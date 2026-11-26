@@ -1,4 +1,4 @@
-import { pluginAction } from "./plugin-settings.mjs";
+import { pluginAction, selectPluginStatus } from "./plugin-settings.mjs";
 import { expectTabler } from "./tabler.mjs";
 import {
   closeSettings,
@@ -95,6 +95,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
 
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
+  await selectPluginStatus(page, "Disabled");
   await pluginAction(page, "GitHub").click();
   await closeSettings(page);
   await openMessages(page);

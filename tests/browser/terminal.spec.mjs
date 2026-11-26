@@ -1,4 +1,4 @@
-import { pluginAction } from "./plugin-settings.mjs";
+import { pluginAction, selectPluginStatus } from "./plugin-settings.mjs";
 import { closeSettings, openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -37,6 +37,7 @@ test("web hides the unusable terminal and does not consume its shortcut, includi
   await expect(launcher).toHaveCount(0);
   await page.keyboard.press(`${modifier}+,`);
   await button(page, "Manage plugins").click();
+  await selectPluginStatus(page, "All");
   const toggle = pluginAction(page, "Terminal");
   await toggle.click();
   await expect(toggle).toHaveAccessibleName(/^Enable /);

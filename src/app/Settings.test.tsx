@@ -369,13 +369,13 @@ it.each([false, true])("groups plugins (Essentials=%s)", async (essentials) => {
 
   fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
   const content = screen.getByRole("region", { name: "Manage plugins" });
-  for (const tab of within(content).getAllByRole("tab")) {
-    const panel = document.getElementById(
-      tab.getAttribute("aria-controls") ?? "",
-    );
-    expect(panel).toHaveAttribute("role", "tabpanel");
-    expect(panel).toHaveAttribute("aria-labelledby", tab.id);
-  }
+  const user = userEvent.setup();
+  await choosePluginFilter(user, "Status", "All");
+  await waitFor(() =>
+    expect(
+      within(content).getByRole("button", { name: "View Invoices details" }),
+    ).toBeVisible(),
+  );
   expect(
     within(content)
       .getAllByRole("heading", { level: 3 })
@@ -478,30 +478,27 @@ it.each([false, true])("groups plugins (Essentials=%s)", async (essentials) => {
   expect(
     within(content).queryByRole("heading", { name: "Finance" }),
   ).toBeNull();
-  expect(
-    within(content).queryByRole("button", {
-      name: "Essentials only",
-    }),
-  ).toBeNull();
-
-  fireEvent.click(within(content).getByRole("tab", { name: "Essentials" }));
-  expect(within(content).queryAllByRole("article")).toHaveLength(
-    essentials ? 3 : 0,
-  );
-  await waitFor(() =>
-    expect(within(content).queryByText("Invoices")).toBeNull(),
-  );
+  await choosePluginFilter(user, "Source", "Built-in");
+  await user.click(within(content).getByRole("tab", { name: "Essentials" }));
   const search = within(content).getByRole("searchbox", {
     name: "Search plugins",
   });
   fireEvent.change(search, { target: { value: "  BUZZ.CODEX  " } });
-  expect(within(content).queryAllByRole("article")).toHaveLength(
-    essentials ? 1 : 0,
-  );
-  if (essentials) expect(within(content).getByText("Codex")).toBeVisible();
-
-  fireEvent.click(within(content).getByRole("tab", { name: "All plugins" }));
-  expect(within(content).getAllByRole("article")).toHaveLength(1);
+  const codex = { name: "View Codex details" };
+  if (essentials) {
+    await waitFor(() =>
+      expect(within(content).getByRole("button", codex)).toBeVisible(),
+    );
+  } else {
+    expect(within(content).queryByRole("button", codex)).toBeNull();
+  }
+  await choosePluginFilter(user, "Status", "Disabled");
+  expect(within(content).queryByRole("button", codex)).toBeNull();
+  await choosePluginFilter(user, "Status", "All");
+  await choosePluginFilter(user, "Source", "Add-ons");
+  expect(within(content).queryByRole("button", codex)).toBeNull();
+  await choosePluginFilter(user, "Source", "All");
+  await user.click(within(content).getByRole("tab", { name: "All plugins" }));
   fireEvent.change(search, { target: { value: "Reconcile" } });
   expect(within(content).getAllByRole("article")).toHaveLength(1);
   await waitFor(() =>
@@ -1063,6 +1060,82 @@ it("confirms rollback from either menu and retains failures for retry", async ()
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
+async function choosePluginFilter(
+  user: ReturnType<typeof userEvent.setup>,
+  name: "Status" | "Source",
+  option: string,
+) {
+  const trigger = screen.getByRole("combobox", { name });
+  trigger.focus();
+  await user.keyboard("{ArrowDown}");
+  await user.click(await screen.findByRole("option", { name: option }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+}
+
+it("combines plugin filters and search and keeps them after toggling a plugin", async () => {
+  const fixture = reviewPluginFixture();
+  const user = userEvent.setup();
+  const status = screen.getByRole("combobox", { name: "Status" });
+  const source = screen.getByRole("combobox", { name: "Source" });
+  const search = screen.getByRole("searchbox", { name: "Search plugins" });
+  const externalDetails = { name: "View Zebra external details" };
+  const bundledDetails = { name: "View Alphabet bundled details" };
+  expect(status).toHaveTextContent("Enabled");
+  expect(source).toHaveTextContent("All");
+  expect(screen.getByRole("button", bundledDetails)).toBeVisible();
+
+  await choosePluginFilter(user, "Source", "Built-in");
+  expect(screen.getByRole("button", bundledDetails)).toBeVisible();
+  expect(screen.queryByRole("button", externalDetails)).toBeNull();
+  await choosePluginFilter(user, "Source", "Add-ons");
+  expect(screen.queryByRole("button", bundledDetails)).toBeNull();
+  expect(screen.getByRole("button", externalDetails)).toBeVisible();
+  await user.type(search, "Alphabet");
+  expect(screen.queryByRole("button", externalDetails)).toBeNull();
+  await user.clear(search);
+  await user.type(search, "Zebra");
+
+  for (const enabled of [false, true]) {
+    const action = enabled ? "enable" : "disable";
+    await user.click(
+      screen.getByRole("button", {
+        name: new RegExp(`^${action} Zebra external$`, "i"),
+      }),
+    );
+    expect(fixture.manager.change).toHaveBeenLastCalledWith(
+      action,
+      fixture.external.manifest.id,
+    );
+    act(() => {
+      const { configuration } = fixture.snapshot;
+      configuration.catalog = {
+        ...configuration.catalog,
+        plugins: configuration.catalog.plugins.map((plugin) =>
+          plugin.manifest.id === fixture.external.manifest.id
+            ? { ...plugin, enabled }
+            : plugin,
+        ),
+      };
+      fixture.publish();
+    });
+    expect(status).toHaveTextContent(enabled ? "Disabled" : "Enabled");
+    expect(source).toHaveTextContent("Add-ons");
+    expect(search).toHaveValue("Zebra");
+    expect(screen.queryByRole("button", externalDetails)).toBeNull();
+    if (!enabled) {
+      await choosePluginFilter(user, "Status", "All");
+      expect(screen.getByRole("button", externalDetails)).toBeInTheDocument();
+      await choosePluginFilter(user, "Status", "Disabled");
+      expect(screen.getByRole("button", externalDetails)).toBeInTheDocument();
+    }
+  }
+  await user.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(status).toHaveTextContent("All");
+  expect(source).toHaveTextContent("All");
+  expect(search).toHaveValue("");
+  expect(search).toHaveFocus();
+});
+
 it("sorts Essentials first and names alphabetically", () => {
   const { snapshot, publish, external } = reviewPluginFixture();
   const bundled = snapshot.configuration.catalog.plugins[0];
@@ -1108,7 +1181,8 @@ it("sorts Essentials first and names alphabetically", () => {
   ]);
 });
 
-it("features bundled Core plugins once, preserving filters, colors and controls", async () => {
+it("features Core plugins once and filters them with the rest of the catalog", async () => {
+  const user = userEvent.setup();
   const { snapshot, publish, manager, external } = reviewPluginFixture();
   const bundled = snapshot.configuration.catalog.plugins[0];
   if (!bundled) throw new Error("Missing bundled fixture");
@@ -1142,17 +1216,10 @@ it("features bundled Core plugins once, preserving filters, colors and controls"
     ],
   };
   act(publish);
-  let content = screen.getByRole("tabpanel");
-  const featured = screen.getByRole("region", { name: "Core plugins" });
-  await waitFor(() => expect(featured).toBeVisible());
-  expect(content).not.toContainElement(featured);
-  const tabs = screen.getByRole("tablist", { name: "Plugin filters" });
-  expect(
-    featured.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
-  expect(
-    tabs.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+  const content = screen.getByRole("region", { name: "Manage plugins" });
+  const featured = within(content).getByRole("region", {
+    name: "Core plugins",
+  });
   expect(
     within(featured)
       .getAllByRole("button", { name: /^View .* details$/ })
@@ -1187,40 +1254,25 @@ it("features bundled Core plugins once, preserving filters, colors and controls"
   expect(
     within(featured).getByRole("button", { name: "Required" }),
   ).toBeDisabled();
-  fireEvent.click(screen.getByRole("tab", { name: "Essentials" }));
-  content = screen.getByRole("tabpanel");
-  expect(within(featured).queryAllByRole("article")).toHaveLength(3);
-  expect(within(content).queryAllByRole("article")).toHaveLength(0);
   const search = screen.getByRole("searchbox", { name: "Search plugins" });
-  fireEvent.change(search, { target: { value: "Profiles" } });
-  expect(within(content).queryAllByRole("article")).toHaveLength(0);
-  expect(within(featured).queryAllByRole("article")).toHaveLength(3);
+  await user.type(search, "Profiles");
+  expect(within(content).getAllByRole("article")).toHaveLength(1);
   expect(
     within(featured).getByRole("button", { name: "View Profiles details" }),
   ).toBeVisible();
-  fireEvent.change(search, { target: { value: "no-match" } });
-  expect(within(content).getByText("No other plugins match")).toBeVisible();
-  expect(within(featured).queryAllByRole("article")).toHaveLength(3);
-  fireEvent.click(trigger);
-  fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
-  expect(trigger).toHaveFocus();
-  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-  content = screen.getByRole("tabpanel");
-  snapshot.configuration.catalog = {
-    ...snapshot.configuration.catalog,
-    plugins: core,
-  };
-  act(publish);
-  expect(within(content).getByText("No other plugins")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  await choosePluginFilter(user, "Source", "Add-ons");
+  expect(
+    within(content).queryByRole("region", { name: "Core plugins" }),
+  ).toBeNull();
+  expect(within(content).getByText("No plugins match")).toBeVisible();
 });
 
-it("omits filter tab semantics when the catalog is unavailable", () => {
+it("omits plugin filters when the catalog is unavailable", () => {
   const { cards } = registry([]);
   render(<Settings {...host} cards={cards} />);
   fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
-  expect(screen.queryByRole("tablist", { name: "Plugin filters" })).toBeNull();
-  expect(screen.queryByRole("tabpanel", { hidden: true })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Status" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Source" })).toBeNull();
 });
 
 it("keeps external Essentials tags from granting curated markers or priority", () => {
@@ -3061,6 +3113,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       f.publish();
     });
     const user = userEvent.setup();
+    await choosePluginFilter(user, "Status", "Disabled");
     const action = screen.getByRole("button", {
       name: "Enable Restricted plugin",
     });

@@ -1,4 +1,4 @@
-import { pluginAction } from "./plugin-settings.mjs";
+import { pluginAction, selectPluginStatus } from "./plugin-settings.mjs";
 import {
   closeSettings,
   openPage,
@@ -220,6 +220,7 @@ test("Channels stays enabled despite saved disabled settings and has no disable 
       .getByText("Required", { exact: true }),
   ).toBeVisible();
   await expect(pluginAction(page, "Channels")).toHaveCount(0);
+  await selectPluginStatus(page, "All");
   await expect(pluginAction(page, "Workflows")).toBeVisible();
   // Older disabled preferences cannot turn off the required launch destination.
   await page.evaluate(() => {

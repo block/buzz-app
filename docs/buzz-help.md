@@ -236,8 +236,11 @@ you or your agents own.
 
 **Settings → Plugins → Manage plugins** shows which plugins are on, turns them
 on and off, adds them from a Git repository or a local folder, and updates
-them. Don't assume an
-optional plugin is on. Agents can ask to install or enable one, which you
+them. The list opens on **Enabled**. Use **Status** to show disabled plugins
+or all plugins, and **Source** to narrow the list to add-ons or built-in plugins.
+The **Essentials** tab and search work with both filters. Turning a plugin on or
+off keeps your selections.
+Don't assume an optional plugin is on. Agents can ask to install or enable one, which you
 approve or decline.
 
 The Notes reader is no longer bundled. When it becomes available in the

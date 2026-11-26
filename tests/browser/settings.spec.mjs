@@ -1,5 +1,5 @@
 import { animationsSettled } from "./animations.mjs";
-import { setPluginEnabled } from "./plugin-settings.mjs";
+import { selectPluginStatus, setPluginEnabled } from "./plugin-settings.mjs";
 import {
   closeSettings,
   openCommunityPicker,
@@ -101,6 +101,66 @@ test("long Settings sections end with the dialog padding at every width", async 
   await expect.poll(endGap).toEqual({ padding: 16, gap: 16 });
 });
 
+test("the narrow catalog keeps filters and search usable while a plugin changes status", async ({
+  page,
+  app,
+}, info) => {
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  const content = page.getByRole("region", {
+    name: "Manage plugins",
+    exact: true,
+  });
+  const search = content.getByRole("searchbox", { name: "Search plugins" });
+  const status = content.getByRole("combobox", {
+    name: "Status",
+    exact: true,
+  });
+  const source = content.getByRole("combobox", {
+    name: "Source",
+    exact: true,
+  });
+  const row = content.getByRole("button", {
+    name: "View GitHub details",
+    exact: true,
+  });
+  await expect(status).toHaveText("Enabled");
+  await expect(source).toHaveText("All");
+  await page.screenshot({ path: info.outputPath("plugin-filters-wide.png") });
+
+  await page.setViewportSize({ width: 480, height: 650 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await source.focus();
+  await page.keyboard.press("ArrowDown");
+  await page.getByRole("option", { name: "Built-in", exact: true }).click();
+  await search.fill("GitHub");
+  await expect(row).toBeVisible();
+  await button(page, "Disable GitHub").press("Space");
+  await expect(row).toHaveCount(0);
+  await expect(status).toHaveText("Enabled");
+  await expect(source).toHaveText("Built-in");
+  await expect(search).toHaveValue("GitHub");
+
+  await selectPluginStatus(page, "All");
+  await expect(row).toBeVisible();
+  await selectPluginStatus(page, "Disabled");
+  await expect(row).toBeVisible();
+  await expect(status).toHaveAttribute("aria-expanded", "false");
+  await page.screenshot({
+    path: info.outputPath("plugin-filters-narrow.png"),
+    animations: "disabled",
+  });
+  await button(page, "Enable GitHub").click();
+  await expect(row).toHaveCount(0);
+  await expect(status).toHaveText("Disabled");
+  await expect(source).toHaveText("Built-in");
+  await expect(search).toHaveValue("GitHub");
+  await selectPluginStatus(page, "All");
+  await expect(row).toBeVisible();
+});
+
 test("short narrow Settings keeps plugin copy and controls reachable at 200% interface size", async ({
   page,
   app,
@@ -122,6 +182,7 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
     name: "Manage plugins",
     exact: true,
   });
+  await selectPluginStatus(page, "All");
   const row = content.getByRole("article").filter({
     has: page.getByRole("button", { name: "View GitHub details", exact: true }),
   });
@@ -633,6 +694,7 @@ confirmedPresence(
       else await expect(detail).toBeFocused();
       await expect(profileContent).toHaveCount(0);
       await expect(pluginContent).toBeVisible();
+      await selectPluginStatus(page, "Disabled");
       await expect(
         page.getByRole("button", { name: "Enable Workflows", exact: true }),
       ).toBeVisible();
@@ -1259,6 +1321,7 @@ test("plugin details preserves the catalog scroll position on open and close", a
   await page.goto(app.origin);
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
+  await selectPluginStatus(page, "All");
   const trigger = button(page, "View Usage details");
   await trigger.scrollIntoViewIfNeeded();
   const place = () =>

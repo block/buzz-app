@@ -1,4 +1,4 @@
-import { pluginAction } from "./plugin-settings.mjs";
+import { pluginAction, selectPluginStatus } from "./plugin-settings.mjs";
 import {
   closeSettings,
   newChat,
@@ -55,6 +55,7 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await expect(card(page, "Notes")).toHaveCount(0);
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
+  await selectPluginStatus(page, "Disabled");
   await pluginAction(page, "Notes fixture").click();
   await closeSettings(page);
   await expect(button(page, "Notes")).toBeVisible();

@@ -1,4 +1,4 @@
-import { pluginAction } from "./plugin-settings.mjs";
+import { pluginAction, selectPluginStatus } from "./plugin-settings.mjs";
 import { selectCommunity, openCommunityPicker } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import {
@@ -505,6 +505,7 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   await expect(page.getByRole("dialog")).toHaveCount(1);
   await selectSettingsSection(page, "Manage plugins");
   // Channels is required; use another page to exercise UI activation.
+  await selectPluginStatus(page, "All");
   const projects = pluginAction(page, "Workflows");
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   // Header search is inert behind Settings; close it to read the palette.
@@ -525,6 +526,7 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   await expectWorkflowsChoice(0);
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
+  await selectPluginStatus(page, "All");
   await projects.click();
   await expect(projects).toHaveAccessibleName(/^Disable /);
   await expectWorkflowsChoice(1);
@@ -868,6 +870,7 @@ companionTest(
     await expect(companion).toHaveCount(0);
     await expect(retainedCompanion).toHaveCount(1);
     await expect(retainedLaunch).toHaveCount(1);
+    await selectPluginStatus(page, "All");
     const enabled = pluginAction(page, "Companion fixture");
     await enabled.click();
     await expect(retainedLaunch).toHaveCount(0);
@@ -1026,6 +1029,7 @@ companionTest(
     // and detail together.
     await openSettings(page);
     await selectSettingsSection(page, "Manage plugins");
+    await selectPluginStatus(page, "All");
     const settingsPage = settingsDialog(page).locator(
       ".buzz-dialog-navigation-layout",
     );

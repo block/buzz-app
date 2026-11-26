@@ -14,7 +14,16 @@ export function pluginAction(page, name) {
     .getByRole("button", { name: /^(Enable|Disable|Unavailable) / });
 }
 
+export async function selectPluginStatus(page, status) {
+  const filter = page.getByRole("combobox", { name: "Status", exact: true });
+  await expect(filter).toBeVisible();
+  if ((await filter.textContent())?.trim() === status) return;
+  await filter.click();
+  await page.getByRole("option", { name: status, exact: true }).click();
+}
+
 export async function setPluginEnabled(page, name, enabled) {
+  await selectPluginStatus(page, "All");
   const action = pluginAction(page, name);
   await expect(action).toBeVisible();
   const target = `${enabled ? "Disable" : "Enable"} ${name}`;

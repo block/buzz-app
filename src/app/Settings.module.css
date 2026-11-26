@@ -146,11 +146,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-bottom: var(--space-5);
-}
-
-.pluginCoreSection {
-  margin-bottom: var(--space-8);
+  margin-block: var(--space-3) var(--space-5);
 }
 
 .pluginToolbar > * {

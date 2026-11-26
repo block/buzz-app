@@ -1,5 +1,5 @@
 import { documentPlugin } from "./document-plugin.mjs";
-import { pluginAction } from "./plugin-settings.mjs";
+import { pluginAction, selectPluginStatus } from "./plugin-settings.mjs";
 import {
   activate,
   chooseColorMode,
@@ -972,6 +972,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
           .args,
     ),
   ).toEqual({ token: expect.stringMatching(/^preview-\d+$/), path: "dist" });
+  await selectPluginStatus(page, "All");
   const enabled = pluginAction(page, "Example two");
   await expect(enabled).toHaveAccessibleName("Enable Example two");
   const row = button(page, "View Example two details");

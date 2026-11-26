@@ -1,4 +1,4 @@
-import { pluginAction } from "./plugin-settings.mjs";
+import { pluginAction, selectPluginStatus } from "./plugin-settings.mjs";
 import { openCommunityPicker } from "./navigation.mjs";
 import {
   closeSettings,
@@ -13,6 +13,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function plugins(page) {
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
+  await selectPluginStatus(page, "All");
 }
 
 // An unseeded page exercises startup ordering: plugin storage must commit its
@@ -186,6 +187,7 @@ test("an existing profile can opt in to Bestie and keep its choice across reload
   await bestie.click();
   await expect(bestie).toHaveAccessibleName(/^Enable /);
   await page.reload();
+  await selectPluginStatus(page, "Disabled");
   await expect(bestie).toHaveAccessibleName(/^Enable /);
   // The workspace behind Settings is hidden from the accessibility tree.
   await closeSettings(page);
@@ -223,6 +225,7 @@ test("an existing profile keeps Reminders and Workflows until deliberately disab
   for (const name of ["Reminders", "Workflows"])
     await pluginAction(page, name).click();
   await page.reload();
+  await selectPluginStatus(page, "All");
   for (const name of ["Reminders", "Workflows"])
     await expect(pluginAction(page, name)).toHaveAccessibleName(/^Enable /);
 });
@@ -264,6 +267,7 @@ test("Membership action removes and restores the working Invite destination", as
   await moderation.click();
   await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
   await page.reload();
+  await selectPluginStatus(page, "All");
   await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
   await expect(admin).toHaveAccessibleName(/^Disable /);
   await closeSettings(page);

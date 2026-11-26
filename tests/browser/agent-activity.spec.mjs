@@ -1,4 +1,4 @@
-import { pluginAction } from "./plugin-settings.mjs";
+import { pluginAction, selectPluginStatus } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, wheel, virtuaIdle } from "./timeline.mjs";
 import { closeSettings } from "./navigation.mjs";
@@ -275,6 +275,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await page
     .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
+  await selectPluginStatus(page, "All");
   const toggle = pluginAction(page, "Agent Activity");
   const disabled = page.waitForResponse(
     (response) =>
@@ -311,6 +312,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
       response.ok() &&
       response.request().postDataJSON().observer !== null,
   );
+  await selectPluginStatus(page, "All");
   await toggle.click();
   await enabled;
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);

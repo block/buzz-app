@@ -35,6 +35,7 @@ import { IconButton } from "../shared/design-system/ui/IconButton";
 import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Tabs } from "../shared/design-system/ui/Tabs";
+import { Select } from "../shared/design-system/ui/Select";
 import { SearchField } from "../shared/design-system/ui/SearchField";
 import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import {
@@ -140,6 +141,18 @@ function CorePluginGroup({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
+const PLUGIN_STATUS_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "enabled", label: "Enabled" },
+  { value: "disabled", label: "Disabled" },
+];
+
+const PLUGIN_SOURCE_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "external", label: "Add-ons" },
+  { value: "bundled", label: "Built-in" },
+];
 
 function isCorePlugin(plugin: PluginInfo) {
   return (
@@ -983,11 +996,16 @@ export function Settings({
       plugin.manifest.id,
     );
   };
-  const [pluginFilter, setPluginFilter] = useState<"all" | "essentials">("all");
+  const [pluginScope, setPluginScope] = useState<"all" | "essentials">("all");
+  const [pluginStatus, setPluginStatus] = useState("enabled");
+  const [pluginSource, setPluginSource] = useState("all");
   const [pluginQuery, setPluginQuery] = useState("");
   const pluginSearch = useRef<HTMLElement>(null);
   const pluginFiltersActive =
-    pluginFilter !== "all" || pluginQuery.trim() !== "";
+    pluginScope !== "all" ||
+    pluginStatus !== "all" ||
+    pluginSource !== "all" ||
+    pluginQuery.trim() !== "";
   const reducedMotion = useReducedMotion();
   const listMotion = {
     layout: reducedMotion ? (false as const) : ("position" as const),
@@ -1003,18 +1021,15 @@ export function Settings({
     layout: listMotion.layout,
     transition: listMotion.transition,
   };
-  const coreGroup = useMemo(
-    () =>
-      groupPlugins(catalog?.plugins ?? []).find((group) => group.id === "core"),
-    [catalog?.plugins],
-  );
   const pluginGroups = useMemo(() => {
     const query = pluginQuery.trim().toLowerCase();
     return groupPlugins(
       (catalog?.plugins ?? []).filter(
         (plugin) =>
-          !isCorePlugin(plugin) &&
-          (pluginFilter === "all" || isEssentialPlugin(plugin)) &&
+          (pluginScope === "all" || isEssentialPlugin(plugin)) &&
+          (pluginStatus === "all" ||
+            pluginStatus === (plugin.enabled ? "enabled" : "disabled")) &&
+          (pluginSource === "all" || pluginSource === plugin.source) &&
           [
             plugin.manifest.name,
             plugin.manifest.id,
@@ -1023,7 +1038,7 @@ export function Settings({
           ].some((value) => value?.toLowerCase().includes(query)),
       ),
     );
-  }, [catalog?.plugins, pluginFilter, pluginQuery]);
+  }, [catalog?.plugins, pluginScope, pluginStatus, pluginSource, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
   const shownPluginId = useRef(selectedPluginId);
   shownPluginId.current = selectedPluginId;
@@ -1177,8 +1192,8 @@ export function Settings({
   useLayoutEffect(() => {
     if (!selectedPlugin && restorePluginFocus.current) {
       restorePluginFocus.current = false;
-      const visible = [coreGroup, ...pluginGroups].some((group) =>
-        group?.plugins.some(
+      const visible = pluginGroups.some((group) =>
+        group.plugins.some(
           (plugin) =>
             plugin.manifest.id === pluginTrigger.current?.dataset.pluginId,
         ),
@@ -1187,7 +1202,7 @@ export function Settings({
         preventScroll: true,
       });
     }
-  }, [selectedPlugin, coreGroup, pluginGroups]);
+  }, [selectedPlugin, pluginGroups]);
   const selectedRunning = selectedPlugin
     ? activation[selectedPlugin.manifest.id]
     : undefined;
@@ -1226,7 +1241,6 @@ export function Settings({
     return (
       <PluginListEntry
         {...listMotion}
-        className={core ? styles.pluginCoreSection : undefined}
         role="region"
         aria-label={core ? "Core plugins" : undefined}
         aria-labelledby={core ? undefined : `plugin-category-${group.id}`}
@@ -1714,9 +1728,6 @@ export function Settings({
                 }
               />
             </motion.div>
-            <AnimatePresence initial={false} mode="popLayout">
-              {coreGroup && renderPluginGroup(coreGroup)}
-            </AnimatePresence>
             {catalog && (
               <AgentPluginRequests
                 plugins={plugins}
@@ -1738,37 +1749,53 @@ export function Settings({
               />
             )}
             {catalog && (
-              <motion.div {...layoutMotion} className={styles.pluginToolbar}>
-                <motion.div {...layoutMotion}>
-                  <Tabs
-                    variant="panel"
-                    label="Plugin filters"
-                    items={[
-                      {
-                        value: "all",
-                        label: "All plugins",
-                        panelId: "plugin-results-all",
-                      },
-                      {
-                        value: "essentials",
-                        label: "Essentials",
-                        panelId: "plugin-results-essentials",
-                      },
+              <>
+                <Tabs
+                  variant="panel"
+                  label="Plugin filters"
+                  items={[
+                    {
+                      value: "all",
+                      label: "All plugins",
+                      panelId: "plugin-results-all",
+                    },
+                    {
+                      value: "essentials",
+                      label: "Essentials",
+                      panelId: "plugin-results-essentials",
+                    },
+                  ]}
+                  value={pluginScope}
+                  onValueChange={setPluginScope}
+                />
+                <motion.div {...layoutMotion} className={styles.pluginToolbar}>
+                  <Select
+                    label="Status"
+                    value={pluginStatus}
+                    groups={[
+                      { label: "Status", options: PLUGIN_STATUS_OPTIONS },
                     ]}
-                    value={pluginFilter}
-                    onValueChange={setPluginFilter}
+                    onValueChange={setPluginStatus}
                   />
-                </motion.div>
-                <motion.div {...layoutMotion} className={styles.pluginSearch}>
-                  <SearchField
-                    inputRef={pluginSearch}
-                    label="Search plugins"
-                    placeholder="Search plugins…"
-                    value={pluginQuery}
-                    onValueChange={setPluginQuery}
+                  <Select
+                    label="Source"
+                    value={pluginSource}
+                    groups={[
+                      { label: "Source", options: PLUGIN_SOURCE_OPTIONS },
+                    ]}
+                    onValueChange={setPluginSource}
                   />
+                  <motion.div {...layoutMotion} className={styles.pluginSearch}>
+                    <SearchField
+                      inputRef={pluginSearch}
+                      label="Search plugins"
+                      placeholder="Search plugins…"
+                      value={pluginQuery}
+                      onValueChange={setPluginQuery}
+                    />
+                  </motion.div>
                 </motion.div>
-              </motion.div>
+              </>
             )}
             {catalog && installRequest && installRequests && (
               <UrlInstallRequestReview
@@ -1862,32 +1889,28 @@ export function Settings({
                 )}
               </div>
               {catalog &&
-                (["all", "essentials"] as const).map((filter) => (
+                (["all", "essentials"] as const).map((scope) => (
                   <div
-                    key={filter}
-                    hidden={filter !== pluginFilter}
+                    key={scope}
+                    hidden={scope !== pluginScope}
                     className={
-                      filter === pluginFilter
+                      scope === pluginScope
                         ? styles.pluginCategories
                         : undefined
                     }
                     role="tabpanel"
-                    id={`plugin-results-${filter}`}
-                    aria-labelledby={`plugin-results-${filter}-tab`}
+                    id={`plugin-results-${scope}`}
+                    aria-labelledby={`plugin-results-${scope}-tab`}
                   >
-                    {filter === pluginFilter && (
+                    {scope === pluginScope && (
                       <>
                         {pluginGroups.length === 0 && (
                           <EmptyState
                             icon={<SquaresFourIcon size={24} />}
                             title={
                               pluginFiltersActive
-                                ? coreGroup
-                                  ? "No other plugins match"
-                                  : "No plugins match"
-                                : coreGroup
-                                  ? "No other plugins"
-                                  : "No plugins yet"
+                                ? "No plugins match"
+                                : "No plugins yet"
                             }
                             description={
                               pluginFiltersActive
@@ -1900,7 +1923,9 @@ export function Settings({
                                   variant="subtle"
                                   onClick={() => {
                                     setPluginQuery("");
-                                    setPluginFilter("all");
+                                    setPluginScope("all");
+                                    setPluginStatus("all");
+                                    setPluginSource("all");
                                     pluginSearch.current?.focus();
                                   }}
                                 >

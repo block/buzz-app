@@ -284,6 +284,7 @@ type Active = {
   voiceRetirement?: Promise<void>;
   voiceHandoff?: VoiceContinuation[];
   resumeSpeechInText?: VoiceContinuation[];
+  adoptedVoice?: true;
   rejectedSpeech?: Promise<void>;
   steering: Promise<void>;
   reply: Request;
@@ -346,6 +347,7 @@ type Lane = {
     origin?: Readonly<{ channelId: string; root?: string }>;
     restore(): Promise<void>;
     rejectedSpeechClosing?: Promise<void>;
+    interruptedSpeech?: VoiceContinuation;
     /** Ends the seat, and tells its owner why. */
     end(error: Error): void;
   };
@@ -2087,7 +2089,7 @@ export class CodexRuntime {
           active !== interrupting &&
           (!seat.resumeOnClose ||
             (active.reply.conversation.channelId === channelId &&
-              active.reply.replyRoot === root))
+              active.reply.toolRoot === root))
         ) {
           interrupting = active;
           interrupted = this.interruptForVoice(
@@ -2172,7 +2174,7 @@ export class CodexRuntime {
         !finishPreemption &&
         (!inOrigin ||
           (active.reply.conversation.channelId === channelId &&
-            active.reply.replyRoot === root))
+            active.reply.toolRoot === root))
       )
         await this.interruptForVoice(entry, key, active, continuations);
     } catch (error) {
@@ -2239,19 +2241,28 @@ export class CodexRuntime {
       signal.removeEventListener("abort", onAbort);
       const handoffs: VoiceContinuation[] = [];
       const active = lane.active;
+      const source = active?.adoptedVoice ? active.requests[0] : active?.reply;
+      const interruptedSpeech = lane.voice?.interruptedSpeech;
+      if (interruptedSpeech && leaving) handoffs.push(interruptedSpeech);
+      else if (interruptedSpeech)
+        for (const pending of interruptedSpeech.requests) {
+          entry.waiting.delete(pending);
+          delete pending.voiceContinuation;
+          pending.failActivity("Codex’s turn was interrupted");
+        }
       let interruption: Promise<void> | undefined;
       if (
         leaving &&
+        !interruptedSpeech &&
         active &&
         (!active.finished ||
           (!active.stopped &&
             active.terminalStatus === "interrupted" &&
-            Object.hasOwn(active.reply, "adopted"))) &&
-        active.reply.conversation.channelId === channelId &&
-        active.reply.replyRoot === root
+            active.adoptedVoice)) &&
+        source?.conversation.channelId === channelId &&
+        source.toolRoot === root
       ) {
-        if (Object.hasOwn(active.reply, "adopted"))
-          active.resumeSpeechInText = handoffs;
+        if (active.adoptedVoice) active.resumeSpeechInText = handoffs;
         else
           interruption = this.interruptForVoice(
             entry,
@@ -2435,7 +2446,7 @@ export class CodexRuntime {
             settings.scope === "community" &&
             active &&
             (active.finished || !active.threadId) &&
-            !Object.hasOwn(active.reply, "adopted")
+            !active.adoptedVoice
           ) {
             const drained = this.drainRejectedSpeech(rpc, threadId, p.turn.id);
             active.rejectedSpeech = drained;
@@ -4627,7 +4638,11 @@ export class CodexRuntime {
     const active: Active = {
       rpc: server.rpc,
       ...(adopted && lane.voice
-        ? { threadId: lane.voice.loaded.threadId, turnId: adopted }
+        ? {
+            threadId: lane.voice.loaded.threadId,
+            turnId: adopted,
+            adoptedVoice: true as const,
+          }
         : {}),
       ready: new Promise((resolve, reject) => {
         ready = resolve;
@@ -4646,6 +4661,14 @@ export class CodexRuntime {
       activity: new Map(),
     };
     void active.ready.catch(() => undefined);
+    if (lane.voice?.interruptedSpeech) {
+      for (const pending of lane.voice.interruptedSpeech.requests) {
+        entry.waiting.delete(pending);
+        delete pending.voiceContinuation;
+        pending.failActivity("Codex’s turn was interrupted");
+      }
+      delete lane.voice.interruptedSpeech;
+    }
     lane.active = active;
     next?.begin(active);
     const { settings, agent } = request;
@@ -4689,6 +4712,29 @@ export class CodexRuntime {
     let turnMayBeRunning = adopted !== undefined;
     /** The voice seat whose thread this turn runs on, if any. */
     let seat: Lane["voice"];
+    const canPostHuddleReply = (reply: Request) =>
+      !reply.wake &&
+      seat?.origin?.channelId === reply.conversation.channelId &&
+      seat.origin.root === reply.toolRoot &&
+      !seat.signal.aborted;
+    const speechContinuation = (): VoiceContinuation | undefined => {
+      if (!adopted || !request.event || !active.threadId) return;
+      const { adopted: _adopted, ...rest } = request;
+      const resumed: TextRequest = { ...rest, event: request.event };
+      const pending = active.requests.filter(
+        (taken): taken is TextRequest =>
+          taken !== request &&
+          !!taken.event &&
+          !taken.unaddressed &&
+          taken.finalDelivery !== true,
+      );
+      return {
+        entry,
+        key,
+        threadId: active.threadId,
+        requests: [...pending, resumed],
+      };
+    };
     let notice = request.gatewayFallback?.notice;
     try {
       const rpc = await server.opening;
@@ -4877,11 +4923,7 @@ export class CodexRuntime {
         active.threadId = threadId;
         // Attention and plugin wakes report through their own explicit sends.
         // Realtime can hand speech into their running turn.
-        postHuddleReply =
-          !request.wake &&
-          seat?.origin?.channelId === request.conversation.channelId &&
-          seat.origin.root === request.replyRoot &&
-          !seat.signal.aborted;
+        postHuddleReply = canPostHuddleReply(request);
         const turnParams = {
           threadId: active.threadId,
           input: input(
@@ -5005,21 +5047,37 @@ export class CodexRuntime {
           this.status(agent.key, key, "Stopped", notice);
         }
       } else if (status === "interrupted") {
-        for (const taken of active.requests)
-          taken.failActivity("Codex’s turn was interrupted");
-        await this.terminals(rpc, threadId);
-        await this.publishOwed(
-          active,
-          "Codex’s turn was interrupted. Send another mention to continue.",
-        );
+        const handoff = seat?.origin && speechContinuation();
+        if (handoff && seat && !seat.signal.aborted) {
+          seat.interruptedSpeech = handoff;
+          for (const pending of handoff.requests) {
+            pending.voiceContinuation = handoff;
+            entry.waiting.add(pending);
+          }
+          continuing = true;
+        } else {
+          for (const taken of active.requests)
+            taken.failActivity("Codex’s turn was interrupted");
+          await this.terminals(rpc, threadId);
+          await this.publishOwed(
+            active,
+            "Codex’s turn was interrupted. Send another mention to continue.",
+          );
+        }
         this.status(agent.key, key, "Interrupted");
       } else {
         const failed = active.requests.find(
           (taken) => taken.finalDelivery instanceof Error,
         )?.finalDelivery;
         if (failed instanceof Error) throw failed;
-        if (postHuddleReply && textReply && request.finalDelivery !== true)
-          await this.publish(request, textReply);
+        const reply = active.reply;
+        if (
+          postHuddleReply &&
+          textReply &&
+          canPostHuddleReply(reply) &&
+          reply.finalDelivery !== true
+        )
+          await this.publish(reply, textReply);
         // A turn may end without a reply when there is nothing new to say.
         for (const taken of active.requests) taken.answered();
         this.status(agent.key, key, "Idle", notice);
@@ -5029,14 +5087,12 @@ export class CodexRuntime {
       // Refused before any turn began, it took nothing in.
       if (error instanceof Refused && !active.turnId) restoreNotes(request);
       const speechHandoff = active.resumeSpeechInText;
-      const speechEvent = request.event;
-      const threadToResume = active.threadId;
       const resumeSpeech =
         speechHandoff &&
-        speechEvent &&
-        threadToResume &&
         !entry.abort.signal.aborted &&
-        (!active.finished || active.terminalStatus === "interrupted");
+        (!active.finished || active.terminalStatus === "interrupted")
+          ? speechContinuation()
+          : undefined;
       if (!resumeSpeech)
         for (const taken of active.requests) taken.failActivity(message(error));
       const ended = active.finished;
@@ -5080,18 +5136,12 @@ export class CodexRuntime {
         }
       }
       active.finished = true;
-      if (resumeSpeech) {
-        const { adopted: _adopted, ...rest } = request;
-        const resumed: TextRequest = { ...rest, event: speechEvent };
-        const handoff = {
-          entry,
-          key,
-          threadId: threadToResume,
-          requests: [resumed],
-        };
-        resumed.voiceContinuation = handoff;
-        entry.waiting.add(resumed);
-        speechHandoff.push(handoff);
+      if (resumeSpeech && speechHandoff) {
+        for (const pending of resumeSpeech.requests) {
+          pending.voiceContinuation = resumeSpeech;
+          entry.waiting.add(pending);
+        }
+        speechHandoff.push(resumeSpeech);
         continuing = true;
       }
       const why = explain?.();

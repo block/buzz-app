@@ -14600,14 +14600,24 @@ it("switches active Solo work to voice and back to text on the same Codex thread
   }
 });
 
-it.each([false, true])(
-  "resumes a delegated spoken turn after leaving (Codex interrupted first: %s)",
-  async (interruptedFirst) => {
+it.each([
+  { interruptedFirst: false, steer: false },
+  { interruptedFirst: true, steer: false },
+  { interruptedFirst: false, steer: true },
+  { interruptedFirst: true, steer: false, settled: true },
+])(
+  "resumes a delegated spoken turn after leaving (interrupted: $interruptedFirst, steered: $steer, settled: $settled)",
+  async ({ interruptedFirst, steer, settled }) => {
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
-    f.soloChannels.add("channel");
+    if (steer)
+      f.snapshot.session.channels.list = () => ({
+        status: "ready",
+        channels: [{ id: "channel", name: "DM", channelType: "dm" }],
+      });
+    else f.soloChannels.add("channel");
     const d = f.delivery("spoken work");
-    const { config } = scoped(d, "channel");
+    const { config } = scoped(d, steer ? "community" : "channel");
     const signal = new AbortController();
     try {
       const connected = await join(f, d, {
@@ -14627,6 +14637,19 @@ it.each([false, true])(
             .some((view) => view.status === "Working"),
         ).toBe(true),
       );
+      if (steer) {
+        await f.runtime.run({
+          ...f.delivery("Keep the accepted steering"),
+          config,
+          model: "test-model",
+          effort: "low",
+        });
+        await vi.waitFor(() =>
+          expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(
+            true,
+          ),
+        );
+      }
       if (interruptedFirst)
         f.emit({
           method: "turn/completed",
@@ -14635,6 +14658,13 @@ it.each([false, true])(
             turn: { id: "speech-1", status: "interrupted" },
           },
         });
+      if (settled) {
+        await vi.waitFor(() =>
+          expect(f.runtime.sessions(d.agent.key)[0]?.status).toBe(
+            "Interrupted",
+          ),
+        );
+      }
       signal.abort();
       await connected.close();
 
@@ -14658,51 +14688,74 @@ it.each([false, true])(
   },
 );
 
-it("publishes a completed typed Huddle answer once without injecting speech", async () => {
-  vi.stubGlobal("RTCPeerConnection", class {});
-  const f = fixture();
-  f.soloChannels.add("channel");
-  const d = f.delivery("finish this");
-  const { config } = scoped(d, "channel");
-  const output = vi.fn(async () => {});
-  const signal = new AbortController();
-  try {
-    const connected = await join(f, d, {
-      config,
-      conversation: { channelId: "channel" },
-      signal: signal.signal,
-      resumeOnClose: () => true,
-      output,
-    });
-    await f.runtime.run({ ...d, config });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    f.emit({
-      method: "item/completed",
-      params: {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        item: {
-          type: "agentMessage",
-          phase: "final_answer",
-          text: "Copper orchard.",
+it.each([false, true])(
+  "publishes a completed typed Huddle answer only in its own conversation (steered elsewhere: %s)",
+  async (elsewhere) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("finish this");
+    const { config } = scoped(d, "channel");
+    const output = vi.fn(async () => {});
+    const signal = new AbortController();
+    try {
+      const connected = await join(f, d, {
+        config,
+        conversation: { channelId: "channel", root },
+        signal: signal.signal,
+        resumeOnClose: () => true,
+        output,
+      });
+      await f.runtime.run({ ...d, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      if (elsewhere) {
+        const steer = f.delivery("Continue in another thread", "e".repeat(64));
+        await vi.waitFor(() =>
+          expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working"),
+        );
+        await f.runtime.run({
+          ...steer,
+          config,
+          model: "test-model",
+          effort: "low",
+        });
+        await vi.waitFor(() =>
+          expect(
+            f.sent.filter((wire) => wire.method === "turn/steer"),
+          ).toHaveLength(1),
+        );
+      }
+      f.emit({
+        method: "item/completed",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "agentMessage",
+            phase: "final_answer",
+            text: "Copper orchard.",
+          },
         },
-      },
-    });
-    await f.complete(0, "");
-    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-    expect(output).not.toHaveBeenCalled();
-    expect(f.publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: "Copper orchard.",
-        tags: expect.arrayContaining([["h", "channel"]]),
-      }),
-    );
-    await connected.close();
-  } finally {
-    signal.abort();
-    f.runtime.dispose();
-  }
-});
+      });
+      await f.complete(0, "");
+      await vi.waitFor(() =>
+        expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+      );
+      expect(f.publish).toHaveBeenCalledTimes(elsewhere ? 0 : 1);
+      expect(output).not.toHaveBeenCalled();
+      if (!elsewhere)
+        expect(f.publish).toHaveBeenCalledWith(
+          expect.objectContaining({
+            content: "Copper orchard.",
+            tags: expect.arrayContaining([["h", "channel"]]),
+          }),
+        );
+      await connected.close();
+    } finally {
+      signal.abort();
+      f.runtime.dispose();
+    }
+  },
+);
 
 it("does not auto-post final text when speech joins an Attention turn in a Huddle", async () => {
   vi.stubGlobal("RTCPeerConnection", class {});

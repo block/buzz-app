@@ -1,7 +1,11 @@
 import { localActivity, localWorkLabel, localWorkRoot } from "./local-activity";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
-import { activityTranscript, type ToolItem } from "./activity-transcript";
+import {
+  activityTranscript,
+  buzzToolTitle,
+  type ToolItem,
+} from "./activity-transcript";
 
 type Snapshot = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
 const verbs: Record<string, string> = {
@@ -31,7 +35,10 @@ function toolLabel(tool: ToolItem): string {
     : undefined;
   const kind = local ?? tool.kind;
   const verb =
-    (Object.hasOwn(verbs, kind) ? verbs[kind] : undefined) ?? "Running a tool";
+    (Object.hasOwn(verbs, kind) ? verbs[kind] : undefined) ??
+    // A Buzz tool is the one kind=other tool with a label of its own.
+    buzzToolTitle(tool) ??
+    "Running a tool";
   // Compact UI never displays raw arguments, commands, or full local paths.
   let path = tool.paths[0];
   if (!path && local && kind !== "execute") {

@@ -49,7 +49,7 @@ export type ActivityReceipt = Readonly<{
   accepted?: () => void;
   /** Steps show on the latest acknowledged message of each scope. */
   activityScope?: string;
-  step?: (tool: string, target?: string) => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
   acknowledged?: () => void;
   superseded?: () => void;
 }>;

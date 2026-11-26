@@ -26,7 +26,6 @@ url = "2"
 tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
-hex = "0.4"
 buzz-mesh-compute = { path = "../src/bundled/mesh-compute/compute" }
 buzz-nsec-backup = { path = "../crates/nsec-backup" }
 buzz-pairing = { path = "../crates/pairing" }
@@ -83,6 +82,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
+hex = "0.4"
 tokio = { version = "1", features = ["test-util"] }
 secp256k1 = { version = "0.31", features = ["std"] }
 tauri = { version = "=2.12.4", features = ["test"] }

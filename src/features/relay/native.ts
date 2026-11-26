@@ -710,23 +710,6 @@ export async function connectNativeTransport(
         throw new Error("The relay returned an invalid direct message.");
       return id;
     },
-    tableKeys: {
-      async reseal(head, grants, member, signal) {
-        signal.throwIfAborted();
-        const content = await invoke<string>("relay_table_key_reseal", {
-          community: origin,
-          head: eventDto(head),
-          grants: grants.map(eventDto),
-          member,
-        }).catch((error: unknown) => {
-          throw typeof error === "string" ? new Error(error) : error;
-        });
-        signal.throwIfAborted();
-        if (typeof content !== "string" || content.length > 1024)
-          throw new Error("Invalid sealed table key");
-        return content;
-      },
-    },
     channelKit: {
       async prepare(record: PrivateRecord, signal) {
         signal.throwIfAborted();

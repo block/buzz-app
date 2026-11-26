@@ -3008,7 +3008,6 @@ export function createRelaySession(
     },
     channelCreation,
     channelKit: channelKit.capability,
-    tableKeys: transport?.tableKeys,
     canvas: channelKit.canvas,
     channelWrites,
     directMessages: createDirectMessages(

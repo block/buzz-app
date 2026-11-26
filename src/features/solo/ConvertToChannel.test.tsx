@@ -139,8 +139,8 @@ function setup(
     authority: (next: string) => {
       role = next;
     },
-    rename: () => {
-      name = "Changed";
+    rename: (next = "Changed") => {
+      name = next;
       clock++;
     },
     admission: (next: "member" | "guest") => {
@@ -164,6 +164,7 @@ const confirm = () =>
   screen.getByRole("button", { name: "Convert to channel" });
 const accessControl = () =>
   screen.getByRole("combobox", { name: "General access" });
+const nameField = () => screen.getByRole("textbox", { name: "Name" });
 async function selectAccess(label: string) {
   const user = userEvent.setup();
   await user.click(accessControl());
@@ -208,13 +209,17 @@ it.each(["private", "public"])(
     const h = setup();
     await ready();
     expect(accessControl()).toHaveTextContent("Private");
+    // The chat's title is the default name.
+    expect(nameField()).toHaveValue("Original");
     const user = userEvent.setup();
     await user.click(accessControl());
     expect(
       await screen.findByRole("option", { name: "Public" }),
     ).toHaveAccessibleDescription("Anyone in the community can participate.");
     await user.keyboard("{Escape}");
-    if (visibility === "public") await selectAccess("Public");
+    if (visibility === "public") {
+      await selectAccess("Public");
+    }
     expect(h.sign).not.toHaveBeenCalled();
     fireEvent.click(confirm());
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
@@ -475,6 +480,31 @@ it.each([
     expect(h.publish).toHaveBeenCalledOnce();
   },
 );
+it("blocks an empty name, then converts and checks an uncertain save under the chosen name", async () => {
+  const h = setup();
+  await ready();
+  const user = userEvent.setup();
+  await user.clear(nameField());
+  expect(confirm()).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("Enter a channel name");
+  h.publish.mockRejectedValueOnce(new Error("lost acknowledgement"));
+  await user.type(nameField(), "#launch plan ");
+  expect(h.sign).not.toHaveBeenCalled();
+  fireEvent.click(confirm());
+  const check = await screen.findByRole("button", { name: "Check status" });
+  expect(nameField()).toHaveValue("launch plan");
+  expect(nameField()).toBeDisabled();
+  h.rename("launch plan");
+  h.converted();
+  fireEvent.click(check);
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.sign).toHaveBeenCalledOnce();
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.sign.mock.calls[0]?.[0].tags).toContainEqual([
+    "name",
+    "launch plan",
+  ]);
+});
 it("definitive rejection permits explicit retry without losing the confirmation", async () => {
   const h = setup();
   h.publish.mockRejectedValueOnce(new PublishRejected("Denied"));

@@ -42,7 +42,7 @@ export type ActivityReceipt = Readonly<{
   delivered?: () => void;
   /** Presentation destination; channel-shared sessions may handle several threads. */
   activityScope?: string;
-  step?: (tool: string, target?: string) => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -1088,7 +1088,7 @@ export class ClaudeProcess {
       const step = stepLabel(message);
       if (step)
         for (const receipt of this.activeReceipts.values())
-          receipt.step?.(step.tool, step.target);
+          receipt.step?.(step.tool, step.target, step.origin);
       return;
     }
     if (message.type !== "result") return;
@@ -1387,10 +1387,12 @@ export class ClaudeProcess {
   }
 }
 
-/** The last content block of an assistant message as the tool it names and its target. */
+/** The last content block of an assistant message as the tool it names and
+ * its target. `origin` marks a call to the `buzz` MCP server, the only place
+ * the server in `mcp__<server>__<tool>` survives. */
 export function stepLabel(
   message: Message,
-): { tool: string; target?: string } | undefined {
+): { tool: string; target?: string; origin?: "buzz" } | undefined {
   const content = (message.message as { content?: unknown } | undefined)
     ?.content;
   if (!Array.isArray(content)) return undefined;
@@ -1402,6 +1404,9 @@ export function stepLabel(
   if (block?.type === "tool_use" && typeof block.name === "string") {
     const tool = block.name.split("__").at(-1);
     if (!tool) return undefined;
+    const origin = block.name.startsWith("mcp__buzz__")
+      ? { origin: "buzz" as const }
+      : {};
     const input = block.input ?? {};
     const target = [
       "description",
@@ -1414,7 +1419,9 @@ export function stepLabel(
     ]
       .map((key) => input[key])
       .find((value): value is string => typeof value === "string" && !!value);
-    return target ? { tool, target: shortTarget(target) } : { tool };
+    return target
+      ? { tool, target: shortTarget(target), ...origin }
+      : { tool, ...origin };
   }
   if (block?.type === "thinking") return { tool: "Thinking" };
   if (block?.type === "text") return { tool: "Writing reply" };

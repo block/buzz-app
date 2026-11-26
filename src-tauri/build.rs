@@ -146,7 +146,6 @@ fn main() {
             "relay_channel_publish",
             "relay_kit_sign",
             "relay_kit_prepare",
-            "relay_table_key_reseal",
             "relay_kit_decode",
             "relay_direct_message",
             "relay_decode_sidebar",

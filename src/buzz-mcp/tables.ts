@@ -8,13 +8,9 @@ import {
   TABLE_KEY,
 } from "../features/tables/file";
 import { sqlite } from "../features/tables/sqlite";
-import type { BuzzClient, BuzzEvent, RelayInfo, Template } from "./client";
+import type { BuzzClient, BuzzEvent, RelayInfo } from "./client";
 
 type Args = Record<string, unknown>;
-
-/** The relay feature a table channel needs: only owners and admins add
- * members, so a writer cannot widen who the table is shared with. */
-export const ADD_ROLE_EXTENSION = "buzz-channel-add-role";
 
 const MAX_ROWS = 200;
 
@@ -22,7 +18,7 @@ export const TABLE_TOOLS = [
   {
     name: "table_create",
     description:
-      "Create a private table from SQL statements (CREATE TABLE and optional INSERTs). Your owner owns it and controls who it is shared with; you can save it. request is an id you choose for this creation: reuse it only to retry the same creation, which then finishes or returns the original table.",
+      "Create a private table from SQL statements (CREATE TABLE and optional INSERTs). Only you can find, read or save it. request is an id you choose for this creation: reuse it only to retry the same creation, which then finishes or returns the original table.",
     properties: {
       name: { type: "string" },
       sql: { type: "string" },
@@ -31,9 +27,15 @@ export const TABLE_TOOLS = [
     required: ["name", "sql", "request"],
   },
   {
+    name: "table_list",
+    description: "Your tables: each one's id and name.",
+    properties: {},
+    required: [],
+  },
+  {
     name: "table_fields",
     description:
-      "A table's columns, read from its SQLite schema. table is the id table_create returned.",
+      "A table's columns, read from its SQLite schema. table is an id from table_list or table_create.",
     properties: { table: { type: "string" } },
     required: ["table"],
   },
@@ -46,7 +48,7 @@ export const TABLE_TOOLS = [
   {
     name: "table_save",
     description:
-      "Run SQL that changes a table (INSERT, UPDATE, DELETE, ALTER) and save it as the next version. Returns saved, conflict when someone saved first (read again and retry), or denied when you may only read it.",
+      "Run SQL that changes a table (INSERT, UPDATE, DELETE, ALTER) and save it as the next version. Returns saved, or conflict when another session saved first: read the table again and retry.",
     properties: { table: { type: "string" }, sql: { type: "string" } },
     required: ["table", "sql"],
   },
@@ -64,38 +66,20 @@ export const TABLE_HANDLERS: Readonly<
     const request = text(args.request);
     if (!name || !sql || !request)
       throw new Error("name, sql and request are required.");
-    const owner = client.owner;
-    if (!owner)
-      throw new Error(
-        "Tables need your owner, and this host does not know them.",
-      );
     const keys = client.tableKeys;
-    if (!keys || !client.relayInfo)
-      throw new Error("Tables are not available on this host.");
-    // Before anything is published: a relay that cannot restrict additions
-    // would let a writer share the table on.
-    const relay = await client.relayInfo();
-    if (!relay.extensions.includes(ADD_ROLE_EXTENSION))
-      throw new Error(
-        "This community's relay cannot restrict who adds members to a channel, so a table here would not stay under your owner's control. Nothing was created.",
-      );
+    if (!keys) throw new Error("Tables are not available on this host.");
     const me = client.pubkey;
-    // The same request always names the same channel and table, so a retry
-    // resumes an interrupted creation, and the relay accepts only one
-    // creation of the table however many attempts overlap.
-    const { h, d } = await creationIds(me, owner, request);
+    const h = await tablesChannel(me);
+    // The same request always names the same table, so a retry resumes an
+    // interrupted creation, and the relay accepts only one creation of it
+    // however many attempts overlap.
+    const d = await uuid(`buzz.table:file:${me}:${request}`);
     const [head] = await client.query([{ artifact: "head", "#d": [d] }]);
-    if (head) return alreadyCreated(client, head, h, owner);
+    if (head) return alreadyCreated(client, head, h, me);
 
-    const mine = (await grantsFor(client, h, d)).filter(
-      (grant) => grant.pubkey === me,
-    );
+    const mine = await grantsFor(client, h, d, me);
     const key = (await recoverKey(keys, me, mine)) ?? newTableKey();
-    const grants = await Promise.all(
-      [owner, me]
-        .filter((member) => !mine.some((g) => tag(g, "for") === member))
-        .map((member) => keyGrant(keys, h, d, member, key)),
-    );
+    const grant = mine.length ? undefined : await keyGrant(keys, h, d, me, key);
     const file = artifact(
       [
         ["d", d],
@@ -106,13 +90,14 @@ export const TABLE_HANDLERS: Readonly<
       ],
       sealTable(key, await build(sql)),
     );
-    for (const event of [file, ...grants])
-      fits(event, relay, "Nothing was created.");
+    const relay = await client.relayInfo?.();
+    for (const event of grant ? [file, grant] : [file])
+      if (relay) fits(event, relay, "Nothing was created.");
 
-    await setUpChannel(client, h, name, owner, me);
-    // Keys first: a file is only published once its owner can open it, so
-    // an interruption never leaves a table that nobody can read.
-    for (const grant of grants) await client.publish(grant);
+    await ensureChannel(client, h, me);
+    // The key first: a file is only published once this agent can open it,
+    // so an interruption never leaves a table nobody can read.
+    if (grant) await client.publish(grant);
     try {
       await client.publish(file);
     } catch (error) {
@@ -125,11 +110,32 @@ export const TABLE_HANDLERS: Readonly<
       const [taken] = await client.query([{ artifact: "head", "#d": [d] }]);
       if (!taken)
         throw new Error(
-          `This request's table id ${d} is already used outside your table's channel. Use a different request.`,
+          `This request's table id ${d} is already used elsewhere. Use a different request.`,
         );
-      return alreadyCreated(client, taken, h, owner);
+      return alreadyCreated(client, taken, h, me);
     }
-    return `created ${described(d, h)}`;
+    return `created private table ${d}`;
+  },
+
+  async table_list(client) {
+    const me = client.pubkey;
+    const h = await tablesChannel(me);
+    const state = await channelState(client, h);
+    if (!state.exists) return "[]";
+    const problem = channelProblem(state, me);
+    if (problem)
+      throw new Error(
+        `Your tables channel ${h} is not private to you (${problem}).`,
+      );
+    const tables = await client.query([
+      { artifact: "current", "#h": [h], "#type": [TABLE_FILE] },
+    ]);
+    return JSON.stringify(
+      tables.map((table) => ({
+        table: tag(table, "d"),
+        name: tag(table, "title"),
+      })),
+    );
   },
 
   async table_fields(client, args) {
@@ -227,7 +233,7 @@ export async function openTableFor(client: BuzzClient, d: string) {
   const [file] = await client.query([{ artifact: "head", "#d": [d] }]);
   const h = tag(file, "h");
   if (!file || tag(file, "type") !== TABLE_FILE || !h)
-    throw new Error(`No table ${d} is shared with you.`);
+    throw new Error(`You have no table ${d}.`);
   const grants = await grantsFor(client, h, d, client.pubkey);
   for (const grant of grants) {
     try {
@@ -237,30 +243,7 @@ export async function openTableFor(client: BuzzClient, d: string) {
       // A grant that does not open this file is skipped; another may.
     }
   }
-  throw new Error(`Table ${d} has not been shared with you.`);
-}
-
-/** Shares table `d` with `member` as a writer or a reader. Only the table
- * channel's owner can add them; the key is granted once they are in. */
-export async function grantTable(
-  client: BuzzClient,
-  d: string,
-  member: string,
-  role: "member" | "guest",
-) {
-  const keys = client.tableKeys;
-  if (!keys) throw new Error("Tables are not available on this host.");
-  const { h, key } = await openTableFor(client, d);
-  await client.publish({
-    kind: 9000,
-    content: "",
-    tags: [
-      ["h", h],
-      ["p", member],
-      ["role", role],
-    ],
-  });
-  await client.publish(await keyGrant(keys, h, d, member, key));
+  throw new Error(`You cannot open table ${d}.`);
 }
 
 type TableKeys = NonNullable<BuzzClient["tableKeys"]>;
@@ -350,110 +333,66 @@ async function build(sql: string) {
   }
 }
 
-const described = (d: string, h: string) =>
-  `table ${d} in private channel ${h}; your owner owns it and you can save it`;
-
-/** An existing creation's result, when `head` is its own table: in its
- * channel, which is restricted and owned by the owner. */
+/** An existing creation's result, when `head` is this agent's own table:
+ * in its tables channel, which only it belongs to. */
 async function alreadyCreated(
   client: BuzzClient,
   head: BuzzEvent,
   h: string,
-  owner: string,
+  me: string,
 ) {
-  const state = await channelState(client, h);
   const d = tag(head, "d") ?? "";
   if (
     tag(head, "type") !== TABLE_FILE ||
     tag(head, "h") !== h ||
-    !state.restricted ||
-    state.roles.get(owner) !== "owner"
+    channelProblem(await channelState(client, h), me)
   )
     throw new Error(
-      `Table ${d} exists but is not this request's table under your owner's control. Use a different request.`,
+      `Table ${d} exists but is not your private table. Use a different request.`,
     );
-  return `already created ${described(d, h)}`;
+  return `already created private table ${d}`;
 }
 
-/** Creates the table channel restricted to owner additions, with the owner
- * as its owner and this agent as a writer, doing only the steps an earlier
- * interrupted attempt left undone. */
-async function setUpChannel(
-  client: BuzzClient,
-  h: string,
-  name: string,
-  owner: string,
-  me: string,
-) {
-  let state = await channelState(client, h);
-  // Another attempt at this creation may be making the same changes; any
-  // step it already made is refused, and the roster check below decides.
-  const step = (event: Template) =>
-    client.publish(event).catch(() => undefined);
-  if (!state.exists)
-    await step({
-      kind: 9007,
-      content: "",
-      tags: [
-        ["h", h],
-        ["name", name],
-        ["visibility", "private"],
-        ["channel_type", "stream"],
-        ["p", owner],
-      ],
-    });
-  if (!state.restricted)
-    await step({
-      kind: 9002,
-      content: "",
-      tags: [
-        ["h", h],
-        ["add_role", "admin"],
-      ],
-    });
-  if (state.roles.get(owner) !== "owner") await step(role(h, owner, "owner"));
-  if (state.roles.get(me) !== "member") await step(role(h, me, "member"));
-  // The relay republishes the channel's metadata and roster after each
-  // change, so wait briefly for them to reflect all of it.
+/** Creates this agent's tables channel if it does not exist yet, then
+ * checks it is private with this agent as its only member. */
+async function ensureChannel(client: BuzzClient, h: string, me: string) {
+  if (!(await channelState(client, h)).exists)
+    // Another session may be creating it too; the check below decides.
+    await client
+      .publish({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", h],
+          ["name", "Tables"],
+          ["visibility", "private"],
+          ["channel_type", "stream"],
+        ],
+      })
+      .catch(() => undefined);
+  // The relay publishes the channel's metadata and roster after creating it.
   let problem: string | undefined;
   for (let attempt = 0; attempt < 10; attempt++) {
     if (attempt) await new Promise((resolve) => setTimeout(resolve, 300));
-    state = await channelState(client, h);
-    problem = channelProblem(state, owner, me);
+    problem = channelProblem(await channelState(client, h), me);
     if (!problem) return;
   }
   throw new Error(
-    `The table channel ${h} is not set up as expected (${problem}). No table data was published.`,
+    `Your tables channel ${h} is not private to you (${problem}). No table data was published.`,
   );
 }
 
-const role = (h: string, member: string, name: string) => ({
-  kind: 9000,
-  content: "",
-  tags: [
-    ["h", h],
-    ["p", member],
-    ["role", name],
-  ],
-});
+/** This agent's tables channel: a UUID-shaped digest of its key, so every
+ * session finds the same one. */
+const tablesChannel = (me: string) => uuid(`buzz.tables:channel:${me}`);
 
-/** Stable ids for this agent's creation `request`: UUID-shaped digests, so
- * the relay sees ordinary channel and artifact ids. */
-async function creationIds(me: string, owner: string, request: string) {
-  const id = async (part: string) => {
-    const hex = bytesToHex(
-      new Uint8Array(
-        await crypto.subtle.digest(
-          "SHA-256",
-          new TextEncoder().encode(
-            `buzz.table:${part}:${me}:${owner}:${request}`,
-          ),
-        ),
-      ),
-    );
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${((Number.parseInt(hex[16] ?? "0", 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-  };
-  return { h: await id("channel"), d: await id("file") };
+async function uuid(seed: string) {
+  const hex = bytesToHex(
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed)),
+    ),
+  );
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${((Number.parseInt(hex[16] ?? "0", 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 /** Refuses an event the relay would reject as too large, before anything
@@ -487,18 +426,17 @@ function fits(
     );
 }
 
-/** The table key from a grant this agent wrote, so a resumed creation keeps
- * the key its earlier grants carry. */
+/** The table key from this agent's own grant, so a resumed creation keeps
+ * the key its earlier grant carries. */
 async function recoverKey(
   keys: TableKeys,
   me: string,
   grants: readonly BuzzEvent[],
 ) {
   for (const grant of grants) {
-    const peer = grant.pubkey === me ? tag(grant, "for") : grant.pubkey;
-    if (!peer) continue;
+    if (grant.pubkey !== me) continue;
     try {
-      return await keys.unwrap(peer, grant.content);
+      return await keys.unwrap(me, grant.content);
     } catch {
       // Not a key this agent can open; another grant may be.
     }
@@ -538,30 +476,25 @@ async function channelState(client: BuzzClient, h: string) {
   const info = newest(meta);
   return {
     exists: !!info,
-    restricted: !!info?.tags.some(
-      ([k, v]) => k === "add_role" && v === "admin",
-    ),
-    roles: new Map(
-      (newest(roster)?.tags ?? [])
-        .filter((t) => t[0] === "p" && t[1])
-        .map((t) => [t[1] as string, t[3] || "member"]),
-    ),
+    private: !!info?.tags.some(([k]) => k === "private"),
+    members: (newest(roster)?.tags ?? [])
+      .filter((t) => t[0] === "p" && t[1])
+      .map((t) => `${t[1]}:${t[3] || "member"}`)
+      .sort(),
   };
 }
 
-/** Why the channel is not restricted with exactly the owner as owner and
- * this agent as a writer, or `undefined` when it is. */
+/** Why the channel is not private with this agent as its only member and
+ * owner, or `undefined` when it is. */
 function channelProblem(
   state: Awaited<ReturnType<typeof channelState>>,
-  owner: string,
   me: string,
 ) {
-  const members = [...state.roles].map(([p, r]) => `${p}:${r}`).sort();
-  const expected = [`${owner}:owner`, `${me}:member`].sort();
-  return state.restricted &&
-    JSON.stringify(members) === JSON.stringify(expected)
+  return state.private &&
+    state.members.length === 1 &&
+    state.members[0] === `${me}:owner`
     ? undefined
-    : `restricted: ${state.restricted}; members: ${members.join(", ") || "unknown"}`;
+    : `private: ${state.private}; members: ${state.members.join(", ") || "unknown"}`;
 }
 
 const text = (value: unknown) =>

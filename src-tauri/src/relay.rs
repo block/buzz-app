@@ -30,8 +30,6 @@ pub(crate) use channel_writes::{
     relay_kit_prepare,
 };
 pub(crate) use kit::relay_kit_sign;
-mod tables;
-pub(crate) use tables::relay_table_key_reseal;
 mod media_blocks;
 mod media_cache;
 pub(crate) use media_cache::MediaCache;

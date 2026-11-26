@@ -63,6 +63,7 @@ import {
 import { attestedOwner } from "../features/agents/owner-attestation";
 import { TABLE_HANDLERS, TABLE_TOOLS } from "./tables";
 import type { AgentSettingsProposal } from "../features/agents/settings-proposal";
+import { type BuzzToolName, TOOL_TITLES } from "./tool-titles";
 import type {
   BuzzClient,
   BuzzEvent,
@@ -107,13 +108,14 @@ const joinRole = {
     "Role for people who join or are added without one. guest on an open channel: anyone reads, only members post.",
 } as const;
 const tool = (
-  name: string,
+  name: BuzzToolName,
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[] = [],
   annotations?: Readonly<{ readOnlyHint: boolean; destructiveHint?: boolean }>,
 ) => ({
-  name,
+  name: name as string,
+  title: TOOL_TITLES[name],
   description,
   inputSchema: {
     type: "object",

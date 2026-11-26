@@ -2,6 +2,7 @@
 // running here can read and change for its owner. What the settings are comes
 // from the host's catalog; these tools never name one.
 import type { BuzzClient } from "./client";
+import { type BuzzToolName, TOOL_TITLES } from "./tool-titles";
 import type { Tool } from "./tools";
 
 const key = {
@@ -9,13 +10,14 @@ const key = {
   description: "A key settings_list gives, such as appearance.mode.",
 } as const;
 const tool = (
-  name: string,
+  name: BuzzToolName,
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[],
   annotations: Tool["annotations"],
 ): Tool => ({
   name,
+  title: TOOL_TITLES[name],
   description,
   inputSchema: {
     type: "object",

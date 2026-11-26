@@ -17,7 +17,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { npubEncode } from "nostr-tools/nip19";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import type { LiveCallbacks } from "../../features/relay/live";
@@ -41,8 +41,6 @@ import {
 } from "../../features/search/usage";
 import { matchesEvent } from "../../features/relay/projection";
 import { eventDto, type RelayEvent } from "../../features/relay/events";
-import type { TableKeyHost } from "../../features/tables/host";
-import type { EventTemplate } from "nostr-tools/pure";
 import { PublishRejected } from "../../features/relay/outbox";
 import type { AgentLibrary } from "../../features/agents/library";
 import { localAgentsFixture } from "../../features/agents/local-testing";
@@ -141,13 +139,6 @@ async function setup(
     personIsRelayAgent?: boolean;
     /** The DM is the relay's moderation DM with the viewer. */
     moderation?: boolean;
-    /** The viewer owns the channel, which holds an agent table: artifact
-     * reads answer from `artifacts`, and the host reseals keys. */
-    table?: {
-      artifacts(filter: Parameters<typeof matchesEvent>[1]): RelayEvent[];
-      reseal: TableKeyHost["reseal"];
-      publish(event: RelayEvent): void;
-    };
   } = {},
 ) {
   const viewer = keypair(),
@@ -270,7 +261,7 @@ async function setup(
     personProfile,
   ];
   const currentRoster = () =>
-    type === "solo" || options.table
+    type === "solo"
       ? signed(relay, {
           kind: 39002,
           created_at: clock,
@@ -284,8 +275,6 @@ async function setup(
         })
       : roster(relay, id, members, clock);
   const query = vi.fn(async (filters: Parameters<typeof matchesEvent>[1][]) => {
-    const artifacts = filters.find((filter) => filter.artifact);
-    if (artifacts) return options.table?.artifacts(artifacts) ?? [];
     if (filters.some((filter) => filter.search)) {
       if (searchFailure) throw new Error("Search offline");
       return [personProfile];
@@ -351,19 +340,6 @@ async function setup(
         : {}),
       readAgentLibrary,
       ...(options.directMessages ? { openDirectMessage } : {}),
-      ...(options.table
-        ? {
-            tableKeys: { reseal: options.table.reseal },
-            configArtifacts: {
-              kinds: [45010],
-              sign: async (template: EventTemplate) => signed(viewer, template),
-              publish: async (event: RelayEvent) => {
-                options.table?.publish(event);
-                return event.id;
-              },
-            },
-          }
-        : {}),
       writer: {
         kinds: [
           9,
@@ -4600,100 +4576,3 @@ it.each([0, 75])(
     ).not.toBeInTheDocument();
   },
 );
-
-describe("agent table access", () => {
-  const member = (10000).toString(16).padStart(64, "0");
-  const channel = "11111111-1111-4111-8111-111111111111";
-  function table(failKeys = false) {
-    const author = keypair();
-    const head = signed(author, {
-      kind: 45010,
-      content: "sealed table",
-      tags: [
-        ["d", "t1"],
-        ["h", channel],
-        ["type", "buzz.table"],
-      ],
-    });
-    const grants: RelayEvent[] = [];
-    const published: RelayEvent[] = [];
-    const reseal = vi.fn<TableKeyHost["reseal"]>(async () => "sealed key");
-    return {
-      published,
-      reseal,
-      grants,
-      option: {
-        artifacts(filter: Parameters<typeof matchesEvent>[1]) {
-          const type = filter["#type"]?.[0];
-          if (type === "buzz.table") return [head];
-          if (failKeys) throw new Error("Relay unavailable");
-          return [...grants, ...published].filter(
-            (grant) =>
-              !filter["#for"] ||
-              filter["#for"].includes(
-                grant.tags.find((t) => t[0] === "for")?.[1] ?? "",
-              ),
-          );
-        },
-        reseal,
-        publish: (event: RelayEvent) => published.push(event),
-      },
-      ownerGrant: (viewer: string) =>
-        grants.push(
-          signed(author, {
-            kind: 45010,
-            content: "owner key",
-            tags: [
-              ["h", channel],
-              ["type", "buzz.table-key"],
-              ["for", viewer],
-              ["table", "t1"],
-            ],
-          }),
-        ),
-    };
-  }
-
-  it("lists members who cannot open the table and grants access only when the owner asks", async () => {
-    const fixture = table();
-    const view = await setup("stream", false, false, undefined, undefined, {
-      extraMembers: 1,
-      table: fixture.option,
-    });
-    fixture.ownerGrant(view.viewer.pubkey);
-    const grant = await screen.findByRole("button", {
-      name: /^Grant .* table access$/,
-    });
-    expect(screen.getByText(/needs table access/)).toBeTruthy();
-    expect(fixture.published).toEqual([]);
-    expect(fixture.reseal).not.toHaveBeenCalled();
-
-    await view.user.click(grant);
-    await vi.waitFor(() => expect(fixture.published).toHaveLength(1));
-    expect(fixture.reseal).toHaveBeenCalledTimes(1);
-    expect(fixture.reseal.mock.calls[0]?.[2]).toBe(member);
-    expect(fixture.published[0]?.tags).toEqual(
-      expect.arrayContaining([
-        ["for", member],
-        ["table", "t1"],
-        ["type", "buzz.table-key"],
-      ]),
-    );
-    await vi.waitFor(() =>
-      expect(screen.queryByText(/needs table access/)).toBeNull(),
-    );
-  });
-
-  it("says when it could not finish checking who needs access", async () => {
-    const fixture = table(true);
-    await setup("stream", false, false, undefined, undefined, {
-      extraMembers: 1,
-      table: fixture.option,
-    });
-    expect(
-      await screen.findByText(/Buzz couldn't finish checking table access/),
-    ).toBeTruthy();
-    expect(fixture.published).toEqual([]);
-    expect(fixture.reseal).not.toHaveBeenCalled();
-  });
-});

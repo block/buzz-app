@@ -1616,6 +1616,9 @@ export function serve({
         send({
           type: "step",
           tool: name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name,
+          // Only the prefix says a tool is Buzz's: Pi's own tools and its
+          // extensions' are reported bare.
+          ...(name.startsWith(PREFIX) ? { origin: "buzz" } : {}),
           target: targetOf(
             // A nested call shows the arguments it runs with. A call the
             // model made runs with what the hooks left of its arguments.

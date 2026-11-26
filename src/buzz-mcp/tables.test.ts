@@ -35,7 +35,48 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-it("refuses to create a table on a relay that cannot restrict additions, publishing nothing", async () => {
+it("refuses to create a table when its tables channel is not private to the agent, publishing nothing", async () => {
+  const squatter = keypair();
+  const channel = (filter: { kinds?: number[]; "#d"?: string[] }) => {
+    const d = filter["#d"]?.[0] ?? "";
+    if (filter.kinds?.[0] === 39000)
+      return finalizeEvent(
+        {
+          kind: 39000,
+          created_at: 1,
+          content: "",
+          tags: [["d", d], ["private"]],
+        },
+        squatter.secret,
+      );
+    return finalizeEvent(
+      {
+        kind: 39002,
+        created_at: 1,
+        content: "",
+        tags: [
+          ["d", d],
+          ["p", squatter.pubkey, "", "owner"],
+          ["p", agent.pubkey, "", "member"],
+        ],
+      },
+      squatter.secret,
+    );
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/events")) {
+        published.push(JSON.parse(String(init?.body)));
+        return new Response('{"accepted":true}');
+      }
+      if (!init?.body) return new Response(JSON.stringify(relayInfo));
+      const [filter] = JSON.parse(String(init.body));
+      return new Response(
+        JSON.stringify(filter?.kinds?.[0] >= 39000 ? [channel(filter)] : []),
+      );
+    }),
+  );
   const buzz = nodeClient({
     relay: "wss://relay.test",
     key: bytesToHex(agent.secret),
@@ -48,15 +89,12 @@ it("refuses to create a table on a relay that cannot restrict additions, publish
       sql: "CREATE TABLE goals(title TEXT NOT NULL, status TEXT)",
       request: "goals-1",
     }),
-  ).rejects.toThrow(/cannot restrict who adds members.*Nothing was created/);
+  ).rejects.toThrow(/not private to you.*No table data was published/);
   expect(published).toEqual([]);
-});
+}, 10_000);
 
 it("refuses a table larger than the relay accepts before creating its channel", async () => {
-  relayInfo = {
-    supported_extensions: ["buzz-channel-add-role"],
-    limitation: { max_message_length: 30_000 },
-  };
+  relayInfo = { limitation: { max_message_length: 30_000 } };
   const buzz = nodeClient({
     relay: "wss://relay.test",
     key: bytesToHex(agent.secret),
@@ -75,7 +113,7 @@ it("refuses a table larger than the relay accepts before creating its channel", 
   expect(published).toEqual([]);
 });
 
-it("discovers a shared table's fields, answers read-only queries and reports refused saves", async () => {
+it("discovers a table's fields, answers read-only queries and reports refused saves", async () => {
   let refusal = "";
   const SQL = await initSqlJs();
   const db = new SQL.Database();
@@ -100,7 +138,7 @@ it("discovers a shared table's fields, answers read-only queries and reports ref
     {
       kind: 45010,
       created_at: 1,
-      content: wrapKey(owner.secret, agent.pubkey, key),
+      content: wrapKey(agent.secret, agent.pubkey, key),
       tags: [
         ["h", "channel"],
         ["type", TABLE_KEY],
@@ -108,7 +146,7 @@ it("discovers a shared table's fields, answers read-only queries and reports ref
         ["table", "goals"],
       ],
     },
-    owner.secret,
+    agent.secret,
   );
   vi.stubGlobal(
     "fetch",

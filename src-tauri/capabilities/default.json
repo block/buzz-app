@@ -82,7 +82,6 @@
     "allow-relay-channel-publish",
     "allow-relay-kit-sign",
     "allow-relay-kit-prepare",
-    "allow-relay-table-key-reseal",
     "allow-relay-kit-decode",
     "allow-relay-direct-message",
     "allow-relay-decode-sidebar",

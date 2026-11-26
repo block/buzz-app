@@ -1,5 +1,4 @@
 import { isAdminAddition } from "../channel-members/administration-protocol.ts";
-import type { TableKeyHost } from "../tables/host";
 import type { ArtifactIncrementalReader } from "./artifact-incremental-reader.ts";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
@@ -170,8 +169,6 @@ export interface ReadTransport {
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
   readonly channelKit?: ChannelKitHost;
-  /** Seals the owner's table keys to current channel members only. */
-  readonly tableKeys?: TableKeyHost;
   /** The relay advertises NIP-CL (`nip-cl` in NIP-11 `supported_extensions`):
    * it keeps channel labels and answers label lookups. */
   readonly channelIdentity?: true;

@@ -154,19 +154,6 @@ fn certificate() -> &'static rcgen::CertifiedKey<rcgen::KeyPair> {
     CERTIFICATE
         .get_or_init(|| rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap())
 }
-/// A TLS acceptor for 127.0.0.1 with the root tests trust.
-pub(crate) fn trusted_acceptor() -> tokio_rustls::TlsAcceptor {
-    let key =
-        rustls::pki_types::PrivateKeyDer::Pkcs8(certificate().signing_key.serialize_der().into());
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let server = rustls::ServerConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![certificate().cert.der().clone()], key)
-        .unwrap();
-    tokio_rustls::TlsAcceptor::from(Arc::new(server))
-}
 pub(crate) fn trusted_root() -> reqwest::Certificate {
     reqwest::Certificate::from_der(certificate().cert.der()).unwrap()
 }

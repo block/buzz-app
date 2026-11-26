@@ -1759,83 +1759,10 @@ pub async fn identity_export(host: tauri::State<'_, IdentityHost>) -> Result<Str
     with_identity(host.inner().clone(), Identity::export).await
 }
 
-/// A table key: 32 bytes as 64 lowercase hex.
-fn table_key(text: &str) -> Option<Zeroizing<[u8; 32]>> {
-    if text.len() != 64 || !text.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')) {
-        return None;
-    }
-    let mut bytes = Zeroizing::new([0; 32]);
-    hex::decode_to_slice(text, bytes.as_mut()).ok()?;
-    Some(bytes)
-}
-
 #[cfg(test)]
 pub(crate) mod tests;
 
 impl IdentityHost {
-    /// Seals to `member` the key of the table whose current version is
-    /// `head`, taken from one of this identity's signed `buzz.table-key`
-    /// grants for it: the first that opens `head`. The key never leaves
-    /// this process, and nothing but a table key is opened.
-    pub(crate) async fn table_key_reseal(
-        &self,
-        head: Event,
-        grants: Vec<Event>,
-        member: String,
-    ) -> Result<String> {
-        const INVALID: &str = "Invalid table key grant";
-        let value = |event: &Event, name: &str| {
-            event.tags.iter().find_map(|tag| match tag.as_slice() {
-                [key, value, ..] if key == name => Some(value.clone()),
-                _ => None,
-            })
-        };
-        let artifact = |event: &Event, kind: &str| {
-            event.verify().is_ok()
-                && event.kind.as_u16() == 45010
-                && value(event, "type").as_deref() == Some(kind)
-        };
-        let table = value(&head, "d").filter(|_| artifact(&head, "buzz.table"));
-        let Some(table) = table else {
-            return Err("Invalid table".into());
-        };
-        if grants.len() > 16
-            || !grants.iter().all(|grant| {
-                artifact(grant, "buzz.table-key")
-                    && value(grant, "table").as_deref() == Some(table.as_str())
-            })
-        {
-            return Err(INVALID.into());
-        }
-        let member = nostr::key::PublicKey::from_hex(&member).map_err(|_| "Invalid member")?;
-        let file = STANDARD
-            .decode(head.content.as_bytes())
-            .map_err(|_| "Invalid table")?;
-        self.with_key(move |secret, viewer| {
-            let secret = NostrSecretKey::from_slice(secret).map_err(|_| INVALID)?;
-            for grant in grants
-                .iter()
-                .filter(|grant| value(grant, "for").as_deref() == Some(viewer))
-            {
-                let Ok(key) = nip44::decrypt(&secret, &grant.pubkey, &grant.content) else {
-                    continue;
-                };
-                let key = Zeroizing::new(key);
-                let Some(bytes) = table_key(&key) else {
-                    continue;
-                };
-                if nip44::v2::decrypt_to_bytes(&nip44::v2::ConversationKey::new(*bytes), &file)
-                    .is_ok()
-                {
-                    return nip44::encrypt(&secret, &member, key.as_str(), nip44::Version::V2)
-                        .map_err(|_| "Could not seal the table key".into());
-                }
-            }
-            Err("None of your table keys opens this table".into())
-        })
-        .await
-    }
-
     /// Only recipe plaintext may cross this boundary. Never export arbitrary decrypt.
     pub(crate) async fn kit_cipher(&self, ciphertext: String, encrypt: bool) -> Result<String> {
         with_identity(self.clone(), move |identity| {

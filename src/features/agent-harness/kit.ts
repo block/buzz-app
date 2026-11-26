@@ -32,6 +32,7 @@ import { soloChat } from "../agents/solo-chat";
 import type { EventData } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { threadReference } from "../relay/thread-reference";
+import { contextSize } from "./context-meter";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
 import { turnChannel, turnOf } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
@@ -111,7 +112,13 @@ export type HarnessKit = Readonly<{
   tools(
     agent: AgentHandle,
     conversation?: HarnessConversation,
-    options?: Readonly<{ read?(path: string): Promise<Uint8Array> }>,
+    options?: Readonly<{
+      read?(path: string): Promise<Uint8Array>;
+      /** The calling session's context size now: the tokens of its last
+       * model call, which each message it posts carries; undefined when
+       * unknown. A harness feeds in what its protocol reports per call. */
+      contextTokens?(): number | undefined;
+    }>,
   ): McpHandler;
   /** Posts `text` as the agent in the conversation: in the event's thread, or
    * at the top level. `notifyOwner` tags the owner, as for a failed turn. */
@@ -488,6 +495,9 @@ export function harnessKit(sources: Sources): HarnessKit {
         const client = () => {
           const ready = session(agent.key);
           return appClient(agent, {
+            ...(options.contextTokens
+              ? { contextTokens: () => contextSize(options.contextTokens?.()) }
+              : {}),
             relayAuthor: ready?.relayAuthor,
             signingAuthority: ready && (ready.workflowAuthority ?? null),
             read: (path) =>

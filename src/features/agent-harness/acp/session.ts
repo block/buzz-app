@@ -1,6 +1,7 @@
 import { steerPrompt } from "../../../bundled/claude-code/prompt";
 import { unsupportedSynced } from "../../agents/agent-config";
 import type { HostMcpServer } from "../../host/service";
+import { ContextMeter } from "../context-meter";
 import type { AcpProcess } from "./process";
 import { codeOf, errorMessage, stepLabel } from "./steps";
 import type { ActivityReceipt, Choice, Settled } from "./types";
@@ -108,6 +109,8 @@ export class AcpSession {
    * provider failure comes back as text, and text is never posted. */
   private acted = false;
   private written = "";
+  /** The session's context size, from the harness's `usage_update`. */
+  private readonly context = new ContextMeter();
   private closed = false;
   /** A final message ended the work: the id of its tool call, whose result
    * cancels the running turn once the harness reports it, then `true` until
@@ -141,6 +144,11 @@ export class AcpSession {
 
   get busy() {
     return this.pending > 0;
+  }
+  /** The session's context size now: the tokens of its last model call, as
+   * the harness last reported them; undefined when unknown. */
+  get contextTokens() {
+    return this.context.tokens;
   }
   get working() {
     return !this.quiet();
@@ -285,6 +293,8 @@ export class AcpSession {
       this.ending = true;
       this.acp.notify("session/cancel", { sessionId: this.id });
     }
+    // ACP's `used` is the tokens of the session's last model call.
+    if (kind === "usage_update") this.context.report(update.used);
     if (kind === "agent_message_chunk" && !this.acted) {
       const content = update.content as { text?: unknown } | undefined;
       if (typeof content?.text === "string")

@@ -10,7 +10,8 @@ import type { RelayWriter } from "./transport";
 export const soloAdminKey = (channel: string) =>
   `solo-initial-admins:${channel}`;
 
-/** A verified head is authority only while it remains the directory's head. */
+/** A verified head is authority only while it remains the directory's head.
+ * An evicted head is unknown, not revoked. */
 export async function soloAgentOwnership(
   profiles: Pick<ProfileQueries, "event"> | undefined,
   viewer: string | undefined,
@@ -25,7 +26,14 @@ export async function soloAgentOwnership(
     head.pubkey === key &&
     (await attestedOwner(head)) === viewer
   );
-  return () => owned && profiles?.event?.(key) === head;
+  return () => {
+    const current = profiles?.event?.(key);
+    if (owned && !current)
+      throw new Error(
+        "An opening agent's profile is unavailable. Retry the opening message.",
+      );
+    return owned && current?.id === head?.id;
+  };
 }
 
 /** Library inclusion is discovery, never authority to grant chat Admin. */
@@ -96,9 +104,23 @@ function readSoloAdminSetup(item: OutgoingEvent) {
     return { channel, admins, recovery: item.recovery };
 }
 
+/** Grants reuse the create's timestamp, so none is sent once it is 15
+ * minutes old. */
+export const soloAdminSetupExpired = (create: { created_at: number }) =>
+  Date.now() / 1000 - create.created_at >= 15 * 60;
+
+/** Setup can no longer grant this agent, so it keeps its current role. */
+class GrantSkipped extends Error {}
+
+/** A verified profile was replaced mid-grant, which a same-owner edit also
+ * does, so the grant restarts from a fresh read. */
+class OwnershipChanged extends Error {}
+
 /** Reconstruct the exact same promotions after interruption. Their timestamp
  * and channel come from the saved create, so retries never invent a new grant
- * that could undo a later demotion or removal. */
+ * that could undo a later demotion or removal. A grant that can no longer be
+ * made is skipped. Any other failure leaves setup for a retry, until it
+ * expires. */
 export async function promoteSoloAdmins(
   creation: OutgoingEvent,
   writer: Omit<RelayWriter, "publish"> & {
@@ -120,7 +142,19 @@ export async function promoteSoloAdmins(
   const read = (filters: Parameters<RelayReader["read"]>[0]) =>
     reader.read(filters, { signal, fresh: true, priority: "foreground" });
   for (const admin of admins) {
-    signal.throwIfAborted();
+    for (let attempt = 1; ; attempt++) {
+      signal.throwIfAborted();
+      try {
+        await promote(admin);
+      } catch (error) {
+        if (error instanceof OwnershipChanged && attempt < 3) continue;
+        if (!(error instanceof GrantSkipped)) throw error;
+        console.warn("Opening agent keeps its current role", admin, error);
+      }
+      break;
+    }
+  }
+  async function promote(admin: string) {
     const template = {
       ...memberAdministrationTemplate(channel, create.pubkey, {
         pubkey: admin,
@@ -142,20 +176,22 @@ export async function promoteSoloAdmins(
           },
         ])
       ).some((event) => event.id === id && event.pubkey === create.pubkey);
+    // An expired grant is never sent, so whether it was recorded no longer
+    // matters and a failed lookup cannot block the chat.
+    if (soloAdminSetupExpired(create)) return;
     // A recorded grant remains complete even when its recipient was demoted.
-    if (await recorded()) continue;
-    if (Date.now() / 1000 - create.created_at >= 15 * 60)
-      throw new Error(
-        "Chat admin setup expired. Choose Abandon admin setup in this chat to continue with current roles, or start a new chat.",
-      );
+    if (await recorded()) return;
     const ownership = await owned?.(admin, admins);
+    if (!ownership?.())
+      throw new GrantSkipped(
+        "An opening agent is not verified as owned by the chat creator.",
+      );
     const checkOwnership = () => {
-      if (!ownership?.())
-        throw new Error(
-          "An opening agent is not verified as owned by the chat creator. Retry this message or choose Abandon admin setup in this chat to continue with current roles.",
+      if (!ownership())
+        throw new OwnershipChanged(
+          "An opening agent's profile changed. Retry the opening message.",
         );
     };
-    checkOwnership();
     const rosters = await read([
       {
         kinds: [39002],
@@ -171,13 +207,15 @@ export async function promoteSoloAdmins(
         event.pubkey === relayAuthor &&
         event.tags.some(([tag, value]) => tag === "d" && value === channel),
     );
-    const role = roster?.tags.find(
+    if (!roster)
+      throw new Error(
+        "The chat's member list is unavailable. Retry the opening message.",
+      );
+    const role = roster.tags.find(
       ([tag, key]) => tag === "p" && key === admin,
     )?.[3];
     if (!role || !["member", "bot", "admin"].includes(role))
-      throw new Error(
-        "An opening agent's access changed. Choose Abandon admin setup in this chat to continue with current roles.",
-      );
+      throw new GrantSkipped("An opening agent's access changed.");
     checkOwnership();
     const signed = await writer.sign(template, signal);
     signal.throwIfAborted();
@@ -187,6 +225,8 @@ export async function promoteSoloAdmins(
       checkOwnership();
       await writer.publish(signed, signal, checkOwnership);
     } catch (error) {
+      // The relay refuses a grant that crossed expiry while it was prepared.
+      if (soloAdminSetupExpired(create)) return;
       if (!(await recorded())) throw error;
     }
     // An OK alone is not proof of the requested role change.

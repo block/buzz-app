@@ -1488,7 +1488,7 @@ export class CodexRuntime {
       if (!host?.serveMcp)
         throw new Error("Protected Codex requires the desktop security host");
       const serveMcp = host.serveMcp.bind(host);
-      const rpc = new AppServer((call) => this.tool(call));
+      const rpc = new AppServer((call, tokens) => this.tool(call, tokens));
       const server: Server = {
         rpc,
         protection,
@@ -1664,7 +1664,7 @@ export class CodexRuntime {
   }
   private shared() {
     if (this.server) return this.server;
-    const rpc = new AppServer((call) => this.tool(call));
+    const rpc = new AppServer((call, tokens) => this.tool(call, tokens));
     // Threads set their own cwd; the process just needs a directory that exists.
     const open = () => rpc.open(this.spawnOrdinary(), defaults.workspace);
     const previous = this.closingSharedServer;
@@ -3569,7 +3569,10 @@ export class CodexRuntime {
       ],
     });
   }
-  private async tool(call: ToolCall): Promise<ToolReply> {
+  private async tool(
+    call: ToolCall,
+    contextTokens?: number,
+  ): Promise<ToolReply> {
     const entries = [...this.entries.values()];
     const matches = (turn?: { threadId?: string; turnId?: string }) =>
       turn?.threadId === call?.threadId && turn?.turnId === call?.turnId;
@@ -3627,6 +3630,8 @@ export class CodexRuntime {
     const { agent } = owner;
     const client = () =>
       appClient(agent, {
+        // Each message it posts carries its thread's context size.
+        contextTokens: () => contextTokens,
         // Its tool registry reviews every call, Buzz's dynamic tools included.
         ...(!this.target ? { nativeCall: check } : {}),
         nativeToolGate: true,

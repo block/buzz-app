@@ -41,6 +41,11 @@ type PluginInstallationSourceKind =
   | "bundled"
   | "absent"
   | "unavailable";
+/** Digest recorded for one catalogued revision; not a fresh hash of the current file. */
+export type PluginInstallationArtifactHash =
+  | Readonly<{ status: "available"; sha256: string }>
+  | Readonly<{ status: "absent" }>
+  | Readonly<{ status: "unavailable" }>;
 export type PluginReleaseCandidate = Readonly<{
   source: PluginInstallSource;
   release: Readonly<{ revision: string; publisher?: string | null }>;
@@ -60,6 +65,11 @@ export type PluginInstaller = Readonly<{
    * enabled state or install source. Returns unavailable until the catalog is ready.
    */
   getInstallationStatus(id: string): PluginInstallationStatus;
+  /**
+   * Returns the SHA-256 recorded for one installed plugin's catalogued revision.
+   * It does not rehash the current package file.
+   */
+  getInstallationArtifactHash?(id: string): PluginInstallationArtifactHash;
   /**
    * Returns only the saved source kind. Returns unavailable before catalog
    * readiness, for duplicate IDs, or for unknown source metadata; absent means
@@ -604,6 +614,23 @@ export function createPluginInstallCore({
       plugin: matches.length === 1 ? matches[0] : undefined,
     };
   };
+  const getInstallationArtifactHash = (
+    id: string,
+  ): PluginInstallationArtifactHash => {
+    const installed = getInstallationIdentity(id);
+    if (installed.status === "absent") return { status: "absent" };
+    if (
+      installed.status !== "installed" ||
+      !installed.plugin ||
+      installed.plugin.source !== "external" ||
+      // Catalog errors stay unavailable; the stored digest is not a current-file integrity check.
+      installed.plugin.error !== null ||
+      typeof installed.plugin.revision !== "string" ||
+      !sha256.test(installed.plugin.revision)
+    )
+      return { status: "unavailable" };
+    return { status: "available", sha256: installed.plugin.revision };
+  };
   const compareInstallationRelease = (
     id: string,
     candidate: PluginReleaseCandidate,
@@ -653,6 +680,7 @@ export function createPluginInstallCore({
     updatesFor: requests.updatesFor,
     registerUpdates: requests.registerUpdates,
     getInstallationStatus,
+    getInstallationArtifactHash,
     getInstallationSource,
     compareInstallationRelease,
     subscribeInstallationStatus(
@@ -791,6 +819,10 @@ export function createPluginInstallerService(
 
     getInstallationStatus(id: string): PluginInstallationStatus {
       return host.core.getInstallationStatus(id);
+    }
+
+    getInstallationArtifactHash(id: string): PluginInstallationArtifactHash {
+      return host.core.getInstallationArtifactHash(id);
     }
 
     getInstallationSource(id: string): PluginInstallationSourceKind {

@@ -1,5 +1,6 @@
 import { readSubthread } from "../features/relay/subthread";
 import { messageAuthor } from "../features/relay/fold";
+import { contextTags } from "../features/relay/context-size";
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
@@ -781,7 +782,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       );
     const audienceTags = [...audienceOf(args), ...requestOf(args)];
     const thread = reply ? await tools.threadTags(reply, channel) : [];
-    return post(tools, channel, args, thread, audienceTags);
+    // The thread a reply joins: its reply link, which names the task
+    // subthread rather than the physical root.
+    const joined = thread.find(([, , , marker]) => marker === "reply")?.[1];
+    return post(tools, channel, args, thread, audienceTags, joined);
   },
 
   async reply_in_subthread(tools, args) {
@@ -810,6 +814,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             ["e", parent, "", "reply"],
           ],
       audienceTags,
+      // Under the task message, or any message below it, the reply is in
+      // the task's own subthread. Unsure is no.
+      parent === context.root ||
+        (target && (await tools.inTaskSubthread(target, channel)))
+        ? context.root
+        : root,
     );
   },
 
@@ -2038,14 +2048,37 @@ function audienceOf(args: Args): string[][] {
   return audience === "everyone" ? [] : [["audience", audience]];
 }
 
+/** Whether a message in `channel`, in the thread `root` or at the top level
+ * when undefined, is in the calling session's own conversation: its channel
+ * when the session is the whole channel, otherwise its thread. Unsure is no. */
+function ownConversation(
+  { client, context }: Tools,
+  channel: string,
+  root: string | undefined,
+) {
+  if (channel !== context.channel) return false;
+  if (context.wholeChannel) return true;
+  if (context.root) return root === context.root;
+  // With no thread, the session is the channel, apart from threads that
+  // the host says have, or may have, sessions of their own.
+  return (
+    root === undefined ||
+    !client.threadsApart ||
+    client.threadsApart(channel) === false
+  );
+}
+
 /** Publishes `args`' text, files and mentions as a message in `channel`,
- * with `thread`'s e-tags and any `extra` tags. */
+ * with `thread`'s e-tags and any `extra` tags. In the thread `root`, or at
+ * the top level when undefined: a message in the session's own conversation
+ * carries its context size, which measures no other. */
 async function post(
   tools: Tools,
   channel: string,
   args: Args,
   thread: readonly string[][],
-  extra: readonly string[][] = [],
+  extra: readonly string[][],
+  root: string | undefined,
 ) {
   const paths = list(args.files);
   const body = (await tools.body(args, !paths.length)) ?? "";
@@ -2072,6 +2105,9 @@ async function post(
       ...files.tags,
       ...(await tools.emoji(content)),
       ...extra,
+      ...(ownConversation(tools, channel, root)
+        ? contextTags(tools.client.contextTokens?.())
+        : []),
     ],
   };
   const event = await (files.managedAttachments.length
@@ -2137,23 +2173,35 @@ class Tools {
           throw new Error("The task thread is in a different channel.");
         return taskTags;
       }
-      if (
-        channel === taskChannel &&
-        tag(target, "h") === channel &&
-        threadReference(target)?.rootId === sourceRoot
-      ) {
-        const branch = await readSubthread(
-          [target],
-          { channel, root: sourceRoot, anchor },
-          THREAD,
-          (filters) => this.client.query(filters),
-        );
-        if (branch.events.length) return taskTags;
-        if (branch.incomplete)
-          throw new Error("Could not verify the task reply's parent thread.");
-      }
+      const inTask = await this.inTaskSubthread(target, channel);
+      if (inTask) return taskTags;
+      if (inTask === undefined)
+        throw new Error("Could not verify the task reply's parent thread.");
     }
     return [["e", target ? rootOf(target) : parent, "", "reply"]];
+  }
+
+  /** Whether `target`, in `channel`, sits in the session's task subthread:
+   * under its anchor message rather than elsewhere in the physical thread.
+   * Undefined when the relay could not show the whole branch. */
+  async inTaskSubthread(target: BuzzEvent, channel: string) {
+    const { channel: taskChannel, root: anchor, sourceRoot } = this.context;
+    if (
+      !anchor ||
+      !sourceRoot ||
+      channel !== taskChannel ||
+      tag(target, "h") !== channel ||
+      threadReference(target)?.rootId !== sourceRoot
+    )
+      return false;
+    const branch = await readSubthread(
+      [target],
+      { channel, root: sourceRoot, anchor },
+      THREAD,
+      (filters) => this.client.query(filters),
+    );
+    if (branch.events.length) return true;
+    return branch.incomplete ? undefined : false;
   }
 
   /** Visit matching events in relay order, retaining only what the caller needs.

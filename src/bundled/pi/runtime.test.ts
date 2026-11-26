@@ -270,6 +270,37 @@ const assign = (store: AgentStore, conversation = `${channel}/${root.id}`) =>
     "/repos/worktree",
   );
 
+it("stamps a message with the context size its Pi conversation reported", async () => {
+  const f = setup();
+  try {
+    await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+    const send = (text: string, contextTokens?: unknown) =>
+      f.runtime.tool({
+        agent: self,
+        conversation: CONVERSATION,
+        context: { channel, root: root.id },
+        ...(contextTokens !== undefined
+          ? { contextTokens: contextTokens as number }
+          : {}),
+        name: "send",
+        arguments: { text, audience: "agents" },
+      });
+    await send("sized", 435_123);
+    await send("unknown");
+    await send("malformed", "lots");
+    const sent = f.published.filter((event) =>
+      ["sized", "unknown", "malformed"].includes(event.content),
+    );
+    expect(
+      sent.map((event) =>
+        event.tags.filter(([name]) => name === "buzz:context"),
+      ),
+    ).toEqual([[["buzz:context", "435123"]], [], []]);
+  } finally {
+    await f.runtime.dispose();
+  }
+});
+
 it("contains delegated file reads with the current Pi handle's policy", async () => {
   const f = setup();
   const spawn = f.desktop.spawn;

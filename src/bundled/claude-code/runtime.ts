@@ -2284,11 +2284,13 @@ export class ClaudeRuntime {
     // it was given, until it is replaced.
     const tools =
       (cwd: string): ToolServer =>
-      async (conversation, message, signal, check) => {
+      async (conversation, message, signal, check, contextTokens) => {
         const handle = entry.handle;
         const client = () =>
           handle &&
           appClient(handle, {
+            // Each message it posts carries its session's context size.
+            contextTokens: () => contextTokens,
             // Its PreToolUse hook reviews every tool, Buzz's included.
             ...(!this.target && check ? { nativeCall: check } : {}),
             nativeToolGate: true,

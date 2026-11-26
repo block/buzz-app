@@ -24,6 +24,7 @@ import {
 // same pipe, as the SDK serves an in-process MCP server, so the process holds
 // no Buzz key.
 import { MESSAGE_TOOLS } from "../../buzz-mcp/session-tools";
+import { ContextMeter } from "../../features/agent-harness/context-meter";
 import { limited } from "../../features/agents/session-usage";
 import type {
   HostProcess,
@@ -103,6 +104,9 @@ export type ToolServer = (
   signal: AbortSignal,
   /** Checks the exact active work that issued a native tool request. */
   check?: () => void,
+  /** The session's context size when it called: the tokens of its last
+   * model call; undefined when unknown. */
+  contextTokens?: number,
 ) => Promise<unknown>;
 /** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
@@ -975,6 +979,8 @@ export class ClaudeProcess {
   // prompt text or tool-result user messages. Only the latest acknowledged
   // request gets steps; settling ends all requests, not just the latest one.
   private readonly receipts = new Map<string, ActivityReceipt>();
+  /** The session's context size, from its model calls' usage. */
+  private context = new ContextMeter();
   private readonly activeReceipts = new Map<string, ActivityReceipt>();
   private handle(message: Message) {
     // The CLI may emit a tool callback before its asynchronous transcript write.
@@ -985,8 +991,12 @@ export class ClaudeProcess {
       this.reviewOutput = message.structured_output;
       if (typeof message.result === "string") this.reviewText = message.result;
     }
-    if (typeof message.session_id === "string" && message.session_id)
+    if (typeof message.session_id === "string" && message.session_id) {
+      // Another session's calls say nothing of this one's size.
+      if (this.sessionId && message.session_id !== this.sessionId)
+        this.context = new ContextMeter();
       this.sessionId = message.session_id;
+    }
     if (message.type === "system" && message.subtype === "init") {
       this.began = true;
       // A picked model is not the session's own.
@@ -1085,6 +1095,9 @@ export class ClaudeProcess {
       return;
     }
     if (message.type === "assistant") {
+      // Each model call's usage, repeated on each of its content blocks. A
+      // subagent's calls have their own context.
+      if (!message.parent_tool_use_id) this.context.report(callSize(message));
       const step = stepLabel(message);
       if (step)
         for (const receipt of this.activeReceipts.values())
@@ -1163,6 +1176,7 @@ export class ClaudeProcess {
             )
               throw new Error("The Claude turn has ended");
           },
+          this.context.tokens,
         ).catch((error) => ({
           jsonrpc: "2.0",
           id: (request.message as Message | undefined)?.id ?? 0,
@@ -1385,6 +1399,25 @@ export class ClaudeProcess {
       this.pending === 1
     );
   }
+}
+
+/** A model call's size, from an assistant message's usage: everything it
+ * read, cached or not, and what it wrote. */
+export function callSize(message: Message) {
+  const usage = (message.message as { usage?: Record<string, unknown> })?.usage;
+  if (!usage) return undefined;
+  let total = 0;
+  for (const field of [
+    "input_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "output_tokens",
+  ]) {
+    const value = usage[field];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+      total += value;
+  }
+  return total;
 }
 
 /** The last content block of an assistant message as the tool it names and

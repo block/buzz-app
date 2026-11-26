@@ -66,7 +66,7 @@ export type LocalWork = Readonly<{
   threadRootId: string;
   /** Canonical evidence source: a thread root, or null for a flat conversation. */
   sourceRootId?: string | null;
-  /** The request is in this thread; absent means channel-level work. */
+  /** The work is in this thread; absent means channel-level work. */
   thread?: true;
   /** The request is in a relay-verified Solo chat, not a DM or channel. */
   soloChat?: true;
@@ -638,6 +638,29 @@ export function createLocalAgentActivity() {
               ? undefined
               : result.error || "Could not finish this request",
           );
+        },
+        /** Moves the work to where its turn was placed: the thread on `root`,
+         * or the channel's top level. Work in a flat conversation stays. */
+        placed: (root?: string) => {
+          const current = entries.get(id);
+          if (
+            !current ||
+            current.sourceRootId === null ||
+            settled(current.state) ||
+            (root
+              ? current.thread && current.threadRootId === root
+              : !current.thread)
+          )
+            return;
+          const { thread: _thread, ...rest } = current;
+          entries.set(
+            id,
+            Object.freeze({
+              ...rest,
+              ...(root ? { thread: true as const, threadRootId: root } : {}),
+            }),
+          );
+          publish();
         },
         /** Notes how this turn ran, such as without its gateway. */
         notice: (text: string) => {

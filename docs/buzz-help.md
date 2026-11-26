@@ -346,10 +346,10 @@ mentions still work.
 
 - Retry a failed reaction with **Retry reaction** on its message.
 - For an expired member invitation, add the person again from **People**.
-- If a chat shows **Chat admin setup didn’t finish**, use **Retry** on its
-  opening message or **Abandon admin setup** in the notice above the composer.
-  Abandon keeps the chat and its current roles; then retry the opening message,
-  or send a new one if it expired.
+- If a new chat's opening message didn't send, use **Retry** on it. After 15
+  minutes it can't be sent, so send a new message instead. An agent that
+  can't be made Admin keeps its current role; make it Admin from **Chat
+  access**.
 
 Diagnostics and Outbox are developer tools, not available in release builds.
 

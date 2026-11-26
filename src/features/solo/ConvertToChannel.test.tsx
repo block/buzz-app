@@ -823,9 +823,19 @@ it("refuses a View only pick the opening check closes after it was made", async 
     screen.getAllByRole("status").map((status) => status.textContent),
   ).toContain("Has other members. Create a new channel instead.");
   fireEvent.click(confirm());
+  // Enter in the name field submits the form past the disabled button.
+  const form = document.querySelector("form");
+  if (!form) throw new Error("missing form");
+  fireEvent.submit(form);
+  await act(async () => {});
+  expect(h.publish).not.toHaveBeenCalled();
   await selectAccess("Private");
   await ready();
-  expect(h.publish).not.toHaveBeenCalled();
+  fireEvent.click(confirm());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  const tags = h.sign.mock.calls[0]?.[0].tags;
+  expect(tags).not.toContainEqual(["visibility", "open"]);
+  expect(tags).not.toContainEqual(["join_role", "guest"]);
 });
 
 it("closes opening from the profile and inventory loads it starts", async () => {

@@ -14,6 +14,8 @@ import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { mentionHistory } from "./mention-history";
+import { focus } from "./focus-service";
+import { registerMessageList } from "./message-selection";
 import {
   composerDOMFixture,
   longMentionDraft,
@@ -89,7 +91,7 @@ import { publishOutgoing, type OutgoingMessage } from "./outgoing-message";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
-import { registerMessageList } from "./message-selection";
+import type { MessageList } from "./message-selection";
 import { setEditWithUpArrowPreference } from "./edit-key-preference";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
@@ -1115,6 +1117,35 @@ it("autofocuses each selected conversation once without stealing focus on update
 it("defers initial focus until a loading conversation enables its composer", () => {
   const h = mount({ autoFocus: true, disabled: true });
   expect(h.input()).not.toHaveFocus();
+  h.retarget({ disabled: false });
+  expect(h.input()).toHaveFocus();
+});
+
+it("selects the newest message instead while a plugin prefers messages on open", () => {
+  const list = document.createElement("section");
+  list.innerHTML =
+    '<div data-message-id="old"><div data-layout="timeline"></div></div>' +
+    '<div data-message-id="new"><div data-layout="timeline"></div></div>';
+  document.body.append(list);
+  const release = focus.preferMessagesOnOpen();
+  try {
+    const h = mount({ autoFocus: true, disabled: true });
+    const unregister = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => h.input(),
+    } as unknown as MessageList);
+    h.retarget({ disabled: false });
+    expect(document.activeElement).toBe(
+      list.querySelector('[data-message-id="new"] > [data-layout]'),
+    );
+    unregister();
+  } finally {
+    release();
+    release();
+    list.remove();
+  }
+  const h = mount({ autoFocus: true, disabled: true });
   h.retarget({ disabled: false });
   expect(h.input()).toHaveFocus();
 });

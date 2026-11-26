@@ -91,6 +91,7 @@ import {
 import { withTimeout } from "../plugins/timeout";
 import { createExternalApps } from "../features/agents/external-connection";
 import { provideMessages } from "../features/messages/messages-service";
+import { provideFocus } from "../features/messages/focus-service";
 
 export function createServices() {
   const appearance = createAppearance();
@@ -139,6 +140,7 @@ export function createServices() {
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   provideMessages(ctx);
+  provideFocus(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const identityNames = new IdentityNamesService(ctx, localAgents.agents);
   const identity = nativeIdentityEnabled() ? createIdentity() : undefined;

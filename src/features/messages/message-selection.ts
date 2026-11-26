@@ -41,6 +41,9 @@ export function registerMessageList(element: HTMLElement, list: MessageList) {
 
 /** Every registered list element, for plugins that track a per-list cursor. */
 export const messageListElements = () => [...lists.keys()];
+/** The list whose message box is `composer`. */
+export const composerMessageList = (composer: Element) =>
+  [...lists].find(([, list]) => list.composer() === composer)?.[0];
 
 /** The row's message box, not its day divider, takes focus. */
 export function focusTarget(row: HTMLElement) {

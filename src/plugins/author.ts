@@ -84,6 +84,7 @@ export type {
   Messages,
   MessageListHandle,
 } from "../features/messages/messages-service";
+export type { Focus } from "../features/messages/focus-service";
 export type { ChannelMembersDialogProps } from "../bundled/channels/ChannelMembersDialog";
 export type {
   ChannelGeneralAccessProps,

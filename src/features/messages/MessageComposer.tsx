@@ -29,7 +29,8 @@ import { LayerAddressContext, layerInView } from "./view-layer";
 import { retireReplyTarget, threadDraftKey } from "./reply-target";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
-import { selectNewestMessage } from "./message-selection";
+import { composerMessageList, selectNewestMessage } from "./message-selection";
+import { messagesOnOpen } from "./focus-service";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
 import {
@@ -1210,6 +1211,7 @@ function Composer({
       return endOnFocusMove();
     }
     if (!focusOnMount.current) return;
+    let frame = 0;
     const focus = () => {
       const handoff = focusFromControl.current;
       if (handoff && !handoff.current) return;
@@ -1235,6 +1237,23 @@ function Composer({
         'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
       );
       if (owner && !owner.contains(editor)) return;
+      if (messagesOnOpen()) {
+        // A plugin asked for the newest message instead. Give its row a few
+        // frames to render, then fall back to the message box.
+        let frames = 30;
+        const selectMessage = () => {
+          const list = composerMessageList(editor);
+          if (list && selectNewestMessage(list)) return;
+          const unmoved =
+            document.activeElement === previous ||
+            document.activeElement === document.body;
+          if (!unmoved || !editor.isConnected) return;
+          if (--frames > 0) frame = requestAnimationFrame(selectMessage);
+          else editor.focus();
+        };
+        selectMessage();
+        return;
+      }
       const end = editor.value.length;
       // Let the visit's listener recognize its own successful focus handoff.
       if (handoff) handoff.current = editor;
@@ -1261,9 +1280,11 @@ function Composer({
       return () => {
         observer.disconnect();
         stopWatching();
+        cancelAnimationFrame(frame);
       };
     }
     focus();
+    return () => cancelAnimationFrame(frame);
   }, [disabled]);
   const linkSharing = useChatLinkSharing(
     fullSession(session),

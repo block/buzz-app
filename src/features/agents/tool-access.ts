@@ -255,16 +255,15 @@ export const PRESET_INFO: readonly RoleInfo[] = [
     id: "coder",
     label: "All",
     description: "Every tool, as agents have today. The default.",
-    can: "Everything Orchestrator can, plus editing files (Edit, Write), Shell (Bash), connected MCP tools such as GitHub or Linear, and plugin tools that change things, such as apps_deploy.",
+    can: "Everything Orchestrator can, plus editing files (Edit, Write) and Shell (Bash).",
   },
   {
     id: "super-agent",
     label: "Orchestrator",
     description:
       "Runs work like an assistant: plans, delegates and follows up in Buzz.",
-    can: "Everything Reviewer can, plus subagents (Task), creating channels, canvases, notes and repositories (channel_create, canvas_set, notes_set, repo), memory and attention (mem_set, watch_add), handoffs, and Tasks (tasks_update) when the Tasks plugin is on.",
-    cannot:
-      "Edit local files, run Shell, use connected MCP tools, or use plugin tools that change things, such as apps_deploy.",
+    can: "Everything Reviewer can, plus subagents (Task), creating channels, canvases, notes and repositories (channel_create, canvas_set, notes_set, repo), memory and attention (mem_set, watch_add) and handoffs (self_handoff).",
+    cannot: "Edit local files or run Shell.",
   },
   {
     id: "reviewer",
@@ -272,7 +271,7 @@ export const PRESET_INFO: readonly RoleInfo[] = [
     description: "Inspects work and reports findings.",
     can: "Read and search files (Read, Grep, Glob), the web (WebFetch, WebSearch), track steps and find tools (TodoWrite, ToolSearch), load skills (Skill), read Buzz (read, search) and send messages (send, react).",
     cannot:
-      "Edit files, run Shell, delegate, use connected tools, manage Tasks or memory, or create channels, canvases or notes.",
+      "Edit files, run Shell, delegate, manage memory or attention, or create channels, canvases or notes.",
   },
 ];
 /** Claude Code's names for one tool in each native group, to show a role's
@@ -291,21 +290,15 @@ const SAMPLE_NATIVE = [
   "Write",
   "Bash",
 ] as const;
-/** What a role allows, from the same gates that decide each call. */
-export function roleTools(
-  preset: ToolPreset,
-  added: readonly Readonly<{ name: string; effect?: ToolEffect }>[] = [],
-) {
+/** The built-in Buzz and native tools a role allows, from the same gates
+ * that decide each call. */
+export function roleTools(preset: ToolPreset) {
   const policy = { preset, allow: [] };
   return {
     native: SAMPLE_NATIVE.filter((name) => nativeToolAllowed(name, policy)),
     buzz: [...BUZZ_EFFECT.keys()].filter((name) =>
-      buzzToolAllowed(name, policy, added),
+      buzzToolAllowed(name, policy),
     ),
-    plugins: added
-      .map((tool) => tool.name)
-      .filter((name) => buzzToolAllowed(name, policy, added)),
-    connected: nativeToolAllowed("mcp__server__tool", policy),
   };
 }
 /** Shown only for an agent an earlier draft saved with its own selection. */

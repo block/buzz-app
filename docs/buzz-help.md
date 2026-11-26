@@ -204,8 +204,7 @@ if that desktop app is up and running.
   **Tools** tab with three roles. **All**, the default, has every tool the
   harness allows, as agents have always had. **Orchestrator** works like an
   assistant: it can take every built-in Buzz action its identity can,
-  including creating channels, canvases and notes, delegate, and track work in
-  Tasks, but not plugin tools that change things, such as app deploys.
+  including creating channels, canvases and notes, and delegate to subagents.
   **Reviewer** reads files, diffs and the web and reports findings in Buzz, but
   can't create or change Buzz deliverables. Neither can change local files,
   run Shell or use connected tools. Where the harness has a native Skill tool,

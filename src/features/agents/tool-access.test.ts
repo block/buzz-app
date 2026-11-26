@@ -172,19 +172,16 @@ it("keeps a saved legacy deliverable grant's access", () => {
   expect(buzzToolAllowed("apps_deploy", legacy, UNDECLARED)).toBe(true);
 });
 
-it("lists the tools each role's gates allow", () => {
-  const added = [...TASKS, ...UNDECLARED];
-  const orchestrator = roleTools("super-agent", added);
+it("lists the built-in tools each role's gates allow", () => {
+  const orchestrator = roleTools("super-agent");
   expect(orchestrator.buzz).toContain("canvas_set");
-  expect(orchestrator.plugins).toEqual(["tasks_update"]);
   expect(orchestrator.native).toContain("Task");
   expect(orchestrator.native).not.toContain("Bash");
-  const reviewer = roleTools("reviewer", added);
+  const reviewer = roleTools("reviewer");
   expect(reviewer.native).toEqual(expect.arrayContaining(["Read", "Skill"]));
   expect(reviewer.native).not.toContain("Task");
   expect(reviewer.buzz).not.toContain("mem_set");
-  expect(roleTools("coder", added).connected).toBe(true);
-  expect(orchestrator.connected).toBe(false);
+  expect(roleTools("coder").native).toContain("Bash");
 });
 
 it("classifies every built-in Buzz tool explicitly", () => {

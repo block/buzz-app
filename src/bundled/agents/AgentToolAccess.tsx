@@ -32,7 +32,6 @@ export function AgentToolAccess({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const form = useId();
-  const plugins = agents.tools();
   const dirty = !same(saved, draft);
   useEffect(() => {
     if (!dirty) setDraft(saved);
@@ -122,7 +121,7 @@ export function AgentToolAccess({
       <Accordion
         variant="settings"
         items={PRESET_INFO.map((preset) => {
-          const tools = roleTools(preset.id, plugins);
+          const tools = roleTools(preset.id);
           return {
             value: preset.id,
             title: `${preset.label}: tools this role permits`,
@@ -134,30 +133,21 @@ export function AgentToolAccess({
                     : tools.native.join(", ")}
                 </ToolList>
                 <ToolList title="Buzz tools">{tools.buzz.join(", ")}</ToolList>
-                <ToolList title="Tools from plugins that are on">
-                  {tools.plugins.join(", ") || "None"}
-                </ToolList>
-                <ToolList title="Connected MCP servers">
-                  {tools.connected
-                    ? "Every tool of every server the harness connects to"
-                    : "None"}
-                </ToolList>
               </dl>
             ),
           };
         })}
       />
       <p className="m-0 text-body-sm text-subtle">
-        Installed harness tools, enabled plugins and connections, and the
-        owner's own restrictions still decide what an agent can actually call.
-        Permission doesn't mean every tool acts without approval: plugin_request
-        waits for the owner, while plugin_disable and settings_set apply
-        immediately. Tool names are Claude Code's; Codex, Goose and Pi use their
-        own names for the same tools, and plugin tools appear only when their
-        plugin is on. Where the harness has a native Skill tool, such as Claude
-        Code, every role can load skills; each action a skill takes still
-        follows the role. Subagents inherit this access. It is not a sandbox:
-        with Shell on, commands can use any credentials the agent's process has.
+        Installed harness tools and the owner's own restrictions still decide
+        what an agent can actually call. Permission doesn't mean every tool acts
+        without approval: plugin_request waits for the owner, while
+        plugin_disable and settings_set apply immediately. Tool names are Claude
+        Code's; Codex, Goose and Pi use their own names for the same tools.
+        Where the harness has a native Skill tool, such as Claude Code, every
+        role can load skills; each action a skill takes still follows the role.
+        Subagents inherit this access. It is not a sandbox: with Shell on,
+        commands can use any credentials the agent's process has.
       </p>
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">

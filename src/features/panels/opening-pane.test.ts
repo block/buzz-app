@@ -44,3 +44,26 @@ it("hands the inline thread, chosen in the side pane, to its tab", () => {
   navigator.back();
   expect(navigator.snapshot().entry.target).toEqual(conversation);
 });
+
+it("retires the saved message-link visit when its projected sheet moves to a tab", () => {
+  const controller = createNavigationController(
+    createMemoryHistory(conversation),
+  );
+  const navigator = controller.navigation;
+  const link = {
+    ...conversation,
+    messageId: reply,
+    threadRootId: root,
+    messageLink: true as const,
+  };
+  void navigator.open(link);
+  const { attempt } = navigator.snapshot();
+  expect(
+    controller.resolve(attempt, { ...inline, inlineMessage: reply }, true),
+  ).toBe(true);
+
+  openFromTab(navigator, link, "side");
+  expect(navigator.snapshot().entry.target).toEqual(link);
+  navigator.back();
+  expect(navigator.snapshot().entry.target).toEqual(conversation);
+});

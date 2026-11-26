@@ -2147,7 +2147,12 @@ function ChannelWorkspace({
   // The inline reader owns this link's acknowledgement while it verifies the
   // reply and root. The channel timeline cannot settle the visit ahead of it.
   const inlineLinkNavigation =
-    inlineThread && messageLinkOffer(navigation) ? navigation : undefined;
+    inlineThread &&
+    navigation?.target.kind === "conversation" &&
+    !navigation.target.messageId &&
+    messageLinkOffer(navigation)
+      ? navigation
+      : undefined;
   // The inline thread's and the layer's openings and closings, as
   // transforms of the visit on screen (inline-address.ts).
   const dismissInline = (

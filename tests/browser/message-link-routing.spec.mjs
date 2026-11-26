@@ -6,7 +6,7 @@ import {
   selectSettingsSection,
 } from "./navigation.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
-import { open } from "./timeline.mjs";
+import { activate, clickRow, open } from "./timeline.mjs";
 
 test.use({
   pluginFixtures: true,
@@ -535,6 +535,76 @@ test.describe("Inline thread placement", () => {
     await expect(linked).toBeVisible();
     expect(page.url()).toBe(address);
     expect(await offers(page)).toHaveLength(1);
+  });
+
+  test("a side-tab link verifies its own reply while a different thread stays inline", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await page.evaluate(() => {
+      window.fixtureMessageLinks.mode = "decline";
+    });
+    const sourceRoot = app.append("primary", "alpha", "Side-tab source");
+    const inlineRoot = app.append("primary", "alpha", "Inline thread");
+    const linkedRoot = app.append("primary", "alpha", "Linked thread");
+    const linked = app.append(
+      "primary",
+      "alpha",
+      "Reply in the linked thread",
+      true,
+      false,
+      linkedRoot.id,
+    );
+    const url = `buzz://message?channel=alpha&id=${linked.id}&thread=${linkedRoot.id}`;
+    const source = app.append(
+      "primary",
+      "alpha",
+      `<${url}>`,
+      true,
+      false,
+      sourceRoot.id,
+    );
+    app.append("primary", "alpha", "Inline reply", true, false, inlineRoot.id);
+    const viewThread = (id) =>
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${id}"]`)
+        .getByRole("button", { name: /^View thread:/ });
+    const side = page.locator("[data-panel-workspace]");
+    const linkedTab = side.locator(
+      `[role="tab"][data-tab-value="thread:alpha:${linkedRoot.id}"]`,
+    );
+    await clickRow(page, viewThread(sourceRoot.id));
+    await sheet(page)
+      .getByRole("button", { name: "Move to side panel", exact: true })
+      .click();
+    await clickRow(page, viewThread(inlineRoot.id));
+    await expect(
+      sheet(page).getByRole("textbox", {
+        name: "Reply to thread",
+        exact: true,
+      }),
+    ).toBeFocused();
+    await activate(
+      side.locator(row(page, source.id)).locator(`a[href="${url}"]`),
+    );
+    await expect(side.locator(row(page, linked.id))).toBeVisible();
+    await expect
+      .poll(() => offers(page))
+      .toEqual([
+        {
+          scope: scope(app),
+          channelId: "alpha",
+          messageId: linked.id,
+          threadRootId: linkedRoot.id,
+        },
+      ]);
+    await expect(
+      sheet(page).getByText("Inline thread", { exact: true }),
+    ).toBeVisible();
+    await dismiss(page);
+    await expect(sheet(page)).toHaveCount(0);
+    await expect(linkedTab).toHaveAttribute("aria-selected", "true");
   });
 
   test("closing an inline thread cancels the pending offer and retires its visit", async ({

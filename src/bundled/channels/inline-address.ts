@@ -53,6 +53,7 @@ export function inlineDismissal(
   const { inline: _inline, inlineMessage: _message, layer, ...named } = target;
   const {
     messageId: _tab,
+    messageLink: _link,
     threadRootId: _root,
     context: _context,
     ...alone

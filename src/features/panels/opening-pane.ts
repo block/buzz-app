@@ -98,7 +98,8 @@ export function openFromTab(
     shown.target.inline &&
     toInline(shown.target, target) === "sheet"
   ) {
-    navigator.dismiss(sheetVisits(shown.target, shown.target.inline), target);
+    const visits = sheetVisits(shown.target, shown.target.inline);
+    navigator.dismiss((visit, id) => id === shown.id || visits(visit), target);
     const { entry } = navigator.snapshot();
     if (targetKey(entry.target) === targetKey(target))
       sideVisits.set(navigator, entry.id);

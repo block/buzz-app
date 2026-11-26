@@ -56,7 +56,12 @@ describe("inline address", () => {
 
   it("keeps the visits of tabs opened beside the inline thread when it closes or moves", () => {
     const other = "d".repeat(64);
-    const tab = { ...inline, messageId: other, threadRootId: other };
+    const tab = {
+      ...inline,
+      messageId: other,
+      threadRootId: other,
+      messageLink: true as const,
+    };
     const earlier = { ...inline, messageId: reply, threadRootId: reply };
     const closed = inlineDismissal(tab, root, true);
     // The visit on screen leaves; the tab's earlier visit stays for Back.
@@ -64,7 +69,7 @@ describe("inline address", () => {
     expect(closed?.visits(inline)).toBe(true);
     expect(closed?.visits(earlier)).toBe(false);
     // The side pane keeps its own selection: the fallback names no tab.
-    expect(closed?.fallback).toEqual(conversation);
+    expect(parseOpenTarget(closed?.fallback)).toEqual(conversation);
     expect(inlineToTab(tab, root)?.visits(earlier)).toBe(false);
   });
 

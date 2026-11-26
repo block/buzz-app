@@ -437,8 +437,12 @@ export function useAppNavigation(
       workspace.current = undefined;
     }
     const visitTarget = owner.attempt.entry.target;
-    const inline = visitTarget.kind === "conversation" && !!visitTarget.inline;
-    const source = (inline && owner.attempt.address) || visitTarget;
+    const inlineProjection =
+      visitTarget.kind === "conversation" &&
+      visitTarget.inline &&
+      !visitTarget.messageId &&
+      owner.attempt.address;
+    const source = inlineProjection || visitTarget;
     const link =
       source.kind === "conversation" &&
       source.messageLink &&
@@ -494,7 +498,7 @@ export function useAppNavigation(
         remaining,
         projectInline: (target) =>
           services.navigationHost.resolve(owner.attempt, target, true),
-        ...(inline && { inlineFallback: visitTarget }),
+        ...(inlineProjection && { inlineFallback: visitTarget }),
         async run(root, verified, signal) {
           const connection = services.relay.snapshot();
           const channels = connection.session.channels;

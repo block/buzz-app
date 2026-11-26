@@ -222,6 +222,8 @@ export default defineConfig(async ({ command, mode }) => {
   return {
     plugins,
     resolve: { alias: diffHighlighterAliases },
+    // The code highlighting worker loads its highlighter in chunks.
+    worker: { format: "es" as const },
     define: {
       "import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_REVISION": JSON.stringify(
         frontendIdentity.revision ?? "",

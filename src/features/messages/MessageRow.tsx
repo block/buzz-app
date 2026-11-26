@@ -919,6 +919,11 @@ function MessageRowContent({
                       collapsed && index === 3 ? group.length - 3 : 0
                     }
                     keepMounted={keepRowMounted}
+                    name={
+                      group.length > 1
+                        ? `image ${index + 1} of ${group.length}`
+                        : undefined
+                    }
                     label={
                       collapsed && index === 3
                         ? `View all ${group.length} ${mediaLabel}, starting at ${imageOnly ? "image" : "item"} 4`

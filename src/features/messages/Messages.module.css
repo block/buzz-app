@@ -4217,7 +4217,7 @@ html[data-keyboard-navigation] .activityExpansion {
   .messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
   @apply text-caption;
   border-radius: var(--radius-capsule);
-  background: var(--reaction-surface, var(--affordance-reaction));
+  background: var(--affordance-agent-preview);
   box-shadow: none;
 }
 .messageBubble > .activityBubbleTrigger,

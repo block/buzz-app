@@ -298,7 +298,7 @@ describe("semantic contrast contract", () => {
   );
 
   it("fails when an accent is missing an overlay it is measured on", () => {
-    const from = "  --accent-overlay-soft-dark: var(--shade-soft-fill);\n";
+    const from = "  --accent-overlay-soft-dark: var(--shade-deep-fill);\n";
     const bee = tokens.indexOf('[data-accent="bee"] {');
     const at = tokens.indexOf(from, bee);
     expect(at).toBeGreaterThan(bee);

@@ -474,15 +474,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "--affordance-reaction",
         variable: "--affordance-reaction",
+        pointsAt: "black 6% light / black 12% dark",
+        use: "Reaction strip on received bubbles and the panel; the add-reaction hover lays it again on top. Dark mode darkens too, so Apple's grey symbol emoji stay visible.",
+        status: "core",
+      },
+      {
+        token: "--affordance-agent-preview",
+        variable: "--affordance-agent-preview",
         pointsAt: "black 6% light / white 10% dark",
-        use: "Reaction strip on received bubbles and the panel; the add-reaction hover lays it again on top.",
+        use: "Compact agent activity bubble.",
         status: "core",
       },
       {
         token: "--affordance-reaction-own",
         variable: "--affordance-reaction-own",
         pointsAt:
-          "affordance-reaction; at Buzzin’, black 6% on the accent fill (white 10% on Mono in light mode)",
+          "affordance-reaction; at Buzzin’, black 6% on the accent fill, 12% in dark mode (white 10% on Mono in light mode)",
         use: "Reaction strip inside your own bubble. It follows the bubble's lightness, as its chips do.",
         status: "core",
       },

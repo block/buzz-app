@@ -542,6 +542,17 @@ test.describe("Inline thread placement", () => {
     page,
     app,
   }) => {
+    await page.addInitScript(() => {
+      const key = "buzzodz.plugins.v1";
+      const choices = JSON.parse(localStorage.getItem(key) ?? "null") ?? {
+        version: 3,
+        enabled: { "buzz.reminders": false, "buzz.workflows": false },
+      };
+      // The catch-all panel fixture claims links opened from the side pane.
+      choices.enabled["fixture.notes"] = false;
+      choices.enabled["fixture.message-link"] = true;
+      localStorage.setItem(key, JSON.stringify(choices));
+    });
     await open(page, app);
     await page.evaluate(() => {
       window.fixtureMessageLinks.mode = "decline";

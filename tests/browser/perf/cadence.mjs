@@ -33,3 +33,43 @@ export function scrollCadence({ frames, gestureStartMs, gestureEndMs }) {
     rafGapsOver50: gaps.filter((gap) => gap > 50).length,
   };
 }
+
+// Time and distinct waits spent pinned at the top edge (scrollTop <= 1) during
+// a scroll gesture, waiting for older pages to arrive.
+export function topEdgeWait({ frames, gestureStartMs, gestureEndMs }) {
+  if (
+    !Number.isFinite(gestureStartMs) ||
+    !Number.isFinite(gestureEndMs) ||
+    gestureEndMs <= gestureStartMs
+  )
+    throw new Error("Missing or invalid scroll gesture timestamps");
+  let edgeWaitMs = 0;
+  let edgeHits = 0;
+  let spanStart = null;
+  const edgeSpansMs = [];
+  for (let i = 1; i < frames.length; i++) {
+    const prev = frames[i - 1];
+    const curr = frames[i];
+    if (prev.t < gestureStartMs || curr.t > gestureEndMs) continue;
+    if (prev.top !== null && prev.top <= 1) {
+      edgeWaitMs += curr.t - prev.t;
+      if (spanStart === null) {
+        spanStart = prev.t;
+        edgeHits++;
+      }
+    } else if (spanStart !== null) {
+      edgeSpansMs.push(prev.t - spanStart);
+      spanStart = null;
+    }
+  }
+  if (spanStart !== null) {
+    const lastIn = frames.findLast(({ t }) => t <= gestureEndMs);
+    if (lastIn && lastIn.t > spanStart) edgeSpansMs.push(lastIn.t - spanStart);
+  }
+  return {
+    edgeWaitMs,
+    edgeHits,
+    maxEdgeSpanMs: edgeSpansMs.length ? Math.max(...edgeSpansMs) : 0,
+    edgeSpansMs,
+  };
+}

@@ -24,6 +24,9 @@ const cases = [
   "thread-scroll-open",
   "thread-scroll-fling",
   "thread-scroll-reverse",
+  "thread-paging-fast",
+  "thread-paging-delayed",
+  "thread-paging-mid-read",
   "background-traffic",
   "background-traffic-large-sidebar",
   "thread-unread-open-60",
@@ -36,6 +39,7 @@ const groups = [
   "scroll-paging",
   "thread",
   "thread-scroll",
+  "thread-paging",
   "background-traffic",
 ];
 const scenarios = [...groups, ...cases];

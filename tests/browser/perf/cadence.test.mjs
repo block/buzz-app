@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { scrollCadence } from "./cadence.mjs";
+import { scrollCadence, topEdgeWait } from "./cadence.mjs";
 
 test("clips cadence to the gesture while retaining stalls at an unchanged offset", () => {
   expect(
@@ -60,4 +60,47 @@ test("counts a missed 60 Hz frame separately from a long stall", () => {
       gestureEndMs: 138,
     }),
   ).toMatchObject({ rafGapsOver33: 1, rafGapsOver50: 0 });
+});
+
+test("accumulates top-edge wait spans inside the gesture window", () => {
+  expect(
+    topEdgeWait({
+      frames: [
+        { t: 0, top: 0 },
+        { t: 20, top: 200 },
+        { t: 40, top: 0 },
+        { t: 80, top: 1 },
+        { t: 100, top: 500 },
+        { t: 120, top: 0 },
+        { t: 150, top: 0 },
+        { t: 180, top: 0 },
+      ],
+      gestureStartMs: 20,
+      gestureEndMs: 160,
+    }),
+  ).toEqual({
+    edgeWaitMs: 90,
+    edgeHits: 2,
+    maxEdgeSpanMs: 60,
+    edgeSpansMs: [60, 30],
+  });
+});
+
+test("reports zero top-edge wait when scrollTop stays away from the top", () => {
+  expect(
+    topEdgeWait({
+      frames: [
+        { t: 10, top: 4500 },
+        { t: 50, top: 3000 },
+        { t: 90, top: 2000 },
+      ],
+      gestureStartMs: 10,
+      gestureEndMs: 90,
+    }),
+  ).toEqual({
+    edgeWaitMs: 0,
+    edgeHits: 0,
+    maxEdgeSpanMs: 0,
+    edgeSpansMs: [],
+  });
 });

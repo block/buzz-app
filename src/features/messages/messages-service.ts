@@ -8,6 +8,8 @@ import {
   selectMessage,
   selectNewestMessage,
 } from "./message-selection";
+import type { ComposerInputElement } from "./composer-dom";
+import { setComposerStatus } from "./composer-status";
 
 const ROW = "[data-message-id]";
 
@@ -20,6 +22,34 @@ export type MessageListHandle = Readonly<{
   has(id: string): boolean;
   /** Keep a message rendered while it is scrolled away, until released. */
   keepMounted(id: string): () => void;
+  /** The list's message box editor; pass it to `composerOf`. */
+  composer(): HTMLElement | undefined;
+}>;
+
+/** A conversation's message box, for plugins that edit it from the keyboard.
+ * Offsets count characters of `value`, the draft as plain text. */
+export type MessageBox = Readonly<{
+  /** The editor element: focus it, or check what it contains. */
+  element: HTMLElement;
+  readonly value: string;
+  readonly selectionStart: number;
+  readonly selectionEnd: number;
+  readonly selectionDirection: "forward" | "backward" | "none";
+  /** Ranges that select and delete only as a whole, such as mentions. */
+  readonly atoms: readonly Readonly<{ start: number; end: number }>[];
+  /** How many steps `undo(false)` can take back now. */
+  readonly undoDepth: number;
+  setSelectionRange(
+    start: number,
+    end: number,
+    direction?: "forward" | "backward" | "none",
+  ): void;
+  /** Replace `range`, or the selection, with `text` in one undo step. */
+  insertText(text: string, range?: { start: number; end: number }): boolean;
+  /** Undo, or redo when `redo` is true. */
+  undo(redo: boolean): void;
+  /** A short status beside Send, such as a key mode; undefined clears it. */
+  setStatus(status: string | undefined): void;
 }>;
 
 /**
@@ -48,6 +78,8 @@ export type Messages = Readonly<{
   hasThread(row: HTMLElement): boolean;
   /** Open the row's thread. False when it has none. */
   openThread(row: HTMLElement): boolean;
+  /** The message box whose editor is `element`, or holds it. */
+  composerOf(element: Element | null): MessageBox | undefined;
 }>;
 
 declare module "@deepseek-ai/cordis" {
@@ -61,6 +93,49 @@ const threadSummary = (row: HTMLElement) =>
     (summary) => summary.closest(ROW) === row,
   );
 
+function editorOf(element: Element | null) {
+  const editor = element?.closest<HTMLElement>('[role="textbox"]');
+  return editor?.closest("[data-composer-surface]") &&
+    typeof (editor as Partial<ComposerInputElement>).insertText === "function"
+    ? (editor as ComposerInputElement)
+    : undefined;
+}
+
+const boxes = new WeakMap<ComposerInputElement, MessageBox>();
+function messageBox(editor: ComposerInputElement): MessageBox {
+  const known = boxes.get(editor);
+  if (known) return known;
+  const box: MessageBox = Object.freeze({
+    element: editor,
+    get value() {
+      return editor.value;
+    },
+    get selectionStart() {
+      return editor.selectionStart;
+    },
+    get selectionEnd() {
+      return editor.selectionEnd;
+    },
+    get selectionDirection() {
+      return editor.selectionDirection;
+    },
+    get atoms() {
+      return editor.atoms;
+    },
+    get undoDepth() {
+      return editor.undoDepth;
+    },
+    setSelectionRange: (start, end, direction) =>
+      editor.setSelectionRange(start, end, direction),
+    insertText: (text, range) =>
+      editor.insertText(text, undefined, range) !== false,
+    undo: (redo) => editor.undo(redo),
+    setStatus: (status) => setComposerStatus(editor, status),
+  });
+  boxes.set(editor, box);
+  return box;
+}
+
 export const messages: Messages = Object.freeze({
   lists: messageListElements,
   listOf(node: Node) {
@@ -72,6 +147,7 @@ export const messages: Messages = Object.freeze({
       newest: () => list.newest(),
       has: (id: string) => !!list.row(id),
       keepMounted: (id: string) => list.keepMounted?.(id) ?? (() => {}),
+      composer: () => list.composer() ?? undefined,
     });
   },
   active: activeMessageList,
@@ -103,6 +179,10 @@ export const messages: Messages = Object.freeze({
     const summary = threadSummary(row);
     summary?.click();
     return !!summary;
+  },
+  composerOf(element: Element | null) {
+    const editor = editorOf(element);
+    return editor && messageBox(editor);
   },
 });
 

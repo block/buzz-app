@@ -15,6 +15,7 @@ import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { mentionHistory } from "./mention-history";
 import { focus } from "./focus-service";
+import { messages } from "./messages-service";
 import { registerMessageList } from "./message-selection";
 import {
   composerDOMFixture,
@@ -1148,6 +1149,33 @@ it("selects the newest message instead while a plugin prefers messages on open",
   const h = mount({ autoFocus: true, disabled: true });
   h.retarget({ disabled: false });
   expect(h.input()).toHaveFocus();
+});
+
+it("gives plugins a handle on the message box that edits, undoes and shows a status", () => {
+  const h = mount();
+  expect(messages.composerOf(document.body)).toBeUndefined();
+  const box = messages.composerOf(h.input());
+  if (!box) throw new Error("Missing message box handle");
+  expect(box.element).toBe(h.input());
+  expect(box.undoDepth).toBe(0);
+  act(() => {
+    box.insertText("hello world");
+  });
+  expect(box.value).toBe("hello world");
+  expect(box.undoDepth).toBe(1);
+  act(() => box.setSelectionRange(0, 5));
+  expect([box.selectionStart, box.selectionEnd]).toEqual([0, 5]);
+  act(() => {
+    box.insertText("bye", { start: 0, end: 5 });
+  });
+  expect(box.value).toBe("bye world");
+  act(() => box.undo(false));
+  expect(box.value).toBe("hello world");
+  expect(box.atoms).toEqual([]);
+  act(() => box.setStatus("NORMAL"));
+  expect(screen.getByText("NORMAL")).toBeVisible();
+  act(() => box.setStatus(undefined));
+  expect(screen.queryByText("NORMAL")).toBeNull();
 });
 
 it("cancels a deferred draft handoff when another control takes focus and disappears", () => {

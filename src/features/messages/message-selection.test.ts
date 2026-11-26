@@ -186,7 +186,7 @@ it("leaves keys native while the newest message is scrolled out of the window", 
 });
 
 it("gives plugins the lists, selection, kept rows and threads through the messages service", () => {
-  const { list, box, controller } = fixture();
+  const { list, box, controller, composer } = fixture();
   const release = vi.fn();
   const keep = vi.fn(() => release);
   Object.assign(controller, { keepMounted: keep });
@@ -199,6 +199,7 @@ it("gives plugins the lists, selection, kept rows and threads through the messag
   expect(handle?.has("gone")).toBe(false);
   expect(handle?.keepMounted("two")).toBe(release);
   expect(keep).toHaveBeenCalledWith("two");
+  expect(handle?.composer()).toBe(composer);
 
   messages.select(row);
   expect(document.activeElement).toBe(box("two"));

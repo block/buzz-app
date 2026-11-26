@@ -185,7 +185,7 @@ async function harness(
 it("shows one bubble per emoji, counts unique people, and removes all my duplicate events", async () => {
   const mine = react(),
     duplicate = react(viewer, 3),
-    theirs = react(other);
+    theirs = react(other, 1);
   const h = await harness([mine, duplicate, theirs]);
   render(<h.Controls />);
   expect(
@@ -204,8 +204,8 @@ it("shows one bubble per emoji, counts unique people, and removes all my duplica
   fireEvent.mouseEnter(own);
   fireEvent.mouseMove(own);
   const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
-  expect(preview.textContent).toContain("You");
-  expect(preview.textContent).toContain(other.pubkey.slice(0, 10));
+  // People are listed in the order they reacted, me included.
+  expect(preview.textContent).toContain(`${other.pubkey.slice(0, 10)}, You`);
   fireEvent.click(own);
   const deletions = h.session.outbox?.snapshot().map((item) => item.event);
   expect(deletions?.every((event) => event.kind === 5)).toBe(true);

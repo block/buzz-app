@@ -580,7 +580,7 @@ export function groupReactions(
     {
       content: string;
       emoji?: CustomEmoji;
-      events: { id: string; authorId: string }[];
+      events: { id: string; authorId: string; at: number }[];
       firstAt: number;
       firstId: string;
     }
@@ -606,9 +606,11 @@ export function groupReactions(
       group.firstId = event.id;
     }
     if (!deleted(event) && !group.events.some((entry) => entry.id === event.id))
-      group.events.push(
-        Object.freeze({ id: event.id, authorId: event.pubkey }),
-      );
+      group.events.push({
+        id: event.id,
+        authorId: event.pubkey,
+        at: event.created_at,
+      });
     groups.set(key, group);
   }
   return Object.freeze(
@@ -621,7 +623,12 @@ export function groupReactions(
         Object.freeze({
           content,
           ...(emoji ? { emoji } : {}),
-          events: Object.freeze(events),
+          // People in the order they reacted, however the events arrived.
+          events: Object.freeze(
+            events
+              .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))
+              .map(({ id, authorId }) => Object.freeze({ id, authorId })),
+          ),
         }),
       ),
   );

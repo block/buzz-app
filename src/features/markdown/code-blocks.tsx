@@ -9,10 +9,11 @@ import {
 } from "react";
 import type { ExtraProps } from "react-markdown";
 import { labelText } from "../messages/label-text";
-import { CopyIcon } from "../../shared/design-system/icons/index";
+import { CheckIcon, CopyIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { writeClipboardText } from "../../shared/clipboard";
+import { useCopyFeedback } from "../../shared/CopyFeedback";
 import { resolveMatch } from "../../plugins/contributions";
 import type {
   CodeBlockRenderer,
@@ -198,6 +199,7 @@ export function CodeActions({
   className?: string | undefined;
 }) {
   const notify = useToastNotification();
+  const { copied, copy, status } = useCopyFeedback();
   const [copying, setCopying] = useState(false);
   return (
     <span className={className}>
@@ -208,18 +210,16 @@ export function CodeActions({
         title="Copy code block"
         disabled={copying}
         focusableWhenDisabled
-        icon={<CopyIcon />}
+        icon={copied ? <CheckIcon /> : <CopyIcon />}
         onClick={() => {
           setCopying(true);
-          void Promise.resolve()
-            .then(() => writeClipboardText(code))
-            .then(
-              () => notify("Copied code to clipboard", "success"),
-              () => notify("Failed to copy code", "error"),
-            )
-            .finally(() => setCopying(false));
+          void copy(() => writeClipboardText(code)).then((result) => {
+            if (result === "failed") notify("Failed to copy code", "error");
+            setCopying(false);
+          });
         }}
       />
+      {status}
     </span>
   );
 }

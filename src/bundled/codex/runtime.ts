@@ -222,7 +222,7 @@ type Request = {
   answered: (stopped?: boolean) => void;
   /** A failed final delivery stays pending until this request gets a reply. */
   finalDelivery?: Error | true;
-  step?: (tool: string, target?: string) => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -4366,7 +4366,7 @@ export class CodexRuntime {
         const step = method === "item/started" ? codexStep(item) : undefined;
         if (step)
           for (const taken of active.activity.values())
-            taken.step?.(step.tool, step.target);
+            taken.step?.(step.tool, step.target, step.origin);
         if (method === "item/started" && item.command)
           this.status(agent.key, key, "Working", item.command);
         if (method === "item/completed" && item.type === "commandExecution")
@@ -4899,10 +4899,12 @@ function continueSession(
 }
 
 /** A started Codex item as a step, named in the shared step vocabulary.
- * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase). */
+ * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase).
+ * `origin` marks a call in the `buzz` tool namespace or to a `buzz` MCP
+ * server. */
 export function codexStep(
   item: Record<string, unknown> | undefined,
-): { tool: string; target?: string } | undefined {
+): { tool: string; target?: string; origin?: "buzz" } | undefined {
   const text = (value: unknown) =>
     typeof value === "string" && value ? value : undefined;
   const step = (tool: string, target?: unknown) => {
@@ -4932,8 +4934,14 @@ export function codexStep(
       return step("Edit", file(first?.path));
     }
     case "mcpToolCall":
-    case "dynamicToolCall":
-      return text(item.tool) ? step(String(item.tool)) : undefined;
+    case "dynamicToolCall": {
+      if (!text(item.tool)) return undefined;
+      const from = item.type === "mcpToolCall" ? item.server : item.namespace;
+      return {
+        tool: String(item.tool),
+        ...(from === "buzz" ? { origin: "buzz" as const } : {}),
+      };
+    }
     case "collabAgentToolCall":
       return step("Agent", item.prompt);
     case "webSearch":

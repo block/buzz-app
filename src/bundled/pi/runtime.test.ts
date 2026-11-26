@@ -1223,7 +1223,7 @@ it("shows a conversation's activity on the request Pi took last", async () => {
     },
   });
   await vi.waitFor(() =>
-    expect(second.step).toHaveBeenCalledWith("bash", "npm test"),
+    expect(second.step).toHaveBeenCalledWith("bash", "npm test", undefined),
   );
   expect(first.step).not.toHaveBeenCalled();
 });
@@ -3529,10 +3529,12 @@ it("keeps mention activity when a watch joins without presentation callbacks", a
       agent: self,
       conversation: CONVERSATION,
       type: "step",
-      tool: "read",
+      tool: "search",
+      origin: "buzz",
     });
     expect(mention.superseded).not.toHaveBeenCalled();
-    expect(mention.step).toHaveBeenCalledWith("read", undefined);
+    // The host marks a `buzz_` tool; the origin reaches the step with it.
+    expect(mention.step).toHaveBeenCalledWith("search", undefined, "buzz");
   } finally {
     f.runtime.dispose();
   }

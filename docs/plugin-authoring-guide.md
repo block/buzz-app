@@ -105,21 +105,22 @@ props its component renders.
 
 Check `ctx.conversation.workspaceSlots?.trailing === true` in the same way
 before passing `trailing` to `ui.Workspace`. The Channels workspace shows that
-content as a card over the
-bottom of the channel timeline, in its own scroll layer: scrolling over the
-card grows it, then slides it up. Render the whole card at rest too, since
-growing scrolls it into view: let `expanded` change labels, not what the card
-holds. Keep its controls in view with `position: sticky; bottom: 0` and an
+content as a card over the bottom of the main tab's history, in its own scroll
+layer: scrolling over the card grows it, then slides it up. When your `target`
+names a thread, the card sits over that thread's replies, so build it from the
+same `channelId` and `threadId` you passed. Render the whole card at rest too,
+since growing scrolls it into view: let `expanded` change labels, not what the
+card holds. Keep its controls in view with `position: sticky; bottom: 0` and an
 opaque background, and draw its outline with a box shadow rather than a bottom
 border.
 
 Check `ctx.conversation.workspaceSlots?.aside === true` before passing `aside`
 to `ui.Workspace`. The host places it in a box of `asideWidth` (default 320)
-over the history's end edge, left of its scrollbar. Docked, it runs from the
-history's top to the reader's bottom, and the history's rows and the composer
-keep to the width beside it; when the reader would get too narrow, it floats
-over the history instead, above the composer. The box
-draws nothing in either mode: draw your own card, let it size to its content,
+over the history's end edge, left of its scrollbar, from the history's top to
+the reader's bottom. Docked, the history's rows and the composer keep to the
+width beside it; when the reader would get too narrow, it floats over the
+history instead, and over the composer's end while open. The box draws nothing
+in either mode: draw your own card, let it size to its content,
 and scroll inside it when it is taller than the box. Only your content takes
 pointer input, so the wheel beside or below it scrolls the history. A popover
 escapes over the history only from a portal, as `ui.Menu`'s does.

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { eventBody } from "../agent-harness/turn-records";
 import {
   activityTranscript,
+  buzzToolTitle,
   promptEventIds,
   promptMessage,
   promptSections,
@@ -889,4 +890,50 @@ it("drops a steer's whole list when one entry is bad or it passes the turn's lim
   expect(turn?.triggeringEventIds).not.toContain(id(500));
   expect(turn?.triggeringEventIds).toContain(id(603));
   expect(turn?.triggeringEventIds).not.toContain(id(700));
+});
+
+it.each([
+  ["mcp__buzz__channel_list", "List channels"],
+  ["buzz__channel_list", "List channels"],
+  ["buzz.channel_list", "List channels"],
+  ["buzz: channel_list", "List channels"],
+  ["  mcp__buzz__read\n", "Read messages"],
+  ["buzz: send", "Send message"],
+])("titles the Buzz tool in %j", (title, expected) => {
+  expect(buzzToolTitle({ title, kind: "other" })).toBe(expected);
+  expect(buzzToolTitle({ title, kind: "" })).toBe(expected);
+});
+
+it.each([
+  // Another server's tool that shares a Buzz tool's name.
+  "mcp__other__read",
+  "mcp__buzz_extra__read",
+  "other__send",
+  "other.read",
+  "other: send",
+  "buzz: other: send",
+  // No server named: the tool may be any server's, a Pi extension's included.
+  "search",
+  "read",
+  "edit",
+  "channel_list",
+  // Not a Buzz tool's exact name, whatever the prefix.
+  "mcp__buzz__notes_add",
+  "buzz__channels",
+  "buzz.Read",
+  "Channel_list",
+  "channel list",
+  "read /private/report.txt",
+  "mcp__buzz__read\nmore",
+  "buzz.toString",
+  "constructor",
+  "__proto__",
+  "",
+])("leaves %j as its adapter sent it", (title) => {
+  expect(buzzToolTitle({ title, kind: "other" })).toBeUndefined();
+});
+
+it("titles no call that has one of ACP's own kinds", () => {
+  for (const kind of ["read", "search", "edit", "delete", "execute", "think"])
+    expect(buzzToolTitle({ title: "read", kind }), kind).toBeUndefined();
 });

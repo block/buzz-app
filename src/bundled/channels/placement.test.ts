@@ -75,6 +75,20 @@ describe("canHoldInline", () => {
       ).toBe(false);
   });
 
+  it("leaves a thread opened from a side-pane tab to that pane", () => {
+    expect(
+      canHoldInline(thread, host, { channelId: "alpha", fromSide: true }),
+    ).toBe(false);
+    // What the tab's own rows open over it is not the thread's concern.
+    expect(
+      canHoldInline(panel, host, {
+        channelId: "alpha",
+        rootId: "root",
+        fromSide: true,
+      }),
+    ).toBe(true);
+  });
+
   it("holds a panel over the conversation or a thread view, with or without a composer", () => {
     const quiet = { ...host, composes: false };
     expect(canHoldInline(panel, quiet, { channelId: "alpha" })).toBe(true);

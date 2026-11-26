@@ -867,3 +867,76 @@ test("the published-activity tab shows turns its agent published", async ({
       .getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeVisible();
 });
+
+test.describe("Inline threads", () => {
+  test.use({ threadPlacement: "inline" });
+
+  // Only the tab workspace beside a real conversation shows where it opens.
+  test("a turn's thread label in an agent's activity in the side pane opens the thread as a tab", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await expect
+      .poll(() => page.evaluate(() => !!window.localAgentFixture))
+      .toBe(true);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    // The fixture agent's key is the curve generator: secret key 1.
+    const key = new Uint8Array(32);
+    key[31] = 1;
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content.startsWith("Thread root"));
+    const turn = (turnId, payload) =>
+      app.observer(
+        {
+          kind: "turn_started",
+          seq: 1,
+          timestamp: new Date().toISOString(),
+          channelId: "alpha",
+          sessionId: turnId,
+          turnId,
+          payload,
+        },
+        key,
+      );
+    // Working in the channel, so its row there opens its activity.
+    turn("channel", {});
+    await page
+      .locator("[data-composer-dock]", {
+        has: page.getByRole("form", {
+          name: "Send a message to Alpha",
+          exact: true,
+        }),
+      })
+      .locator("..")
+      .getByRole("button", { name: /^Activity: .+ working$/ })
+      .hover();
+    await page
+      .getByRole("dialog", { name: "Working now", exact: true })
+      .getByRole("button", { name: /^View .*Local tester.* activity$/ })
+      .click();
+    // The activity is a profile tab in the side pane.
+    const side = page.locator("[data-panel-workspace]");
+    await expect(
+      side.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    turn("threaded", { threadRootEventId: root.id });
+    await side
+      .getByRole("button", {
+        name: `Thread ${root.id.slice(0, 8)}`,
+        exact: true,
+      })
+      .click();
+    // Chosen in the side pane, the thread opens there, not over the composer.
+    await expect(
+      side.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      side.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("[data-details-sheet-surface]")).toHaveCount(0);
+  });
+});

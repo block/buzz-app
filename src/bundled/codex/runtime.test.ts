@@ -21,6 +21,7 @@ import {
 import { pubkeyOf } from "../../features/agents/membership";
 import { createSessionAdmissions } from "../../features/agents/session-admission";
 import { memoryStorage } from "../../features/agents/test-fakes";
+import { stepText } from "../../features/agents/local-activity";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
@@ -5648,7 +5649,7 @@ it.each([
         params: { threadId, item: { type: "commandExecution", command } },
       });
     step("sleep 20");
-    expect(first.step).toHaveBeenLastCalledWith("Shell", "sleep");
+    expect(first.step).toHaveBeenLastCalledWith("Shell", "sleep", undefined);
     const requested = deferred<void>();
     const response = deferred<void>();
     const write = f.process.write;
@@ -5671,7 +5672,7 @@ it.each([
       await f.runtime.run({ ...delivery("follow-up"), ...next });
       await requested.promise;
       step("ls");
-      expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
+      expect(first.step).toHaveBeenLastCalledWith("Shell", "ls", undefined);
       expect(first.superseded).not.toHaveBeenCalled();
       expect(next.acknowledged).not.toHaveBeenCalled();
       expect(next.step).not.toHaveBeenCalled();
@@ -5682,8 +5683,8 @@ it.each([
         );
         expect(first.superseded).toHaveBeenCalledOnce();
         step("pwd");
-        expect(next.step).toHaveBeenLastCalledWith("Shell", "pwd");
-        expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
+        expect(next.step).toHaveBeenLastCalledWith("Shell", "pwd", undefined);
+        expect(first.step).toHaveBeenLastCalledWith("Shell", "ls", undefined);
         await f.tool("send", {
           audience: "everyone",
           text: "Updated answer",
@@ -5698,7 +5699,7 @@ it.each([
         expect(first.superseded).not.toHaveBeenCalled();
         expect(next.acknowledged).not.toHaveBeenCalled();
         step("pwd");
-        expect(first.step).toHaveBeenLastCalledWith("Shell", "pwd");
+        expect(first.step).toHaveBeenLastCalledWith("Shell", "pwd", undefined);
         await f.tool("send", {
           audience: "everyone",
           text: "Original answer",
@@ -5789,8 +5790,16 @@ it.each(["stream", "dm"])(
       method: "item/started",
       params: { threadId, item: { type: "reasoning" } },
     });
-    expect(first.step).toHaveBeenLastCalledWith("Thinking", undefined);
-    expect(second.step).toHaveBeenLastCalledWith("Thinking", undefined);
+    expect(first.step).toHaveBeenLastCalledWith(
+      "Thinking",
+      undefined,
+      undefined,
+    );
+    expect(second.step).toHaveBeenLastCalledWith(
+      "Thinking",
+      undefined,
+      undefined,
+    );
     expect(first.superseded).not.toHaveBeenCalled();
     expect(second.superseded).not.toHaveBeenCalled();
     expect(watched.acknowledged).not.toHaveBeenCalled();
@@ -6621,6 +6630,23 @@ describe("codexStep", () => {
     expect(codexStep({ type: "mcpToolCall", tool: "send_message" })).toEqual({
       tool: "send_message",
     });
+    // A Buzz tool is a dynamic tool in the `buzz` namespace, reported by its
+    // bare name and its origin, which the step text titles.
+    const buzz = codexStep({
+      type: "dynamicToolCall",
+      namespace: "buzz",
+      tool: "search",
+    });
+    expect(buzz).toEqual({ tool: "search", origin: "buzz" });
+    expect(buzz && stepText(buzz)).toBe("Search messages");
+    // Another server's tool of the same name is not Buzz's.
+    const docs = codexStep({
+      type: "mcpToolCall",
+      server: "docs",
+      tool: "search",
+    });
+    expect(docs).toEqual({ tool: "search" });
+    expect(docs && stepText(docs)).toBe("search");
     expect(codexStep({ type: "reasoning" })).toEqual({ tool: "Thinking" });
     expect(codexStep({ type: "userMessage" })).toBeUndefined();
     expect(codexStep(undefined)).toBeUndefined();

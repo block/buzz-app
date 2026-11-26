@@ -3,6 +3,8 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
+import { animationsSettled } from "./animations.mjs";
+import { pauseClock } from "./clock.mjs";
 
 const fixtureImage = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#666"/></svg>`;
 
@@ -411,7 +413,10 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       );
     await expect(history.locator("[data-message-id]")).toHaveCount(62);
     // Loading belongs to history; the composer retains its live region idle.
-    await expect(history.getByRole("status")).toHaveCount(0);
+    // A message's toolbar keeps an empty status for its copy; none speaks.
+    await expect(
+      history.getByRole("status").filter({ hasText: /\S/ }),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Load more replies", exact: true }),
     ).toHaveCount(0);
@@ -1166,12 +1171,43 @@ for (const privateSource of [false, true]) {
         await dialog
           .getByRole("textbox", { name: "Note (optional)" })
           .fill("Please keep my review note");
-        await dialog
-          .getByRole("button", { name: "Copy as forward", exact: true })
-          .click();
+        // The button shows its own copy, and where to paste it stands in the
+        // dialog before any copy: a copy adds no line, resizes nothing and
+        // raises no toast. Hold the clock so "Copied" stays until it is read.
+        const copyForward = dialog.getByRole("button", {
+          name: "Copy as forward",
+          exact: true,
+        });
+        const pasteHint = dialog.getByText(
+          "Paste the copy in any message box to forward it.",
+        );
+        await expect(pasteHint).toBeVisible();
+        await expect(copyForward).toHaveAccessibleDescription(
+          "Paste the copy in any message box to forward it.",
+        );
+        const layout = async () => [
+          await copyForward.boundingBox(),
+          await pasteHint.boundingBox(),
+          await dialog.boundingBox(),
+        ];
+        // The dialog scales in as it opens. Measure once it has stopped.
+        await animationsSettled(dialog, { subtree: true });
+        await pauseClock(page);
+        const atRest = await layout();
+        await copyForward.click();
+        await expect(copyForward).toHaveText("Copied");
+        await expect(copyForward.locator(".tabler-icon-check")).toBeVisible();
+        await expect(copyForward).toHaveAccessibleName("Copy as forward");
         await expect(
-          page.getByText("Copied. Paste it in any message box to forward it."),
-        ).toBeVisible();
+          dialog.getByRole("status").filter({ hasText: /^Copied$/ }),
+        ).toHaveCount(1);
+        expect(await layout()).toEqual(atRest);
+        await page.clock.runFor(1500);
+        await expect(copyForward).toHaveText("Copy as forward");
+        // The clock a toast mounts on has run.
+        await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+        expect(await layout()).toEqual(atRest);
+        await page.clock.resume();
         await dialog.getByRole("button", { name: "Cancel" }).click();
         if (privateSource)
           await page

@@ -94,9 +94,11 @@ it.each(["failed", "unknown"] as const)(
     );
     const { rerender } = render(view());
     if (delivery === "unknown")
-      expect(screen.getByRole("status").textContent).toContain(
-        "Retry sends the same message",
-      );
+      expect(
+        screen.getByText(/Retry sends the same message/, {
+          selector: '[role="status"]',
+        }),
+      ).toBeDefined();
     const editor = screen.getByRole("textbox");
     const retry = screen.getByRole("button", { name: "Retry" });
     retry.focus();

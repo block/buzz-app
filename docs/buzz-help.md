@@ -246,6 +246,12 @@ The old enabled setting does not carry over, and browsers cannot load external
 plugins. Existing notes remain available to agents through `notes_get`,
 `notes_set` and `notes_rm`.
 
+If Buzz cannot find Git while adding a plugin, use **Install Git** for your
+platform’s setup instructions. Make sure Git is on Buzz’s PATH, then choose
+**Try again** to reuse the same repository and branch or tag. If Buzz still
+cannot find Git, fully quit and restart it, then reopen the original install
+link or enter the repository details again.
+
 For a Git-installed plugin, an agent's update request or a pinned install link
 can switch the tracked branch even when the code is unchanged. Review and
 confirm the update to save the new source; no reinstall is needed.

@@ -80,7 +80,21 @@ const gitSizeRecoveryHints = new Map([
 const scopedFileCountRefusalSuffix =
   " has more than 20,000 files; choose a smaller folder";
 
-type PluginImportError = { message: string; recoveryHint?: string };
+const GIT_NOT_FOUND = "Git executable not found.";
+
+type PluginImportError = {
+  message: string;
+  recoveryHint?: string;
+  retry?: () => void;
+};
+
+function gitInstallUrl(platform: string) {
+  const base = "https://git-scm.com/install";
+  if (platform.startsWith("Win")) return `${base}/windows`;
+  if (platform.startsWith("Mac")) return `${base}/mac`;
+  if (platform.startsWith("Linux")) return `${base}/linux`;
+  return base;
+}
 
 function errorMessage(reason: unknown) {
   return reason instanceof Error ? reason.message : String(reason);
@@ -328,20 +342,28 @@ export function PluginImport({
     returnTo: Element | null,
     transient = false,
     fromGit = false,
+    retry?: () => void,
   ) {
     if (!error) {
       errorTrigger.current = returnTo as HTMLElement | null;
       errorReturnsToBack.current = returnTo === previewBack.current;
     }
     if (!transient) rememberQueuedUpdateFailure(String(reason));
-    recordError(reason, fromGit);
-  }
-  function recordError(reason: unknown, fromGit = false) {
-    const message = String(reason);
-    const recoveryHint = fromGit
-      ? gitSizeRecoveryHint(errorMessage(reason))
-      : undefined;
-    setError(recoveryHint ? { message, recoveryHint } : { message });
+    const message = errorMessage(reason);
+    const gitMissing =
+      message === GIT_NOT_FOUND ||
+      message.startsWith(`${GIT_NOT_FOUND} (repository access rule `);
+    const displayMessage = String(reason);
+    if (fromGit && gitMissing && retry) {
+      setError({ message: displayMessage, retry });
+      return;
+    }
+    const recoveryHint = fromGit ? gitSizeRecoveryHint(message) : undefined;
+    setError(
+      recoveryHint
+        ? { message: displayMessage, recoveryHint }
+        : { message: displayMessage },
+    );
   }
   const [enableOnInstall, setEnableOnInstall] = useState(true);
   const lifetime = useRef({ active: true, token: "", installing: false });
@@ -592,13 +614,13 @@ export function PluginImport({
     operation: () => Promise<ImportPreview | null>,
     linked = false,
     fromGit = false,
+    returnTo = document.activeElement as HTMLElement | null,
   ) {
     if (!imports || pending.current || blocked) return;
     const observe =
       currentPlugin && savedSource
         ? checks.observe(currentPlugin, updateAction?.source)
         : undefined;
-    const returnTo = document.activeElement as HTMLElement | null;
     sourceTrigger.current = returnTo;
     pending.current = true;
     const current = lifetime.current;
@@ -694,7 +716,9 @@ export function PluginImport({
     } catch (reason) {
       if (current.active) {
         observe?.(undefined, String(reason));
-        showError(reason, returnTo, false, fromGit);
+        showError(reason, returnTo, false, fromGit, () => {
+          void load(operation, linked, fromGit, returnTo);
+        });
       }
     } finally {
       pending.current = false;
@@ -1168,18 +1192,27 @@ export function PluginImport({
         }
         actions={
           error ? (
-            <Button
-              ref={errorBack}
-              type="button"
-              disabled={busy || discarding}
-              loading={loading}
-              onClick={() => {
-                if (!preview && savedSource) prepareReview();
-                else setError(null);
-              }}
-            >
-              {!preview && savedSource ? "Try again" : "Back"}
-            </Button>
+            <>
+              <Button
+                ref={errorBack}
+                type="button"
+                disabled={busy || discarding}
+                loading={loading}
+                onClick={() => {
+                  if (!preview && savedSource) {
+                    if (error.retry) error.retry();
+                    else prepareReview();
+                  } else setError(null);
+                }}
+              >
+                {!preview && savedSource ? "Try again" : "Back"}
+              </Button>
+              {error.retry && !savedSource && (
+                <Button type="button" disabled={blocked} onClick={error.retry}>
+                  Try again
+                </Button>
+              )}
+            </>
           ) : showUnchanged ? (
             <Button ref={unchangedBack} onClick={() => setShowUnchanged(false)}>
               Back
@@ -1279,6 +1312,29 @@ export function PluginImport({
         {error && (
           <p role="alert" className="error break-words">
             <span>{error.message}</span>
+            {error.retry && (
+              <>
+                <br />
+                <Button
+                  variant="link"
+                  size="text"
+                  nativeButton={false}
+                  role="link"
+                  render={
+                    <a
+                      href={gitInstallUrl(navigator.platform)}
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  Install Git
+                </Button>{" "}
+                or make sure it is available on Buzz’s PATH, then try again. If
+                Buzz still cannot find Git, fully quit and restart Buzz. If you
+                opened an install link, open it again after restarting.
+              </>
+            )}
             {error.recoveryHint &&
               !bound &&
               !linkConstrained &&

@@ -158,6 +158,12 @@ it.each([
     );
     const alert = await screen.findByRole("alert");
     expect(within(alert).getByText(error, { exact: true })).toBeVisible();
+    expect(
+      within(alert).queryByRole("link", { name: /install git/i }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: "Try again" }),
+    ).toBeNull();
     expect(git).toHaveBeenCalledExactlyOnceWith(
       "https://example.org/plugins",
       referenceValue,
@@ -1063,10 +1069,10 @@ it("shows a rejected dropped candidate's warning beside a usable sibling preview
   ]);
 });
 
-it("Back restores source fields and focus after acquisition fails", async () => {
+it("restores source fields on Back and retries the same Git source when Git is missing", async () => {
   const user = userEvent.setup();
-  const git = vi.fn(async () => {
-    throw new Error("Repository unavailable");
+  const git = vi.fn(async (): Promise<ImportPreview | null> => {
+    throw new Error("Git executable not found.");
   });
   const manager = { imports: { git } } as unknown as PluginManager;
   render(
@@ -1085,12 +1091,17 @@ it("Back restores source fields and focus after acquisition fails", async () => 
   const find = screen.getByRole("button", { name: "Find plugins" });
   await user.click(find);
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Repository unavailable",
+    "Git executable not found.",
   );
   expect(git).toHaveBeenCalledExactlyOnceWith(
     "https://github.com/example/plugin",
     "stable",
   );
+  expect(screen.getByRole("link", { name: /install git/i })).toHaveAttribute(
+    "href",
+    expect.stringMatching(/^https:\/\/git-scm\.com\/install(?:\/|$)/),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(/restart Buzz/i);
   expect(screen.queryByRole("form", { name: "Add from Git" })).toBeNull();
   const back = screen.getByRole("button", { name: "Back" });
   expect(back).toHaveFocus();
@@ -1103,6 +1114,17 @@ it("Back restores source fields and focus after acquisition fails", async () => 
     "stable",
   );
   expect(find).toHaveFocus();
+  await user.click(find);
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  git.mockResolvedValueOnce(null);
+  await user.click(retry);
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(git.mock.calls).toEqual(
+    Array.from({ length: 3 }, () => [
+      "https://github.com/example/plugin",
+      "stable",
+    ]),
+  );
 });
 
 it.each([true, false])(
@@ -3667,18 +3689,26 @@ function linkedHarness(
   return { git, discard, installImport, change, live, element };
 }
 
-it("pins a linked source to its commit and installs the linked folder", async () => {
+it("retries a pinned install link without changing its source or folder", async () => {
   const { git, installImport, element } = linkedHarness(
     requestedPreview(pinned, ["a", "plugins/b"]),
     { commit: pinned, path: "plugins/b" },
   );
+  git.mockRejectedValueOnce(
+    "Git executable not found. (repository access rule example-org, agent socket inherited)",
+  );
   render(element);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Try again" }),
+  );
   await screen.findByRole("dialog", { name: /^Review .+ access$/ });
-  expect(git).toHaveBeenCalledExactlyOnceWith(
-    "https://example.com/plugins.git",
-    "v1",
-    undefined,
-    { commit: pinned, path: "plugins/b" },
+  expect(git.mock.calls).toEqual(
+    Array.from({ length: 2 }, () => [
+      "https://example.com/plugins.git",
+      "v1",
+      undefined,
+      { commit: pinned, path: "plugins/b" },
+    ]),
   );
   expect(screen.getByRole("dialog")).toHaveTextContent(
     "Commit 0123456789ab (matches the requested commit, verified on v1)",

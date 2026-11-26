@@ -865,9 +865,13 @@ impl Git {
         if Instant::now() >= self.deadline {
             return Err("Repository import exceeded 60 seconds".into());
         }
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("Could not start Git: {e}. Install Git to load repositories."))?;
+        let mut child = command.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "Git executable not found.".to_string()
+            } else {
+                format!("Could not start Git: {e}")
+            }
+        })?;
         let result = (|| loop {
             if self.retired.as_ref().is_some_and(|retired| retired()) {
                 return Err("Repository authorization retired".into());
@@ -3234,6 +3238,15 @@ mod tests {
         assert!(
             !authorized.contains("repository access rule"),
             "{authorized}"
+        );
+    }
+    #[test]
+    fn missing_git_reports_install_recovery_error() {
+        let git = Git::new().unwrap();
+        let command = Command::new(git.scratch.path().join("missing-git"));
+        assert_eq!(
+            git.run_command(command, LIMIT).unwrap_err(),
+            "Git executable not found."
         );
     }
     #[test]

@@ -3,12 +3,14 @@ import type { Agent, Agents } from "../../features/agents/service";
 import {
   joinToolSelection,
   PRESET_INFO,
+  roleTools,
   SAVED_SELECTION,
   toolPolicy,
   type ToolPolicy,
   type ToolPreset,
 } from "../../features/agents/tool-access";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
@@ -30,6 +32,7 @@ export function AgentToolAccess({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const form = useId();
+  const plugins = agents.tools();
   const dirty = !same(saved, draft);
   useEffect(() => {
     if (!dirty) setDraft(saved);
@@ -116,10 +119,38 @@ export function AgentToolAccess({
           ))}
         </RadioGroup>
       </Field>
+      <Accordion
+        variant="settings"
+        items={PRESET_INFO.map((preset) => {
+          const tools = roleTools(preset.id, plugins);
+          return {
+            value: preset.id,
+            title: `Every tool ${preset.label} can use`,
+            content: (
+              <dl className="m-0 grid gap-2 text-body-sm">
+                <ToolList title="Native, as Claude Code names them">
+                  {preset.id === "coder"
+                    ? "Every tool the harness has"
+                    : tools.native.join(", ")}
+                </ToolList>
+                <ToolList title="Buzz">{tools.buzz.join(", ")}</ToolList>
+                <ToolList title="Plugins that are on">
+                  {tools.plugins.join(", ") || "None"}
+                </ToolList>
+                <ToolList title="Connected MCP servers">
+                  {tools.connected ? "Every tool" : "None"}
+                </ToolList>
+              </dl>
+            ),
+          };
+        })}
+      />
       <p className="m-0 text-body-sm text-subtle">
-        Where the harness has a native Skill tool, such as Claude Code, every
-        role can load skills; each action a skill takes still follows the role.
-        Subagents inherit this access. It is not a sandbox: with Shell on,
+        Tool names are Claude Code's; Codex, Goose and Pi use their own names
+        for the same tools, and plugin tools appear only when their plugin is
+        on. Where the harness has a native Skill tool, such as Claude Code,
+        every role can load skills; each action a skill takes still follows the
+        role. Subagents inherit this access. It is not a sandbox: with Shell on,
         commands can use any credentials the agent's process has.
       </p>
       {error && (
@@ -134,5 +165,14 @@ export function AgentToolAccess({
         disabled={!dirty || saving}
       />
     </form>
+  );
+}
+
+function ToolList({ title, children }: { title: string; children: string }) {
+  return (
+    <div>
+      <dt className="text-primary">{title}</dt>
+      <dd className="m-0 text-subtle">{children}</dd>
+    </div>
   );
 }

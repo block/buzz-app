@@ -10,6 +10,7 @@ import {
   nativeToolAllowed,
   nativeToolDenial,
   pickToolConfig,
+  roleTools,
   toolPolicy,
   toolPolicyKey,
 } from "./tool-access";
@@ -169,6 +170,21 @@ it("keeps a saved legacy deliverable grant's access", () => {
   const legacy = { toolPreset: "custom", toolAllow: "buzz:deliverable" };
   expect(buzzToolAllowed("canvas_set", legacy)).toBe(true);
   expect(buzzToolAllowed("apps_deploy", legacy, UNDECLARED)).toBe(true);
+});
+
+it("lists the tools each role's gates allow", () => {
+  const added = [...TASKS, ...UNDECLARED];
+  const orchestrator = roleTools("super-agent", added);
+  expect(orchestrator.buzz).toContain("canvas_set");
+  expect(orchestrator.plugins).toEqual(["tasks_update"]);
+  expect(orchestrator.native).toContain("Task");
+  expect(orchestrator.native).not.toContain("Bash");
+  const reviewer = roleTools("reviewer", added);
+  expect(reviewer.native).toEqual(expect.arrayContaining(["Read", "Skill"]));
+  expect(reviewer.native).not.toContain("Task");
+  expect(reviewer.buzz).not.toContain("mem_set");
+  expect(roleTools("coder", added).connected).toBe(true);
+  expect(orchestrator.connected).toBe(false);
 });
 
 it("classifies every built-in Buzz tool explicitly", () => {

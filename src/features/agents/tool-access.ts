@@ -255,26 +255,59 @@ export const PRESET_INFO: readonly RoleInfo[] = [
     id: "coder",
     label: "All",
     description: "Every tool, as agents have today. The default.",
-    can: "Use every tool the agent's harness allows, including files, Shell, connected tools, plugin tools and every Buzz action.",
+    can: "Everything Orchestrator can, plus editing files (Edit, Write), Shell (Bash), connected MCP tools such as GitHub or Linear, and plugin tools that change things, such as apps_deploy.",
   },
   {
     id: "super-agent",
     label: "Orchestrator",
     description:
       "Runs work like an assistant: plans, delegates and follows up in Buzz.",
-    can: "Take every built-in Buzz action its identity can, such as messaging, creating channels, canvases and notes, and managing memory and attention, plus plugin tools that coordinate work, such as Tasks. Read files and the web, track steps and delegate to subagents.",
+    can: "Everything Reviewer can, plus subagents (Task), creating channels, canvases, notes and repositories (channel_create, canvas_set, notes_set, repo), memory and attention (mem_set, watch_add), handoffs, and Tasks (tasks_update) when the Tasks plugin is on.",
     cannot:
-      "Edit local files, run commands, use connected MCP tools such as GitHub, or use plugin tools that change things, such as app deploys.",
+      "Edit local files, run Shell, use connected MCP tools, or use plugin tools that change things, such as apps_deploy.",
   },
   {
     id: "reviewer",
     label: "Reviewer",
     description: "Inspects work and reports findings.",
-    can: "Read files and the web, track steps, find tools, read Buzz and send messages.",
+    can: "Read and search files (Read, Grep, Glob), the web (WebFetch, WebSearch), track steps and find tools (TodoWrite, ToolSearch), load skills (Skill), read Buzz (read, search) and send messages (send, react).",
     cannot:
-      "Edit files, run commands, delegate, use connected tools, manage Tasks or memory, or change deliverables.",
+      "Edit files, run Shell, delegate, use connected tools, manage Tasks or memory, or create channels, canvases or notes.",
   },
 ];
+/** Claude Code's names for one tool in each native group, to show a role's
+ * native access in words an owner recognizes. */
+const SAMPLE_NATIVE = [
+  "Read",
+  "Grep",
+  "Glob",
+  "WebFetch",
+  "WebSearch",
+  "TodoWrite",
+  "ToolSearch",
+  "Skill",
+  "Task",
+  "Edit",
+  "Write",
+  "Bash",
+] as const;
+/** What a role allows, from the same gates that decide each call. */
+export function roleTools(
+  preset: ToolPreset,
+  added: readonly Readonly<{ name: string; effect?: ToolEffect }>[] = [],
+) {
+  const policy = { preset, allow: [] };
+  return {
+    native: SAMPLE_NATIVE.filter((name) => nativeToolAllowed(name, policy)),
+    buzz: [...BUZZ_EFFECT.keys()].filter((name) =>
+      buzzToolAllowed(name, policy, added),
+    ),
+    plugins: added
+      .map((tool) => tool.name)
+      .filter((name) => buzzToolAllowed(name, policy, added)),
+    connected: nativeToolAllowed("mcp__server__tool", policy),
+  };
+}
 /** Shown only for an agent an earlier draft saved with its own selection. */
 export const SAVED_SELECTION: RoleInfo = {
   id: "custom",

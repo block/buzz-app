@@ -322,6 +322,8 @@ type Lane = {
     signal: AbortSignal;
     restore(): Promise<void>;
     rejectedSpeechClosing?: Promise<void>;
+    /** Set by `end`: typed work queued before the close takes no seat. */
+    ending?: true;
     /** Ends the seat, and tells its owner why. */
     end(error: Error): void;
   };
@@ -2095,6 +2097,7 @@ export class CodexRuntime {
           loaded,
           signal,
           end(error) {
+            this.ending = true;
             void close();
             seat.ended(error);
           },
@@ -4180,7 +4183,7 @@ export class CodexRuntime {
         ready();
         return;
       }
-      seat = lane.voice;
+      seat = lane.voice?.ending ? undefined : lane.voice;
       // A seat keeps its loaded thread between turns, and the owner can
       // change a section or the session scope meanwhile: its turns get the
       // sections as they are. Its lane fixes its place and folder.

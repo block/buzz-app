@@ -7470,9 +7470,19 @@ describe("voice seats", () => {
   async function seated(
     overrides: Partial<AgentVoiceSeat> = {},
     configure: (f: ReturnType<typeof fixture>) => void = () => {},
+    persisted?: AgentStore,
   ) {
     vi.stubGlobal("RTCPeerConnection", class {});
-    const f = fixture();
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      persisted,
+    );
     configure(f);
     f.huddleChannels.add("channel");
     const delivery = f.delivery("hello");
@@ -7837,6 +7847,52 @@ describe("voice seats", () => {
     expect(
       f.sent.filter((wire) => wire.method === "thread/start"),
     ).toHaveLength(2);
+  });
+  it("starts a mention queued behind the refused turn fresh, not on the ending seat", async () => {
+    // Hold the refused turn while it forgets its thread, so the mention
+    // queues behind it before the seat ends.
+    const saved = new Map<string, string>();
+    const base = localStore({
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => saved.set(key, value),
+      removeItem: (key: string) => saved.delete(key),
+    } as unknown as Storage);
+    let forgetting: Promise<void> | undefined;
+    const held = vi.fn();
+    const store: AgentStore = {
+      ...base,
+      async set(key, value) {
+        if (forgetting) {
+          held();
+          await forgetting;
+        }
+        return base.set(key, value);
+      },
+    };
+    const f = await seated({}, () => {}, store);
+    await f.runtime.run(f.delivery("typed work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const gate = deferred<void>();
+    forgetting = gate.promise;
+    failTurn(f, AUDIO_REFUSED, "other");
+    await vi.waitFor(() => expect(held).toHaveBeenCalled());
+    forgetting = undefined;
+    await f.runtime.run(f.delivery("queued follow-up"));
+    expect(f.starts()).toHaveLength(1);
+    gate.resolve();
+    await vi.waitFor(() => expect(f.ended).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).not.toMatchObject({ threadId: "thread-1" });
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/start"),
+    ).toHaveLength(2);
+    const [, bindings = "{}"] =
+      [...saved].find(([key]) => key.startsWith("buzz.codex.sessions.")) ?? [];
+    expect(
+      Object.values(JSON.parse(bindings)).map(
+        (binding) => (binding as { threadId: string }).threadId,
+      ),
+    ).toEqual(["thread-2"]);
   });
   it("leaves a seat on another Codex thread when the provider refuses a thread", async () => {
     const f = await seated({ conversation: { channelId: "other" } }, (f) =>

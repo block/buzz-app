@@ -209,9 +209,8 @@ it.each(["private", "public"])(
     const h = setup();
     await ready();
     expect(accessControl()).toHaveTextContent("Private");
-    // The chat's title is the default name, beside the icon its access shows.
+    // The chat's title is the default name.
     expect(nameField()).toHaveValue("Original");
-    expect(screen.getByRole("img", { name: "Private channel" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(accessControl());
     expect(
@@ -220,8 +219,6 @@ it.each(["private", "public"])(
     await user.keyboard("{Escape}");
     if (visibility === "public") {
       await selectAccess("Public");
-      expect(screen.getByRole("img", { name: "Public channel" })).toBeVisible();
-      expect(screen.queryByRole("img", { name: "Private channel" })).toBeNull();
     }
     expect(h.sign).not.toHaveBeenCalled();
     fireEvent.click(confirm());

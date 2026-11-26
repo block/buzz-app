@@ -39,7 +39,7 @@ import {
   generalAccessValue,
   type GeneralAccess,
 } from "../channels/general-access";
-import { channelIcon, channelIconLabel } from "../channels/channel-icon";
+import { channelIcon } from "../channels/channel-icon";
 import { ChannelTextField } from "../../bundled/channels/ChannelTextField";
 import styles from "./ConvertToChannel.module.css";
 
@@ -368,15 +368,9 @@ export function ConvertToChannel({
       >
         <ChannelTextField
           field="name"
-          // The icon the sidebar will show for the chosen access.
-          leading={
-            <PreviewIcon
-              size={16}
-              role="img"
-              aria-hidden={false}
-              aria-label={channelIconLabel(preview)}
-            />
-          }
+          // The icon the sidebar will show for the chosen access. It stays
+          // decorative: General access states the choice in words.
+          leading={<PreviewIcon size={16} />}
           value={shownName}
           error={nameError}
           disabled={locked}

@@ -51,6 +51,10 @@ function start() {
       content: "looking",
     },
   ];
+  const profileMap = new Map([
+    [OWNER, { name: "baxen" }],
+    [PAT, { name: "Pat" }],
+  ]);
   const session = {
     viewer: OWNER,
     subscribeLive(listener: typeof live) {
@@ -72,11 +76,8 @@ function start() {
     },
     read: vi.fn(async () => history),
     profiles: {
-      snapshot: () =>
-        new Map([
-          [OWNER, { name: "baxen" }],
-          [PAT, { name: "Pat" }],
-        ]),
+      snapshot: () => profileMap,
+      subscribe: () => () => {},
     },
     ownerMentions: {
       confirmedOwnerSends: (_place: unknown, ids: readonly string[]) => ids,
@@ -99,6 +100,9 @@ function start() {
     delayMs: 0,
     where: {} as WhereAnswer,
     who: { ART: 0.84, mbot: 0.1 } as Record<string, number>,
+    deliverResult: { status: "delivered" } as
+      | { status: "delivered" }
+      | { status: "dropped"; reason: string },
   };
   /** Placers registered now; each is removed with the scope that added it. */
   const placers = new Set<MentionPlacer>();
@@ -108,7 +112,7 @@ function start() {
     options: { note?: string } = {},
   ) => {
     delivered.push({ key, event, ...options });
-    return { status: "delivered" };
+    return state.deliverResult;
   };
   class Agents extends Service {
     constructor(ctx: Context) {
@@ -189,7 +193,15 @@ function start() {
       return { outcome: "answered", backend: "jev", model: "jev", answers };
     },
   } as never);
-  root.provide("conversation", { registerMessageAction: vi.fn() } as never);
+  const actions: {
+    id: string;
+    matches: (message: { id: string }) => boolean;
+    marker?: ComponentType<{ message: { id: string }; session: unknown }>;
+  }[] = [];
+  root.provide("conversation", {
+    registerMessageAction: (action: (typeof actions)[number]) =>
+      void actions.push(action),
+  } as never);
   const cards: { id: string; component: ComponentType }[] = [];
   root.provide("settingsCards", {
     register: (card: { id: string; component: ComponentType }) =>
@@ -281,6 +293,8 @@ function start() {
     provider,
     placers,
     cards,
+    actions,
+    session,
     live: () => live,
   };
 }
@@ -498,5 +512,55 @@ describe("smart routing", () => {
     expect(await screen.findByText("Needs a decisions provider")).toBeTruthy();
     expect(f.calls).toHaveLength(1);
     expect(f.delivered).toHaveLength(1);
+  });
+
+  it("shows a quiet marker only for picked messages (with undelivered status), while keeping inspection on every routed message", async () => {
+    const f = await setup();
+    const action = f.actions.find((entry) => entry.id === "smart-routing");
+    if (!action?.marker) throw new Error("No marker registered");
+    const Marker = action.marker;
+
+    // Picked and delivered: marker renders with no hover title.
+    f.state.where = { place: "working" };
+    await f.send(top("1", "check this"));
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
+    expect(action.matches({ id: hex("1") })).toBe(true);
+    const picked = render(
+      createElement(Marker, { message: { id: hex("1") }, session: f.session }),
+    );
+    const pickedMark = screen.getByRole("img", { name: "Routed to ART" });
+    expect(pickedMark.getAttribute("title")).toBeNull();
+    picked.unmount();
+
+    // Picked but undelivered: marker flags delivery failure.
+    f.state.deliverResult = { status: "dropped", reason: "offline" };
+    await f.send(top("2", "try again"));
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(2));
+    const failed = render(
+      createElement(Marker, { message: { id: hex("2") }, session: f.session }),
+    );
+    expect(
+      screen.getByRole("img", { name: "Routed to ART, not delivered" }),
+    ).toBeTruthy();
+    failed.unmount();
+
+    // Tagged placement and below-threshold none stay silent in the timeline
+    // but remain inspectable via the message action.
+    await f.place(top("3", "@ART hi", [["p", ART]]));
+    expect(action.matches({ id: hex("3") })).toBe(true);
+    const placed = render(
+      createElement(Marker, { message: { id: hex("3") }, session: f.session }),
+    );
+    expect(placed.container.firstChild).toBeNull();
+    placed.unmount();
+
+    f.state.who = { ART: 0.2, mbot: 0.1 };
+    await f.send(top("4", "just thinking aloud"));
+    await vi.waitFor(() => expect(action.matches({ id: hex("4") })).toBe(true));
+    const none = render(
+      createElement(Marker, { message: { id: hex("4") }, session: f.session }),
+    );
+    expect(none.container.firstChild).toBeNull();
+    none.unmount();
   });
 });

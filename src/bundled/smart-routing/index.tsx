@@ -16,11 +16,17 @@ import type {
   DecisionAnswer,
   DecisionQuestion,
 } from "../../features/decisions/service";
+import { avatarMedia } from "../../shared/avatar-source";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Header } from "../../shared/design-system/ui/Header";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import { SendIcon } from "../../shared/design-system/icons/index";
+import {
+  ArrowRightIcon,
+  SendIcon,
+} from "../../shared/design-system/icons/index";
+import styles from "./index.module.css";
 import {
   buildState,
   ELSEWHERE_NOTE,
@@ -64,6 +70,7 @@ export type Entry = Readonly<{
   status: "picked" | "none" | "placed" | "failed" | "skipped";
   reason?: string;
   agent?: string;
+  agentPubkey?: string;
   probability?: number;
   yes?: Readonly<Record<string, number>>;
   where?: Where;
@@ -615,6 +622,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ...decision,
       status: "picked",
       agent: agent.name,
+      agentPubkey: agent.pubkey,
       probability,
       destination,
     } as const;
@@ -684,57 +692,102 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   // ---- What the owner sees ----
 
-  function label(entry: Entry | undefined) {
-    if (!entry) return null;
-    const where = entry.where
-      ? ` · ${placeText(entry.where.destination)}${entry.where.elsewhere ? " · asks elsewhere" : ""}`
-      : "";
-    if (entry.status === "picked") {
-      // A watch turn already took the message: the agent is on it, where
-      // its watch answers, not where Jev would have put it.
-      if (entry.wake === "dropped: watched")
-        return `→ ${entry.agent} ${pct(entry.probability)} · woken by its watch`;
-      const undelivered =
-        entry.wake && !["delivered", "waking", "retrying"].includes(entry.wake);
-      return `→ ${entry.agent} ${pct(entry.probability)}${where}${entry.wake === "retrying" ? " · retrying…" : undelivered ? " · not delivered" : ""}`;
-    }
-    if (entry.status === "placed" && entry.where)
-      return `where: ${where.slice(3)}`;
-    if (entry.status === "none")
-      return entry.agent
-        ? `Jev: none (top ${entry.agent} ${pct(entry.probability)})`
-        : "Jev: none";
-    if (entry.status === "failed") return "Jev failed";
-    return null;
+  const noopSubscribe = () => () => {};
+
+  function isInspectable(entry: Entry | undefined) {
+    if (!entry) return false;
+    return (
+      entry.status === "picked" ||
+      (entry.status === "placed" && !!entry.where) ||
+      entry.status === "none" ||
+      entry.status === "failed"
+    );
   }
+
+  function isUndelivered(entry: Entry) {
+    return Boolean(
+      entry.wake &&
+        !["delivered", "waking", "retrying", "dropped: watched"].includes(
+          entry.wake,
+        ),
+    );
+  }
+
   const useEntry = (id: string) =>
     useSyncExternalStore(subscribe, () => entryOf(id));
-  function Marker({ message }: { message: { id: string } }) {
+
+  function Marker({
+    message,
+    session,
+  }: {
+    message: { id: string };
+    session: RelaySession;
+  }) {
     const entry = useEntry(message.id);
-    const text = label(entry);
-    if (!text || !entry) return null;
+    const active = entry?.status === "picked";
+    const agentsSub =
+      active && typeof ctx.agents.subscribe === "function"
+        ? ctx.agents.subscribe
+        : noopSubscribe;
+    const profilesSub =
+      active && typeof session.profiles?.subscribe === "function"
+        ? session.profiles.subscribe
+        : noopSubscribe;
+    const matchedAgent = useSyncExternalStore(agentsSub, () =>
+      active
+        ? safe(() =>
+            ctx.agents
+              .snapshot()
+              .agents.find((agent) =>
+                entry.agentPubkey
+                  ? agent.pubkey === entry.agentPubkey
+                  : agent.name === entry.agent,
+              ),
+          )
+        : undefined,
+    );
+    const pubkey = entry?.agentPubkey ?? matchedAgent?.pubkey;
+    const profile = useSyncExternalStore(profilesSub, () =>
+      active && pubkey
+        ? safe(() => session.profiles.snapshot().get(pubkey))
+        : undefined,
+    );
+    if (!active) return null;
+
+    const name = profile?.name || matchedAgent?.name || entry.agent || "Agent";
+    const src = avatarMedia(
+      profile?.picture || matchedAgent?.picture,
+      session.media,
+    );
+    const undelivered = isUndelivered(entry);
+
     return (
       <span
-        className="text-caption"
-        title={details(entry)}
-        style={{
-          color:
-            entry.status === "failed" || / · not delivered$/.test(text)
-              ? "var(--text-warning)"
-              : entry.status === "picked" || entry.status === "placed"
-                ? "var(--text-accent)"
-                : "var(--text-metadata)",
-          whiteSpace: "nowrap",
-        }}
+        className={styles.marker}
+        data-undelivered={undelivered ? "true" : undefined}
+        role="img"
+        aria-label={
+          undelivered ? `Routed to ${name}, not delivered` : `Routed to ${name}`
+        }
       >
-        {text}
+        <ArrowRightIcon size={13} className={styles.arrow} />
+        <span className={styles.avatar} aria-hidden="true">
+          <Avatar
+            src={src}
+            alt=""
+            fallback={name}
+            size="tiny"
+            shape="squircle"
+          />
+          {undelivered && <span className={styles.warningDot} />}
+        </span>
       </span>
     );
   }
   ctx.conversation.registerMessageAction({
     id: "smart-routing",
     title: "Smart routing",
-    matches: (message) => !!label(entryOf(message.id)),
+    matches: (message) => isInspectable(entryOf(message.id)),
     component: ({ message, close }) => {
       const entry = useEntry(message.id);
       return (
@@ -832,7 +885,7 @@ export function timeouts(entries: readonly Entry[]) {
   };
 }
 
-/** The mark's tooltip and the dialog: every answer behind a decision. */
+/** The dialog: every answer behind a decision. */
 export function details(entry: Entry) {
   const lines = [
     `${entry.flow}: ${entry.status}${entry.reason ? ` (${entry.reason})` : ""}`,

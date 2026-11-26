@@ -290,18 +290,27 @@ function pictures() {
     /** A loaded video, showing a frame. */
     loaded: (video: HTMLVideoElement) => define(video, drawable),
     /** A video still to load, of `rate` frames a second, that presents the
-     * frame of a position only as `presents` allows. Returns how to load it,
-     * and the media time of the frame it shows. */
+     * frame of a position only as `presents` allows. One that `truncates`
+     * goes to the whole microsecond before where it is sent, as Chromium's
+     * does. One that is `late` ends a seek before the seek's event arrives,
+     * having played on if it plays, as a busy page's can. Returns how to
+     * load it, how to have it present the frame of its position, and the
+     * media time of the frame it shows. */
     loading(
       video: HTMLVideoElement,
       presents: (to: number, from: number) => boolean,
-      rate = 24,
+      { rate = 24, truncates = false, late = false } = {},
     ) {
+      const reached = (to: number) =>
+        truncates ? Math.trunc(to * 1e6) / 1e6 : to;
       let position = video.currentTime;
       let shows: number | undefined;
       /** Seeks under way: one is from the moment it is asked for, and its
-       * events arrive afterwards. */
+       * events arrive afterwards. Only the last one asked for ends. */
       let seeks = 0;
+      /** Whether its first frame is still to arrive, which it does as the
+       * seek to its start ends. */
+      let first = false;
       Object.defineProperty(video, "seeking", {
         configurable: true,
         get: () => seeks > 0,
@@ -314,21 +323,32 @@ function pictures() {
           callback(0, { mediaTime: shows } as VideoFrameCallbackMetadata);
       };
       const seek = (from: number) => {
-        video.dispatchEvent(new Event("seeking"));
-        if (presents(position, from)) present(position);
-        seeks -= 1;
-        video.dispatchEvent(new Event("seeked"));
+        seeks += 1;
+        queueMicrotask(() => {
+          if (late) {
+            seeks -= 1;
+            if (!video.paused) position += 0.02;
+          }
+          video.dispatchEvent(new Event("seeking"));
+          queueMicrotask(() => {
+            if (seeks === (late ? 0 : 1)) {
+              if (first) present(0);
+              first = false;
+              if (presents(position, from)) present(position);
+            }
+            if (!late) seeks -= 1;
+            if (!seeks) video.dispatchEvent(new Event("seeked"));
+          });
+        });
       };
       Object.defineProperty(video, "currentTime", {
         configurable: true,
         get: () => position,
         set(to: number) {
           const from = position;
-          position = to;
           // Until it loads, this only sets where it starts.
-          if (!video.readyState) return;
-          seeks += 1;
-          queueMicrotask(() => seek(from));
+          position = video.readyState ? reached(to) : to;
+          if (video.readyState) seek(from);
         },
       });
       video.addEventListener("play", () => present(position));
@@ -336,32 +356,35 @@ function pictures() {
         load: () =>
           settled(() => {
             define(video, drawable);
+            first = true;
             // To where it starts.
-            seeks += 1;
-            video.dispatchEvent(new Event("loadedmetadata"));
-            // Its first frame arrives as the seek to its start ends.
-            present(0);
+            position = reached(position);
             seek(0);
+            video.dispatchEvent(new Event("loadedmetadata"));
           }),
+        present: () => settled(() => present(position)),
         shows: () => shows,
       };
     },
   };
 }
 
-/** A reader opened over a brief paused at 0:42, its video still to load. */
+/** A reader opened over a brief paused at `at`, its video still to load. */
 async function pausedReader(
   presents: (to: number, from: number) => boolean,
-  rate?: number,
+  {
+    at = 42.02,
+    ...engine
+  }: { at?: number; rate?: number; truncates?: boolean } = {},
 ) {
   const frames = pictures();
   const brief = await player();
   frames.loaded(brief.video);
   await brief.press("Play video");
-  brief.video.currentTime = 42.02;
+  brief.video.currentTime = at;
   await brief.press("Pause video");
   const reader = await player({ reader: true });
-  const video = frames.loading(reader.video, presents, rate);
+  const video = frames.loading(reader.video, presents, engine);
   expect(reader.still()).toBe(true);
   await video.load();
   return { reader, video };
@@ -392,6 +415,48 @@ it("lifts a paused reader's still only once its video presents the handed frame"
   expect(reader.video.paused).toBe(true);
 });
 
+// Chromium: a video sent to a position goes to the whole microsecond before
+// it, and reports that. The hand-off's own seeks are still its own.
+it.each([
+  // The seek to its start goes elsewhere than it was sent, and its first
+  // frame is the last it has presented when that seek ends.
+  { at: 8.16232, reaches: 8.162319, frame: 8.125 },
+  // Sent aside, it goes elsewhere than it was sent.
+  { at: 42.200002, reaches: 42.200002, frame: 1012 / 24 },
+])(
+  "takes its own seeks of a video that truncates them for its own (from $at)",
+  async ({ at, reaches, frame }) => {
+    const { reader, video } = await pausedReader(
+      (to, from) => from !== 0 && to !== from,
+      { at, truncates: true },
+    );
+    await passes(3000, () => {
+      if (!reader.still()) expect(video.shows()).toBe(frame);
+    });
+    expect(reader.still()).toBe(false);
+    expect(reader.video.currentTime).toBe(reaches);
+  },
+);
+
+// A busy main thread, in Chromium and WebKit: a seek has ended by the time
+// its event arrives, and the video has played on from where it was sent.
+it("takes a playing reader's seek that ended before its event arrived for its own", async () => {
+  const frames = pictures();
+  const brief = await player();
+  frames.loaded(brief.video);
+  await brief.press("Play video");
+  brief.video.currentTime = 42.02;
+  const reader = await player({ reader: true });
+  const video = frames.loading(reader.video, () => false, { late: true });
+  await video.load();
+  // Its first frame, reported after the seek, is all it has presented.
+  expect(video.shows()).toBe(0);
+  expect(reader.still()).toBe(true);
+  await video.present();
+  expect(video.shows()).toBe(42);
+  expect(reader.still()).toBe(false);
+});
+
 it("keeps the still over a paused reader that presents no frame, until it plays", async () => {
   const { reader, video } = await pausedReader(() => false);
   await passes(5000);
@@ -411,7 +476,7 @@ it("keeps the still over a paused reader that presents no frame, until it plays"
 // A frame every four seconds, as a recording of a still screen has: the frame
 // at 0:42 began at 0:40, too long before for a frame of the position.
 it("lifts the still once the viewer seeks a paused reader, onto whatever frame is there", async () => {
-  const { reader, video } = await pausedReader(() => true, 0.25);
+  const { reader, video } = await pausedReader(() => true, { rate: 0.25 });
   await passes(2000);
   expect(video.shows()).toBe(40);
   expect(reader.still()).toBe(true);

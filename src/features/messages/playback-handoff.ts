@@ -112,6 +112,10 @@ const unpresentedMs = 250;
 const asideSeconds = 0.1;
 /** How many times, for one position. */
 const asideLimit = 3;
+/** How far from where a seek took it a video may report itself once the seek
+ * has ended: settled, and having played on since. */
+const settledSeconds = 0.00001;
+const playedOnSeconds = 1;
 
 /** Calls `shown` once `video` presents a frame of its position, having been
  * sent to `seconds`. Nothing else lifts a still: a seek that has ended and
@@ -147,9 +151,13 @@ function whenShown(
   /** The media time of the last frame presented since the video was last
    * sent anywhere. */
   let presented: number | undefined;
-  /** Where the hand-off last left the video. */
+  /** Where the hand-off last left the video, as the video reported it
+   * straight after. An engine may take a video near where it is sent rather
+   * than there, as Chromium does to the whole microsecond before, and it is
+   * that place the video reports while the seek is under way. */
   let rest = seconds;
-  /** Where the video is while it is sent aside, and where it goes back to. */
+  /** Where the video is while it is sent aside, as it reported it straight
+   * after, and where it goes back to. */
   let aside: { at: number; home: number } | undefined;
   let asides = 0;
   /** A frame from here or before is of where the video was sent aside. One
@@ -173,12 +181,14 @@ function whenShown(
     const { at, home: to } = aside;
     aside = undefined;
     presented = undefined;
-    // A seek made since, whose event is still to come, stands. Read while it
-    // is under way, when a video reports exactly where it was sent: one that
-    // has ended a seek may report a position rounded from it.
+    // A seek made since, whose event is still to come, stands. A video whose
+    // seek is under way reports where that seek takes it, which for the
+    // hand-off's own is what it reported straight after it was sent. One
+    // whose seek has ended may have played on from there, and Chromium's may
+    // settle a microsecond off it.
     if (video.seeking && video.currentTime !== at) return;
-    rest = to;
     video.currentTime = to;
+    rest = video.currentTime;
   };
   const sendAside = () => {
     timer = undefined;
@@ -193,10 +203,10 @@ function whenShown(
         : Math.max(0, at - asideSeconds);
     if (to === at) return;
     asides += 1;
-    if (to < at) floor = to;
-    aside = { at: to, home: at };
     presented = undefined;
     video.currentTime = to;
+    aside = { at: video.currentTime, home: at };
+    if (to < at) floor = aside.at;
   };
   /** Acts on the last frame presented, once the seek has ended. */
   const judge = () => {
@@ -217,10 +227,22 @@ function whenShown(
         ? setTimeout(sendAside, unpresentedMs)
         : undefined;
   }
-  /** A seek the hand-off did not make leaves the video where it went. */
+  /** A seek the hand-off did not make leaves the video where it went. One it
+   * made is going where the video reported straight after it.
+   *
+   * A seek can end before its event arrives, when the main thread is busy.
+   * The video is then where the seek left it: for the hand-off's own, within
+   * a microsecond of where it reported, or as far on as it has played. */
   const sought = () => {
     const at = video.currentTime;
-    if (at === (aside ? aside.at : rest)) return;
+    const off = at - (aside ? aside.at : rest);
+    if (!off) return;
+    if (
+      !video.seeking &&
+      off > -settledSeconds &&
+      off < (video.paused ? settledSeconds : playedOnSeconds)
+    )
+      return;
     aside = undefined;
     presented = undefined;
     rest = at;
@@ -231,7 +253,7 @@ function whenShown(
   /** A browser that reports no frames: its position moving on, by playing or
    * by a seek, is the one sign that it shows something newer. */
   const progressed = () => {
-    if (!reports && there() && video.currentTime !== seconds) finish();
+    if (!reports && there() && (moved || video.currentTime !== rest)) finish();
   };
   const listeners = [
     ["seeked", arrived],
@@ -268,6 +290,7 @@ function whenShown(
     /** The video has been sent to the position. */
     sent() {
       sent = true;
+      rest = video.currentTime;
       arrived();
     },
     stop,

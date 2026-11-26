@@ -32,7 +32,17 @@ export type Shortcuts = {
   register(shortcut: Shortcut): void;
   snapshot(): readonly RegisteredShortcut[];
   subscribe(listener: () => void): () => void;
+  /** Run one of Buzz's own shortcuts or actions by id, such as `new-dm`, if
+   * it can run now. True when it ran. The ids are in the authoring guide. */
+  runHost(id: string): boolean;
 };
+/** A Buzz action plugins can run by id, with no key of its own. */
+export type HostAction = Readonly<{
+  id: string;
+  title: string;
+  run: () => void | Promise<void>;
+  when?: () => boolean;
+}>;
 /** Device-local user rebinds, keyed by host id or namespaced contribution key. */
 export type BindingOverrides = {
   /** A stored override is a nonempty alias list; anything else means the default. */
@@ -67,7 +77,15 @@ function eligibleIn(
     return false;
   }
 }
-function runShortcut(shortcut: Shortcut) {
+function whenHolds(action: HostAction) {
+  try {
+    return !action.when || action.when();
+  } catch (error) {
+    console.error(`Shortcut predicate failed: ${action.id}`, error);
+    return false;
+  }
+}
+function runShortcut(shortcut: Pick<Shortcut, "id" | "run">) {
   try {
     void Promise.resolve(shortcut.run()).catch((error) =>
       console.error(`Shortcut failed: ${shortcut.id}`, error),
@@ -79,6 +97,7 @@ function runShortcut(shortcut: Shortcut) {
 export class ShortcutsService extends Service implements Shortcuts {
   private readonly contributions;
   private readonly hostBindings = new Map<string, HostShortcut>();
+  private readonly hostActions = new Map<string, HostAction>();
   private readonly hostListeners = new Set<() => void>();
   private hostReady: readonly HostShortcut[] = Object.freeze([]);
   constructor(
@@ -161,13 +180,13 @@ export class ShortcutsService extends Service implements Shortcuts {
     // back/forward: the chord's own eligibility, outside any editable.
     this.runHost = (id: string) => {
       const shortcut = this.hostBindings.get(id);
-      if (
-        !shortcut ||
-        shortcut.local ||
-        !eligibleIn(shortcut, false, modalOpen())
-      )
-        return false;
-      runShortcut(shortcut);
+      const action = shortcut ? undefined : this.hostActions.get(id);
+      const runnable = shortcut
+        ? !shortcut.local && eligibleIn(shortcut, false, modalOpen())
+        : !!action && whenHolds(action);
+      const entry = shortcut ?? action;
+      if (!entry || !runnable) return false;
+      runShortcut(entry);
       return true;
     };
     // Only xterm needs an early handoff: ordinary editors still handle keys first.
@@ -180,11 +199,11 @@ export class ShortcutsService extends Service implements Shortcuts {
         host?.removeEventListener("keydown", dispatch);
         host?.removeEventListener(TERMINAL_KEY_EVENT, terminalKey);
         this.hostBindings.clear();
+        this.hostActions.clear();
         this.publishHost();
       };
     });
   }
-  /** Host composition only: runs a host shortcut if it is eligible now. */
   readonly runHost: (id: string) => boolean;
   snapshot = () => this.contributions.snapshot();
   subscribe = (listener: () => void) => this.contributions.subscribe(listener);
@@ -206,6 +225,18 @@ export class ShortcutsService extends Service implements Shortcuts {
       if (this.hostBindings.get(entry.id) !== entry) return;
       this.hostBindings.delete(entry.id);
       this.publishHost();
+    };
+  }
+  /** Host composition only: an action `runHost` runs by id, with no binding,
+   * so Settings doesn't list it. */
+  registerHostAction(action: HostAction) {
+    if (this.hostBindings.has(action.id) || this.hostActions.has(action.id))
+      throw new Error(`Host shortcut already registered: ${action.id}`);
+    const entry = Object.freeze({ ...action });
+    this.hostActions.set(entry.id, entry);
+    return () => {
+      if (this.hostActions.get(entry.id) === entry)
+        this.hostActions.delete(entry.id);
     };
   }
   /** Host-only read path for Settings; plugins keep seeing only contributions. */

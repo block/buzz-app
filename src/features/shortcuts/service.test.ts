@@ -500,9 +500,32 @@ it("exposes host bindings to the host with change notifications", async () => {
   expect(service.hostSnapshot()).toEqual([]);
   expect(service.hostSnapshot()).not.toBe(registered);
   stop();
-  service.registerHost(shortcut());
+  const run = vi.fn();
+  service.registerHost(shortcut(run));
   expect(listener).toHaveBeenCalledTimes(2);
   expect(service.hostSnapshot()).toHaveLength(1);
+
+  // Plugins run host shortcuts and unbound host actions by id, if they can run now.
+  expect(service.runHost("action")).toBe(true);
+  expect(run).toHaveBeenCalledOnce();
+  let available = true;
+  const act = vi.fn();
+  const removeAction = service.registerHostAction({
+    id: "new-dm",
+    title: "New DM",
+    run: act,
+    when: () => available,
+  });
+  expect(service.hostSnapshot()).toHaveLength(1);
+  expect(service.runHost("new-dm")).toBe(true);
+  expect(act).toHaveBeenCalledOnce();
+  available = false;
+  expect(service.runHost("new-dm")).toBe(false);
+  expect(service.runHost("missing")).toBe(false);
+  removeAction();
+  available = true;
+  expect(service.runHost("new-dm")).toBe(false);
+  expect(act).toHaveBeenCalledOnce();
   await ctx.fiber.dispose();
   expect(service.hostSnapshot()).toEqual([]);
 });

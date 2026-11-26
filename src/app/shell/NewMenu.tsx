@@ -1,10 +1,11 @@
 import { createPortal } from "react-dom";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Agents } from "../../features/agents/service";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
 import type { Navigation } from "../../features/navigation/controller";
+import type { ShortcutsService } from "../../features/shortcuts/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -43,6 +44,9 @@ type Props = {
   triggerContainer?: HTMLElement | null;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Registers each item as a host action (`new-chat`, `new-channel`,
+   * `new-dm`, `new-workspace`) that plugins run by id. */
+  shortcuts?: Pick<ShortcutsService, "registerHostAction"> | undefined;
 };
 
 const actions = {
@@ -73,6 +77,7 @@ function ReadyNewMenu({
   triggerContainer,
   open,
   onOpenChange,
+  shortcuts,
 }: Props & { session: RelaySession; available: boolean }) {
   const preferences = useSidebarPreferences(session.sidebarPreferences);
   const scope = splitPartition(session.scope);
@@ -114,6 +119,35 @@ function ReadyNewMenu({
     }
     void navigator.open(destination);
   };
+  const startWorkspace = () => {
+    if (!current()) return;
+    finalFocus.current = caret.current;
+    setCreatingWorkspace(true);
+  };
+  const latest = useRef({ run, disabled, startWorkspace, preferences });
+  latest.current = { run, disabled, startWorkspace, preferences };
+  useEffect(() => {
+    if (!shortcuts) return;
+    const removes = [
+      ...(["chat", "channel", "dm"] as const).map((kind) =>
+        shortcuts.registerHostAction({
+          id: `new-${kind}`,
+          title: actions[kind].label,
+          run: () => latest.current.run(kind),
+          when: () => !latest.current.disabled(kind),
+        }),
+      ),
+      shortcuts.registerHostAction({
+        id: "new-workspace",
+        title: "New workspace",
+        run: () => latest.current.startWorkspace(),
+        when: () => !!latest.current.preferences.sectionCreationWritable,
+      }),
+    ];
+    return () => {
+      for (const remove of removes) remove();
+    };
+  }, [shortcuts]);
   const controls = (
     <MenuTrigger
       render={
@@ -168,11 +202,7 @@ function ReadyNewMenu({
           <MenuSeparator />
           <MenuItem
             disabled={!preferences.sectionCreationWritable}
-            onClick={() => {
-              if (!current()) return;
-              finalFocus.current = caret.current;
-              setCreatingWorkspace(true);
-            }}
+            onClick={startWorkspace}
           >
             <MenuIcon>
               <FolderSimpleIcon size={16} />

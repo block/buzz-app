@@ -1005,7 +1005,9 @@ it("opens a list's menu from the keyboard and keeps its focus in the list", asyn
           overflowItems={<MenuItem>Edit a</MenuItem>}
         >
           <div data-message-id="a">
-            <button type="button">Open a</button>
+            <div data-layout="timeline" tabIndex={-1} data-testid="message a">
+              <button type="button">Open a</button>
+            </div>
           </div>
         </MessageActionBar>
       </div>
@@ -1026,4 +1028,16 @@ it("opens a list's menu from the keyboard and keeps its focus in the list", asyn
   expect(focused).toHaveBeenLastCalledWith("menu", "a");
   fireEvent.keyDown(menu, { key: "Escape" });
   await waitFor(() => expect(document.activeElement).toBe(control));
+
+  // A selected message gets focus back itself, not its first control.
+  const message = screen.getByTestId("message a");
+  message.focus();
+  fireEvent.keyDown(message, { key: "F10", shiftKey: true });
+  const again = await screen.findByRole("menu");
+  await waitFor(() =>
+    expect(again.contains(document.activeElement)).toBe(true),
+  );
+  fireEvent.keyDown(again, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(message));
 });

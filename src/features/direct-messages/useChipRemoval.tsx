@@ -25,7 +25,7 @@ export function useChipRemoval() {
         },
       ]);
       try {
-        const sound = new Audio("/recipient-removal/plop.m4a");
+        const sound = new Audio("/recipient-removal/plop.mp3");
         sound.volume = 0.34;
         void sound.play().catch(() => {});
       } catch {

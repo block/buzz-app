@@ -6,7 +6,9 @@ import { UnattestedProfile } from "../relay/identity-archives";
 import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { archiveRelay, keypair, signed, type Key } from "../relay/testing";
+import { tablesChannel } from "../tables/channel";
 import {
+  deleteAgentTables,
   type OwnerConsent,
   publishAgentRecord,
   removeAgentFromChannels,
@@ -454,4 +456,92 @@ it("keeps the settings and tags of the record it replaces", async () => {
       ["a", "30175:owner:p1"],
     ],
   });
+});
+
+/** The agent's tables channel as the agent reads it: present while the
+ * relay fixture still has it, private or not, with these roles. */
+async function tables(
+  roles: Record<string, string>,
+  isPrivate = true,
+  rosterReadable = true,
+) {
+  const h = await tablesChannel(agent.pubkey);
+  const { fixture, instance } = setup(viewer, { [h]: Object.keys(roles) });
+  const read = async (filters: readonly Readonly<Record<string, unknown>>[]) =>
+    filters.flatMap((filter) => {
+      if (!(h in fixture.channels)) return [];
+      const kind = (filter.kinds as number[])[0] ?? 0;
+      if (kind === 39002 && !rosterReadable) return [];
+      return [
+        signed(relay, {
+          kind,
+          content: "",
+          tags:
+            kind === 39000
+              ? [["d", h], ...(isPrivate ? [["private"]] : [])]
+              : [
+                  ["d", h],
+                  ...Object.entries(roles).map(([key, role]) => [
+                    "p",
+                    key,
+                    "",
+                    role,
+                  ]),
+                ],
+        }),
+      ];
+    });
+  const retire = () =>
+    deleteAgentTables(
+      instance.session,
+      read,
+      agent.pubkey,
+      new AbortController().signal,
+    );
+  return { fixture, h, retire };
+}
+
+it("deletes the tables channel only the retiring agent owns, as its owner", async () => {
+  const { fixture, h, retire } = await tables({ [agent.pubkey]: "owner" });
+  expect(await retire()).toBe("deleted");
+  expect(fixture.published).toEqual([
+    expect.objectContaining({ kind: 9008, pubkey: viewer.pubkey }),
+  ]);
+  expect(fixture.published[0]?.tags).toContainEqual(["h", h]);
+  expect(h in fixture.channels).toBe(false);
+  expect(await retire()).toBe("none");
+});
+
+it("keeps a tables channel that is shared or is not the agent's", async () => {
+  for (const [roles, isPrivate] of [
+    [{ [agent.pubkey]: "owner", [stranger.pubkey]: "owner" }, true],
+    [{ [stranger.pubkey]: "owner", [agent.pubkey]: "member" }, true],
+    [{ [agent.pubkey]: "owner" }, false],
+  ] as const) {
+    const { fixture, retire } = await tables(roles, isPrivate);
+    expect(await retire()).toBe("kept");
+    expect(fixture.published).toEqual([]);
+  }
+});
+
+it("a refused deletion keeps the tables and a retry deletes them", async () => {
+  const { fixture, h, retire } = await tables({ [agent.pubkey]: "owner" });
+  fixture.removal.fail = new PublishRejected("restricted: not authorized");
+  fixture.removal.failKind = 9008;
+  await expect(retire()).rejects.toThrow();
+  expect(h in fixture.channels).toBe(true);
+  delete fixture.removal.fail;
+  expect(await retire()).toBe("deleted");
+  expect(h in fixture.channels).toBe(false);
+});
+
+it("leaves the tables and fails Delete when it cannot read who owns them", async () => {
+  const { fixture, h, retire } = await tables(
+    { [agent.pubkey]: "owner" },
+    true,
+    false,
+  );
+  await expect(retire()).rejects.toThrow("could not be read");
+  expect(fixture.published).toEqual([]);
+  expect(h in fixture.channels).toBe(true);
 });

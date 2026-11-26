@@ -264,7 +264,7 @@ export const flush = () =>
 /** Fixture relay for NIP-IA requests: applies accepted 9035/9036 events to its
  * relay-signed 13535 snapshot. `hold`/`fail`/`apply` script the publish outcome.
  * `channels` maps channel IDs to relay-signed 39002 members; `removal` scripts
- * accepted 9001 removals the same way. */
+ * accepted 9001 removals the same way, and a 9008 deletes its channel. */
 export function archiveRelay(
   viewer: Key,
   relay: Key,
@@ -357,7 +357,7 @@ export function archiveRelay(
         return [];
       }),
     writer: {
-      kinds: [9001, 5, 30177],
+      kinds: [9001, 5, 9008, 30177],
       async sign(template) {
         return finalizeEvent({ ...template }, viewer.secret);
       },
@@ -377,6 +377,11 @@ export function archiveRelay(
         }
         const tag = (name: string) =>
           event.tags.find(([key]) => key === name)?.[1] ?? "";
+        if (event.kind === 9008) {
+          delete channels[tag("h")];
+          time += 1;
+          return;
+        }
         if (archivedChannels.has(tag("h"))) {
           published.pop();
           throw new PublishRejected("invalid: channel is archived");

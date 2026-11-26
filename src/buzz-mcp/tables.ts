@@ -1,4 +1,3 @@
-import { bytesToHex } from "nostr-tools/utils";
 import type { Database } from "sql.js";
 import {
   newTableKey,
@@ -7,6 +6,12 @@ import {
   TABLE_FILE,
   TABLE_KEY,
 } from "../features/tables/file";
+import {
+  channelProblem,
+  channelState,
+  digestId,
+  tablesChannel,
+} from "../features/tables/channel";
 import { sqlite } from "../features/tables/sqlite";
 import type { BuzzClient, BuzzEvent, RelayInfo } from "./client";
 
@@ -82,7 +87,7 @@ export const TABLE_HANDLERS: Readonly<
     // The same request always names the same table, so a retry resumes an
     // interrupted creation, and the relay accepts only one creation of it
     // however many attempts overlap.
-    const d = await uuid(`buzz.table:file:${me}:${request}`);
+    const d = await digestId(`buzz.table:file:${me}:${request}`);
     const [head] = await client.query([{ artifact: "head", "#d": [d] }]);
     if (head) return alreadyCreated(client, head, h, me);
 
@@ -125,7 +130,7 @@ export const TABLE_HANDLERS: Readonly<
   async table_list(client) {
     const me = client.pubkey;
     const h = await tablesChannel(me);
-    const state = await channelState(client, h);
+    const state = await channelState((filters) => client.query(filters), h);
     if (!state.exists) return "[]";
     const problem = channelProblem(state, me);
     if (problem)
@@ -272,7 +277,10 @@ export async function openTableFor(client: BuzzClient, d: string) {
     file.pubkey !== me ||
     tag(file, "type") !== TABLE_FILE ||
     tag(file, "h") !== h ||
-    channelProblem(await channelState(client, h), me)
+    channelProblem(
+      await channelState((filters) => client.query(filters), h),
+      me,
+    )
   )
     throw new Error(`You have no table ${d}.`);
   for (const grant of await grantsFor(client, h, d, me)) {
@@ -421,7 +429,10 @@ async function alreadyCreated(
   if (
     tag(head, "type") !== TABLE_FILE ||
     tag(head, "h") !== h ||
-    channelProblem(await channelState(client, h), me)
+    channelProblem(
+      await channelState((filters) => client.query(filters), h),
+      me,
+    )
   )
     throw new Error(
       `Table ${d} exists but is not your private table. Use a different request.`,
@@ -432,7 +443,7 @@ async function alreadyCreated(
 /** Creates this agent's tables channel if it does not exist yet, then
  * checks it is private with this agent as its only member. */
 async function ensureChannel(client: BuzzClient, h: string, me: string) {
-  if (!(await channelState(client, h)).exists)
+  if (!(await channelState((filters) => client.query(filters), h)).exists)
     // Another session may be creating it too; the check below decides.
     await client
       .publish({
@@ -450,25 +461,15 @@ async function ensureChannel(client: BuzzClient, h: string, me: string) {
   let problem: string | undefined;
   for (let attempt = 0; attempt < 10; attempt++) {
     if (attempt) await new Promise((resolve) => setTimeout(resolve, 300));
-    problem = channelProblem(await channelState(client, h), me);
+    problem = channelProblem(
+      await channelState((filters) => client.query(filters), h),
+      me,
+    );
     if (!problem) return;
   }
   throw new Error(
     `Your tables channel ${h} is not private to you (${problem}). No table data was published.`,
   );
-}
-
-/** This agent's tables channel: a UUID-shaped digest of its key, so every
- * session finds the same one. */
-const tablesChannel = (me: string) => uuid(`buzz.tables:channel:${me}`);
-
-async function uuid(seed: string) {
-  const hex = bytesToHex(
-    new Uint8Array(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed)),
-    ),
-  );
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${((Number.parseInt(hex[16] ?? "0", 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 /** Refuses an event the relay would reject as too large, before anything
@@ -561,37 +562,6 @@ async function savedFor(
     (event) =>
       event.pubkey === client.pubkey && tag(event, "request") === request,
   );
-}
-
-async function channelState(client: BuzzClient, h: string) {
-  const [meta, roster] = await Promise.all([
-    client.query([{ kinds: [39000], "#d": [h] }]),
-    client.query([{ kinds: [39002], "#d": [h] }]),
-  ]);
-  const newest = (events: readonly BuzzEvent[]) =>
-    [...events].sort((a, b) => b.created_at - a.created_at)[0];
-  const info = newest(meta);
-  return {
-    exists: !!info,
-    private: !!info?.tags.some(([k]) => k === "private"),
-    members: (newest(roster)?.tags ?? [])
-      .filter((t) => t[0] === "p" && t[1])
-      .map((t) => `${t[1]}:${t[3] || "member"}`)
-      .sort(),
-  };
-}
-
-/** Why the channel is not private with this agent as its only member and
- * owner, or `undefined` when it is. */
-function channelProblem(
-  state: Awaited<ReturnType<typeof channelState>>,
-  me: string,
-) {
-  return state.private &&
-    state.members.length === 1 &&
-    state.members[0] === `${me}:owner`
-    ? undefined
-    : `private: ${state.private}; members: ${state.members.join(", ") || "unknown"}`;
 }
 
 const text = (value: unknown) =>

@@ -197,6 +197,7 @@ import {
   removeAgentFromChannels,
   removeRelayAgent,
   archiveAgent,
+  deleteAgentTables,
   type OwnerConsent,
 } from "./relay-removal";
 import { UnattestedProfile } from "../relay/identity-archives";
@@ -7776,6 +7777,14 @@ export class AgentsService extends Service implements Agents {
           binding.controller.signal,
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
+        // While its key is here to read the channel as the agent does.
+        if (deleting)
+          await deleteAgentTables(
+            binding.session,
+            (filters) => native.query(member, filters),
+            pubkey,
+            signal,
+          );
         // Only an owner proves ownership with a proof issued now; its key,
         // still here, force-republishes its own profile naming that owner.
         await leaveCommunity(

@@ -16,7 +16,7 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 
 - `--scenario`: a case name, or a group that runs every case starting with it
   (`channel-open`, `scroll-paging`, `thread`, `thread-scroll`,
-  `background-traffic`). Default `all`.
+  `thread-paging`, `background-traffic`). Default `all`.
 - `--repeat`: samples per case, default 5. Each sample starts from fresh
   storage and server state.
 - `--cpu`: Chromium's CPU slowdown factor (1 is unthrottled). It doesn't
@@ -45,6 +45,9 @@ errors before trusting a number.
 | `thread-open-rich`, `-close-rich`, `-reopen-rich` | A 120-reply thread with media, tables and code |
 | `thread-unread-open-60`, `-200` | Opening a thread whose 60 or 200 replies are all unread |
 | `thread-scroll-open`, `-fling`, `-reverse` | The [long-thread workload](#thread-scrolling) |
+| `thread-paging-fast` | Scrolling from newest to oldest in a read 460-reply thread while older pages arrive after 100ms |
+| `thread-paging-delayed` | The same with 500ms page delays |
+| `thread-paging-mid-read` | Reading mid-thread after preloading ~310 of 460 replies, well below the top |
 | `background-traffic` | Reading one channel while 30 others get a message every 200ms for 30 seconds |
 | `background-traffic-large-sidebar` | The same, with 128 DMs and 1,001 participants |
 
@@ -60,7 +63,8 @@ never arrive) fails instead of reporting a fast time.
 | `scriptMs`, `layoutMs`, `styleMs`, `taskMs` | Chromium's JavaScript, layout, style and main-thread task time |
 | `loafBlockingMs` | Long-animation-frame blocking time, from every frame that overlaps the action |
 | `rafP95GapMs`, `rafMaxGapMs`, `rafGapsOver33`, `rafGapsOver50` | Animation-frame spacing during a scroll gesture |
-| `edgeWaitMs` | Paging time spent held at the top edge, waiting for older history |
+| `edgeWaitMs`, `edgeHits`, `maxEdgeSpanMs` | Paging time held at the top edge waiting for older history, distinct top-edge hits, and the longest wait |
+| `olderReadsDuring`, `unwantedOlderReads`, `extraRowsLoaded` | Older pages requested while paging or reading mid-thread, and extra rows mounted by mid-thread reads |
 | `domGapFrames` | Thread scroll frames with no loaded reply in view |
 | `idleTaskMsPerSec`, `trafficTaskMsPerSec`, `taskMsPerMessage` (and script, style and layout per message) | Background traffic cost |
 | `heapGrowthKBPerMessage`, `nodesDelta`, `listenersDelta` | Background traffic growth, measured after a forced GC |

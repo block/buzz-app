@@ -145,7 +145,7 @@ import {
 } from "./thread-follows";
 import { createMessages, replyInvocationIntents } from "./messages";
 import { createOwnerMentionStore } from "./owner-mentions";
-import { retryRead } from "./read-retry";
+import { isRetryableRead, retryRead } from "./read-retry";
 import { messageAuthor } from "./fold";
 import { createThreadView, resumeAfter, type ThreadResume } from "./threads";
 import { ByteLru } from "./budget";
@@ -176,6 +176,9 @@ export type EventViewSnapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
   events: readonly VisibleEvent[];
   error?: string | undefined;
+  /** The failure is a connectivity failure (`isRetryableRead`). `error` is
+   * only a string, so the kind travels beside it. */
+  transient?: boolean | undefined;
 }>;
 
 /** The live recovery tick re-reads the full channel list at most this often.
@@ -1319,6 +1322,9 @@ export function createRelaySession(
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
     activityStatus: channelActivity.status(),
+    ...(channelActivity.transient()
+      ? { activityTransient: true as const }
+      : {}),
   });
   let channelActivityRevision = channelActivity.revision();
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
@@ -1367,6 +1373,9 @@ export function createRelaySession(
       activityChannelList = Object.freeze({
         ...snapshot,
         activityStatus: channelActivity.status(),
+        ...(channelActivity.transient()
+          ? { activityTransient: true as const }
+          : {}),
         channels: projected.every(
           (channel, index) => channel === snapshot.channels[index],
         )
@@ -2803,12 +2812,29 @@ export function createRelaySession(
             for (const thread of threads) thread.retry(timed);
           },
         ),
-        // Visibility owns its quiet retries and exhausts without `transient`,
-        // so this source only reports `busy`; its retry is not reached.
+        // Visibility retries quietly first, then exhausts with `transient`
+        // for a connectivity failure; this source then owns the retries.
         recoverable(
           lifecycle.capability.subscribe,
           () => loadState(lifecycle.capability.snapshot()),
           () => void lifecycle.capability.refreshVisibility(),
+        ),
+        // Recent ordering and the active filter read channel activity. A
+        // connectivity failure retries here instead of waiting for the next
+        // roster change.
+        recoverable(
+          channelActivity.subscribe,
+          () =>
+            loadState({
+              status: channelActivity.status(),
+              ...(channelActivity.transient()
+                ? { transient: true as const }
+                : {}),
+            }),
+          () => {
+            activityRosterKey = undefined;
+            refreshChannelActivity();
+          },
         ),
       ])
     : undefined;
@@ -3579,7 +3605,8 @@ export function createRelaySession(
         if (
           next.events === snapshot.events &&
           next.status === snapshot.status &&
-          next.error === snapshot.error
+          next.error === snapshot.error &&
+          next.transient === snapshot.transient
         )
           return;
         snapshot = Object.freeze(next);
@@ -3615,7 +3642,7 @@ export function createRelaySession(
         controller = undefined;
         const visible = visibility(remote);
         remote = clear ? [] : remote.filter(visible);
-        update({ status: "idle", error: undefined });
+        update({ status: "idle", error: undefined, transient: undefined });
       });
       const view = {
         snapshot: () => snapshot,
@@ -3629,7 +3656,7 @@ export function createRelaySession(
           if (disposed || closed || controller) return;
           const owned = new AbortController();
           controller = owned;
-          update({ status: "loading", error: undefined });
+          update({ status: "loading", error: undefined, transient: undefined });
           try {
             const events = await finiteRead(
               filters,
@@ -3641,7 +3668,11 @@ export function createRelaySession(
             update({ status: "ready" });
           } catch (error) {
             if (!disposed && !owned.signal.aborted)
-              update({ status: "error", error: String(error) });
+              update({
+                status: "error",
+                error: String(error),
+                transient: isRetryableRead(error),
+              });
           } finally {
             if (controller === owned) controller = undefined;
           }

@@ -128,7 +128,7 @@ export function WorkspaceControl({
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>
-          {snapshot.status === "error" && (
+          {snapshot.status === "error" && !snapshot.transient && (
             <MenuItem onClick={() => void session.sidebarPreferences.refresh()}>
               Retry workspaces
             </MenuItem>

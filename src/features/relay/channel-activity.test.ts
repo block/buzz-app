@@ -3,6 +3,7 @@ import {
   createChannelActivity,
   CHANNEL_ACTIVITY_KINDS,
 } from "./channel-activity";
+import { httpReadError } from "./errors";
 import { flush, keypair, message, signed } from "./testing";
 
 const forumActivity = (
@@ -245,8 +246,40 @@ it("publishes settled readiness even for empty activity and failure without chan
   take(wire.pending).reject(new Error("offline"));
   await rejected;
   expect(activity.status()).toBe("error");
+  expect(activity.transient()).toBe(false);
   activity.clear();
   expect(activity.status()).toBe("idle");
+  activity.dispose();
+});
+
+it("flags a connectivity failure as transient so session recovery owns the retry", async () => {
+  const wire = deferredReader();
+  const activity = createChannelActivity(wire.read);
+  const failure = activity.refresh(["quiet"]);
+  const rejected = expect(failure).rejects.toThrow("Load failed");
+  take(wire.pending).reject(new TypeError("Load failed"));
+  await rejected;
+  expect(activity.status()).toBe("error");
+  expect(activity.transient()).toBe(true);
+  const again = activity.refresh(["quiet"]);
+  take(wire.pending).resolve([]);
+  await again;
+  expect(activity.transient()).toBe(false);
+  // The relay answering is not an outage: only a status that clears by itself
+  // (408, 429, 5xx) is recovery's to retry. A 404 keeps its own warning.
+  for (const [status, expected] of [
+    [503, true],
+    [429, true],
+    [404, false],
+    [422, false],
+  ] as const) {
+    const refused = activity.refresh(["quiet"]);
+    const settled = expect(refused).rejects.toThrow(`(${status})`);
+    take(wire.pending).reject(httpReadError(status));
+    await settled;
+    expect(activity.status()).toBe("error");
+    expect(activity.transient()).toBe(expected);
+  }
   activity.dispose();
 });
 

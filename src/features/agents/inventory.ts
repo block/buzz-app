@@ -1,6 +1,6 @@
 import type { AgentLibrary, AgentLibraryReader } from "./library";
 import { definitionSlug } from "./relay-library";
-import { retryRead } from "../relay/read-retry";
+import { isRetryableRead, retryRead } from "../relay/read-retry";
 
 /** Preserve local names/artwork; add relay-only keys. Names never join identities. */
 export function combineInventory(
@@ -78,19 +78,32 @@ export function inventoryReader(
       if (result.status === "rejected")
         console.warn(`${source} read failed`, result.reason);
     if (remote.status === "rejected" && (!local || saved.status === "rejected"))
-      throw new Error("Agent inventory sources unavailable");
+      // The cause tells a connectivity failure (recovery retries) from a bad one.
+      throw new Error("Agent inventory sources unavailable", {
+        cause:
+          saved.status === "rejected" && !isRetryableRead(saved.reason)
+            ? saved.reason
+            : remote.reason,
+      });
     const error =
       saved.status === "rejected"
         ? "Local library unavailable; showing relay inventory. Refresh agents to include local identities."
         : remote.status === "rejected"
           ? "Relay inventory unavailable; showing local library. Refresh agents to discover other identities."
           : undefined;
+    // The relay's own failure, when it is the only one: a connectivity failure
+    // recovery can retry. A local failure is not.
+    const transient =
+      remote.status === "rejected" &&
+      saved.status === "fulfilled" &&
+      isRetryableRead(remote.reason);
     return {
       ...combineInventory(
         saved.status === "fulfilled" ? saved.value : empty,
         remote.status === "fulfilled" ? remote.value : empty,
       ),
       ...(error ? { error } : {}),
+      ...(transient ? { transient: true as const } : {}),
     };
   };
 }

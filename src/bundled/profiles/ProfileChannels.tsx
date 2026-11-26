@@ -1,5 +1,7 @@
 import type { Navigation } from "../../features/navigation/controller";
 import { useChannelList } from "../../features/relay/react";
+import { rosterRecovering } from "../../features/relay/live-recovery";
+import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -21,6 +23,10 @@ export function ProfileChannels({
   navigation: Navigation | undefined;
 }) {
   const list = useChannelList(session.channels);
+  // Recovery retries a failed channel list itself; its notice is the report.
+  const recovers = useRecoveryOwns(session, (live) =>
+    rosterRecovering(live.roster),
+  );
   const channels = (
     list.status === "ready" || list.status === "error" ? list.channels : []
   ).filter(
@@ -45,7 +51,9 @@ export function ProfileChannels({
   return (
     <section aria-label="Channels" className="flex flex-col gap-2">
       <div className={styles.channelList}>
-        {(list.status === "idle" || list.status === "loading") && (
+        {(list.status === "idle" ||
+          list.status === "loading" ||
+          (list.status === "error" && recovers && !channels.length)) && (
           <p className={styles.channelNote} role="status">
             Loading channels…
           </p>
@@ -55,7 +63,7 @@ export function ProfileChannels({
             Channel membership is unavailable.
           </p>
         )}
-        {list.status === "error" && (
+        {list.status === "error" && !recovers && (
           <div className={styles.channelNote}>
             <p role="alert">Could not finish loading channels.</p>
             <Button

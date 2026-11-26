@@ -1,3 +1,4 @@
+import { isTransientFailure, ReadError, transientStatus } from "./errors";
 import type { RelayEvent } from "./events";
 
 export const CHANNEL_ACTIVITY_KINDS = [9, 40002, 40008, 45001, 45003] as const;
@@ -25,6 +26,8 @@ export function createChannelActivity(
   let status: "idle" | "loading" | "ready" | "error" | "unavailable" = read
     ? "idle"
     : "unavailable";
+  // True while `status` is "error" for a failure a retry can fix.
+  let transient = false;
   let active: AbortController | undefined;
   const listeners = new Set<() => void>();
   const publish = () => {
@@ -46,6 +49,7 @@ export function createChannelActivity(
   };
   return {
     status: () => status,
+    transient: () => status === "error" && transient,
     last: (channelId: string) => values.get(channelId) ?? undefined,
     known: (channelId: string) => values.has(channelId),
     revision: () => revision,
@@ -108,6 +112,12 @@ export function createChannelActivity(
         // Batches that landed before the failure still apply.
         values = merge(ids.slice(0, offset));
         status = "error";
+        // The relay's own refusal (400, 404, 422) is "unavailable" too, but the
+        // same read fails the same way, so recovery must not retry it forever.
+        transient =
+          error instanceof ReadError && error.status !== undefined
+            ? transientStatus(error.status)
+            : isTransientFailure(error);
         publish();
         throw error;
       } finally {

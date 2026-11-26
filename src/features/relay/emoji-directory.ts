@@ -58,7 +58,14 @@ export function createEmojiDirectory(
     mine: Object.freeze([]),
   });
   function publish(patch: Partial<EmojiSnapshot> = {}) {
-    snapshot = Object.freeze({ ...snapshot, ...patch });
+    // `transient` describes `error`: it never outlives a change of it.
+    snapshot = Object.freeze({
+      ...snapshot,
+      ...("error" in patch && !("transient" in patch)
+        ? { transient: undefined }
+        : {}),
+      ...patch,
+    });
     for (const listener of listeners) notify(listener);
   }
   function accept(incoming: readonly RelayEvent[]) {
@@ -150,7 +157,8 @@ export function createEmojiDirectory(
         if (!closed && !owned.signal.aborted)
           publish({
             status: snapshot.status === "ready" ? "ready" : "error",
-            error: String(error),
+            // The message alone: "ReadError: …" is the class name, not text.
+            error: error instanceof Error ? error.message : String(error),
             transient: isTransientFailure(error) || undefined,
           });
       } finally {

@@ -8,7 +8,10 @@ import {
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayRecovery } from "../../features/relay/recovery";
-import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
+import {
+  useReauthorizedRetry,
+  useRecoverableRead,
+} from "../../features/relay/RecoveryNotice";
 import type {
   ChannelAccess,
   ChannelDetails,
@@ -148,6 +151,8 @@ function ChannelGeneralAccessEditor({
   const [loading, setLoading] = useState(!summary);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // The raw failure of the access read (not of a save), beside its message.
+  const [loadFailure, setLoadFailure] = useState<unknown>();
   const [status, setStatus] = useState("");
   const lifetime = useRef<AbortController | undefined>(undefined);
   const busy = useRef(false);
@@ -163,6 +168,7 @@ function ChannelGeneralAccessEditor({
       const failed = reauthorized.begin();
       setLoading(true);
       setError("");
+      setLoadFailure(undefined);
       try {
         const details = await capability.load(channelId, signal);
         if (!signal.aborted) {
@@ -173,6 +179,7 @@ function ChannelGeneralAccessEditor({
         if (!signal.aborted) {
           setBase(undefined);
           setError(reason instanceof Error ? reason.message : String(reason));
+          setLoadFailure(reason);
           failed(reason);
         }
       } finally {
@@ -201,6 +208,25 @@ function ChannelGeneralAccessEditor({
     const signal = lifetime.current?.signal;
     if (!known && signal && !signal.aborted) void load(signal);
   }, [known, load]);
+  // A connectivity failure of the access read joins session recovery, which
+  // reads it again and fills the row in; its notice is the one report, so the
+  // row shows neither the error nor Reload access.
+  const accessRead = useRecoverableRead(
+    recovery,
+    {
+      status: loading
+        ? "loading"
+        : loadFailure === undefined
+          ? "ready"
+          : "error",
+      error: loadFailure,
+    },
+    () => {
+      const signal = lifetime.current?.signal;
+      if (signal && !signal.aborted) void load(signal);
+    },
+  );
+  const quiet = accessRead.quiet;
   const shown = summary ?? base;
   const locked = loading || pending || !!attempt || !shown?.canEdit;
   const solo = soloLabels(shown?.labels);
@@ -328,7 +354,7 @@ function ChannelGeneralAccessEditor({
                     ? "New people can only view."
                     : access === "private"
                       ? "Existing members keep their access."
-                      : loading
+                      : loading || quiet
                         ? "Checking current access…"
                         : "Current access could not be confirmed."}
               </p>
@@ -344,7 +370,9 @@ function ChannelGeneralAccessEditor({
               valueLabel={
                 restrictPublic && access === "public" ? "Public" : undefined
               }
-              placeholder={loading ? "Loading access…" : "Access unavailable"}
+              placeholder={
+                loading || quiet ? "Loading access…" : "Access unavailable"
+              }
               disabled={locked}
               groups={[
                 {
@@ -439,12 +467,12 @@ function ChannelGeneralAccessEditor({
           {status}
         </p>
       </section>
-      {(error || attempt?.status === "unconfirmed") && (
+      {((error && !quiet) || attempt?.status === "unconfirmed") && (
         <fieldset
           aria-label="General access recovery"
           className={styles.accessFeedback}
         >
-          {error && (
+          {error && !quiet && (
             <p role="alert" className="text-body-sm text-danger">
               {error}
             </p>
@@ -463,7 +491,8 @@ function ChannelGeneralAccessEditor({
               </Button>
             </>
           ) : (
-            error && (
+            error &&
+            !quiet && (
               <Button
                 disabled={loading || pending}
                 onClick={() => {

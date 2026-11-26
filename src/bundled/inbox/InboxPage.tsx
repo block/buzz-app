@@ -69,6 +69,7 @@ import {
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import styles from "./Inbox.module.css";
 import listRowStyles from "../../features/messages/MessageListRow.module.css";
+import { useInboxRecovery } from "./useInboxRecovery";
 import {
   readView,
   subscribeView,
@@ -234,7 +235,9 @@ export function InboxPage({
             />
             <div className={styles.notice} role="status">
               <p className="text-body text-subtle">
-                {connection.status === "connecting"
+                {/* A connection retrying by itself is still connecting; the
+                    app's one notice reports it, with no raw error here. */}
+                {connection.status === "connecting" || connection.retrying
                   ? "Connecting to your activity…"
                   : connection.denied
                     ? // Its notice, on every page, offers what fixes it.
@@ -242,9 +245,11 @@ export function InboxPage({
                     : (connection.error ??
                       "Choose a community to see your activity.")}
               </p>
-              {connection.status === "error" && !connection.denied && (
-                <Button onClick={relay.tryAgain}>Retry connection</Button>
-              )}
+              {connection.status === "error" &&
+                !connection.denied &&
+                !connection.retrying && (
+                  <Button onClick={relay.tryAgain}>Retry connection</Button>
+                )}
             </div>
           </div>
         )}
@@ -327,6 +332,12 @@ function InboxList({
     session.unread.sync,
     session.unread.sync,
   );
+  const recovered = useInboxRecovery(session, {
+    list,
+    inbox,
+    feed,
+    reactions: reactionFeed,
+  });
   const viewScope = session.scope;
   const [filters, setFilters] = useState(() => readFilters(viewScope));
   const { activity, sender: senderFilter } = filters;
@@ -976,13 +987,15 @@ function InboxList({
     list.status === "idle" ||
     list.status === "loading" ||
     inbox.status === "loading" ||
-    feed.status === "loading";
+    feed.status === "loading" ||
+    // A connectivity failure recovery is retrying is not an empty or retained list.
+    recovered.held;
   const failure =
-    reactionFeed.error ??
+    recovered.reactions ??
     error ??
-    list.error ??
-    inbox.error ??
-    feed.error ??
+    recovered.list ??
+    recovered.inbox ??
+    recovered.feed ??
     sync.error;
   useLayoutEffect(() => {
     if (!retryFocus.current) return;
@@ -1058,24 +1071,27 @@ function InboxList({
               });
             }}
           >
-            {inbox.freshness === "stale" && !failure && (
-              <div className={styles.notice} role="status">
-                <span className="text-body text-subtle">
-                  Showing retained activity.
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  loading={pending}
-                  onClick={() => refresh()}
-                >
-                  Refresh
-                </Button>
-              </div>
-            )}
+            {inbox.freshness === "stale" &&
+              !failure &&
+              !recovered.recovering && (
+                <div className={styles.notice} role="status">
+                  <span className="text-body text-subtle">
+                    Showing retained activity.
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    loading={pending}
+                    onClick={() => refresh()}
+                  >
+                    Refresh
+                  </Button>
+                </div>
+              )}
             {(inbox.status === "idle" || feed.status === "idle") &&
               !loading &&
-              !failure && (
+              !failure &&
+              !recovered.recovering && (
                 <div className={styles.notice} role="status">
                   <span className="text-body text-subtle">
                     Check recent activity.

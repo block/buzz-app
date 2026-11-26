@@ -26,6 +26,8 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import type { ComposerSession } from "../../features/messages/composer-session";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
+import { isRetryableRead } from "../../features/relay/read-retry";
 import type { CustomEmoji } from "../../features/relay/emoji";
 import {
   communityFromScope,
@@ -74,7 +76,7 @@ export function EmojiPicker({
   gifShortcut,
   addEmoji = NO_ADD_EMOJI,
 }: {
-  session: Pick<ComposerSession, "emoji" | "media">;
+  session: Pick<ComposerSession, "emoji" | "media" | "recovery">;
   gifShortcut?: GifShortcut;
   addEmoji?: Pick<AddEmoji, "snapshot" | "subscribe"> | undefined;
   scope: string;
@@ -102,6 +104,8 @@ export function EmojiPicker({
     community: string;
     supported: boolean | undefined;
     error?: string;
+    /** The check failed for want of a connection; recovery retries it. */
+    transient?: true;
   }>();
   const [gifDiscoveryRequested, setGifDiscoveryRequested] = useState(false);
   const [{ perLine, availableWidth, scale, emojiSize, slot }, setLayout] =
@@ -157,6 +161,32 @@ export function EmojiPicker({
     session.emoji.subscribe,
     session.emoji.snapshot,
     session.emoji.snapshot,
+  );
+  // An open picker's GIF availability is a passive load. A connectivity
+  // failure is the recovery notice's to report: hide this picker's copy and
+  // Retry, and fill in when the relay answers. The community emoji catalog
+  // owns its own retry; see emoji-directory.ts.
+  const watching = open && !disabled;
+  const retryGifDiscovery = () => {
+    setGifAvailability(undefined);
+    setGifDiscoveryRequested(true);
+  };
+  const gifFailure =
+    gifAvailability?.community === community ? gifAvailability : undefined;
+  const gifRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: !watching
+        ? "ready"
+        : gifFailure?.error
+          ? "error"
+          : gifDiscoveryRequested && gifs === undefined
+            ? "loading"
+            : "ready",
+      error: gifFailure?.error,
+      transient: gifFailure?.transient,
+    },
+    retryGifDiscovery,
   );
   // Remount Emoji Mart for catalog contents, not for status-only publishes.
   const entries = catalog.status === "ready" ? catalog.entries : NO_ENTRIES;
@@ -266,12 +296,13 @@ export function EmojiPicker({
           setGifAvailability({ community, supported });
         }
       },
-      () => {
+      (reason: unknown) => {
         if (!controller.signal.aborted) {
           setGifAvailability({
             community,
             supported: undefined,
             error: "Could not check GIF availability.",
+            ...(isRetryableRead(reason) ? { transient: true as const } : {}),
           });
           setGifDiscoveryRequested(false);
         }
@@ -417,16 +448,15 @@ export function EmojiPicker({
       unavailable={
         gifs === false
           ? "GIFs are not available in this community."
-          : gifAvailability?.community === community
+          : gifAvailability?.community === community && !gifRead.quiet
             ? gifAvailability.error
             : undefined
       }
       retryDiscovery={
-        gifAvailability?.community === community && gifAvailability.error
-          ? () => {
-              setGifAvailability(undefined);
-              setGifDiscoveryRequested(true);
-            }
+        gifAvailability?.community === community &&
+        gifAvailability.error &&
+        !gifRead.quiet
+          ? retryGifDiscovery
           : undefined
       }
       search={gifRequests.search}

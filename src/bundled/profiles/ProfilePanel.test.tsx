@@ -14,6 +14,7 @@ import {
 import { useContext, useEffect, useState, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
+import { ReadError } from "../../features/relay/errors";
 import type { RelayData } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
 import {
@@ -1273,10 +1274,32 @@ it("shows historical verification time and issuer, discloses cache, and hides di
     );
     expect(retryButton).toHaveFocus();
     expect(retryButton).not.toHaveAttribute("aria-busy");
-    // Success removes Retry and hands its focus to the profile region.
+    // A connectivity failure is recovery's: Retry and the error go, and the
+    // focus Retry held goes to the profile region, not the document body.
+    const region = screen.getByRole("region", { name: "Profile details" });
     await user.click(retryButton);
     await waitFor(() => expect(profileReads).toHaveLength(3));
-    await act(async () => profileReads[2]?.resolve());
+    await act(async () =>
+      // The relay's own pause is longer than a quiet retry waits.
+      profileReads[2]?.reject(
+        new ReadError("unavailable", "Relay read failed (429)", 429, 60_000),
+      ),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry profile" })).toBeNull();
+    expect(region).toHaveFocus();
+    // Recovery's retry failing for a reason it cannot fix shows Retry again.
+    act(() => owner.session.recovery?.retryNow());
+    await waitFor(() => expect(profileReads).toHaveLength(4));
+    await act(async () => profileReads[3]?.reject(new Error("still rejected")));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load this profile.",
+    );
+    expect(region).toHaveFocus();
+    // Success removes Retry and hands its focus to the profile region.
+    await user.click(screen.getByRole("button", { name: "Retry profile" }));
+    await waitFor(() => expect(profileReads).toHaveLength(5));
+    await act(async () => profileReads[4]?.resolve());
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry profile" })).toBeNull();
     expect(

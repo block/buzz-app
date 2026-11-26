@@ -29,6 +29,8 @@ export interface WorkflowView<T> {
     status: "idle" | "loading" | "ready" | "error" | "unavailable";
     data: T;
     error?: string;
+    /** The failed read was a connectivity failure, not a denial or a bad reply. */
+    transient?: boolean;
   }>;
   subscribe(listener: () => void): () => void;
   refresh(options?: { ifStale?: boolean }): Promise<void>;

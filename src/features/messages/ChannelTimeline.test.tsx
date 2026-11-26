@@ -138,6 +138,7 @@ function setup({
   historyLimited = false,
   error = undefined as string | undefined,
   recovering = false,
+  transient = false,
   initial = undefined as unknown,
   mounted = [] as { id: string; y: number }[],
   initialRows = undefined as ChannelMessage[] | undefined,
@@ -269,6 +270,7 @@ function setup({
     loadingOlder: loadingOlder || accepted,
     historyLimited,
     error,
+    ...(transient ? { transient: true as const } : {}),
   });
   const loadOlder = vi.fn(() => {
     if (!blocked && !accepted && !loadingOlder) {
@@ -295,6 +297,7 @@ function setup({
           reauthorized: 0,
         }),
         subscribe: () => () => {},
+        register: () => () => {},
       },
     } as unknown as RelaySession);
   let rows = initialRows ?? [timelineMessage("first"), timelineMessage("last")];
@@ -338,6 +341,7 @@ function setup({
         ...(hasNewer ? { hasNewer } : {}),
         loadingOlder,
         historyLimited,
+        ...(transient ? { transient: true as const } : {}),
       },
       onOpenLink: () => false,
       revealMessageId,
@@ -462,6 +466,15 @@ function setup({
       }>;
       return edge.props.children.find((child) => child?.type === Button)?.props
         .children;
+    },
+    /** The edge's status text, if any. */
+    status() {
+      const edge = section.props.children[0] as ReactElement<{
+        children: ReactElement<{ role?: string; children: unknown }>[];
+      }>;
+      return edge.props.children.find(
+        (child) => child?.type === "span" && child.props.role === "status",
+      )?.props.children;
     },
     /** The edge's plain caption text, if any (not its alert or status). */
     caption() {
@@ -1664,9 +1677,9 @@ it("offline top-edge input reads nothing, and the connected session pages once i
   try {
     h.gesture();
     h.render();
-    expect(h.caption()).toBe(
-      "You can load older messages once Buzz reconnects.",
-    );
+    // The app-level offline notice says so; the edge offers nothing inert.
+    expect(h.caption()).toBeUndefined();
+    expect(h.historyButton()).toBeUndefined();
     await flush();
     expect(older()).toHaveLength(0);
     online = createRelaySession(
@@ -2232,6 +2245,31 @@ it.each(["button", "scroll"] as const)(
     expect(recovering.alert()).toBeUndefined();
     expect(recovering.historyButton()).toBe("Retry older messages");
     recovering.unmount();
+  },
+);
+
+it.each(["button", "scroll"] as const)(
+  "leaves an older page's connectivity failure to recovery: no reason, no Retry (%s)",
+  (historyControl) => {
+    const failed = setup({
+      hasMore: true,
+      historyControl,
+      error: "Relay request failed (503)",
+      transient: true,
+    });
+    expect(failed.alert()).toBeUndefined();
+    expect(failed.historyButton()).toBeUndefined();
+    expect(failed.status()).toBe("Loading older…");
+    failed.unmount();
+    // A failure no retry fixes keeps its reason and Retry.
+    const denied = setup({
+      hasMore: true,
+      historyControl,
+      error: "Relay response is not an event array",
+    });
+    expect(denied.alert()).toBe("Relay response is not an event array");
+    expect(denied.historyButton()).toBe("Retry older messages");
+    denied.unmount();
   },
 );
 

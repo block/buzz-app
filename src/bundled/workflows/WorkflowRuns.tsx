@@ -11,16 +11,19 @@ import {
 } from "../../shared/datetime";
 import { useClockFormat } from "../../shared/clock-preference";
 import { Button } from "../../shared/design-system/ui/Button";
+import type { RelayRecovery } from "../../features/relay/recovery";
 import { useWorkflowView } from "./useWorkflowView";
 
 export function WorkflowRuns({
   capability,
   workflow,
   heading = true,
+  recovery,
 }: {
   capability: WorkflowCapability;
   workflow: WorkflowDefinition;
   heading?: boolean;
+  recovery?: RelayRecovery | undefined;
 }) {
   const [cursor, setCursor] = useState<WorkflowRunCursor | undefined>();
   if (!capability.availability.history)
@@ -37,6 +40,7 @@ export function WorkflowRuns({
       cursor={cursor}
       onPage={setCursor}
       heading={heading}
+      recovery={recovery}
     />
   );
 }
@@ -46,12 +50,14 @@ function RunPage({
   cursor,
   onPage,
   heading,
+  recovery,
 }: {
   capability: WorkflowCapability;
   workflow: WorkflowReference;
   cursor: WorkflowRunCursor | undefined;
   onPage: (cursor: WorkflowRunCursor | undefined) => void;
   heading: boolean;
+  recovery: RelayRecovery | undefined;
 }) {
   useClockFormat();
   const { snapshot, refresh } = useWorkflowView(
@@ -59,6 +65,7 @@ function RunPage({
       () => capability.runs(workflow, cursor),
       [capability, workflow, cursor],
     ),
+    recovery,
   );
   if (!snapshot) return <p role="status">Reading runs…</p>;
   return (

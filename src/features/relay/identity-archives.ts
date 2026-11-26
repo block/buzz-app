@@ -19,6 +19,7 @@ export type IdentityArchiveSnapshot = Readonly<{
   createdAt?: number;
   readAt?: number;
   error?: string;
+  /** Connectivity failure; an invalid or stale snapshot is not transient. */
   transient?: true;
   /** Earliest automatic retry after the relay's admission delay. */
   retryAt?: number;

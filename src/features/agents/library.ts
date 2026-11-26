@@ -1,3 +1,5 @@
+import { isRetryableRead } from "../relay/read-retry";
+
 /** A display-only projection of the local and owner-authored relay inventory, not proof of
  * ownership, membership, custody or running state. No prompts/configuration. */
 export type AgentLibrary = Readonly<{
@@ -18,6 +20,8 @@ export type AgentLibrarySnapshot = AgentLibrary &
   Readonly<{
     status: "unavailable" | "idle" | "loading" | "ready" | "error";
     error?: string;
+    /** `error` is a connectivity failure (isRetryableRead), not a denial. */
+    transient?: true | undefined;
   }>;
 const empty = { definitions: Object.freeze([]), identities: Object.freeze([]) };
 
@@ -79,13 +83,14 @@ export function createAgentLibrary(
         if (!closed && !owned.signal.aborted)
           publish({ ...inheritDefinitionAvatars(library), status: "ready" });
       })
-      .catch(() => {
+      .catch((cause: unknown) => {
         if (!closed && !owned.signal.aborted)
           publish({
             ...snapshot,
             status: "error",
             error:
               "Could not read agent inventory. Check the community connection and local library, then retry; saved data is unchanged.",
+            transient: isRetryableRead(cause) || undefined,
           });
       })
       .finally(() => {

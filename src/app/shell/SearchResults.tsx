@@ -18,6 +18,8 @@ import type { RelayEvent } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import type { KeyBinding } from "../../features/shortcuts/bindings";
+import { rosterRecovering } from "../../features/relay/live-recovery";
+import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
 import {
   useChannelList,
   useProfileGeneration,
@@ -255,10 +257,11 @@ export function SearchResults({
   usageScope,
   sidebarScope,
   views,
-  offline,
+  offline: offlineNotice,
   openAsk,
   decisions,
   community,
+  savedOnly: savedConversationsOnly = false,
 }: {
   session: RelaySession;
   /** Reranks message hits by how well each answers the query. */
@@ -294,7 +297,11 @@ export function SearchResults({
   /** Why only saved conversations are searched. The relay's message, people
    * and open-channel lookups wait for the connection instead of failing. */
   offline?: ReactNode;
+  /** Only saved conversations are searched, with nothing to say about it: the
+   * app's connection notice is the one report of the disconnect. */
+  savedOnly?: boolean | undefined;
 } & SearchInputProps) {
+  const offline = !!offlineNotice || savedConversationsOnly;
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
   // Chosen filters render as chips ahead of the typed text: the query holds
@@ -407,6 +414,11 @@ export function SearchResults({
   const authorPrompt = asking
     ? undefined
     : operatorMatches(query, /(?:^|\s)(from:@?|in:@)([^\s]*)$/gi).at(-1);
+  // The joined list loads when the palette opens. Recovery retries it and the
+  // app's one notice reports it, so it shows no error or Retry of its own.
+  const rosterRecovers = useRecoveryOwns(session, (live) =>
+    rosterRecovering(live.roster),
+  );
   // `me` is the viewer, never a name to pick.
   const pickerPrompt =
     !!authorPrompt &&
@@ -2628,7 +2640,7 @@ export function SearchResults({
             ? conversationBinding
             : undefined
         }
-        footer={offline}
+        footer={offlineNotice}
         peek={{
           // A filter or a conversation's own search asks for messages
           // only, so they aren't ranked with other results, but each still
@@ -2681,7 +2693,7 @@ export function SearchResults({
           {list.status === "loading" &&
             query.trim() &&
             !list.channels.length && <p>Loading joined conversations…</p>}
-          {list.status === "error" && (
+          {list.status === "error" && !rosterRecovers && (
             <div>
               <p>Couldn’t load all joined conversations.</p>
               <Button

@@ -1497,11 +1497,16 @@ it("reports identified assistant actions only once to the acknowledged request",
   };
   const row = (id: string) =>
     local.reader.work().find((work) => work.messageId === id);
-  const tool = (id: string, isReplay = false) =>
+  const tool = (
+    id: string,
+    isReplay = false,
+    parentToolUseId: string | null = null,
+  ) =>
     fake.emit({
       type: "assistant",
       uuid: `message-${id}`,
       isReplay,
+      parent_tool_use_id: parentToolUseId,
       message: {
         content: [
           {
@@ -1531,19 +1536,24 @@ it("reports identified assistant actions only once to the acknowledged request",
     tool("history", true);
     fake.emit({ type: "keep_alive" });
     expect(row("first")?.lastAction).toBe(action);
+    fake.finish();
+    await first;
+    expect(row("first")?.state).toBe("done");
     const second = send("second");
     await flush();
     tool("two");
+    tool("late-child", false, "one");
     expect(row("second")?.lastAction).toBeUndefined();
+    now.mockReturnValue(4_662_000);
     tool("three");
     expect(row("second")?.lastAction).toEqual({
       turnId: expect.any(String),
       sequence: 1,
-      occurredAt: 4_661_000,
+      occurredAt: 4_662_000,
     });
     expect(row("first")?.lastAction).toBe(action);
     fake.finish();
-    await Promise.all([first, second]);
+    await second;
     const settled = row("second")?.lastAction;
     tool("late");
     expect(row("second")?.state).toBe("done");

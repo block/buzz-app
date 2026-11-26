@@ -1102,7 +1102,12 @@ export class ClaudeProcess {
       if (!message.parent_tool_use_id) this.context.report(callSize(message));
       const content = (message.message as { content?: unknown } | undefined)
         ?.content;
-      if (message.isReplay !== true && Array.isArray(content)) {
+      // Child events can outlive the request that started them.
+      if (
+        !message.parent_tool_use_id &&
+        message.isReplay !== true &&
+        Array.isArray(content)
+      ) {
         for (const block of content) {
           const id =
             block?.type === "tool_use" && typeof block.id === "string"

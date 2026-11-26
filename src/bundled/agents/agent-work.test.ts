@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 import type { ReadEvent } from "../../features/drafts-sent/model";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { agentWorkRows, agentWorkTarget, missingRoots } from "./agent-work";
+import {
+  agentWorkCandidates,
+  agentWorkRows,
+  agentWorkTarget,
+} from "./agent-work";
 
 const viewer = "a".repeat(64);
 const agent = "b".repeat(64);
@@ -88,7 +92,7 @@ it("lists Solo chats and threads you and your agent both wrote in, newest first"
   ]);
 });
 
-it("leaves out DMs and Solo threads, and asks for roots it can't name", () => {
+it("gives DM threads their own rows, leaves out Solo threads, and names roots", () => {
   const result = rows({
     channels: [
       channel("dm", "dm"),
@@ -107,10 +111,10 @@ it("leaves out DMs and Solo threads, and asks for roots it can't name", () => {
     ],
   });
   expect(result.map(({ id }) => id)).toEqual([
+    `thread:dm:${hex("9")}`,
     `thread:team:${hex("7")}`,
     "solo:solo",
   ]);
-  expect(missingRoots(result)).toEqual([hex("7")]);
   const named = rows({
     channels: [channel("team", "stream")],
     sent: [message(hex("3"), viewer, 10, "team", hex("7"))],
@@ -120,7 +124,6 @@ it("leaves out DMs and Solo threads, and asks for roots it can't name", () => {
     ],
   });
   expect(named[0]?.label).toBe("Their question");
-  expect(missingRoots(named)).toEqual([]);
 });
 
 it("caps the list at 50 and opens a thread beside its channel", () => {
@@ -147,4 +150,18 @@ it("caps the list at 50 and opens a thread beside its channel", () => {
     scope,
     channelId: "solo",
   });
+});
+
+it("looks up each recent thread, your top-level messages included, and top levels", () => {
+  const sent = [
+    message(hex("1"), viewer, 30, "mobile"),
+    message(hex("2"), viewer, 20, "mobile", hex("9")),
+    message(hex("3"), viewer, 10, "solo"),
+  ];
+  expect(
+    agentWorkCandidates(sent, viewer, [
+      channel("mobile", "stream"),
+      channel("solo", "solo"),
+    ]),
+  ).toEqual({ roots: [hex("1"), hex("9")], tops: ["mobile"] });
 });

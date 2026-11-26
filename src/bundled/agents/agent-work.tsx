@@ -4,7 +4,6 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
-  SENT_LIMIT,
   UPDATE_KINDS,
   UPDATE_LIMIT,
   accepted,
@@ -24,8 +23,46 @@ const threadIcon = <CornerDownRightIcon size={16} aria-hidden="true" />;
 
 /** The card shows this many conversations, as Activity's card does. */
 export const AGENT_WORK_LIMIT = 50;
-/** Recent messages read from the viewer's agents. */
-const AGENT_MESSAGE_LIMIT = 300;
+/** The viewer's own recent messages, which name the conversations to check. */
+const OWN_LIMIT = 500;
+/** Threads and top levels checked for the viewer's agents. */
+const THREAD_CANDIDATES = 300;
+const TOP_LEVEL_CANDIDATES = 30;
+
+/** Where the viewer recently talked: each thread, by its root (a top-level
+ * message of theirs may have become one), and each channel or DM top level. */
+export function agentWorkCandidates(
+  sent: readonly ReadEvent[],
+  viewer: string,
+  channels: readonly ChannelSummary[],
+) {
+  const talks = new Set(
+    channels.flatMap((channel) =>
+      !channel.archived &&
+      (channel.channelType === "stream" ||
+        channel.channelType === "forum" ||
+        channel.channelType === "dm")
+        ? [channel.id]
+        : [],
+    ),
+  );
+  const roots = new Set<string>();
+  const tops = new Set<string>();
+  // Newest first.
+  for (const entry of sentEntries(sent, viewer)) {
+    if (!talks.has(entry.channelId)) continue;
+    if (roots.size < THREAD_CANDIDATES)
+      roots.add(entry.threadRootId ?? entry.id);
+    if (!entry.threadRootId && tops.size < TOP_LEVEL_CANDIDATES)
+      tops.add(entry.channelId);
+  }
+  return { roots: [...roots], tops: [...tops] };
+}
+
+const chunks = <T,>(values: readonly T[], size: number) =>
+  Array.from({ length: Math.ceil(values.length / size) }, (_, index) =>
+    values.slice(index * size, index * size + size),
+  );
 
 /** A row and where it opens. */
 export type AgentWorkRow = SidebarSectionRow &
@@ -75,8 +112,8 @@ export function agentWorkRows({
         channelId: channel.id,
         at: channel.lastActivityAt ?? 0,
       });
-  // A Solo chat is already its own row. Threads live in channels; a DM's
-  // conversation is its top level.
+  // A Solo chat is already its own row. In a channel or DM, its top level is
+  // one conversation and each thread is another.
   const inChannel = (id: string) => {
     const type = open(id)?.channelType;
     return type === "stream" || type === "forum";
@@ -89,7 +126,7 @@ export function agentWorkRows({
     const keep = (found: Map<string, number>, key: string, at: number) =>
       found.set(key, Math.max(found.get(key) ?? 0, at));
     for (const { channelId, root, top, at } of entries) {
-      if (inChannel(channelId)) keep(threads, `${channelId}:${root}`, at);
+      if (talks(channelId)) keep(threads, `${channelId}:${root}`, at);
       if (top && talks(channelId)) keep(tops, channelId, at);
     }
     return { threads, tops };
@@ -171,15 +208,6 @@ export function agentWorkRows({
 /** The start of a message as one line; the row cuts it to fit. */
 const firstLine = (content: string) => plainText(content).trim();
 
-/** Roots the rows need but neither list holds: someone else began the thread. */
-export function missingRoots(rows: readonly AgentWorkRow[]) {
-  return rows.flatMap((row) =>
-    row.kind === "thread" && row.label === "Thread" && row.rootId
-      ? [row.rootId]
-      : [],
-  );
-}
-
 /** Where a row opens: a Solo chat, or a thread beside its channel. */
 export function agentWorkTarget(
   row: Pick<AgentWorkRow, "channelId" | "rootId">,
@@ -237,10 +265,9 @@ export function createAgentWork(relay: RelayData) {
   const watch = (session: RelaySession, viewer: string) => {
     type Open = { view: View; dispose(): void };
     const views: Partial<
-      Record<"sent" | "agents" | "roots", Open | undefined>
+      Record<"sent" | "threads" | "tops" | "roots", Open | undefined>
     > = {};
-    let agentKey = "";
-    let rootKey = "";
+    let lookupKey = "";
     const open = (filters: Parameters<RelaySession["observe"]>[0]): Open => {
       const view = session.observe(filters);
       const stopView = view.subscribe(compute);
@@ -257,42 +284,67 @@ export function createAgentWork(relay: RelayData) {
       new Set(
         session.agentChoices.snapshot().identities.map(({ pubkey }) => pubkey),
       );
+    const events = (name: keyof typeof views) =>
+      views[name]?.view.snapshot().events ?? none;
     function compute() {
       const agents = agentsOf();
-      const nextAgentKey = [...agents].sort().join(",");
-      if (nextAgentKey !== agentKey) {
-        agentKey = nextAgentKey;
-        views.agents?.dispose();
-        views.agents = agents.size
-          ? open([
-              { kinds: [9], authors: [...agents], limit: AGENT_MESSAGE_LIMIT },
-            ])
-          : undefined;
+      const channels = session.channels.list().channels;
+      const sent = events("sent");
+      // Look up your agents in each conversation you recently talked in, so a
+      // busy agent elsewhere never pushes an older conversation out.
+      const { roots, tops } = agentWorkCandidates(sent, viewer, channels);
+      const authors = [...agents].sort();
+      const nextKey = `${authors}|${roots}|${tops}`;
+      if (nextKey !== lookupKey) {
+        lookupKey = nextKey;
+        for (const name of ["threads", "tops", "roots"] as const) {
+          views[name]?.dispose();
+          views[name] = undefined;
+        }
+        if (authors.length && roots.length)
+          views.threads = open(
+            chunks(roots, 100).map((ids) => ({
+              kinds: [9],
+              authors,
+              "#e": ids,
+              limit: 500,
+            })),
+          );
+        if (authors.length && tops.length)
+          views.tops = open(
+            tops.map((id) => ({ kinds: [9], authors, "#h": [id], limit: 20 })),
+          );
+        // Each thread's first message: its label, and an agent's when one
+        // began it.
+        if (roots.length)
+          views.roots = open(
+            chunks(roots, 100).map((ids) => ({
+              kinds: [9],
+              ids,
+              limit: ids.length,
+            })),
+          );
       }
+      const found = [
+        ...events("threads"),
+        ...events("tops"),
+        ...events("roots"),
+      ];
       const next = agentWorkRows({
-        channels: session.channels.list().channels,
-        sent: views.sent?.view.snapshot().events ?? none,
-        agentEvents: views.agents?.view.snapshot().events ?? none,
-        roots: views.roots?.view.snapshot().events ?? none,
+        channels,
+        sent,
+        agentEvents: found,
+        roots: found,
         agents,
         viewer,
       });
-      const missing = missingRoots(next);
-      const nextRootKey = missing.sort().join(",");
-      if (nextRootKey !== rootKey) {
-        rootKey = nextRootKey;
-        views.roots?.dispose();
-        views.roots = missing.length
-          ? open([{ kinds: [9], ids: missing, limit: missing.length }])
-          : undefined;
-      }
       if (!sameRows(rows, next)) {
         rows = next;
         notify();
       }
     }
     views.sent = open([
-      { kinds: [9], authors: [viewer], limit: SENT_LIMIT },
+      { kinds: [9], authors: [viewer], limit: OWN_LIMIT },
       { kinds: UPDATE_KINDS, authors: [viewer], limit: UPDATE_LIMIT },
     ]);
     session.channels.ensureList();
@@ -303,9 +355,7 @@ export function createAgentWork(relay: RelayData) {
     return () => {
       stopChannels();
       stopAgents();
-      views.sent?.dispose();
-      views.agents?.dispose();
-      views.roots?.dispose();
+      for (const view of Object.values(views)) view?.dispose();
     };
   };
   return {

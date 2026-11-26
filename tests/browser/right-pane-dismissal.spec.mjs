@@ -341,6 +341,50 @@ test("a cold thread closes to its own channel in place", async ({
   expect((await address()).canGoBack).toBe(false);
 });
 
+test("X after a reload skips the thread's visits from before it", async ({
+  page,
+  app,
+}) => {
+  const { tabs, openThread, address } = await start(page, app);
+  const alphaVisit = (await address()).entry.id;
+  await openThread(0);
+  const showChannel = async (channel, name) => {
+    await page.locator(`button[data-channel-id="${channel}"]`).click();
+    await expect(
+      page.getByRole("textbox", { name: `Message #${name}`, exact: true }),
+    ).toBeVisible();
+    return (await address()).entry.id;
+  };
+  const betaVisit = await showChannel("beta", "Beta");
+  const laterAlphaVisit = await showChannel("alpha", "Alpha");
+  await openThread(0);
+  await page.reload();
+  await expect(
+    page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeVisible();
+  await tabs
+    .locator("xpath=..")
+    .getByRole("button", { name: /^Close / })
+    .click();
+  await expect(tabs).toHaveCount(0);
+  await expect
+    .poll(async () => (await address()).entry.id)
+    .toBe(laterAlphaVisit);
+  await page.goBack();
+  await expect.poll(async () => (await address()).entry.id).toBe(betaVisit);
+  // The thread's visit before the reload is retired with the one closed.
+  await page.goBack();
+  await expect.poll(async () => (await address()).entry.id).toBe(alphaVisit);
+  await expect(tabs).toHaveCount(0);
+  await page.goForward();
+  await expect.poll(async () => (await address()).entry.id).toBe(betaVisit);
+  await page.goForward();
+  await expect
+    .poll(async () => (await address()).entry.id)
+    .toBe(laterAlphaVisit);
+  expect((await address()).canGoForward).toBe(false);
+});
+
 test("closing the selected thread returns to its surviving neighbour and Back leaves that thread", async ({
   page,
   app,

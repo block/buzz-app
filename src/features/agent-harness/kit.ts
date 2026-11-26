@@ -33,7 +33,7 @@ import type { EventData } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { threadReference } from "../relay/thread-reference";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
-import { wakeAnchor, wakeLands } from "./plugin-wake";
+import { turnChannel, turnOf } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
 import { readProject, worksElsewhere } from "./project";
 import { placeOf } from "./sections/compose";
@@ -212,10 +212,8 @@ export function harnessKit(sources: Sources): HarnessKit {
   };
 
   return Object.freeze({
-    async conversation(
-      { trigger, agent, channelId, signal, routeConversation }: Delivery,
-      scope: HarnessScope,
-    ) {
+    async conversation(delivery: Delivery, scope: HarnessScope) {
+      const { trigger, agent, signal, routeConversation } = delivery;
       if (
         trigger.type !== "mention" &&
         trigger.type !== "attention" &&
@@ -232,10 +230,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         if (!(await fromOwner(trigger.event, agent.owner))) return undefined;
         signal.throwIfAborted();
       }
-      const event =
-        trigger.type === "mention" ? trigger.event : wakeAnchor(trigger);
-      const channel =
-        channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
+      const channel = turnChannel(trigger, delivery);
       if (!channel) return undefined;
       const solo = await soloChat(
         () => sources.relay(agent.key),
@@ -243,8 +238,11 @@ export function harnessKit(sources: Sources): HarnessKit {
         channel,
         signal,
       );
-      const topLevel = solo || wake?.topLevel === true;
-      if (wake && !wakeLands(wake, topLevel)) return undefined;
+      // Where the host placed it: a harness built on the kit needs no
+      // placement code of its own.
+      const turn = turnOf(trigger, delivery, channel, solo);
+      if (!turn) return undefined;
+      const { event, topLevel } = turn;
       const found = await reader(agent.key)?.channel(channel);
       const dm = found?.dm === true;
       const nativeRoot = threadReference(event)?.rootId ?? event.id;

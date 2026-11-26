@@ -109,9 +109,18 @@ The index lives in memory on this device. It is never sent anywhere. Scoped
 searches can add older messages. A reconnect keeps it. Signing out, being
 refused by the community, or switching to another account or community drops
 it. **Clear cache** doesn't; restarting does. When you lose access to a
-channel, its messages leave the index; if you rejoin it, the next reconnect
-reads your history in that channel again. A deleted message leaves the index
-too, and stays out if a later read brings it back.
+channel, its messages leave the index and the results right away; if you
+rejoin it, the next reconnect reads your history in that channel again. If the
+relay still refuses that read, the rest of the index finishes, and the channel
+is tried again at the following reconnect. A deleted message (kind 5 or 9005)
+leaves the index too, once the app has seen the deletion, and stays out if a
+later read brings it back.
+
+Direct messages are read 50 at a time, in the order of your DM list. When that
+list changes, every group of 50 from the change onward is read again from 90
+days back. A new DM early in the list can re-read most of them. If the relay
+refuses one DM, the others in its group are read one at a time, and the
+refused one is tried again at the next reconnect.
 
 ## How it stays current
 

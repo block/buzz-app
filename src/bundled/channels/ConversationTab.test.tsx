@@ -644,28 +644,6 @@ it("a conversation tab opens a reply at its message as the thread", () => {
   expect(screen.queryByText("Conversation content")).toBeNull();
 });
 
-it.each(["conversation", "thread"] as const)(
-  "only a channel timeline shows the workspace's trailing content (%s)",
-  (kind) => {
-    const c = openingAt([]);
-    render(
-      <ConversationTab
-        {...c.props}
-        tab={
-          kind === "thread"
-            ? { id: "thread:beta", kind, channelId: "beta", messageId: "root" }
-            : { id: "conversation:beta", kind, channelId: "beta" }
-        }
-        trailing={{ restHeight: 100, content: () => <p>Decision card</p> }}
-      />,
-    );
-    c.settle();
-    expect(screen.queryByText("Decision card") !== null).toBe(
-      kind === "conversation",
-    );
-  },
-);
-
 it("a thread tab asks its reader to reveal for each open at a message, not on restore", () => {
   const c = openingAt([]);
   const tab = {

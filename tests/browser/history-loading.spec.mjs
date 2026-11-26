@@ -104,8 +104,9 @@ test("landed pages keep reading ahead of a reader who stops at the top", async (
 });
 
 test.describe("past the history budget", () => {
-  // More rows than one window keeps (2,400).
-  test.use({ historyCounts: { alpha: 2700, beta: 20 } });
+  // More rows than one window keeps (2,400), short enough to mount around
+  // the reader at the sizes of the rows they replace.
+  test.use({ historyCounts: { alpha: 2700, beta: 20 }, shortMessages: true });
   test("paging older slides the window to the channel start, and Jump to latest returns", async ({
     page,
     app,
@@ -514,12 +515,20 @@ test.describe("pages inside one second", () => {
         .poll(() => history(page).evaluate((e) => e.scrollHeight))
         .toBeGreaterThan(height);
       await expectAnchor(page, before);
+      // Linux WebKit animates a wheel over several frames, and any scroll
+      // write ends it there. A row measuring meanwhile moves nothing above
+      // the reader, so it must not cost them the rest of the wheel.
       const wheeled = await history(page).evaluateHandle((e) => {
         const state = { wheel: false };
-        e.addEventListener("wheel", () => (state.wheel = true), {
-          once: true,
-          passive: true,
-        });
+        e.addEventListener(
+          "wheel",
+          () => {
+            state.wheel = true;
+            const rows = e.querySelectorAll("[data-message-id]");
+            rows[rows.length - 1].style.paddingBottom = "10px";
+          },
+          { once: true, passive: true },
+        );
         return state;
       });
       await page.mouse.wheel(0, -40);

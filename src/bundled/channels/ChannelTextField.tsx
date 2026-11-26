@@ -1,6 +1,7 @@
-import { useId, type Ref } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
+import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import styles from "./ChannelTextField.module.css";
 
@@ -10,7 +11,13 @@ type Props = {
   error?: string | undefined;
   disabled?: boolean | undefined;
 } & (
-  | { field: "name"; inputRef?: Ref<HTMLInputElement>; creation?: boolean }
+  | {
+      field: "name";
+      inputRef?: Ref<HTMLInputElement>;
+      creation?: boolean;
+      /** Shown inside the field before the name, such as the channel's icon. */
+      leading?: ReactNode;
+    }
   | { field: "description"; inputRef?: Ref<HTMLTextAreaElement> }
 );
 
@@ -31,6 +38,18 @@ export function ChannelTextField(props: Props) {
       event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
     ) => props.onChange(boundedInput(event.currentTarget, props.value, limit)),
   };
+  const nameInput = props.field === "name" && (
+    <Input
+      {...control}
+      ref={props.inputRef}
+      data-create-channel-name={props.creation ? "" : undefined}
+      required
+      autoComplete={props.creation ? "off" : undefined}
+      autoCapitalize="none"
+      spellCheck={false}
+      placeholder="release-notes"
+    />
+  );
   return (
     <Field
       label={
@@ -49,16 +68,11 @@ export function ChannelTextField(props: Props) {
       error={props.error}
     >
       {props.field === "name" ? (
-        <Input
-          {...control}
-          ref={props.inputRef}
-          data-create-channel-name={props.creation ? "" : undefined}
-          required
-          autoComplete={props.creation ? "off" : undefined}
-          autoCapitalize="none"
-          spellCheck={false}
-          placeholder="release-notes"
-        />
+        props.leading ? (
+          <InputGroup leading={props.leading}>{nameInput}</InputGroup>
+        ) : (
+          nameInput
+        )
       ) : (
         <Textarea
           {...control}

@@ -311,11 +311,11 @@ export class AcpSession {
     if (kind === "session_info_update" || runId !== null) return;
     const step = stepLabel(update);
     if (!step) return;
-    const label = `${step.tool}\u0000${step.target ?? ""}`;
+    const label = `${step.tool}\u0000${step.target ?? ""}\u0000${step.origin ?? ""}`;
     if (label === this.lastStep) return;
     this.lastStep = label;
     for (const receipt of this.active.values())
-      receipt.step?.(step.tool, step.target);
+      receipt.step?.(step.tool, step.target, step.origin);
   }
 
   /** Ends the session's work with `error`; nothing more is sent to it. */

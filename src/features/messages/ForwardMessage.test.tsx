@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement, ReactNode } from "react";
@@ -94,6 +95,7 @@ afterEach(() => {
   for (const stop of stops.splice(0)) stop();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 function Trigger() {
   const forward = useForwardMessage();
@@ -144,10 +146,13 @@ function setup({
   saved = [] as OutgoingEvent[],
   nested = false,
   content = <Trigger />,
+  unavailable = false,
 }: {
   saved?: OutgoingEvent[];
   nested?: boolean;
   content?: ReactNode;
+  /** The source message can't be read: deleted, or no longer the viewer's. */
+  unavailable?: boolean;
 } = {}) {
   const history = createMemoryHistory();
   const controller = createNavigationController(history);
@@ -244,6 +249,7 @@ function setup({
   };
   const session = {
     viewer,
+    scope,
     directMessages,
     messages,
     outbox,
@@ -263,14 +269,16 @@ function setup({
     agentChoices: { snapshot: () => choices, subscribe: () => () => {} },
     media: (url: string) => url,
     thread: () => {
-      const snapshot = {
-        status: "ready",
-        root: sourceRow,
-        replies: [],
-        target: sourceRow,
-        targetStatus: "ready",
-        canLoadMore: false,
-      };
+      const snapshot = unavailable
+        ? { status: "ready", replies: [], canLoadMore: false }
+        : {
+            status: "ready",
+            root: sourceRow,
+            replies: [],
+            target: sourceRow,
+            targetStatus: "ready",
+            canLoadMore: false,
+          };
       return {
         snapshot: () => snapshot,
         subscribe: () => () => {},
@@ -1132,9 +1140,115 @@ it("shows a forwarding problem before submission and offers a working Copy link"
     screen.getByRole("button", { name: "Forward to Avery Chen" }),
   ).toBeDisabled();
   expect(screen.getByRole("alert")).toHaveTextContent("too long");
-  await user.click(screen.getByRole("button", { name: "Copy link" }));
+  // Nothing can be pasted to forward it, so no instruction says so.
+  expect(screen.queryByText(pasteHint)).toBeNull();
+  const copy = screen.getByRole("button", { name: "Copy link" });
+  expect(copy).toHaveTextContent(/^Copy link$/);
+  vi.useFakeTimers();
+  await act(async () => fireEvent.click(copy));
+  expect(messages.forward).not.toHaveBeenCalled();
+  // The button shows the copy under the name it always has.
+  expect(copy).toHaveTextContent(/^Copied$/);
+  expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
+  expect(copy).toHaveAccessibleName("Copy link");
+  expect(copyStatus()).toBe("Copied");
+  act(() => vi.advanceTimersByTime(1499));
+  expect(copy).toHaveTextContent(/^Copied$/);
+  // The clock a toast mounts on has run: the button and its status are all.
+  expect(screen.getAllByText(/copied/i)).toHaveLength(2);
+  expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+  act(() => vi.advanceTimersByTime(1));
+  expect(copy).toHaveTextContent(/^Copy link$/);
+  expect(copyStatus()).toBe("");
+  // Reading the clipboard back takes the real clock.
+  vi.useRealTimers();
   expect(await navigator.clipboard.readText()).toBe(
     `buzz://message?channel=alpha&id=${messageId}`,
   );
-  expect(messages.forward).not.toHaveBeenCalled();
+});
+
+const pasteHint = "Paste the copy in any message box to forward it.";
+/** Everything the dialog's copy statuses say. Each copy button shown has one,
+ * and only the one pressed speaks. */
+const copyStatus = () =>
+  within(screen.getByRole("dialog", { name: "Forward message" }))
+    .getAllByRole("status")
+    .map((status) => status.textContent)
+    .join("");
+/** A clipboard that takes the rich copy Copy as forward writes. */
+function richClipboard(write: () => Promise<void>) {
+  vi.stubGlobal(
+    "ClipboardItem",
+    class {
+      constructor(readonly items: Record<string, Blob>) {}
+    },
+  );
+  vi.spyOn(navigator, "clipboard", "get").mockReturnValue({
+    write,
+  } as unknown as Clipboard);
+}
+
+it("shows a copied forward in the Copy as forward button, beside the standing paste instruction, with no toast", async () => {
+  const user = userEvent.setup();
+  setup();
+  await choose(user);
+  const write = vi.fn(async () => {});
+  richClipboard(write);
+  const copy = screen.getByRole("button", { name: "Copy as forward" });
+  // The instruction is there before any copy, and describes the button.
+  expect(screen.getByText(pasteHint)).toBeVisible();
+  expect(copy).toHaveAccessibleDescription(pasteHint);
+  expect(copy).toHaveTextContent(/^Copy as forward$/);
+  vi.useFakeTimers();
+  await act(async () => fireEvent.click(copy));
+  expect(write).toHaveBeenCalledOnce();
+  expect(copy).toHaveTextContent(/^Copied$/);
+  expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
+  expect(copy).toHaveAccessibleName("Copy as forward");
+  expect(copyStatus()).toBe("Copied");
+
+  act(() => vi.advanceTimersByTime(1499));
+  expect(copy).toHaveTextContent(/^Copied$/);
+  // The clock a toast mounts on has run: the button and its status are all.
+  expect(screen.getAllByText(/copied/i)).toHaveLength(2);
+  expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+  act(() => vi.advanceTimersByTime(1));
+  expect(copy).toHaveTextContent(/^Copy as forward$/);
+  expect(copy.querySelector("svg")).toBeNull();
+  expect(copyStatus()).toBe("");
+  expect(screen.getByText(pasteHint)).toBeVisible();
+});
+
+it("gives no paste instruction while Copy as forward has no message to copy", async () => {
+  const user = userEvent.setup();
+  setup({ unavailable: true });
+  await user.click(screen.getByRole("button", { name: "Forward source" }));
+  const dialog = await screen.findByRole("dialog", { name: "Forward message" });
+  expect(
+    await within(dialog).findByText(/^Couldn’t load this message\./),
+  ).toBeVisible();
+  const copy = screen.getByRole("button", { name: "Copy as forward" });
+  expect(copy).toBeDisabled();
+  // An instruction would point at a button that cannot be pressed.
+  expect(screen.queryByText(pasteHint)).toBeNull();
+  expect(copy).not.toHaveAccessibleDescription();
+});
+
+it("reports a refused Copy as forward in a toast, and leaves the button's label alone", async () => {
+  const user = userEvent.setup();
+  setup();
+  await choose(user);
+  richClipboard(
+    vi.fn(async () => {
+      throw new DOMException("denied", "NotAllowedError");
+    }),
+  );
+  const copy = screen.getByRole("button", { name: "Copy as forward" });
+  await user.click(copy);
+  const refusal = await screen.findByText(
+    "Couldn't copy. Try again, or use Forward.",
+  );
+  expect(refusal.closest(".buzz-toast")).not.toBeNull();
+  expect(copy).toHaveTextContent(/^Copy as forward$/);
+  expect(copyStatus()).toBe("");
 });

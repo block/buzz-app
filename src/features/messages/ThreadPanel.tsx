@@ -2,6 +2,7 @@
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { hostComposerProvenance } from "./mention-draft";
 import { useComposerScope } from "./composer-overlay";
+import { useSheetReady, useSheetReveal } from "./sheet-reveal";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -42,7 +43,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { XIcon } from "../../shared/design-system/icons/index";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  ConversationExtensions,
+  ConversationWorkspaceProps,
+} from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import { compareMessages } from "../relay/message-order";
 import type { RelaySession } from "../relay/session";
@@ -67,6 +71,7 @@ import { useComposerWrites } from "./composer-writes";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
+import { useTrailingSheet } from "./use-trailing-sheet";
 import { useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
 import {
@@ -85,6 +90,8 @@ import { contentSelector } from "./useFloatingActionBar";
 
 export type ThreadPanelProps = {
   intro?: ReactNode;
+  /** A workspace's card over the end of the replies, as in a channel. */
+  trailing?: ConversationWorkspaceProps["trailing"];
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -274,6 +281,8 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
   const current = useRef<Opening | undefined>(undefined);
   const [opening, setOpening] = useState<Opening>();
   const [error, setError] = useState<string>();
+  // A failure with its retry is all a quick-opening sheet will show.
+  useSheetReady(!!error && !opening);
   const [failure, setFailure] = useState<{ unavailable: boolean }>();
   // Retry keeps its control mounted and focused until the new attempt settles.
   const [pending, setPending] = useState(false);
@@ -459,6 +468,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
 }
 function OwnedThreadPanel({
   intro,
+  trailing,
   session,
   extensions,
   scope,
@@ -490,6 +500,7 @@ function OwnedThreadPanel({
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
+  useSheetReady(!!error);
   const [attempt, setAttempt] = useState(0);
   // Allocate in the effect, not render/useMemo: StrictMode must not leak owned views.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery after view allocation fails.
@@ -549,6 +560,7 @@ function OwnedThreadPanel({
   ) : view ? (
     <ThreadMessages
       intro={intro}
+      trailing={trailing}
       soloConversation={soloConversation}
       disabled={disabled}
       extensions={extensions}
@@ -584,6 +596,7 @@ function OwnedThreadPanel({
 }
 function ThreadMessages({
   intro,
+  trailing,
   session,
   extensions,
   scope,
@@ -616,6 +629,7 @@ function ThreadMessages({
   routePending,
 }: {
   intro?: ReactNode;
+  trailing?: ThreadPanelProps["trailing"];
   subthreadId?: string | undefined;
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A route to this reader is on its way: until it lands, a reader not yet
@@ -812,6 +826,17 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  // The trailing card scrolls in its own sheet over the replies' end; rows it
+  // stops covering can be read.
+  const {
+    restSpace,
+    sheet,
+    rest: restSheet,
+    revealFocus: revealSheetFocus,
+    coveredFrom,
+  } = useTrailingSheet(trailing, scroller, () =>
+    readingPositioned(scroller.current),
+  );
   const positioned = useRef(false);
   const positionedLatestRequest = useRef<AbortSignal | undefined>(undefined);
   const shown = useRef(active);
@@ -1592,6 +1617,7 @@ function ThreadMessages({
     // When neither is loaded the visit opens again as it first did.
     if (openLatest) {
       positionedLatestRequest.current = latestRequest;
+      restSheet();
       targetAnchor.current = undefined;
       olderAnchor.current = undefined;
       remounted.current = undefined;
@@ -1827,6 +1853,7 @@ function ThreadMessages({
     expanded,
     expandedActivity,
     boundary,
+    restSheet,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
   // shrinks this viewport, late media grows rows and a join error grows the end
@@ -1941,6 +1968,7 @@ function ThreadMessages({
     element.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
+    restSheet();
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
     if (jumpTimer.current !== undefined) clearTimeout(jumpTimer.current);
     jumpTimer.current = setTimeout(() => {
@@ -2358,6 +2386,45 @@ function ThreadMessages({
   useLayoutEffect(() => {
     composerHandle?.expect(composerExpected);
   }, [composerHandle, composerExpected]);
+  // A first window that leaves less than a screen above the reader is demand
+  // for the next page by itself: its root would otherwise sit right above the
+  // newest replies, with the earlier ones missing between them until a
+  // scroll. It reads once per thread, still following the latest reply.
+  // Only then can a quick-opening sheet draw the thread: read, positioned,
+  // and with its reply box mounted if one is coming.
+  const filled = useRef<string | undefined>(undefined);
+  const reveal = useSheetReveal();
+  const placeholder = composerRoot ? replyPlaceholder(composerRoot) : undefined;
+  useLayoutEffect(() => {
+    if (placeholder) reveal?.placeholder(placeholder);
+  }, [reveal, placeholder]);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    if (
+      filled.current !== messageId &&
+      !revealSelected &&
+      !snapshot.seeking &&
+      !olderAnchor.current &&
+      snapshot.direction === "older" &&
+      snapshot.status === "ready" &&
+      snapshot.canLoadMore &&
+      element.scrollHeight - element.clientHeight < element.clientHeight
+    ) {
+      filled.current = messageId;
+      captureOlderAnchor(element, true);
+      void view.loadMore();
+      return;
+    }
+    if (
+      reveal &&
+      (snapshot.status === "ready" || snapshot.status === "error") &&
+      !positioning &&
+      !olderAnchor.current &&
+      (!composerExpected || composerRoot)
+    )
+      reveal.ready();
+  });
   const sourceRootId = subthreadId ? composerRoot?.threadRootId : undefined;
   const retryThread = () => {
     if (showOlderPageStatus) {
@@ -2372,6 +2439,8 @@ function ThreadMessages({
         channelId={channelId}
         scroller={scroller}
         settled={readingSettled}
+        // Rows under the trailing card aren't shown.
+        trailing={coveredFrom}
         // The thread opened bounds DM reads even before its root resolves. An
         // exact reply under an unavailable original shows alone, so it, not
         // its signed root, is the thread: its hidden siblings stay unread.
@@ -2409,6 +2478,8 @@ function ThreadMessages({
           aria-busy={positioning}
           data-positioning={positioning || undefined}
           data-jump-visible={showJumpToLatest || undefined}
+          data-trailing={trailing ? "" : undefined}
+          onFocus={(event) => revealSheetFocus(event.target)}
           onScroll={(event) => {
             if (!positioned.current) return;
             const element = event.currentTarget;
@@ -2633,12 +2704,16 @@ function ThreadMessages({
               </Button>
             </div>
           )}
-          <div
-            className={styles.timelineEnd}
-            data-thread-end=""
-            aria-hidden="true"
-          />
+          {/* Its resize keeps a reader at the latest reply there, as the
+              card's rest space changes too. */}
+          <div data-thread-end="">
+            <div className={styles.timelineEnd} aria-hidden="true" />
+            {restSpace}
+          </div>
         </section>
+        {/* After the history, so keyboard order follows the card's place
+            between the history and the composer. */}
+        {sheet}
         <DialogBarMaterial className={styles.threadEdgeBottom} />
       </div>
       {/* After the scroller, so its ref is attached when this registers. */}
@@ -2733,6 +2808,7 @@ function ThreadMessages({
           onDraftSaved={onDraftSaved}
           onSend={(id) => {
             onSend?.(id);
+            restSheet();
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

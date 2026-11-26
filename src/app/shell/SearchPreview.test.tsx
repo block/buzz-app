@@ -345,17 +345,33 @@ it("reads for a highlight nobody moved only once typing pauses and results settl
 });
 
 it.each([
-  ["ordinary prose", "Find the needle here", "needle"],
-  ["a Solo link", "buzz://channel/channel", "buzz"],
+  [
+    "ordinary prose",
+    "Find the needle here",
+    "needle",
+    "Find the needle here",
+    "needle",
+  ],
+  // A joined Solo chat's link reads as its title, with no channel "#"; a hit
+  // inside it marks the title.
+  ["a Solo link", "buzz://channel/channel", "buzz", "Solo", "Solo"],
   [
     "prose with a Solo link",
     "See buzz://channel/channel for release notes",
     "release",
+    "See Solo for release notes",
+    "release",
   ],
-  ["a time-prefixed comment", "⏱ 0:42 — Check the release", "release"],
+  [
+    "a time-prefixed comment",
+    "⏱ 0:42 — Check the release",
+    "release",
+    "⏱ 0:42 — Check the release",
+    "release",
+  ],
 ])(
   "keeps %s and highlights intact with live timestamp preferences",
-  async (_case, content, term) => {
+  async (_case, content, term, shown, marked) => {
     vi.useFakeTimers();
     const noon = new Date(2026, 10, 13, 12, 0, 0);
     vi.setSystemTime(noon);
@@ -415,9 +431,11 @@ it.each([
         await vi.advanceTimersByTimeAsync(150);
       });
       expect(screen.getByText(/^12:00\s?PM$/)).toBeVisible();
-      expect(screen.getByText(term, { selector: "mark" })).toBeVisible();
+      expect(
+        [...document.querySelectorAll("mark")].map((mark) => mark.textContent),
+      ).toEqual([marked]);
       expect(document.querySelector(".search-peek-text")?.textContent).toBe(
-        content,
+        shown,
       );
       expect(screen.queryByRole("link")).not.toBeInTheDocument();
       if (content.startsWith("⏱")) {

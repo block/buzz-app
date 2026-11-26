@@ -54,7 +54,7 @@ import {
 import { namedChannel, useChannelReference } from "./channel-reference";
 import { useLinkedMessageByline } from "./linked-message";
 import { messageViewKey } from "../messages/view-key";
-import { soloChatLinkName } from "../solo/labels";
+import { linkedSoloChatName } from "../solo/labels";
 import styles from "./LinkPreview.module.css";
 import { writeClipboardText } from "../../shared/clipboard";
 
@@ -154,16 +154,10 @@ export function MessageLink({
   const channels = session?.channels;
   const chatName = useSyncExternalStore(
     channels?.subscribeList ?? subscribe,
-    () => {
-      if (!destination || destination.messageId || destination.threadRootId)
-        return "";
-      const channel = channels
-        ?.list()
-        .channels.find((item) => item.id === destination.channelId);
-      return channel?.channelType === "solo" && !channel.cached
-        ? soloChatLinkName(channel)
-        : "";
-    },
+    () =>
+      destination
+        ? linkedSoloChatName(destination, channels?.list().channels)
+        : "",
     () => "",
   );
   const named = referenced ? namedChannel(reference) : undefined;

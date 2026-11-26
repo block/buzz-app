@@ -102,6 +102,7 @@ mod relay;
 mod relay_admin;
 mod saved_downloads;
 mod sign_out;
+mod speech;
 mod system_clock;
 use identity::{
     identity_create, identity_export, identity_import, identity_import_legacy,
@@ -950,6 +951,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
         decisions::decide,
+        speech::speech_connect,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -1165,6 +1167,12 @@ pub fn run() {
                 app.state::<federated_identity::FederatedIdentity>()
                     .inner()
                     .clone(),
+                // Packaged builds keep `devUrl` in their config but never load it.
+                app.config()
+                    .build
+                    .dev_url
+                    .as_ref()
+                    .filter(|_| tauri::is_dev()),
             ) {
                 Ok(stream) => {
                     app.manage(stream);

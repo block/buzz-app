@@ -1028,8 +1028,11 @@ it.each([undefined, { width: 640, height: 400 }])(
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
       view.rerender(show(false));
-      const unavailable = screen.getByRole("status");
-      expect(unavailable).toHaveTextContent("Image unavailable");
+      // The row's toolbar keeps an empty status of its own.
+      const unavailable = screen
+        .getAllByRole("status")
+        .find((status) => status.textContent === "Image unavailable");
+      expect(unavailable).toBeDefined();
       if (dimensions)
         expect(unavailable).toHaveStyle({
           width: "360px",
@@ -4022,16 +4025,43 @@ it("offers the viewer's own message the activity of each agent it names", async 
 
 it("keeps agent and human emoji reactions ordinary, without treating them as activity", () => {
   const agent = { id: "agent-reaction", authorId: "agent" };
+  const repeatedAgent = { id: "agent-reaction-repeat", authorId: "agent" };
   const human = { id: "human-reaction", authorId: "human" };
+  const firstCustomUrl = "https://emoji.example/party-one.png";
+  const secondCustomUrl = "https://emoji.example/party-two.png";
   const reactions = [
-    { content: "👀", events: [agent, human] },
+    { content: "👀", events: [agent, human, repeatedAgent] },
     { content: "💬", events: [agent] },
     { content: "✅", events: [agent] },
+    {
+      content: ":party:",
+      emoji: { shortcode: "party", url: firstCustomUrl },
+      events: [agent, human],
+    },
+    {
+      content: ":party:",
+      emoji: { shortcode: "party", url: secondCustomUrl },
+      events: [agent],
+    },
+    {
+      content: ":empty:",
+      emoji: { shortcode: "empty", url: "https://emoji.example/empty.png" },
+      events: [],
+    },
   ];
+  const writes = { react: vi.fn(), remove: vi.fn() };
+  const references = {
+    channels: {
+      list: () => ({ status: "ready", channels: [] }),
+      subscribeList: () => () => {},
+    },
+    messages: writes,
+  } as unknown as RelaySession;
   try {
     const view = renderDom(
       <MessageRow
         row={{ ...row, reactions }}
+        references={references}
         profile={undefined}
         media={() => undefined}
         onOpenLink={() => false}
@@ -4043,9 +4073,55 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
         }
       />,
     );
-    expect(view.getAllByText("👀", { exact: true })).toHaveLength(2);
-    expect(view.getAllByText("💬", { exact: true })).toHaveLength(1);
-    expect(view.getAllByText("✅", { exact: true })).toHaveLength(1);
+    const reactionGroup = view.getByRole("group", { name: "Reactions" });
+    expect(reactionGroup).toHaveAttribute("role", "group");
+    expect(reactionGroup).toHaveAccessibleName("Reactions");
+    expect(reactionGroup).toHaveAttribute(
+      "data-copy-text",
+      "👀 2, 💬 1, ✅ 1, :party: 2, :party: 1",
+    );
+    const badges = reactionGroup.querySelectorAll<HTMLElement>(
+      ":scope > [data-reaction]",
+    );
+    expect(badges).toHaveLength(5);
+    const firstBadge = badges.item(0);
+    if (!firstBadge) throw new Error("Missing first reaction badge");
+    expect(
+      [...badges].map((badge) => badge.getAttribute("data-reaction")),
+    ).toEqual(["👀", "💬", "✅", ":party:", ":party:"]);
+    expect(
+      [...reactionGroup.querySelectorAll('[data-reaction=":party:"]')].map(
+        (badge) => badge.getAttribute("data-reaction-url"),
+      ),
+    ).toEqual([firstCustomUrl, secondCustomUrl]);
+    expect(
+      within(reactionGroup).getByRole("img", { name: "👀: 2 people" }),
+    ).toBeVisible();
+    expect(firstBadge).toHaveTextContent("2");
+    expect(
+      within(reactionGroup).getByRole("img", { name: "💬: 1 person" }),
+    ).toBeVisible();
+    expect(
+      within(reactionGroup).getAllByRole("img", {
+        name: ":party:: 2 people",
+      }),
+    ).toHaveLength(1);
+    expect(
+      within(reactionGroup).getAllByRole("img", {
+        name: ":party:: 1 person",
+      }),
+    ).toHaveLength(1);
+    expect(
+      reactionGroup.querySelector(':scope > [data-reaction=":empty:"]'),
+    ).toBeNull();
+    expect(
+      reactionGroup.querySelector(
+        "button, a[href], input, select, textarea, [tabindex]",
+      ),
+    ).toBeNull();
+    fireEvent.click(firstBadge);
+    expect(writes.react).not.toHaveBeenCalled();
+    expect(writes.remove).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("img", { name: "Other agent working" }),
     ).toBeNull();

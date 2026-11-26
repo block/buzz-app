@@ -135,6 +135,7 @@ export function SidebarUnread({
     const cue = lowerCue.current;
     const upper = upperCue.current;
     const action = floatingAction?.current;
+    const sidebarFrame = viewport.closest<HTMLElement>("[data-sidebar-frame]");
     let positionFrame = 0;
     const schedulePosition = () => {
       if (!cue || !upper || !action || positionFrame) return;
@@ -146,6 +147,7 @@ export function SidebarUnread({
         upper.removeAttribute("data-share-action-row");
         cue.removeAttribute("data-beside-action");
         cue.removeAttribute("data-share-action-row");
+        sidebarFrame?.removeAttribute("data-stacked-cues");
         const cueRect = cue.getBoundingClientRect();
         const actionRect = action.getBoundingClientRect();
         const center = cueRect.left + cueRect.width / 2;
@@ -197,6 +199,7 @@ export function SidebarUnread({
             if (clippedCount) {
               cue.dataset.shareActionRow = "stacked";
               upper.dataset.shareActionRow = "stacked";
+              sidebarFrame?.setAttribute("data-stacked-cues", "");
             }
           }
         }
@@ -285,6 +288,7 @@ export function SidebarUnread({
         edge?.removeAttribute("data-beside-action");
         edge?.removeAttribute("data-share-action-row");
       }
+      sidebarFrame?.removeAttribute("data-stacked-cues");
       cue?.removeAttribute("data-lifted");
       cue?.removeAttribute("data-preview-limit");
     };

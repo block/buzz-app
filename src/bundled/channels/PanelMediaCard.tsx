@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { useMediaReview } from "../../features/conversation/Conversation";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
+import { PanelPane } from "../../features/panels/opening-pane";
 
 type Props = ComponentProps<typeof PanelCard> &
   Pick<
@@ -9,6 +10,8 @@ type Props = ComponentProps<typeof PanelCard> &
     "session" | "scope" | "channelId" | "channelName" | "extensions"
   > & {
     isActive(): boolean;
+    /** The pane this panel's tab is in, which its links open from. */
+    pane?: "main" | "side" | undefined;
   };
 
 /** A channel panel shares the inline media viewer and its session-backed source. */
@@ -19,6 +22,7 @@ export function PanelMediaCard({
   channelName,
   extensions,
   isActive,
+  pane,
   context,
   ...card
 }: Props) {
@@ -37,7 +41,7 @@ export function PanelMediaCard({
     if (!active) media.review?.close();
   }, [active, media.review]);
   return (
-    <>
+    <PanelPane.Provider value={pane}>
       <PanelCard
         {...card}
         context={
@@ -70,6 +74,6 @@ export function PanelMediaCard({
           }
         />
       )}
-    </>
+    </PanelPane.Provider>
   );
 }

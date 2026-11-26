@@ -31,8 +31,7 @@ import {
 } from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
-  wakeAnchor,
-  wakeLands,
+  turnOf,
 } from "../../features/agent-harness/plugin-wake";
 import { compactAt } from "../../features/agents/compact-at";
 import { routeFor } from "../../features/agents/model-routes";
@@ -224,7 +223,7 @@ type Request = {
   /** A failed final delivery stays pending until this request gets a reply. */
   finalDelivery?: Error | true;
   voiceContinuation?: VoiceContinuation;
-  step?: (tool: string, target?: string) => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -1987,8 +1986,9 @@ export class CodexRuntime {
     // canvas_set; v15 removes message keywords; v16 splits channel and
     // channels into the channel_* tools; v17 split members into the
     // member_* tools; v18 adds search and removes read's q; v19 replaces
-    // solo_workspace_list with workspace_list and adds channel_move.
-    return `buzz.codex.sessions.v19:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
+    // solo_workspace_list with workspace_list and adds channel_move; v20
+    // adds canvas versions.
+    return `buzz.codex.sessions.v20:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -2462,8 +2462,6 @@ export class CodexRuntime {
     // code, and the agent's own handoff comes from a turn already acting
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     // A workflow's mention waits out a reconnect; the check below decides.
     const ready =
       trigger.type === "mention" && workflowMarked(trigger.event, agent.owner)
@@ -2498,8 +2496,12 @@ export class CodexRuntime {
     const channel = await reads.channel(channelId);
     const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
     const huddle = isHuddleRoom(channel?.about);
-    const topLevel = solo || huddle || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
+    // Where the host placed it. A Huddle room is Codex's own reason to
+    // answer at the top level.
+    const turn = turnOf(trigger, delivery, channelId, solo || huddle);
+    if (!turn) return delivery.ignored?.();
+    const { event } = turn;
+    const topLevel = turn.topLevel || huddle;
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
     const [canvasRead, folders] = await Promise.all([
@@ -4478,7 +4480,7 @@ export class CodexRuntime {
         const step = method === "item/started" ? codexStep(item) : undefined;
         if (step)
           for (const taken of active.activity.values())
-            taken.step?.(step.tool, step.target);
+            taken.step?.(step.tool, step.target, step.origin);
         if (method === "item/started" && item.command)
           this.status(agent.key, key, "Working", item.command);
         if (method === "item/completed" && item.type === "commandExecution")
@@ -5034,10 +5036,12 @@ function continueSession(
 }
 
 /** A started Codex item as a step, named in the shared step vocabulary.
- * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase). */
+ * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase).
+ * `origin` marks a call in the `buzz` tool namespace or to a `buzz` MCP
+ * server. */
 export function codexStep(
   item: Record<string, unknown> | undefined,
-): { tool: string; target?: string } | undefined {
+): { tool: string; target?: string; origin?: "buzz" } | undefined {
   const text = (value: unknown) =>
     typeof value === "string" && value ? value : undefined;
   const step = (tool: string, target?: unknown) => {
@@ -5067,8 +5071,14 @@ export function codexStep(
       return step("Edit", file(first?.path));
     }
     case "mcpToolCall":
-    case "dynamicToolCall":
-      return text(item.tool) ? step(String(item.tool)) : undefined;
+    case "dynamicToolCall": {
+      if (!text(item.tool)) return undefined;
+      const from = item.type === "mcpToolCall" ? item.server : item.namespace;
+      return {
+        tool: String(item.tool),
+        ...(from === "buzz" ? { origin: "buzz" as const } : {}),
+      };
+    }
     case "collabAgentToolCall":
       return step("Agent", item.prompt);
     case "webSearch":

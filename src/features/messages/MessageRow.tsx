@@ -317,6 +317,15 @@ function MessageRowContent({
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
   const reactions = row.reactions;
+  const interactiveReactionContext =
+    session && scope && extensions ? { session, scope, extensions } : undefined;
+  const fallbackReactions = interactiveReactionContext
+    ? undefined
+    : reactions.flatMap((reaction) => {
+        const count = new Set(reaction.events.map((event) => event.authorId))
+          .size;
+        return count > 0 ? [{ reaction, count }] : [];
+      });
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -1484,59 +1493,70 @@ function MessageRowContent({
     !attachmentOnly && !row.huddle && !shownRow && !emojiOnly && !row.diff;
   // A plugin card keeps reactions in its bubble, so its mark goes above them.
   const editedInBubble = !editedInBody && reactionsInBubble;
-  const reactionContent =
-    session && scope && extensions ? (
-      <MessageReactions
-        onFocusedRemoval={() =>
-          menuTrigger.current?.focus({ preventScroll: true })
-        }
-        row={row}
-        session={session}
-        scope={scope}
-        tools={extensions.tools}
-        inline={extensions.inline}
-        profiles={directory.profiles}
-        disabled={
-          !canReact ||
-          (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
-        }
-      />
-    ) : (
-      reactions.length > 0 && (
-        <div
-          className={`${styles.reactions} ${styles.reactionFallback}`}
-          data-message-reactions
-        >
-          {reactions.flatMap((reaction) =>
-            [...new Set(reaction.events.map((event) => event.authorId))].map(
-              (authorId) => (
-                <span
-                  key={JSON.stringify([
-                    reaction.content,
-                    reaction.emoji?.url,
-                    authorId,
-                  ])}
-                >
-                  {extensions ? (
-                    <InlineText
-                      registry={extensions.inline}
-                      content={{
-                        text: reaction.content,
-                        message: row,
-                        reaction,
-                      }}
-                      media={media}
-                    />
-                  ) : (
-                    reaction.content
-                  )}
-                </span>
-              ),
-            ),
-          )}
-        </div>
-      )
-    );
+  const reactionContent = interactiveReactionContext ? (
+    <MessageReactions
+      onFocusedRemoval={() =>
+        menuTrigger.current?.focus({ preventScroll: true })
+      }
+      row={row}
+      session={interactiveReactionContext.session}
+      scope={interactiveReactionContext.scope}
+      tools={interactiveReactionContext.extensions.tools}
+      inline={interactiveReactionContext.extensions.inline}
+      profiles={directory.profiles}
+      disabled={
+        !canReact ||
+        (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+      }
+    />
+  ) : (
+    fallbackReactions &&
+    fallbackReactions.length > 0 && (
+      // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
+      <div
+        className={`${styles.reactions} ${styles.reactionFallback}`}
+        data-message-reactions
+        role="group"
+        aria-label="Reactions"
+        data-copy-text={fallbackReactions
+          .map(({ reaction, count }) => `${reaction.content} ${count}`)
+          .join(", ")}
+      >
+        {fallbackReactions.map(({ reaction, count }) => (
+          <span
+            key={JSON.stringify([reaction.content, reaction.emoji?.url])}
+            aria-label={`${reaction.content}: ${count} ${count === 1 ? "person" : "people"}`}
+            data-reaction={reaction.content}
+            data-reaction-url={reaction.emoji?.url}
+            role="img"
+          >
+            <span
+              className={styles.reactionGlyph}
+              data-grouped=""
+              aria-hidden="true"
+            >
+              <span className={styles.reactionFallbackLabel}>
+                {extensions ? (
+                  <InlineText
+                    registry={extensions.inline}
+                    content={{
+                      text: reaction.content,
+                      message: row,
+                      reaction,
+                    }}
+                    media={media}
+                  />
+                ) : (
+                  reaction.content
+                )}
+              </span>
+              <span className={styles.reactionCount}>{count}</span>
+            </span>
+          </span>
+        ))}
+      </div>
+    )
+  );
   const message = (
     <div
       data-message-id={renderMessage ? undefined : row.id}
@@ -1795,6 +1815,7 @@ function MessageRowContent({
                   messageId={row.id}
                   registry={linkPreviewRegistry}
                   onOpenLink={openLink}
+                  settings={extensions?.settings}
                 />
               )}
               {attachmentContent()}

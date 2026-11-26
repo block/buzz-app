@@ -164,30 +164,30 @@ fn create(
     origin: Option<&TranscriptOrigin>,
     card_id: Option<&str>,
 ) -> EventTemplate {
-    let mut about = format!("Buzz Huddle (buzz.huddles/v1)\nparent:{parent}");
-    if let Some(card_id) = card_id {
+    let about = format!("Buzz Huddle (buzz.huddles/v1)\nparent:{parent}");
+    let mut tags = vec![
+        vec!["h".into(), room.into()],
+        vec!["name".into(), "Huddle".into()],
+        vec!["visibility".into(), "private".into()],
+        vec!["channel_type".into(), "stream".into()],
+        vec!["about".into(), about],
+        vec!["ttl".into(), "3600".into()],
+    ];
+    let transcript = if let Some(card_id) = card_id {
         let root = origin
             .and_then(|origin| origin.root.as_deref())
             .unwrap_or(card_id);
-        about.push_str(&format!("\ntranscripts:card:{root}:{card_id}"));
-    } else if let Some(origin) = origin {
-        match &origin.root {
-            Some(root) => about.push_str(&format!("\ntranscripts:thread:{root}")),
-            None => about.push_str("\ntranscripts:channel"),
-        }
+        Some(format!("transcripts:card:{root}:{card_id}"))
+    } else {
+        origin.map(|origin| match &origin.root {
+            Some(root) => format!("transcripts:thread:{root}"),
+            None => "transcripts:channel".into(),
+        })
+    };
+    if let Some(transcript) = transcript {
+        tags.push(vec!["buzz:huddle-transcript".into(), transcript]);
     }
-    template(
-        9007,
-        vec![
-            vec!["h".into(), room.into()],
-            vec!["name".into(), "Huddle".into()],
-            vec!["visibility".into(), "private".into()],
-            vec!["channel_type".into(), "stream".into()],
-            vec!["about".into(), about],
-            vec!["ttl".into(), "3600".into()],
-        ],
-        String::new(),
-    )
+    template(9007, tags, String::new())
 }
 fn confirm_member(room: &str, viewer: &str) -> EventTemplate {
     template(
@@ -549,13 +549,13 @@ async fn run(
             // Do not cancel an in-flight publication: its outcome may be uncertain.
             publish(host, fi, &call.community, create(&room, &call.parent, call.origin.as_ref(), card_id.as_deref()), &call.viewer).await?;
             check_cancelled(&stop, &touched)?;
+            // The first joinable card or advisory may be visible even if
+            // publication fails locally. Do not roll back a shared room.
+            advertised = true;
             if let Some(card) = card {
                 publish_signed(host, fi, &call.community, card, &call.viewer, "post the Huddle card").await?;
                 check_cancelled(&stop, &touched)?;
             }
-            // Once the advisory might be visible, another person can join. Never
-            // archive that shared room on our own failed/cancelled connection.
-            advertised = true;
             let mut start = lifecycle(48100, &call.parent, &room);
             if let Some(origin) = &call.origin {
                 // Keep lifecycle events visible to discovery, including
@@ -948,6 +948,24 @@ mod tests {
             ]
         );
         assert_eq!(e.tags[2], ["visibility", "private"]);
+        let root = "ab".repeat(32);
+        let routed = create(
+            &room,
+            &parent,
+            Some(&TranscriptOrigin {
+                root: Some(root.clone()),
+                card: false,
+            }),
+            None,
+        );
+        assert_eq!(routed.tags[4], e.tags[4]);
+        assert_eq!(
+            routed.tags[6],
+            [
+                "buzz:huddle-transcript",
+                &format!("transcripts:thread:{root}")
+            ]
+        );
         let e = lifecycle(48100, &parent, &room);
         assert_eq!(e.tags, vec![vec!["h", &parent]]);
         assert_eq!(

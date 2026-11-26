@@ -142,17 +142,21 @@ it("restores signed proof with cached membership, without granting write access"
   expect(restored.get(room)).toBeUndefined();
 });
 
-it("takes a transcript thread from the signed creation, across metadata edits", () => {
-  const owner = state();
-  const root = "b".repeat(64);
-  const marker = `${huddleDescription(parent)}\ntranscripts:thread:${root}`;
-  const created = tags.map((tag) =>
-    tag[0] === "about" ? ["about", marker] : tag,
-  );
-  expect(owner.accept(receipt(creator, created))).toBe(true);
-  owner.accept(info(30, `${huddleDescription(parent)}\ntranscripts:channel`));
-  expect(owner.get(room)?.huddleTranscript).toEqual({
-    channelId: parent,
-    root,
-  });
-});
+it.each(["preview", "v1-compatible"])(
+  "takes a transcript thread from a signed %s creation, across metadata edits",
+  (format) => {
+    const owner = state();
+    const root = "b".repeat(64);
+    const marker = `${huddleDescription(parent)}\ntranscripts:thread:${root}`;
+    const created =
+      format === "preview"
+        ? tags.map((tag) => (tag[0] === "about" ? ["about", marker] : tag))
+        : [...tags, ["buzz:huddle-transcript", `transcripts:thread:${root}`]];
+    expect(owner.accept(receipt(creator, created))).toBe(true);
+    owner.accept(info(30, `${huddleDescription(parent)}\ntranscripts:channel`));
+    expect(owner.get(room)?.huddleTranscript).toEqual({
+      channelId: parent,
+      root,
+    });
+  },
+);

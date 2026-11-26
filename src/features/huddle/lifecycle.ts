@@ -3,12 +3,16 @@ import type { EventData } from "../relay/events";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const prefix = "Buzz Huddle (buzz.huddles/v1)\nparent:";
 export const huddleDescription = (parent: string) => `${prefix}${parent}`;
-export function huddleRoomMetadata(description: string | undefined) {
+export function huddleRoomMetadata(
+  description: string | undefined,
+  transcriptTag?: string,
+) {
   if (!description?.startsWith(prefix)) return;
-  const [parent, origin, ...extra] = description
+  const [parent, previewOrigin, ...extra] = description
     .slice(prefix.length)
     .split("\n");
   if (!parent || !uuid.test(parent) || extra.length) return;
+  const origin = transcriptTag ?? previewOrigin;
   if (origin === undefined) return { parent };
   if (origin === "transcripts:channel")
     return { parent, transcriptDestination: { channelId: parent } };

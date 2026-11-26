@@ -194,39 +194,54 @@ it.each([
   },
 );
 
-it("opens Members to change access for someone who can edit the channel", async () => {
-  const openMembers = vi.fn();
-  const user = userEvent.setup();
-  const details = detailsCapability();
-  details.load = vi.fn(async () => ({
-    channelId: "alpha",
-    version: "v1",
-    name: "Alpha",
-    description: "",
-    visibility: "public" as const,
-    canEdit: true,
-  }));
-  render(
-    <ChannelSettingsPanel
-      scope="community:viewer"
-      channel={{
-        id: "alpha",
-        name: "Alpha",
-        channelType: "stream",
+it.each(["direct", "delegated"])(
+  "offers a change-access action for direct edit authority only (%s)",
+  async (authority) => {
+    const openMembers = vi.fn();
+    const user = userEvent.setup();
+    const details = detailsCapability();
+    details.load = vi.fn(async () => ({
+      channelId: "alpha",
+      version: "v1",
+      name: "Alpha",
+      description: "",
+      visibility: "public" as const,
+      canEdit: true,
+    }));
+    if (authority === "delegated")
+      details.summaryAccess = () => ({
         visibility: "public",
-      }}
-      details={details}
-      openMembers={openMembers}
-      close={() => {}}
-    >
-      Diagnostics
-    </ChannelSettingsPanel>,
-  );
-  const access = await screen.findByRole("button", { name: "Change access" });
-  expect(access).toHaveAccessibleDescription("Public");
-  await user.click(access);
-  expect(openMembers).toHaveBeenCalledWith(access);
-});
+        joinRole: "member",
+        canEdit: false,
+      });
+    render(
+      <ChannelSettingsPanel
+        scope="community:viewer"
+        channel={{
+          id: "alpha",
+          name: "Alpha",
+          channelType: "stream",
+          visibility: "public",
+        }}
+        details={details}
+        openMembers={openMembers}
+        close={() => {}}
+      >
+        Diagnostics
+      </ChannelSettingsPanel>,
+    );
+    await screen.findByRole("button", { name: "Edit channel name" });
+    const access = screen.queryByRole("button", { name: "Change access" });
+    if (authority === "delegated") {
+      expect(access).not.toBeInTheDocument();
+      return;
+    }
+    assert(access);
+    expect(access).toHaveAccessibleDescription("Public");
+    await user.click(access);
+    expect(openMembers).toHaveBeenCalledWith(access);
+  },
+);
 
 it("leaves access out of an archived channel", () => {
   render(

@@ -1,4 +1,6 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "./channel-details";
 import {
@@ -286,6 +288,64 @@ it.each(["owner", "admin", "member"])(
     }
   },
 );
+it("lets a member rename a channel owned by their attested agent and rechecks before publishing", async () => {
+  const h = harness("member");
+  const agentKey = new Uint8Array(32).fill(4);
+  const agent = getPublicKey(agentKey);
+  const digest = createHash("sha256")
+    .update(`nostr:agent-auth:${agent}:`)
+    .digest();
+  const proof = Buffer.from(schnorr.sign(digest, key)).toString("hex");
+  const profile = (owned: boolean) =>
+    finalizeEvent(
+      {
+        kind: 0,
+        created_at: owned ? 1 : 2,
+        tags: owned ? [["auth", viewer, "", proof]] : [],
+        content: "{}",
+      },
+      agentKey,
+    );
+  h.set([
+    h.entry(0),
+    h.record(39001, [["p", agent, "owner"]]),
+    h.record(39002, [
+      ["p", viewer, "", "member"],
+      ["p", agent, "", "owner"],
+    ]),
+  ]);
+  let verifiedProfile: RelayEvent | undefined = profile(false);
+  h.read.mockImplementation(async (filters) => {
+    if (!filters.some((filter) => filter.kinds?.includes(0))) return h.events();
+    if (!verifiedProfile) throw new Error("Profiles are unavailable");
+    return [verifiedProfile];
+  });
+  const unowned = await h.owner.capability.load(id);
+  expect(unowned.canEdit).toBe(false);
+  verifiedProfile = undefined;
+  await expect(h.owner.capability.load(id)).resolves.toMatchObject(unowned);
+  verifiedProfile = profile(true);
+  const base = await h.owner.capability.load(id);
+  expect(base.canEdit).toBe(true);
+  const renamed = { ...base, name: draft.name };
+
+  h.sign.mockImplementationOnce(async (event) => {
+    verifiedProfile = profile(false);
+    return finalizeEvent(event, key);
+  });
+  await expect(h.owner.capability.save(base, renamed)).rejects.toThrow(
+    "permission",
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+
+  verifiedProfile = profile(true);
+  h.publish.mockImplementationOnce(async () => {
+    h.set([h.metadata(renamed.name), ...h.events().slice(1)]);
+    verifiedProfile = undefined;
+  });
+  await h.owner.capability.save(base, renamed);
+  expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.entry(0)]);
+});
 it("revoked authority while signing prevents publication", async () => {
   const h = harness();
   const base = await h.owner.capability.load(id);

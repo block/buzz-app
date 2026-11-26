@@ -178,7 +178,12 @@ import { BOARD_MAIN_MIN_REM } from "./panel-split";
 import type { CommunityReader } from "../../features/communities/service";
 import { avatarMedia } from "../../shared/avatar-source";
 import { TemporaryChatSheet } from "./TemporaryChat";
-import { useOpenTemporaryChat } from "../../features/solo/temporary-chat";
+import {
+  ownTemporaryChat,
+  showTemporaryChat,
+  temporarySource,
+  useOpenTemporaryChat,
+} from "../../features/solo/temporary-chat";
 
 /** The open Solo conversation's Archive, published for the shortcut while its visit is live. */
 export type ArchiveShortcut = {
@@ -652,6 +657,9 @@ function ChannelWorkspace({
   const resolving =
     resolvingMembership ||
     (list.status !== "error" && !!requestedDestination?.metadataPending);
+  const requestedTemporary = ownTemporaryChat(requestedDestination, viewer)
+    ? temporarySource(requestedDestination.description)
+    : undefined;
   const current =
     requestedDestination?.unlisted || requestedDestination?.metadataPending
       ? undefined
@@ -769,6 +777,33 @@ function ChannelWorkspace({
     if (
       !cached &&
       !resolving &&
+      requestedTemporary &&
+      requestedDestination &&
+      navigation &&
+      viewer
+    ) {
+      showTemporaryChat(queries, {
+        chatId: requestedDestination.id,
+        source: requestedTemporary,
+      });
+      navigation.resolve({
+        version: 1,
+        kind: "conversation",
+        channelId: requestedTemporary.channelId,
+        messageId: requestedTemporary.messageId,
+        ...(requestedTemporary.rootId !== requestedTemporary.messageId
+          ? { threadRootId: requestedTemporary.rootId }
+          : {}),
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+      return;
+    }
+    if (
+      !cached &&
+      !resolving &&
       !current &&
       ((requestedChannel && list.status === "ready") ||
         (list.status === "error" &&
@@ -805,10 +840,13 @@ function ChannelWorkspace({
     emptyDestination,
     draft,
     requestedChannel,
+    requestedDestination,
+    requestedTemporary,
     resolving,
     current,
     list,
     navigation,
+    queries,
     viewer,
     scope,
   ]);

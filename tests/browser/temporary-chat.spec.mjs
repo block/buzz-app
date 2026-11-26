@@ -74,6 +74,27 @@ test("a temporary chat opens over its message, stays out of the sidebar and post
   await page
     .getByRole("menuitem", { name: "Post to thread", exact: true })
     .click();
+  // Post to thread closes the temporary chat and drops the answer into the
+  // source thread's reply box so the viewer can edit and send it themselves.
+  await expect(sheet).toBeHidden();
+  const thread = page.getByRole("dialog", { name: "Thread" });
+  await expect(thread).toBeVisible();
+  const threadComposer = thread.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await expect(threadComposer).toContainText("Three items are still open");
+  // Nothing was published yet until the viewer sends.
+  expect(
+    app.report.publications.some(
+      ({ event }) =>
+        event.kind === 9 &&
+        event.tags.some(([key, value]) => key === "h" && value === source) &&
+        event.tags.some(([key, value]) => key === "e" && value === question.id),
+    ),
+  ).toBe(false);
+  await threadComposer.click();
+  await page.keyboard.press("Enter");
   await expect
     .poll(() =>
       app.report.publications.some(
@@ -86,23 +107,29 @@ test("a temporary chat opens over its message, stays out of the sidebar and post
       ),
     )
     .toBe(true);
+  await expect(thread.getByText("Three items are still open")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(sheet).toBeHidden();
-  // Nothing lists it: only its message's marker reopens it.
+  await expect(thread).toBeHidden();
+  // Nothing lists the temporary chat: only its message's marker reopens it.
   await expect(sidebar.getByText(/^About:/)).toHaveCount(0);
-  const marker = row.getByRole("button", { name: "Your temporary chat" });
-  await expect(marker).toBeVisible();
-  await marker.click();
+  // A follow-up from the agent while closed marks the source message as unread.
+  const followUp = app.soloAgentMessage(
+    chat,
+    "Support just signed off — down to two open items.",
+  );
+  const unreadMarker = row.getByRole("button", {
+    name: /Your temporary chat · 1 new/,
+  });
+  await expect(unreadMarker).toBeVisible();
+  await unreadMarker.click();
   await expect(sheet).toBeVisible();
-  await expect(sheet.getByText("Three items are still open")).toBeVisible();
+  await expect(
+    sheet.locator(`[data-message-id="${followUp.id}"]`),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();
-  // The post back is a reply in the source thread, quoting the agent.
-  await row.getByRole("button", { name: /1 reply/ }).click();
   await expect(
-    page
-      .getByRole("dialog", { name: "Thread" })
-      .getByText("Three items are still open"),
+    row.getByRole("button", { name: "Your temporary chat", exact: true }),
   ).toBeVisible();
 });
 
@@ -171,11 +198,29 @@ test("a temporary chat stacks on the inline thread it opens from, and its detail
     detailsRow.getByRole("button", { name: "Show less", exact: true }),
   ).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByRole("dialog")).toHaveCount(2);
-  await page.keyboard.press("Escape");
+  // Posting back from a temporary chat over an already-open inline thread
+  // closes only the chat and puts the text right into the thread's reply box.
+  const summary = app.soloAgentMessage(
+    chat,
+    "Drill needs a staging snapshot and 15 minutes with on-call.",
+  );
+  const summaryRow = sheet.locator(`[data-message-id="${summary.id}"]`);
+  await expect(summaryRow).toBeVisible();
+  await hoverMessage(summaryRow);
+  await summaryRow
+    .getByRole("button", { name: "More message actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Post to thread", exact: true })
+    .click();
   await expect(sheet).toBeHidden();
   await expect(thread).toBeVisible();
-  // The thread's own reply box is back once the chat closes.
-  await expect(
-    thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
-  ).toBeVisible();
+  const threadComposer = thread.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await expect(threadComposer).toBeVisible();
+  await expect(threadComposer).toContainText(
+    "Drill needs a staging snapshot and 15 minutes with on-call.",
+  );
 });

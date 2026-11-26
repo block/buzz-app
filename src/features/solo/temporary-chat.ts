@@ -128,6 +128,10 @@ export function showTemporaryChat(
   for (const listener of state.listeners) listener();
 }
 
+export function openTemporaryChat(session: RelaySession) {
+  return sheets.get(session.channels)?.open;
+}
+
 export function useOpenTemporaryChat(session: RelaySession) {
   const state = sheet(session);
   return useSyncExternalStore(

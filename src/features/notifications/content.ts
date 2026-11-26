@@ -5,6 +5,7 @@ import { scanMarkdown, visibleHtmlSource } from "../relay/message-content";
 import type { NotificationCategory } from "./preferences";
 import { prepareMarkdown } from "../messages/markdown-preparation";
 import { remarkSpoilers } from "../messages/remark-spoilers";
+import { TEMPORARY_LABEL } from "../solo/temporary-chat";
 import { messageLinkParts } from "../messages/message-link-parts";
 import { placeholderCharacters } from "../messages/placeholder-characters";
 
@@ -186,8 +187,10 @@ export function messageNotificationText(
     channel?.channelType === "dm"
       ? "a direct message"
       : `#${shortText(channel?.name ?? "", 64) || message.channelId.slice(0, 8)}`;
-  const title =
-    category === "mention"
+  const temporary = !!channel?.labels?.includes(TEMPORARY_LABEL);
+  const title = temporary
+    ? `${sender} replied in your temporary chat`
+    : category === "mention"
       ? `${sender} mentioned you in ${destination}`
       : category === "direct"
         ? `${sender} sent you a direct message`

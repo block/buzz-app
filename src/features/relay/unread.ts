@@ -1,4 +1,5 @@
 import { viewerMember } from "./membership";
+import { ownTemporaryChat } from "../solo/temporary-chat";
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience, detailsBrief, messageAudience } from "./audience";
@@ -891,6 +892,11 @@ export function createUnread({
   const isDm = (channelId: string) =>
     channels.list().channels.find((channel) => channel.id === channelId)
       ?.channelType === "dm";
+  const isTemporary = (channelId: string) =>
+    ownTemporaryChat(
+      channels.list().channels.find((channel) => channel.id === channelId),
+      viewer,
+    );
   // Read on first use: constructing a session touches no storage.
   let saved: ThreadFollows | undefined;
   const choices = () => (saved ??= follows.read());
@@ -1253,7 +1259,11 @@ export function createUnread({
         viewing: false,
       });
     const dm = isDm(channelId);
-    const kind = category(entry, dm);
+    // An agent reply in the viewer's own temporary chat notifies even without
+    // an explicit @mention, while staying classified as a mention so local Solo
+    // completion alerts still deduplicate it.
+    const kind =
+      category(entry, dm) ?? (isTemporary(channelId) ? "mention" : undefined);
     // A queued or running lookup may still make this reply thread attention.
     // A read reply is never looked up, so it is undecided but not pending.
     // A broadcast is never undecided: its lookup can still raise it from

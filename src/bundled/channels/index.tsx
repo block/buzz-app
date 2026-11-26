@@ -122,7 +122,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Post to thread",
     placement: "menu",
     matches: canPostBack,
-    component: PostBackMenuItem,
+    component: ({ message, session, close }) => (
+      <PostBackMenuItem
+        message={message}
+        session={session}
+        navigation={navigator}
+        close={close}
+      />
+    ),
   });
   const panels = ctx.panels;
   const archive: ArchiveShortcut = {};

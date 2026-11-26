@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { ConfirmedChannel } from "../../features/conversation/ConfirmedChannel";
 import {
   ConversationChannel,
@@ -14,7 +14,10 @@ import {
   useComposerScope,
 } from "../../features/messages/composer-overlay";
 import { ComposerSheet } from "../../features/messages/ComposerSheet";
+import { mentionDraft } from "../../features/messages/mention-draft";
+import type { Navigation } from "../../features/navigation/controller";
 import type { ChannelMessage } from "../../features/relay/contracts";
+import { splitPartition } from "../../features/relay/partition";
 import type { RelaySession } from "../../features/relay/session";
 import { useDefaultAgent } from "../../features/solo/default-agent";
 import {
@@ -29,6 +32,7 @@ import { ArrowUpIcon, ChatCircleIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import referenceStyles from "../../shared/InlineReference.module.css";
+import { readView, writeView } from "../../shared/view-state";
 import { ChannelBody } from "./ChannelBody";
 import styles from "./TemporaryChat.module.css";
 
@@ -121,72 +125,113 @@ export function TemporaryChatMarker({
 }) {
   const chat = useTemporaryChat(session, message.id);
   const source = chat && temporarySource(chat.description);
+  const target = useMemo(
+    () =>
+      chat ? ({ kind: "channel", channelId: chat.id } as const) : undefined,
+    [chat],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      target ? session.unread.subscribe(target, listener) : () => {},
+    [session.unread, target],
+  );
+  const get = useCallback(
+    () => (target ? session.unread.snapshot(target) : undefined),
+    [session.unread, target],
+  );
+  const unread = useSyncExternalStore(subscribe, get, get);
   if (!chat || !source) return null;
+  const count = unread?.row?.observedCount ?? unread?.observedCount ?? 0;
   return (
     <span className="text-caption">
       <button
         type="button"
         className={`${referenceStyles.link} ${styles.marker}`}
         data-temporary-chat-marker=""
+        data-temporary-chat-unread={count > 0 ? "" : undefined}
         onClick={() => showTemporaryChat(session, { chatId: chat.id, source })}
       >
         <ChatCircleIcon size={14} aria-hidden="true" />
-        Your temporary chat
+        {count > 0
+          ? `Your temporary chat · ${count} new`
+          : "Your temporary chat"}
       </button>
     </span>
   );
 }
 
-/** In a temporary chat, an agent's message can be posted back to the source's
- * thread, as the viewer, quoting the agent. */
+/** In a temporary chat, an agent's message can be drafted into the source's
+ * thread composer for the viewer to review, edit and send as themselves. */
 export function canPostBack(message: ChannelMessage, session: RelaySession) {
   const chat = session.channels.get?.(message.channelId);
   return (
+    !!session.scope &&
     ownTemporaryChat(chat, session.viewer) &&
     message.authorId !== session.viewer &&
     !message.threadRootId &&
+    !!message.content.trim() &&
     !!temporarySource(chat.description) &&
     (!message.delivery || ["accepted", "seen"].includes(message.delivery))
   );
 }
 
+/** Puts the message into the source thread's draft, closes the temporary chat
+ * and opens that thread. Nothing is sent until the person sends it there. */
 export function PostBackMenuItem({
   message,
   session,
+  navigation,
   close,
 }: {
   message: ChannelMessage;
   session: RelaySession;
+  navigation: Navigation;
   close(): void;
 }) {
   const notify = useToastNotification();
   const source = temporarySource(
     session.channels.get?.(message.channelId)?.description,
   );
+  async function post() {
+    const scope = session.scope;
+    const parts = scope ? splitPartition(scope) : undefined;
+    if (!scope || !parts || !source) {
+      notify("The thread is unavailable.", "error");
+      return;
+    }
+    const key = `draft:${source.channelId}:thread:${source.rootId}`;
+    const { document: _, ...saved } = mentionDraft(
+      readView<unknown>(scope, key, ""),
+    );
+    const text = saved.text.trim()
+      ? `${saved.text.trimEnd()}\n\n${message.content}`
+      : message.content;
+    if (!writeView(scope, key, { ...saved, text })) {
+      notify("The thread’s draft couldn’t be saved. Try again.", "error");
+      return;
+    }
+    showTemporaryChat(session, undefined);
+    close();
+    const current = navigation.snapshot().entry.target;
+    if (
+      current.kind === "conversation" &&
+      current.channelId === source.channelId &&
+      current.inline === source.rootId
+    )
+      return;
+    const result = await navigation.open({
+      version: 1,
+      kind: "conversation",
+      scope: parts,
+      channelId: source.channelId,
+      messageId: source.messageId,
+      threadRootId: source.rootId,
+    });
+    if (result.status === "failed")
+      notify("The thread couldn’t open. Your draft is saved there.", "error");
+  }
   return (
-    <MenuItem
-      disabled={!source}
-      onClick={() => {
-        if (!source) return;
-        try {
-          session.messages.forward(
-            source.channelId,
-            message,
-            authorName(session, message.authorId),
-            "",
-            undefined,
-            { rootId: source.rootId },
-          );
-          notify("Posted to the thread", "success");
-          close();
-        } catch (error) {
-          notify(
-            error instanceof Error ? error.message : String(error),
-            "error",
-          );
-        }
-      }}
-    >
+    <MenuItem disabled={!source} onClick={() => void post()}>
       <MenuIcon>
         <ArrowUpIcon size={16} aria-hidden="true" />
       </MenuIcon>
@@ -231,7 +276,6 @@ export function TemporaryChatSheet({
       title="Temporary chat"
       description="Only you can see this"
       containsComposer
-      tall
     >
       <ConversationChannel
         session={session}

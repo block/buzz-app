@@ -2,6 +2,7 @@
    source conversation. */
 .chat {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   height: min(36rem, var(--sheet-max-height));
   min-height: 0;
@@ -17,4 +18,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+}
+.marker[data-temporary-chat-unread] {
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-medium);
 }

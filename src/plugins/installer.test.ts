@@ -347,7 +347,7 @@ it("checks installed ids even when disabled, source-backed, or contribution-free
   expect(installer.getInstallationStatus("example.missing")).toBe("absent");
 });
 
-it("lets independent callers read one known plugin's installed artifact hash", async () => {
+it("lets independent callers read one known plugin's catalog-recorded artifact hash", async () => {
   const digest = "a".repeat(64);
   const target = info("example.target");
   target.revision = digest;
@@ -385,7 +385,7 @@ it.each([
     },
   },
 ])(
-  "returns the installed bytes hash for a disabled external $kind install",
+  "returns the catalog-recorded artifact hash for a disabled external $kind install",
   async ({ source }) => {
     const digest = "d".repeat(64);
     const installed = info("example.target");

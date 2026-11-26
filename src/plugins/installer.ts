@@ -41,7 +41,7 @@ type PluginInstallationSourceKind =
   | "bundled"
   | "absent"
   | "unavailable";
-/** Result of reading the stored artifact hash for one installed plugin ID. */
+/** Digest recorded for one catalogued revision; not a fresh hash of the current file. */
 export type PluginInstallationArtifactHash =
   | Readonly<{ status: "available"; sha256: string }>
   | Readonly<{ status: "absent" }>
@@ -65,7 +65,10 @@ export type PluginInstaller = Readonly<{
    * enabled state or install source. Returns unavailable until the catalog is ready.
    */
   getInstallationStatus(id: string): PluginInstallationStatus;
-  /** Returns the native package-byte hash for one known ID, without its source metadata. */
+  /**
+   * Returns the SHA-256 recorded for one installed plugin's catalogued revision.
+   * It does not rehash the current package file.
+   */
   getInstallationArtifactHash?(id: string): PluginInstallationArtifactHash;
   /**
    * Returns only the saved source kind. Returns unavailable before catalog
@@ -620,7 +623,7 @@ export function createPluginInstallCore({
       installed.status !== "installed" ||
       !installed.plugin ||
       installed.plugin.source !== "external" ||
-      // A catalog error means the recorded revision cannot confirm installed bytes.
+      // Catalog errors stay unavailable; the stored digest is not a current-file integrity check.
       installed.plugin.error !== null ||
       typeof installed.plugin.revision !== "string" ||
       !sha256.test(installed.plugin.revision)

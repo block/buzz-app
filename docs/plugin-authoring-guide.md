@@ -136,7 +136,7 @@ For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the 
 
 ### Installed plugin artifact hash
 
-The optional `pluginInstaller` service has an optional `getInstallationArtifactHash(id)` capability on newer hosts. It reads one known plugin ID and returns only the native SHA-256 of its installed package bytes. The `PluginInstallationArtifactHash` result type is exported from `@buzz/author`:
+The optional `pluginInstaller` service has an optional `getInstallationArtifactHash(id)` capability on newer hosts. It returns only the native SHA-256 recorded for that plugin's catalogued revision. The lookup and subscription read catalog state; neither rehashes the current package file, so an `available` result is not a fresh integrity check. The `PluginInstallationArtifactHash` result type is exported from `@buzz/author`:
 
 ```js
 const installer = ctx.reflect.get("pluginInstaller");
@@ -148,7 +148,7 @@ if (result?.status === "available") {
 
 `available` includes a 64-character lowercase hexadecimal SHA-256 in `sha256`. `absent` means a ready catalog has no matching ID. `unavailable` means the catalog is not ready, the ID is ambiguous, or Buzz cannot confirm a supported stored artifact digest (for example, an errored entry, a bundled plugin, or invalid digest metadata). A disabled external plugin can still have an available digest. Subscribe with `subscribeInstallationStatus(id, listener)` before reading; its callback is an invalidation signal, so re-read the hash when it fires.
 
-Equal digests mean the installed package bytes are identical. They do not prove a common source, publisher, trust level, or version order.
+Equal recorded digests mean the catalogued revisions have the same package digest. They do not verify current file bytes or prove a common source, publisher, trust level, or version order.
 
 ## Speech providers
 

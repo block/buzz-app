@@ -184,13 +184,20 @@ it("lists the built-in tools each role's gates allow", () => {
   expect(roleTools("coder").native).toContain("Bash");
 });
 
-it("lets Read / Write edit and run commands but not use connected or plugin deliverable tools", () => {
+it("lets Read / Write edit, run commands and chat, but not use connected, plugin or admin Buzz tools", () => {
   const builder = { toolPreset: "builder" };
   for (const name of ["Read", "Edit", "Bash", "apply_patch", "Task", "Skill"])
     expect(nativeToolAllowed(name, builder)).toBe(true);
   expect(nativeToolAllowed("mcp__github__create_issue", builder)).toBe(false);
-  expect(buzzToolAllowed("canvas_set", builder)).toBe(true);
-  expect(buzzToolAllowed("tasks_update", builder, TASKS)).toBe(true);
+  expect(buzzToolAllowed("send", builder)).toBe(true);
+  for (const name of [
+    "canvas_set",
+    "settings_set",
+    "plugin_disable",
+    "mem_set",
+  ])
+    expect(buzzToolAllowed(name, builder)).toBe(false);
+  expect(buzzToolAllowed("tasks_update", builder, TASKS)).toBe(false);
   expect(buzzToolAllowed("apps_deploy", builder, UNDECLARED)).toBe(false);
 });
 

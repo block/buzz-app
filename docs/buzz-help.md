@@ -203,8 +203,10 @@ if that desktop app is up and running.
 - **Tools.** Local Claude Code, Codex, Goose and Pi agents have a per-device
   **Tools** tab with three roles. **All**, the default, uses every tool
   available to the agent, as agents always have. **Read / Write** edits files
-  and runs builds and tests with Shell, delegates to subagents and uses built-in
-  Buzz tools, but not connected MCP tools or plugin tools that change things.
+  and runs builds and tests with Shell, delegates to subagents and chats in Buzz,
+  while connected MCP tools, plugin tools and Buzz actions that manage memory,
+  attention, channels, canvases, notes, members, plugins or settings stay with
+  All.
   **Read Only** inspects files and the web and answers in chat; it can't edit
   files, run Shell or delegate. An agent saved with Orchestrator or an
   individual tool selection by an earlier version keeps it, shown as **Earlier

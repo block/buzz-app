@@ -216,8 +216,6 @@ const ROLES: Readonly<
     "native:meta",
     "buzz:read",
     "buzz:message",
-    "buzz:coordinate",
-    "buzz:builtin-deliverable",
   ],
   "super-agent": [
     "native:read",
@@ -268,14 +266,15 @@ export const PRESET_INFO: readonly RoleInfo[] = [
     id: "coder",
     label: "All",
     description: "Uses every tool available to the agent. The default.",
-    can: "Everything Read / Write can, plus connected MCP tools and plugin tools that change things.",
+    can: "Everything Read / Write can, plus connected MCP tools, plugin tools, and Buzz actions that manage memory, attention, channels, canvases, notes, members, plugins and settings.",
   },
   {
     id: "builder",
     label: "Read / Write",
     description: "Edits files and runs builds and tests.",
-    can: "Read, edit and create files (Read, Edit, Write), run commands such as builds, tests and git (Bash), use the web, delegate to subagents (Task), and use built-in Buzz tools.",
-    cannot: "Use connected MCP tools or plugin tools that change things.",
+    can: "Read, edit and create files (Read, Edit, Write), run commands such as builds, tests and git (Bash), use the web, delegate to subagents (Task), read Buzz and chat (read, send).",
+    cannot:
+      "Use connected MCP tools or plugin tools, or manage memory, attention, channels, canvases, notes, members, plugins or settings.",
   },
   {
     id: "reviewer",
@@ -283,7 +282,7 @@ export const PRESET_INFO: readonly RoleInfo[] = [
     description: "Inspects files and answers in chat.",
     can: "Read and search files (Read, Grep, Glob), use the web (WebFetch, WebSearch), load skills (Skill), read Buzz and send messages (read, send).",
     cannot:
-      "Edit files, run commands, delegate, or create channels, canvases or notes.",
+      "Edit files, run commands, delegate, or create channels, canvases or notes. On Goose it can list folders and view images but can't open text files.",
   },
 ];
 /** Shown only for an agent saved with Orchestrator by an earlier draft. */

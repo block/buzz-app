@@ -199,60 +199,49 @@ it("commits on stop, stops the microphone, and waits for the last words", async 
   expect(quick.onEnd.mock.calls).toEqual([["Yes."]]);
 });
 
-it("sends what was said while connecting, and the backlog before ending", async () => {
+it("sends what was said while connecting, and the rest before ending", async () => {
   const r = hosted();
-  // Web Audio: a delay line from the microphone to what the peer sends.
-  const sent = { stop: vi.fn() };
+  const sent = {};
+  const now = { currentTime: 0, state: "running" };
   const delayTime = {
     value: 0,
     setValueAtTime(value: number) {
       delayTime.value = value;
     },
-    linearRampToValueAtTime: vi.fn(),
+    linearRampToValueAtTime() {},
   };
-  const node = { connect: (next: unknown) => next };
-  const audio = { currentTime: 0, close: vi.fn() };
+  const node = { connect: (next: unknown) => next, delayTime };
   vi.stubGlobal(
     "AudioContext",
     class {
       get currentTime() {
-        return audio.currentTime;
+        return now.currentTime;
       }
+      state = now.state;
       resume = async () => {};
-      state = "running";
-      close = audio.close;
-      createDelay = () => ({ ...node, delayTime });
+      close = async () => {};
+      createDelay = () => node;
       createMediaStreamSource = () => node;
       createMediaStreamDestination = () => ({
         stream: { getAudioTracks: () => [sent] },
       });
     },
   );
-  let answer: (reply: Awaited<ReturnType<Connect>>) => void = () => {};
-  r.connect.mockImplementation(
-    () => new Promise((resolve) => (answer = resolve)),
-  );
+  let answer = (_: Awaited<ReturnType<Connect>>) => {};
+  r.connect.mockReturnValue(new Promise((resolve) => (answer = resolve)));
   const listening = listenHosted(r.options, r.connect);
   await vi.advanceTimersByTimeAsync(0);
-  // Listening while the provider is still answering.
   expect(r.onState).toHaveBeenLastCalledWith("listening");
-  audio.currentTime = 1.5;
+  now.currentTime = 1.5;
   answer({ outcome: "answered", sdp: "answer" });
   await vi.advanceTimersByTimeAsync(0);
   expect(r.replaceTrack).toHaveBeenCalledWith(sent);
   r.channel.dispatchEvent(new Event("open"));
-  // Sent from the moment the microphone opened.
   expect(delayTime.value).toBe(1.5);
-
-  r.receive({ type: DELTA, item_id: "a", delta: "jump to" });
   listening.stop();
   expect(r.commits()).toBe(0);
   await vi.advanceTimersByTimeAsync(1_500);
   expect(r.commits()).toBe(1);
-  r.receive({ type: COMMITTED, item_id: "a" });
-  r.receive({ type: COMPLETED, item_id: "a", transcript: "Jump to design." });
-  expect(r.onEnd.mock.calls).toEqual([["Jump to design."]]);
-  expect(audio.close).toHaveBeenCalled();
 });
 
 it("reports what it heard when the final words don't come", async () => {

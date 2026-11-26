@@ -83,11 +83,6 @@ const SILENCE_MS = 8_000;
 /** How long an ending waits for the final transcript before reporting what
  * was heard so far. */
 const FINAL_MS = 1_000;
-/** The most audio, in seconds, kept while the provider connects. */
-const BACKLOG_S = 30;
-/** How fast the replayed backlog catches up with live speech: 0.15 plays
- * it at 1.15 times speed until it has. */
-const CATCH_UP = 0.15;
 
 const MESSAGES: Readonly<Record<SpeechFailure, string>> = {
   unavailable: "Speech to text isn’t available.",
@@ -162,32 +157,26 @@ export function transcriptItems() {
   };
 }
 
-/** The microphone through a delay line: audio is kept from the moment the
- * microphone opens, so words said while the provider connects are sent once
- * it does, then the delay plays slightly fast until it is live. Without Web
- * Audio, undefined: the microphone is sent as is. */
+/** The microphone through a delay line from the moment it opens, so words
+ * said while the provider connects are sent once it does. */
 function delayLine(media: MediaStream) {
-  if (typeof AudioContext === "undefined") return undefined;
+  if (typeof AudioContext === "undefined") return;
   const audio = new AudioContext();
-  const delay = audio.createDelay(BACKLOG_S);
+  const delay = audio.createDelay(30);
   const out = audio.createMediaStreamDestination();
   audio.createMediaStreamSource(media).connect(delay).connect(out);
   void audio.resume();
   const opened = audio.currentTime;
   return {
+    audio,
+    delay: delay.delayTime,
     track: out.stream.getAudioTracks()[0],
-    /** Sends from the moment the microphone opened, then catches up. */
+    /** Sends from the moment the microphone opened, then catches up at 1.15x. */
     replay() {
       const now = audio.currentTime;
-      const backlog = Math.min(now - opened, BACKLOG_S);
-      delay.delayTime.setValueAtTime(backlog, now);
-      delay.delayTime.linearRampToValueAtTime(0, now + backlog / CATCH_UP);
+      delay.delayTime.setValueAtTime(now - opened, now);
+      delay.delayTime.linearRampToValueAtTime(0, now + (now - opened) / 0.15);
     },
-    /** Whether audio flows: a context the webview keeps suspended doesn't. */
-    running: () => audio.state === "running",
-    /** Milliseconds of heard audio not sent yet. */
-    lag: () => delay.delayTime.value * 1000,
-    close: () => void audio.close(),
   };
 }
 
@@ -217,7 +206,7 @@ export function listenHosted(
   let channel: RTCDataChannel | undefined;
   let ended = false;
   let ending = false;
-  /** Ending, while the delay line still sends heard audio. */
+  /** Ending, while the delay line still sends what it holds. */
   let draining = false;
   /** The transcript last reported. */
   let text = "";
@@ -257,7 +246,7 @@ export function listenHosted(
     channel?.close();
     peer?.close();
     stopMicrophone();
-    line?.close();
+    void line?.audio.close();
     options.onState?.("idle");
     if (report && text.trim()) options.onEnd(text.trim());
   };
@@ -266,13 +255,10 @@ export function listenHosted(
     if (ending && !draining && unanswered <= 0 && items.settled()) close(true);
   };
   /** Ends listening once the last commit's words are in. Stop commits
-   * even before the first word, so speech cut short still counts. Audio the
-   * delay line still holds is sent first. */
+   * even before the first word, so speech cut short still counts. */
   const end = (stopped: boolean) => {
     if (ended || ending) return;
     ending = true;
-    clearTimeout(pause);
-    const lag = line?.lag() ?? 0;
     stopMicrophone();
     const last = () => {
       draining = false;
@@ -280,6 +266,7 @@ export function listenHosted(
       wait(FINAL_MS, () => close(true));
       settle();
     };
+    const lag = (line?.delay.value ?? 0) * 1000;
     draining = lag > 0;
     if (draining) wait(lag, last);
     else last();
@@ -371,11 +358,8 @@ export function listenHosted(
           // Stopped meanwhile: release the microphone at once.
           if (ended || ending)
             for (const track of media.getTracks()) track.stop();
-          else {
-            // Heard from now on, though sent once the provider answers.
-            line = delayLine(media);
-            if (line) state("listening");
-          }
+          else line = delayLine(media);
+          if (line) state("listening");
           return media;
         });
       const [media, answer] = await Promise.all([
@@ -386,11 +370,8 @@ export function listenHosted(
       if (answer.outcome === "failed") return fail(answer.reason);
       if (answer.maxSeconds !== undefined)
         options.onCallLimit?.(answer.maxSeconds);
-      // A suspended delay line would send silence: send the microphone.
-      if (line && !line.running()) {
-        line.close();
-        line = undefined;
-      }
+      // A suspended delay line would send silence.
+      if (line?.audio.state === "suspended") line = void line.audio.close();
       await sender.replaceTrack(
         line?.track ?? media.getAudioTracks()[0] ?? null,
       );

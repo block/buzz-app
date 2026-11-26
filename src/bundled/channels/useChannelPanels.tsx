@@ -5,6 +5,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { PanelPane } from "../../features/panels/opening-pane";
 import type {
   ChannelPanelContext,
   PanelContext,
@@ -46,10 +47,11 @@ export function useChannelPanels(
   context?: ChannelPanelContext,
   onOpen?: () => void,
   tabs?: ChannelPanelTabs,
-  /** Opens a target as a channel tab; drawer panels and launchers share it. */
+  /** Opens a target as a channel tab; drawer panels and launchers share it.
+   * A panel in the side column opens from the side pane. */
   opener?: Readonly<{
     canOpen(target: string): boolean;
-    open(target: string): boolean;
+    open(target: string, pane?: "side"): boolean;
   }>,
   openMembers?: () => void,
   /** The channel's side-column opening, retained across visits until closed. */
@@ -144,7 +146,10 @@ export function useChannelPanels(
     channelId: opening.context.channelId,
     canOpen: (target) => !!opener?.canOpen(target),
     open: (target) =>
-      activeOpening.current === opening && !!opener?.open(target),
+      activeOpening.current === opening &&
+      !!(opening.panel.channelPlacement === "side"
+        ? opener?.open(target, "side")
+        : opener?.open(target)),
   });
   const bound = (binding: ChannelPanelContext, panel: RegisteredPanel) =>
     mounted.current === binding && panels.snapshot().includes(panel);
@@ -221,13 +226,16 @@ export function useChannelPanels(
           }
         }}
       >
-        <PanelView
-          panel={selected.panel}
-          target={selected.target}
-          channelContext={context}
-          context={openingContext(selected)}
-          close={() => hide(selected)}
-        />
+        {/* It sits in the side pane, so its links open there. */}
+        <PanelPane.Provider value="side">
+          <PanelView
+            panel={selected.panel}
+            target={selected.target}
+            channelContext={context}
+            context={openingContext(selected)}
+            close={() => hide(selected)}
+          />
+        </PanelPane.Provider>
       </Panel>
     ),
     content: (

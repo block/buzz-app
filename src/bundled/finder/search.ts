@@ -7,7 +7,12 @@ import {
   type FinderDoc,
   type FinderResults,
 } from "./corpus.ts";
-import { type ChannelSearchStatus, type FinderSync, finderDoc } from "./sync";
+import {
+  type ChannelSearchStatus,
+  type FinderSync,
+  finderDoc,
+  lost,
+} from "./sync";
 
 const PAGE = 50;
 
@@ -109,13 +114,18 @@ export function useFinderAll({
     () => corpus.search(query, PAGE),
     [corpus, query, revision],
   );
-  const local =
+  const steady =
     holding.current &&
     kept.current?.query === query &&
     kept.current.session === session
       ? kept.current.results
       : fresh;
-  kept.current = { query, session, results: local };
+  kept.current = { query, session, results: steady };
+  // Rows held still still leave when you lose the channel they're from.
+  const local: FinderResults = {
+    ...steady,
+    hits: steady.hits.filter(({ doc }) => !lost(session, doc.channelId)),
+  };
   // Always asked: a page of device rows with every word can still rank below
   // an unindexed message that has them together.
   const search = useSearchMessages(session, query);
@@ -153,7 +163,8 @@ export function useFinderAll({
         !shown.has(message.id) &&
         channel &&
         !channel.huddle &&
-        !channel.metadataPending
+        !channel.metadataPending &&
+        !lost(session, message.channelId)
       );
     })
     .map(({ id, channelId, authorId, createdAt, text }) =>
@@ -166,9 +177,16 @@ export function useFinderAll({
   useEffect(() => {
     if (!search.loading && !search.error) hold(docs);
   }, [session, search.loading, search.error, freshKey]);
-  const ranked = createCorpus();
-  ranked.add(docs);
-  const results = ranked.search(query, docs.length || 1);
+  // Ranked again only when the hits or their labels change.
+  const docsKey = docs
+    .map((doc) => `${doc.id} ${doc.author} ${doc.place} ${doc.text}`)
+    .join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: docsKey names the docs.
+  const results = useMemo(() => {
+    const ranked = createCorpus();
+    ranked.add(docs);
+    return ranked.search(query, docs.length || 1);
+  }, [docsKey, query]);
   const matched = new Set(results.hits.map(({ doc }) => doc.id));
   const relay: FinderResults = {
     total: docs.length,

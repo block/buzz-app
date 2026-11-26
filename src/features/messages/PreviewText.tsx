@@ -1,16 +1,37 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { LinkLabel } from "../../bundled/links/InlineLink";
+import {
+  LinkAccessibleNameContext,
+  LinkChannelKindContext,
+  LinkContentContext,
+} from "../conversation/LinkLabelContext";
 import { useChannelIdentityNames } from "../identity-names/react";
+import { buzzLinkKind, parseBuzzLink } from "../navigation/buzz-links";
 import { spoilerText } from "../notifications/content";
 import { profileKey } from "../profiles/target";
 import { PROFILE_CACHE_BASE } from "../relay/budget";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
+import { linkedSoloChatName } from "../solo/labels";
 import { preparedMarkdown, recentResults } from "./markdown-preparation";
 import { placeholderPattern, protectInlineContent } from "./MessageMarkdown";
+import { placeholder } from "./placeholder-characters";
 import type { AgentLibrary } from "../agents/library";
 import { profileMentionNames } from "./profile-mentions";
-import { ProfileMention, useReferenceDirectory } from "./ReferenceText";
+import {
+  channelForLink,
+  channelLinkLabel,
+  ProfileMention,
+  type ReferenceChannel,
+  useReferenceDirectory,
+} from "./ReferenceText";
 
 /** A message as its previews bind it: its body as its conversation shows
  * it, attachments already projected out, and its signed identities. */
@@ -70,6 +91,63 @@ const flatChip = (text: string) => {
   return `${chars[0]}${flatSpaces(chars.slice(1, -1).join(""))}${chars.at(-1)}`;
 };
 
+/** A link that names a channel or a message in one, which previews show by
+ * the channel's name as the conversation does. */
+const channelLink = (url: string) => parseBuzzLink(url)?.format === "legacy";
+
+const unsubscribed = () => () => {};
+
+/** A joined channel's name for a preview's link to it, behind the icon the
+ * conversation's link shows: the conversation's own label, told the channel's
+ * kind as its link is. A link to a Solo chat itself reads by the chat's
+ * title, with no channel `#`, once the relay has confirmed the chat, as the
+ * conversation's link does. */
+function ChannelName({
+  url,
+  channel,
+  session,
+}: {
+  url: string;
+  channel: ReferenceChannel;
+  session: RelaySession | undefined;
+}) {
+  const channels = session?.channels;
+  // A string, so channel activity that changes no title renders nothing.
+  const chat = useSyncExternalStore(
+    channels?.subscribeList ?? unsubscribed,
+    () => {
+      const link = parseBuzzLink(url);
+      return link?.format === "legacy"
+        ? linkedSoloChatName(link, channels?.list().channels)
+        : "";
+    },
+    () => "",
+  );
+  const label = chat || channelLinkLabel(url, [channel]) || channel.name;
+  const kind =
+    chat || channel.channelType === "solo"
+      ? "chat"
+      : channel.private
+        ? "private"
+        : "channel";
+  // A preview in a link's hover card sits inside that link's own label and
+  // name, which are not this channel's.
+  return (
+    <LinkAccessibleNameContext value={undefined}>
+      <LinkContentContext value={undefined}>
+        <LinkChannelKindContext value={kind}>
+          {/* The label shows a channel's "#" as its icon, which is hidden
+            from readers, so they still hear the "#" once. */}
+          {kind !== "chat" &&
+            buzzLinkKind(url) === "channel" &&
+            label.startsWith("#") && <span className="sr-only">#</span>}
+          <LinkLabel href={url} label={label} />
+        </LinkChannelKindContext>
+      </LinkContentContext>
+    </LinkAccessibleNameContext>
+  );
+}
+
 /** Whether `text` can show a chip for `labels`: one reads as its name, or
  * with a namesake qualifier, which may differ in case. */
 const mayName = (text: string, labels: Labels) =>
@@ -95,8 +173,9 @@ const LONGEST_BODY = 16_384;
  * The body bound as its conversation binds it, flattened as preview text
  * is: the conversation's protected body, with each mention, emoji and
  * literal held in a placeholder, flattened once, and each placeholder read
- * back as its text. Undefined when the conversation renders the body as
- * plain text or it binds no one.
+ * back as its text. A channel link that reads as its URL, outside code, is a
+ * part too. Undefined when the conversation renders the body as plain text
+ * or it binds no one and links no channel.
  */
 function flatParts(
   content: string,
@@ -118,12 +197,20 @@ function flatParts(
     [],
     prepared.spoilerDelimiters,
   );
-  if (!protectedContent.parts.some((part) => part.target)) return undefined;
   const flat = spoilerText(
     protectedContent.content,
-    `<${protectedContent.prefix}spoiler\uE002>`,
-    { limit: Number.POSITIVE_INFINITY },
+    `<${protectedContent.prefix}spoiler${placeholder.end}>`,
+    {
+      limit: Number.POSITIVE_INFINITY,
+      // The part reads as the URL, as the surface's own flattened text does.
+      link: (url) => {
+        if (!channelLink(url)) return undefined;
+        protectedContent.parts.push({ text: url, target: url });
+        return `${protectedContent.prefix}${protectedContent.parts.length - 1}${placeholder.end}`;
+      },
+    },
   );
+  if (!protectedContent.parts.some((part) => part.target)) return undefined;
   const parts: Part[] = [];
   let [plain, at] = ["", 0];
   for (const match of flat.matchAll(placeholderPattern(protectedContent))) {
@@ -191,10 +278,11 @@ function previewParts(
 }
 
 /** Flattened preview text with its signed mentions as chips, bound and
- * labelled as its message binds them. `text` shows `full` (itself by
- * default) from `start`, as `previewParts` describes. `matches` are the code
- * points MatchedLabel marks in `text`; a chip holding one is marked whole,
- * since its label can differ from its text. */
+ * labelled as its message binds them, and its links to joined channels by
+ * their names. `text` shows `full` (itself by default) from `start`, as
+ * `previewParts` describes. `matches` are the code points MatchedLabel marks
+ * in `text`; a chip holding one is marked whole, since its label can differ
+ * from its text. */
 export function PreviewText({
   text,
   full = text,
@@ -222,14 +310,17 @@ export function PreviewText({
     mentionLabels(mentionedIds(mentions), directory.profiles, directory.agents),
   );
   // Binding parses the body's Markdown, and only for previews on or near the
-  // screen whose text can show a name.
+  // screen whose text can show a name or a channel link. Channel links come
+  // from the body's text, not its signed tags, so an edited body keeps them.
   const parts = useMemo(() => {
-    if (!shown.near || edited || labels === "[]") return [{ text }];
-    const parsed: Labels = JSON.parse(labels);
-    if (!mayName(text, parsed)) return [{ text }];
-    const key = JSON.stringify([labels, seams, content, full, text, start]);
+    if (!shown.near) return [{ text }];
+    const parsed: Labels = edited ? [] : JSON.parse(labels);
+    const named = parsed.length > 0 && mayName(text, parsed);
+    if (!named && !/buzz:\/\//i.test(text)) return [{ text }];
+    const bound = named ? parsed : [];
+    const key = JSON.stringify([bound, seams, content, full, text, start]);
     return recentParts(key, () => {
-      const flat = flatParts(content, seams, parsed);
+      const flat = flatParts(content, seams, bound);
       return (flat && previewParts(flat, full, text, start)) ?? [{ text }];
     });
   }, [shown.near, edited, labels, content, seams, full, text, start]);
@@ -242,11 +333,24 @@ export function PreviewText({
     const positions = matches
       ?.filter((at) => at >= start && at < start + length)
       .map((at) => at - start);
-    if (!part.target || !profileKey(part.target))
+    const channel =
+      part.target && !profileKey(part.target)
+        ? channelForLink(part.target, directory.channels)
+        : undefined;
+    if (!part.target || (!profileKey(part.target) && !channel))
       return (
         <MatchedLabel key={start} label={part.text} positions={positions} />
       );
-    const chip = (
+    // A row is its own control and nothing in it opens, so a channel name
+    // reads as the row's own text behind its icon, not as a link.
+    const chip = channel ? (
+      <ChannelName
+        key={start}
+        url={part.target}
+        channel={channel}
+        session={session}
+      />
+    ) : (
       <ProfileMention
         key={start}
         text={part.text}

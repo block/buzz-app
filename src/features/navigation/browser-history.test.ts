@@ -1,7 +1,12 @@
 import { expect, it } from "vitest";
 import { createBrowserHistory } from "./browser-history";
 import { createNavigationController } from "./controller";
-import { createMemoryHistory, homeTarget } from "./history";
+import {
+  createMemoryHistory,
+  homeTarget,
+  type NavigationHistory,
+} from "./history";
+import { targetKey, type OpenTarget } from "./targets";
 
 const settings = {
   version: 1,
@@ -17,6 +22,13 @@ function browser(initialHash = "", deferredTraversal = false) {
     index = 0;
   const location = { pathname: "/", search: "", hash: initialHash };
   const storage = new Map<string, string>();
+  let storageFull = false;
+  let storageCap = Infinity;
+  const storageSize = () =>
+    [...storage].reduce(
+      (size, [key, value]) => size + key.length + value.length,
+      0,
+    );
   const history = {
     get state() {
       return entries[index]?.state;
@@ -58,7 +70,16 @@ function browser(initialHash = "", deferredTraversal = false) {
     sessionStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => {
+        const size =
+          storageSize() -
+          (storage.get(key)?.length ?? -key.length) +
+          value.length;
+        if (storageFull || size > storageCap)
+          throw new DOMException("Storage is full", "QuotaExceededError");
         storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
       },
     },
     addEventListener: events.addEventListener.bind(events),
@@ -75,6 +96,14 @@ function browser(initialHash = "", deferredTraversal = false) {
     },
     pending: () => pending.length,
     length: () => entries.length,
+    /** Every later write to session storage fails, as when it is full. */
+    fillStorage() {
+      storageFull = true;
+    },
+    /** Session storage keeps its current size as its quota, so only writes that grow it fail. */
+    capStorage() {
+      storageCap = storageSize();
+    },
   };
 }
 for (const kind of ["memory", "browser"] as const) {
@@ -528,4 +557,166 @@ it("guards asynchronous native traversal without losing the presentation or its 
   expect(nav.snapshot().entry.target).toEqual(homeTarget);
   expect(original.signal.aborted).toBe(true);
   host.dispose();
+});
+
+const alpha = {
+  version: 1,
+  kind: "page",
+  pluginId: "test",
+  pageId: "alpha",
+} as const;
+const beta = { ...alpha, pageId: "beta" } as const;
+const alphaThread = {
+  ...alpha,
+  route: { version: 1, params: { thread: "root" } },
+} as const;
+const closesThread = (target: OpenTarget) =>
+  targetKey(target) === targetKey(alphaThread);
+/** Home, Alpha, Alpha + thread, Beta, Alpha, Alpha + thread; the next driver is a reload. */
+function visitThreadTwice(fixture: ReturnType<typeof browser>) {
+  const driver = createBrowserHistory(fixture.host);
+  for (const target of [alpha, alphaThread, beta, alpha, alphaThread])
+    driver.push(target);
+  driver.dispose();
+}
+function walkBack(driver: NavigationHistory) {
+  const walked = [];
+  while (driver.snapshot().canGoBack) {
+    driver.back();
+    walked.push(driver.snapshot().current.target);
+  }
+  return walked;
+}
+
+it("an explicit close after reload retires every retained visit it covers", () => {
+  const fixture = browser();
+  visitThreadTwice(fixture);
+  const driver = createBrowserHistory(fixture.host);
+  driver.dismiss(closesThread, alpha);
+  expect(driver.snapshot().current.target).toEqual(alpha);
+  expect(driver.snapshot().canGoForward).toBe(false);
+  expect(walkBack(driver)).toEqual([beta, alpha, homeTarget]);
+  driver.dispose();
+});
+
+/** Rewrites the saved window as an older build saved it, with ids and no targets. */
+function dropSavedTargets(fixture: ReturnType<typeof browser>, visits: number) {
+  const storage = fixture.host.sessionStorage;
+  const key = `buzz-navigation-identities:${fixture.host.history.state.buzzNavigationV1.chain}`;
+  const saved: [number, string][] = JSON.parse(storage.getItem(key) ?? "[]");
+  // A key the driver does not use reads back empty, and the rewrite would do nothing.
+  expect(saved).toHaveLength(visits);
+  storage.setItem(key, JSON.stringify(saved.map(([index, id]) => [index, id])));
+}
+
+it("visits an older build saved without targets stay retained and reachable", () => {
+  const fixture = browser();
+  visitThreadTwice(fixture);
+  dropSavedTargets(fixture, 6);
+  const driver = createBrowserHistory(fixture.host);
+  expect(driver.snapshot().retainedVisits).toHaveLength(6);
+  driver.dismiss(closesThread, alpha);
+  expect(driver.snapshot().current.target).toEqual(alpha);
+  expect(walkBack(driver).at(-1)).toEqual(homeTarget);
+  driver.dispose();
+});
+
+it("a reload does not restore a window that could not be saved", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  first.push(alpha);
+  first.push(beta);
+  first.back();
+  first.back();
+  fixture.fillStorage();
+  first.push(beta);
+  const opener = first.snapshot().current;
+  first.push(alphaThread);
+  first.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  // The last window saved has Alpha where Beta now is.
+  expect(driver.snapshot().previous).toEqual(opener);
+  driver.dispose();
+});
+
+it("a close after reload spares a visit that replaced the closed view", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  first.push(alphaThread);
+  first.push(beta);
+  first.back();
+  first.replace(alpha);
+  first.forward();
+  first.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  // Beta's own history state still names the thread as its opener.
+  driver.dismiss(closesThread, alpha);
+  expect(walkBack(driver)).toEqual([alpha, homeTarget]);
+  driver.dispose();
+});
+
+it("a reload never saves a copied opener over the visit that replaced it", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  for (const target of [alphaThread, beta, alphaThread]) first.push(target);
+  first.back();
+  first.back();
+  first.replace(alpha);
+  first.forward();
+  first.dispose();
+  dropSavedTargets(fixture, 4);
+  // Beta's own history state still names the thread as its opener.
+  const second = createBrowserHistory(fixture.host);
+  second.forward();
+  second.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  driver.dismiss(closesThread, alpha);
+  expect(driver.snapshot().current.target).toEqual(alpha);
+  expect(walkBack(driver)).toEqual([beta, alpha, homeTarget]);
+  driver.dispose();
+});
+
+it("a close after reload spares a visit resolved in place since its copy was made", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  first.push(alphaThread);
+  first.push(beta);
+  first.back();
+  first.resolve(alpha);
+  first.forward();
+  first.dispose();
+  dropSavedTargets(fixture, 3);
+  // Beta's own history state still names the thread, under the visit's own ID.
+  const driver = createBrowserHistory(fixture.host);
+  driver.dismiss(closesThread, alpha);
+  expect(walkBack(driver)).toEqual([alpha, homeTarget]);
+  driver.dispose();
+});
+
+it("full storage drops saved targets so a growing floor keeps the window", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  for (let i = 0; i < 108; i++) first.push(i % 2 ? beta : alpha);
+  fixture.capStorage();
+  // The floor moves from 9 to 10, one character longer.
+  first.push(alphaThread);
+  first.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  expect(driver.snapshot().retainedVisits).toHaveLength(100);
+  driver.dispose();
+});
+
+it("full storage drops saved targets so a close survives reload", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  for (const target of [alpha, alphaThread, beta]) first.push(target);
+  first.back();
+  first.back();
+  fixture.capStorage();
+  first.dismiss(closesThread, alpha);
+  first.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  driver.forward();
+  expect(driver.snapshot().current.target).toEqual(beta);
+  driver.dispose();
 });

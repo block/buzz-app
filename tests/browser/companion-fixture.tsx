@@ -60,10 +60,23 @@ export const companionPlugins: readonly BundledPlugin[] = [
           matches: () => false,
           channelLauncher: SidePanelLauncher,
           channelPlacement: "side",
-          component: ({ close }: PanelProps) => (
-            <button type="button" onClick={close}>
-              Hide side panel fixture
-            </button>
+          component: ({ close, context }: PanelProps) => (
+            <>
+              <button type="button" onClick={close}>
+                Hide side panel fixture
+              </button>
+              {/* A link the panel hands to its host, as a message row in a
+                  panel's own discussion does. */}
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const link = new FormData(event.currentTarget).get("link");
+                  if (typeof link === "string") context?.open(link);
+                }}
+              >
+                <input name="link" aria-label="Link to open from the panel" />
+              </form>
+            </>
           ),
         });
       },

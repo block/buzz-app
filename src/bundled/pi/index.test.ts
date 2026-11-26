@@ -19,6 +19,7 @@ it("shares a Pi agent's provider and model as the pi runtime and imports them ba
     },
     effect: vi.fn(),
   } as never);
+  expect(type?.skillFolders).toEqual(["~/.agents/skills"]);
   const shared = type?.exportShared?.({
     provider: "anthropic",
     model: "sonnet",

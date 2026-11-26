@@ -31,8 +31,7 @@ import {
 } from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
-  wakeAnchor,
-  wakeLands,
+  turnOf,
 } from "../../features/agent-harness/plugin-wake";
 import { compactAt } from "../../features/agents/compact-at";
 import { routeFor } from "../../features/agents/model-routes";
@@ -1972,8 +1971,9 @@ export class CodexRuntime {
     // canvas_set; v15 removes message keywords; v16 splits channel and
     // channels into the channel_* tools; v17 split members into the
     // member_* tools; v18 adds search and removes read's q; v19 replaces
-    // solo_workspace_list with workspace_list and adds channel_move.
-    return `buzz.codex.sessions.v19:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
+    // solo_workspace_list with workspace_list and adds channel_move; v20
+    // adds canvas versions.
+    return `buzz.codex.sessions.v20:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -2431,8 +2431,6 @@ export class CodexRuntime {
     // code, and the agent's own handoff comes from a turn already acting
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     // A workflow's mention waits out a reconnect; the check below decides.
     const ready =
       trigger.type === "mention" && workflowMarked(trigger.event, agent.owner)
@@ -2467,8 +2465,12 @@ export class CodexRuntime {
     const channel = await reads.channel(channelId);
     const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
     const huddle = isHuddleRoom(channel?.about);
-    const topLevel = solo || huddle || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
+    // Where the host placed it. A Huddle room is Codex's own reason to
+    // answer at the top level.
+    const turn = turnOf(trigger, delivery, channelId, solo || huddle);
+    if (!turn) return delivery.ignored?.();
+    const { event } = turn;
+    const topLevel = turn.topLevel || huddle;
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
     const [canvasRead, folders] = await Promise.all([

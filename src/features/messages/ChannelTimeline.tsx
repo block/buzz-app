@@ -1668,13 +1668,17 @@ function Timeline({
       });
     };
     measure();
-    const hold = new MutationObserver((mutations) => {
+    // Virtua committed sizes or offsets, or mounted rows.
+    const listMutated = (rowsRestyled: boolean, rowsMounted = false) => {
       consumeMovement();
       // Ignore list-only pointer-events changes during input. A row's offsets
-      // can change even when the sum of its siblings' heights does not.
+      // can change even when the sum of its siblings' heights does not, and a
+      // held row the range had not mounted can mount at its index's size,
+      // changing neither.
       if (
         list.style.height === height &&
-        !mutations.some((mutation) => mutation.target.parentNode === list)
+        !rowsRestyled &&
+        !(rowsMounted && !mounted)
       )
         return;
       height = list.style.height;
@@ -1694,12 +1698,22 @@ function Timeline({
         lastScrollTop = element.scrollTop;
       }
       logical = logicalTop();
+    };
+    const hold = new MutationObserver((mutations) =>
+      listMutated(
+        mutations.some((mutation) => mutation.target.parentNode === list),
+      ),
+    );
+    const mounts = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) => mutation.addedNodes.length))
+        listMutated(false, true);
     });
     const release = (keepAnchor = false) => {
       if (!keepAnchor && heldReader.current === anchor)
         heldReader.current = undefined;
       cancelAnimationFrame(frame);
       hold.disconnect();
+      mounts.disconnect();
       element.removeEventListener("scroll", read);
       element.removeEventListener("virtua-scroll-correction", corrected);
       element.removeEventListener("scrollend", end);
@@ -1722,6 +1736,7 @@ function Timeline({
       attributeFilter: ["style"],
       subtree: true,
     });
+    mounts.observe(list, { childList: true });
     element.addEventListener("scroll", read);
     element.addEventListener("virtua-scroll-correction", corrected);
     element.addEventListener("scrollend", end);
@@ -1991,7 +2006,7 @@ function Timeline({
         }
       }
     };
-    let frame = requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
         // A request can be cancelled while the scroller is attaching.
         if (
@@ -2048,8 +2063,9 @@ function Timeline({
               recordPosition(scroller.current, true);
               layoutCorrection.current = true;
             }
-            cancelAnimationFrame(frame);
-            frame = requestAnimationFrame(restorePosition);
+            // Virtua wrote this height before paint; following in a later
+            // frame would paint rows below a grown one pushed down first.
+            restorePosition();
           });
           observer.observe(list, {
             attributes: true,

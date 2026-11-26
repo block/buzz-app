@@ -16,6 +16,7 @@ import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { bareHostParts, messageLinkParts } from "./message-link-parts";
 import { labelText } from "./label-text";
+import { placeholder } from "./placeholder-characters";
 import {
   ReferenceText,
   channelForLink,
@@ -120,14 +121,14 @@ export function protectInlineContent(
       return code <= 0x10ffff ? String.fromCodePoint(code) : entity;
     },
   );
-  const used = new Set(
-    [...decoded.matchAll(/[\uE000\uFFFC](\d+)\uE001/g)].map(
-      (match) => match[1],
-    ),
+  const nonces = new RegExp(
+    `[${placeholder.start}${placeholder.mention}](\\d+)${placeholder.separator}`,
+    "g",
   );
+  const used = new Set([...decoded.matchAll(nonces)].map((match) => match[1]));
   let nonce = 0;
   while (used.has(String(nonce))) nonce++;
-  const prefix = `\uE000${nonce}\uE001`;
+  const prefix = `${placeholder.start}${nonce}${placeholder.separator}`;
   const parts: InlinePart[] = [];
   const token = (part: InlinePart) => {
     parts.push(part);
@@ -139,9 +140,13 @@ export function protectInlineContent(
     // clients could read.
     // U+FFFC is a Unicode symbol, not Markdown syntax. Keep it inside the
     // nonce-protected token so restoration removes only generated characters.
-    const start = part.target ? `\uFFFC${nonce}\uE001` : prefix;
+    const start = part.target
+      ? `${placeholder.mention}${nonce}${placeholder.separator}`
+      : prefix;
     const end =
-      part.target && /[\p{P}\p{S}]$/u.test(part.text) ? "\uFFFC" : "\uE002";
+      part.target && /[\p{P}\p{S}]$/u.test(part.text)
+        ? placeholder.mention
+        : placeholder.end;
     return `${start}${parts.length - 1}${end}`;
   };
   let offset = 0;
@@ -211,7 +216,7 @@ export function protectInlineContent(
             // not an HTML/autolink opener, so this remains a text delimiter.
             result +=
               "spoiler" in match
-                ? `<${prefix}spoiler\uE002>`
+                ? `<${prefix}spoiler${placeholder.end}>`
                 : token(
                     match.literal
                       ? { text: match.literal, literal: true }
@@ -229,7 +234,7 @@ export function protectInlineContent(
 
 export const placeholderPattern = (protectedContent: ProtectedContent) =>
   new RegExp(
-    `[\uE000\uFFFC]${protectedContent.prefix.slice(1)}(\\d+)[\uE002\uFFFC]`,
+    `[${placeholder.start}${placeholder.mention}]${protectedContent.prefix.slice(1)}(\\d+)[${placeholder.end}${placeholder.mention}]`,
     "g",
   );
 
@@ -809,7 +814,10 @@ const MarkdownBody = memo(function MarkdownBody({
           remarkGfm,
           [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,
-          [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+          [
+            remarkSpoilers,
+            `<${protectedContent.prefix}spoiler${placeholder.end}>`,
+          ],
           [remarkInlineContent, protectedContent],
           remarkLiteralHtml,
         ],

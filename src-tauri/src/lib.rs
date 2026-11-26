@@ -1167,6 +1167,12 @@ pub fn run() {
                 app.state::<federated_identity::FederatedIdentity>()
                     .inner()
                     .clone(),
+                // Packaged builds keep `devUrl` in their config but never load it.
+                app.config()
+                    .build
+                    .dev_url
+                    .as_ref()
+                    .filter(|_| tauri::is_dev()),
             ) {
                 Ok(stream) => {
                     app.manage(stream);

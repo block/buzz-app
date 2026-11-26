@@ -2524,11 +2524,11 @@ it("retains the saved anchor correction when cached rows are promoted before its
     offset: -42,
   });
 });
-it("reader input cancels the queued correction even when cached rows are then promoted", async () => {
+it("reader input cancels bottom follow even when cached rows are then promoted", async () => {
   const h = mount();
   await frame();
-  scroll.toIndex.mockClear();
   await h.measured();
+  scroll.toIndex.mockClear();
   fireEvent.wheel(
     screen.getByRole("region", { name: "Channel message history" }),
   );

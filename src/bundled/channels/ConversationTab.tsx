@@ -34,7 +34,8 @@ import styles from "./ChannelTabs.module.css";
 type ConversationTabProps = {
   tab: Tab;
   intro?: ReactNode;
-  /** Only the channel timeline shows it, not a thread. */
+  /** The channel timeline and a thread tab show it, not a thread a
+   * conversation tab opens in place. */
   trailing?: ConversationWorkspaceProps["trailing"];
   subthreadId?: string | undefined;
   latestRequest?: AbortSignal | undefined;
@@ -179,6 +180,7 @@ export function ConversationTab({
           <ComposerScopeProvider rootId={rootOfTab(tab)} shown={active}>
             <ConversationThread
               intro={intro}
+              trailing={trailing}
               latestRequest={active ? latestRequest : undefined}
               active={active}
               shown={active}

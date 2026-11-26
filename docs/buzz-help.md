@@ -60,7 +60,10 @@ if that desktop app is up and running.
   sheet over the conversation's message box; Back or **X** closes it. **Move to
   side panel** on the sheet moves that thread into a tab. To open them as tabs
   instead, set **Settings → Appearance → Open threads in** to **Side pane** or
-  **Main pane**. Calls, canvases and apps always open as tabs on the right.
+  **Main pane**. A thread opened from the side pane, as from a link in a thread
+  or canvas there or from **Pinned messages**, opens as a tab in its channel's
+  side pane, not as a sheet, and a sheet already open stays. Calls, canvases
+  and apps always open as tabs on the right.
 - **Left Sidebar**: a stack of cards. The **Plugins** card lists **Messages**,
   **Agents**, **Activity** and any pages plugins add. Then come **Solo**,
   **Favorites**, your workspaces (which organize groups of channels/chats/dms),

@@ -34,13 +34,16 @@ import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import {
+  useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { openFromPanel, PanelPane } from "../../features/panels/opening-pane";
 import {
   CheckCircleIcon,
   CopyIcon,
@@ -204,13 +207,16 @@ export function ProfilePanel({
   );
   const pubkey = profilePanelKey(target) ?? activityKey;
   const owned = useAgent(agents, pubkey ?? "");
+  const pane = useContext(PanelPane);
   if (!pubkey) return <p>Unsupported profile.</p>;
   if (connection.status !== "ready")
     return <p>Connect to a community to view this profile.</p>;
-  // An agent's activity opens a turn's conversation in this community.
+  // An agent's activity opens a turn's conversation in this community, as a
+  // link in this panel does: beside it when it sits in a pane.
   const openConversation = conversationOpener(
     navigation,
     panelCommunity(connection.scope, connection.viewer),
+    (navigator, opening) => openFromPanel(navigator, opening, pane),
   );
   const owner =
     agents &&
@@ -298,6 +304,7 @@ function OwnedAgentProfile({
   // Unsaved edits are asked about before a link replaces this profile.
   const [unsaved, reportUnsaved] = useAgentSaveReports();
   const [leaving, setLeaving] = useState<string>();
+  const pane = useContext(PanelPane);
   if (leaving && !unsaved.dirty) setLeaving(undefined);
   if (!owned) return null;
   const address = navigation?.snapshot().entry.target;
@@ -308,7 +315,7 @@ function OwnedAgentProfile({
   const go = (link: string) => {
     const target = conversationTarget(link);
     if (target && navigation) {
-      void navigation.open(target);
+      openFromPanel(navigation, target, pane);
       return true;
     }
     return (context?.push ?? context?.open)?.(link);
@@ -442,6 +449,7 @@ function ProfileDetails({
   // Retry stays mounted and focusable while its own read is pending.
   const [retrying, setRetrying] = useState(false);
   const retryButton = useRef<HTMLButtonElement>(null);
+  const [retryFocused, setRetryFocused] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const [tab, setTab] = useState<
     "info" | "activity" | "channels" | `agent:${string}`
@@ -521,9 +529,6 @@ function ProfileDetails({
     void session.profiles.ensure([pubkey]).then(
       () => {
         if (!active) return;
-        // Retry unmounts on success; hand its focus to the stable region.
-        if (document.activeElement === retryButton.current)
-          region.current?.focus();
         setStatus("ready");
         setRetrying(false);
       },
@@ -548,6 +553,34 @@ function ProfileDetails({
     attempt,
   );
   const verifiedOwner = ownership.owner;
+  // A read that finds no profile is an answer, not a failure: it shows no
+  // notice and no retry. A failed read is reported unless kind-0 metadata is
+  // already shown; a verified overlay can exist while its kind-0 read failed.
+  const reportsFailure = !profile || !!profile.verified;
+  const readFailed = status === "error" && reportsFailure;
+  const readPending = status === "loading" && reportsFailure;
+  // The owner check reads the agent's signed profile on its own, so it can
+  // fail beside a profile that loaded or was never set. Its alert and Retry
+  // wait for a profile read whose failure would be reported, so only one of
+  // the two alerts is ever announced, and never beside "Loading profile…".
+  // A pending retry states no reason.
+  const ownerUnconfirmed =
+    ownership.failed && !readPending && !readFailed && !retrying;
+  // The owner check rereads on its own, as after a reconnect, and an explicit
+  // retry rereads it too. A focused Retry stays mounted and busy until that
+  // read settles, so the reread cannot take its focus away.
+  const ownerRechecking =
+    retryFocused && !readFailed && ownership.status === "loading";
+  const offerRetry =
+    readFailed || retrying || ownerUnconfirmed || ownerRechecking;
+  // Retry unmounts once nothing is left to retry; hand its focus to the
+  // stable region rather than the document body.
+  useLayoutEffect(() => {
+    if (offerRetry || !retryFocused) return;
+    setRetryFocused(false);
+    const active = document.activeElement;
+    if (!active || active === document.body) region.current?.focus();
+  }, [offerRetry, retryFocused]);
   const selectedTab =
     requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
   useEffect(() => {
@@ -838,26 +871,25 @@ function ProfileDetails({
                       />
                     )}
                     <ProfilePublicMetadata nip05={profile?.nip05} />
-                    {/* A verified overlay can exist while its kind-0 read failed. */}
-                    {(!profile ||
-                      (profile.verified && (status === "error" || retrying))) &&
-                      (status === "loading" ? (
-                        <p role="status">Loading profile…</p>
-                      ) : (
-                        <p role={status === "error" ? "alert" : undefined}>
-                          {status === "error"
-                            ? "Could not load this profile."
-                            : "No profile metadata is available in this community."}
-                        </p>
-                      ))}
-                    {((!profile && status !== "loading") ||
-                      (profile?.verified && status === "error") ||
-                      retrying ||
-                      ownership.failed) && (
+                    {status === "loading"
+                      ? (!profile || (profile.verified && retrying)) && (
+                          <p role="status">Loading profile…</p>
+                        )
+                      : readFailed && (
+                          <p role="alert">Could not load this profile.</p>
+                        )}
+                    {ownerUnconfirmed && (
+                      <p role="alert">
+                        Could not confirm who manages this agent.
+                      </p>
+                    )}
+                    {offerRetry && (
                       <Button
                         ref={retryButton}
                         size="compact"
-                        loading={retrying}
+                        loading={retrying || ownerRechecking}
+                        onFocus={() => setRetryFocused(true)}
+                        onBlur={() => setRetryFocused(false)}
                         onClick={() => {
                           setRetrying(true);
                           retry((value) => value + 1);

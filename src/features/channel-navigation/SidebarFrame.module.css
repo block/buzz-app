@@ -266,8 +266,11 @@
   --channel-row-fill-start: 0px;
   --channel-row-fill-end: 0px;
 }
-/* Cards scroll without a visible scrollbar. */
+/* Cards scroll without a visible scrollbar, and cut off cleanly at the edge:
+   a card's own rounded edge already marks where the list ends, and a fade
+   would wash a card out into the lighter sheet behind it. */
 .cards .sidebar .channelList {
+  mask-image: none;
   padding-block-start: 0;
   scrollbar-gutter: auto;
   scrollbar-width: none;

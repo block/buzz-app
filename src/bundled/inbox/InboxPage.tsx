@@ -25,10 +25,12 @@ import { routeOf } from "./route";
 import {
   hasUnread,
   InboxRowButton,
+  ownIdentity,
   ReactionRowButton,
   rowIdentity,
   rowProfileIds,
 } from "./InboxRow";
+import { useOwnActivity, withOwnActivity } from "./own-activity";
 import { withMentionedIds } from "../../features/messages/PreviewText";
 import { activityConversation, useActivityMutes } from "./useActivityMutes";
 import {
@@ -159,6 +161,8 @@ type Selection = {
   messageId: string;
   rootId?: string;
   reaction?: string;
+  /** A conversation where only you have written lately, by its Activity id. */
+  own?: string;
 };
 // The row a tab opened and the list's offset, kept as long as the session's
 // tabs so returning to Activity still selects the conversation it restores,
@@ -327,6 +331,7 @@ function InboxList({
     session.unread.sync,
     session.unread.sync,
   );
+  const own = useOwnActivity(session, scope.viewer, list.channels);
   const viewScope = session.scope;
   const [filters, setFilters] = useState(() => readFilters(viewScope));
   const { activity, sender: senderFilter } = filters;
@@ -507,6 +512,7 @@ function InboxList({
   const selected = items.find(
     (item) =>
       !selectedTarget?.reaction &&
+      !selectedTarget?.own &&
       item.channelId === selectedTarget?.channelId &&
       item.messageIds.includes(selectedTarget.messageId),
   );
@@ -517,7 +523,9 @@ function InboxList({
       item.channelId === selectedTarget.channelId,
   );
   const selectedId =
-    selected?.id ?? (selectedReaction ? selectedTarget?.reaction : undefined);
+    selected?.id ??
+    (selectedReaction ? selectedTarget?.reaction : undefined) ??
+    selectedTarget?.own;
   // A room reclassified as a Huddle belongs to its Huddle composer, not Inbox.
   const selectedRetired = list.channels.some(
     (channel) =>
@@ -641,12 +649,37 @@ function InboxList({
               (senderFilter === "agents" ? "agent" : "human"),
         )
       : [];
+  const isDm = (channelId: string) =>
+    list.channels.some(
+      (channel) => channel.id === channelId && channel.channelType === "dm",
+    );
+  // Your own messages place a conversation by when you last wrote in it, and
+  // list the ones only you have written in lately, except where a view is
+  // about what others did: mentions, reactions, unread or one kind of sender.
+  const ownView = activity !== "mentions" && activity !== "reactions";
+  const conversationRows = withOwnActivity(
+    visible,
+    items,
+    ownView ? own : new Map(),
+    (mine) =>
+      !unreadOnly &&
+      senderFilter === "everyone" &&
+      (activity === "all" ||
+        (activity === "threads" ? !!mine.rootId : isDm(mine.channelId))),
+  );
   const rows = [
-    ...visible.map((item) => ({ kind: "conversation" as const, item })),
-    ...reactionItems.map((item) => ({ kind: "reaction" as const, item })),
+    ...conversationRows,
+    ...reactionItems.map((item) => ({
+      kind: "reaction" as const,
+      item,
+      createdAt: item.createdAt,
+    })),
   ].sort(
     (a, b) =>
-      b.item.createdAt - a.item.createdAt || a.item.id.localeCompare(b.item.id),
+      b.createdAt - a.createdAt ||
+      (a.kind === "own" ? a.own.id : a.item.id).localeCompare(
+        b.kind === "own" ? b.own.id : b.item.id,
+      ),
   );
   const listView = useRef(visible);
   // The view a read's success is judged against, not the one it was clicked in.
@@ -682,6 +715,7 @@ function InboxList({
   });
   const profileKey = withMentionedIds(
     [
+      scope.viewer,
       ...authorIds,
       ...reactionItems.slice(0, 50).flatMap((item) =>
         rowProfileIds(
@@ -699,6 +733,9 @@ function InboxList({
     [
       ...reactionItems.slice(0, 50).map((item) => item.message),
       ...visible.slice(0, 50).map((item) => item.previewMentions),
+      ...conversationRows
+        .slice(0, 50)
+        .flatMap((row) => (row.own ? [row.own.preview] : [])),
     ],
   )
     .sort()
@@ -1203,11 +1240,75 @@ function InboxList({
                     </li>
                   );
                 }
+                if (row.kind === "own") {
+                  const mine = row.own;
+                  const channel = list.channels.find(
+                    (candidate) => candidate.id === mine.channelId,
+                  );
+                  return (
+                    <li
+                      key={mine.id}
+                      className={styles.row}
+                      data-inbox-row={mine.id}
+                      data-selected={selectedId === mine.id || undefined}
+                    >
+                      <InboxRowButton
+                        own={mine}
+                        identity={ownIdentity(
+                          scope.viewer,
+                          channel,
+                          profiles,
+                          name,
+                        )}
+                        session={session}
+                        feed={feed}
+                        time={relativeTimestamp(mine.createdAt)}
+                        previewId={`${previewId}-${mine.id}`}
+                        selected={selectedId === mine.id}
+                        onClick={() => {
+                          const target: PageTabTarget = {
+                            ...tabTarget(
+                              {
+                                channelId: mine.channelId,
+                                messageId: mine.messageId,
+                                ...(mine.rootId && { rootId: mine.rootId }),
+                                thread: !!mine.rootId,
+                              },
+                              channel,
+                            ),
+                            messageId: mine.messageId,
+                          };
+                          const shown = openTab(target);
+                          setOpened(shown ? target : undefined);
+                          cancelRetry();
+                          setSelectedTarget({
+                            channelId: mine.channelId,
+                            messageId: mine.messageId,
+                            own: mine.id,
+                          });
+                          if (!shown)
+                            void navigator.open({
+                              version: 1,
+                              kind: "conversation",
+                              scope,
+                              channelId: mine.channelId,
+                              messageId: mine.messageId,
+                              ...(mine.rootId
+                                ? { threadRootId: mine.rootId }
+                                : {}),
+                            });
+                        }}
+                      />
+                    </li>
+                  );
+                }
                 const item = row.item;
                 const channel = list.channels.find(
                   (candidate) => candidate.id === item.channelId,
                 );
-                const identity = rowIdentity(item, channel, profiles, name);
+                const identity = row.own
+                  ? ownIdentity(scope.viewer, channel, profiles, name)
+                  : rowIdentity(item, channel, profiles, name);
                 const { sender, context } = identity;
                 const unread = hasUnread(item);
                 const readable = unread && canRead;
@@ -1249,10 +1350,11 @@ function InboxList({
                       >
                         <InboxRowButton
                           item={item}
+                          own={row.own}
                           identity={identity}
                           session={session}
                           feed={feed}
-                          time={relativeTimestamp(item.createdAt)}
+                          time={relativeTimestamp(row.createdAt)}
                           previewId={`${previewId}-${item.id}`}
                           disabled={pending}
                           selected={selectedId === item.id}

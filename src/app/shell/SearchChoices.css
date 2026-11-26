@@ -89,8 +89,17 @@
   }
 
   .search-palette-group .navigation-item {
-    min-height: 2.75rem;
     transition: none;
+  }
+  /* Dense rows keep the sidebar's height. */
+  .search-palette-group .navigation-item[data-variant="search"] {
+    min-height: 2.75rem;
+  }
+
+  /* A conversation with unread messages, bold as its sidebar row is. */
+  .search-palette [data-search-unread] {
+    color: var(--text-navigation-unread);
+    font-weight: var(--type-weight-semibold);
   }
 
   .search-palette-group-empty,
@@ -369,13 +378,14 @@
     block-size: 1px;
   }
 
-  /* Full-width dividers frame the inset results and preview. */
+  /* Full-width dividers frame the inset results and preview. A narrow list
+     leaves the preview most of the room: rows are one line each. */
   .search-peek-workspace {
     display: grid;
     flex: 1;
     min-width: 0;
     min-height: 0;
-    grid-template-columns: minmax(0, 64fr) minmax(0, 40fr);
+    grid-template-columns: minmax(min(18rem, 100%), 1fr) minmax(0, 2fr);
     column-gap: var(--space-3);
     grid-template-rows: auto minmax(0, 1fr);
     overflow: clip;

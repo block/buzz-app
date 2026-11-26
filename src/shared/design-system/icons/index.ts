@@ -132,6 +132,11 @@ import TablerArrowUpIcon from "@tabler/icons-react/dist/esm/icons/IconArrowUp.mj
 export const ArrowUpIcon = defineIcon("tabler", TablerArrowUpIcon);
 import TablerArrowUpRightIcon from "@tabler/icons-react/dist/esm/icons/IconArrowUpRight.mjs";
 export const ArrowUpRightIcon = defineIcon("tabler", TablerArrowUpRightIcon);
+import TablerCornerDownRightIcon from "@tabler/icons-react/dist/esm/icons/IconCornerDownRight.mjs";
+export const CornerDownRightIcon = defineIcon(
+  "tabler",
+  TablerCornerDownRightIcon,
+);
 import TablerArrowsClockwiseIcon from "@tabler/icons-react/dist/esm/icons/IconRefresh.mjs";
 export const ArrowsClockwiseIcon = defineIcon(
   "tabler",

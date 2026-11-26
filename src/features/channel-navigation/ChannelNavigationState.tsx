@@ -32,6 +32,9 @@ export type ChannelMenuSurface = {
   focus(): void;
   pending: boolean;
   runRead(action: () => Promise<unknown>): Promise<void>;
+  /** The surface stands in for the sidebar row, so it lists every action the
+   * row does, including chat tools and lifecycle, rather than adding its own. */
+  complete?: boolean;
 };
 type MenuActions = (
   channel: ChannelSummary,

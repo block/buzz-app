@@ -19,6 +19,7 @@ import { externalMcpEnabled } from "../../features/agents/external-connection";
 import { forgetMemoryListingsOnSelection } from "../../features/agents/memory";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { gatewayRoutes } from "../../features/agents/gateway/route";
+import { createAgentWork } from "./agent-work";
 
 export const inject = [
   "pages",
@@ -94,6 +95,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     matches: (url) => agentCardLinkId(url) !== null,
     className: inlineStyles.link,
     component: ({ url }) => <AgentCardLink url={url} reads={cardReads} />,
+  });
+  // Every conversation with your agents, newest first: Solo chats, and channel
+  // threads where you and one of your agents both wrote.
+  const agentWork = createAgentWork(relay);
+  ctx.reflect.get("sidebarSections")?.register({
+    version: 1,
+    id: "agent-work",
+    title: "Agent work",
+    rows: { snapshot: agentWork.snapshot, subscribe: agentWork.subscribe },
+    select: agentWork.target,
   });
   ctx.pages.register({
     id: "agents",

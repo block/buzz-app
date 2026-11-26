@@ -16,18 +16,12 @@ import {
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelayEvent } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
-import type { InboxItem } from "../../features/relay/inbox";
 import type { KeyBinding } from "../../features/shortcuts/bindings";
 import {
   useChannelList,
   useProfileGeneration,
 } from "../../features/relay/react";
 import { useSavedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
-import {
-  useUnreadChannelIds,
-  useUnreadReasons,
-  useUnreadThreadOnly,
-} from "../../bundled/channels/useSidebarFilters";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import {
   agentUnavailable,
@@ -39,18 +33,15 @@ import { searchedProfiles } from "../../features/relay/profile-search";
 import { foldProfiles } from "../../features/relay/profiles";
 import {
   ArrowsDownUpIcon,
-  AtIcon,
   CalendarIcon,
   ChatCircleIcon,
   ChatsCircleIcon,
-  ClockIcon,
   GearIcon,
   HashIcon,
   InfoIcon,
   RobotIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
-  ThreadIcon,
   XIcon,
   UserIcon,
   UsersIcon,
@@ -59,12 +50,13 @@ import { useDefaultAgent } from "../../features/solo/default-agent";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import { searchTerms, snippet } from "../../features/search/snippet";
 import {
-  readRecentSearches,
-  recordRecentSearch,
-} from "../../features/search/recent-searches";
+  type BrowseSort,
+  useBrowseSort,
+} from "../../features/search/browse-sort";
 import { type PreviewCache, SearchPreview } from "./SearchPreview";
+import { UnreadDots, UnreadName } from "./SearchUnread";
+import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { formatItemTimestamp } from "../../shared/datetime";
-import { Badge } from "../../shared/design-system/ui/Badge";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Calendar } from "../../shared/design-system/ui/Calendar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -89,7 +81,6 @@ import {
   syntaxOf,
 } from "./SearchFilterGuide";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
-import { useUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { messageSortPreference } from "../../features/search/message-sort-preference";
 import {
   noSearchUsage,
@@ -174,11 +165,71 @@ function conversationName(
   );
 }
 
-const noMutes: readonly string[] = [];
-/** Confirmed mutes only: optimistic menu intents do not quiet unread. */
-const confirmedMutes = (
-  snapshot: ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>,
-) => (snapshot.cached ? noMutes : (snapshot.data?.muted ?? noMutes));
+const MESSAGE_SORTS = [
+  ["relevance", "Most relevant"],
+  ["newest", "Most recent"],
+] as const satisfies readonly (readonly [SearchSort, string])[];
+const BROWSE_SORTS = [
+  ["activity", "Latest activity"],
+  ["name", "Name"],
+] as const satisfies readonly (readonly [BrowseSort, string])[];
+
+const browseCollator = new Intl.Collator(undefined, { sensitivity: "base" });
+
+/** A menu in the search field that orders the results, named with the
+ * order shown: the chosen one unless the results came back in another. */
+function SortMenu<T extends string>({
+  label,
+  value,
+  shown = value,
+  options,
+  onChange,
+  input,
+}: {
+  label: string;
+  value: T;
+  shown?: T;
+  options: readonly (readonly [T, string])[];
+  onChange: (value: T) => void;
+  input: SearchInputProps["input"];
+}) {
+  const current = options.find(([option]) => option === shown)?.[1];
+  return (
+    <MenuRoot>
+      <MenuTrigger
+        render={(props) => (
+          <IconButton
+            {...props}
+            variant="ghost"
+            aria-label={`${label}: ${current}`}
+            title={label}
+            icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
+          />
+        )}
+      />
+      <MenuPopup
+        align="end"
+        size="compact"
+        aria-label={label}
+        finalFocus={input}
+      >
+        <MenuRadioGroup
+          value={value}
+          onValueChange={(next) => {
+            const chosen = options.find(([option]) => option === next);
+            if (chosen) onChange(chosen[0]);
+          }}
+        >
+          {options.map(([option, text]) => (
+            <MenuRadioItem key={option} value={option} closeOnClick>
+              {text}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
 
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
@@ -1125,16 +1176,8 @@ export function SearchResults({
     () => (usageScope ? readSearchUsage(usageScope) : noSearchUsage),
     [usageScope],
   );
-  const recentSearches = useMemo(
-    () => (usageScope ? readRecentSearches(usageScope) : []),
-    [usageScope],
-  );
-  const remember = () => {
-    if (usageScope && query.trim()) recordRecentSearch(usageScope, query);
-  };
   const choose = (key: string, run: () => void) => () => {
     if (usageScope) recordChoice(usageScope, needle, key);
-    remember();
     cancelPersonOpen(key);
     run();
   };
@@ -1448,10 +1491,24 @@ export function SearchResults({
     const label = names.get(channel.id) ?? channel.name;
     const matches = needle ? matchName(label, needle)?.positions : undefined;
     const key = `channel:${channel.id}`;
+    const kind =
+      channel.channelType === "dm"
+        ? "dm"
+        : channel.channelType === "solo"
+          ? "chat"
+          : "channel";
     return {
       key,
       label,
       ...(matches ? { matches } : {}),
+      labelContent: (
+        <UnreadName session={session} channelId={channel.id} kind={kind}>
+          <MatchedLabel label={label} positions={matches} />
+        </UnreadName>
+      ),
+      trailing: (
+        <UnreadDots session={session} channelId={channel.id} kind={kind} />
+      ),
       detail: channel.archived
         ? channel.channelType === "solo"
           ? "Archived chat"
@@ -1468,12 +1525,7 @@ export function SearchResults({
               ? soloDetail(channel)
               : "Conversation",
       icon: channelIcon(channel),
-      kind:
-        channel.channelType === "dm"
-          ? "person"
-          : channel.channelType === "solo"
-            ? "chat"
-            : "channel",
+      kind: kind === "dm" ? "person" : kind,
       peek: {
         kind: "channel",
         channelId: channel.id,
@@ -1664,189 +1716,38 @@ export function SearchResults({
   const dmResults = directMessageResults.filter(
     (channel) => !bestieShown || channel.id !== bestieDm?.id,
   );
-  const suggestions = channels
+  // With nothing typed, search lists every joined conversation by kind, in
+  // the order the person chose: latest activity first, or by name.
+  const [browseSort, setBrowseSort] = useBrowseSort(usageScope);
+  // Activity order needs each conversation's newest activity, which the
+  // session reads only while someone asks for it.
+  const byActivity =
+    browseSort === "activity" && !scopedChannelId && !query.trim();
+  useEffect(() => {
+    if (byActivity) return session.channels.demandActivity?.();
+  }, [byActivity, session.channels]);
+  const browsed = channels
     .filter(
       (channel) =>
         joined(channel) && !channel.archived && !sidebarHidden(channel),
     )
-    .sort(
-      (a, b) =>
-        (b.lastActivityAt ?? b.updatedAt ?? 0) -
-        (a.lastActivityAt ?? a.updatedAt ?? 0),
-    );
-  // Other unread conversations lead an empty search, so Enter opens the
-  // first, unless turned off: DMs, then mentions of you, then threads you're
-  // in, then the rest, each most recent first. Muted ones stay quiet, as in
-  // the app's unread indicator, except for a mention of you.
-  const unreadFirst = useUnreadFirstPreference().enabled;
-  const unreadIds = useUnreadChannelIds(
-    session.unread,
-    JSON.stringify(suggestions.map(({ id }) => id)),
-  );
-  const reasons = useUnreadReasons(
-    session.unread,
-    JSON.stringify(
-      suggestions.flatMap(({ id, channelType }) =>
-        unreadIds.has(id) && channelType !== "dm" ? [id] : [],
-      ),
-    ),
-  );
-  // A DM's or chat's own newest unread message, as the Inbox shows it.
-  const inbox = useSyncExternalStore(
-    session.unread.subscribeInbox,
-    session.unread.inbox,
-    session.unread.inbox,
-  );
-  const muted = useSyncExternalStore(
-    session.sidebarPreferences.subscribe,
-    () => confirmedMutes(session.sidebarPreferences.snapshot()),
-    () => confirmedMutes(session.sidebarPreferences.snapshot()),
-  );
-  const isUnread = ({ id }: ChannelSummary) =>
-    unreadFirst &&
-    id !== currentChannelId &&
-    unreadIds.has(id) &&
-    (!muted.includes(id) || !!reasons.get(id)?.mention);
-  const tier = ({ id, channelType }: ChannelSummary) =>
-    channelType === "dm"
-      ? 0
-      : reasons.get(id)?.mention
-        ? 1
-        : reasons.get(id)?.thread
-          ? 2
-          : 3;
-  const unreadChannels = suggestions
-    .filter(isUnread)
-    .sort((a, b) => tier(a) - tier(b));
-  // A channel unread only through thread replies previews and opens the
-  // newest one, as its sidebar activity does.
-  const unreadThreads = useUnreadThreadOnly(
-    session.unread,
-    JSON.stringify(
-      unreadChannels.map(({ id, channelType }) => [id, channelType === "dm"]),
-    ),
-  );
-  const latestUnread = new Map<string, InboxItem>();
-  for (const item of inbox.items) {
-    const kept = latestUnread.get(item.channelId);
-    if (
-      item.id === `${item.channelId}:${item.channelId}` &&
-      (!kept || item.createdAt > kept.createdAt)
+    .map((channel) => ({
+      channel,
+      name: names.get(channel.id) ?? channel.name,
+    }))
+    .sort((a, b) =>
+      browseSort === "name"
+        ? browseCollator.compare(a.name, b.name)
+        : (b.channel.lastActivityAt ?? b.channel.updatedAt ?? 0) -
+          (a.channel.lastActivityAt ?? a.channel.updatedAt ?? 0),
     )
-      latestUnread.set(item.channelId, item);
-  }
-  const threadAuthors = [
-    ...new Set(
-      [
-        ...unreadThreads.values(),
-        ...[...reasons.values()].flatMap(({ mention, thread }) => [
-          ...(mention ? [mention] : []),
-          ...(thread ? [thread] : []),
-        ]),
-        ...latestUnread.values(),
-      ].map(({ authorId, workflowOwnerId }) => workflowOwnerId ?? authorId),
-    ),
-  ]
-    .sort()
-    .join(":");
-  useEffect(() => {
-    void profileGeneration;
-    if (threadAuthors)
-      void session.profiles
-        .ensure(threadAuthors.split(":"), "background")
-        .catch(() => {});
-  }, [session, threadAuthors, profileGeneration]);
-  const authorName = (
-    {
-      authorId,
-      workflowOwnerId,
-    }: { authorId: string; workflowOwnerId?: string | undefined },
-    channel: ChannelSummary,
-  ) => {
-    const displayId = workflowOwnerId ?? authorId;
-    const resolved = resolveName(
-      displayId,
-      profiles.get(displayId)?.name ?? displayId.slice(0, 10),
-      channel.members ?? noMembers,
-    );
-    return workflowOwnerId ? workflowLabel(resolved) : resolved;
+    .map(({ channel }) => channel);
+  // One line each, as the sidebar shows them: the preview beside the list
+  // says the rest.
+  const browseDestination = (channel: ChannelSummary): SearchDestination => {
+    const { detail: _, ...row } = conversationDestination(channel);
+    return row;
   };
-  // The preview beside the row shows its latest messages, so the row names
-  // its kind, as a search result does.
-  const suggestion = (channel: ChannelSummary): SearchDestination => {
-    const destination = channelDestination(channel);
-    const thread = unreadThreads.get(channel.id);
-    if (!thread) return destination;
-    const name = authorName(thread, channel);
-    return {
-      ...destination,
-      detailIcon: ThreadIcon,
-      detailIconLabel: "Thread reply",
-      detail: thread.preview.trim()
-        ? `${name}: ${thread.preview}`
-        : `${name} replied in a thread`,
-      run: choose(destination.key, () =>
-        openConversation(channel.id, thread.rootId, thread.rootId),
-      ),
-    };
-  };
-  // An unread row says why it leads, and shows the message that made it
-  // unread: the mention, the thread reply, or a DM's or chat's newest.
-  const unread = unreadChannels.map((channel): SearchDestination => {
-    const reason = reasons.get(channel.id);
-    const mention = reason?.mention;
-    // The row shows the reply that earned it the Thread tier.
-    const thread = !mention && reason?.thread;
-    const threadOnly = unreadThreads.has(channel.id);
-    // A channel unread only through threads opens the thread its row shows;
-    // a mixed one opens to its conversation.
-    const root = threadOnly
-      ? (mention || thread || undefined)?.rootId
-      : undefined;
-    const row = suggestion(channel);
-    const latest =
-      threadOnly || thread ? undefined : latestUnread.get(channel.id);
-    // Only a group conversation names who wrote it.
-    const shown =
-      latest?.preview.trim() &&
-      ((channel.members?.length ?? 0) > 2
-        ? `${authorName(latest, channel)}: ${latest.preview}`
-        : latest.preview);
-    const tag =
-      channel.channelType === "dm"
-        ? "DM"
-        : mention
-          ? "Mentioned"
-          : reason?.thread
-            ? "Thread"
-            : undefined;
-    return {
-      ...row,
-      ...(root && {
-        run: choose(row.key, () => openConversation(channel.id, root, root)),
-      }),
-      ...(shown && { detail: shown }),
-      ...(thread && {
-        detailIcon: ThreadIcon,
-        detailIconLabel: "Thread reply",
-        detail: thread.preview.trim()
-          ? `${authorName(thread, channel)}: ${thread.preview}`
-          : `${authorName(thread, channel)} replied in a thread`,
-      }),
-      ...(mention && {
-        detailIcon: AtIcon,
-        detailIconLabel: "Mention",
-        detail: mention.preview.trim()
-          ? `${authorName(mention, channel)}: ${mention.preview}`
-          : `${authorName(mention, channel)} mentioned you`,
-      }),
-      ...(tag && { trailing: <Badge size="xs">{tag}</Badge> }),
-    };
-  });
-  const recent = suggestions
-    .filter((channel) => !isUnread(channel))
-    .slice(0, 4)
-    .map(suggestion);
   const nameOf = (pubkey: string, channelId?: string) =>
     resolveName(
       pubkey,
@@ -1945,7 +1846,6 @@ export function SearchResults({
       },
       run: () => {
         cancelPersonOpen();
-        remember();
         if (message.threadRootId)
           openConversation(message.channelId, message.id, message.threadRootId);
         else openConversation(message.channelId, message.id);
@@ -1985,7 +1885,6 @@ export function SearchResults({
           ),
           run: () => {
             cancelPersonOpen();
-            if (usageScope) recordRecentSearch(usageScope, `ask: ${text}`);
             openAsk(text, askAgent);
           },
         })
@@ -2310,6 +2209,28 @@ export function SearchResults({
     !messagesPending &&
     !rankedGroups.some((group) => group.destinations.length);
   const offerAsk = !!parsed.text && (words >= 4 || settledEmpty);
+  // Everything joined, by kind, from the list already held.
+  const browseGroups: SearchGroup[] = (
+    [
+      ["Channels", "channel", HashIcon],
+      ["Direct messages", "person", UsersIcon],
+      ["Chats", "chat", ChatsCircleIcon],
+    ] as const
+  ).flatMap(([label, tone, icon]) => {
+    const rows = browsed
+      .filter(
+        ({ channelType }) =>
+          (channelType === "dm"
+            ? "person"
+            : channelType === "solo"
+              ? "chat"
+              : "channel") === tone,
+      )
+      .map(browseDestination);
+    return rows.length
+      ? [{ label, tone, icon, browse: true, dense: true, destinations: rows }]
+      : [];
+  });
   const resultGroups: readonly SearchGroup[] =
     pickerPrompt || showAmbiguousPicker
       ? [
@@ -2384,78 +2305,18 @@ export function SearchResults({
                 },
               ]
             : !query.trim()
-              ? [
-                  ...(unread.length
-                    ? [{ label: "Unread", destinations: unread }]
-                    : []),
-                  // Conversations first, then searches: searches keep no
-                  // time to interleave by.
-                  ...(recent.length || recentSearches.length || !unread.length
-                    ? [
-                        {
-                          label: "Recents",
-                          destinations: [
-                            ...recent,
-                            ...recentSearches.map((text): SearchDestination => {
-                              const restored = restoreChips(text);
-                              return {
-                                key: `recent:${text}`,
-                                label: [
-                                  ...restored.chips.map((chip) => chip.text),
-                                  restored.visible,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" "),
-                                icon: ClockIcon,
-                                kind: "page",
-                                action: "Search again",
-                                run: () =>
-                                  setChipQuery(
-                                    restored.chips,
-                                    restored.visible,
-                                  ),
-                              };
-                            }),
-                          ],
-                          empty:
-                            list.status === "loading"
-                              ? "Loading recent conversations…"
-                              : "No recent activity yet.",
-                        },
-                      ]
-                    : []),
-                  // Everything joined, by kind, from the list already held.
-                  ...(
-                    [
-                      ["Channels", "channel", HashIcon],
-                      ["Direct messages", "person", UsersIcon],
-                      ["Chats", "chat", ChatsCircleIcon],
-                    ] as const
-                  ).flatMap(([label, tone, icon]) => {
-                    const rows = suggestions
-                      .filter(
-                        ({ channelType }) =>
-                          (channelType === "dm"
-                            ? "person"
-                            : channelType === "solo"
-                              ? "chat"
-                              : "channel") === tone,
-                      )
-                      .map(channelDestination)
-                      .map((row) => ({ ...row, key: `browse:${row.key}` }));
-                    return rows.length
-                      ? [
-                          {
-                            label,
-                            tone,
-                            icon,
-                            browse: true,
-                            destinations: rows,
-                          },
-                        ]
-                      : [];
-                  }),
-                ]
+              ? browseGroups.length
+                ? browseGroups
+                : [
+                    {
+                      label: "Conversations",
+                      destinations: [],
+                      empty:
+                        list.status === "loading"
+                          ? "Loading conversations…"
+                          : "No conversations yet.",
+                    },
+                  ]
               : [
                   ...rankedGroups.filter(
                     (group) => hits || group !== messageGroup,
@@ -2475,6 +2336,8 @@ export function SearchResults({
                   ...(hits ? [] : [messageGroup]),
                 ];
   const groups = guideOpen ? [guideGroup] : resultGroups;
+  /** Every joined conversation by kind, with nothing typed. */
+  const browsing = !guideOpen && !scopedChannelId && !query.trim();
   const askReader =
     openAsk && !offline && (asking || guideOpen || !!parsed.text) ? (
       <DefaultAgent
@@ -2516,40 +2379,24 @@ export function SearchResults({
         fieldAction={
           <>
             {sortable && (
-              <MenuRoot>
-                <MenuTrigger
-                  render={(props) => (
-                    <IconButton
-                      {...props}
-                      variant="ghost"
-                      // The heading's order is visual only; name it here.
-                      aria-label={`Sort messages: ${order}`}
-                      title="Sort messages"
-                      icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
-                    />
-                  )}
-                />
-                <MenuPopup
-                  align="end"
-                  size="compact"
-                  aria-label="Sort messages"
-                  finalFocus={input}
-                >
-                  <MenuRadioGroup
-                    value={sort}
-                    onValueChange={(value) =>
-                      setSort(value === "newest" ? "newest" : "relevance")
-                    }
-                  >
-                    <MenuRadioItem value="relevance" closeOnClick>
-                      Most relevant
-                    </MenuRadioItem>
-                    <MenuRadioItem value="newest" closeOnClick>
-                      Most recent
-                    </MenuRadioItem>
-                  </MenuRadioGroup>
-                </MenuPopup>
-              </MenuRoot>
+              <SortMenu
+                // The heading's order is visual only; the button names it.
+                label="Sort messages"
+                value={sort}
+                shown={search.newestFirst ? "newest" : "relevance"}
+                options={MESSAGE_SORTS}
+                onChange={setSort}
+                input={input}
+              />
+            )}
+            {browsing && (
+              <SortMenu
+                label="Sort conversations"
+                value={browseSort}
+                options={BROWSE_SORTS}
+                onChange={setBrowseSort}
+                input={input}
+              />
             )}
             {!asking && (
               <IconButton
@@ -2585,9 +2432,7 @@ export function SearchResults({
         }
         groups={groups}
         open={open}
-        highlightEmpty={
-          guideOpen || (!scopedChannelId && !query.trim() && unread.length > 0)
-        }
+        highlightEmpty={guideOpen || browsing}
         // Enter before any row, or on search actions alone, waits for a
         // channel or person row, or for the lookups to settle, rather than
         // opening a message that lands first. A cold joined list has not yet

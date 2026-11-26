@@ -12,6 +12,7 @@ import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { connectBrokerTransport } from "./transport";
 import { createRelaySession } from "./session";
 import {
+  expandWorkspaceRecord,
   projectSidebarPreferences,
   readSidebarPreferences,
   workspaceSectionOrder,
@@ -807,4 +808,26 @@ it("projects bounded optional activity windows without changing legacy mode deco
       ),
     ),
   ).toThrow("Invalid sidebar activity window");
+});
+
+it("drops plugin card places an experimental build saved, so the next save is readable everywhere", () => {
+  const record = { version: 1, sections: [], assignments: {} };
+  const expanded = expandWorkspaceRecord({
+    ...record,
+    sectionOrder: ["plugin:inbox/activity", "pages", "solo-region:x", "dms"],
+    cardOrder: ["plugin:inbox/activity", "pages", "dms"],
+  });
+  expect(expanded).not.toHaveProperty("cardOrder");
+  expect(expanded.sectionOrder).toEqual(["pages", "dms"]);
+  expect(
+    projectSidebarPreferences(
+      expanded,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      undefined,
+      true,
+    ).sectionOrder,
+  ).toEqual(["pages", "dms"]);
 });

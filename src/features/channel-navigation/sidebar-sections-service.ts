@@ -3,7 +3,7 @@ import type {
   RegisteredSidebarContext,
 } from "../sidebar/contracts";
 import { Service, type Context } from "@deepseek-ai/cordis";
-import type { ReactElement, ReactNode } from "react";
+import type { ComponentType, ReactElement, ReactNode } from "react";
 import type { OpenTarget } from "../navigation/targets";
 import { isBundledOwner } from "../../plugins/provenance";
 import type {
@@ -31,17 +31,37 @@ export type SidebarSectionAction = Readonly<{
   onSelect: () => void | Promise<void>;
 }>;
 
+/** What a card's own contents know: whether the card is still mounted for
+ * its plugin, and what the sidebar has open. */
+export type SidebarSectionBodyProps = Readonly<{
+  active(): boolean;
+  target: OpenTarget;
+}>;
+
+/** Ways a card can lay out its contents, offered as Layout in its menu. */
+export type SidebarSectionLayouts = Readonly<{
+  options: readonly Readonly<{ id: string; label: string }>[];
+  snapshot: () => string;
+  subscribe: (listener: () => void) => () => void;
+  select: (id: string) => void;
+}>;
+
 export type SidebarSectionContribution = Readonly<{
   version: 1;
   id: string;
   title: string;
-  icon: ReactNode;
+  /** Optional: a card's title can stand alone, as the built-in cards' do. */
+  icon?: ReactNode;
   rows: Readonly<{
     snapshot: () => readonly SidebarSectionRow[];
     subscribe: (listener: () => void) => () => void;
   }>;
   select: (row: SidebarSectionRow) => OpenTarget;
   actions?: readonly SidebarSectionAction[];
+  layouts?: SidebarSectionLayouts;
+  /** Bundled plugins only. Preview, likely to break: the card's own contents,
+   * shown inside its frame above any rows. */
+  body?: ComponentType<SidebarSectionBodyProps>;
 }>;
 
 export type RegisteredSidebarSection = Contribution<SidebarSectionContribution>;
@@ -139,11 +159,18 @@ export class SidebarSectionsService extends Service implements SidebarSections {
       return;
     }
     if (
+      section.body !== undefined &&
+      (!this.ctx.pluginOwner || !isBundledOwner(this.ctx.pluginOwner))
+    )
+      throw new Error(
+        "Sidebar card contents are available only to bundled plugins",
+      );
+    if (
       typeof section.id !== "string" ||
       !idPattern.test(section.id) ||
       typeof section.title !== "string" ||
       !section.title.trim() ||
-      section.icon == null ||
+      (section.body !== undefined && !isComponent(section.body)) ||
       !section.rows ||
       typeof section.rows.snapshot !== "function" ||
       typeof section.rows.subscribe !== "function" ||
@@ -159,7 +186,21 @@ export class SidebarSectionsService extends Service implements SidebarSections {
               !action.label.trim() ||
               action.icon == null ||
               typeof action.onSelect !== "function",
-          )))
+          ))) ||
+      (section.layouts !== undefined &&
+        (!Array.isArray(section.layouts.options) ||
+          section.layouts.options.length < 2 ||
+          section.layouts.options.some(
+            (option) =>
+              !option ||
+              typeof option.id !== "string" ||
+              !idPattern.test(option.id) ||
+              typeof option.label !== "string" ||
+              !option.label.trim(),
+          ) ||
+          typeof section.layouts.snapshot !== "function" ||
+          typeof section.layouts.subscribe !== "function" ||
+          typeof section.layouts.select !== "function"))
     )
       throw new Error(
         "A sidebar section needs an id, title, rows, and select action",

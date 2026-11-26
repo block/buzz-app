@@ -144,18 +144,114 @@
   color: var(--text-subtle);
 }
 
-.reactionHeading {
-  display: flex;
+/* A row's place: its conversation's icon, then its name, on one line. */
+.place {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
-  align-items: baseline;
+  max-inline-size: 100%;
+  vertical-align: bottom;
 }
-.reactionTail {
-  flex-shrink: 0;
+
+.placeIcon {
+  flex: none;
+}
+
+.placeName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.reactionPreview {
-  max-inline-size: 64ch;
+/* Compact Activity: a sidebar row's icon slot, name and unread look, with
+   who wrote last after the name in lighter text. */
+.compactIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* A line's height, so on a two-line row it centers on the first line. */
+  min-height: var(--space-5);
+  width: 1.25rem;
+  flex: 0 0 1.25rem;
+}
+/* On a two-line row the icon sits on the first line, past the row padding. */
+.compactIcon[data-lines="two"] {
+  margin-block-start: var(--space-row-gap);
+}
+/* Faces at a compact row's end, centered on the row like its leading icon. */
+.compactTrailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+/* Never squeezed by a long name or message beside it. */
+.compactAvatar {
+  display: grid;
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+.compactCount {
+  display: grid;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding-inline: var(--space-half);
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--affordance-subtle);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+}
+.compactLabel {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+}
+.compactPlace {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compactLabel[data-unread] .compactPlace {
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
+[data-selected] .compactLabel[data-unread] .compactPlace {
+  color: var(--text-row-selected);
+}
+
+/* Default 2: the compact row's line, then who wrote by face and the start of
+   their message. */
+.compactLines {
+  display: flex;
+  flex-direction: column;
+  /* The same line gap and row padding as Default's rows. */
+  gap: var(--space-1);
+  min-width: 0;
+  padding-block: var(--space-row-gap);
+}
+.compactPreview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  color: var(--text-subtle);
+}
+.compactPreview[data-unread] {
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
+[data-selected] .compactPreview[data-unread] {
+  color: var(--text-row-selected);
+}
+.compactPreviewText {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

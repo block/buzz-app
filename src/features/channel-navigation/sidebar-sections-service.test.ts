@@ -163,3 +163,33 @@ it("owns neutral sidebar contexts as bundled contributions and removes them on d
   expect(registry.contextSnapshot()).toEqual([]);
   await root.fiber.dispose();
 });
+
+it("limits a card's own contents to bundled owners", async () => {
+  const { bundledOwner } = await import("../../plugins/provenance");
+  const root = rootContext();
+  const registry = new SidebarSectionsService(root);
+  const card = { ...section, body: () => null };
+  expect(() =>
+    root
+      .extend({ pluginOwner: { id: "example.plugin", revision: "one" } })
+      .sidebarSections?.register(card),
+  ).toThrow(/bundled/);
+  expect(() =>
+    root
+      .extend({
+        pluginOwner: bundledOwner({ id: "buzz.inbox", revision: "bundled" }),
+      })
+      .sidebarSections?.register({
+        ...section,
+        body: "not a component" as never,
+      }),
+  ).toThrow(/needs/);
+  const fiber = root
+    .extend({
+      pluginOwner: bundledOwner({ id: "buzz.inbox", revision: "bundled" }),
+    })
+    .plugin((ctx) => ctx.sidebarSections?.register(card));
+  await fiber.await();
+  expect(registry.snapshot()).toMatchObject([{ key: "buzz.inbox/work" }]);
+  await root.fiber.dispose();
+});

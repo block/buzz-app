@@ -2,6 +2,7 @@ import {
   starredMessageTarget,
   workspaceMessageTarget,
 } from "../../features/channel-navigation/new-message-route";
+import { OVERFLOW_SECTIONS, useShowsOverflow } from "./sidebar-overflow";
 import { WorkspaceNewMenu } from "./WorkspaceNewMenu";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { visibleSoloRegions } from "./SoloRegions";
@@ -146,6 +147,7 @@ import {
 } from "./sidebar-sections";
 import { activityTranscript } from "./working-agents";
 import { SidebarContributionSection } from "../../features/channel-navigation/SidebarContributionSection";
+import { contributionConversationRow } from "./ContributionConversationRow";
 import {
   ContributionBoundary,
   contributionKey,
@@ -331,6 +333,11 @@ export function ChannelInventory({
     // a chat that already leads, so they leave the sidebar alone.
     ...(pluginSorted ? {} : { rank: recentAt }),
   });
+  // One row type per session, so the cards' rows keep their state across renders.
+  const conversationRow = useMemo(
+    () => contributionConversationRow(queries),
+    [queries],
+  );
   const rosterRecovers = useRecoveryOwns(queries, (live) =>
     rosterRecovering(live.roster),
   );
@@ -556,6 +563,7 @@ export function ChannelInventory({
       });
   }, []);
   const hasPages = !!pages;
+  const showsOverflow = useShowsOverflow();
   const cards = useMemo(
     () =>
       sidebarSections(
@@ -566,8 +574,14 @@ export function ChannelInventory({
         new Set<string>(JSON.parse(activeDraftSections)),
         regions.managed,
         hasPages,
+      ).filter(
+        // Without the catch-all cards, the sidebar is Favorites, workspaces
+        // and plugin cards such as Activity; Command K lists the rest.
+        (card) =>
+          showsOverflow || chatsOnly || !OVERFLOW_SECTIONS.has(card.key),
       ),
     [
+      showsOverflow,
       hasPages,
       sidebarChannels,
       preferences.data,
@@ -1237,7 +1251,7 @@ export function ChannelInventory({
     surface?: ChannelMenuSurface,
   ) => {
     const actions: ReactNode[] = [];
-    if (!surface && channel.channelType === "solo") {
+    if ((!surface || surface.complete) && channel.channelType === "solo") {
       actions.push(
         <SoloChatMenuItems
           key="chat-tools"
@@ -1452,7 +1466,7 @@ export function ChannelInventory({
     actions.push(
       <ChannelCopyLinkMenuItem key="copy-link" channelId={channel.id} />,
     );
-    if (!surface && !channel.archived) {
+    if ((!surface || surface.complete) && !channel.archived) {
       actions.push(
         <ChannelLifecycleMenu
           key="lifecycle"
@@ -2394,6 +2408,8 @@ export function ChannelInventory({
                     groupIndex={index}
                     reorderable={reorderable}
                     onRowsCommitted={sidebar.retryReveal}
+                    resizeScope={scope}
+                    conversationRow={conversationRow}
                     move={
                       reorderable
                         ? {

@@ -240,6 +240,24 @@ function unpackConversationId(id: string) {
 
 /** Expand compact filings before applying migration fallbacks or an edit. */
 export function expandWorkspaceRecord(value: unknown): Record<string, unknown> {
+  return withoutCardPlaces(expandWorkspaceFilings(value));
+}
+
+/** An experimental build saved plugin card places in the shared order and in
+ * `cardOrder`, which other builds reject. Drop both so the next save writes
+ * a record every build can read. */
+function withoutCardPlaces(record: Record<string, unknown>) {
+  const { cardOrder: _cardOrder, ...rest } = record;
+  if (!Array.isArray(rest.sectionOrder)) return rest;
+  return {
+    ...rest,
+    sectionOrder: rest.sectionOrder.filter(
+      (key) => typeof key !== "string" || !/^(plugin|solo-region):/.test(key),
+    ),
+  };
+}
+
+function expandWorkspaceFilings(value: unknown): Record<string, unknown> {
   const data = object(value);
   if (data.filings === undefined) {
     if (data.packedUnfiled !== undefined)

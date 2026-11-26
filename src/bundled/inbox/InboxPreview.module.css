@@ -51,6 +51,9 @@
 }
 
 .body {
+  /* The hover card's rows round to its floating surface; in the sidebar they
+     keep the sidebar's own row shape. */
+  --radius-row: var(--floating-inner-radius);
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -61,16 +64,40 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  --radius-row: var(--floating-inner-radius);
+  /* Compact feeds keep every row to two lines: name and place, then message. */
+  --message-list-row-preview-lines: 1;
 }
 
-/* A row keeps its hover fill while the pointer is on its Mark as read. */
+/* A light rule between rows, inset to the rows' padding, for scanning. */
+.list:not([data-layout="compact"]) > li + li::before {
+  content: "";
+  display: block;
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--border-standard);
+}
+
+/* A DM row's sender already names it, so a compact feed leaves out the place. */
+.list [data-named-by-sender] {
+  display: none;
+}
+
+/* A row keeps its hover fill while its right-click menu is open, as the
+   sidebar's other cards do. */
 @media (hover: hover) and (pointer: fine) {
   .list > li:hover > [class~="navigation-item"]:not([data-selected]) {
     --text-subtle: var(--interaction-row-text);
     --text-metadata: var(--interaction-row-metadata);
     background: var(--interaction-row-hover);
   }
+}
+
+.list
+  > li[data-context-menu-present]
+  > [class~="navigation-item"]:not([data-selected]) {
+  --text-subtle: var(--interaction-row-text);
+  --text-metadata: var(--interaction-row-metadata);
+  background: var(--interaction-row-hover);
 }
 
 .notice {
@@ -134,4 +161,14 @@
   flex-direction: column;
   padding-top: var(--space-1);
   border-top: 1px solid var(--border-standard);
+}
+
+/* The place reads at the name's size, lighter than everything else, and is
+   never bold, unread or not. */
+.list [data-inbox-source] {
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  letter-spacing: var(--text-body--letter-spacing);
+  font-weight: var(--type-weight-normal);
+  color: var(--text-metadata);
 }

@@ -50,7 +50,6 @@ import {
 import { attachmentDraftCount } from "../../features/messages/attachment-draft";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { usageScope } from "../../features/search/usage";
-import { unreadFirstPreference } from "../../features/search/unread-first-preference";
 
 export type SearchServices = Pick<
   AppServices,
@@ -151,10 +150,7 @@ export function PageSearch({
         ? document.activeElement
         : trigger.current;
     const memory = remembered.current;
-    const kept =
-      memory &&
-      Date.now() - memory.at < SEARCH_MEMORY &&
-      (memory.query.trim() || !unreadFirstPreference());
+    const kept = memory && Date.now() - memory.at < SEARCH_MEMORY;
     setQuery(kept ? memory.query : "");
     selectKept.current = !!kept && !!memory.query;
     place.current = kept ? { ...memory.place } : { top: 0, key: "" };
@@ -348,8 +344,7 @@ export function PageSearch({
         motion="default"
         dismissOnOutsideClick
         presentation="search"
-        size="wide"
-        height="stable-tall"
+        size="expanded"
         bodyLayout="flex"
         initialFocus={input}
         finalFocus={() =>
@@ -554,12 +549,12 @@ function CommunitySearch({
                 ]
               : [
                   {
-                    label: "Recents",
+                    label: "Conversations",
                     destinations: [],
                     empty: !enabled
                       ? "Enable Messages to see conversations."
                       : !client.selected
-                        ? "Choose a community to see recent conversations."
+                        ? "Choose a community to see your conversations."
                         : "Connecting to this community…",
                   },
                 ]

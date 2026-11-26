@@ -1,0 +1,734 @@
+import { reactionRows } from "./reaction-rows";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactElement,
+  type RefObject,
+} from "react";
+import type { Navigation } from "../../features/navigation/controller";
+import type { NavigationScope } from "../../features/navigation/targets";
+import { useIdentityNames } from "../../features/identity-names/react";
+import { selectProfiles } from "../../features/relay/profile-selection";
+import {
+  useChannelList,
+  useProfileGeneration,
+} from "../../features/relay/react";
+import type { RelaySession } from "../../features/relay/session";
+import { ChecksIcon } from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { shortRelativeTimestamp } from "../../shared/relative-timestamp";
+import {
+  CompactActivityRow,
+  conversationPreview,
+  ReactionPreview,
+  hasUnread,
+  InboxRowButton,
+  ownIdentity,
+  reactionIdentity,
+  ReactionRowButton,
+  rowIdentity,
+  rowProfileIds,
+} from "./InboxRow";
+import { withMentionedIds } from "../../features/messages/PreviewText";
+import { activityConversation, useActivityMutes } from "./useActivityMutes";
+import type { InboxItem } from "../../features/relay/inbox";
+import { useOwnActivity, withOwnActivity } from "./own-activity";
+import {
+  ConversationMenu,
+  type ConversationMenuMessage,
+} from "../channels/ConversationMenu";
+import {
+  ConversationWork,
+  type ConversationWorkState,
+} from "../channels/ConversationWork";
+import styles from "./InboxPreview.module.css";
+
+/** Rows a compact feed renders and enriches; the Activity page holds the rest. */
+const maxRows = 50;
+
+/** What a compact feed lists: everything, mentions of you, or your threads. */
+export type FeedView = "all" | "mentions" | "threads";
+
+/** The row's explicit read, as Activity's Mark as read saves it. */
+async function readRow(session: RelaySession, item: InboxItem) {
+  if (item.target.kind === "channel")
+    await session.unread.prepareChannelRead(item.channelId)();
+  else if (item.timeline)
+    await session.unread.markTimelineRead(item.channelId, item.messageIds);
+  // One intent across its steps: a newer Mark as unread stops the rest.
+  else await session.unread.markReadThrough(item.readThrough);
+}
+
+/** Where a row opens, for opening it and for showing which row is open. */
+export type FeedDestination = Readonly<{
+  channelId: string;
+  messageId: string;
+  rootId?: string | undefined;
+}>;
+
+/**
+ * Activity's compact list, newest first: conversations by their newest
+ * message from anyone, yours included, and in All the reactions to your
+ * messages. Shared by the Activity row's hover card and the sidebar card.
+ */
+export function ActivityFeed({
+  session,
+  scope,
+  navigator,
+  view = "all",
+  unreadOnly = false,
+  onUnreadOnlyChange,
+  focusFallback,
+  isOpen,
+  onOpen,
+  unreadFirst = false,
+  showTime = true,
+  compact = false,
+  previews = false,
+  onSeeAll,
+}: {
+  session: RelaySession;
+  scope: NavigationScope;
+  navigator: Navigation;
+  view?: FeedView;
+  unreadOnly?: boolean;
+  onUnreadOnlyChange?: (value: boolean) => void;
+  /** Where focus goes when Mark as read leaves an empty list. */
+  focusFallback?: RefObject<HTMLElement | null>;
+  /** Whether a row's conversation is the one open now, to show it selected. */
+  isOpen?: (destination: FeedDestination) => boolean;
+  /** Before a row opens its conversation. */
+  onOpen?: () => void;
+  /** Unread conversations lead, each part newest first. */
+  unreadFirst?: boolean;
+  /** Opens the rest when there are more rows than the feed shows; its row
+   * ends the list. */
+  onSeeAll?: () => void;
+  /** Whether rows show when their latest message was sent. */
+  showTime?: boolean;
+  /** One line per conversation, without the message. */
+  compact?: boolean;
+  /** With `compact`, each row adds a line with who wrote and their message. */
+  previews?: boolean;
+}) {
+  const list = useChannelList(session.channels);
+  const muted = useActivityMutes(session);
+  const own = useOwnActivity(session, scope.viewer, list.channels);
+  const inbox = useSyncExternalStore(
+    session.unread.subscribeInbox,
+    session.unread.inbox,
+    session.unread.inbox,
+  );
+  const feed = useSyncExternalStore(
+    session.inboxFeed.subscribe,
+    session.inboxFeed.snapshot,
+    session.inboxFeed.snapshot,
+  );
+  const reactions = useSyncExternalStore(
+    session.inboxFeed.reactions.subscribe,
+    session.inboxFeed.reactions.snapshot,
+    session.inboxFeed.reactions.snapshot,
+  );
+  const sync = useSyncExternalStore(
+    session.unread.subscribeSync,
+    session.unread.sync,
+    session.unread.sync,
+  );
+  const [refreshAfterRoster, setRefreshAfterRoster] = useState(false);
+  useEffect(() => {
+    // As on the page, a completed discovery revision can retire a feed attempt.
+    void list.asOf;
+    if (list.status !== "ready") return;
+    // Retry after a roster failure also refreshes activity that failed meanwhile.
+    if (refreshAfterRoster) {
+      setRefreshAfterRoster(false);
+      void Promise.all([
+        session.unread.refresh(),
+        session.inboxFeed.refresh(),
+        session.inboxFeed.reactions.refresh(),
+      ]);
+    } else {
+      void session.unread.ensure();
+      void session.inboxFeed.ensure();
+      void session.inboxFeed.reactions.ensure();
+    }
+  }, [session, list.status, list.asOf, refreshAfterRoster]);
+  const channelOf = (channelId: string) =>
+    list.channels.find((channel) => channel.id === channelId);
+  const conversations = inbox.items
+    .map((item) =>
+      view === "mentions" ? item.mention : activityConversation(item, muted),
+    )
+    .filter(
+      (item): item is InboxItem =>
+        item !== undefined && (view !== "threads" || item.thread),
+    );
+  // Mentions are about what others said; elsewhere your own messages count.
+  const conversationRows = withOwnActivity(
+    unreadOnly ? conversations.filter(hasUnread) : conversations,
+    inbox.items,
+    view === "mentions" ? new Map() : own,
+    (mine) => !unreadOnly && (view === "all" || !!mine.rootId),
+  );
+  // Only someone else's message makes a row unread; yours and reactions never do.
+  // A row opened while unread is read, and keeps its place while it stays
+  // open; once you move on, it settles among the rest by when it was last
+  // active. `seen` waits for the open to land before leaving can count.
+  const [held, setHeld] = useState<Readonly<{ key: string; seen: boolean }>>();
+  const unreadIds = new Set(
+    conversationRows.flatMap((row) =>
+      row.kind === "conversation" && hasUnread(row.item) ? [row.item.id] : [],
+    ),
+  );
+  const activity = [
+    ...conversationRows,
+    ...(view === "all" && !unreadOnly
+      ? reactionRows(
+          reactions.items.filter(
+            (item) =>
+              !muted.has(item.channelId) ||
+              channelOf(item.channelId)?.channelType === "dm",
+          ),
+        )
+      : []
+    ).map((item) => ({
+      kind: "reaction" as const,
+      item,
+      createdAt: item.createdAt,
+    })),
+  ].map((row) => ({
+    ...row,
+    id: row.kind === "own" ? row.own.id : row.item.id,
+  }));
+  // One row per conversation: a channel's main conversation, each thread, a
+  // DM or a chat. Its newest activity, from anyone, stands for it, and it is
+  // unread while any of someone else's messages in it are.
+  const conversationOf = (row: (typeof activity)[number]) => {
+    const where =
+      row.kind === "own"
+        ? row.own
+        : row.kind === "reaction"
+          ? {
+              channelId: row.item.channelId,
+              rootId: row.item.message.threadRootId,
+            }
+          : { channelId: row.item.channelId, rootId: row.item.rootId };
+    return channelOf(where.channelId)?.channelType === "dm" || !where.rootId
+      ? where.channelId
+      : `${where.channelId}:${where.rootId}`;
+  };
+  const groups = new Map<
+    string,
+    { row: (typeof activity)[number]; unread: InboxItem[] }
+  >();
+  for (const row of activity) {
+    const key = conversationOf(row);
+    const group = groups.get(key) ?? { row, unread: [] };
+    if (
+      row.createdAt > group.row.createdAt ||
+      (row.createdAt === group.row.createdAt && row.id < group.row.id)
+    )
+      group.row = row;
+    if (row.kind === "conversation" && unreadIds.has(row.id))
+      group.unread.push(row.item);
+    groups.set(key, group);
+  }
+  /** The message a thread row shows, which its menu acts on. */
+  const rowMessage = (
+    row: (typeof activity)[number],
+    threadRootId: string,
+  ): ConversationMenuMessage | undefined => {
+    if (row.kind === "reaction")
+      return {
+        channelId: row.item.channelId,
+        messageId: row.item.message.id,
+        threadRootId,
+        text: row.item.message.content,
+      };
+    // A row showing your newer message acts on it.
+    const own = row.own;
+    if (own)
+      return {
+        channelId: own.channelId,
+        messageId: own.messageId,
+        threadRootId,
+        text: own.preview.content,
+      };
+    if (row.kind !== "conversation") return undefined;
+    const { item } = row;
+    return {
+      channelId: item.channelId,
+      messageId: item.previewMessageId ?? item.latestMessageId,
+      threadRootId,
+      text: item.previewMentions.content,
+    };
+  };
+  const destination = (row: (typeof activity)[number]): FeedDestination =>
+    row.kind === "reaction"
+      ? {
+          channelId: row.item.channelId,
+          messageId: row.item.message.id,
+          rootId: row.item.message.threadRootId,
+        }
+      : row.kind === "own"
+        ? row.own
+        : row.item;
+  const heldGroup = held && groups.get(held.key);
+  const heldOpen =
+    !!heldGroup && (isOpen?.(destination(heldGroup.row)) ?? false);
+  useEffect(() => {
+    if (!held) return;
+    if (heldOpen && !held.seen) setHeld({ key: held.key, seen: true });
+    else if (!heldOpen && held.seen) setHeld(undefined);
+  }, [held, heldOpen]);
+  const sorted = [...groups.entries()]
+    .map(([key, { row, unread }]) => ({ ...row, key, unread }))
+    .sort(
+      (a, b) =>
+        (unreadFirst
+          ? Number(b.unread.length > 0 || b.key === held?.key) -
+            Number(a.unread.length > 0 || a.key === held?.key)
+          : 0) ||
+        b.createdAt - a.createdAt ||
+        a.id.localeCompare(b.id),
+    );
+  const rows = sorted.slice(0, maxRows);
+  const more = sorted.length > rows.length;
+  const profileKey = withMentionedIds(
+    [
+      scope.viewer,
+      ...rows.flatMap((row) =>
+        row.kind === "own"
+          ? rowProfileIds({}, channelOf(row.own.channelId))
+          : [
+              ...(row.kind === "reaction"
+                ? row.item.events.map((event) => event.pubkey)
+                : [row.item.authorId]),
+              ...rowProfileIds(
+                row.kind === "reaction" ? {} : row.item,
+                channelOf(row.item.channelId),
+              ),
+            ],
+      ),
+    ],
+    rows.flatMap((row) =>
+      row.kind === "reaction"
+        ? [row.item.message]
+        : row.kind === "own"
+          ? [row.own.preview]
+          : [row.item.previewMentions, ...(row.own ? [row.own.preview] : [])],
+    ),
+  )
+    .sort()
+    .join(":");
+  const profileIds = useMemo(
+    () => (profileKey ? profileKey.split(":") : []),
+    [profileKey],
+  );
+  const selection = useMemo(
+    () => selectProfiles(session.profiles, profileIds),
+    [session, profileIds],
+  );
+  const profiles = useSyncExternalStore(
+    selection.subscribe,
+    selection.snapshot,
+    selection.snapshot,
+  );
+  const name = useIdentityNames(session.names);
+  const profileGeneration = useProfileGeneration(session.profiles);
+  useEffect(() => {
+    void profileGeneration;
+    if (profileIds.length && list.status === "ready")
+      void session.profiles.ensure(profileIds, "background").catch(() => {});
+  }, [session, profileIds, list.status, profileGeneration]);
+
+  const loading =
+    list.status === "idle" ||
+    list.status === "loading" ||
+    inbox.status === "loading" ||
+    feed.status === "loading" ||
+    reactions.status === "loading";
+  // As on the page, an empty result is only shown once activity was checked.
+  const checked =
+    inbox.status === "ready" ||
+    feed.status === "ready" ||
+    reactions.status === "ready";
+  const failure =
+    list.error ?? inbox.error ?? feed.error ?? reactions.error ?? sync.error;
+  const retry = async () => {
+    if (list.status !== "ready") {
+      setRefreshAfterRoster(true);
+      session.channels.ensureList();
+    } else
+      await Promise.all([
+        session.unread.refresh(),
+        session.inboxFeed.refresh(),
+        session.inboxFeed.reactions.refresh(),
+      ]);
+    await session.unread.retrySync();
+  };
+  const notify = useToastNotification();
+  const listRef = useRef<HTMLUListElement>(null);
+  const [reading, setReading] = useState<ReadonlySet<string>>(new Set());
+  const canRead = sync.capability === "frontier-sync";
+  /** Reads every unread message in the conversation a row stands for. */
+  const markRead = async (rowId: string, items: readonly InboxItem[]) => {
+    if (reading.has(rowId)) return;
+    setReading((current) => new Set(current).add(rowId));
+    try {
+      for (const item of items) await readRow(session, item);
+    } catch {
+      notify("Couldn't mark as read", "error");
+    } finally {
+      setReading((current) => {
+        const next = new Set(current);
+        next.delete(rowId);
+        return next;
+      });
+    }
+  };
+  const retryFocus = useRef(false);
+  const retryButton = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return;
+    // Capture ownership before removal, not after focus has fallen to body.
+    return () => {
+      retryFocus.current = document.activeElement === button;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!retryFocus.current) return;
+    retryFocus.current = false;
+    // A recovered Retry hands its focus to the feed's owner, as on the page.
+    if (failure || document.activeElement !== document.body) return;
+    focusFallback?.current?.focus({ preventScroll: true });
+  }, [failure, focusFallback]);
+  const open = (row: (typeof rows)[number]) => {
+    const item = destination(row);
+    // Only an unread row needs holding; a read one is already in place.
+    if (row.unread.length) setHeld({ key: row.key, seen: false });
+    if (canRead && row.unread.length) void markRead(row.id, row.unread);
+    onOpen?.();
+    void navigator.open({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: item.channelId,
+      messageId: item.messageId,
+      ...(item.rootId && { threadRootId: item.rootId }),
+    });
+  };
+  const empty =
+    view === "mentions"
+      ? {
+          title: "No mentions",
+          description: "Messages that mention you appear here.",
+        }
+      : view === "threads"
+        ? {
+            title: "No threads",
+            description: "Threads you've written in appear here.",
+          }
+        : unreadOnly
+          ? {
+              title: "You're all caught up",
+              description:
+                "No unread mentions, direct messages, or thread replies.",
+            }
+          : {
+              title: "No recent activity",
+              description:
+                "Mentions, direct messages, thread replies, reactions to your messages, and your own recent messages appear here.",
+            };
+  return (
+    <>
+      {failure && (
+        <div className={styles.notice} role="alert">
+          <p className="text-body">{failure}</p>
+          <Button ref={retryButton} size="sm" onClick={() => void retry()}>
+            Retry activity
+          </Button>
+        </div>
+      )}
+      {rows.length ? (
+        <ul
+          ref={listRef}
+          className={styles.list}
+          aria-label="Recent activity"
+          data-unread-emphasis="weight"
+          data-layout={
+            compact ? (previews ? "compact-previews" : "compact") : undefined
+          }
+        >
+          {rows.map((row) => {
+            const selected = isOpen?.(destination(row)) ?? false;
+            const unread = row.unread.length > 0;
+            // Right-click is the row's menu: its message's in a thread,
+            // otherwise its conversation's sidebar menu.
+            const rowMenu = (
+              item: (
+                working: ConversationWorkState | undefined,
+              ) => ReactElement,
+            ) => {
+              const where = destination(row);
+              const channel = channelOf(where.channelId);
+              return (
+                <ConversationWork
+                  key={row.id}
+                  session={session}
+                  channelId={where.channelId}
+                  rootId={where.rootId}
+                >
+                  {(working) => (
+                    <ConversationMenu
+                      channel={channel}
+                      message={
+                        where.rootId ? rowMessage(row, where.rootId) : undefined
+                      }
+                      onOpen={() => open(row)}
+                      onRead={
+                        canRead && unread
+                          ? () => void markRead(row.id, row.unread)
+                          : undefined
+                      }
+                    >
+                      {item(working)}
+                    </ConversationMenu>
+                  )}
+                </ConversationWork>
+              );
+            };
+            if (compact) {
+              const channelId =
+                row.kind === "own" ? row.own.channelId : row.item.channelId;
+              const channel = channelOf(channelId);
+              const identity =
+                row.kind === "reaction"
+                  ? reactionIdentity(row.item, channel, profiles, name)
+                  : row.kind === "own" || row.own
+                    ? ownIdentity(scope.viewer, channel, profiles, name)
+                    : rowIdentity(row.item, channel, profiles, name);
+              const own =
+                row.kind === "own" ||
+                (row.kind === "conversation" && !!row.own);
+              return rowMenu((working) => (
+                <li
+                  key={row.id}
+                  data-preview-row={row.id}
+                  // A sidebar card counts these rows for its resize grip.
+                  data-card-row=""
+                >
+                  <CompactActivityRow
+                    working={working}
+                    channel={channel}
+                    context={identity.context}
+                    thread={!!destination(row).rootId}
+                    // A DM's name already says who wrote, unless it was you.
+                    sender={
+                      channel?.channelType === "dm" && !own
+                        ? undefined
+                        : identity.sender
+                    }
+                    senders={
+                      row.kind === "reaction"
+                        ? [...new Set(row.item.events.map((e) => e.pubkey))]
+                        : own
+                          ? [scope.viewer]
+                          : [row.item.workflowOwnerId ?? row.item.authorId]
+                    }
+                    preview={
+                      !previews ? undefined : row.kind === "reaction" ? (
+                        <ReactionPreview item={row.item} session={session} />
+                      ) : (
+                        conversationPreview({
+                          item: row.kind === "own" ? undefined : row.item,
+                          own: row.own,
+                          feed,
+                          session,
+                        })
+                      )
+                    }
+                    unread={unread}
+                    session={session}
+                    profiles={profiles}
+                    name={name}
+                    selected={selected}
+                    onClick={() => open(row)}
+                  />
+                </li>
+              ));
+            }
+            if (row.kind === "reaction")
+              return rowMenu((working) => (
+                <li
+                  key={row.id}
+                  data-preview-row={row.id}
+                  // A sidebar card counts these rows for its resize grip.
+                  data-card-row=""
+                >
+                  <ReactionRowButton
+                    working={working}
+                    item={row.item}
+                    session={session}
+                    profiles={profiles}
+                    name={name}
+                    channel={channelOf(row.item.channelId)}
+                    time={
+                      showTime ? shortRelativeTimestamp(row.createdAt) : null
+                    }
+                    unread={unread}
+                    selected={selected}
+                    onClick={() => open(row)}
+                  />
+                </li>
+              ));
+            if (row.kind === "own")
+              return rowMenu((working) => (
+                <li
+                  key={row.id}
+                  data-preview-row={row.id}
+                  // A sidebar card counts these rows for its resize grip.
+                  data-card-row=""
+                >
+                  <InboxRowButton
+                    working={working}
+                    own={row.own}
+                    identity={ownIdentity(
+                      scope.viewer,
+                      channelOf(row.own.channelId),
+                      profiles,
+                      name,
+                    )}
+                    session={session}
+                    feed={feed}
+                    time={
+                      showTime ? shortRelativeTimestamp(row.createdAt) : null
+                    }
+                    unread={unread}
+                    selected={selected}
+                    onClick={() => open(row)}
+                  />
+                </li>
+              ));
+            const item = row.item;
+            const channel = channelOf(item.channelId);
+            const identity = row.own
+              ? ownIdentity(scope.viewer, channel, profiles, name)
+              : rowIdentity(item, channel, profiles, name);
+            return rowMenu((working) => (
+              <li
+                key={row.id}
+                data-preview-row={row.id}
+                // A sidebar card counts these rows for its resize grip.
+                data-card-row=""
+              >
+                <InboxRowButton
+                  working={working}
+                  item={item}
+                  own={row.own}
+                  identity={identity}
+                  session={session}
+                  feed={feed}
+                  time={showTime ? shortRelativeTimestamp(row.createdAt) : null}
+                  unread={unread}
+                  selected={selected}
+                  onClick={() => open(row)}
+                />
+              </li>
+            ));
+          })}
+          {more && onSeeAll && (
+            <li>
+              <NavigationItem label="See all activity" onClick={onSeeAll} />
+            </li>
+          )}
+        </ul>
+      ) : loading ? (
+        [0, 1, 2].map((row) => (
+          <div className={styles.placeholderRow} key={row} aria-hidden="true">
+            <span className={styles.placeholderAvatar} />
+            <span className={styles.placeholderLines}>
+              <span className={styles.placeholderLine} />
+              <span className={styles.placeholderLine} />
+              <span className={styles.placeholderLine} />
+            </span>
+          </div>
+        ))
+      ) : failure || !checked ? null : (
+        <div className={styles.empty} role="status">
+          <EmptyState
+            frame="none"
+            level={4}
+            icon={<ChecksIcon />}
+            title={empty.title}
+            description={empty.description}
+            action={
+              unreadOnly &&
+              onUnreadOnlyChange &&
+              (conversations.length || own.size || reactions.items.length) ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onUnreadOnlyChange(false)}
+                >
+                  Show recent activity
+                </Button>
+              ) : undefined
+            }
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The unread line over a compact feed: how many conversations need you, and
+ * of what kind, as the page's filters with Unread only would list them. */
+export function useActivitySummary(session: RelaySession) {
+  const list = useChannelList(session.channels);
+  const muted = useActivityMutes(session);
+  const inbox = useSyncExternalStore(
+    session.unread.subscribeInbox,
+    session.unread.inbox,
+    session.unread.inbox,
+  );
+  const unread = inbox.items
+    .map((item) => activityConversation(item, muted))
+    .filter((item): item is InboxItem => item !== undefined && hasUnread(item));
+  // Each conversation counts once, under its most specific kind. A Solo
+  // chat's own row has no kind, so the total leads.
+  let dms = 0;
+  let mentions = 0;
+  let threads = 0;
+  for (const item of unread) {
+    const channel = list.channels.find(
+      (candidate) => candidate.id === item.channelId,
+    );
+    if (channel?.channelType === "dm") dms++;
+    else if (item.mentioned && hasUnread(item.mention ?? item)) mentions++;
+    else if (item.thread) threads++;
+  }
+  const kinds = [
+    mentions && `${mentions} ${mentions === 1 ? "mention" : "mentions"}`,
+    threads && `${threads} ${threads === 1 ? "thread" : "threads"}`,
+    dms && `${dms} ${dms === 1 ? "DM" : "DMs"}`,
+  ].filter(Boolean);
+  const loading =
+    list.status === "idle" ||
+    list.status === "loading" ||
+    inbox.status === "loading";
+  return loading
+    ? "Checking recent activity…"
+    : unread.length
+      ? [`${unread.length} unread`, ...kinds].join(" · ")
+      : inbox.status === "ready"
+        ? "Nothing unread"
+        : undefined;
+}

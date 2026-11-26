@@ -34,7 +34,12 @@ it("parses a row preview's Markdown once across renders", () => {
   const row = (time: string) => (
     <InboxRowButton
       item={item}
-      identity={{ sender: "Sender", context: "Channel", profile: undefined }}
+      identity={{
+        sender: "Sender",
+        context: "Channel",
+        profile: undefined,
+        channel: undefined,
+      }}
       session={{} as unknown as RelaySession}
       feed={{ incomplete: [] } as unknown as InboxFeedSnapshot}
       time={time}
@@ -65,7 +70,12 @@ it("shows a preview's resolved mentions as chips", () => {
   const view = render(
     <InboxRowButton
       item={item}
-      identity={{ sender: "Sender", context: "Channel", profile: undefined }}
+      identity={{
+        sender: "Sender",
+        context: "Channel",
+        profile: undefined,
+        channel: undefined,
+      }}
       session={
         {
           profiles: { subscribe: () => () => {}, snapshot: () => profiles },
@@ -158,11 +168,11 @@ it.each([
 );
 
 it.each([
-  { place: "a one-to-one DM", channel: dm(alice), context: "in DM" },
+  { place: "a one-to-one DM", channel: dm(alice), context: "DM" },
   {
     place: "a group DM",
     channel: dm(alice, bob),
-    context: "in DM with Alice, Bob",
+    context: "DM with Alice, Bob",
   },
 ])(
   "places a reaction from a member of $place $context",
@@ -199,3 +209,46 @@ it.each([
     expect(view.getByText(context)).toBeInTheDocument();
   },
 );
+
+it("shows who is working and their step in place of the message", () => {
+  const agent = "d".repeat(64);
+  const item = {
+    id: "row",
+    authorId: "a".repeat(64),
+    createdAt: 1,
+    messageIds: [],
+    preview: "the last message",
+    previewMentions: { content: "the last message", mentions: [] },
+    unreadCount: 0,
+    manual: false,
+  } as unknown as InboxItem;
+  const row = (step: string | undefined) => (
+    <InboxRowButton
+      item={item}
+      identity={{
+        sender: "Sender",
+        context: "Channel",
+        profile: undefined,
+        channel: undefined,
+      }}
+      session={{ media: () => undefined } as unknown as RelaySession}
+      feed={{ incomplete: [] } as unknown as InboxFeedSnapshot}
+      time="now"
+      working={{
+        agents: [agent],
+        profiles: new Map([[agent, { name: "Morgarita" }]]),
+        waiting: false,
+        step,
+      }}
+    />
+  );
+  const view = render(row("Reviewing the PR"));
+  expect(view.getByText("Reviewing the PR")).toBeInTheDocument();
+  // The row's own avatar and name become the working agent's.
+  expect(view.getByText("Morgarita")).toBeInTheDocument();
+  expect(view.queryByText("Sender")).not.toBeInTheDocument();
+  expect(view.queryByText("the last message")).not.toBeInTheDocument();
+  // Raw tool detail never reaches the row.
+  view.rerender(row("f=/private/tmp/claude-501/x"));
+  expect(view.getByText("Working")).toBeInTheDocument();
+});

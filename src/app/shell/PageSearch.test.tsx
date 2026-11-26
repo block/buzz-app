@@ -31,7 +31,6 @@ import {
   roster,
   scriptedTransport,
 } from "../../features/relay/testing";
-import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { readView, writeView } from "../../shared/view-state";
@@ -1131,16 +1130,16 @@ it("finds and opens saved conversations while the community is unreachable or st
     fireEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
     const dialog = screen.getByRole("dialog", { name: "Search Buzz" });
     const field = within(dialog).getByRole("combobox", { name: "Search Buzz" });
-    // Recents lists the saved conversations.
-    const recent = within(dialog).getByRole("group", {
-      name: "Recents",
+    // The saved conversations are listed, one line each.
+    const saved = within(dialog).getByRole("group", {
+      name: "Channels",
     });
     expect(
-      within(recent)
+      within(saved)
         .getAllByRole("option")
         .map((option) => option.textContent)
         .sort(),
-    ).toEqual(["AlphaConversation · 1 member", "BetaConversation · 1 member"]);
+    ).toEqual(["Alpha", "Beta"]);
     // A saved session has no message scope or open-channel view to offer.
     expect(within(dialog).queryByText(/^Search in Alpha/)).toBeNull();
     expect(
@@ -1528,10 +1527,12 @@ function memorySearch() {
       await screen.findByRole("dialog", { name: "Search Buzz" });
     },
     /** The empty view's rows, once the joined channels have loaded. */
-    async recentRows() {
-      const recent = await screen.findByRole("group", {
-        name: "Recents",
-      });
+    async browseRows() {
+      const recent = (
+        await screen.findAllByRole("group", {
+          name: /^(Channels|Direct messages|Chats)$/,
+        })
+      )[0] as HTMLElement;
       await waitFor(() =>
         expect(within(recent).getAllByRole("option")).not.toHaveLength(0),
       );
@@ -1613,7 +1614,7 @@ it("moves through results with the person's own keys, saved, alongside the arrow
   const t = memorySearch();
   try {
     await t.open();
-    const rows = await t.recentRows();
+    const rows = await t.browseRows();
     const hints = () =>
       [...document.querySelectorAll(".search-peek-keys kbd")]
         .slice(0, 2)
@@ -1635,7 +1636,7 @@ it("moves through results with the person's own keys, saved, alongside the arrow
       { key: "j", ctrl: true },
     ]);
     restored.dispose();
-    await userEvent.keyboard("{Control>}j{/Control}");
+    // The first row is chosen on opening.
     expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
     await userEvent.keyboard("{Control>}j{/Control}");
     expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
@@ -1673,9 +1674,9 @@ it("lets an app shortcut that runs inside search keep a chord the field's Contro
   });
   try {
     await t.open();
-    const rows = await t.recentRows();
+    const rows = await t.browseRows();
     // Control+N and Control+P step while no shortcut claims them.
-    await userEvent.keyboard("{Control>}n{/Control}{Control>}n{/Control}");
+    await userEvent.keyboard("{Control>}n{/Control}");
     expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
     await userEvent.keyboard("{Control>}p{/Control}");
     expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
@@ -1700,47 +1701,20 @@ it("lets an app shortcut that runs inside search keep a chord the field's Contro
   }
 });
 
-it("reopens an empty search fresh while unread leads, so it shows what is unread now", async () => {
+it("reopens an empty search where it was left", async () => {
   const t = memorySearch();
   try {
-    setUnreadFirstPreference(true);
     await t.open();
-    await t.recentRows();
+    const rows = await t.browseRows();
     await userEvent.keyboard("{ArrowDown}");
-    expect(t.field()).toHaveAttribute("aria-activedescendant");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
     await userEvent.keyboard("{Enter}");
     await t.closed();
     await t.open();
-    await t.recentRows();
-    expect(t.field()).not.toHaveAttribute("aria-activedescendant");
+    const again = await t.browseRows();
+    expect(again[1]).toHaveTextContent(rows[1]?.textContent ?? "");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", again[1]?.id);
   } finally {
-    setUnreadFirstPreference(true);
-    await t.dispose();
-  }
-});
-
-it("keeps an empty search's place only while unread does not lead it", async () => {
-  const t = memorySearch();
-  try {
-    setUnreadFirstPreference(false);
-    await t.open();
-    await t.recentRows();
-    await userEvent.keyboard("{ArrowDown}");
-    await userEvent.keyboard("{Enter}");
-    await t.closed();
-    // Off, an empty search reopens where it was left.
-    await t.open();
-    const kept = (await t.recentRows())[0];
-    expect(t.field()).toHaveAttribute("aria-activedescendant", kept?.id);
-    await userEvent.keyboard("{Enter}");
-    await t.closed();
-    // Turned back on, that place is not restored over what is unread now.
-    setUnreadFirstPreference(true);
-    await t.open();
-    await t.recentRows();
-    expect(t.field()).not.toHaveAttribute("aria-activedescendant");
-  } finally {
-    setUnreadFirstPreference(true);
     await t.dispose();
   }
 });

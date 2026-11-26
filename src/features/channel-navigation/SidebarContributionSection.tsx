@@ -4,6 +4,9 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentType,
+  type ReactElement,
+  type ReactNode,
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -19,9 +22,36 @@ import type {
 import { DroppableSidebarSection } from "./ChannelSidebarDnd";
 import { sidebarTarget } from "./routes";
 
+/** What the sidebar knows about a row that opens a conversation: whether it is
+ * unread, who is working in it, and its right-click menu. Channels supplies it,
+ * so a card's rows read as the sidebar's own. */
+export type ContributionConversationRow = ComponentType<{
+  channelId: string;
+  /** A thread row's root message. */
+  rootId: string | undefined;
+  /** The row's label, which a thread row's menu copies. */
+  label: string;
+  onOpen(): void;
+  children: (
+    state: Readonly<{ unread: boolean; working: ReactNode }>,
+  ) => ReactElement;
+}>;
+
+const noSubscribe = () => () => {};
+const noLayout = () => "";
+
 function isSelectedDestination(destination: OpenTarget, target: OpenTarget) {
   const selectedKey = targetKey(target);
   if (targetKey(destination) === selectedKey) return true;
+  // A thread row stays selected wherever in its thread the reader is.
+  if (destination.kind === "conversation" && destination.threadRootId)
+    return (
+      target.kind === "conversation" &&
+      target.scope?.viewer === destination.scope?.viewer &&
+      target.scope?.communityOrigin === destination.scope?.communityOrigin &&
+      target.channelId === destination.channelId &&
+      (target.threadRootId ?? target.inline) === destination.threadRootId
+    );
   if (
     destination.kind === "conversation" &&
     target.kind === "conversation" &&
@@ -61,6 +91,8 @@ export function SidebarContributionSection({
   reorderable,
   move,
   onRowsCommitted,
+  resizeScope,
+  conversationRow,
 }: {
   entry: RegisteredSidebarSection;
   registry: SidebarSections;
@@ -72,6 +104,9 @@ export function SidebarContributionSection({
   reorderable: boolean;
   move: { up?: () => void; down?: () => void } | undefined;
   onRowsCommitted?: () => void;
+  /** Where its height is kept, as the sidebar's other cards keep theirs. */
+  resizeScope?: string | undefined;
+  conversationRow?: ContributionConversationRow | undefined;
 }) {
   // A failed section stops observing its rows; Retry renders it again.
   const [attempt, setAttempt] = useState(0);
@@ -131,6 +166,8 @@ export function SidebarContributionSection({
           reorderable={reorderable}
           move={move}
           onRowsCommitted={onRowsCommitted}
+          resizeScope={resizeScope}
+          conversationRow={conversationRow}
         />
       )}
     </OwnedContribution>
@@ -148,6 +185,8 @@ function SectionContents({
   reorderable,
   move,
   onRowsCommitted,
+  resizeScope,
+  conversationRow: ConversationRow,
 }: {
   entry: RegisteredSidebarSection;
   active: () => boolean;
@@ -159,6 +198,8 @@ function SectionContents({
   reorderable: boolean;
   move: { up?: () => void; down?: () => void } | undefined;
   onRowsCommitted: (() => void) | undefined;
+  resizeScope: string | undefined;
+  conversationRow: ContributionConversationRow | undefined;
 }) {
   const subscribe = useCallback(
     (listener: () => void) => entry.rows.subscribe(listener),
@@ -201,6 +242,17 @@ function SectionContents({
       setActionError(true);
     }
   };
+  const layouts = entry.layouts;
+  const layoutValue = useSyncExternalStore(
+    layouts?.subscribe ?? noSubscribe,
+    layouts?.snapshot ?? noLayout,
+    layouts?.snapshot ?? noLayout,
+  );
+  const layout = layouts && {
+    value: layoutValue,
+    options: layouts.options,
+    set: layouts.select,
+  };
   const actions = (entry.actions ?? []).map((action) => (
     <IconButton
       key={action.id}
@@ -235,6 +287,8 @@ function SectionContents({
       move={move}
       hideMoreActions={!reorderable}
       headerActions={actions}
+      layout={layout}
+      resizeScope={resizeScope}
       headerNotice={
         actionError && (
           <p className={styles.contributionFeedback} role="alert">
@@ -243,6 +297,7 @@ function SectionContents({
         )
       }
     >
+      {entry.body ? <entry.body active={active} target={current} /> : null}
       {rows.map((row) => {
         const trailing = [
           row.badge,
@@ -254,17 +309,28 @@ function SectionContents({
           .filter((value) => typeof value === "string" && value.trim())
           .join(" · ");
         const destination = entry.select(row);
-        return (
-          <div key={row.id} className={styles.contributionNavigationItem}>
+        const item = (
+          state?: Readonly<{ unread: boolean; working: ReactNode }>,
+        ) => (
+          <div
+            key={row.id}
+            className={styles.contributionNavigationItem}
+            // The card's resize grip counts these rows.
+            data-card-row=""
+            data-ordinary={state?.unread || undefined}
+          >
             <SpringLoadedNavigationItem
-              label={row.label}
+              label={
+                <span className={styles.contributionTitle}>{row.label}</span>
+              }
               icon={row.icon}
               trailing={
-                trailing ? (
+                state?.working ||
+                (trailing ? (
                   <span className={styles.contributionMetadata}>
                     {trailing}
                   </span>
-                ) : undefined
+                ) : undefined)
               }
               selected={isSelectedDestination(destination, current)}
               onClick={() => select(destination)}
@@ -276,6 +342,25 @@ function SectionContents({
               }
             />
           </div>
+        );
+        // A plain conversation or a thread reads as the sidebar's own rows; a
+        // message or panel in it is somewhere else.
+        return ConversationRow &&
+          destination.kind === "conversation" &&
+          destination.panel === undefined &&
+          (destination.messageId === undefined ||
+            destination.messageId === destination.threadRootId) ? (
+          <ConversationRow
+            key={row.id}
+            channelId={destination.channelId}
+            rootId={destination.threadRootId}
+            label={row.label}
+            onOpen={() => select(destination)}
+          >
+            {item}
+          </ConversationRow>
+        ) : (
+          item()
         );
       })}
     </DroppableSidebarSection>

@@ -13,10 +13,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { createAppearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
-import {
-  setUnreadFirstPreference,
-  unreadFirstPreference,
-} from "../features/search/unread-first-preference";
 import { setMessageSortPreference } from "../features/search/message-sort-preference";
 
 import {
@@ -56,7 +52,6 @@ afterEach(() => {
   setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
-  setUnreadFirstPreference(true);
   setMessageSortPreference("relevance");
   setClockPreference({
     hourCycle: "system",
@@ -546,33 +541,6 @@ it("offers message spelling correction only on Mac WebKit, off until this device
     );
   });
   expect(toggle()).not.toBeChecked();
-});
-
-it("leads search with unread until this device turns it off", async () => {
-  const user = userEvent.setup();
-  const appearance = createAppearance();
-  preferenceAppearances.push(appearance);
-  const toggle = () =>
-    screen.getByRole("switch", { name: "Show unread first in search" });
-  render(<AppearanceSettings appearance={appearance} />, {
-    wrapper: ToastProvider,
-  });
-  expect(toggle()).toBeChecked();
-  await user.click(toggle());
-  expect(unreadFirstPreference()).toBe(false);
-  expect(localStorage.getItem("buzz-search-unread-first.v1")).toBe("off");
-  cleanup();
-  render(<AppearanceSettings appearance={appearance} />, {
-    wrapper: ToastProvider,
-  });
-  expect(toggle()).not.toBeChecked();
-  act(() => {
-    localStorage.setItem("buzz-search-unread-first.v1", "on");
-    window.dispatchEvent(
-      new StorageEvent("storage", { key: "buzz-search-unread-first.v1" }),
-    );
-  });
-  expect(toggle()).toBeChecked();
 });
 
 it("saves the message sort default and restores it", async () => {

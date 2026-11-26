@@ -1126,6 +1126,27 @@ function ChannelWorkspace({
     };
   }, [read, readableId, queries, navigation]);
   const onComposerSend = useComposerSent(currentId, setSent);
+  // Each visit seeks again, Back and Forward included: the channel may have
+  // dropped the older pages an earlier visit read.
+  const contextVisit = useRef({ navigation, request: 0 });
+  if (contextVisit.current.navigation !== navigation)
+    contextVisit.current = {
+      navigation,
+      request: contextVisit.current.request + 1,
+    };
+  // A bare message, with no thread hint, opens in the channel timeline when
+  // it is top-level, replies or not, reading older pages to find it. Only a
+  // reply, or a message not found, opens as its thread.
+  const bareMessage =
+    !cached && current && !current.cached && !requestedThread
+      ? requestedMessage
+      : undefined;
+  const bareInTimeline = useMessageOpening(
+    queries.channels,
+    currentId ?? "",
+    bareMessage,
+    contextVisit.current.request,
+  );
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -1137,6 +1158,7 @@ function ChannelWorkspace({
       current?.cached ||
       !navigation ||
       !requestedMessage ||
+      !requestedThread ||
       requestedThread === requestedMessage ||
       !currentId ||
       navigation.signal.aborted
@@ -1171,19 +1193,28 @@ function ChannelWorkspace({
   // the pending intent; an exact reader cannot use display-only authority.
   const exact = useMemo(
     () =>
-      cached || current?.cached
+      cached || current?.cached || !navigation || !requestedMessage
         ? undefined
-        : navigation && requestedMessage && requestedThread === requestedMessage
+        : requestedThread === requestedMessage
           ? { request: navigation, inTimeline: false }
-          : exactOpening?.request === navigation
-            ? exactOpening
-            : undefined,
+          : !requestedThread
+            ? bareInTimeline === undefined
+              ? undefined
+              : {
+                  request: navigation,
+                  inTimeline: bareInTimeline,
+                  ...(bareInTimeline && { rootId: requestedMessage }),
+                }
+            : exactOpening?.request === navigation
+              ? exactOpening
+              : undefined,
     [
       cached,
       current?.cached,
       navigation,
       requestedMessage,
       requestedThread,
+      bareInTimeline,
       exactOpening,
     ],
   );
@@ -1237,14 +1268,6 @@ function ChannelWorkspace({
     navigation.target.context === "channel"
       ? requestedThread
       : undefined;
-  // Each visit seeks again, Back and Forward included: the channel may have
-  // dropped the older pages an earlier visit read.
-  const contextVisit = useRef({ navigation, request: 0 });
-  if (contextVisit.current.navigation !== navigation)
-    contextVisit.current = {
-      navigation,
-      request: contextVisit.current.request + 1,
-    };
   const contextInTimeline = useMessageOpening(
     queries.channels,
     currentId ?? "",

@@ -464,3 +464,134 @@ it("preserves the receiver for an external row store", () => {
   });
   expect(screen.getByRole("button", { name: "Later item" })).toBeVisible();
 });
+
+it("shows a bundled card's own contents with what the sidebar has open", () => {
+  const open: OpenTarget = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: "a".repeat(64), communityOrigin: "wss://one.example" },
+    channelId: "room",
+  };
+  const none: readonly SidebarSectionRow[] = [];
+  const entry: RegisteredSidebarSection = {
+    ...makeEntry("good", { snapshot: () => none, subscribe: () => () => {} }),
+    body: ({ target }) => (
+      <p>{target.kind === "conversation" ? target.channelId : "none"}</p>
+    ),
+  };
+  render(
+    <ChannelSidebarDnd
+      writable={false}
+      onMove={() => {}}
+      onReorder={() => {}}
+      overlay={() => null}
+    >
+      <SidebarContributionSection
+        entry={entry}
+        registry={{
+          version: 1,
+          snapshot: () => [entry],
+          subscribe: () => () => {},
+          register: () => {},
+        }}
+        navigator={navigatorAt(open)}
+        target={open}
+        open
+        onToggle={() => {}}
+        groupIndex={0}
+        reorderable={false}
+        move={{}}
+      />
+    </ChannelSidebarDnd>,
+  );
+  expect(screen.getByText("room")).toBeInTheDocument();
+});
+
+it("draws a conversation row with the sidebar's unread, working and second line", async () => {
+  const scope = {
+    viewer: "a".repeat(64),
+    communityOrigin: "https://example.test",
+  };
+  const root = "b".repeat(64);
+  const thread: OpenTarget = {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "team",
+    messageId: root,
+    threadRootId: root,
+  };
+  const page: OpenTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "fixture.pages",
+    pageId: "docs",
+  };
+  const rows: readonly SidebarSectionRow[] = [
+    { id: "thread", label: "Fix the build" },
+    { id: "page", label: "Docs" },
+  ];
+  const entry: RegisteredSidebarSection = {
+    ...makeEntry("good", { snapshot: () => rows, subscribe: () => () => {} }),
+    select: (row) => (row.id === "thread" ? thread : page),
+  };
+  const seen: unknown[] = [];
+  const open = vi.fn().mockResolvedValue({ status: "opened" });
+  render(
+    <ChannelSidebarDnd
+      writable={false}
+      onMove={() => {}}
+      onReorder={() => {}}
+      overlay={() => null}
+    >
+      <SidebarContributionSection
+        entry={entry}
+        registry={{
+          version: 1,
+          snapshot: () => [entry],
+          subscribe: () => () => {},
+          register: () => {},
+        }}
+        // The reader is further down the same thread.
+        navigator={navigatorAt({ ...thread, messageId: "c".repeat(64) }, open)}
+        target={{
+          version: 1,
+          kind: "conversation",
+          scope,
+          channelId: "team",
+        }}
+        open
+        onToggle={() => {}}
+        groupIndex={0}
+        reorderable={false}
+        move={{}}
+        conversationRow={({ channelId, rootId, label, children }) => {
+          seen.push({ channelId, rootId, label });
+          return children({
+            unread: true,
+            working: <span role="img" aria-label="Agent working" />,
+          });
+        }}
+      />
+    </ChannelSidebarDnd>,
+  );
+  expect(seen).toContainEqual({
+    channelId: "team",
+    rootId: root,
+    label: "Fix the build",
+  });
+  const button = screen.getByRole("button", { name: /Fix the build/ });
+  expect(button).toHaveTextContent("Fix the build");
+  expect(button).toHaveAttribute("aria-current", "page");
+  expect(button.closest("[data-ordinary]")).not.toBeNull();
+  expect(
+    screen.getByRole("img", { name: "Agent working" }),
+  ).toBeInTheDocument();
+  // A row that opens no conversation stays a plain row.
+  expect(
+    screen.getByRole("button", { name: "Docs" }).closest("[data-ordinary]"),
+  ).toBeNull();
+  expect(seen).toHaveLength(1);
+  await userEvent.click(button);
+  expect(open).toHaveBeenCalledWith(thread);
+});

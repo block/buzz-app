@@ -664,7 +664,7 @@ function Sections({
   title: string;
   sections: readonly PromptSection[];
 }) {
-  const { ref, mounted, onToggle } = useSearchDisclosure((query) =>
+  const { ref, mounted, onToggle, onClick } = useSearchDisclosure((query) =>
     sections.some(
       (section) =>
         sectionTitle(section.tag).toLowerCase().includes(query) ||
@@ -673,7 +673,8 @@ function Sections({
   );
   return (
     <details ref={ref} className={styles.context} onToggle={onToggle}>
-      <summary className="text-body text-subtle">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary activation includes keyboard clicks. */}
+      <summary className="text-body text-subtle" onClick={onClick}>
         <FileTextIcon size="1rem" aria-hidden="true" />
         <span>
           {title} · {sections.length} sections
@@ -719,7 +720,7 @@ function Disclosure({
   children: ReactNode;
 }) {
   const focused = useContext(RowContext).focused === `item:${item.id}`;
-  const { ref, mounted, onToggle } = useSearchDisclosure(
+  const { ref, mounted, onToggle, onClick } = useSearchDisclosure(
     (query) => itemMatches(item, query),
     focused,
   );
@@ -730,7 +731,8 @@ function Disclosure({
       onToggle={onToggle}
       data-status={item.type === "tool" ? item.status : undefined}
     >
-      <summary className={styles.row}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary activation includes keyboard clicks. */}
+      <summary className={styles.row} onClick={onClick}>
         {icon}
         <span className={styles.summary}>
           {label}

@@ -10,7 +10,6 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useDebounced } from "../../shared/search-debounce";
 import { formatBinding, isApplePlatform } from "../shortcuts/format";
-import { revealRange } from "../search/range-highlights";
 import {
   TranscriptFind,
   TranscriptSearch,
@@ -35,8 +34,22 @@ function ScopedTranscriptView({ actions, history, children }: Props) {
   const active = useRef<Range | null>(null);
   const closing = useRef(false);
   const automatic = useRef(new WeakSet<HTMLDetailsElement>()).current;
-  const kept = useRef(new WeakSet<HTMLDetailsElement>()).current;
-  const anchor = useRef<{ range: Range; top: number } | undefined>(undefined);
+  const kept = useRef(new Set<HTMLDetailsElement>()).current;
+  const anchor = useRef<
+    { target: Range | HTMLElement; view: HTMLElement; top: number } | undefined
+  >(undefined);
+  const openedAt = useRef(0);
+  const scrollView = () => {
+    for (
+      let element = content.current?.parentElement;
+      element;
+      element = element.parentElement
+    ) {
+      if (/auto|scroll/.test(getComputedStyle(element).overflowY))
+        return element;
+    }
+    return document.scrollingElement as HTMLElement | null;
+  };
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
   const settledQuery = useDebounced(query, 100);
@@ -59,6 +72,8 @@ function ScopedTranscriptView({ actions, history, children }: Props) {
           ? document.activeElement
           : null;
       closing.current = false;
+      kept.clear();
+      openedAt.current = scrollView()?.scrollTop ?? 0;
       active.current = null;
       setFindOpen(true);
     }
@@ -71,6 +86,7 @@ function ScopedTranscriptView({ actions, history, children }: Props) {
   };
   const closeFind = () => {
     const range = active.current;
+    kept.clear();
     const chain: HTMLDetailsElement[] = [];
     for (
       let element = range?.startContainer.parentElement;
@@ -79,11 +95,55 @@ function ScopedTranscriptView({ actions, history, children }: Props) {
     ) {
       if (element instanceof HTMLDetailsElement) chain.push(element);
     }
-    if (chain.every((details) => details.open)) {
+    const readable = chain.every((details) => details.open);
+    if (readable && range && !range.getBoundingClientRect) {
       for (const details of chain) kept.add(details);
     }
-    if (range?.getBoundingClientRect)
-      anchor.current = { range, top: range.getBoundingClientRect().top };
+    const view = scrollView();
+    if (view && content.current) {
+      const port =
+        view === document.scrollingElement
+          ? { top: 0 }
+          : view.getBoundingClientRect();
+      const top = Math.max(
+        port.top + view.clientTop,
+        content.current.previousElementSibling?.getBoundingClientRect()
+          .bottom ?? 0,
+      );
+      const bottom = port.top + view.clientTop + view.clientHeight;
+      const visible = (box: DOMRect) =>
+        box.height > 0 && box.bottom > top && box.top < bottom;
+      const nearEnd =
+        view.scrollHeight - view.scrollTop - view.clientHeight <= 32;
+      // An abandoned search may resume following; don't compensate that away.
+      if (
+        range ||
+        (!nearEnd && Math.abs(view.scrollTop - openedAt.current) > 1)
+      ) {
+        const box = readable ? range?.getBoundingClientRect?.() : undefined;
+        if (box && visible(box)) {
+          for (const details of chain) kept.add(details);
+        }
+        let target: Range | HTMLElement | undefined =
+          box && visible(box) ? (range ?? undefined) : undefined;
+        if (!target) {
+          const rows = [
+            ...content.current.querySelectorAll<HTMLElement>("[data-entry]"),
+          ];
+          target =
+            rows.find((row) => {
+              const rect = row.getBoundingClientRect();
+              return rect.top >= top && visible(rect);
+            }) ?? rows.find((row) => visible(row.getBoundingClientRect()));
+        }
+        if (target)
+          anchor.current = {
+            target,
+            view,
+            top: target.getBoundingClientRect().top,
+          };
+      }
+    }
     closing.current = true;
     setFindOpen(false);
     const target = opener.current?.isConnected
@@ -95,15 +155,14 @@ function ScopedTranscriptView({ actions, history, children }: Props) {
     if (findOpen) return;
     const held = anchor.current;
     anchor.current = undefined;
-    if (held?.range.startContainer.isConnected && !held.range.collapsed) {
-      for (
-        let element = content.current?.parentElement;
-        element;
-        element = element.parentElement
-      ) {
-        element.scrollTop += held.range.getBoundingClientRect().top - held.top;
-      }
-      revealRange(held.range, content.current?.previousElementSibling);
+    if (held) {
+      const connected =
+        held.target instanceof Range
+          ? held.target.startContainer.isConnected
+          : held.target.isConnected;
+      if (connected && held.target.getBoundingClientRect().height > 0)
+        held.view.scrollTop +=
+          held.target.getBoundingClientRect().top - held.top;
     }
     closing.current = false;
   }, [findOpen]);

@@ -605,6 +605,76 @@ test.describe("transcript find", () => {
         ),
       ),
     ).toEqual([]);
+    // A previous retained match must not become an exception on a later close.
+    await tool.locator(":scope > summary").click();
+    await expect(tool).not.toHaveAttribute("open", "");
+    await find.click();
+    const reopened = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await reopened.fill("f");
+    await expect(status).toHaveText(/of/);
+    await reopened.press("Escape");
+    await expect(tool).not.toHaveAttribute("open", "");
+
+    // Escape respects a reader who scrolled away from the active result.
+    await page.setViewportSize({ width: 1200, height: 850 });
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+    );
+    const host = page.locator('[data-screen="transcript"]');
+    await host.evaluate((node) => {
+      node.style.height = "180px";
+    });
+    await find.click();
+    const scrolled = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await scrolled.fill("hidden-needle");
+    await expect(status).toHaveText("1 of 2");
+    await host.evaluate((node) => {
+      node.scrollTop = 0;
+      node.dispatchEvent(new Event("scroll"));
+    });
+    await scrolled.press("Escape");
+    expect(await host.evaluate((node) => node.scrollTop)).toBe(0);
+    expect(
+      await transcript
+        .locator('[data-type="message"]')
+        .first()
+        .evaluate((node) => {
+          const box = node.getBoundingClientRect();
+          const port = node
+            .closest('[data-screen="transcript"]')
+            .getBoundingClientRect();
+          const header = document
+            .querySelector("[data-transcript-header]")
+            .getBoundingClientRect();
+          return box.bottom > header.bottom && box.top < port.bottom;
+        }),
+    ).toBe(true);
+    await expect(tool).not.toHaveAttribute("open", "");
+    await host.evaluate((node) => {
+      node.style.height = "420px";
+    });
+
+    // Native toggle is asynchronous: dismiss in the same task as the reader's click.
+    await tool.locator(":scope > summary").click();
+    await expect(tool).toHaveAttribute("open", "");
+    await find.click();
+    const quick = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await quick.fill("hidden-needle");
+    await expect(status).toHaveText("1 of 2");
+    await quick.evaluate((input) => {
+      document.querySelector('[data-type="tool"] > details > summary').click();
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await expect(quick).toHaveCount(0);
+    await expect(tool).not.toHaveAttribute("open", "");
     expect(errors.unexplained()).toEqual([]);
   });
 });
@@ -689,6 +759,33 @@ test.describe("transcript find", () => {
       Math.abs(
         (await output.evaluate((node) => node.getBoundingClientRect().top)) -
           top,
+      ),
+    ).toBeLessThan(2);
+    await find.click();
+    field = transcript.getByRole("searchbox", { name: "Find in transcript" });
+    await field.fill("not in this transcript");
+    await expect(transcript.locator("search [role=status]")).toHaveText(
+      "No results",
+    );
+    const visibleRow = await host.evaluate((node) => {
+      node.scrollTop = (node.scrollHeight - node.clientHeight) / 2;
+      node.dispatchEvent(new Event("scroll"));
+      const top = node
+        .querySelector("[data-transcript-header]")
+        .getBoundingClientRect().bottom;
+      const bottom = node.getBoundingClientRect().bottom;
+      const row = [...node.querySelectorAll("[data-entry]")].find((row) => {
+        const box = row.getBoundingClientRect();
+        return box.height > 0 && box.top >= top && box.top < bottom;
+      });
+      return { id: row.dataset.entry, top: row.getBoundingClientRect().top };
+    });
+    await field.press("Escape");
+    const heldRow = transcript.locator(`[data-entry="${visibleRow.id}"]`);
+    expect(
+      Math.abs(
+        (await heldRow.evaluate((node) => node.getBoundingClientRect().top)) -
+          visibleRow.top,
       ),
     ).toBeLessThan(2);
     await host.evaluate((node) => {

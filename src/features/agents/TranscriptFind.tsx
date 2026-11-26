@@ -36,7 +36,7 @@ export type TranscriptSearchState = {
   active: RefObject<Range | null>;
   closing: RefObject<boolean>;
   automatic: WeakSet<HTMLDetailsElement>;
-  kept: WeakSet<HTMLDetailsElement>;
+  kept: Set<HTMLDetailsElement>;
 };
 export const TranscriptSearch = createContext<
   TranscriptSearchState | undefined
@@ -133,12 +133,26 @@ export function useSearchDisclosure(
       prior.current = undefined;
       if (search.closing.current && search.kept.has(details)) {
         setVisited(true);
-      } else if (details.open !== snapshot.open) {
+      } else if (details.open && details.open !== snapshot.open) {
         search.automatic.add(details);
         details.open = snapshot.open;
       }
     };
   }, [matching, query]);
+  const onClick: ReactEventHandler<HTMLElement> = (event) => {
+    const details = ref.current;
+    if (!details) return;
+    const target = event.target;
+    if (event.defaultPrevented || !(target instanceof Element)) return;
+    if (
+      target.closest("summary")?.parentElement !== details ||
+      target.closest("a, button, input, select, textarea")
+    )
+      return;
+    // Native toggle arrives later; record the summary's default action now.
+    if (prior.current) prior.current.open = !details.open;
+    if (!details.open) setVisited(true);
+  };
   const onToggle: ReactEventHandler<HTMLDetailsElement> = (event) => {
     const details = event.currentTarget;
     if (search?.automatic.delete(details)) return;
@@ -156,6 +170,7 @@ export function useSearchDisclosure(
         search.kept.has(ref.current)
       ),
     onToggle,
+    onClick,
   };
 }
 
@@ -315,6 +330,7 @@ export function TranscriptFind({
           value={query}
           onValueChange={onQueryChange}
           inputRef={input}
+          aria-describedby={history?.omitted ? `${id}-scope` : undefined}
         />
       </div>
       <div className={styles.navigation}>
@@ -343,7 +359,10 @@ export function TranscriptFind({
         />
       </div>
       {history?.omitted && (
-        <div className={`text-caption text-subtle ${styles.scope}`}>
+        <div
+          id={`${id}-scope`}
+          className={`text-caption text-subtle ${styles.scope}`}
+        >
           Search covers loaded activity only.{" "}
           {history.loadEarlier && (
             <Button

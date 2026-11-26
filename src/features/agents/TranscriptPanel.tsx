@@ -7,10 +7,9 @@ import {
   useState,
 } from "react";
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import activityStyles from "./ActivityLayout.module.css";
+import { TranscriptView } from "./TranscriptView";
 import { ActivityTranscript } from "./ActivityTranscript";
 import type { Transcript, TranscriptTurn } from "./activity-transcript";
 import { AgentsContext } from "./react";
@@ -405,21 +404,18 @@ export function TranscriptPanel<T extends Transcript>({
   const isWorking = shown.working && (working || !holdExpired);
   const { transcript, error } = shown;
   return (
-    <div className={activityStyles.transcript} data-transcript>
-      <div className={activityStyles.transcriptHeader} data-transcript-header>
-        <InlineHeader
-          title="Transcript"
-          actions={
-            <IconButton
-              hint="familiar"
-              aria-label="Refresh transcript"
-              title="Refresh transcript"
-              onClick={refresh}
-              icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
-            />
-          }
+    <TranscriptView
+      scope={readKey}
+      actions={
+        <IconButton
+          hint="familiar"
+          aria-label="Refresh transcript"
+          title="Refresh transcript"
+          onClick={refresh}
+          icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
         />
-      </div>
+      }
+    >
       <LoadingRegion
         pending={loading}
         label={transcript === undefined ? reading : "Refreshing transcript…"}
@@ -448,6 +444,6 @@ export function TranscriptPanel<T extends Transcript>({
           transcript === null && missing
         )}
       </LoadingRegion>
-    </div>
+    </TranscriptView>
   );
 }

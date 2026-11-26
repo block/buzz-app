@@ -66,6 +66,12 @@ import { AgentsContext } from "./react";
 import { useProfileGeneration } from "../relay/react";
 import type { ProfileQueries } from "../relay/profile-directory";
 
+import {
+  TranscriptSearch,
+  itemMatches,
+  useSearchDisclosure,
+} from "./TranscriptFind";
+
 const noSubscribe = () => () => {};
 const none = () => undefined;
 const PeopleContext = createContext<{
@@ -403,7 +409,11 @@ export function ActivityTranscript({
   community?: string | undefined;
 }) {
   const partial = transcript.partial === true;
-  const scroll = useFollowLatest(transcript, follow);
+  const searching = Boolean(useContext(TranscriptSearch));
+  const scroll = useFollowLatest(transcript, follow && !searching);
+  useLayoutEffect(() => {
+    if (searching) scroll.following.current = false;
+  }, [searching, scroll.following]);
   const focused = useShowFocused(
     transcript,
     scroll.timeline,
@@ -625,9 +635,17 @@ function Sections({
   title: string;
   sections: readonly PromptSection[];
 }) {
+  const { ref, matching } = useSearchDisclosure((query) =>
+    sections.some(
+      (section) =>
+        sectionTitle(section.tag).toLowerCase().includes(query) ||
+        section.body.toLowerCase().includes(query),
+    ),
+  );
   const [visited, setVisited] = useState(false);
   return (
     <details
+      ref={ref}
       className={styles.context}
       onToggle={(event) => {
         if (event.currentTarget.open) setVisited(true);
@@ -644,7 +662,7 @@ function Sections({
           aria-hidden="true"
         />
       </summary>
-      {visited &&
+      {(visited || matching) &&
         sections.map((section, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: sections are a positional, immutable parse of one prompt.
           <section key={index} className={styles.codePanel}>
@@ -678,11 +696,15 @@ function Disclosure({
   footer?: ReactNode;
   children: ReactNode;
 }) {
+  const { ref, matching } = useSearchDisclosure((query) =>
+    itemMatches(item, query),
+  );
   const focused = useContext(RowContext).focused === `item:${item.id}`;
   const [visited, setVisited] = useState(focused);
   if (focused && !visited) setVisited(true);
   return (
     <details
+      ref={ref}
       className={styles.tool}
       onToggle={(event) => {
         if (event.currentTarget.open) setVisited(true);
@@ -703,8 +725,10 @@ function Disclosure({
         />
         <Stamp item={item} />
       </summary>
-      {visited && children && <div className={styles.toolBody}>{children}</div>}
-      {visited && footer}
+      {(visited || matching) && children && (
+        <div className={styles.toolBody}>{children}</div>
+      )}
+      {(visited || matching) && footer}
     </details>
   );
 }

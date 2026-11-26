@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
 
+test.use({ video: "on" });
+
 const SHOTS = fileURLToPath(
   new URL("../../test-results/markdown-documents/", import.meta.url),
 );
@@ -460,4 +462,108 @@ test("inline snippets keep rounded ends and tall fenced code wraps with a partia
     await page.keyboard.press("Tab");
     await expect(copy).toBeFocused();
   }
+});
+
+test.describe("transcript find", () => {
+  // Native details visibility, highlight geometry and nested scroll containers
+  // need a real engine; content/search-state cases live in the component tests.
+  test("finds collapsed tool output without including the rest of the page", async ({
+    page,
+  }, testInfo) => {
+    const errors = watchPageErrors(page);
+    await page.goto(`${url}?working&find&width=1100`);
+    const transcript = page.getByRole("region", { name: "Agent transcript" });
+    const find = transcript.getByRole("button", {
+      name: "Find in transcript",
+      exact: true,
+    });
+    await find.focus();
+    await page.keyboard.press("Control+f");
+    const field = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await expect(field).toBeFocused();
+    await field.fill("HIDDEN-NEEDLE");
+    const status = transcript.locator("search [role=status]");
+    await expect(status).toHaveText("1 of 2");
+    const tool = transcript.locator('[data-type="tool"] > details');
+    await expect(tool).toHaveAttribute("open", "");
+    const activeMatch = () =>
+      page.evaluate(() => {
+        const name = [...CSS.highlights.keys()].find(
+          (key) =>
+            key.startsWith("transcript-find-") && key.endsWith("-active"),
+        );
+        const [range] = CSS.highlights.get(name);
+        const box = range.getBoundingClientRect();
+        const header = document
+          .querySelector("[data-transcript-header]")
+          .getBoundingClientRect();
+        let shown = box.width > 0 && box.top >= header.bottom;
+        for (
+          let node = range.startContainer.parentElement;
+          node;
+          node = node.parentElement
+        ) {
+          const style = getComputedStyle(node);
+          if (
+            /auto|scroll|hidden/.test(`${style.overflowX}${style.overflowY}`)
+          ) {
+            const clip = node.getBoundingClientRect();
+            shown &&=
+              box.top >= clip.top &&
+              box.bottom <= clip.bottom &&
+              box.left >= clip.left &&
+              box.right <= clip.right;
+          }
+        }
+        return { text: range.toString(), shown };
+      });
+    await expect
+      .poll(activeMatch)
+      .toEqual({ text: "hidden-needle", shown: true });
+    await field.press("Enter");
+    await expect(status).toHaveText("2 of 2");
+    await expect
+      .poll(activeMatch)
+      .toEqual({ text: "hidden-needle", shown: true });
+    await field.press("Shift+Enter");
+    await expect(status).toHaveText("1 of 2");
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      for (const width of [390, 1200]) {
+        await page.setViewportSize({ width, height: 850 });
+        await transcript
+          .getByRole("button", { name: "Next match", exact: true })
+          .click();
+        await expect
+          .poll(activeMatch)
+          .toEqual({ text: "hidden-needle", shown: true });
+        // Highlight changes paint on the next frame in WebKit.
+        await page.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        );
+        await page.screenshot({
+          path: testInfo.outputPath(`transcript-find-${mode}-${width}.png`),
+        });
+      }
+    }
+    await field.press("Escape");
+    await expect(field).toHaveCount(0);
+    await expect(tool).not.toHaveAttribute("open", "");
+    await expect(find).toBeFocused();
+    expect(
+      await page.evaluate(() =>
+        [...CSS.highlights.keys()].filter((name) =>
+          name.startsWith("transcript-find-"),
+        ),
+      ),
+    ).toEqual([]);
+    expect(errors.unexplained()).toEqual([]);
+  });
 });

@@ -1,0 +1,16 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-half);
+  padding-block: var(--space-2);
+}
+.field {
+  flex: 1;
+  min-width: 0;
+}
+.count {
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-inline-end: var(--space-2);
+}

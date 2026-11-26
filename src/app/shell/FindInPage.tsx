@@ -15,12 +15,16 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { activeModal } from "../../shared/design-system/overlayLayer";
 import { FIND_LIMIT, findRanges } from "../../features/search/find-in-page";
+import {
+  clearHighlights,
+  paintHighlights,
+  revealRange,
+} from "../../features/search/range-highlights";
 import type { ShortcutsService } from "../../features/shortcuts/service";
 import { HOST_SHORTCUT_ORDER } from "../shortcuts";
 import styles from "./FindInPage.module.css";
 
 const MATCHES = "buzz-find";
-const ACTIVE = "buzz-find-active";
 /** Typing waits this long; arriving messages recount after a longer pause. */
 const TYPING_DELAY = 100;
 const MUTATION_DELAY = 250;
@@ -42,79 +46,13 @@ const VISIBILITY = [
   "open",
 ];
 
-/** The highlight registered under `name`, registering it the first time. */
-function registered(highlights: HighlightRegistry, name: string) {
-  let highlight = highlights.get(name);
-  if (!highlight) {
-    highlight = new Highlight();
-    highlights.set(name, highlight);
-  }
-  return highlight;
-}
-/**
- * Older WebKit, including the system web view on macOS, repaints nothing when
- * `CSS.highlights.set()` replaces a registered highlight, so earlier matches
- * stay painted. It also never paints a range object that another highlight
- * already placed. So keep one registered highlight per name, change it in place
- * (which repaints the old ranges and the new), and give it fresh copies.
- */
 function paint(ranges: readonly Range[], active: number) {
-  // Without the Custom Highlight API the bar still counts and scrolls.
-  const highlights = globalThis.CSS?.highlights;
-  if (!highlights) return;
-  // Highlight rules apply only while painting: any ::highlight rule makes
-  // Chromium compute highlight styles in every style recalc.
   document.documentElement.dataset.findOnScreen = "";
-  const matches = registered(highlights, MATCHES);
-  const current = registered(highlights, ACTIVE);
-  matches.clear();
-  current.clear();
-  ranges.forEach((range, index) => {
-    // A range whose text was removed has collapsed; there's nothing to paint.
-    if (!range.collapsed)
-      (index === active ? current : matches).add(range.cloneRange());
-  });
+  paintHighlights(MATCHES, ranges, active);
 }
 function unpaint() {
   delete document.documentElement.dataset.findOnScreen;
-  globalThis.CSS?.highlights?.delete(MATCHES);
-  globalThis.CSS?.highlights?.delete(ACTIVE);
-}
-/** The distance to move a span so it is centered, when it isn't fully inside. */
-const offset = (start: number, end: number, low: number, high: number) =>
-  start >= low && end <= high ? 0 : (start + end - low - high) / 2;
-/**
- * Scroll each container from the match outward so the match itself is in
- * view. Centering its element instead can leave a match in a long code block
- * offscreen.
- */
-function reveal(range: Range) {
-  const parent = range.startContainer.parentElement;
-  // jsdom lays out nothing and has no range geometry.
-  if (!range.getBoundingClientRect)
-    return parent?.scrollIntoView({ block: "center", inline: "nearest" });
-  for (let element = parent; element; element = element.parentElement) {
-    const box =
-      element === document.scrollingElement
-        ? { top: 0, left: 0 }
-        : element.getBoundingClientRect();
-    const top = box.top + element.clientTop;
-    const left = box.left + element.clientLeft;
-    const match = range.getBoundingClientRect();
-    // Elements that don't scroll ignore these.
-    element.scrollTop += offset(
-      match.top,
-      match.bottom,
-      top,
-      top + element.clientHeight,
-    );
-    element.scrollLeft += offset(
-      match.left,
-      match.right,
-      left,
-      left + element.clientWidth,
-    );
-  }
+  clearHighlights(MATCHES);
 }
 
 /**
@@ -151,7 +89,7 @@ export function FindInPage({
       query: latest.current.query.trim(),
     });
     const range = list[active.current];
-    if (scroll && range) reveal(range);
+    if (scroll && range) revealRange(range);
   }, []);
   const close = useCallback(() => {
     const scope = latest.current.root;

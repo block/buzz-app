@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   renderHook,
   screen,
@@ -834,4 +835,148 @@ it("exposes TranscriptPanel stably on Agents.ui across renders", async () => {
     await runtime.dispose();
     await host.fiber.dispose();
   }
+});
+
+it("finds collapsed nested tool content only in this transcript and restores expansion on Escape", async () => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {},
+  });
+  const transcript = {
+    turns: [toolTurn("search", "First line\nSaffron and saffron")],
+  };
+  render(
+    <>
+      <p>saffron outside this transcript</p>
+      <TranscriptPanel
+        agent={agent}
+        read={async () => transcript}
+        readKey="search"
+        working={false}
+        reading="Reading…"
+        missing={null}
+        failed="Failed"
+      />
+    </>,
+  );
+  await act(async () => {});
+  const find = screen.getByRole("button", { name: "Find in transcript" });
+  fireEvent.keyDown(find, { key: "f", ctrlKey: true });
+  const field = screen.getByRole("searchbox", { name: "Find in transcript" });
+  expect(field).toHaveFocus();
+  fireEvent.change(field, { target: { value: "SAFFRON" } });
+  await act(async () => vi.advanceTimersByTime(100));
+  expect(screen.getByText("1 of 2")).toBeVisible();
+  const output = screen.getByText("Saffron and saffron", { exact: false });
+  const child = output.closest("details");
+  expect(child).toHaveAttribute("open");
+  expect(child?.parentElement?.closest("details")).toHaveAttribute("open");
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(screen.getByText("2 of 2")).toBeVisible();
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(screen.getByText("1 of 2")).toBeVisible();
+  fireEvent.keyDown(field, { key: "Enter", shiftKey: true });
+  expect(screen.getByText("2 of 2")).toBeVisible();
+  fireEvent.keyDown(field, { key: "Escape" });
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  expect(find).toHaveFocus();
+  expect(child).not.toHaveAttribute("open");
+  expect(child?.parentElement?.closest("details")).not.toHaveAttribute("open");
+});
+
+it("searches prompt context, thoughts, replies, plans and tool input and keeps user-opened rows open", async () => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {},
+  });
+  const searchTurn = toolTurn("search", "reply body");
+  searchTurn.items.push(
+    {
+      id: "prompt",
+      type: "prompt",
+      at: 1,
+      text: "Request",
+      steer: false,
+      sections: [
+        { tag: "base", body: "hidden-context" },
+        { tag: "text", body: "Request" },
+      ],
+    },
+    { id: "thought", type: "thought", at: 2, text: "Thinking\nhidden-context" },
+    { id: "reply", type: "message", at: 3, text: "Reply\nhidden-context" },
+    {
+      id: "plan",
+      type: "plan",
+      at: 4,
+      entries: [{ status: "pending", content: "hidden-context" }],
+    },
+  );
+  const read = async () => ({ turns: [searchTurn] });
+  render(
+    <TranscriptPanel
+      agent={agent}
+      read={read}
+      readKey="search"
+      working={false}
+      reading="Reading…"
+      missing={null}
+      failed="Failed"
+    />,
+  );
+  await act(async () => {});
+  const script = screen.getByText("Run", { exact: true }).closest("details");
+  if (!script) throw new Error("Missing script disclosure");
+  script.open = true;
+  fireEvent(script, new Event("toggle"));
+  fireEvent.click(screen.getByRole("button", { name: "Find in transcript" }));
+  const field = screen.getByRole("searchbox", { name: "Find in transcript" });
+  fireEvent.change(field, { target: { value: "hidden-context" } });
+  await act(async () => vi.advanceTimersByTime(100));
+  expect(screen.getByText("1 of 4")).toBeVisible();
+  fireEvent.change(field, { target: { value: "script" } });
+  await act(async () => vi.advanceTimersByTime(100));
+  expect(screen.getByText("Input")).toBeVisible();
+  fireEvent.change(field, { target: { value: "not present" } });
+  await act(async () => vi.advanceTimersByTime(100));
+  expect(screen.getByText("No results")).toBeVisible();
+  fireEvent.keyDown(field, { key: "Escape" });
+  expect(script).toHaveAttribute("open");
+});
+
+it("keeps search current through refresh and clears it when opening another transcript", async () => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {},
+  });
+  let transcript = { turns: [toolTurn("search", "First line\nsaffron")] };
+  const read = async () => transcript;
+  const panel = (key: string) => (
+    <TranscriptPanel
+      agent={agent}
+      read={read}
+      readKey={key}
+      working={false}
+      reading="Reading…"
+      missing={null}
+      failed="Failed"
+    />
+  );
+  const view = render(panel("one"));
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Find in transcript" }));
+  const field = screen.getByRole("searchbox", { name: "Find in transcript" });
+  fireEvent.change(field, { target: { value: "saffron" } });
+  await act(async () => vi.advanceTimersByTime(100));
+  expect(screen.getByText("1 of 1")).toBeVisible();
+  transcript = { turns: [toolTurn("search", "First line\nsaffron saffron")] };
+  fireEvent.click(screen.getByRole("button", { name: "Refresh transcript" }));
+  await act(async () => {});
+  await act(async () => vi.advanceTimersByTime(250));
+  expect(field).toHaveValue("saffron");
+  expect(screen.getByText("1 of 2")).toBeVisible();
+  view.rerender(panel("two"));
+  await act(async () => {});
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Find in transcript" }));
+  expect(screen.getByRole("searchbox")).toHaveValue("");
 });

@@ -103,6 +103,7 @@ const reply = (seq: number, text: string, messageId: string) =>
     },
   });
 const working = params.has("working");
+const finding = params.has("find");
 const transcript = activityTranscript(
   [
     {
@@ -120,7 +121,34 @@ const transcript = activityTranscript(
               method: "session/update",
               params: {
                 sessionId: "S",
-                update: { sessionUpdate: "tool_call", toolCallId: "c1" },
+                update: {
+                  sessionUpdate: "tool_call",
+                  toolCallId: "c1",
+                  ...(finding
+                    ? {
+                        title: "Run command",
+                        kind: "execute",
+                        status: "completed",
+                        rawInput: { command: "printf result" },
+                        content: [
+                          {
+                            type: "content",
+                            content: {
+                              type: "text",
+                              text: [
+                                "first hidden-needle",
+                                ...Array.from(
+                                  { length: 100 },
+                                  (_, i) => `filler line ${i}`,
+                                ),
+                                "last hidden-needle",
+                              ].join("\n"),
+                            },
+                          },
+                        ],
+                      }
+                    : {}),
+                },
               },
             }),
             reply(3, LONG_CODE, "m2"),
@@ -217,7 +245,11 @@ createRoot(root).render(
           agents={{ subscribe: () => () => {}, memberships: () => [] }}
         />
       </section>
-      <section data-screen="transcript">
+      {finding && <p>hidden-needle outside the transcript</p>}
+      <section
+        data-screen="transcript"
+        style={finding ? { height: 420, overflowY: "auto" } : undefined}
+      >
         {working ? (
           <TranscriptPanel
             agent={memoryAgent}

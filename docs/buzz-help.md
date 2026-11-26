@@ -170,7 +170,11 @@ if that desktop app is up and running.
 - **An agent's page** has its identity and instructions, settings, **Memory**,
   **Activity** (its past sessions) and plugin tabs such as **Attention**.
   Local Claude and Codex transcripts can open on recent activity. Choose
-  **Load earlier activity** to see more history.
+  **Load earlier activity** to see more history. Use the transcript's **Find**
+  button, or ⌘F (Ctrl+F) while focused inside it, to search loaded activity,
+  including collapsed messages, thoughts and tool input/output. Enter and
+  Shift+Enter move between highlighted matches; Escape closes find. Search
+  does not load older activity or search other transcripts.
 - **Settings → Agent details → Environment variables** sets variables one local
   Claude Code, Codex, Goose or Pi agent starts with, such as API keys. They're
   kept in the OS credential store on this computer, never synced, and values

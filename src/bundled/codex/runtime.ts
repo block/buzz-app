@@ -223,6 +223,7 @@ type Request = {
   /** A failed final delivery stays pending until this request gets a reply. */
   finalDelivery?: Error | true;
   step?: (tool: string, target?: string, origin?: "buzz") => void;
+  action?: (eventId: string) => void;
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -2673,6 +2674,7 @@ export class CodexRuntime {
       failActivity,
       ...(delivery.accepted ? { accepted: delivery.accepted } : {}),
       ...(delivery.step ? { step: delivery.step } : {}),
+      ...(delivery.action ? { action: delivery.action } : {}),
       ...(delivery.acknowledged ? { acknowledged: delivery.acknowledged } : {}),
       ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
       ...(trigger.type === "mention" && trigger.resumed
@@ -4362,13 +4364,24 @@ export class CodexRuntime {
     const { settings, agent } = request;
     // A community wake can report its deadline before Codex has stopped.
     const waitForNative = request.unaddressed !== undefined;
+    const actions = new Set<string>();
     const followed = follow(
       server.rpc,
       waitForNative ? undefined : signal,
       active,
-      (method, item) => {
+      (method, item, turnId) => {
         if (signal.aborted) return;
         const step = method === "item/started" ? codexStep(item) : undefined;
+        if (
+          step &&
+          turnId &&
+          typeof item.id === "string" &&
+          !actions.has(item.id)
+        ) {
+          actions.add(item.id);
+          if (active.activity.size === 1)
+            active.activity.values().next().value?.action?.(item.id);
+        }
         if (step)
           for (const taken of active.activity.values())
             taken.step?.(step.tool, step.target, step.origin);
@@ -4798,6 +4811,7 @@ export class CodexRuntime {
 }
 /** A started or completed item, as the app-server reports it. */
 type Item = {
+  id?: string;
   type: string;
   text?: string;
   phase?: string;
@@ -4811,7 +4825,7 @@ function follow(
   rpc: AppServer,
   signal: AbortSignal | undefined,
   turn: { threadId?: string; turnId?: string; finished: boolean },
-  onItem?: (method: string, item: Item) => void,
+  onItem?: (method: string, item: Item, turnId?: string) => void,
 ) {
   let finish!: (status: string) => void;
   let fail!: (error: Error) => void;
@@ -4827,6 +4841,7 @@ function follow(
     const p = wire.params as
       | {
           threadId?: string;
+          turnId?: string;
           message?: string;
           turn?: { id: string; status: string; error?: { message: string } };
           item?: Item;
@@ -4838,12 +4853,13 @@ function follow(
     }
     if (!p || !turn.threadId || p.threadId !== turn.threadId) return;
     if (p.turn && turn.turnId && p.turn.id !== turn.turnId) return;
+    if (p.turnId && turn.turnId && p.turnId !== turn.turnId) return;
     const terminalTurn = wire.method === "turn/completed" ? p.turn : undefined;
     // Local failure can settle the caller before Codex settles the turn.
     if (terminalTurn) sawCompletion = true;
     if (turn.finished) return;
     if (wire.method === "turn/started" && p.turn) turn.turnId = p.turn.id;
-    if (p.item && wire.method) onItem?.(wire.method, p.item);
+    if (p.item && wire.method) onItem?.(wire.method, p.item, p.turnId);
     if (terminalTurn) {
       turn.finished = true;
       if (terminalTurn.status === "failed")

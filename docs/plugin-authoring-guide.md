@@ -55,6 +55,20 @@ export function apply(ctx) {
 - **State:** React state resets on reload. The module is evaluated once per revision per app session. Use the `seen` service to remember a one-time experience.
 - **Errors:** an invalid `register` call fails activation, and the error shows in Settings and `plugin_status`. Pages and panels render in error boundaries, but loops and global side effects aren't contained.
 
+## Local agent action evidence
+
+`session.agentActivity.snapshot(channelId).local` may include
+`lastAction: { turnId: string, sequence: number, occurredAt: number }` on a work
+row. `occurredAt` is the host's first observation time in Unix milliseconds;
+`turnId` identifies that local attempt and `sequence` increases for distinct
+identified harness actions. Match the row's agent, channel, thread and request,
+not just its agent. The field is optional and is retained after completion.
+
+This is local evidence, not a heartbeat or a promise of ongoing progress. Replays,
+typing, human input and snapshot reads do not refresh it. Unidentified stream
+chunks and activity ambiguous between several thread scopes have no action time.
+Use the work row's separate state for queued, running and terminal outcomes.
+
 ## Services
 
 Each line is the main call. Read the types for every field.

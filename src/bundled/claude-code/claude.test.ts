@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callSessionTool, type AddedTool } from "../../buzz-mcp/session-tools";
-import { stepText } from "../../features/agents/local-activity";
+import {
+  createLocalAgentActivity,
+  stepText,
+} from "../../features/agents/local-activity";
 import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeProcess, stepLabel } from "./claude";
 import {
@@ -1460,6 +1463,93 @@ it("releases result-only background continuations and their idle waiters", async
     expect(claude.active).toBe(false);
     await expect(claude.send("next request")).resolves.toEqual({ ok: true });
   } finally {
+    await claude.kill();
+  }
+});
+
+it("reports identified assistant actions only once to the acknowledged request", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "actions",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("Expected process");
+  fake.hold = true;
+  const local = createLocalAgentActivity();
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const send = (messageId: string) => {
+    const work = local.begin({
+      scope: "s",
+      agent: "a",
+      channelId: "c",
+      messageId,
+      threadRootId: messageId,
+    });
+    const done = claude.send(messageId, {
+      step: work.step,
+      action: work.action,
+      acknowledged: work.started,
+      superseded: work.supersede,
+    });
+    void done.then(work.finish);
+    return done;
+  };
+  const row = (id: string) =>
+    local.reader.work().find((work) => work.messageId === id);
+  const tool = (id: string, isReplay = false) =>
+    fake.emit({
+      type: "assistant",
+      uuid: `message-${id}`,
+      isReplay,
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name: "Read",
+            input: { file_path: "private.txt" },
+          },
+        ],
+      },
+    });
+  try {
+    const first = send("first");
+    await flush();
+    tool("one");
+    expect(row("first")?.lastAction?.sequence).toBe(1);
+    now.mockReturnValue(1_001_000);
+    tool("two");
+    const action = row("first")?.lastAction;
+    expect(action).toEqual({
+      turnId: expect.any(String),
+      sequence: 2,
+      occurredAt: 1_001_000,
+    });
+    now.mockReturnValue(4_661_000);
+    tool("two");
+    tool("history", true);
+    fake.emit({ type: "keep_alive" });
+    expect(row("first")?.lastAction).toBe(action);
+    const second = send("second");
+    await flush();
+    tool("two");
+    expect(row("second")?.lastAction).toBeUndefined();
+    tool("three");
+    expect(row("second")?.lastAction).toEqual({
+      turnId: expect.any(String),
+      sequence: 1,
+      occurredAt: 4_661_000,
+    });
+    expect(row("first")?.lastAction).toBe(action);
+    fake.finish();
+    await Promise.all([first, second]);
+    const settled = row("second")?.lastAction;
+    tool("late");
+    expect(row("second")?.state).toBe("done");
+    expect(row("second")?.lastAction).toBe(settled);
+  } finally {
+    now.mockRestore();
     await claude.kill();
   }
 });

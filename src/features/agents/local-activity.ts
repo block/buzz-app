@@ -74,6 +74,13 @@ export type LocalWork = Readonly<{
   conversationName?: string;
   state: LocalWorkState;
   startedAt: number;
+  /** First observation of the latest identified harness action, in Unix milliseconds.
+   * Local evidence only: neither run liveness nor a typing/transport heartbeat. */
+  lastAction?: Readonly<{
+    turnId: string;
+    sequence: number;
+    occurredAt: number;
+  }>;
   /** Null until acceptance; absent on hosts without lifecycle evidence support. */
   evidence?: LocalConversationEvidence | null;
   /** This run's messages still awaiting publication acknowledgement. */
@@ -223,6 +230,7 @@ export function createLocalAgentActivity() {
         LocalWork,
         | "state"
         | "startedAt"
+        | "lastAction"
         | "publishing"
         | "replyMessages"
         | "publishedMessageIds"
@@ -271,6 +279,7 @@ export function createLocalAgentActivity() {
       }
       const id = Symbol();
       const lifecycleId = crypto.randomUUID();
+      const actions = new Set<string>();
       const sourceRootId =
         input.sourceRootId === undefined
           ? (localWorkRoot(input) ?? null)
@@ -475,6 +484,27 @@ export function createLocalAgentActivity() {
           publish();
         },
         started: () => update("working"),
+        action: (eventId: string) => {
+          const current = entries.get(id);
+          if (current?.state !== "working" || !eventId || actions.has(eventId))
+            return;
+          actions.add(eventId);
+          entries.set(
+            id,
+            Object.freeze({
+              ...current,
+              lastAction: Object.freeze({
+                turnId: lifecycleId,
+                sequence: (current.lastAction?.sequence ?? 0) + 1,
+                occurredAt: Math.max(
+                  Date.now(),
+                  current.lastAction?.occurredAt ?? 0,
+                ),
+              }),
+            }),
+          );
+          publish();
+        },
         acknowledged: (input?: Readonly<{ steering?: true }>) => {
           const current = entries.get(id);
           if (!current || settled(current.state) || accepted) return;

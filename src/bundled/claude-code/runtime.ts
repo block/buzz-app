@@ -1290,6 +1290,7 @@ export class ClaudeRuntime {
       ignored,
       signal,
       step,
+      action,
       acknowledged,
       accepted,
       superseded,
@@ -1625,6 +1626,7 @@ export class ClaudeRuntime {
           ...(contextRoot ? { contextRoot } : {}),
           activityScope: topLevel ? channel : replyRoot,
           ...(step ? { step } : {}),
+          ...(action ? { action } : {}),
           delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
           accepted: () => {

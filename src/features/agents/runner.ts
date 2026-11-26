@@ -3898,6 +3898,7 @@ export class AgentRunners {
                 // While a route chooses, its Stop calls this one too.
                 if (!selecting) job.work?.interruptible(stop);
               },
+              action: (eventId: string) => job.work?.action(eventId),
               step: (tool: string, target?: string, origin?: StepOrigin) =>
                 job.work?.step(tool, target, origin),
             }

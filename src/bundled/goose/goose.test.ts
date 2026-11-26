@@ -1,3 +1,4 @@
+import { createAgentActivity } from "../../features/agents/activity";
 import { sessionTools } from "../../buzz-mcp/session-tools";
 import { steerPrompt } from "../claude-code/prompt";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -2002,4 +2003,133 @@ it("keeps a failed close failed for a strict one while goose runs, and counts it
   process.exit(null);
   await goose.exited;
   await expect(goose.close(session, true)).resolves.toBeUndefined();
+});
+
+it("exposes identified ACP actions without refreshing queued work, replays or silent turns", async () => {
+  const { goose, open, process } = await start();
+  process.hold = true;
+  const session = await open();
+  const local = createLocalAgentActivity();
+  const activity = createAgentActivity(
+    false,
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    { scope: "s", source: local.reader },
+  );
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const request = (messageId: string) => {
+    const work = local.begin({
+      scope: "s",
+      agent: "a",
+      channelId: "c",
+      messageId,
+      threadRootId: messageId,
+      thread: true,
+    });
+    const done = session.send(
+      messageId,
+      {
+        step: work.step,
+        action: work.action,
+        acknowledged: work.started,
+        superseded: work.supersede,
+      },
+      messageId === "second" ? "other-model" : undefined,
+    );
+    void done.then(work.finish);
+    return { work, done };
+  };
+  const row = (messageId: string) =>
+    activity.queries
+      .snapshot("c")
+      .local?.find((row) => row.messageId === messageId);
+  const call = (toolCallId: string) =>
+    process.update(session.id, {
+      sessionUpdate: "tool_call",
+      toolCallId,
+      title: "Read",
+      rawInput: { path: "private.txt" },
+    });
+  try {
+    const first = request("first");
+    await flush();
+    expect(row("first")?.lastAction).toBeUndefined();
+    call("call-1");
+    await flush();
+    const action = row("first")?.lastAction;
+    expect(action).toEqual({
+      turnId: expect.any(String),
+      sequence: 1,
+      occurredAt: 1_000_000,
+    });
+    now.mockReturnValue(1_001_000);
+    call("call-2");
+    await flush();
+    expect(row("first")?.lastAction).toEqual({
+      ...action,
+      sequence: 2,
+      occurredAt: 1_001_000,
+    });
+    const latest = row("first")?.lastAction;
+    // Same native event, changing display labels, typing and host liveness are not actions.
+    now.mockReturnValue(4_661_000);
+    call("call-1");
+    process.update(session.id, {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "thinking" },
+    });
+    process.update(session.id, {
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text: "ping" },
+    });
+    process.update(session.id, { sessionUpdate: "usage_update", used: 100 });
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: process.turns[0]?.runId } },
+    });
+    await flush();
+    expect(row("first")?.lastAction).toBe(latest);
+    expect(row("first")?.state).toBe("working");
+    expect(activity.queries.snapshot("other").local ?? []).toEqual([]);
+    const second = request("second");
+    await flush();
+    expect(row("second")?.lastAction).toBeUndefined();
+    call("call-2");
+    await flush();
+    expect(row("second")?.lastAction).toBeUndefined();
+    call("call-queued");
+    await flush();
+    expect(row("first")?.lastAction).toEqual({
+      ...action,
+      sequence: 3,
+      occurredAt: 4_661_000,
+    });
+    expect(row("second")?.lastAction).toBeUndefined();
+    process.turns[0]?.finish();
+    await flush();
+    call("call-queued");
+    await flush();
+    expect(row("second")?.lastAction).toBeUndefined();
+    call("call-3");
+    await flush();
+    expect(row("second")?.lastAction).toEqual({
+      turnId: expect.any(String),
+      sequence: 1,
+      occurredAt: 4_661_000,
+    });
+    expect(row("second")?.lastAction?.turnId).not.toBe(action?.turnId);
+    process.turns[1]?.finish();
+    await Promise.all([first.done, second.done]);
+    const settled = row("second")?.lastAction;
+    call("late-call");
+    await flush();
+    expect(row("second")?.state).toBe("done");
+    expect(row("second")?.lastAction).toBe(settled);
+  } finally {
+    now.mockRestore();
+    activity.dispose();
+    await goose.stop();
+  }
 });

@@ -44,6 +44,7 @@ export type ActivityReceipt = Readonly<{
   /** Presentation destination; channel-shared sessions may handle several threads. */
   activityScope?: string;
   step?: (tool: string, target?: string, origin?: "buzz") => void;
+  action?: (eventId: string) => void;
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -982,6 +983,7 @@ export class ClaudeProcess {
   /** The session's context size, from its model calls' usage. */
   private context = new ContextMeter();
   private readonly activeReceipts = new Map<string, ActivityReceipt>();
+  private readonly actions = new Set<string>();
   private handle(message: Message) {
     // The CLI may emit a tool callback before its asynchronous transcript write.
     // Keep native protocol evidence alongside persisted history, without replacing it.
@@ -1098,6 +1100,23 @@ export class ClaudeProcess {
       // Each model call's usage, repeated on each of its content blocks. A
       // subagent's calls have their own context.
       if (!message.parent_tool_use_id) this.context.report(callSize(message));
+      const content = (message.message as { content?: unknown } | undefined)
+        ?.content;
+      if (message.isReplay !== true && Array.isArray(content)) {
+        for (const block of content) {
+          const id =
+            block?.type === "tool_use" && typeof block.id === "string"
+              ? `tool:${block.id}`
+              : (block?.type === "text" || block?.type === "thinking") &&
+                  typeof message.uuid === "string"
+                ? `message:${message.uuid}`
+                : undefined;
+          if (typeof id !== "string" || !id || this.actions.has(id)) continue;
+          this.actions.add(id);
+          if (this.activeReceipts.size === 1 && !this.stopping)
+            this.activeReceipts.values().next().value?.action?.(id);
+        }
+      }
       const step = stepLabel(message);
       if (step)
         for (const receipt of this.activeReceipts.values())

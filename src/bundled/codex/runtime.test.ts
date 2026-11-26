@@ -21,7 +21,10 @@ import {
 import { pubkeyOf } from "../../features/agents/membership";
 import { createSessionAdmissions } from "../../features/agents/session-admission";
 import { memoryStorage } from "../../features/agents/test-fakes";
-import { stepText } from "../../features/agents/local-activity";
+import {
+  createLocalAgentActivity,
+  stepText,
+} from "../../features/agents/local-activity";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
@@ -14205,4 +14208,75 @@ describe("gateway turns", () => {
     ).toBe(previous);
     await f.complete(2);
   });
+});
+
+it("reports identified items from the exact native turn without replay freshness", async () => {
+  const f = fixture();
+  const local = createLocalAgentActivity();
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const send = async (id: string) => {
+    const work = local.begin({
+      scope: "s",
+      agent: pubkey,
+      channelId: "channel",
+      messageId: id,
+      threadRootId: id,
+    });
+    await f.runtime.run({
+      ...f.delivery(id),
+      step: work.step,
+      action: work.action,
+      acknowledged: work.started,
+      superseded: work.supersede,
+    });
+    return work;
+  };
+  const row = (id: string) =>
+    local.reader.work().find((work) => work.messageId === id);
+  try {
+    await send("first");
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const started = f.starts()[0];
+    if (!started) throw new Error("Expected started turn");
+    const threadId = (started.params as { threadId: string }).threadId;
+    const item = (id: string, turnId = "turn-1", type = "commandExecution") =>
+      f.emit({
+        method: "item/started",
+        params: { threadId, turnId, item: { id, type, command: "echo hello" } },
+      });
+    item("one");
+    expect(row("first")?.lastAction?.sequence).toBe(1);
+    now.mockReturnValue(1_001_000);
+    item("two");
+    const action = row("first")?.lastAction;
+    expect(action).toEqual({
+      turnId: expect.any(String),
+      sequence: 2,
+      occurredAt: 1_001_000,
+    });
+    now.mockReturnValue(4_661_000);
+    item("two");
+    item("foreign", "turn-other");
+    item("human", "turn-1", "userMessage");
+    f.emit({
+      method: "item/started",
+      params: { threadId, item: { id: "unbound", type: "reasoning" } },
+    });
+    expect(row("first")?.lastAction).toBe(action);
+    await send("second");
+    await vi.waitFor(() => expect(row("second")?.state).toBe("working"));
+    item("two");
+    expect(row("second")?.lastAction).toBeUndefined();
+    item("three");
+    expect(row("second")?.lastAction).toEqual({
+      turnId: expect.any(String),
+      sequence: 1,
+      occurredAt: 4_661_000,
+    });
+    expect(row("first")?.lastAction).toBe(action);
+    await f.complete(0, "");
+  } finally {
+    now.mockRestore();
+    await f.runtime.dispose();
+  }
 });

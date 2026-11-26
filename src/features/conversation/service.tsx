@@ -528,6 +528,14 @@ export class ConversationService extends Service implements Conversation {
     if (typeof value.matches !== "function")
       throw new Error("A link preview renderer needs a matcher");
     if (
+      value.placement !== undefined &&
+      value.placement !== "below" &&
+      value.placement !== "message"
+    )
+      throw new Error(
+        'A link preview renderer placement must be "below" or "message"',
+      );
+    if (
       value.order !== undefined &&
       typeof value.order !== "number" &&
       typeof value.order !== "function"

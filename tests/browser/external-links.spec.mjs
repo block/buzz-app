@@ -20,7 +20,7 @@ test.beforeEach(async ({ page }) => {
 });
 const github = "https://github.com/block/buzz/pull/1";
 const ordinary = "https://example.test/external-link";
-const unsupported = "https://github.com/block/buzz/blob/main/README.md";
+const unsupported = "https://github.com/block/buzz/tree/main/docs";
 // Presentation plugins may shorten a raw URL label; the destination remains the contract.
 const link = (page, url) =>
   page.locator(`[data-channel-timeline] a[href=${JSON.stringify(url)}]`);

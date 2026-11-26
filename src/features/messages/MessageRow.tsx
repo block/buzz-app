@@ -1805,6 +1805,16 @@ function MessageRowContent({
                   ) : (
                     body
                   )}
+                  {previewUrls.length > 0 && (
+                    <LinkPreviews
+                      urls={previewUrls}
+                      messageId={row.id}
+                      registry={linkPreviewRegistry}
+                      onOpenLink={openLink}
+                      settings={extensions?.settings}
+                      placement="message"
+                    />
+                  )}
                   {editedInBubble && shown.edited && <EditedMarker />}
                   {reactionsInBubble && !withoutReactions && reactionContent}
                 </div>

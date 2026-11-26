@@ -4,6 +4,7 @@ import {
   GhUnavailable,
   GitHubError,
   gitHubCli,
+  gitHubComment,
   gitHubDiff,
   MAX_DIFF_CHARS,
   OutputTooLarge,
@@ -240,4 +241,67 @@ it("gives GitHub's reason a diff was refused, and stops gh past the size the pan
     }),
   ).rejects.toThrow(OutputTooLarge);
   expect(kill).toHaveBeenCalled();
+});
+
+it("posts a review comment's JSON to the pull request's comments and gives GitHub's reason when refused", async () => {
+  expect(gitHubComment({})).toBeUndefined();
+  const writes: string[] = [];
+  let answer = {
+    stdout:
+      '{"html_url":"https://github.com/example-org/sample/pull/7#discussion_r1"}',
+    code: 0,
+  };
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    let exit!: (code: number) => void;
+    return {
+      write: async () => {},
+      end: async (data = "") => {
+        writes.push(data);
+        options?.onStdout?.(answer.stdout);
+        exit(answer.code);
+      },
+      kill: vi.fn(async () => {}),
+      exited: new Promise<number | null>((resolve) => {
+        exit = resolve;
+      }),
+    };
+  });
+  const post = gitHubComment({ spawn });
+  const comment = {
+    body: "Looks off by one",
+    commit_id: "abc123",
+    path: "src/a.ts",
+    line: 12,
+    side: "RIGHT",
+    start_line: 10,
+    start_side: "RIGHT",
+  } as const;
+  await expect(
+    post?.({ repository: "example-org/sample", number: 7 }, comment),
+  ).resolves.toEqual({
+    html_url: "https://github.com/example-org/sample/pull/7#discussion_r1",
+  });
+  expect(spawn).toHaveBeenCalledWith("comment", {
+    args: ["repos/example-org/sample/pulls/7/comments"],
+    onStdout: expect.any(Function),
+    onStderr: expect.any(Function),
+  });
+  expect(JSON.parse(writes[0] ?? "")).toEqual(comment);
+  answer = {
+    stdout:
+      '{"message":"Validation Failed","errors":["pull_request_review_thread.line must be part of the diff"]}',
+    code: 1,
+  };
+  await expect(
+    post?.({ repository: "example-org/sample", number: 7 }, comment),
+  ).rejects.toThrow(
+    new GitHubError(
+      "Validation Failed: pull_request_review_thread.line must be part of the diff",
+    ),
+  );
+  // Only a pull request this plugin parsed reaches gh.
+  await expect(
+    post?.({ repository: "../evil", number: 7 }, comment),
+  ).rejects.toThrow("Unsupported pull request");
+  expect(spawn).toHaveBeenCalledTimes(2);
 });

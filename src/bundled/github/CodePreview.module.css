@@ -1,0 +1,170 @@
+/* The excerpt sits in the message like a fenced code block, on a neutral
+   inset inside colored bubbles. */
+.frame {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--message-inner-radius, var(--radius-row));
+  background: var(--surface-panel);
+  color: var(--text-standard);
+}
+/* One compact row: path, then lines and ref, then buttons that never
+   shrink. Folders cut from the left first, then the ref; a narrow message
+   moves lines and ref to a second row. */
+.bar,
+.sticky {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-standard);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
+  user-select: none;
+}
+.path {
+  flex: 1 1 auto;
+  min-width: 7ch;
+  overflow: hidden;
+  /* Right to left puts the ellipsis on the folders, not the file name. */
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.path bdi {
+  direction: ltr;
+}
+.path b {
+  color: var(--text-standard);
+  font-weight: var(--font-weight-semibold);
+}
+.where {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.meta {
+  flex: none;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.ref {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+  min-width: 8ch;
+  max-width: 28ch;
+  flex: 0 1 auto;
+  padding: 0 var(--space-1);
+  /* Painted like the pull request panel's branches. */
+  border-radius: var(--radius-chip);
+  background: var(--affordance-link-hover);
+  color: var(--text-link);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.ref svg {
+  flex: none;
+}
+.ref span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-half);
+  flex: none;
+  margin-inline-start: auto;
+}
+/* The timeline's container: a narrow timeline means narrow bubbles. */
+@container messages (max-width: 30rem) {
+  .bar {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+  .bar .path {
+    flex-basis: 0;
+  }
+  .bar .where {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+.code {
+  /* Leave half a line below the cap as a cue that more code follows. */
+  max-height: calc(var(--space-3) + 12.5lh);
+  overflow: auto;
+}
+.panel {
+  min-width: 0;
+}
+.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-panel);
+}
+.notice,
+.threads {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
+  overflow-wrap: anywhere;
+}
+.threads {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-top: 1px solid var(--border-standard);
+  background: var(--surface-inset-subtle);
+  list-style: none;
+}
+.comment {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.said {
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+  background: var(--surface-panel);
+  color: var(--text-standard);
+}
+.said p {
+  margin: 0;
+}
+.author {
+  color: var(--text-standard);
+  font-weight: var(--font-weight-semibold);
+}
+.form {
+  display: grid;
+  gap: var(--space-4);
+}
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.error {
+  margin: 0;
+  color: var(--text-danger);
+  overflow-wrap: anywhere;
+}

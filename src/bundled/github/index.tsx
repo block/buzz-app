@@ -28,6 +28,7 @@ import { usePanelTabTitle } from "../../features/panels/PanelWorkspace";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import {
   gitHubCli,
+  gitHubComment,
   gitHubDiff,
   GitHubError,
   type GitHubCli,
@@ -70,6 +71,8 @@ import { createPanelMemory, type PanelMemory } from "./panel-memory";
 import { PullFiles } from "./PullFiles";
 import { GitHubSettings } from "./GitHubSettings";
 import { openGitHubLinksInBuzz } from "./link-preference";
+import { CodeExcerpt, CodePanel } from "./CodePreview";
+import { createCodeReader, parseCodeLink } from "./code";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = PANEL_REFRESH_MS;
@@ -141,13 +144,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerLink({
     id: "pull",
     title: "GitHub links",
-    matches: (url) => !!parseGitHubReference(url, { pullSubtargets: true }),
+    matches: (url) =>
+      !!parseGitHubReference(url, { pullSubtargets: true }) ||
+      parseCodeLink(url)?.kind === "blob",
     // Links claims GitHub at the default band, 0, and a tie falls to the
     // contribution key; only a lower order makes this the GitHub renderer
     // whichever plugin registered first. Other GitHub pages stay with Links.
     order: -1,
     className: inlineStyles.link,
     component: ({ url }) => <GitHubLink url={url} states={states} />,
+  });
+  const code = createCodeReader(gh);
+  const comment = gitHubComment(ctx.host);
+  // Line links show their lines in the message; a whole-file link shows none,
+  // and opening any file link shows the whole file in the panel.
+  ctx.conversation.registerLinkPreview({
+    id: "code",
+    title: "Code viewer",
+    placement: "message",
+    matches: (url) => !!parseCodeLink(url)?.lines,
+    component: (props) => (
+      <CodeExcerpt {...props} reader={code} comment={comment} />
+    ),
+  });
+  ctx.panels.register({
+    id: "code",
+    title: "File",
+    deferUntilShown: true,
+    matches: (target) =>
+      openGitHubLinksInBuzz() && parseCodeLink(target)?.kind === "blob",
+    component: (props: PanelProps) => <CodePanel {...props} reader={code} />,
   });
   ctx.conversation.registerChatMenu(({ session, channelId }) => (
     <SoloPullMenu

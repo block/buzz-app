@@ -26,6 +26,19 @@
           "--header",
           "Accept: application/vnd.github.diff"
         ]
+      },
+      {
+        "id": "comment",
+        "program": "gh",
+        "args": [
+          "api",
+          "--hostname",
+          "github.com",
+          "--method",
+          "POST",
+          "--input",
+          "-"
+        ]
       }
     ]
   }

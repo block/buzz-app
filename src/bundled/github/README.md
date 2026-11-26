@@ -19,3 +19,7 @@ Preview GitHub repositories, pull requests, issues, and commits without leaving 
 2. On a pull request, switch between **Discussion** and **Checks**.
 3. Switch a pull request from **Summary** to **Changes** to read its diff.
 4. Choose **Open on GitHub** to see the full page.
+5. A link to a file shows the file's name and opens the whole file in a
+   panel. A link to lines also shows them in the message. On pull request
+   lines, select lines by their numbers and use the comment button to post a
+   review comment.

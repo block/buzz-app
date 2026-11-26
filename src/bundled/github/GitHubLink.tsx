@@ -3,13 +3,14 @@ import { LinkLabelContext } from "../../features/conversation/LinkLabelContext";
 import { GitCommitIcon } from "../../shared/design-system/icons/index";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { LinkLabel } from "../links/InlineLink";
+import { CodeLinkLabel } from "./CodePreview";
 import { PullLink } from "./PullLink";
 import type { PullStates } from "./pull-states";
 import { parseGitHubReference } from "./references";
 
 /** A GitHub link in a message, named by what it links to: `owner/repo`, a
- * pull request or issue with its state, or `repo@abc1234`. An authored label
- * stays. */
+ * pull request or issue with its state, `repo@abc1234`, or a file and its
+ * lines. An authored label stays. */
 export function GitHubLink({
   url,
   states,
@@ -19,14 +20,15 @@ export function GitHubLink({
 }) {
   const authored = useContext(LinkLabelContext) !== undefined;
   const reference = parseGitHubReference(url, { pullSubtargets: true });
-  if (reference?.kind === "repository")
+  if (!reference) return <CodeLinkLabel url={url} />;
+  if (reference.kind === "repository")
     return (
       <LinkLabel
         href={url}
         {...(!authored && { label: reference.repository })}
       />
     );
-  if (reference?.kind === "commit") {
+  if (reference.kind === "commit") {
     const repo = reference.repository.slice(
       reference.repository.indexOf("/") + 1,
     );

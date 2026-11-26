@@ -179,6 +179,10 @@ export type LinkPreviewRenderer = Readonly<{
   matches(url: string): boolean;
   /** Claim strength when several renderers match a URL; see `MatchOrder`. */
   order?: MatchOrder | undefined;
+  /** `"message"` draws the card inside the message, after its text, for a
+   * preview that reads as part of it; the default, `"below"`, draws it under
+   * the message. */
+  placement?: "below" | "message" | undefined;
   component: ComponentType<LinkPreviewProps>;
   /** Side-effect free, like a decision provider's `status()`. While it is
    * `checking` the link has no card; while it is `needs-setup` the host draws

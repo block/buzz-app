@@ -2,6 +2,18 @@ import type { OutboxStorage, OutgoingEvent } from "./outbox";
 
 type Row = { operation: OutgoingEvent };
 
+/** A save would leave the shared journal over its budget. Nothing was written. */
+export class OutboxFull extends Error {
+  constructor(
+    /** Rows this save would have added. */
+    readonly added: readonly string[],
+    /** The journal as it was before this save. */
+    readonly stored: readonly OutgoingEvent[],
+  ) {
+    super("Outbox storage is full");
+  }
+}
+
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("buzz-outbox-v2", 2);
@@ -81,6 +93,10 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
       persisted.delete(id);
       legacyIds.delete(id);
     },
+    adopt(operations) {
+      for (const item of operations)
+        if (!persisted.has(item.event.id)) persisted.set(item.event.id, item);
+    },
     async load(options) {
       const db = await open();
       let migrated = false;
@@ -149,16 +165,43 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
         const partitions = tx.objectStore("partitions");
         const migration = legacyIds.size ? partitions.get(scope) : undefined;
         // Checked before this transaction deletes them.
-        let refusal: string | undefined;
+        let refusal: Error | undefined;
+        const fits = options?.fits;
+        // Other windows write to the same journal, so only the stored rows
+        // show whether a new row still fits.
+        if (fits && [...next.keys()].some((id) => !persisted.has(id))) {
+          const stored = events.index("scope").getAll(IDBKeyRange.only(scope));
+          stored.onsuccess = () => {
+            const before = stored.result.map((row: Row) => row.operation);
+            const after = new Map(before.map((item) => [item.event.id, item]));
+            for (const id of [...persisted.keys(), ...legacyIds, ...retired])
+              if (!next.has(id)) after.delete(id);
+            const added: string[] = [];
+            for (const [id, operation] of next) {
+              // Another window removed it, and this save will not restore it.
+              if (!after.has(id) && persisted.has(id) && id !== options?.force)
+                continue;
+              if (!after.has(id)) added.push(id);
+              after.set(id, operation);
+            }
+            if (!added.length || fits([...after.values()])) return;
+            refusal = new OutboxFull(added, before);
+            tx.abort();
+          };
+        }
         for (const id of retired) {
           const row = events.get([scope, id]);
           row.onsuccess = () => {
             const found: Row | undefined = row.result;
             if (found === undefined) {
               if (legacyIds.has(id) && migration?.result !== true) return;
-              refusal = "This save was replaced in another window. Try again.";
+              refusal = new Error(
+                "This save was replaced in another window. Try again.",
+              );
             } else if (found.operation.recovery)
-              refusal = "This save is in progress in another window.";
+              refusal = new Error(
+                "This save is in progress in another window.",
+              );
             else return void events.delete([scope, id]);
             tx.abort();
           };
@@ -206,9 +249,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
         };
         tx.onabort = () =>
           reject(
-            refusal
-              ? new Error(refusal)
-              : (tx.error ?? new Error("Outbox transaction aborted")),
+            refusal ?? tx.error ?? new Error("Outbox transaction aborted"),
           );
         tx.onerror = () => {
           if (!refusal) reject(tx.error);

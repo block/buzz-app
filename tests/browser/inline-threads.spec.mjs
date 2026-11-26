@@ -643,6 +643,20 @@ test.describe("Inline", () => {
     // it hands over is read here: Linux WebKit unmutes any video that plays
     // this slowly.
     const { muted } = await read(brief);
+    // The frame the brief shows as its playback leaves it, kept as it is
+    // paused. The frame it rests on afterwards does not say: once paused,
+    // Linux WebKit presents one frame more, from later in the clip.
+    await brief.evaluate((video) => {
+      video.pause = () => {
+        if (!window.briefFrame) {
+          const canvas = document.createElement("canvas");
+          [canvas.width, canvas.height] = [video.videoWidth, video.videoHeight];
+          canvas.getContext("2d").drawImage(video, 0, 0);
+          window.briefFrame = canvas;
+        }
+        HTMLMediaElement.prototype.pause.call(video);
+      };
+    });
     let load;
     slow = new Promise((resolve) => {
       load = resolve;
@@ -653,7 +667,8 @@ test.describe("Inline", () => {
     const handed = (await read(brief)).seconds;
     expect(handed).toBeGreaterThan(20.3);
     // While its video has yet to load, however long that takes, the reader's
-    // player shows the frame the brief stopped on and not the poster.
+    // player shows the frame the brief showed as it stopped and not the
+    // poster.
     const loading = await picture(
       brief,
       await reader.locator("video").screenshot(),
@@ -661,7 +676,15 @@ test.describe("Inline", () => {
     expect(
       await reader.locator("video").evaluate((video) => video.readyState),
     ).toBe(0);
-    const stopped = await picture(brief);
+    const stopped = await picture(
+      brief,
+      Buffer.from(
+        await page.evaluate(() =>
+          window.briefFrame.toDataURL("image/png").replace(/^.*,/, ""),
+        ),
+        "base64",
+      ),
+    );
     expect(apart(loading, stopped)).toBeLessThan(apart(loading, unplayed) / 4);
     load();
     slow = undefined;

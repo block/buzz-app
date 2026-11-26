@@ -1196,11 +1196,7 @@ function ThreadMessages({
     const since = unreadRequest?.readThrough;
     const unread = (row: ChannelMessage): boolean => {
       const attention = session.unread.attention(channelId, row.id, since);
-      return (
-        attention.unread ||
-        attention.forced ||
-        (tree.children.get(row.id) ?? []).some(unread)
-      );
+      return attention.unread || (tree.children.get(row.id) ?? []).some(unread);
     };
     const first = (tree.children.get(undefined) ?? []).find(unread);
     // A requested read time follows a read of the whole thread, so a nested
@@ -1208,7 +1204,7 @@ function ThreadMessages({
     const nested = (row: ChannelMessage): ChannelMessage | undefined => {
       for (const child of tree.children.get(row.id) ?? []) {
         const attention = session.unread.attention(channelId, child.id, since);
-        if (attention.unread || attention.forced) return child;
+        if (attention.unread) return child;
         const found = nested(child);
         if (found) return found;
       }

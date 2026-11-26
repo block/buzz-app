@@ -63,8 +63,10 @@ async function readPermalink(page, app, messageId, joined = false) {
   const followAction = page.getByRole("menuitem", {
     name: /^(Follow thread|Unfollow thread)$/,
   });
+  // A preview offers no read state, and the only joined link is the viewer's
+  // own reply, which can never be unread.
+  await expect(readAction).toHaveCount(0);
   if (joined) {
-    await expect(readAction).toBeVisible();
     const wasFollowing = (await followAction.textContent()).includes(
       "Unfollow",
     );
@@ -80,7 +82,6 @@ async function readPermalink(page, app, messageId, joined = false) {
       }),
     ).toBeVisible();
   } else {
-    await expect(readAction).toHaveCount(0);
     await expect(followAction).toHaveCount(0);
   }
   await page.keyboard.press("Escape");

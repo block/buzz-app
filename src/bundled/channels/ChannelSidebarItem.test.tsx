@@ -528,7 +528,12 @@ it("shows what the row has not seen, while the channel stays unread", () => {
   const marker = (name: string) => document.querySelector(`[${name}]`);
   // Opening the channel saw its mention, thread reply and ordinary message.
   act(() =>
-    state.unread(3, 2, { observedCount: 0, attentionCount: 0, threadCount: 0 }),
+    state.unread(3, 2, {
+      observedCount: 0,
+      attentionCount: 0,
+      threadCount: 0,
+      markedCount: 0,
+    }),
   );
   expect(row()).not.toHaveAttribute("data-ordinary");
   for (const name of [
@@ -539,7 +544,12 @@ it("shows what the row has not seen, while the channel stays unread", () => {
     expect(marker(name)).toBeNull();
   // A later thread reply lights the row's thread dot.
   act(() =>
-    state.unread(4, 3, { observedCount: 1, attentionCount: 1, threadCount: 1 }),
+    state.unread(4, 3, {
+      observedCount: 1,
+      attentionCount: 1,
+      threadCount: 1,
+      markedCount: 0,
+    }),
   );
   expect(marker("data-channel-activity")).not.toBeNull();
   expect(row()).not.toHaveAttribute("data-ordinary");

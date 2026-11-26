@@ -3,6 +3,7 @@ import { test, expect } from "./fixture.mjs";
 import { pauseClock } from "./clock.mjs";
 import { frames, open, settle } from "./timeline.mjs";
 import { chooseDefaultSkinTone } from "./skin-tone.mjs";
+import { readJournal } from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -241,11 +242,24 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   });
   await chooseDefaultSkinTone(page);
   await open(page, app);
-  const event = app.append("primary", "alpha", "Message actions browser check");
+  // A peer's message: your own messages never offer Mark as unread.
+  const event = app.append(
+    "primary",
+    "alpha",
+    "Message actions browser check",
+    true,
+    false,
+  );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
   await expect(row).toBeVisible();
+  // Automatic reading flips the menu's read action. Settle it first so the
+  // menu does not change under the journey.
+  await row.getByText(event.content, { exact: true }).click();
+  await expect
+    .poll(async () => (await readJournal(page))?.state.frontiers["alpha"] ?? 0)
+    .toBeGreaterThanOrEqual(event.created_at);
   const actions = row.getByRole("group", { name: "Message actions" });
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
@@ -258,6 +272,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     page.getByRole("menuitem", { name: "Copy message", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(trigger).toBeFocused();
   await trigger.click();
   await page

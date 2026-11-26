@@ -120,10 +120,7 @@ type MessageVisit = Readonly<{
   entryMessageIds: ReadonlySet<string> | undefined;
   entryHistoryComplete: boolean;
   entryReadRevision: number;
-  entryAttention: ReadonlyMap<
-    string,
-    Pick<MessageAttention, "unread" | "forced"> | null
-  >;
+  entryAttention: ReadonlyMap<string, Pick<MessageAttention, "unread"> | null>;
   active: boolean;
   ready: boolean;
   failed: boolean;
@@ -190,15 +187,19 @@ export function useMessageKeyActions(session: RelaySession) {
         management.remove(row, undefined, () => editor?.focusTarget() ?? null);
       },
       canMarkUnread(row: ChannelMessage) {
-        // Coordination between agents is never unread, so it has no read state.
-        if (!joined(row) || row.audience === "agents") return false;
-        const attention = session.unread.attention(row.channelId, row.id);
-        return !attention.unread && !attention.forced;
+        // Your own messages and coordination between agents are never unread,
+        // so they have no read state.
+        if (!readable(row, session) || !joined(row)) return false;
+        return !session.unread.attention(row.channelId, row.id).unread;
       },
       markUnread(row: ChannelMessage) {
         management.report(undefined);
         void session.unread
-          .markMessageUnread(row.channelId, row.id)
+          .markUnreadLocal({
+            kind: "message",
+            channelId: row.channelId,
+            messageId: row.id,
+          })
           .catch((cause) =>
             management.report(
               cause instanceof Error
@@ -210,6 +211,11 @@ export function useMessageKeyActions(session: RelaySession) {
     };
   }, [management, editor, session]);
 }
+
+/** Your own messages and coordination between agents are never unread, so
+ * they have no read state. */
+const readable = (row: ChannelMessage, session: RelaySession) =>
+  row.audience !== "agents" && row.authorId !== session.viewer;
 
 /** A failed or unconfirmed send is still this device's outbox intent. */
 const unsent = (row: ChannelMessage) =>
@@ -286,7 +292,7 @@ export function MessageManagement({
     const headPending = !!channelId && headReadPending(session.live, channelId);
     const entryAttention = new Map<
       string,
-      Pick<MessageAttention, "unread" | "forced"> | null
+      Pick<MessageAttention, "unread"> | null
     >();
     if (channelId)
       for (const row of rows) {
@@ -295,7 +301,7 @@ export function MessageManagement({
           row.id,
           attention.status === "unknown" || attention.pending
             ? null
-            : { unread: attention.unread, forced: attention.forced },
+            : { unread: attention.unread },
         );
       }
     return {
@@ -492,10 +498,8 @@ export function MessageReadStateItem({
     (listener) => session.unread.subscribe(target, listener),
     () => session.unread.snapshot(target),
   );
-  // Coordination between agents is never unread, so it has no read state.
-  if (!management || row.audience === "agents") return null;
-  const attention = session.unread.attention(row.channelId, row.id);
-  const unread = attention.unread || attention.forced;
+  if (!management || !readable(row, session)) return null;
+  const { unread } = session.unread.attention(row.channelId, row.id);
   return (
     <MenuItem
       onClick={() => {
@@ -503,7 +507,7 @@ export function MessageReadStateItem({
         void (
           unread
             ? session.unread.markMessageRead(row.channelId, row.id)
-            : session.unread.markMessageUnread(row.channelId, row.id)
+            : session.unread.markUnreadLocal(target)
         ).catch((cause) =>
           management.report(
             cause instanceof Error

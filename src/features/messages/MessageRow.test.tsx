@@ -1612,7 +1612,7 @@ it("retires the fullscreen image viewer when its retained row is suspended", () 
 });
 
 it.each(["peer", "own"] as const)(
-  "lists Mark unread above Copy message for a managed %s message",
+  "lists the managed %s message's actions, Mark unread above Copy message",
   async (author) => {
     const snapshot = { channels: [{ id: row.channelId }], status: "ready" };
     const operations: never[] = [];
@@ -1643,7 +1643,7 @@ it.each(["peer", "own"] as const)(
         subscribe: () => () => {},
         subscribeSync: () => () => {},
         snapshot: () => undefined,
-        attention: () => ({ unread: false, forced: false, viewing: true }),
+        attention: () => ({ unread: false, viewing: true }),
         following: () => false,
       },
     } as unknown as RelaySession;
@@ -1670,7 +1670,6 @@ it.each(["peer", "own"] as const)(
       ).toEqual(
         author === "own"
           ? [
-              "Mark as unread",
               "Copy message",
               "Send to channel",
               "Copy link",

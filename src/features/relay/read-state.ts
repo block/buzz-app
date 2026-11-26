@@ -512,8 +512,13 @@ export function createReadState({
   };
   type LocalUnreadAttempt = {
     key: string;
-    /** A message or thread mark's covering context, saved with it. */
-    cover?: Readonly<{ channelId: string; rootId?: string | undefined }>;
+    /** A message or thread mark's covering context, saved with it.
+     * `through` raises the saved read mark: reading that far does not end it. */
+    cover?: Readonly<{
+      channelId: string;
+      rootId?: string | undefined;
+      through?: number | undefined;
+    }>;
     saved?: { revision: number; previous: number; set?: number | undefined };
   };
   const pendingLocalUnread = new Set<LocalUnreadAttempt>();
@@ -1424,12 +1429,15 @@ export function createReadState({
             if (cover) {
               localCovers[key] = [
                 revision,
-                effectiveFrontier(
-                  localState(current, now()),
-                  key,
-                  cover.channelId,
-                  cover.rootId === UNRESOLVED_ROOT ? undefined : cover.rootId,
-                ) ?? -1,
+                Math.max(
+                  effectiveFrontier(
+                    localState(current, now()),
+                    key,
+                    cover.channelId,
+                    cover.rootId === UNRESOLVED_ROOT ? undefined : cover.rootId,
+                  ) ?? -1,
+                  cover.through ?? -1,
+                ),
                 cover.channelId,
                 cover.rootId ?? "",
               ];

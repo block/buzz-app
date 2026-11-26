@@ -494,9 +494,22 @@ describe("holdsLead", () => {
     const both = [reviewQueue, review];
     const first = holdsLead(undefined, found(review, 0.9), "open review", both);
     expect(first.jump).toBe(false);
+    const second = holdsLead(
+      first.lead,
+      found(reviewQueue, 0.9),
+      "open review queue",
+      both,
+    );
+    expect(second).toEqual({ jump: true, lead: undefined });
+    // If the middle jump is discarded by a newer transcript, the earlier short
+    // lead was cleared so #review must establish a fresh lead before jumping.
     expect(
-      holdsLead(first.lead, found(reviewQueue, 0.9), "open review queue", both)
-        .jump,
-    ).toBe(true);
+      holdsLead(
+        second.lead,
+        found(review, 0.9),
+        "open review queue no review",
+        both,
+      ).jump,
+    ).toBe(false);
   });
 });

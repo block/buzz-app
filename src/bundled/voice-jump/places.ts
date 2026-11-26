@@ -447,7 +447,7 @@ export function holdsLead(
     result.probability < VOICE_JUMP_LIVE_THRESHOLD
   )
     return { jump: false, lead: undefined };
-  if (!extendable(result.place, places)) return { jump: true, lead };
+  if (!extendable(result.place, places)) return { jump: true, lead: undefined };
   const words = said.trim().split(/\s+/).length;
   if (lead?.key !== result.place.key)
     return { jump: false, lead: { key: result.place.key, words } };

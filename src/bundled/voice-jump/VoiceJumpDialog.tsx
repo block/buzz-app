@@ -338,7 +338,7 @@ function VoiceJumpBody({
     const current = run.current;
     if (current.done) return;
     const said = spoken.trim();
-    noteTranscript(said);
+    const revision = noteTranscript(said);
     current.pending = undefined;
     if (!said) return setPhase({ kind: "none", text: "" });
     if (!placesNow().length)
@@ -352,7 +352,12 @@ function VoiceJumpBody({
       );
     setPhase({ kind: "matching" });
     void ask(said, scope?.communityOrigin).then((result) => {
-      if (run.current !== current || current.done) return;
+      if (
+        run.current !== current ||
+        current.done ||
+        revision !== current.revision
+      )
+        return;
       show(result);
       if (
         result.outcome === "found" &&
@@ -385,7 +390,10 @@ function VoiceJumpBody({
       live(next, noteTranscript(next));
     },
     onPause: (spoken) => settle(spoken),
-    onEnd: (spoken) => submitRef.current(spoken),
+    onEnd: (spoken) => {
+      setText(spoken);
+      submitRef.current(spoken);
+    },
     onError: (_failure, message) => {
       restart();
       setPhase({ kind: "failed", message });
@@ -439,6 +447,7 @@ function VoiceJumpBody({
           // Typing takes over from the microphone.
           cancel();
           restart();
+          run.current.latest = next;
           setCandidates([]);
           setPhase({ kind: "listening" });
           setText(next);
@@ -447,7 +456,7 @@ function VoiceJumpBody({
           if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
           event.preventDefault();
           cancel();
-          submit(text);
+          submit(run.current.latest ?? text);
         }}
         trailing={
           <IconButton

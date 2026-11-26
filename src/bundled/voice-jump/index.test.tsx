@@ -514,3 +514,44 @@ test("without a community, hosted invalid_request falls back to local page match
     }),
   );
 });
+
+test("Enter right after final speech submits the latest transcript without racing the older text", async () => {
+  const first = deferred<ReturnType<typeof answer>>();
+  const second = deferred<ReturnType<typeof answer>>();
+  const { listens, decide, open } = await mount();
+  decide.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+  const listen = listens[0] as ListenOptions;
+  const field = screen.getByRole("searchbox", { name: "Where to" });
+
+  act(() => listen.onText("design"));
+  expect(decide).toHaveBeenCalledTimes(1);
+
+  // Final speech arrives and Enter fires before React commits the new input value.
+  act(() => {
+    listen.onEnd("launch");
+    fireEvent.keyDown(field, { key: "Enter" });
+  });
+  expect(decide).toHaveBeenCalledTimes(2);
+
+  await act(async () => {
+    first.resolve(answer("#design", { "#design": 0.95, "#launch": 0.02 }));
+    await first.promise;
+  });
+  expect(open).not.toHaveBeenCalled();
+
+  await act(async () => {
+    second.resolve(answer("#launch", { "#launch": 0.95, "#design": 0.02 }));
+    await second.promise;
+  });
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin },
+      channelId: "launch",
+    }),
+  );
+  expect(open).toHaveBeenCalledTimes(1);
+});

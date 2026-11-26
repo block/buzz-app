@@ -10,6 +10,7 @@ import {
 } from "./threads";
 import { byteSize } from "./budget";
 import { ReadError } from "./errors";
+import { foldMessages } from "./fold";
 import type { RelayReader } from "./reader";
 import type { OutgoingEvent } from "./outbox";
 import type { LiveCallbacks } from "./live";

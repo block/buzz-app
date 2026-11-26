@@ -88,3 +88,23 @@ it("reopens a saved Orchestrator as an earlier selection that still can't edit o
   expect(nativeToolAllowed("Edit", { toolPreset: "super-agent" })).toBe(false);
   expect(nativeToolAllowed("Bash", { toolPreset: "super-agent" })).toBe(false);
 });
+
+it("warns before saving a restricted Goose role on Windows only", async () => {
+  const user = userEvent.setup();
+  const goose = { ...agentWith({}), type: "buzz.goose/goose" };
+  const warning = /messages pause until you choose All/;
+  const { rerender } = render(
+    <AgentToolAccess agents={agentsWith()} agent={goose} windows />,
+  );
+  expect(screen.queryByText(warning)).toBeNull();
+  await user.click(screen.getByRole("radio", { name: "Read Only" }));
+  expect(screen.getByText(warning)).toBeInTheDocument();
+  rerender(
+    <AgentToolAccess agents={agentsWith()} agent={goose} windows={false} />,
+  );
+  expect(screen.queryByText(warning)).toBeNull();
+  rerender(
+    <AgentToolAccess agents={agentsWith()} agent={agentWith({})} windows />,
+  );
+  expect(screen.queryByText(warning)).toBeNull();
+});

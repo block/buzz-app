@@ -190,6 +190,12 @@ it("lets Read / Write edit, run commands and chat, but not use connected, plugin
     expect(nativeToolAllowed(name, builder)).toBe(true);
   expect(nativeToolAllowed("mcp__github__create_issue", builder)).toBe(false);
   expect(buzzToolAllowed("send", builder)).toBe(true);
+  const reading = [
+    { name: "docs_read", effect: "read" as const },
+    { name: "chat_post", effect: "message" as const },
+  ];
+  expect(buzzToolAllowed("docs_read", builder, reading)).toBe(true);
+  expect(buzzToolAllowed("chat_post", builder, reading)).toBe(true);
   for (const name of [
     "canvas_set",
     "settings_set",

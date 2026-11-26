@@ -272,9 +272,9 @@ export const PRESET_INFO: readonly RoleInfo[] = [
     id: "builder",
     label: "Read / Write",
     description: "Edits files and runs builds and tests.",
-    can: "Read, edit and create files (Read, Edit, Write), run commands such as builds, tests and git (Bash), use the web, delegate to subagents (Task), read Buzz and chat (read, send).",
+    can: "Read, edit and create files (Read, Edit, Write), run commands such as builds, tests and git (Bash), use the web, delegate to subagents (Task), read Buzz and chat (read, send), and use plugin tools that read or send messages.",
     cannot:
-      "Use connected MCP tools or plugin tools, or manage memory, attention, channels, canvases, notes, members, plugins or settings.",
+      "Use connected MCP tools or plugin tools that change things, or manage memory, attention, channels, canvases, notes, members, plugins or settings.",
   },
   {
     id: "reviewer",

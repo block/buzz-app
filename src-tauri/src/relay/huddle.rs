@@ -948,7 +948,7 @@ mod tests {
             ]
         );
         assert_eq!(e.tags[2], ["visibility", "private"]);
-        let root = "ab".repeat(32);
+        let root = format!("{}{}", "ab".repeat(16), "cd".repeat(16));
         let routed = create(
             &room,
             &parent,
@@ -960,15 +960,34 @@ mod tests {
         );
         assert_eq!(routed.tags[4], e.tags[4]);
         assert!(super::super::channel_writes::creation(&routed));
-        let card = "cd".repeat(32);
+        assert_eq!(
+            routed.tags[6..],
+            [
+                vec!["t".to_owned(), "huddle:transcripts".into()],
+                vec!["t".into(), format!("huddle:root:0:{}", "ab".repeat(16))],
+                vec!["t".into(), format!("huddle:root:1:{}", "cd".repeat(16))],
+            ]
+        );
+        let card = format!("{}{}", "ef".repeat(16), "01".repeat(16));
         let with_card = create(
             &room,
             &parent,
-            Some(&TranscriptOrigin { root: None, card: true }),
+            Some(&TranscriptOrigin {
+                root: Some(root),
+                card: true,
+            }),
             Some(&card),
         );
         assert!(super::super::channel_writes::creation(&with_card));
         assert_eq!(with_card.tags[4], e.tags[4]);
+        assert_eq!(with_card.tags[6..9], routed.tags[6..]);
+        assert_eq!(
+            with_card.tags[9..],
+            [
+                vec!["t".to_owned(), format!("huddle:card:0:{}", "ef".repeat(16))],
+                vec!["t".into(), format!("huddle:card:1:{}", "01".repeat(16))],
+            ]
+        );
         let e = lifecycle(48100, &parent, &room);
         assert_eq!(e.tags, vec![vec!["h", &parent]]);
         assert_eq!(

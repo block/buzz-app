@@ -3313,11 +3313,17 @@ export class AgentRunners {
     if (!scope || !channelId) return;
     const channel = this.host.channel(agent, event);
     // A mention's work is where its turn will be, by the turn's own rule:
-    // a thread on a top-level mention, from the start. `placed` moves it if
-    // a plugin places the turn elsewhere.
+    // a thread on a top-level mention, from the start, or where a resumed
+    // turn was placed. `placed` moves it if a plugin places the turn
+    // elsewhere. A DM is answered at its top level, so its work stays there.
     const place =
-      trigger.type === "mention"
-        ? placeOf(trigger, channelId, channel?.channelType === "solo")
+      trigger.type === "mention" && channel?.channelType !== "dm"
+        ? placeOf(
+            trigger,
+            channelId,
+            channel?.channelType === "solo",
+            job.placed?.placement,
+          )
         : undefined;
     const threadRootId =
       place && "root" in place ? place.root : threadReference(event)?.rootId;

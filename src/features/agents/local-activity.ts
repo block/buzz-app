@@ -615,11 +615,12 @@ export function createLocalAgentActivity() {
           );
         },
         /** Moves the work to where its turn was placed: the thread on `root`,
-         * or the channel's top level. */
+         * or the channel's top level. Work in a flat conversation stays. */
         placed: (root?: string) => {
           const current = entries.get(id);
           if (
             !current ||
+            current.sourceRootId === null ||
             settled(current.state) ||
             (root
               ? current.thread && current.threadRootId === root

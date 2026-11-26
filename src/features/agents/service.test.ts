@@ -11618,8 +11618,18 @@ describe("a turn closing or reloading the app stopped", () => {
       history: [asked],
     });
     await settle();
+    // Its activity is where it was placed from the start, even while queued.
+    const shown: unknown[] = [];
+    second.activity.reader.subscribeWork(() => {
+      const row = second.activity.reader
+        .work()
+        .find((work) => work.messageId === asked.id);
+      if (row && !shown.length) shown.push(row);
+    });
     second.service.resumeInterrupted();
     await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+    expect(shown[0]).toMatchObject({ threadRootId: asked.id });
+    expect(shown[0]).not.toHaveProperty("thread");
     const delivery = second.run.mock.calls[0]?.[0];
     expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
     expect(delivery?.place).toEqual({ channel, topLevel: true });
@@ -16641,6 +16651,8 @@ it.each([
     });
     try {
       await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+      // A Solo chat or DM answers a top-level mention at its top level.
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("thread");
       expect(f.activity.reader.work()[0]).toMatchObject({
         channelId: channel,
         ...(eligible

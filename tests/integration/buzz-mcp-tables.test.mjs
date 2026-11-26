@@ -157,6 +157,6 @@ test("the packaged MCP server reads a table's fields and rows", async (t) => {
         sql: "SELECT title FROM goals WHERE status = 'active'",
       }),
     ),
-    { rows: [{ title: "Ship the demo" }], more: false },
+    { rows: [{ title: "Ship the demo" }], more: false, version: head.id },
   );
 });

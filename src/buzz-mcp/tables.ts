@@ -13,6 +13,10 @@ import type { BuzzClient, BuzzEvent, RelayInfo } from "./client";
 type Args = Record<string, unknown>;
 
 const MAX_ROWS = 200;
+const PAGE = 100;
+const MAX_TABLES = 10_000;
+/** The desktop signer refuses event content larger than this. */
+const MAX_CONTENT = 64 * 1024;
 
 export const TABLE_TOOLS = [
   {
@@ -41,15 +45,20 @@ export const TABLE_TOOLS = [
   },
   {
     name: "table_query",
-    description: `Run one read-only SQL SELECT on a table and get at most ${MAX_ROWS} rows as JSON.`,
+    description: `Run one read-only SQL SELECT on a table and get at most ${MAX_ROWS} rows as JSON, with the table's version.`,
     properties: { table: { type: "string" }, sql: { type: "string" } },
     required: ["table", "sql"],
   },
   {
     name: "table_save",
     description:
-      "Run SQL that changes a table (INSERT, UPDATE, DELETE, ALTER) and save it as the next version. Returns saved, or conflict when another session saved first: read the table again and retry.",
-    properties: { table: { type: "string" }, sql: { type: "string" } },
+      "Run SQL that changes a table (INSERT, UPDATE, DELETE, ALTER) and save it as the next version. version is the one table_query returned: when the table has changed since, nothing is saved and it returns conflict, so read the table again and retry. request is an id you choose for this change: reuse it only to retry the same change, which then returns already saved instead of applying it twice.",
+    properties: {
+      table: { type: "string" },
+      sql: { type: "string" },
+      version: { type: "string" },
+      request: { type: "string" },
+    },
     required: ["table", "sql"],
   },
 ] as const;
@@ -92,7 +101,7 @@ export const TABLE_HANDLERS: Readonly<
     );
     const relay = await client.relayInfo?.();
     for (const event of grant ? [file, grant] : [file])
-      if (relay) fits(event, relay, "Nothing was created.");
+      fits(event, relay, "Nothing was created.");
 
     await ensureChannel(client, h, me);
     // The key first: a file is only published once this agent can open it,
@@ -101,11 +110,7 @@ export const TABLE_HANDLERS: Readonly<
     try {
       await client.publish(file);
     } catch (error) {
-      if (
-        !(error as Error).message.includes(
-          "conflict: artifact identity is taken",
-        )
-      )
+      if (!errorText(error).includes("conflict: artifact identity is taken"))
         throw error;
       const [taken] = await client.query([{ artifact: "head", "#d": [d] }]);
       if (!taken)
@@ -127,9 +132,24 @@ export const TABLE_HANDLERS: Readonly<
       throw new Error(
         `Your tables channel ${h} is not private to you (${problem}).`,
       );
-    const tables = await client.query([
-      { artifact: "current", "#h": [h], "#type": [TABLE_FILE] },
-    ]);
+    const tables: BuzzEvent[] = [];
+    for (let offset = 0; ; offset += PAGE) {
+      if (offset >= MAX_TABLES)
+        throw new Error(
+          `You have more than ${MAX_TABLES} tables; table_list cannot list them all.`,
+        );
+      const page = await client.query([
+        {
+          artifact: "current",
+          "#h": [h],
+          "#type": [TABLE_FILE],
+          limit: PAGE,
+          offset,
+        },
+      ]);
+      tables.push(...page.filter((table) => table.pubkey === me));
+      if (page.length < PAGE) break;
+    }
     return JSON.stringify(
       tables.map((table) => ({
         table: tag(table, "d"),
@@ -161,7 +181,7 @@ export const TABLE_HANDLERS: Readonly<
   async table_query(client, args) {
     const sql = text(args.sql);
     if (!sql) throw new Error("sql is required.");
-    return withTable(client, args, (db) => {
+    return withTable(client, args, (db, file) => {
       db.run("PRAGMA query_only = ON");
       const statement = db.prepare(sql);
       refuseAttach(statement.getSQL());
@@ -174,6 +194,7 @@ export const TABLE_HANDLERS: Readonly<
         return JSON.stringify({
           rows: result.slice(0, MAX_ROWS),
           more: result.length > MAX_ROWS,
+          version: file.id,
         });
       } finally {
         statement.free();
@@ -184,17 +205,23 @@ export const TABLE_HANDLERS: Readonly<
   async table_save(client, args) {
     const d = text(args.table);
     const sql = text(args.sql);
+    const expected = text(args.version);
+    const request = text(args.request);
     if (!d || !sql) throw new Error("table and sql are required.");
     const { file, h, key, bytes } = await openTableFor(client, d);
+    if (request) {
+      const done = await savedFor(client, h, d, request);
+      if (done) return `already saved table ${d} as version ${done.id}`;
+    }
+    if (expected && expected !== file.id)
+      return `conflict: table ${d} is at version ${file.id}, not ${expected}. Nothing was saved; read it again and retry.`;
     const db = new (await sqlite()).Database(bytes);
     let next: Uint8Array;
     try {
-      runEach(db, sql);
-      db.run("VACUUM");
-      next = db.export();
+      next = change(db, sql);
     } catch (error) {
       throw new Error(
-        `The table's SQL failed, so nothing was saved: ${(error as Error).message}`,
+        `The table's SQL failed, so nothing was saved: ${errorText(error)}`,
       );
     } finally {
       db.close();
@@ -207,16 +234,16 @@ export const TABLE_HANDLERS: Readonly<
         ["title", tag(file, "title") ?? "Table"],
         ["op", "update"],
         ["prev", file.id],
+        ...(request ? [["request", request]] : []),
       ],
       sealTable(key, next),
     );
-    if (client.relayInfo)
-      fits(version, await client.relayInfo(), "Nothing was saved.");
+    fits(version, await client.relayInfo?.(), "Nothing was saved.");
     try {
       const saved = await client.publish(version);
       return `saved table ${d} as version ${saved.id}`;
     } catch (error) {
-      const reason = refusal((error as Error).message);
+      const reason = refusal(errorText(error));
       if (!reason) throw error;
       return `${REFUSALS[reason.prefix]}: the relay said "${reason.text}"`;
     }
@@ -280,16 +307,16 @@ const keyGrant = async (
 async function withTable(
   client: BuzzClient,
   args: Args,
-  read: (db: Database) => string,
+  read: (db: Database, file: BuzzEvent) => string,
 ) {
   const d = text(args.table);
   if (!d) throw new Error("table is required.");
-  const { bytes } = await openTableFor(client, d);
+  const { file, bytes } = await openTableFor(client, d);
   const db = new (await sqlite()).Database(bytes);
   try {
-    return read(db);
+    return read(db, file);
   } catch (error) {
-    throw new Error(`The table's SQL failed: ${(error as Error).message}`);
+    throw new Error(`The table's SQL failed: ${errorText(error)}`);
   } finally {
     db.close();
   }
@@ -316,6 +343,20 @@ function refusal(message: string) {
   );
   return prefix && { prefix, text: reason };
 }
+
+/** Applies `sql` with foreign keys enforced and returns the compacted file.
+ * The check after it also catches SQL that turned enforcement off. */
+function change(db: Database, sql: string) {
+  db.run("PRAGMA foreign_keys = ON");
+  runEach(db, sql);
+  if (db.exec("PRAGMA foreign_key_check").length)
+    throw new Error("A row refers to a row that does not exist.");
+  db.run("VACUUM");
+  return db.export();
+}
+
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 /** Runs `sql` one statement at a time, as SQLite itself splits it. */
 function runEach(db: Database, sql: string) {
@@ -352,11 +393,9 @@ async function build(sql: string) {
   const db = new SQL.Database();
   try {
     db.run("PRAGMA page_size=512");
-    runEach(db, sql);
-    db.run("VACUUM");
-    return db.export();
+    return change(db, sql);
   } catch (error) {
-    throw new Error(`The table's SQL failed: ${(error as Error).message}`);
+    throw new Error(`The table's SQL failed: ${errorText(error)}`);
   } finally {
     db.close();
   }
@@ -428,10 +467,15 @@ async function uuid(seed: string) {
  * is published, measuring it as it will be signed and sent. */
 function fits(
   event: ReturnType<typeof artifact>,
-  relay: RelayInfo,
+  relay: RelayInfo | undefined,
   outcome: string,
 ) {
-  const limit = relay.maxMessageLength;
+  const content = new TextEncoder().encode(event.content).length;
+  if (content > MAX_CONTENT)
+    throw new Error(
+      `This table is too large to sign: it is ${content} bytes, and the signer accepts at most ${MAX_CONTENT}. ${outcome}`,
+    );
+  const limit = relay?.maxMessageLength;
   if (!limit) return;
   const signed = {
     id: "0".repeat(64),
@@ -487,6 +531,28 @@ async function grantsFor(client: BuzzClient, h: string, d: string, me: string) {
   )
     .filter((grant) => grant.pubkey === me && tag(grant, "table") === d)
     .sort((a, b) => b.created_at - a.created_at);
+}
+
+/** This agent's own earlier revision of table `d` made for `request`. */
+async function savedFor(
+  client: BuzzClient,
+  h: string,
+  d: string,
+  request: string,
+) {
+  const revisions = await client.query([
+    {
+      kinds: [45010],
+      artifact: "history",
+      "#d": [d],
+      "#h": [h],
+      "#request": [request],
+    },
+  ]);
+  return revisions.find(
+    (event) =>
+      event.pubkey === client.pubkey && tag(event, "request") === request,
+  );
 }
 
 async function channelState(client: BuzzClient, h: string) {

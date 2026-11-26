@@ -100,9 +100,12 @@ function relay() {
       const event = d && head(d);
       return event && member(tag(event, "h"), reader) ? [event] : [];
     }
-    if (filter.artifact !== "current") return [];
+    if (filter.artifact !== "current" && filter.artifact !== "history")
+      return [];
     const matches = [...revisions.values()]
-      .map((list) => list.at(-1) as BuzzEvent)
+      .flatMap((list) =>
+        filter.artifact === "history" ? list : [list.at(-1) as BuzzEvent],
+      )
       .filter((event) => member(tag(event, "h"), reader))
       .filter((event) =>
         Object.entries(filter)
@@ -154,6 +157,12 @@ const run = async (key: Key, name: string, args: Record<string, unknown>) =>
 
 const create = (key: Key, request: string, sql: string, name = request) =>
   run(key, "table_create", { name, request, sql });
+
+const query = async (key: Key, table: string, sql: string) =>
+  JSON.parse(await run(key, "table_query", { table, sql })) as {
+    rows: Record<string, unknown>[];
+    version: string;
+  };
 
 const listed = async (key: Key) =>
   JSON.parse(await run(key, "table_list", {})) as {
@@ -307,3 +316,122 @@ async function tablesChannelOf(key: Key) {
   );
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${((Number.parseInt(hex[16] ?? "0", 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
+
+it("saves only from the version it read, and applies a retried change once", async () => {
+  await create(a, "goals", "CREATE TABLE goals(title TEXT)");
+  const table = (await listed(a))[0]?.table as string;
+  const { version } = await query(a, table, "SELECT * FROM goals");
+  expect(
+    await run(a, "table_save", {
+      table,
+      version,
+      sql: "INSERT INTO goals VALUES ('first')",
+    }),
+  ).toMatch(/^saved table/);
+  const before = fake.published.length;
+  expect(
+    await run(a, "table_save", {
+      table,
+      version,
+      sql: "INSERT INTO goals VALUES ('stale')",
+    }),
+  ).toMatch(/^conflict: .*Nothing was saved/);
+  expect(fake.published.length).toBe(before);
+
+  // The relay stores the change but its reply is lost, so the agent retries.
+  fake.loseReply = () => true;
+  const retry = {
+    table,
+    request: "add-second",
+    sql: "INSERT INTO goals VALUES ('second')",
+  };
+  await expect(run(a, "table_save", retry)).rejects.toThrow();
+  fake.loseReply = undefined;
+  expect(await run(a, "table_save", retry)).toMatch(/^already saved table/);
+  expect((await query(a, table, "SELECT title FROM goals")).rows).toEqual([
+    { title: "first" },
+    { title: "second" },
+  ]);
+});
+
+it("reports a refusal the desktop host sends as a string", async () => {
+  await create(a, "goals", "CREATE TABLE goals(title TEXT)");
+  const table = (await listed(a))[0]?.table as string;
+  const client = session(a);
+  const publish = client.publish.bind(client);
+  client.publish = async () => {
+    throw "409 conflict: artifact head changed";
+  };
+  expect(
+    String(
+      await callTool(client, {}, "table_save", {
+        table,
+        sql: "INSERT INTO goals VALUES ('x')",
+      }),
+    ),
+  ).toBe('conflict: the relay said "conflict: artifact head changed"');
+  client.publish = publish;
+});
+
+it("refuses a change that leaves a row pointing at a missing row", async () => {
+  await create(
+    a,
+    "plans",
+    "CREATE TABLE goals(id TEXT PRIMARY KEY); CREATE TABLE steps(goal TEXT REFERENCES goals(id)); INSERT INTO goals VALUES ('g1')",
+  );
+  const table = (await listed(a))[0]?.table as string;
+  const before = fake.published.length;
+  for (const sql of [
+    "INSERT INTO steps VALUES ('missing')",
+    "PRAGMA foreign_keys = OFF; INSERT INTO steps VALUES ('missing')",
+  ])
+    await expect(run(a, "table_save", { table, sql })).rejects.toThrow(
+      /nothing was saved: (FOREIGN KEY constraint failed|A row refers to a row that does not exist)/,
+    );
+  await expect(
+    create(
+      a,
+      "orphans",
+      "CREATE TABLE goals(id TEXT PRIMARY KEY); CREATE TABLE steps(goal TEXT REFERENCES goals(id)); INSERT INTO steps VALUES ('missing')",
+    ),
+  ).rejects.toThrow(/FOREIGN KEY constraint failed/);
+  expect(fake.published.length).toBe(before);
+});
+
+it("refuses a table the signer cannot sign before anything is published", async () => {
+  await expect(
+    create(
+      a,
+      "notes",
+      "CREATE TABLE notes(body TEXT); INSERT INTO notes SELECT hex(randomblob(18000))",
+    ),
+  ).rejects.toThrow(
+    /it is \d+ bytes, and the signer accepts at most 65536\. Nothing was created\./,
+  );
+  expect(fake.published).toEqual([]);
+});
+
+it("lists every table across pages", async () => {
+  await create(a, "first", "CREATE TABLE t(v TEXT)");
+  const file = fake.published.find(
+    (event) => event.kind === 45010 && tag(event, "type") === TABLE_FILE,
+  ) as BuzzEvent;
+  for (let i = 0; i < 150; i++)
+    fake.put(
+      finalizeEvent(
+        {
+          kind: 45010,
+          created_at: 1,
+          content: file.content,
+          tags: [
+            ["d", `copy-${i}`],
+            ["h", tag(file, "h") as string],
+            ["type", TABLE_FILE],
+            ["title", `copy ${i}`],
+          ],
+        },
+        a.secret,
+      ) as unknown as BuzzEvent,
+    );
+  expect(await listed(a)).toHaveLength(151);
+});

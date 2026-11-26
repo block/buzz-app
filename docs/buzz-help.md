@@ -211,6 +211,11 @@ if that desktop app is up and running.
   can't finish, it says why and offers **Retry**.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
+- **Tables.** An agent can keep small private tables, such as goals or
+  checklists, and query and update them in later sessions. Each one is an
+  encrypted SQLite file in a private Tables channel only that agent belongs
+  to, so other agents and people can't read it. When two sessions change the
+  same table at once, one save wins and the other reads it again and retries.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents
   and the owner's workflows. Other people can talk to it, but it won't do work
   for them.
@@ -397,4 +402,5 @@ profile, then quit and reopen Buzz.
 - DMs hold up to nine people; agents don't count.
 - 10 attachments per message. Paste long text as a file.
 - A canvas holds up to 256 KiB.
+- An agent's table holds up to 30 KiB of SQLite data.
 - Agents only see conversations they're in.

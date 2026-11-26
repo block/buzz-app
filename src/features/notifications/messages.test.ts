@@ -1,4 +1,7 @@
 import { huddleDescription } from "../huddle/lifecycle";
+import { UNLISTED_LABEL } from "../relay/channel-labels";
+import { SOLO_LABEL } from "../solo/labels";
+import { TEMPORARY_LABEL } from "../solo/temporary-chat";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   SidebarDecoder,
@@ -1180,4 +1183,60 @@ it("cancels a pending thread notification when metadata marks its room as a Hudd
   }
   await flush();
   expect(h.show).not.toHaveBeenCalled();
+});
+
+it("notifies the owner when an agent replies in a closed temporary chat, while other unlisted channels stay quiet", async () => {
+  const h = await setup();
+  const now = Math.floor(Date.now() / 1000);
+  const sourceChannel = "11111111-1111-4111-8111-111111111111";
+  const sourceMessage = "a".repeat(64);
+  const labelTags = (labels: readonly string[]) =>
+    labels.map((label) => ["t", label]);
+  h.emit([
+    roster(h.relay, "temp-chat", [h.viewer.pubkey, h.peer.pubkey]),
+    metadata(h.relay, "temp-chat", "About: checklist", now, [
+      ["private"],
+      ["P", h.viewer.pubkey],
+      ["t", "stream"],
+      [
+        "about",
+        `Temporary chat about buzz://message?channel=${sourceChannel}&id=${sourceMessage}. Post back there only when asked.`,
+      ],
+      ...labelTags([SOLO_LABEL, UNLISTED_LABEL, TEMPORARY_LABEL]),
+    ]),
+    roster(h.relay, "other-unlisted", [h.viewer.pubkey, h.peer.pubkey]),
+    metadata(h.relay, "other-unlisted", "Plugin room", now, [
+      ["private"],
+      ["P", h.viewer.pubkey],
+      ["t", "stream"],
+      ["t", UNLISTED_LABEL],
+    ]),
+  ]);
+  // Another unlisted channel stays quiet even on an explicit mention.
+  h.emit(
+    [
+      message(h.peer, "other-unlisted", "quiet mention", now, [
+        ["p", h.viewer.pubkey],
+      ]),
+    ],
+    "live",
+    "other-unlisted",
+  );
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+  // The viewer's own temporary chat notifies even without an explicit @mention.
+  h.emit(
+    [message(h.peer, "temp-chat", "Three items are still open.", now)],
+    "live",
+    "temp-chat",
+  );
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: expect.stringContaining("replied in your temporary chat"),
+      body: "Three items are still open.",
+    }),
+    expect.any(Function),
+    expect.any(Function),
+  );
 });

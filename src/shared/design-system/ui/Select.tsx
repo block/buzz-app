@@ -10,6 +10,7 @@ import { Field } from "./Field";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { CheckIcon, CaretDownIcon } from "../icons/index";
 import { Button } from "./Button";
+import { useOverlayPortalContainer } from "../overlayLayer";
 
 export type SelectGroup = {
   label: string;
@@ -212,7 +213,7 @@ export function Select({
             )}
           />
         )}
-        <BaseSelect.Portal>
+        <BaseSelect.Portal container={useOverlayPortalContainer()}>
           <BaseSelect.Positioner
             className="buzz-select-positioner"
             sideOffset={4}

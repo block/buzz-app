@@ -25,7 +25,7 @@ export function ProfileChannels({
     list.status === "ready" || list.status === "error" ? list.channels : []
   ).filter(
     (channel) =>
-      !channel.huddle &&
+      !channel.unlisted &&
       !channel.metadataPending &&
       !channel.archived &&
       !channel.hidden &&
@@ -36,7 +36,7 @@ export function ProfileChannels({
     (list.status === "ready" || list.status === "error") &&
     list.channels.some(
       (channel) =>
-        !channel.huddle &&
+        !channel.unlisted &&
         !channel.archived &&
         !channel.hidden &&
         !channel.channelType &&

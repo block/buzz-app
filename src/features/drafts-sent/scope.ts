@@ -10,4 +10,4 @@ export function scopeOf(connection: RelaySnapshot) {
 
 /** Hidden from both the list and the count: Huddle rooms and channels still resolving. */
 export const listed = (channel: ChannelSummary | undefined) =>
-  !channel?.huddle && !channel?.metadataPending;
+  !channel?.unlisted && !channel?.metadataPending;

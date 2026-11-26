@@ -522,7 +522,7 @@ function InboxList({
   const selectedRetired = list.channels.some(
     (channel) =>
       channel.id === selectedTarget?.channelId &&
-      (channel.archived || channel.huddle || channel.metadataPending),
+      (channel.archived || channel.unlisted || channel.metadataPending),
   );
   useEffect(() => {
     if (

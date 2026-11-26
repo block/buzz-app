@@ -14,6 +14,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { LockIcon, RobotIcon } from "../../shared/design-system/icons";
 import { avatarMedia } from "../../shared/avatar-source";
+import { ownTemporaryChat } from "../solo/temporary-chat";
 import { useForwardSource } from "./use-forward-source";
 import styles from "./ForwardedMessage.module.css";
 
@@ -61,12 +62,15 @@ export function ForwardedMessage({
   });
   const reference = source.reference;
   const known = reference.state === "found" && reference.readable !== false;
+  const sourceChannel = session?.channels.get?.(snapshot.channelId);
   const sourceName = known
     ? reference.channelType === "dm"
       ? "Direct message"
-      : reference.channelType === "solo"
-        ? "Solo chat"
-        : `#${reference.name}`
+      : ownTemporaryChat(sourceChannel, session?.viewer)
+        ? "Temporary chat"
+        : reference.channelType === "solo"
+          ? "Solo chat"
+          : `#${reference.name}`
     : "Private conversation";
   // Collapse by rendered height so wrapped prose and code follow the same limit.
   const [overflows, setOverflows] = useState(false);

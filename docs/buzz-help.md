@@ -136,6 +136,15 @@ if that desktop app is up and running.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.
+- **Temporary chat from a message.** Choose **Temporary chat** from any
+  message's More menu to open a private chat with an agent right over that
+  conversation (or over an open inline thread). Only you can see it, it stays
+  out of the sidebar (using your **New Solo chats** temporary lifetime, or 7
+  days by default), and a **Your temporary chat** marker on the source message
+  and search both reopen it — even read-only after it archives, where you can
+  still unarchive or share replies. Choose **Post to thread** on an agent reply
+  to stage it as an attributed forward card in the source thread's reply box so
+  you can review, add a note, and send it yourself.
 - **Channels** are open (anyone can find and join them) or private (invite
   only). The member avatars in the header manage members, access and roles.
   Archived channels are read-only, and owners and admins can unarchive them.

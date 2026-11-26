@@ -3823,7 +3823,7 @@ function Composer({
           {
             name: threadRootId ? `thread in ${name}` : name,
             // A huddle opens from its entry point, never by its room's link.
-            ...(listed?.huddle
+            ...(listed?.unlisted
               ? {}
               : { link: conversationLink(channelId, threadRootId) }),
           },

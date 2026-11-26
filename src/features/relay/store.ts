@@ -562,6 +562,7 @@ export function createChannelStore(
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
         old.huddle === channel.huddle &&
+        old.unlisted === channel.unlisted &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
         old.ttlSeconds === channel.ttlSeconds &&
@@ -4241,6 +4242,7 @@ export function createChannelStore(
           [...new Set([transport.viewer, ...channel.members])].sort(),
         ),
         labels: channel.labels,
+        ...(channel.description ? { description: channel.description } : {}),
         creator: transport.viewer,
         createdAt,
         updatedAt: createdAt,

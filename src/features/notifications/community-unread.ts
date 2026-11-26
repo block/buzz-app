@@ -72,7 +72,7 @@ export function observeCommunityUnread(
         .list()
         .channels.filter(
           (channel) =>
-            !channel.huddle &&
+            !channel.unlisted &&
             !channel.metadataPending &&
             !channel.archived &&
             (channel.channelType === "dm" || !channel.hidden) &&

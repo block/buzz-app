@@ -9,7 +9,7 @@ import { soloLabels } from "../solo/labels";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
-import { channelIdentity } from "./channel-labels";
+import { channelIdentity, unlistedLabels } from "./channel-labels";
 
 const names = new WeakMap<RelayEvent, string | undefined>();
 /** Display name from signed channel metadata; the content body overrides the tag. */
@@ -249,7 +249,14 @@ export class DiscoveryState {
   /** Lists a Solo chat this device is creating until the relay confirms it. */
   start(channel: ChannelSummary) {
     if (this.metadata.has(channel.id) || this.rosters.has(channel.id)) return;
-    this.starting.set(channel.id, Object.freeze({ ...channel, pending: true }));
+    this.starting.set(
+      channel.id,
+      Object.freeze({
+        ...channel,
+        pending: true,
+        ...(unlistedLabels(channel.labels) ? { unlisted: true as const } : {}),
+      }),
+    );
   }
   /** Returns whether a started chat was still awaiting confirmation. */
   abandon(id: string): boolean {
@@ -514,6 +521,9 @@ export class DiscoveryState {
     return {
       id,
       ...(huddle || legacyHuddle ? { huddle: true as const } : {}),
+      ...(huddle || legacyHuddle || unlistedLabels(identity?.labels)
+        ? { unlisted: true as const }
+        : {}),
       ...(huddle ? { parentChannelId: huddle } : {}),
       ...(!this.authorized(id) || this.cached.has(id) || viewerRole === "guest"
         ? { readOnly: true as const }

@@ -177,6 +177,13 @@ import styles from "./Channels.module.css";
 import { BOARD_MAIN_MIN_REM } from "./panel-split";
 import type { CommunityReader } from "../../features/communities/service";
 import { avatarMedia } from "../../shared/avatar-source";
+import { TemporaryChatSheet } from "./TemporaryChat";
+import {
+  ownTemporaryChat,
+  showTemporaryChat,
+  temporarySource,
+  useOpenTemporaryChat,
+} from "../../features/solo/temporary-chat";
 
 /** The open Solo conversation's Archive, published for the shortcut while its visit is live. */
 export type ArchiveShortcut = {
@@ -458,6 +465,7 @@ function ChannelWorkspace({
     if (list.status === "ready") queries.channelKit.ensure();
   }, [queries, list.status]);
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
+  const temporaryChat = useOpenTemporaryChat(queries);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
   const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
@@ -540,7 +548,7 @@ function ChannelWorkspace({
     list.channels.filter(
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
-        !channel.huddle && !channel.metadataPending,
+        !channel.unlisted && !channel.metadataPending,
     ),
     queries.profiles,
     queries.names,
@@ -649,8 +657,11 @@ function ChannelWorkspace({
   const resolving =
     resolvingMembership ||
     (list.status !== "error" && !!requestedDestination?.metadataPending);
+  const requestedTemporary = ownTemporaryChat(requestedDestination, viewer)
+    ? temporarySource(requestedDestination.description)
+    : undefined;
   const current =
-    requestedDestination?.huddle || requestedDestination?.metadataPending
+    requestedDestination?.unlisted || requestedDestination?.metadataPending
       ? undefined
       : requestedDestination;
   useLayoutEffect(() => {
@@ -694,7 +705,7 @@ function ChannelWorkspace({
           (channel) =>
             channel.id === requestedChannel &&
             !channel.cached &&
-            !channel.huddle &&
+            !channel.unlisted &&
             !channel.metadataPending &&
             channel.channelType !== "solo" &&
             channel.channelType !== "dm",
@@ -766,6 +777,33 @@ function ChannelWorkspace({
     if (
       !cached &&
       !resolving &&
+      requestedTemporary &&
+      requestedDestination &&
+      navigation &&
+      viewer
+    ) {
+      showTemporaryChat(queries, {
+        chatId: requestedDestination.id,
+        source: requestedTemporary,
+      });
+      navigation.resolve({
+        version: 1,
+        kind: "conversation",
+        channelId: requestedTemporary.channelId,
+        messageId: requestedTemporary.messageId,
+        ...(requestedTemporary.rootId !== requestedTemporary.messageId
+          ? { threadRootId: requestedTemporary.rootId }
+          : {}),
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+      return;
+    }
+    if (
+      !cached &&
+      !resolving &&
       !current &&
       ((requestedChannel && list.status === "ready") ||
         (list.status === "error" &&
@@ -802,10 +840,13 @@ function ChannelWorkspace({
     emptyDestination,
     draft,
     requestedChannel,
+    requestedDestination,
+    requestedTemporary,
     resolving,
     current,
     list,
     navigation,
+    queries,
     viewer,
     scope,
   ]);
@@ -2429,6 +2470,20 @@ function ChannelWorkspace({
       )
         return false;
       const parsed = parseBuzzLink(url);
+      const linkedTemporary =
+        parsed && "channelId" in parsed && parsed.channelId
+          ? queries.channels.get?.(parsed.channelId)
+          : undefined;
+      if (ownTemporaryChat(linkedTemporary, queries.viewer)) {
+        const tempSource = temporarySource(linkedTemporary.description);
+        if (tempSource && tempSource.channelId === current?.id) {
+          showTemporaryChat(queries, {
+            chatId: linkedTemporary.id,
+            source: tempSource,
+          });
+          return true;
+        }
+      }
       const linkedChat =
         parsed?.format === "legacy" &&
         !parsed.messageId &&
@@ -2864,6 +2919,25 @@ function ChannelWorkspace({
       !fullscreenMedia,
     contentReadyChannel === currentId,
   );
+  // The open temporary chat from this conversation, over the composer of
+  // what is on top: the conversation, or its inline thread.
+  const temporarySheet =
+    temporaryChat &&
+    current &&
+    temporaryChat.source.channelId === current.id ? (
+      <TemporaryChatSheet
+        key={`${temporaryChat.chatId}:${inlineThread ?? ""}`}
+        session={queries}
+        scope={scope}
+        extensions={extensions}
+        interactions={{
+          onOpenLink: openLink,
+          canOpenLink,
+          onOpenMediaReview: openMediaReview,
+        }}
+        open={temporaryChat}
+      />
+    ) : undefined;
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
     <div className={styles.conversationBody}>
@@ -3045,16 +3119,21 @@ function ChannelWorkspace({
           messageId={addressed?.inlineMessage}
           // A layer over the thread grows the thread to fit it.
           tall={
-            !!layerTarget &&
-            layerTarget.rootId === inlineThread &&
-            !layerTarget.channelId
+            !!temporarySheet ||
+            (!!layerTarget &&
+              layerTarget.rootId === inlineThread &&
+              !layerTarget.channelId)
           }
           seen={seen}
           close={() => closeInline(inlineThread)}
           moveToTab={() => moveInlineToTab(inlineThread)}
           onResolvedRoot={(root) => resolveInlineRoot(inlineThread, root)}
+          // An open thread covers the conversation, so a temporary chat
+          // stacks on the thread's reply box.
+          over={temporarySheet}
         />
       )}
+      {!inlineThread && temporarySheet}
       {current && <LayerReader channelId={current.id} />}
     </div>
   );

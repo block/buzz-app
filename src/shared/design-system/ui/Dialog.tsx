@@ -10,6 +10,7 @@ import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { useModalWindowDrag } from "./ModalWindowDrag";
 import { IconButton } from "./IconButton";
 import { ScrollEdgeMaterial } from "./ScrollEdgeMaterial";
+import { OverlayPortalProvider } from "../overlayLayer";
 import { useFinalFocusUnlessMoved } from "./finalFocus";
 
 type PopupProps = ComponentProps<typeof BaseDialog.Popup>;
@@ -281,30 +282,32 @@ export function Dialog({
           ref={focus.ref}
           finalFocus={focus.finalFocus}
         >
-          {step ? (
-            <>
-              {/* One stable accessible label, even while two visual steps crossfade. */}
-              <BaseDialog.Title className="sr-only">{title}</BaseDialog.Title>
-              {description && (
-                <BaseDialog.Description className="sr-only">
-                  {description}
-                </BaseDialog.Description>
-              )}
-              <AnimatePresence initial={false}>
-                <DialogStep
-                  key={step.key}
-                  scale={step.scale}
-                  height={height}
-                  bodyLayout={bodyLayout}
-                  instant={motion === "none"}
-                >
-                  {contents}
-                </DialogStep>
-              </AnimatePresence>
-            </>
-          ) : (
-            contents
-          )}
+          <OverlayPortalProvider value={undefined}>
+            {step ? (
+              <>
+                {/* One stable accessible label, even while two visual steps crossfade. */}
+                <BaseDialog.Title className="sr-only">{title}</BaseDialog.Title>
+                {description && (
+                  <BaseDialog.Description className="sr-only">
+                    {description}
+                  </BaseDialog.Description>
+                )}
+                <AnimatePresence initial={false}>
+                  <DialogStep
+                    key={step.key}
+                    scale={step.scale}
+                    height={height}
+                    bodyLayout={bodyLayout}
+                    instant={motion === "none"}
+                  >
+                    {contents}
+                  </DialogStep>
+                </AnimatePresence>
+              </>
+            ) : (
+              contents
+            )}
+          </OverlayPortalProvider>
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>

@@ -1,6 +1,7 @@
 import { ContextMenu as BaseContextMenu } from "@base-ui/react/context-menu";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { CheckIcon, CaretRightIcon } from "../icons/index";
+import { useOverlayPortalContainer } from "../overlayLayer";
 import { useFinalFocusUnlessMoved } from "./finalFocus";
 import { hoverOpenTiming, type HoverOpen } from "./hoverIntent";
 import {
@@ -129,8 +130,9 @@ function PositionedPopup({
 }: PopupProps) {
   const focus = useFinalFocusUnlessMoved(finalFocus, ref);
   const contextMenu = useContext(ContextMenuPresence) !== null;
+  const portalContainer = useOverlayPortalContainer();
   return (
-    <BaseMenu.Portal>
+    <BaseMenu.Portal container={portalContainer}>
       <BaseMenu.Positioner
         className="buzz-menu-positioner"
         align={align}

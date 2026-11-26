@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppServices } from "../../app/services";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { splitPartition } from "../relay/partition";
+import { openTemporaryChat } from "../solo/temporary-chat";
 import {
   bindAgentCompletionNotifications,
   completionBody,
@@ -20,7 +21,7 @@ export function AgentCompletionNotifications({
 }: {
   services: Pick<
     AppServices,
-    "agentActivity" | "agents" | "navigation" | "notifications"
+    "agentActivity" | "agents" | "communities" | "navigation" | "notifications"
   >;
 }) {
   const notify = useToastNotification();
@@ -29,7 +30,26 @@ export function AgentCompletionNotifications({
       bindAgentCompletionNotifications(services.agentActivity, {
         focused: () =>
           isTauri() ? getCurrentWindow().isFocused() : document.hasFocus(),
-        active: () => services.navigation.snapshot().entry.target,
+        active: () => {
+          const entry = services.navigation.snapshot().entry.target;
+          const relay = services.communities.relay.snapshot();
+          const open =
+            relay.status === "ready"
+              ? openTemporaryChat(relay.session)
+              : undefined;
+          if (
+            open &&
+            entry.kind === "conversation" &&
+            entry.channelId === open.source.channelId
+          )
+            return {
+              version: 1,
+              kind: "conversation",
+              scope: entry.scope,
+              channelId: open.chatId,
+            };
+          return entry;
+        },
         target: (work) => completionTarget(work, splitPartition(work.scope)),
         desktop: (work, target) => {
           const name = agentName(services, work.agent);

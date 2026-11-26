@@ -4,6 +4,13 @@ import { MessagesSidebar } from "./MessagesSidebar";
 import { soloSidebarSource } from "./SoloSidebarSource";
 import { teamSidebarSource } from "./TeamSidebarSource";
 import { StartLinkedChat, canStartLinkedChatFrom } from "./StartLinkedChat";
+import {
+  PostBackMenuItem,
+  TemporaryChatMarker,
+  TemporaryChatMenuItem,
+  canPostBack,
+  canStartTemporaryChat,
+} from "./TemporaryChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
@@ -98,6 +105,29 @@ export const apply: PluginModule["apply"] = (ctx) => {
         navigation={navigator}
         channelId={message.channelId}
         message={message}
+      />
+    ),
+  });
+  ctx.conversation.registerMessageAction({
+    id: "temporary-chat",
+    title: "Temporary chat",
+    placement: "menu",
+    icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
+    matches: canStartTemporaryChat,
+    component: TemporaryChatMenuItem,
+    marker: TemporaryChatMarker,
+  });
+  ctx.conversation.registerMessageAction({
+    id: "temporary-chat-post-back",
+    title: "Post to thread",
+    placement: "menu",
+    matches: canPostBack,
+    component: ({ message, session, close }) => (
+      <PostBackMenuItem
+        message={message}
+        session={session}
+        navigation={navigator}
+        close={close}
       />
     ),
   });

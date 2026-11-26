@@ -58,7 +58,7 @@ it("keeps only your private channels, split by Bestie's membership, most recent 
       channel("dm", [YOU, BESTIE], { channelType: "dm" }),
       channel("solo", [YOU, BESTIE], { channelType: "solo" }),
       channel("archived", [YOU], { archived: true }),
-      channel("huddle", [YOU], { huddle: true }),
+      channel("huddle", [YOU], { huddle: true, unlisted: true }),
     ],
     YOU,
     BESTIE,

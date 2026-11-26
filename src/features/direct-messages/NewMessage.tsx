@@ -534,7 +534,7 @@ export function NewMessage({
         channel.cached ||
         channel.readOnly ||
         channel.pending ||
-        channel.huddle ||
+        channel.unlisted ||
         !channel.members ||
         !sameDirectMessage(
           channel.members,

@@ -71,6 +71,7 @@ it("shows only exact verified visible memberships, handles partial lists and ope
         name: "Hidden huddle",
         channelType: "stream",
         huddle: true,
+        unlisted: true,
         members: [person],
       },
       { id: "forum", name: "Forum", channelType: "forum", members: [person] },

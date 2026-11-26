@@ -1,4 +1,5 @@
 import { plainText } from "../../features/notifications/content";
+import { hiddenFromSearch } from "../../features/solo/temporary-chat";
 import { workflowOwner } from "../../features/relay/workflow-attribution";
 import {
   useCallback,
@@ -168,7 +169,7 @@ async function readPage(
       !hitChannelId ||
       (channelId && hitChannelId !== channelId) ||
       !hitChannel ||
-      hitChannel.huddle
+      hiddenFromSearch(hitChannel, session.viewer)
     )
       return [];
     // Search returns original indexed events, not an auxiliary edit fold.
@@ -243,7 +244,7 @@ export function useSearchMessages(
       const channel = session.channels.get?.(id);
       return (
         !!channel &&
-        !channel.huddle &&
+        !hiddenFromSearch(channel, session.viewer) &&
         (includePending || !channel.metadataPending)
       );
     },

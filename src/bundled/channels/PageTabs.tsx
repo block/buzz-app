@@ -95,7 +95,7 @@ export function PageTabs({
   const { joined: channels, profiles } = useChannelLabels(
     // As in Channels, a Huddle room's tabs show the unavailable placeholder.
     list.channels.filter(
-      (channel) => !channel.huddle && !channel.metadataPending,
+      (channel) => !channel.unlisted && !channel.metadataPending,
     ),
     session.profiles,
     session.names,

@@ -5,6 +5,16 @@ export const MAX_CHANNEL_LABELS = 8;
 const CHANNEL_TYPES = new Set(["stream", "forum", "dm", "workflow", "system"]);
 const LABEL = /^[a-z0-9.:-]{1,64}$/;
 
+/** NIP-CL label for a channel that its own surface presents, such as a
+ * plugin's view or the message it was opened from: the app's own lists
+ * (sidebar, search, pickers, inbox and unread counts) leave it out. Like any
+ * label it is presentation only and never changes who can read it. */
+export const UNLISTED_LABEL = "buzz.unlisted";
+
+/** Whether `labels` mark a channel unlisted; see UNLISTED_LABEL. */
+export const unlistedLabels = (labels: readonly string[] | undefined) =>
+  !!labels?.includes(UNLISTED_LABEL);
+
 /** Refusal for NIP-CL writes and lookups on a relay that does not advertise
  * `nip-cl`. Such a relay drops label tags, so nothing is sent. */
 export function channelIdentityUnsupported(): Error {

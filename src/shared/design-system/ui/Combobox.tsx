@@ -4,6 +4,7 @@ import { CaretDownIcon, CircleNotchIcon, CheckIcon } from "../icons";
 import { Field } from "./Field";
 import { InputGroup } from "./InputGroup";
 import { IconButton } from "./IconButton";
+import { useOverlayPortalContainer } from "../overlayLayer";
 
 /** Shared presentation; callers retain filtering, custom values and async work. */
 function Control({
@@ -166,8 +167,9 @@ function Popup({
     typeof BaseCombobox.Positioner
   >["collisionBoundary"];
 }) {
+  const portalContainer = useOverlayPortalContainer();
   return (
-    <BaseCombobox.Portal>
+    <BaseCombobox.Portal container={portalContainer}>
       <BaseCombobox.Positioner
         side={side}
         sideOffset={4}

@@ -61,6 +61,9 @@ export type ChannelSummary = Readonly<{
   parentChannelId?: string | undefined;
   /** Marked Huddle room; presented through its parent conversation, not the sidebar. */
   huddle?: true;
+  /** Left out of the app's conversation lists: a Huddle room, or a channel
+   * labelled `UNLISTED_LABEL` that its own surface presents. */
+  unlisted?: true;
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
@@ -414,6 +417,7 @@ export interface ChannelQueries {
       members: readonly string[];
       labels: readonly string[];
       ttlSeconds?: number | undefined;
+      description?: string | undefined;
     }>,
   ): void;
   /** Drops a started chat the relay did not confirm. */

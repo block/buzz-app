@@ -9,6 +9,7 @@ import { deletionApplies } from "../../features/relay/fold";
 import { readErrorKind } from "../../features/relay/errors";
 import type { RelaySession } from "../../features/relay/session";
 import { threadReference } from "../../features/relay/thread-reference";
+import { hiddenFromSearch } from "../../features/solo/temporary-chat";
 import type { FinderCorpus, FinderDoc } from "./corpus.ts";
 
 const KINDS = [9, 40002];
@@ -223,7 +224,7 @@ export function startFinderSync({
     const found = channel(channelId);
     return (
       !!found &&
-      !found.huddle &&
+      !hiddenFromSearch(found, session.viewer) &&
       !found.cached &&
       (!found.readOnly || found.viewerRole === "guest")
     );

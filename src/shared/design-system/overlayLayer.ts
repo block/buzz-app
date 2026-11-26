@@ -1,4 +1,19 @@
+import { createContext, useContext } from "react";
+
 const unavailable = '[hidden], [inert], [aria-hidden="true"]';
+
+/**
+ * Explicit portal container for popups inside a non-modal surface that clips
+ * or transforms its own subtree (such as a stacked ComposerSheet). Undefined
+ * keeps Base UI's default parent portal, which modal dialogs rely on.
+ */
+const OverlayPortalContext = createContext<
+  (() => HTMLElement | null) | undefined
+>(undefined);
+export const OverlayPortalProvider = OverlayPortalContext.Provider;
+export function useOverlayPortalContainer(): HTMLElement | null | undefined {
+  return useContext(OverlayPortalContext)?.();
+}
 
 /** The topmost available modal: the last open one in document order. */
 export function activeModal(document: Document) {

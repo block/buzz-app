@@ -336,6 +336,39 @@ export function policyRelay({
             filters.flatMap((filter) => answer(communityOf(url), filter)),
           );
         }
+        if (
+          filters.length === 2 &&
+          filters[0].consistency === "strong" &&
+          filters[1].ids
+        ) {
+          // A started Solo chat confirms its metadata, roster and create.
+          expect(filters).toEqual([
+            {
+              "#d": [expect.any(String)],
+              kinds: [39000, 39002],
+              limit: 2,
+              consistency: "strong",
+            },
+            {
+              ids: [expect.stringMatching(/^[0-9a-f]{64}$/)],
+              limit: 1,
+              consistency: "strong",
+            },
+          ]);
+          const community = communityOf(url);
+          for (const filter of filters)
+            report.queries.push({ community, filter, at: performance.now() });
+          return Response.json(
+            filters.flatMap((filter) =>
+              filter.ids
+                ? answer(community, { ...filter, kinds: [9007] })
+                : [
+                    ...answer(community, { ...filter, kinds: [39000] }),
+                    ...answer(community, { ...filter, kinds: [39002] }),
+                  ],
+            ),
+          );
+        }
         if (filters.length === 2 && filters[0].kinds?.includes(39000)) {
           // Exact channel authority lookup, distinct from sidebar preferences.
           const ids = filters[0]["#d"];
@@ -343,12 +376,17 @@ export function policyRelay({
           expect(ids.length).toBeGreaterThan(0);
           expect(ids.length).toBeLessThanOrEqual(128);
           expect(new Set(ids).size).toBe(ids.length);
+          // A chat being started reads its authority strongly.
+          const strong = filters[0].consistency
+            ? { consistency: "strong" }
+            : {};
           expect(filters).toEqual([
             {
               kinds: [39000],
               authors: [relayAuthor],
               "#d": ids,
               limit: ids.length + 1,
+              ...strong,
             },
             {
               kinds: [39002],
@@ -356,6 +394,7 @@ export function policyRelay({
               "#d": ids,
               "#p": [viewer],
               limit: ids.length + 1,
+              ...strong,
             },
           ]);
           const community = communityOf(url);
@@ -468,11 +507,16 @@ export function policyRelay({
             expect(filter).toEqual({
               kinds: [9007],
               authors: expect.arrayContaining([expect.any(String)]),
-              "#h": expect.arrayContaining([expect.any(String)]),
+              // A start's own create, or creator receipts by channel.
+              ...(filter.ids
+                ? { ids: [expect.stringMatching(/^[0-9a-f]{64}$/)] }
+                : { "#h": expect.arrayContaining([expect.any(String)]) }),
               limit: expect.any(Number),
               ...(filter.consistency ? { consistency: "strong" } : {}),
             });
-            expect(filter["#h"].length).toBeLessThanOrEqual(2048);
+            expect((filter["#h"] ?? filter.ids).length).toBeLessThanOrEqual(
+              2048,
+            );
             expect(filter.limit).toBeGreaterThan(0);
             expect(filter.limit).toBeLessThanOrEqual(500);
             report.queries.push({

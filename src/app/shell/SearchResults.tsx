@@ -416,7 +416,7 @@ export function SearchResults({
     () =>
       list.channels.filter(
         (channel) =>
-          !channel.huddle &&
+          !channel.unlisted &&
           !channel.metadataPending &&
           (!channel.archived ||
             // A saved member row stays read-only until the relay confirms it.
@@ -620,7 +620,7 @@ export function SearchResults({
     !!name && !!wanted && normalizeName(name) === normalizeName(wanted);
   /** Whether `channel` is the conversation the `in:` operator names. */
   const matchesInOperator = (channel: ChannelSummary) => {
-    if (channel.huddle) return false;
+    if (channel.unlisted) return false;
     if (operatorPerson === undefined)
       return (
         channel.name.toLowerCase() === operatorChannel.toLowerCase() ||

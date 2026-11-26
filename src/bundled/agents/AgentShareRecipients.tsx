@@ -65,7 +65,7 @@ export function AgentShareRecipients({
   const channels: ShareTarget[] = list.channels
     .filter(
       (item) =>
-        !item.huddle &&
+        !item.unlisted &&
         !item.metadataPending &&
         !item.readOnly &&
         !item.cached &&

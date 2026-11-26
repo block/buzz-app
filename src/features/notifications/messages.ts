@@ -11,6 +11,7 @@ import { relayPartition } from "../relay/partition";
 import type { RelaySession } from "../relay/session";
 import type { NotificationsService } from "./service";
 import { messageNotificationText } from "./content";
+import { ownTemporaryChat } from "../solo/temporary-chat";
 
 const labels = {
   mention: "Mentions",
@@ -80,7 +81,7 @@ export function notificationAuthorized(
       .channels.some(
         (channel) =>
           channel.id === target.channelId &&
-          !channel.huddle &&
+          (!channel.unlisted || ownTemporaryChat(channel, scope.viewer)) &&
           !channel.metadataPending &&
           viewerMember(channel, scope.viewer),
       )

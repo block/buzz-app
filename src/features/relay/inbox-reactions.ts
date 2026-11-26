@@ -73,7 +73,7 @@ export function createInboxReactions({
   const allowedChannel = (channel: ChannelSummary) =>
     !channel.cached &&
     !channel.archived &&
-    !channel.huddle &&
+    !channel.unlisted &&
     !channel.metadataPending &&
     viewerMember(channel, viewer);
   const allowed = (id: string) =>

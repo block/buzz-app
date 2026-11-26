@@ -76,6 +76,9 @@ export const test = base.extend({
   savedSidebar: [false, { option: true }],
   ownSoloChannels: [[], { option: true }],
   soloAgentNames: [[], { option: true }],
+  /** The relay makes the Solo chats the viewer starts, as it does a
+   * temporary chat, with their labels, about and the Solo agents. */
+  soloStarts: [false, { option: true }],
   soloOutsideAgentNames: [[], { option: true }],
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
@@ -183,6 +186,7 @@ export const test = base.extend({
       savedSidebar,
       ownSoloChannels,
       soloAgentNames,
+      soloStarts,
       soloOutsideAgentNames,
       sortingSidebar,
       initialSidebarSort,
@@ -1140,7 +1144,15 @@ export const test = base.extend({
               : filter.kinds.includes(event.kind)),
         );
       // These ordinary fixture channels have no Huddle creation receipt.
-      if (filter.kinds?.length === 1 && filter.kinds[0] === 9007) return [];
+      if (filter.kinds?.length === 1 && filter.kinds[0] === 9007)
+        return (report.soloStarts ?? []).filter(
+          (event) =>
+            (!filter.ids || filter.ids.includes(event.id)) &&
+            (!filter["#h"] ||
+              event.tags.some(
+                ([key, value]) => key === "h" && filter["#h"].includes(value),
+              )),
+        );
       // The real relay can return both current metadata and rosters in one query.
       if (filter.kinds?.includes(39000) && filter.kinds?.includes(39002))
         return [39000, 39002].flatMap((kind) =>
@@ -1269,7 +1281,12 @@ export const test = base.extend({
                 ["owner", "admin"].includes(lifecycleRole)
                   ? [["p", viewer, lifecycleRole]]
                   : []),
-                ...(ownSoloChannels.includes(id)
+                ...(ownSoloChannels.includes(id) &&
+                !report.soloStarts?.some((start) =>
+                  start.tags.some(
+                    ([key, value]) => key === "h" && value === id,
+                  ),
+                )
                   ? soloAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
                   : []),
                 ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
@@ -2032,6 +2049,60 @@ export const test = base.extend({
     const acceptReadPublication = (community, event) => {
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
+      if (soloStarts && event.kind === 9007) {
+        const id = event.tags.find(([key]) => key === "h")?.[1];
+        expect(event.tags).toContainEqual(["t", "buzz.solo"]);
+        if (!rosterIds.includes(id)) rosterIds.push(id);
+        if (!soloChannels.includes(id)) soloChannels.push(id);
+        if (!ownSoloChannels.includes(id)) ownSoloChannels.push(id);
+        histories.set(`${community}/${id}`, []);
+        lifecycleTime++;
+        const metadata = sign(
+          39000,
+          [
+            ["d", id],
+            ...event.tags.filter(([key]) =>
+              ["name", "about", "ttl"].includes(key),
+            ),
+            ["t", "stream"],
+            ["private"],
+            ...event.tags.filter(([key]) => key === "t"),
+            ["P", viewer],
+            ["created_at", String(event.created_at)],
+          ],
+          "",
+          relayKey,
+          lifecycleTime,
+        );
+        soloDetails.set(`${community}/${id}`, metadata);
+        report.soloStarts ??= [];
+        report.soloStarts.push(event);
+        relay.publish(community, metadata, { requireSubscriber: false });
+        relay.publish(
+          community,
+          answer(community, { kinds: [39002], "#d": [id] })[0],
+          { requireSubscriber: false },
+        );
+        return;
+      }
+      if (soloStarts && event.kind === 9002) {
+        const id = event.tags.find(([key]) => key === "h")?.[1];
+        expect(soloChannels).toContain(id);
+        const unarchive = event.tags.some(
+          ([key, value]) => key === "archived" && value === "false",
+        );
+        if (unarchive) archivedIds.delete(id);
+        else archivedIds.add(id);
+        const previous = soloDetails.get(`${community}/${id}`);
+        if (previous) {
+          const tags = previous.tags.filter(([key]) => key !== "archived");
+          if (!unarchive) tags.push(["archived", "true"]);
+          const next = sign(39000, tags, "", relayKey, ++lifecycleTime);
+          soloDetails.set(`${community}/${id}`, next);
+          relay.publish(community, next, { requireSubscriber: false });
+        }
+        return;
+      }
       if (event.kind === 20002) {
         expect(validTypingTemplate(event)).toBe(true);
         expect(rosterIds).toContain(event.tags[0]?.[1]);
@@ -2131,7 +2202,15 @@ export const test = base.extend({
         report.publications.push({ community, event });
         const channel = event.tags.find(([name]) => name === "h")?.[1];
         histories.get(`${community}/${channel}`).push(event);
-        relay.publish(community, event);
+        // A chat started here may be written before its live interest lands.
+        const started = report.soloStarts?.some((start) =>
+          start.tags.some(([key, value]) => key === "h" && value === channel),
+        );
+        relay.publish(
+          community,
+          event,
+          started ? { requireSubscriber: false } : undefined,
+        );
         return;
       }
       if (event.kind === 30177) {
@@ -2455,7 +2534,7 @@ export const test = base.extend({
         }
         const sendable = [...soloChannels, ...sendChannels];
         if (sendable.length && route === "sign") {
-          expect(body.kind).toBe(9);
+          expect(soloStarts ? [9, 9002, 9007] : [9]).toContain(body.kind);
           return send(response, finalizeEvent(body, userKey));
         }
         if (sendable.length && route === "publish") {
@@ -2697,6 +2776,9 @@ export const test = base.extend({
                           ...(ownSoloChannels.length
                             ? { channelIdentity: true }
                             : {}),
+                          ...(soloStarts
+                            ? { channelCreation: true, channelLifecycle: true }
+                            : {}),
                         }),
                       }),
                   upstreamFetch: relay.fetch,
@@ -2872,6 +2954,18 @@ export const test = base.extend({
           relay.publish("primary", event, { requireSubscriber: false });
           return event;
         },
+        archiveSoloChat(id, archived = true) {
+          const previous = soloDetails.get(`primary/${id}`);
+          expect(previous).toBeTruthy();
+          if (archived) archivedIds.add(id);
+          else archivedIds.delete(id);
+          const tags = previous.tags.filter(([key]) => key !== "archived");
+          if (archived) tags.push(["archived", "true"]);
+          const event = sign(39000, tags, "", relayKey, ++lifecycleTime);
+          soloDetails.set(`primary/${id}`, event);
+          relay.publish("primary", event, { requireSubscriber: false });
+          return event;
+        },
         signRelay: (template) => finalizeEvent(template, relayKey),
         ownerAgent,
         setArchivedIdentities(keys) {
@@ -2991,14 +3085,14 @@ export const test = base.extend({
         },
         participants,
         soloAgents,
-        soloAgentMessage(channelId, content) {
+        soloAgentMessage(channelId, content, tags = []) {
           const agent = soloAgents[0];
           expect(agent).toBeTruthy();
           const history = histories.get(`primary/${channelId}`);
           expect(history).toBeTruthy();
           const event = sign(
             9,
-            [["h", channelId]],
+            [["h", channelId], ...tags],
             content,
             soloAgentKeys[0],
             (history.at(-1)?.created_at ?? 1700000100) + 1,

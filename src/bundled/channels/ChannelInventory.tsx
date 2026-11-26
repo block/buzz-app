@@ -443,7 +443,7 @@ export function ChannelInventory({
         channel.participants?.length === 1 &&
         channel.participants[0] !== viewer &&
         !channel.metadataPending &&
-        !channel.huddle,
+        !channel.unlisted,
     );
   const { archived } = useMentionArchives(
     queries,
@@ -468,7 +468,7 @@ export function ChannelInventory({
       channels.filter(
         (channel) =>
           channel.id !== promotedDm &&
-          !channel.huddle &&
+          !channel.unlisted &&
           !channel.metadataPending &&
           // Identity archival changes discovery, never the conversation itself.
           !(

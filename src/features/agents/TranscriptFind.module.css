@@ -1,16 +1,27 @@
 .bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-half);
   padding-block: var(--space-2);
 }
 .field {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 12rem;
+  min-width: min(100%, 12rem);
+}
+.navigation {
+  display: flex;
+  align-items: center;
+  gap: var(--space-half);
+  margin-inline-start: auto;
 }
 .count {
+  align-self: center;
   color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   padding-inline-end: var(--space-2);
+}
+.scope {
+  flex-basis: 100%;
 }

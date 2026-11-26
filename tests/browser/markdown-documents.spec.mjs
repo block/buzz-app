@@ -483,11 +483,24 @@ test.describe("transcript find", () => {
       name: "Find in transcript",
     });
     await expect(field).toBeFocused();
-    await field.fill("HIDDEN-NEEDLE");
     const status = transcript.locator("search [role=status]");
+    await field.fill("Text with code");
+    await expect(status).toHaveText("1 of 1");
+    const formatted = transcript
+      .locator('[data-type="message"] p')
+      .filter({ hasText: "Text with code" });
+    await expect(formatted).toBeVisible();
+    await field.fill("HIDDEN-NEEDLE");
     await expect(status).toHaveText("1 of 2");
     const tool = transcript.locator('[data-type="tool"] > details');
     await expect(tool).toHaveAttribute("open", "");
+    await expect(formatted).toHaveCount(0);
+    await tool.locator(":scope > summary").click();
+    await expect(tool).not.toHaveAttribute("open", "");
+    await expect(status).toHaveText("1 of 2");
+    await field.press("Enter");
+    await expect(tool).toHaveAttribute("open", "");
+    await field.press("Shift+Enter");
     const activeMatch = () =>
       page.evaluate(() => {
         const name = [...CSS.highlights.keys()].find(
@@ -522,6 +535,9 @@ test.describe("transcript find", () => {
     await expect
       .poll(activeMatch)
       .toEqual({ text: "hidden-needle", shown: true });
+    await page.locator('[data-screen="transcript"]').evaluate((host) => {
+      host.style.height = "180px";
+    });
     await field.press("Enter");
     await expect(status).toHaveText("2 of 2");
     await expect
@@ -529,6 +545,12 @@ test.describe("transcript find", () => {
       .toEqual({ text: "hidden-needle", shown: true });
     await field.press("Shift+Enter");
     await expect(status).toHaveText("1 of 2");
+    await expect
+      .poll(activeMatch)
+      .toEqual({ text: "hidden-needle", shown: true });
+    await page.locator('[data-screen="transcript"]').evaluate((host) => {
+      host.style.height = "420px";
+    });
     for (const mode of ["light", "dark"]) {
       await page.evaluate((mode) => {
         document.documentElement.dataset.colorMode = mode;
@@ -553,9 +575,28 @@ test.describe("transcript find", () => {
         });
       }
     }
+    for (const { width, scale } of [
+      { width: 320, scale: "1" },
+      { width: 390, scale: "1.3" },
+    ]) {
+      await page.setViewportSize({ width, height: 850 });
+      await page.evaluate(
+        (scale) =>
+          document.documentElement.style.setProperty(
+            "--buzz-text-scale",
+            scale,
+          ),
+        scale,
+      );
+      await field.fill("no such passage");
+      await expect(status).toHaveText("No results");
+      expect((await field.boundingBox()).width).toBeGreaterThan(100);
+      await field.fill("HIDDEN-NEEDLE");
+      await expect(status).toHaveText("1 of 2");
+    }
     await field.press("Escape");
     await expect(field).toHaveCount(0);
-    await expect(tool).not.toHaveAttribute("open", "");
+    await expect(tool).toHaveAttribute("open", "");
     await expect(find).toBeFocused();
     expect(
       await page.evaluate(() =>
@@ -565,5 +606,138 @@ test.describe("transcript find", () => {
       ),
     ).toEqual([]);
     expect(errors.unexplained()).toEqual([]);
+  });
+});
+
+test.describe("transcript find", () => {
+  test("resumes live following only when it will not abandon a found passage", async ({
+    page,
+  }) => {
+    await page.goto(`${url}?working&find&width=1100`);
+    const host = page.locator('[data-screen="transcript"]');
+    const transcript = page.getByRole("region", { name: "Agent transcript" });
+    const find = transcript.getByRole("button", {
+      name: "Find in transcript",
+      exact: true,
+    });
+    const append = () =>
+      page
+        .getByRole("button", { name: "Append activity" })
+        .evaluate((button) => button.click());
+    const atEnd = () =>
+      host.evaluate(
+        (node) => node.scrollHeight - node.clientHeight - node.scrollTop < 32,
+      );
+    await expect.poll(atEnd).toBe(true);
+    await find.click();
+    let field = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await field.fill("not in this transcript");
+    await expect(transcript.locator("search [role=status]")).toHaveText(
+      "No results",
+    );
+    await append();
+    await expect(
+      transcript.getByText("Live update 11", { exact: true }),
+    ).toBeVisible();
+    await expect.poll(atEnd).toBe(false);
+    await field.press("Escape");
+    await expect.poll(atEnd).toBe(true);
+
+    await find.click();
+    field = transcript.getByRole("searchbox", { name: "Find in transcript" });
+    await field.fill("Live update 11");
+    await expect(transcript.locator("search [role=status]")).toHaveText(
+      "1 of 1",
+    );
+    await field.press("Escape");
+    const nearLatest = transcript.locator('[data-entry="item:live-11"]');
+    const nearTop = await nearLatest.evaluate(
+      (node) => node.getBoundingClientRect().top,
+    );
+    await append();
+    await expect(
+      transcript.getByText("Live update 23", { exact: true }),
+    ).toBeVisible();
+    expect(
+      Math.abs(
+        (await nearLatest.evaluate(
+          (node) => node.getBoundingClientRect().top,
+        )) - nearTop,
+      ),
+    ).toBeLessThan(2);
+
+    await find.click();
+    field = transcript.getByRole("searchbox", { name: "Find in transcript" });
+    await field.fill("hidden-needle");
+    await expect(transcript.locator("search [role=status]")).toHaveText(
+      "1 of 2",
+    );
+    const output = transcript
+      .locator("pre")
+      .filter({ hasText: "first hidden-needle" });
+    await field.press("Escape");
+    const top = await output.evaluate(
+      (node) => node.getBoundingClientRect().top,
+    );
+    await append();
+    await expect(
+      transcript.getByText("Live update 35", { exact: true }),
+    ).toBeVisible();
+    expect(
+      Math.abs(
+        (await output.evaluate((node) => node.getBoundingClientRect().top)) -
+          top,
+      ),
+    ).toBeLessThan(2);
+    await host.evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+      node.dispatchEvent(new Event("scroll"));
+    });
+    await expect.poll(atEnd).toBe(true);
+    await append();
+    await expect(
+      transcript.getByText("Live update 47", { exact: true }),
+    ).toBeVisible();
+    await expect.poll(atEnd).toBe(true);
+  });
+
+  test("keeps hosted and saved Mesh activity searchable in their real layouts", async ({
+    page,
+  }, testInfo) => {
+    for (const host of ["hosted", "mesh"]) {
+      await page.goto(`${url}?working&find&host=${host}&width=1100`);
+      const transcript = page.getByRole("region", { name: "Agent transcript" });
+      await expect(transcript).toBeVisible();
+      await page.locator('[data-screen="transcript"]').evaluate((node) => {
+        node.scrollTop = 0;
+      });
+      await page.locator('[data-screen="transcript"]').screenshot({
+        path: testInfo.outputPath(`transcript-${host}-before-find.png`),
+      });
+      await transcript
+        .getByRole("button", { name: "Find in transcript", exact: true })
+        .click();
+      await transcript
+        .getByRole("searchbox", { name: "Find in transcript" })
+        .fill("Text with code");
+      await expect(transcript.locator("search [role=status]")).toHaveText(
+        "1 of 1",
+      );
+      await expect(
+        transcript.getByText("Search covers loaded activity only.", {
+          exact: false,
+        }),
+      ).toBeVisible();
+      for (const mode of ["light", "dark"]) {
+        await page.evaluate((mode) => {
+          document.documentElement.dataset.colorMode = mode;
+        }, mode);
+        await page.locator('[data-screen="transcript"]').screenshot({
+          path: testInfo.outputPath(`transcript-find-${host}-${mode}.png`),
+        });
+      }
+    }
   });
 });

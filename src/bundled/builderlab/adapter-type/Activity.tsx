@@ -197,6 +197,7 @@ function ActivityFeed({
   return (
     <TranscriptView
       scope={`${agent.pubkey}:${channelId ?? ""}:${rootId ?? ""}`}
+      history={{ omitted: true }}
     >
       <ActivityTranscript
         transcript={transcript}

@@ -125,7 +125,10 @@ export function createMeshTranscriptTab(
           </p>
         ) : (
           transcript && (
-            <TranscriptView scope={`${agent.key}:${workspace}:${selected}`}>
+            <TranscriptView
+              scope={`${agent.key}:${workspace}:${selected}`}
+              history={{ omitted: transcript.more }}
+            >
               <ActivityTranscript
                 transcript={transcript}
                 agentName={agent.name}

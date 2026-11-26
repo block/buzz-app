@@ -81,3 +81,85 @@ export function findRanges(
   }
   return ranges;
 }
+
+/** Transcript matches can cross inline formatting, but never block boundaries.
+ * Collapsed bodies count too; navigation opens their native disclosures. */
+export function findTranscriptRanges(
+  root: HTMLElement,
+  query: string,
+): Range[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const document = root.ownerDocument;
+  const ranges: Range[] = [];
+  const styles = new Map<Element, CSSStyleDeclaration>();
+  const styleOf = (element: Element) => {
+    let style = styles.get(element);
+    if (!style) {
+      style = getComputedStyle(element);
+      styles.set(element, style);
+    }
+    return style;
+  };
+  const selectable = (element: Element) => {
+    if (element.closest(`${SKIPPED}, button, [data-transcript-preview]`))
+      return false;
+    for (let node: Element | null = element; node; node = node.parentElement) {
+      const style = styleOf(node);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.contentVisibility === "hidden" ||
+        style.userSelect === "none" ||
+        style.webkitUserSelect === "none"
+      )
+        return false;
+      if (node === root) break;
+    }
+    return true;
+  };
+  let block: Element | null = null;
+  let text = "";
+  let chunks: { node: Node; start: number; end: number }[] = [];
+  const flush = () => {
+    const folded = lower(text);
+    for (
+      let at = folded.text.indexOf(needle);
+      at !== -1 && ranges.length < FIND_LIMIT;
+      at = folded.text.indexOf(needle, at + needle.length)
+    ) {
+      const start = folded.starts?.[at] ?? at;
+      const last = at + needle.length - 1;
+      const end = folded.ends?.[last] ?? last + 1;
+      const first = chunks.find((chunk) => chunk.end > start);
+      const final = chunks.find((chunk) => chunk.end >= end);
+      if (!first || !final) continue;
+      const range = document.createRange();
+      range.setStart(first.node, start - first.start);
+      range.setEnd(final.node, end - final.start);
+      ranges.push(range);
+    }
+    text = "";
+    chunks = [];
+  };
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (!parent || !selectable(parent)) {
+      flush();
+      block = null;
+      continue;
+    }
+    const current = parent.closest(
+      "p, pre, summary, li, td, th, h1, h2, h3, h4, h5, h6, div, section, article",
+    );
+    if (current !== block) flush();
+    if (ranges.length === FIND_LIMIT) break;
+    block = current;
+    const start = text.length;
+    text += node.nodeValue ?? "";
+    chunks.push({ node, start, end: text.length });
+  }
+  if (ranges.length < FIND_LIMIT) flush();
+  return ranges;
+}

@@ -67,7 +67,7 @@ export function revealRange(range: Range, covering?: Element | null) {
       match.top,
       match.bottom,
       top,
-      top + element.clientHeight,
+      box.top + element.clientTop + element.clientHeight,
     );
     element.scrollLeft += offset(
       match.left,

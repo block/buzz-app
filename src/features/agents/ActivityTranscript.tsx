@@ -9,7 +9,6 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type ReactNode,
 } from "react";
 import remarkGfm from "remark-gfm";
@@ -215,12 +214,34 @@ const END_SLACK = 32;
 
 /** Opens at the latest step and keeps it in view as the transcript grows,
  * unless the reader has scrolled up to read earlier turns. */
-function useFollowLatest(content: unknown, enabled: boolean) {
+function useFollowLatest(
+  content: unknown,
+  enabled: boolean,
+  searching = false,
+  active: Range | null = null,
+  paused?: { current: { following: boolean; top: number } | undefined },
+) {
   const timeline = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const restoredTop = useRef<number | undefined>(undefined);
   useLayoutEffect(() => {
     const view = enabled ? scroller(timeline.current) : undefined;
+    if (!view || !paused) return;
+    if (searching && !paused.current) {
+      paused.current = { following: following.current, top: view.scrollTop };
+      following.current = false;
+    } else if (!searching && paused.current) {
+      const prior = paused.current;
+      paused.current = undefined;
+      following.current =
+        prior.following &&
+        !active &&
+        (view.scrollHeight - view.scrollTop - view.clientHeight <= END_SLACK ||
+          Math.abs(view.scrollTop - prior.top) <= END_SLACK);
+    }
+  }, [enabled, searching, active, paused]);
+  useLayoutEffect(() => {
+    const view = enabled && !searching ? scroller(timeline.current) : undefined;
     if (!view) return;
     const read = () => {
       const top = view.scrollTop;
@@ -231,12 +252,13 @@ function useFollowLatest(content: unknown, enabled: boolean) {
     };
     view.addEventListener("scroll", read, { passive: true });
     return () => view.removeEventListener("scroll", read);
-  }, [enabled]);
+  }, [enabled, searching]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: content is the change to follow.
   useLayoutEffect(() => {
-    const view = enabled && following.current && scroller(timeline.current);
+    const view =
+      enabled && !searching && following.current && scroller(timeline.current);
     if (view) view.scrollTop = view.scrollHeight;
-  }, [content, enabled]);
+  }, [content, enabled, searching]);
   return { timeline, following, restoredTop };
 }
 
@@ -409,11 +431,18 @@ export function ActivityTranscript({
   community?: string | undefined;
 }) {
   const partial = transcript.partial === true;
-  const searching = Boolean(useContext(TranscriptSearch));
-  const scroll = useFollowLatest(transcript, follow && !searching);
-  useLayoutEffect(() => {
-    if (searching) scroll.following.current = false;
-  }, [searching, scroll.following]);
+  const search = useContext(TranscriptSearch);
+  const searching = search?.open ?? false;
+  const paused = useRef<{ following: boolean; top: number } | undefined>(
+    undefined,
+  );
+  const scroll = useFollowLatest(
+    transcript,
+    follow,
+    searching,
+    search?.active.current ?? null,
+    paused,
+  );
   const focused = useShowFocused(
     transcript,
     scroll.timeline,
@@ -635,22 +664,15 @@ function Sections({
   title: string;
   sections: readonly PromptSection[];
 }) {
-  const { ref, matching } = useSearchDisclosure((query) =>
+  const { ref, mounted, onToggle } = useSearchDisclosure((query) =>
     sections.some(
       (section) =>
         sectionTitle(section.tag).toLowerCase().includes(query) ||
         section.body.toLowerCase().includes(query),
     ),
   );
-  const [visited, setVisited] = useState(false);
   return (
-    <details
-      ref={ref}
-      className={styles.context}
-      onToggle={(event) => {
-        if (event.currentTarget.open) setVisited(true);
-      }}
-    >
+    <details ref={ref} className={styles.context} onToggle={onToggle}>
       <summary className="text-body text-subtle">
         <FileTextIcon size="1rem" aria-hidden="true" />
         <span>
@@ -662,7 +684,7 @@ function Sections({
           aria-hidden="true"
         />
       </summary>
-      {(visited || matching) &&
+      {mounted &&
         sections.map((section, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: sections are a positional, immutable parse of one prompt.
           <section key={index} className={styles.codePanel}>
@@ -696,26 +718,28 @@ function Disclosure({
   footer?: ReactNode;
   children: ReactNode;
 }) {
-  const { ref, matching } = useSearchDisclosure((query) =>
-    itemMatches(item, query),
-  );
   const focused = useContext(RowContext).focused === `item:${item.id}`;
-  const [visited, setVisited] = useState(focused);
-  if (focused && !visited) setVisited(true);
+  const { ref, mounted, onToggle } = useSearchDisclosure(
+    (query) => itemMatches(item, query),
+    focused,
+  );
   return (
     <details
       ref={ref}
       className={styles.tool}
-      onToggle={(event) => {
-        if (event.currentTarget.open) setVisited(true);
-      }}
+      onToggle={onToggle}
       data-status={item.type === "tool" ? item.status : undefined}
     >
       <summary className={styles.row}>
         {icon}
         <span className={styles.summary}>
           {label}
-          {preview && <span className={styles.preview}> {preview}</span>}
+          {preview && (
+            <span className={styles.preview} data-transcript-preview>
+              {" "}
+              {preview}
+            </span>
+          )}
         </span>
         {metadata}
         <CaretRightIcon
@@ -725,10 +749,8 @@ function Disclosure({
         />
         <Stamp item={item} />
       </summary>
-      {(visited || matching) && children && (
-        <div className={styles.toolBody}>{children}</div>
-      )}
-      {(visited || matching) && footer}
+      {mounted && children && <div className={styles.toolBody}>{children}</div>}
+      {mounted && footer}
     </details>
   );
 }

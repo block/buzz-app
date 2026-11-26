@@ -354,6 +354,8 @@ export function TranscriptPanel<T extends Transcript>({
   missing,
   failed,
   notes,
+  loadEarlier,
+  loadingEarlier,
 }: {
   agent: AgentViewProps["agent"];
   /** The agent type's read; resolves undefined when it has no transcript. */
@@ -382,6 +384,9 @@ export function TranscriptPanel<T extends Transcript>({
   failed: string;
   /** Shown above the oldest loaded turn. */
   notes?: (transcript: T) => ReactNode;
+  /** Expands the adapter's bounded preview, never an unbounded history scan. */
+  loadEarlier?: (() => void) | undefined;
+  loadingEarlier?: boolean | undefined;
 }) {
   const { shown, loading, refresh } = useLiveTranscript({
     read,
@@ -403,9 +408,18 @@ export function TranscriptPanel<T extends Transcript>({
   }, [holding]);
   const isWorking = shown.working && (working || !holdExpired);
   const { transcript, error } = shown;
+  const bounds = transcript as
+    | (T & { partial?: boolean; more?: boolean; incomplete?: string })
+    | null
+    | undefined;
   return (
     <TranscriptView
       scope={readKey}
+      history={{
+        omitted: !!(bounds?.partial || bounds?.more || bounds?.incomplete),
+        loadEarlier: bounds?.partial ? loadEarlier : undefined,
+        loading: loadingEarlier,
+      }}
       actions={
         <IconButton
           hint="familiar"

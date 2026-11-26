@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type RefObject,
+  type ReactEventHandler,
 } from "react";
 import {
   CaretDownIcon,
@@ -16,16 +17,55 @@ import {
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
-import { FIND_LIMIT, findRanges } from "../search/find-in-page";
+import { FIND_LIMIT, findTranscriptRanges } from "../search/find-in-page";
 import {
   clearHighlights,
   paintHighlights,
   revealRange,
 } from "../search/range-highlights";
+import remarkGfm from "remark-gfm";
+import { parseForGuard } from "../markdown/guard";
+import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
+import { Button } from "../../shared/design-system/ui/Button";
 import { sectionTitle, type TranscriptItem } from "./activity-transcript";
 import styles from "./TranscriptFind.module.css";
 
-export const TranscriptSearch = createContext("");
+export type TranscriptSearchState = {
+  open: boolean;
+  query: string;
+  active: RefObject<Range | null>;
+  closing: RefObject<boolean>;
+  automatic: WeakSet<HTMLDetailsElement>;
+  kept: WeakSet<HTMLDetailsElement>;
+};
+export const TranscriptSearch = createContext<
+  TranscriptSearchState | undefined
+>(undefined);
+
+const markdownText = new WeakMap<TranscriptItem, string>();
+/** A conservative candidate filter; only rendered DOM determines occurrences. */
+function renderedCandidate(item: TranscriptItem & { text: string }) {
+  let text = markdownText.get(item);
+  if (text !== undefined) return text;
+  text = item.text;
+  if (text.length <= MAX_MARKDOWN_LENGTH && !scanMarkdown(text).tooDeep) {
+    const tree = parseForGuard(text, {
+      syntax: [remarkGfm],
+      transforms: [],
+      html: "literal",
+    });
+    const values: string[] = [];
+    const visit = (node: { value?: string; children?: readonly unknown[] }) => {
+      if (node.value !== undefined) values.push(node.value);
+      for (const child of node.children ?? [])
+        visit(child as Parameters<typeof visit>[0]);
+    };
+    visit(tree);
+    text = values.join("");
+  }
+  markdownText.set(item, text.toLowerCase());
+  return text.toLowerCase();
+}
 
 /** Only matching disclosures mount their bodies while searching. */
 export function itemMatches(item: TranscriptItem, query: string): boolean {
@@ -59,28 +99,71 @@ export function itemMatches(item: TranscriptItem, query: string): boolean {
       );
     case "plan":
       return item.entries.some((entry) => includes(entry.content));
+    case "message":
+    case "thought":
+      return includes(item.text) || renderedCandidate(item).includes(query);
     default:
       return includes(item.text);
   }
 }
 
-/** Restore the reader's expansion when a search no longer needs it open. */
-export function useSearchDisclosure(matches: (query: string) => boolean) {
-  const query = useContext(TranscriptSearch);
+/** Search expansion is temporary; a reader's own toggles remain theirs. */
+export function useSearchDisclosure(
+  matches: (query: string) => boolean,
+  initiallyVisited = false,
+) {
+  const search = useContext(TranscriptSearch);
+  const query = search?.query ?? "";
   const ref = useRef<HTMLDetailsElement>(null);
+  const prior = useRef<{ open: boolean } | undefined>(undefined);
+  const [visited, setVisited] = useState(initiallyVisited);
   const matching = Boolean(query && matches(query));
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new query reopens matches the reader closed during the previous query.
+  if (initiallyVisited && !visited) setVisited(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: query changes reopen matches; the search session's refs are stable.
   useLayoutEffect(() => {
     const details = ref.current;
-    if (!details || !matching) return;
-    const wasOpen = details.open;
-    details.open = true;
+    if (!details || !matching || !search) return;
+    const snapshot = { open: details.open };
+    prior.current = snapshot;
+    if (!details.open) {
+      search.automatic.add(details);
+      details.open = true;
+    }
     return () => {
-      details.open = wasOpen;
+      prior.current = undefined;
+      if (search.closing.current && search.kept.has(details)) {
+        setVisited(true);
+      } else if (details.open !== snapshot.open) {
+        search.automatic.add(details);
+        details.open = snapshot.open;
+      }
     };
   }, [matching, query]);
-  return { ref, matching };
+  const onToggle: ReactEventHandler<HTMLDetailsElement> = (event) => {
+    const details = event.currentTarget;
+    if (search?.automatic.delete(details)) return;
+    if (prior.current) prior.current.open = details.open;
+    if (details.open) setVisited(true);
+  };
+  return {
+    ref,
+    mounted:
+      visited ||
+      matching ||
+      !!(
+        search?.closing.current &&
+        ref.current &&
+        search.kept.has(ref.current)
+      ),
+    onToggle,
+  };
 }
+
+export type TranscriptHistory = {
+  omitted: boolean;
+  loadEarlier?: (() => void) | undefined;
+  loading?: boolean | undefined;
+};
 
 /** Find in the loaded transcript, never in the surrounding conversation. */
 export function TranscriptFind({
@@ -88,20 +171,22 @@ export function TranscriptFind({
   query,
   onQueryChange,
   onClose,
+  settledQuery,
+  history,
 }: {
   content: RefObject<HTMLDivElement | null>;
   query: string;
   onQueryChange: (query: string) => void;
   onClose: () => void;
+  settledQuery: string;
+  history?: TranscriptHistory | undefined;
 }) {
   const id = `transcript-find-${useId().replace(/[^a-zA-Z0-9-]/g, "")}`;
   const input = useRef<HTMLElement>(null);
+  const session = useContext(TranscriptSearch);
   const ranges = useRef<Range[]>([]);
   const active = useRef(0);
-  const pending = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [count, setCount] = useState({ active: 0, total: 0, query: "" });
-  const latest = useRef(query);
-  latest.current = query;
 
   const show = useCallback(
     (index: number, scroll: boolean) => {
@@ -111,21 +196,31 @@ export function TranscriptFind({
       setCount({
         active: active.current,
         total: list.length,
-        query: latest.current.trim(),
+        query: settledQuery.trim(),
       });
       const range = list[active.current];
-      if (scroll && range)
+      if (session) session.active.current = range ?? null;
+      if (scroll && range) {
+        for (
+          let element = range.startContainer.parentElement;
+          element;
+          element = element.parentElement
+        ) {
+          if (element instanceof HTMLDetailsElement && !element.open) {
+            session?.automatic.add(element);
+            element.open = true;
+          }
+        }
         revealRange(range, content.current?.previousElementSibling);
+      }
     },
-    [id, content],
+    [id, content, session, settledQuery],
   );
   const search = useCallback(
     (scroll: boolean) => {
-      clearTimeout(pending.current);
-      pending.current = undefined;
       if (!content.current) return;
       const previous = ranges.current[active.current];
-      ranges.current = findRanges(content.current, latest.current);
+      ranges.current = findTranscriptRanges(content.current, settledQuery);
       const next = previous
         ? ranges.current.findIndex(
             (range) =>
@@ -134,7 +229,7 @@ export function TranscriptFind({
         : 0;
       show(Math.max(0, next), scroll);
     },
-    [content, show],
+    [content, show, settledQuery],
   );
 
   useEffect(() => {
@@ -145,9 +240,9 @@ export function TranscriptFind({
   useEffect(() => {
     ranges.current = [];
     clearHighlights(id);
-    pending.current = setTimeout(() => search(true), 100);
-    return () => clearTimeout(pending.current);
-  }, [query, search, id]);
+    if (session) session.active.current = null;
+    search(true);
+  }, [settledQuery, search, id]);
   useEffect(() => {
     const root = content.current;
     if (!root) return;
@@ -175,10 +270,15 @@ export function TranscriptFind({
       clearTimeout(timer);
     };
   }, [content, search]);
+  useEffect(() => {
+    if (query.trim() !== settledQuery.trim()) {
+      clearHighlights(id);
+      if (session) session.active.current = null;
+    }
+  }, [query, settledQuery, id, session]);
   useEffect(() => () => clearHighlights(id), [id]);
   const step = (by: number) => {
-    if (pending.current !== undefined) search(true);
-    else show(active.current + by, true);
+    if (query.trim() === settledQuery.trim()) show(active.current + by, true);
   };
   const total =
     count.total === FIND_LIMIT ? `${FIND_LIMIT}+` : String(count.total);
@@ -215,33 +315,51 @@ export function TranscriptFind({
           value={query}
           onValueChange={onQueryChange}
           inputRef={input}
-          trailing={
-            <span className={`text-caption ${styles.count}`} role="status">
-              {label}
-            </span>
-          }
         />
       </div>
-      <IconButton
-        title="Previous match"
-        aria-label="Previous match"
-        disabled={!count.total}
-        onClick={() => step(-1)}
-        icon={<CaretUpIcon size={16} aria-hidden="true" />}
-      />
-      <IconButton
-        title="Next match"
-        aria-label="Next match"
-        disabled={!count.total}
-        onClick={() => step(1)}
-        icon={<CaretDownIcon size={16} aria-hidden="true" />}
-      />
-      <IconButton
-        title="Close find in transcript"
-        aria-label="Close find in transcript"
-        onClick={onClose}
-        icon={<XIcon size={16} aria-hidden="true" />}
-      />
+      <div className={styles.navigation}>
+        <span className={`text-caption ${styles.count}`} role="status">
+          {label}
+        </span>
+        <IconButton
+          title="Previous match"
+          aria-label="Previous match"
+          disabled={!count.total || count.query !== query.trim()}
+          onClick={() => step(-1)}
+          icon={<CaretUpIcon size={16} aria-hidden="true" />}
+        />
+        <IconButton
+          title="Next match"
+          aria-label="Next match"
+          disabled={!count.total || count.query !== query.trim()}
+          onClick={() => step(1)}
+          icon={<CaretDownIcon size={16} aria-hidden="true" />}
+        />
+        <IconButton
+          title="Close find in transcript"
+          aria-label="Close find in transcript"
+          onClick={onClose}
+          icon={<XIcon size={16} aria-hidden="true" />}
+        />
+      </div>
+      {history?.omitted && (
+        <div className={`text-caption text-subtle ${styles.scope}`}>
+          Search covers loaded activity only.{" "}
+          {history.loadEarlier && (
+            <Button
+              variant="plain"
+              size="inline"
+              loading={history.loading ?? false}
+              onClick={() => {
+                input.current?.focus({ preventScroll: true });
+                history.loadEarlier?.();
+              }}
+            >
+              Load earlier activity
+            </Button>
+          )}
+        </div>
+      )}
     </search>
   );
 }

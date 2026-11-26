@@ -1349,6 +1349,7 @@ export function createTabs(
             session may have been deleted.
           </p>
         }
+        loadEarlier={loadEarlier}
         notes={(transcript) => (
           <>
             <TranscriptPreviewNotice

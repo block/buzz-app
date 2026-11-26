@@ -837,7 +837,7 @@ it("exposes TranscriptPanel stably on Agents.ui across renders", async () => {
   }
 });
 
-it("finds collapsed nested tool content only in this transcript and restores expansion on Escape", async () => {
+it("finds collapsed nested tool content only in this transcript and keeps the selected result readable", async () => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
     value: () => {},
@@ -880,8 +880,8 @@ it("finds collapsed nested tool content only in this transcript and restores exp
   fireEvent.keyDown(field, { key: "Escape" });
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   expect(find).toHaveFocus();
-  expect(child).not.toHaveAttribute("open");
-  expect(child?.parentElement?.closest("details")).not.toHaveAttribute("open");
+  expect(child).toHaveAttribute("open");
+  expect(child?.parentElement?.closest("details")).toHaveAttribute("open");
 });
 
 it("searches prompt context, thoughts, replies, plans and tool input and keeps user-opened rows open", async () => {
@@ -979,4 +979,47 @@ it("keeps search current through refresh and clears it when opening another tran
   expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Find in transcript" }));
   expect(screen.getByRole("searchbox")).toHaveValue("");
+});
+
+it("retains the query while the existing bounded history action reveals older activity", async () => {
+  let loaded = false;
+  const panel = (again: string) => (
+    <TranscriptPanel
+      agent={agent}
+      read={async () => ({
+        turns: [toolTurn("search", loaded ? "older saffron" : "recent output")],
+        partial: !loaded,
+        more: true,
+      })}
+      readKey="history"
+      readAgain={again}
+      working={false}
+      reading="Reading…"
+      missing={null}
+      failed="Failed"
+      loadEarlier={() => {
+        loaded = true;
+      }}
+    />
+  );
+  const view = render(panel("preview"));
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Find in transcript" }));
+  const field = screen.getByRole("searchbox", { name: "Find in transcript" });
+  fireEvent.change(field, { target: { value: "saffron" } });
+  await act(async () => vi.advanceTimersByTime(100));
+  expect(screen.getByText("No results")).toBeVisible();
+  expect(screen.getByText(/Search covers loaded activity only/)).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Load earlier activity" }),
+  );
+  view.rerender(panel("full"));
+  await act(async () => {});
+  await act(async () => vi.advanceTimersByTime(250));
+  expect(field).toHaveValue("saffron");
+  expect(screen.getByText("1 of 1")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Load earlier activity" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText(/Search covers loaded activity only/)).toBeVisible();
 });

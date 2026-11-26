@@ -1179,6 +1179,8 @@ export function createTabs({
             may have been deleted, or the session ran in a different workspace.
           </p>
         }
+        loadEarlier={loadEarlier}
+        loadingEarlier={history.loading}
         notes={(transcript) => (
           <>
             <TranscriptPreviewNotice

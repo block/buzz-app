@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import * as content from "../../features/notifications/content";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
@@ -199,3 +199,52 @@ it.each([
     expect(view.getByText(context)).toBeInTheDocument();
   },
 );
+
+it("shows a row's other unread senders on its avatar, leaving out its own, until they are read", async () => {
+  const item = {
+    id: "row",
+    channelId: "room",
+    authorId: bob.pubkey,
+    createdAt: 1,
+    messageIds: [],
+    preview: "Shipping it",
+    previewMentions: { content: "Shipping it", mentions: [] },
+    unreadCount: 4,
+    moreUnread: { count: 3, authorIds: [alice.pubkey, bob.pubkey] },
+    manual: false,
+  } as unknown as InboxItem;
+  const row = (item: InboxItem) => (
+    <InboxRowButton
+      item={item}
+      identity={rowIdentity(item, undefined, profiles, name)}
+      session={
+        {
+          ...session,
+          profiles: { subscribe: () => () => {}, snapshot: () => profiles },
+          channels: {
+            list: () => ({ channels: [] }),
+            subscribeList: () => () => {},
+          },
+        } as unknown as RelaySession
+      }
+      feed={{ incomplete: [] } as unknown as InboxFeedSnapshot}
+      time="now"
+      previewId="preview"
+    />
+  );
+  const view = render(row(item));
+  expect(view.getByRole("button")).toHaveAccessibleDescription(
+    "Shipping it and 3 more messages from Alice and Bob",
+  );
+  const faces = () =>
+    [...view.container.querySelectorAll("[data-avatar-stack] [title]")].map(
+      (face) => face.getAttribute("title"),
+    );
+  expect(faces()).toEqual(["Alice"]);
+
+  // Reading the row lets its faces leave.
+  const { moreUnread: _, ...read } = item;
+  view.rerender(row({ ...read, unreadCount: 0 } as InboxItem));
+  expect(view.getByRole("button")).toHaveAccessibleDescription("Shipping it");
+  await waitFor(() => expect(faces()).toEqual([]));
+});

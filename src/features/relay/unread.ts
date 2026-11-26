@@ -1773,6 +1773,14 @@ export function createUnread({
             const unread = entries.filter((entry) =>
               isUnread(entry, state, dm),
             );
+            const more = unread.filter((entry) => entry.event.id !== shown.id);
+            // Senders with the most unread messages first; ties, the newest.
+            const moreAuthors = new Map<string, number>();
+            for (const { event } of [...more].reverse()) {
+              const author =
+                workflowOwner(event, workflowAuthority) ?? event.pubkey;
+              moreAuthors.set(author, (moreAuthors.get(author) ?? 0) + 1);
+            }
             const representative = unread[0] ?? latest;
             const replies = entries.filter(
               (entry) => entry.rootId !== undefined,
@@ -1844,6 +1852,18 @@ export function createUnread({
               previewMessageId: shown.id,
               previewMentions: previewRows.get(shown.id) ?? noMentions,
               createdAt: shown.created_at,
+              ...(more.length
+                ? {
+                    moreUnread: Object.freeze({
+                      count: more.length,
+                      authorIds: Object.freeze(
+                        [...moreAuthors]
+                          .sort(([, a], [, b]) => b - a)
+                          .map(([author]) => author),
+                      ),
+                    }),
+                  }
+                : {}),
               mentioned: entries.some((entry) => entry.mentioned),
               messages: Object.freeze(
                 entries.map(({ event, mentioned }) =>

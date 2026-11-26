@@ -147,6 +147,8 @@ if that desktop app is up and running.
   Plugins can add actions after **View channel details** in a Solo channel’s
   **⋯** menu.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
+  Each conversation shows its latest message and who sent its other unread
+  messages.
   **Mute** on a conversation silences everything but mentions.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`

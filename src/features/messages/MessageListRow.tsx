@@ -6,6 +6,7 @@ import styles from "./MessageListRow.module.css";
  * Reading, draft continuation and delivery evidence stay with each caller. */
 export function MessageListRow({
   avatar,
+  avatarBadge,
   sender,
   source,
   time,
@@ -15,6 +16,8 @@ export function MessageListRow({
   ...props
 }: {
   avatar: ReactNode;
+  /** Sits on the avatar's corner, such as a conversation's other senders. */
+  avatarBadge?: ReactNode;
   sender: ReactNode;
   source: ReactNode;
   time: ReactNode;
@@ -28,7 +31,14 @@ export function MessageListRow({
   return (
     <NavigationItem
       {...props}
-      icon={<span className={styles.rowAvatar}>{avatar}</span>}
+      icon={
+        <span className={styles.rowAvatar}>
+          {avatar}
+          {avatarBadge && (
+            <span className={styles.avatarBadge}>{avatarBadge}</span>
+          )}
+        </span>
+      }
       label={
         <span className={styles.content}>
           <span className={styles.heading}>

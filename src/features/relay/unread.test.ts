@@ -5586,6 +5586,38 @@ it("inbox describes a row by its newest message within the same second", () => {
     });
 });
 
+it("an inbox row counts its other unread messages by sender, most messages first", async () => {
+  const h = setup();
+  h.grant("room");
+  const bob = keypair(),
+    carol = keypair();
+  const root = message(h.viewer, "room", "Plan", 10);
+  const reply = (author: typeof h.alice, content: string, time: number) =>
+    message(author, "room", content, time, [["e", root.id, "", "reply"]]);
+  const first = reply(h.alice, "Thoughts?", 11);
+  h.emit([
+    root,
+    first,
+    reply(h.alice, "Can you review?", 12),
+    reply(bob, "Looks good", 13),
+    reply(carol, "Shipping it", 14),
+  ]);
+  const row = () =>
+    h.session.unread.inbox().items.find((item) => item.rootId === root.id);
+  expect(row()).toMatchObject({
+    preview: "Shipping it",
+    unreadCount: 4,
+    moreUnread: { count: 3, authorIds: [h.alice.pubkey, bob.pubkey] },
+  });
+
+  // Read messages leave the count; tied senders put the newest first.
+  await h.session.unread.markMessageRead("room", first.id);
+  expect(row()?.moreUnread).toEqual({
+    count: 2,
+    authorIds: [bob.pubkey, h.alice.pubkey],
+  });
+});
+
 it("inbox leaves a Solo chat message its attributed author deleted out of the row's preview", () => {
   const h = setup({}, true, undefined, true);
   h.grant("chat");

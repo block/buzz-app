@@ -23,6 +23,9 @@ export type InboxItem = Readonly<{
   /** The preview message's body and signed mentions, which its chips bind. */
   previewMentions: PreviewMentions;
   createdAt: number;
+  /** Unread messages besides the preview's, with their senders: most messages
+   * first, then the newest. */
+  moreUnread?: Readonly<{ count: number; authorIds: readonly string[] }>;
   mentioned: boolean;
   /** Verified group members with time and viewer-mention classification. */
   messages: readonly Readonly<{

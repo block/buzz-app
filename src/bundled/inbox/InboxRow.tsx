@@ -17,6 +17,7 @@ import { ByteLru } from "../../features/relay/budget";
 import { avatarMedia } from "../../shared/avatar-source";
 import { LightningIcon, SmileyIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
@@ -76,13 +77,28 @@ function dmContext(
     : `DM${join}${dmLabel(channel.participants, profiles, name, channel.name ?? "Direct message")}`;
 }
 
-/** Who sent a row and where, as the Inbox page and its sidebar preview name it. */
+/** Who sent a row and where, as the Inbox page and its sidebar preview name
+ * it, with what else is unread there. */
+export type RowIdentity = {
+  sender: string;
+  context: string;
+  profile: Profile | undefined;
+  more?: MoreUnread | undefined;
+};
+
+/** Unread messages a row's preview leaves out: how many, the other senders
+ * its avatars show (newest first) and a sentence naming every sender. */
+type MoreUnread = {
+  people: readonly { id: string; name: string; profile?: Profile }[];
+  description: string;
+};
+
 export function rowIdentity(
   item: InboxItem,
   channel: ChannelSummary | undefined,
   profiles: ReadonlyMap<string, Profile>,
   name: ResolveName,
-) {
+): RowIdentity {
   const displayId = item.workflowOwnerId ?? item.authorId;
   const profile = profiles.get(displayId);
   const resolved = name(
@@ -104,15 +120,59 @@ export function rowIdentity(
       : channel
         ? channelText(channel)
         : "Conversation";
-  return { sender, context, profile };
+  return {
+    sender,
+    context,
+    profile,
+    more: moreUnread(item, displayId, channel, profiles, name),
+  };
 }
 
-/** Profiles a row names: its sender or workflow owner and up to three DM participants. */
+/** Senders a row's unread summary shows on its avatar, and names. */
+const SUMMARY_PEOPLE = 3;
+
+function moreUnread(
+  item: InboxItem,
+  sender: string,
+  channel: ChannelSummary | undefined,
+  profiles: ReadonlyMap<string, Profile>,
+  name: ResolveName,
+): MoreUnread | undefined {
+  const more = item.moreUnread;
+  if (!more) return;
+  const { count, authorIds } = more;
+  const people = authorIds.map((id) => {
+    const profile = profiles.get(id);
+    return {
+      id,
+      name: name(
+        id,
+        profile?.name ?? formatPublicKey(id) ?? "Unknown sender",
+        channel?.members,
+      ),
+      ...(profile ? { profile } : {}),
+    };
+  });
+  const names = people.slice(0, SUMMARY_PEOPLE).map((person) => person.name);
+  const rest = people.length - names.length;
+  if (rest) names.push(`${rest} ${rest === 1 ? "other" : "others"}`);
+  const label = `and ${count} more ${count === 1 ? "message" : "messages"}`;
+  return {
+    // The row already shows its own sender.
+    people: people.filter((person) => person.id !== sender),
+    description: `${label} from ${new Intl.ListFormat(undefined, { type: "conjunction" }).format(names)}`,
+  };
+}
+
+/** Profiles a row names: its sender or workflow owner, the senders its unread
+ * summary shows or names (one more, in case one is the row's sender) and up
+ * to three DM participants. */
 export const rowProfileIds = (
-  item: Pick<InboxItem, "workflowOwnerId">,
+  item: Pick<InboxItem, "workflowOwnerId" | "moreUnread">,
   channel: ChannelSummary | undefined,
 ): string[] => [
   ...(item.workflowOwnerId ? [item.workflowOwnerId] : []),
+  ...(item.moreUnread?.authorIds.slice(0, SUMMARY_PEOPLE + 1) ?? []),
   ...(channel?.channelType === "dm"
     ? (channel.participants?.slice(0, 3) ?? [])
     : []),
@@ -121,7 +181,7 @@ export const rowProfileIds = (
 /** One Inbox conversation row's button: avatar, sender, source, time, preview and unread mark. */
 export function InboxRowButton({
   item,
-  identity: { sender, context, profile },
+  identity: { sender, context, profile, more },
   session,
   feed,
   time,
@@ -129,7 +189,7 @@ export function InboxRowButton({
   ...props
 }: {
   item: InboxItem;
-  identity: ReturnType<typeof rowIdentity>;
+  identity: RowIdentity;
   session: RelaySession;
   feed: InboxFeedSnapshot;
   time: ReactNode;
@@ -139,11 +199,14 @@ export function InboxRowButton({
   "icon" | "label" | "trailing" | "aria-label"
 >) {
   const unread = hasUnread(item);
+  const summaryId = useId();
   return (
     <MessageListRow
       {...props}
       aria-label={`Open ${sender} in ${context}`}
-      aria-describedby={previewId}
+      aria-describedby={
+        [previewId, more && summaryId].filter(Boolean).join(" ") || undefined
+      }
       avatar={
         <Avatar
           size="fill"
@@ -161,6 +224,32 @@ export function InboxRowButton({
             item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
           }
         />
+      }
+      avatarBadge={
+        // Mounted while empty too, so faces shrink away as they are read.
+        <>
+          <AvatarStack
+            size="badge"
+            max={SUMMARY_PEOPLE}
+            animateChanges
+            // Later avatars overlap earlier ones, so the sender with the
+            // most unread messages renders last: on top, in the corner.
+            items={(more?.people ?? [])
+              .slice(0, SUMMARY_PEOPLE)
+              .reverse()
+              .map(({ id, name, profile }) => ({
+                id,
+                name,
+                src: avatarMedia(profile?.picture, session.media),
+                shape: profile?.isAgent ? "squircle" : "circle",
+              }))}
+          />
+          {more && (
+            <span id={summaryId} className="sr-only">
+              {more.description}
+            </span>
+          )}
+        </>
       }
       sender={sender}
       source={context}

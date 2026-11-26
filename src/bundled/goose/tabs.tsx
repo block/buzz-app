@@ -108,20 +108,29 @@ type Read<T> = (
   | { status: "error"; error: string; value?: T }
 ) & { scope?: string };
 
-/** `read()` as it settles, read again when `key` changes or on `retry`. A
- * value already shown stays while it is read again, even when that read
- * fails, but only for the same `scope`; another scope's value is never shown. */
+/** Read again when `key` changes or on request. Keep the prior value in the
+ * same scope, even if the read fails. A background reload keeps it ready. */
 function useRead<T>(read: () => Promise<T>, key: string, scope = key) {
   const [state, setState] = useState<Read<T>>({ status: "loading" });
-  const [round, setRound] = useState(0);
+  const [reload, requestReload] = useState<{ background: boolean }>();
+  const last = useRef({ key, reload });
   // biome-ignore lint/correctness/useExhaustiveDependencies: `read` follows `key`.
   useEffect(() => {
     let current = true;
+    const background =
+      !!reload?.background &&
+      reload !== last.current.reload &&
+      key === last.current.key;
+    last.current = { key, reload };
     const kept = (prior: Read<T>) =>
       prior.value === undefined || prior.scope !== scope
         ? {}
         : { value: prior.value, scope };
-    setState((prior) => ({ status: "loading", ...kept(prior) }));
+    setState((prior) =>
+      background && prior.status === "ready" && prior.scope === scope
+        ? prior
+        : { status: "loading", ...kept(prior) },
+    );
     read().then(
       (value) => current && setState({ status: "ready", value, scope }),
       (error: unknown) =>
@@ -135,8 +144,12 @@ function useRead<T>(read: () => Promise<T>, key: string, scope = key) {
     return () => {
       current = false;
     };
-  }, [key, round]);
-  return [state, () => setRound((value) => value + 1)] as const;
+  }, [key, reload]);
+  return [
+    state,
+    () => requestReload({ background: false }),
+    () => requestReload({ background: true }),
+  ] as const;
 }
 
 /** A session the profile can show: one found for a place, or one goose
@@ -273,14 +286,20 @@ export function createTabs({
     return resolved;
   }
 
-  function useModelRefresh(provider: string, reload: () => void) {
-    // biome-ignore lint/correctness/useExhaustiveDependencies: `reload` follows `provider`.
+  function useModelRefresh(provider: string, reloadInBackground: () => void) {
+    // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when the provider changes.
     useEffect(() => {
-      if (provider)
-        void setup.refreshModels(provider).then(
-          (refreshed) => refreshed && reload(),
-          () => undefined,
-        );
+      if (!provider) return;
+      let current = true;
+      void setup.refreshModels(provider).then(
+        (refreshed) => {
+          if (current && refreshed) reloadInBackground();
+        },
+        () => undefined,
+      );
+      return () => {
+        current = false;
+      };
     }, [provider]);
   }
 
@@ -293,12 +312,12 @@ export function createTabs({
     );
     const current = listing.value?.defaults;
     const id = current?.provider ?? "";
-    const [models, reloadModels] = useRead(
+    const [models, reloadModels, reloadModelsInBackground] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
       `${id}:${state.readiness}:${!!state.blocking}`,
       id,
     );
-    useModelRefresh(id, reloadModels);
+    useModelRefresh(id, reloadModelsInBackground);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     return (
@@ -462,7 +481,7 @@ export function createTabs({
     const fallback = providers?.defaults.provider;
     const id = value.provider || (deviceDefaults ? "" : fallback) || "";
     const provider = providers?.providers.find((item) => item.id === id);
-    const [models, reloadModels] = useRead(
+    const [models, , reloadModelsInBackground] = useRead(
       () =>
         provider?.configured
           ? setup.models(id)
@@ -470,7 +489,10 @@ export function createTabs({
       `${id}:${provider?.configured ?? false}:${saves}:${revision}`,
       id,
     );
-    useModelRefresh(!hideModel && provider?.configured ? id : "", reloadModels);
+    useModelRefresh(
+      !hideModel && provider?.configured ? id : "",
+      reloadModelsInBackground,
+    );
     const named = (key: string | undefined) =>
       providers?.providers.find((item) => item.id === key)?.name ?? key;
     const modelDefault = value.provider
@@ -1273,11 +1295,11 @@ export function createTabs({
     const [open, setOpen] = useState(false);
     const [listing, reload] = useRead(() => setup.providers(), "providers");
     const provider = current.provider || listing.value?.defaults.provider || "";
-    const [models, reloadModels] = useRead(
+    const [models, reloadModels, reloadModelsInBackground] = useRead(
       () => (provider ? setup.models(provider) : Promise.resolve([])),
       provider,
     );
-    useModelRefresh(provider, reloadModels);
+    useModelRefresh(provider, reloadModelsInBackground);
     const refresh = () => {
       reload();
       reloadModels();

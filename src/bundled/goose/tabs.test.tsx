@@ -1583,7 +1583,7 @@ it("retries Goose default model discovery", async () => {
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
-it("lists the models goose saves while refreshing the default provider", async () => {
+it("keeps the default model picker usable while loading refreshed models", async () => {
   const lmstudio = {
     providerId: "lmstudio",
     providerName: "LM Studio",
@@ -1595,17 +1595,29 @@ it("lists the models goose saves while refreshing the default provider", async (
     providers: [lmstudio],
     defaults: { providerId: "lmstudio", modelId: "model-a" },
   });
+  const listing = gated("_goose/unstable/providers/list");
   const refresh = gated("_goose/unstable/providers/inventory/refresh");
-  const setup = new GooseSetup({ ...fake, spawn: refresh.wrap(fake.spawn) });
+  const setup = new GooseSetup({
+    ...fake,
+    spawn: listing.wrap(refresh.wrap(fake.spawn)),
+  });
   const { DefaultControl } = createTabs({ setup, ...unused });
   render(<DefaultControl onConfigure={vi.fn()} />);
+  await waitFor(() => expect(listing.waiting()).toHaveLength(1));
+  listing.release();
   await waitFor(() => expect(refresh.waiting()).toHaveLength(1));
+  const trigger = await screen.findByRole("button", {
+    name: /^Goose default model:/,
+  });
+  await waitFor(() =>
+    expect(trigger).not.toHaveAttribute("aria-disabled", "true"),
+  );
   lmstudio.models.push({ id: "model-b" });
   refresh.release();
+  await waitFor(() => expect(listing.waiting()).toHaveLength(1));
   const user = userEvent.setup();
-  await user.click(
-    await screen.findByRole("button", { name: /^Goose default model:/ }),
-  );
+  await user.click(trigger);
+  listing.release();
   (await screen.findByRole("menuitem", { name: "Other" })).focus();
   await user.keyboard("{ArrowRight}");
   expect(

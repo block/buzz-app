@@ -29,7 +29,11 @@ import { LayerAddressContext, layerInView } from "./view-layer";
 import { retireReplyTarget, threadDraftKey } from "./reply-target";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
-import { composerMessageList, selectNewestMessage } from "./message-selection";
+import {
+  composerMessageList,
+  selectMessage,
+  selectNewestMessage,
+} from "./message-selection";
 import { messagesOnOpen } from "./focus-service";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
@@ -1237,21 +1241,36 @@ function Composer({
         'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
       );
       if (owner && !owner.contains(editor)) return;
-      if (messagesOnOpen()) {
-        // A plugin asked for the newest message instead. Give its row a few
-        // frames to render, then fall back to the message box.
+      const pick = messagesOnOpen();
+      if (pick) {
+        // A plugin asked for a message instead. Give its row a few frames to
+        // render, then fall back to the message box. The handoff then ends,
+        // so a later reload doesn't take focus again.
         let frames = 30;
-        const selectMessage = () => {
-          const list = composerMessageList(editor);
-          if (list && selectNewestMessage(list)) return;
+        const selectInstead = () => {
+          // Focus moving while it waits wins, as it does for the message box.
           const unmoved =
             document.activeElement === previous ||
             document.activeElement === document.body;
-          if (!unmoved || !editor.isConnected) return;
-          if (--frames > 0) frame = requestAnimationFrame(selectMessage);
-          else editor.focus();
+          const list = unmoved ? composerMessageList(editor) : undefined;
+          const row = list && pick(list);
+          if (row?.isConnected) selectMessage(row);
+          if (
+            !unmoved ||
+            !editor.isConnected ||
+            row?.isConnected ||
+            (list && selectNewestMessage(list))
+          ) {
+            focusOnMount.current = undefined;
+            return;
+          }
+          if (--frames > 0) frame = requestAnimationFrame(selectInstead);
+          else {
+            editor.focus();
+            focusOnMount.current = editor;
+          }
         };
-        selectMessage();
+        selectInstead();
         return;
       }
       const end = editor.value.length;

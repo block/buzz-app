@@ -1122,7 +1122,7 @@ it("defers initial focus until a loading conversation enables its composer", () 
   expect(h.input()).toHaveFocus();
 });
 
-it("selects the newest message instead while a plugin prefers messages on open", () => {
+it("selects the newest message instead while a plugin prefers messages on open", async () => {
   const list = document.createElement("section");
   list.innerHTML =
     '<div data-message-id="old"><div data-layout="timeline"></div></div>' +
@@ -1137,10 +1137,49 @@ it("selects the newest message instead while a plugin prefers messages on open",
       composer: () => h.input(),
     } as unknown as MessageList);
     h.retarget({ disabled: false });
-    expect(document.activeElement).toBe(
-      list.querySelector('[data-message-id="new"] > [data-layout]'),
+    const newest = list.querySelector<HTMLElement>(
+      '[data-message-id="new"] > [data-layout]',
     );
+    expect(document.activeElement).toBe(newest);
+    // The handoff is done: a later reload doesn't take focus again.
+    newest?.blur();
+    h.retarget({ disabled: true });
+    h.retarget({ disabled: false });
+    expect(document.activeElement).toBe(document.body);
     unregister();
+
+    // A plugin can pick the message, such as the one it last selected.
+    const old = list.querySelector<HTMLElement>('[data-message-id="old"]');
+    const releasePick = focus.preferMessagesOnOpen(() => old ?? undefined);
+    const picked = mount({ autoFocus: true, disabled: true });
+    const unregisterPicked = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => picked.input(),
+    } as unknown as MessageList);
+    picked.retarget({ disabled: false });
+    expect(document.activeElement).toBe(old?.firstElementChild);
+    unregisterPicked();
+    releasePick();
+
+    // While it waits for the message to render, focus moving elsewhere wins.
+    const rows = list.innerHTML;
+    list.replaceChildren();
+    const waiting = mount({ autoFocus: true, disabled: true });
+    const unregisterWaiting = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => waiting.input(),
+    } as unknown as MessageList);
+    waiting.retarget({ disabled: false });
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    list.innerHTML = rows;
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+    unregisterWaiting();
   } finally {
     release();
     release();

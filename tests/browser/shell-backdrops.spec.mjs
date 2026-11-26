@@ -33,6 +33,8 @@ async function paint(page, points) {
 }
 const near = (actual, expected) =>
   actual.every((value, index) => Math.abs(value - expected[index]) <= 2);
+/** Seen through the glass sheet: softened, but still clearly the blue layer. */
+const throughGlass = ([r, g, b]) => b - Math.max(r, g) > 40;
 
 /** Solid `bg-app` resolved to rgb, as the engine paints it. */
 const appColor = (page) =>
@@ -69,7 +71,7 @@ test("registered backdrops paint in order between the shell and its controls, an
       .querySelector("[data-sidebar-card]")
       .getBoundingClientRect();
     return {
-      // Below the header row, beside the bottom of the window: a bare gutter.
+      // Below the header row, beside the bottom of the window: the glass sheet.
       gutter: [window.innerWidth - 2, window.innerHeight - 2],
       // Inside the history group, above its icons, and just outside it: the
       // group's own fill and the floor's spread around it.
@@ -77,7 +79,7 @@ test("registered backdrops paint in order between the shell and its controls, an
       floor: [toggle.left - 3, header.top + header.height / 2],
       pane: [main.left + main.width / 2, main.top + main.height / 2],
       // Sidebar cards float like the conversation: opaque inside, with the
-      // backdrop showing in the gap below the first one.
+      // backdrop showing through the glass sheet in the gap below the first.
       dock: [card.left + card.width / 2, card.bottom - 3],
       gap: [card.left + card.width / 2, card.bottom + 3],
     };
@@ -93,7 +95,7 @@ test("registered backdrops paint in order between the shell and its controls, an
       points.dock,
       points.gap,
     ]);
-    expect(near(gutter, blue), `${mode} gutter ${gutter}`).toBe(true);
+    expect(throughGlass(gutter), `${mode} gutter ${gutter}`).toBe(true);
     const app = await appColor(page);
     expect(near(group, app), `${mode} header group ${group}`).toBe(true);
     expect(near(floor, app), `${mode} header floor ${floor}`).toBe(true);
@@ -101,7 +103,7 @@ test("registered backdrops paint in order between the shell and its controls, an
       near(dock, blue) || near(dock, red),
       `${mode} sidebar card ${dock}`,
     ).toBe(false);
-    expect(near(gap, blue), `${mode} sidebar gap ${gap}`).toBe(true);
+    expect(throughGlass(gap), `${mode} sidebar gap ${gap}`).toBe(true);
     expect(near(pane, blue) || near(pane, red), `${mode} pane ${pane}`).toBe(
       false,
     );

@@ -338,6 +338,11 @@
     border-radius: var(--shell-sheet-radius) var(--shell-sheet-radius) 0 0;
     padding-block-start: var(--space-panel-gap);
   }
+  /* Under a plugin's backdrop the sheet turns to glass, so the backdrop
+     shows through it, softened, around the opaque cards and conversation. */
+  .shell-background:has(> .shell-backdrop) .shell-workspace {
+    @apply glass-primary;
+  }
   /* Sidebar cards on the sheet repaint `--surface-panel`, so their own fills,
      title actions and nested controls take the card's fill too. */
   .shell-workspace :where([data-sidebar-cards] [data-sidebar-card]) {

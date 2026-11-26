@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { hiddenFromSearch } from "../../features/solo/temporary-chat";
 import { useSearchMessages } from "../../app/shell/useSearchMessages";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -162,7 +163,7 @@ export function useFinderAll({
       return (
         !shown.has(message.id) &&
         channel &&
-        !channel.unlisted &&
+        !hiddenFromSearch(channel, session.viewer) &&
         !channel.metadataPending &&
         !lost(session, message.channelId)
       );

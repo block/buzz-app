@@ -22,7 +22,11 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { readView, writeView } from "../../shared/view-state";
-import { PostBackMenuItem, canPostBack } from "./TemporaryChat";
+import {
+  PostBackMenuItem,
+  TemporaryChatMarker,
+  canPostBack,
+} from "./TemporaryChat";
 
 const owner = createRelaySession(null);
 afterAll(() => owner.dispose());
@@ -67,13 +71,22 @@ const answer: ChannelMessage = {
 };
 
 function makeSession(channel: ChannelSummary | undefined = chat) {
+  const listResult = {
+    status: "ready" as const,
+    channels: channel ? [channel] : [],
+  };
   return {
     ...owner.session,
     viewer,
     scope,
     channels: {
       ...owner.session.channels,
+      list: () => listResult,
       get: (id: string) => (id === channel?.id ? channel : undefined),
+    },
+    messages: {
+      ...owner.session.messages,
+      forwardProblem: () => undefined,
     },
   };
 }
@@ -123,7 +136,7 @@ it("offers Post to thread only on delivered agent replies in the viewer's tempor
   expect(canPostBack(answer, makeSession({ ...chat, labels: [] }))).toBe(false);
 });
 
-it("drafts the reply into the source thread without sending, closes the sheet and opens the thread", async () => {
+it("stages the reply as an attributed forward card in the source thread without sending, closes the sheet and opens the thread", async () => {
   const session = makeSession();
   const draftKey = `draft:${sourceChannel}:thread:${root}`;
   writeView(scope, draftKey, "Quick update:");
@@ -143,8 +156,14 @@ it("drafts the reply into the source thread without sending, closes the sheet an
     channelId: sourceChannel,
   });
   expect(readView(scope, draftKey, null)).toEqual({
-    text: "Quick update:\n\nThree items are still open.",
+    text: "Quick update:",
     recipients: [],
+    forward: {
+      version: 1,
+      origin: "https://relay.test",
+      channelId: chatId,
+      id: answerId,
+    },
   });
   expect(openTemporaryChat(session)).toBeUndefined();
   expect(close).toHaveBeenCalledOnce();
@@ -169,9 +188,32 @@ it("stays on the already-open inline thread when posting back from over it", asy
     inline: root,
   });
   expect(readView(scope, draftKey, null)).toEqual({
-    text: "Three items are still open.",
+    text: "",
     recipients: [],
+    forward: {
+      version: 1,
+      origin: "https://relay.test",
+      channelId: chatId,
+      id: answerId,
+    },
   });
   expect(close).toHaveBeenCalledOnce();
   expect(open).not.toHaveBeenCalled();
+});
+
+it("keeps the reopen marker visible for archived temporary chats and allows posting back from them", async () => {
+  const archived: ChannelSummary = { ...chat, archived: true };
+  const session = makeSession(archived);
+  expect(canPostBack(answer, session)).toBe(true);
+  render(
+    <TemporaryChatMarker
+      message={{ ...answer, id: reply, channelId: sourceChannel }}
+      session={session}
+    />,
+  );
+  const marker = screen.getByRole("button", {
+    name: "Your temporary chat · Archived",
+  });
+  await userEvent.setup().click(marker);
+  expect(openTemporaryChat(session)?.chatId).toBe(chatId);
 });

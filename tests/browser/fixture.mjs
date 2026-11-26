@@ -1281,7 +1281,12 @@ export const test = base.extend({
                 ["owner", "admin"].includes(lifecycleRole)
                   ? [["p", viewer, lifecycleRole]]
                   : []),
-                ...(ownSoloChannels.includes(id)
+                ...(ownSoloChannels.includes(id) &&
+                !report.soloStarts?.some((start) =>
+                  start.tags.some(
+                    ([key, value]) => key === "h" && value === id,
+                  ),
+                )
                   ? soloAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
                   : []),
                 ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
@@ -2080,6 +2085,24 @@ export const test = base.extend({
         );
         return;
       }
+      if (soloStarts && event.kind === 9002) {
+        const id = event.tags.find(([key]) => key === "h")?.[1];
+        expect(soloChannels).toContain(id);
+        const unarchive = event.tags.some(
+          ([key, value]) => key === "archived" && value === "false",
+        );
+        if (unarchive) archivedIds.delete(id);
+        else archivedIds.add(id);
+        const previous = soloDetails.get(`${community}/${id}`);
+        if (previous) {
+          const tags = previous.tags.filter(([key]) => key !== "archived");
+          if (!unarchive) tags.push(["archived", "true"]);
+          const next = sign(39000, tags, "", relayKey, ++lifecycleTime);
+          soloDetails.set(`${community}/${id}`, next);
+          relay.publish(community, next, { requireSubscriber: false });
+        }
+        return;
+      }
       if (event.kind === 20002) {
         expect(validTypingTemplate(event)).toBe(true);
         expect(rosterIds).toContain(event.tags[0]?.[1]);
@@ -2511,7 +2534,7 @@ export const test = base.extend({
         }
         const sendable = [...soloChannels, ...sendChannels];
         if (sendable.length && route === "sign") {
-          expect(soloStarts ? [9, 9007] : [9]).toContain(body.kind);
+          expect(soloStarts ? [9, 9002, 9007] : [9]).toContain(body.kind);
           return send(response, finalizeEvent(body, userKey));
         }
         if (sendable.length && route === "publish") {
@@ -2753,7 +2776,9 @@ export const test = base.extend({
                           ...(ownSoloChannels.length
                             ? { channelIdentity: true }
                             : {}),
-                          ...(soloStarts ? { channelCreation: true } : {}),
+                          ...(soloStarts
+                            ? { channelCreation: true, channelLifecycle: true }
+                            : {}),
                         }),
                       }),
                   upstreamFetch: relay.fetch,
@@ -2925,6 +2950,18 @@ export const test = base.extend({
             relayKey,
             ++lifecycleTime,
           );
+          soloDetails.set(`primary/${id}`, event);
+          relay.publish("primary", event, { requireSubscriber: false });
+          return event;
+        },
+        archiveSoloChat(id, archived = true) {
+          const previous = soloDetails.get(`primary/${id}`);
+          expect(previous).toBeTruthy();
+          if (archived) archivedIds.add(id);
+          else archivedIds.delete(id);
+          const tags = previous.tags.filter(([key]) => key !== "archived");
+          if (archived) tags.push(["archived", "true"]);
+          const event = sign(39000, tags, "", relayKey, ++lifecycleTime);
           soloDetails.set(`primary/${id}`, event);
           relay.publish("primary", event, { requireSubscriber: false });
           return event;

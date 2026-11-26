@@ -31,11 +31,12 @@ export function confirmedChannel(
   view: ChannelView,
   channel: ChannelSummary | undefined,
   viewer: string | undefined,
+  allowArchived = false,
 ) {
   if (!channel || channel.cached) return undefined;
   if (view === "thread") return channel;
   return !channel.readOnly &&
-    !channel.archived &&
+    (allowArchived || !channel.archived) &&
     (channel.channelType !== "solo" || viewerMember(channel, viewer))
     ? channel
     : undefined;
@@ -51,6 +52,7 @@ export function ConfirmedChannel({
   view,
   channelId,
   channel,
+  allowArchived = false,
   children,
 }: {
   session: Session;
@@ -58,9 +60,16 @@ export function ConfirmedChannel({
   channelId: string;
   /** The channel as its host lists it, confirmed or not. */
   channel: ChannelSummary | undefined;
+  /** Keep an archived conversation readable in place (e.g. a temporary chat). */
+  allowArchived?: boolean;
   children: (channel: ChannelSummary) => ReactNode;
 }) {
-  const confirmed = confirmedChannel(view, channel, session.viewer);
+  const confirmed = confirmedChannel(
+    view,
+    channel,
+    session.viewer,
+    allowArchived,
+  );
   return confirmed ? (
     children(confirmed)
   ) : (

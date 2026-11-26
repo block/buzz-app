@@ -51,6 +51,7 @@ test("a temporary chat opens over its message, stays out of the sidebar and post
   const [start] = app.report.soloStarts;
   const chat = start.tags.find(([key]) => key === "h")[1];
   expect(start.tags).toContainEqual(["t", "buzz.unlisted"]);
+  expect(start.tags).toContainEqual(["ttl", "604800"]);
   // The forwarded source is the chat's first message.
   await expect(
     sheet.getByText("Where did we land on the launch"),
@@ -74,16 +75,17 @@ test("a temporary chat opens over its message, stays out of the sidebar and post
   await page
     .getByRole("menuitem", { name: "Post to thread", exact: true })
     .click();
-  // Post to thread closes the temporary chat and drops the answer into the
-  // source thread's reply box so the viewer can edit and send it themselves.
+  // Post to thread closes the temporary chat and stages the reply as an
+  // attributed forward card in the source thread's reply box so the viewer can
+  // review, add a note, and send with clear agent attribution.
   await expect(sheet).toBeHidden();
   const thread = page.getByRole("dialog", { name: "Thread" });
   await expect(thread).toBeVisible();
-  const threadComposer = thread.getByRole("textbox", {
-    name: "Reply to thread",
-    exact: true,
+  const stagedForward = thread.getByRole("group", {
+    name: /Forwarded message from Honey/,
   });
-  await expect(threadComposer).toContainText("Three items are still open");
+  await expect(stagedForward).toBeVisible();
+  await expect(stagedForward).toContainText("Three items are still open");
   // Nothing was published yet until the viewer sends.
   expect(
     app.report.publications.some(
@@ -93,7 +95,12 @@ test("a temporary chat opens over its message, stays out of the sidebar and post
         event.tags.some(([key, value]) => key === "e" && value === question.id),
     ),
   ).toBe(false);
+  const threadComposer = thread.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
   await threadComposer.click();
+  await page.keyboard.type("Checked with Honey — here is what is left:");
   await page.keyboard.press("Enter");
   await expect
     .poll(() =>
@@ -107,7 +114,23 @@ test("a temporary chat opens over its message, stays out of the sidebar and post
       ),
     )
     .toBe(true);
-  await expect(thread.getByText("Three items are still open")).toBeVisible();
+  await expect(
+    thread.getByText("Checked with Honey — here is what is left:"),
+  ).toBeVisible();
+  const postedForward = thread.getByRole("group", {
+    name: /Forwarded message from Honey/,
+  });
+  await expect(postedForward).toBeVisible();
+  await expect(postedForward).toContainText("Temporary chat");
+  await expect(postedForward).toContainText("Three items are still open");
+  // Clicking "View original" reopens the temporary chat sheet right over the thread.
+  await postedForward
+    .getByRole("button", { name: "View original", exact: true })
+    .click();
+  await expect(sheet).toBeVisible();
+  await expect(thread).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(thread).toBeHidden();
   // Nothing lists the temporary chat: only its message's marker reopens it.
@@ -131,6 +154,44 @@ test("a temporary chat opens over its message, stays out of the sidebar and post
   await expect(
     row.getByRole("button", { name: "Your temporary chat", exact: true }),
   ).toBeVisible();
+  // After the temporary chat archives, the marker stays visible, opens read-only
+  // with an Unarchive button, and Search still finds its messages.
+  app.archiveSoloChat(chat, true);
+  const archivedMarker = row.getByRole("button", {
+    name: "Your temporary chat · Archived",
+    exact: true,
+  });
+  await expect(archivedMarker).toBeVisible();
+  await archivedMarker.click();
+  await expect(sheet).toBeVisible();
+  await expect(
+    sheet.getByText("This temporary chat is archived and read-only."),
+  ).toBeVisible();
+  await expect(
+    sheet.locator(`[data-message-id="${followUp.id}"]`),
+  ).toBeVisible();
+  await expect(
+    sheet.getByRole("button", { name: "Unarchive", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  // Search finds the archived temporary chat's message and reopens it over its source.
+  await page
+    .getByRole("button", { name: /Search/i })
+    .first()
+    .click();
+  const searchBox = page.getByRole("combobox", { name: /Search/i });
+  await searchBox.fill("signed off");
+  const hit = page.getByRole("option", { name: /Support just signed off/ });
+  await expect(hit).toBeVisible();
+  await hit.click();
+  await expect(sheet).toBeVisible();
+  // Unarchiving restores the composer in place.
+  await sheet.getByRole("button", { name: "Unarchive", exact: true }).click();
+  await expect(
+    sheet.getByText("This temporary chat is archived and read-only."),
+  ).toBeHidden();
+  await expect(sheet.getByRole("textbox").last()).toBeVisible();
 });
 
 test("a temporary chat stacks on the inline thread it opens from, and its details expand in place", async ({
@@ -215,12 +276,11 @@ test("a temporary chat stacks on the inline thread it opens from, and its detail
     .click();
   await expect(sheet).toBeHidden();
   await expect(thread).toBeVisible();
-  const threadComposer = thread.getByRole("textbox", {
-    name: "Reply to thread",
-    exact: true,
+  const staged = thread.getByRole("group", {
+    name: /Forwarded message from Honey/,
   });
-  await expect(threadComposer).toBeVisible();
-  await expect(threadComposer).toContainText(
+  await expect(staged).toBeVisible();
+  await expect(staged).toContainText(
     "Drill needs a staging snapshot and 15 minutes with on-call.",
   );
 });

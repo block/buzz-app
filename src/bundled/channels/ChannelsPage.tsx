@@ -2470,6 +2470,20 @@ function ChannelWorkspace({
       )
         return false;
       const parsed = parseBuzzLink(url);
+      const linkedTemporary =
+        parsed && "channelId" in parsed && parsed.channelId
+          ? queries.channels.get?.(parsed.channelId)
+          : undefined;
+      if (ownTemporaryChat(linkedTemporary, queries.viewer)) {
+        const tempSource = temporarySource(linkedTemporary.description);
+        if (tempSource && tempSource.channelId === current?.id) {
+          showTemporaryChat(queries, {
+            chatId: linkedTemporary.id,
+            source: tempSource,
+          });
+          return true;
+        }
+      }
       const linkedChat =
         parsed?.format === "legacy" &&
         !parsed.messageId &&
@@ -2912,7 +2926,7 @@ function ChannelWorkspace({
     current &&
     temporaryChat.source.channelId === current.id ? (
       <TemporaryChatSheet
-        key={temporaryChat.chatId}
+        key={`${temporaryChat.chatId}:${inlineThread ?? ""}`}
         session={queries}
         scope={scope}
         extensions={extensions}

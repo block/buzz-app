@@ -1,15 +1,19 @@
 import { useSyncExternalStore } from "react";
 import { UNLISTED_LABEL } from "../relay/channel-labels";
+import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/channel-writes";
 import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import { attemptEnded } from "../relay/withdraw";
 import { messageCopyLink } from "../messages/message-copy";
+import { readDefaultLifetime } from "./default-lifetime";
 
 /** NIP-CL label of a temporary chat: a Solo chat started from one message,
  * read in a sheet over that message and reopened from it. It is also
  * unlisted (`UNLISTED_LABEL`), so no list shows it. */
 export const TEMPORARY_LABEL = "buzz.solo.temporary";
-/** A temporary chat archives after a day without messages. */
-export const TEMPORARY_TTL_SECONDS = 24 * 60 * 60;
+/** Default temporary chat lifetime when the user has no Solo temporary
+ * lifetime configured: 7 days without messages. */
+export const TEMPORARY_TTL_SECONDS = DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS;
 export const TEMPORARY_LABELS = [UNLISTED_LABEL, TEMPORARY_LABEL] as const;
 
 const ABOUT_PREFIX = "Temporary chat about ";
@@ -69,7 +73,19 @@ export function ownTemporaryChat(
   );
 }
 
-/** The viewer's newest open temporary chat started from `messageId`. */
+/** Whether an unlisted channel should be hidden from the viewer's search.
+ * Other unlisted channels (such as huddles) stay out of search, while the
+ * viewer's own temporary chats stay searchable so past answers can be found. */
+export function hiddenFromSearch(
+  channel: ChannelSummary | undefined,
+  viewer: string | undefined,
+): boolean {
+  return !!channel?.unlisted && !ownTemporaryChat(channel, viewer);
+}
+
+/** The viewer's temporary chat started from `messageId`: prefers the newest
+ * open chat, falling back to the newest archived one so quiet chats stay
+ * reachable read-only from their source message. */
 export function findTemporaryChat(
   channels: readonly ChannelSummary[],
   viewer: string | undefined,
@@ -79,11 +95,20 @@ export function findTemporaryChat(
   for (const channel of channels) {
     if (
       !ownTemporaryChat(channel, viewer) ||
-      channel.archived ||
       temporarySource(channel.description)?.messageId !== messageId
     )
       continue;
-    if ((channel.createdAt ?? 0) >= (found?.createdAt ?? 0)) found = channel;
+    if (!found) {
+      found = channel;
+      continue;
+    }
+    const foundArchived = !!found.archived;
+    const nextArchived = !!channel.archived;
+    if (foundArchived !== nextArchived) {
+      if (!nextArchived) found = channel;
+      continue;
+    }
+    if ((channel.createdAt ?? 0) >= (found.createdAt ?? 0)) found = channel;
   }
   return found;
 }
@@ -145,29 +170,52 @@ export function useOpenTemporaryChat(session: RelaySession) {
 
 /** Starts a temporary chat from `message` with `agent`: a private, unlisted
  * Solo chat whose first message forwards the source, so the agent reads it
- * as history once asked. Settles with the chat's id once it exists. */
+ * as history once asked. Settles once the chat exists and the opening forward
+ * attempt finishes, reporting any forward failure alongside the open chat. */
 export async function startTemporaryChat(
   session: RelaySession,
   message: ChannelMessage,
   agent: string,
   authorName: string,
-): Promise<OpenTemporaryChat> {
+): Promise<OpenTemporaryChat & Readonly<{ forwardError?: string }>> {
   const description = temporaryAbout(message, session.scope ?? "");
   const source = temporarySource(description);
   if (!source) throw new Error("This message can’t start a temporary chat.");
   const id = crypto.randomUUID();
   const excerpt = message.content.replace(/\s+/g, " ").trim();
   const title = `About: ${[...excerpt].slice(0, 60).join("") || "a message"}`;
+  const ttlSeconds =
+    (session.scope ? readDefaultLifetime(session.scope) : undefined) ??
+    TEMPORARY_TTL_SECONDS;
   const { ready } = session.channelWrites.start(
     id,
     title,
     [agent],
-    TEMPORARY_TTL_SECONDS,
+    ttlSeconds,
     false,
     undefined,
     { labels: TEMPORARY_LABELS, description },
   );
   await ready;
-  session.messages.forward(id, message, authorName, "");
-  return { chatId: id, source };
+  let forwardError: string | undefined;
+  try {
+    const forwardId = session.messages.forward(id, message, authorName, "");
+    if (session.outbox) {
+      await attemptEnded(session.outbox, forwardId);
+      const pending = session.outbox
+        .snapshot()
+        .find((item) => item.event.id === forwardId);
+      if (
+        pending &&
+        (pending.delivery === "failed" || pending.delivery === "unknown")
+      ) {
+        forwardError =
+          pending.error ??
+          "Couldn’t send the source message to the temporary chat.";
+      }
+    }
+  } catch (error) {
+    forwardError = error instanceof Error ? error.message : String(error);
+  }
+  return { chatId: id, source, ...(forwardError ? { forwardError } : {}) };
 }

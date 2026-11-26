@@ -1,4 +1,11 @@
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ConfirmedChannel } from "../../features/conversation/ConfirmedChannel";
 import {
   ConversationChannel,
@@ -14,9 +21,14 @@ import {
   useComposerScope,
 } from "../../features/messages/composer-overlay";
 import { ComposerSheet } from "../../features/messages/ComposerSheet";
+import type { ForwardReference } from "../../features/messages/forward-clipboard";
 import { mentionDraft } from "../../features/messages/mention-draft";
 import type { Navigation } from "../../features/navigation/controller";
-import type { ChannelMessage } from "../../features/relay/contracts";
+import { ChannelLifecycleUnconfirmed } from "../../features/relay/channel-lifecycle";
+import type {
+  ChannelMessage,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { splitPartition } from "../../features/relay/partition";
 import type { RelaySession } from "../../features/relay/session";
 import { useDefaultAgent } from "../../features/solo/default-agent";
@@ -29,11 +41,13 @@ import {
   type OpenTemporaryChat,
 } from "../../features/solo/temporary-chat";
 import { ArrowUpIcon, ChatCircleIcon } from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { readView, writeView } from "../../shared/view-state";
 import { ChannelBody } from "./ChannelBody";
+import { useLifecycleOffer } from "./useLifecycleOffer";
 import styles from "./TemporaryChat.module.css";
 
 const authorName = (session: RelaySession, pubkey: string) =>
@@ -89,15 +103,17 @@ export function TemporaryChatMenuItem({
     }
     setBusy(true);
     try {
-      showTemporaryChat(
+      const started = await startTemporaryChat(
         session,
-        await startTemporaryChat(
-          session,
-          message,
-          agent.pubkey,
-          authorName(session, message.authorId),
-        ),
+        message,
+        agent.pubkey,
+        authorName(session, message.authorId),
       );
+      showTemporaryChat(session, {
+        chatId: started.chatId,
+        source: started.source,
+      });
+      if (started.forwardError) notify(started.forwardError, "error");
       close();
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), "error");
@@ -142,6 +158,12 @@ export function TemporaryChatMarker({
   const unread = useSyncExternalStore(subscribe, get, get);
   if (!chat || !source) return null;
   const count = unread?.row?.observedCount ?? unread?.observedCount ?? 0;
+  const label =
+    count > 0
+      ? `Your temporary chat · ${count} new`
+      : chat.archived
+        ? "Your temporary chat · Archived"
+        : "Your temporary chat";
   return (
     <span className="text-caption">
       <button
@@ -149,19 +171,19 @@ export function TemporaryChatMarker({
         className={`${referenceStyles.link} ${styles.marker}`}
         data-temporary-chat-marker=""
         data-temporary-chat-unread={count > 0 ? "" : undefined}
+        data-temporary-chat-archived={chat.archived ? "" : undefined}
         onClick={() => showTemporaryChat(session, { chatId: chat.id, source })}
       >
         <ChatCircleIcon size={14} aria-hidden="true" />
-        {count > 0
-          ? `Your temporary chat · ${count} new`
-          : "Your temporary chat"}
+        {label}
       </button>
     </span>
   );
 }
 
-/** In a temporary chat, an agent's message can be drafted into the source's
- * thread composer for the viewer to review, edit and send as themselves. */
+/** In a temporary chat, an agent's message can be staged as a forwarded card
+ * in the source's thread composer so the viewer can review it, add an optional
+ * note, and send with clear agent attribution. */
 export function canPostBack(message: ChannelMessage, session: RelaySession) {
   const chat = session.channels.get?.(message.channelId);
   return (
@@ -169,14 +191,15 @@ export function canPostBack(message: ChannelMessage, session: RelaySession) {
     ownTemporaryChat(chat, session.viewer) &&
     message.authorId !== session.viewer &&
     !message.threadRootId &&
-    !!message.content.trim() &&
+    (!!message.content.trim() || message.attachments.length > 0) &&
     !!temporarySource(chat.description) &&
     (!message.delivery || ["accepted", "seen"].includes(message.delivery))
   );
 }
 
-/** Puts the message into the source thread's draft, closes the temporary chat
- * and opens that thread. Nothing is sent until the person sends it there. */
+/** Stages the message as an attributed forward card in the source thread's
+ * draft, closes the temporary chat and opens that thread. Nothing is sent
+ * until the person sends it there. */
 export function PostBackMenuItem({
   message,
   session,
@@ -199,14 +222,27 @@ export function PostBackMenuItem({
       notify("The thread is unavailable.", "error");
       return;
     }
+    const problem = session.messages.forwardProblem?.(
+      source.channelId,
+      message,
+      authorName(session, message.authorId),
+      "",
+    );
+    if (problem) {
+      notify(problem, "error");
+      return;
+    }
     const key = `draft:${source.channelId}:thread:${source.rootId}`;
     const { document: _, ...saved } = mentionDraft(
       readView<unknown>(scope, key, ""),
     );
-    const text = saved.text.trim()
-      ? `${saved.text.trimEnd()}\n\n${message.content}`
-      : message.content;
-    if (!writeView(scope, key, { ...saved, text })) {
+    const forward: ForwardReference = {
+      version: 1,
+      origin: parts.communityOrigin,
+      channelId: message.channelId,
+      id: message.id,
+    };
+    if (!writeView(scope, key, { ...saved, forward })) {
       notify("The thread’s draft couldn’t be saved. Try again.", "error");
       return;
     }
@@ -240,10 +276,79 @@ export function PostBackMenuItem({
   );
 }
 
+function TemporaryChatArchivedFooter({
+  chat,
+  session,
+}: {
+  chat: ChannelSummary;
+  session: RelaySession;
+}) {
+  const offer = useLifecycleOffer(session, chat);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const controller = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => controller.current?.abort(), []);
+  const canUnarchive =
+    !!offer?.canUnarchive && session.channelLifecycle.available;
+  const unarchive = () => {
+    if (!canUnarchive || pending) return;
+    controller.current?.abort();
+    const current = new AbortController();
+    controller.current = current;
+    setPending(true);
+    setError(undefined);
+    session.channelLifecycle.run("unarchive", chat.id, current.signal).then(
+      () => {
+        if (!current.signal.aborted) setPending(false);
+      },
+      (reason: unknown) => {
+        if (current.signal.aborted) return;
+        setPending(false);
+        setError(
+          reason instanceof ChannelLifecycleUnconfirmed
+            ? "Unarchive may have taken effect, but it is not confirmed yet. Try again to check."
+            : reason instanceof Error
+              ? reason.message
+              : "Couldn’t unarchive this temporary chat.",
+        );
+      },
+    );
+  };
+  return (
+    <section
+      aria-label="Archived temporary chat"
+      className={styles.archivedFooter}
+    >
+      <p className="text-body-sm text-subtle">
+        This temporary chat is archived and read-only.
+      </p>
+      {canUnarchive && (
+        <Button
+          type="button"
+          size="sm"
+          variant="prominent"
+          loading={pending}
+          onClick={unarchive}
+        >
+          Unarchive
+        </Button>
+      )}
+      {error && (
+        <p
+          role="alert"
+          className={`${styles.archivedError} text-body-sm text-danger`}
+        >
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
 /** The open temporary chat, as a sheet over the composer of the view it
  * covers (the conversation, or its open inline thread) with its own
- * composer in that one's place. Closing it leaves
- * the chat; its source reopens it until it archives. */
+ * composer in that one's place. Closing it leaves the chat; its source
+ * reopens it even after it archives (read-only, with Unarchive). */
 export function TemporaryChatSheet({
   session,
   scope,
@@ -274,7 +379,11 @@ export function TemporaryChatSheet({
       }}
       host={host}
       title="Temporary chat"
-      description="Only you can see this"
+      description={
+        chat.archived
+          ? "Archived · Only you can see this"
+          : "Only you can see this"
+      }
       containsComposer
     >
       <ConversationChannel
@@ -289,6 +398,7 @@ export function TemporaryChatSheet({
           view="conversation"
           channelId={chat.id}
           channel={chat}
+          allowArchived
         >
           {() => (
             // Its own view, which the address never names: its composer
@@ -299,7 +409,11 @@ export function TemporaryChatSheet({
                 <div className={styles.history}>
                   <ChannelBody cached={false} viewer={session.viewer} />
                 </div>
-                <ConversationComposer autoFocus />
+                {chat.archived ? (
+                  <TemporaryChatArchivedFooter chat={chat} session={session} />
+                ) : (
+                  <ConversationComposer autoFocus />
+                )}
               </div>
             </ComposerScopeProvider>
           )}

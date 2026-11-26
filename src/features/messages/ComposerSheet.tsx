@@ -41,8 +41,15 @@ function dockGeometry(dock: HTMLElement): CSSProperties {
   const outer = dock.parentElement?.closest<HTMLElement>(
     "[data-details-sheet-surface]",
   );
+  // During a quick open (`revealFrom`), the outer sheet translates down while
+  // its children counter-translate up; strip that Y transform so a sheet
+  // stacked on it measures the outer sheet's resting top on its first frame.
+  const outerShift =
+    outer && typeof DOMMatrixReadOnly !== "undefined"
+      ? new DOMMatrixReadOnly(getComputedStyle(outer).transform).m42
+      : 0;
   const viewTop = outer
-    ? outer.getBoundingClientRect().top + outer.clientTop
+    ? outer.getBoundingClientRect().top - outerShift + outer.clientTop
     : (dock.parentElement ?? dock).getBoundingClientRect().top;
   return {
     "--composer-height": `${box.height}px`,
@@ -108,9 +115,23 @@ function useDockGeometry(dock: HTMLElement, mounted: boolean) {
         : new ResizeObserver(update);
     observer?.observe(dock);
     if (dock.parentElement) observer?.observe(dock.parentElement);
+    const outer = dock.parentElement?.closest<HTMLElement>(
+      "[data-details-sheet-surface]",
+    );
+    if (outer) observer?.observe(outer);
+    const opened =
+      outer && typeof MutationObserver !== "undefined"
+        ? new MutationObserver(update)
+        : undefined;
+    if (outer)
+      opened?.observe(outer, {
+        attributes: true,
+        attributeFilter: ["data-opened"],
+      });
     window.addEventListener("resize", update);
     return () => {
       observer?.disconnect();
+      opened?.disconnect();
       window.removeEventListener("resize", update);
     };
   }, [dock, mounted]);

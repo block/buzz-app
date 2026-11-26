@@ -69,16 +69,19 @@ describe("agent completion notifications", () => {
   );
 
   it.each(["before", "after"])(
-    "notifies once when a background reply arrives %s completion",
+    "notifies once when a recorded background reply is confirmed %s completion",
     (when) => {
       const h = setup(false, active("other"), "solo", true);
       h.work.reply("coordination", false);
+      h.work.reply("reply", false);
       if (when === "before") h.work.reply("reply", true);
       h.work.finish({ ok: true });
       if (when === "after") {
         expect(h.desktop).not.toHaveBeenCalled();
         h.work.reply("reply", true);
       }
+      expect(h.desktop).toHaveBeenCalledOnce();
+      h.work.reply("reply", true);
       h.work.reply("another-reply", true);
       expect(h.desktop).toHaveBeenCalledOnce();
       h.stop();

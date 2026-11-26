@@ -559,11 +559,17 @@ export function createLocalAgentActivity() {
         },
         reply: (messageId: string, userVisible = false) => {
           const current = entries.get(id);
-          if (
-            !current ||
-            current.replyMessages?.some((item) => item.id === messageId)
-          )
+          if (!current) return;
+          if (current.replyMessages?.some((item) => item.id === messageId)) {
+            if (userVisible && !current.hasUserVisibleReply) {
+              entries.set(
+                id,
+                Object.freeze({ ...current, hasUserVisibleReply: true }),
+              );
+              publish();
+            }
             return;
+          }
           const now = Date.now();
           const replyMessages = [
             ...(current.replyMessages ?? []).filter(

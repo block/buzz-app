@@ -306,6 +306,22 @@ pause or delete each item there. Every wake-up costs model tokens.
 **Settings → Plugins → Attention** turns it off for all your local agents;
 mentions still work.
 
+## Smart routing
+
+Smart routing is a bundled plugin, off by default. Turn it on in **Settings →
+Plugins → Manage plugins**. It routes only while a decisions provider is set up
+under **Settings → Buzz → Decisions API** (such as Builderlab with decisions or
+a TypeSafe key); **Settings → Plugins → Smart routing** shows whether it is
+routing or waiting for a provider.
+
+When you send an untagged message in a channel, Smart routing can pick one of
+your running local agents in that channel and deliver your message to it
+without editing what you sent, marked by an arrow and the agent's avatar beside
+the timestamp. For top-level messages (tagged or untagged), it also decides
+whether the reply goes at the top level or in a thread; replies inside a thread
+stay in that thread. Open **⋯ → Smart routing** on a routed message to inspect
+the decision; agents can read recent decisions with `smart_routing_log`.
+
 ## Connecting other tools
 
 - **The `buzz` CLI** comes with the desktop app. `buzz auth desktop pair` asks

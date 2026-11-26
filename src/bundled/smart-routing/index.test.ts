@@ -74,7 +74,9 @@ function start() {
         ],
       }),
     },
-    read: vi.fn(async () => history),
+    read: vi.fn(
+      async (_filters?: unknown, _opts?: { signal?: AbortSignal }) => history,
+    ),
     profiles: {
       snapshot: () => profileMap,
       subscribe: () => () => {},
@@ -243,7 +245,10 @@ function start() {
   };
   let skipCount = 0;
   const skipped = () => skipCount;
-  const place = (event: Record<string, unknown>) => {
+  const place = (
+    event: Record<string, unknown>,
+    signal = new AbortController().signal,
+  ) => {
     const placer = [...placers][0];
     if (!placer) throw new Error("No placer registered");
     return placer.place(
@@ -252,7 +257,7 @@ function start() {
         channel: CH,
         event: { kind: 9, pubkey: OWNER, created_at: 200, ...event } as never,
       },
-      new AbortController().signal,
+      signal,
     );
   };
   /** Where the `index`th delivered mention lands, as the host places it: a
@@ -448,6 +453,103 @@ describe("smart routing", () => {
       status: "failed",
       reason: "Jev timeout",
     });
+  });
+
+  it("shares the 800ms placement deadline across context loading and Jev, falling back to cached context", async () => {
+    const f = await setup();
+    f.state.where = { place: "working" };
+    f.session.channels.window = () =>
+      ({
+        status: "loading",
+        hasMore: true,
+        rows: [
+          {
+            id: EARLIER,
+            authorId: PAT,
+            createdAt: 100,
+            content: "cached timeline note",
+          },
+        ],
+      }) as never;
+    const readSignals: AbortSignal[] = [];
+    f.session.read.mockImplementation(
+      (_filters: unknown, opts?: { signal?: AbortSignal }) => {
+        if (opts?.signal) readSignals.push(opts.signal);
+        return new Promise(() => {});
+      },
+    );
+
+    const fastStart = Date.now();
+    await expect(
+      f.place(top("f", "@ART is it done?", [["p", ART]])),
+    ).resolves.toEqual({ topLevel: true });
+    expect(Date.now() - fastStart).toBeLessThan(800);
+    expect(readSignals[0]?.aborted).toBe(true);
+    expect(f.calls[0]?.state).toContain("cached timeline note");
+
+    // Slow relay + slow Jev still stops at the shared 800ms deadline.
+    f.state.delayMs = 600;
+    const slowStart = Date.now();
+    await expect(
+      f.place(top("1", "@ART still waiting?", [["p", ART]])),
+    ).resolves.toBeUndefined();
+    const slowWaited = Date.now() - slowStart;
+    expect(slowWaited).toBeGreaterThanOrEqual(790);
+    expect(slowWaited).toBeLessThan(1000);
+    const log = JSON.parse(await f.tool().call({}, {}, {}));
+    expect(log.entries[0]).toMatchObject({
+      flow: "where",
+      status: "failed",
+      reason: "Jev timeout",
+    });
+  });
+
+  it("honors the placement hook abort signal without recording a placement, while letting a surviving co-tagged caller finish", async () => {
+    const f = await setup();
+    f.state.where = { place: "working" };
+    let readSignal: AbortSignal | undefined;
+    f.session.read.mockImplementationOnce(
+      (_filters: unknown, opts?: { signal?: AbortSignal }) => {
+        readSignal = opts?.signal;
+        return new Promise(() => {});
+      },
+    );
+
+    const aborted = new AbortController();
+    const pending = f.place(
+      top("2", "@ART check", [["p", ART]]),
+      aborted.signal,
+    );
+    setTimeout(() => aborted.abort(), 40);
+    const started = Date.now();
+    await expect(pending).resolves.toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(readSignal?.aborted).toBe(true);
+    expect(f.calls).toHaveLength(0);
+    await vi.waitFor(async () => {
+      const log = JSON.parse(await f.tool().call({}, {}, {}));
+      expect(log.entries[0]).toMatchObject({
+        flow: "where",
+        status: "failed",
+        reason: "placement cancelled",
+      });
+    });
+
+    // Two agents tagged together: aborting one caller does not cancel the other.
+    f.state.delayMs = 80;
+    const event = top("3", "@ART @mbot status?", [
+      ["p", ART],
+      ["p", MBOT],
+    ]);
+    const first = new AbortController();
+    const second = new AbortController();
+    setTimeout(() => first.abort(), 20);
+    const [a, b] = await Promise.all([
+      f.place(event, first.signal),
+      f.place(event, second.signal),
+    ]);
+    expect(a).toBeUndefined();
+    expect(b).toEqual({ topLevel: true });
   });
 
   it("a Jev-picked agent and a tagged agent end up in the same place for the same message", async () => {

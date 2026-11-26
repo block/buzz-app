@@ -55,6 +55,8 @@ const QUESTION_LIMIT = 32;
  * here as a timeout rather than dropped there. A direct call's p99 is about
  * 224ms. */
 const PLACE_TIMEOUT_MS = 800;
+/** Max wait for relay history when the loaded timeline lacks enough context. */
+const CONTEXT_TIMEOUT_MS = 4000;
 /** The untagged who + where call, which nothing waits on. */
 const WHO_TIMEOUT_MS = 15000;
 /** Waits before each retry of a delivery the host refused as `unavailable`. */
@@ -126,6 +128,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     session: RelaySession,
     event: RelayEvent,
     channelId: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
   ) {
     const thread = threadReference(event);
     const at = eventMs(event);
@@ -164,10 +168,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
       [...seen.values()].filter(inThread).length >= CONTEXT_LIMIT;
     const done =
       !thread && window?.status === "ready" && window.hasMore === false;
-    if (!enough() && !done) {
+    if (!enough() && !done && timeoutMs > 0 && !signal?.aborted) {
       const kinds = [9, 40002];
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const readSignal = signal
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal;
+      let onAbort: (() => void) | undefined;
       try {
-        const events = await session.read(
+        const read = session.read(
           thread
             ? [
                 { ids: [thread.rootId], limit: 1 },
@@ -187,19 +197,32 @@ export const apply: PluginModule["apply"] = (ctx) => {
                   limit: 100,
                 },
               ],
-          { signal: AbortSignal.timeout(4000) },
+          { signal: readSignal },
         );
-        add(
-          events.map((item) => ({
-            id: item.id,
-            pubkey: item.pubkey,
-            ms: eventMs(item),
-            text: messageText(item),
-            root: threadReference(item)?.rootId,
-          })),
-        );
+        void read.catch(() => {});
+        const events = await Promise.race([
+          read,
+          new Promise<undefined>((resolve) => {
+            if (readSignal.aborted) return resolve(undefined);
+            onAbort = () => resolve(undefined);
+            readSignal.addEventListener("abort", onAbort, { once: true });
+          }),
+        ]);
+        if (events)
+          add(
+            events.map((item) => ({
+              id: item.id,
+              pubkey: item.pubkey,
+              ms: eventMs(item),
+              text: messageText(item),
+              root: threadReference(item)?.rootId,
+            })),
+          );
       } catch {
         // Decide from what the timeline has.
+      } finally {
+        clearTimeout(timer);
+        if (onAbort) readSignal.removeEventListener("abort", onAbort);
       }
     }
     const sorted = [...seen.values()].sort((a, b) => a.ms - b.ms);
@@ -249,8 +272,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ask: readonly Agent[],
     tagging: readonly Agent[],
     timeoutMs: number,
+    signal?: AbortSignal,
   ) {
     const started = Date.now();
+    const deadline = started + timeoutMs;
+    const remaining = () => Math.max(0, deadline - Date.now());
+    if (signal?.aborted) return { failed: "cancelled", ms: 0 } as const;
     const thread = threadReference(event);
     const profiles = safe(() => session.profiles.snapshot());
     const all = ctx.agents.snapshot().agents;
@@ -266,8 +293,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       return isAgent(pubkey) ? `${name} (agent)` : name;
     };
     const owner = safe(() => profiles?.get(viewer)?.name) || "the owner";
+    // Reserve at least half the budget for Jev so a slow relay read falls back
+    // to cached context instead of eating the whole placement deadline.
+    const contextBudgetMs = Math.min(
+      CONTEXT_TIMEOUT_MS,
+      Math.floor(remaining() / 2),
+    );
     const earlier: ContextMessage[] = (
-      await readContext(session, event, channel.id)
+      await readContext(session, event, channel.id, contextBudgetMs, signal)
     ).map((item) => ({
       id: item.id,
       from: nameOf(item.pubkey),
@@ -279,6 +312,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         text: reply.text,
       })),
     }));
+    if (signal?.aborted)
+      return { failed: "cancelled", ms: Date.now() - started } as const;
+    const decideBudgetMs = remaining();
+    if (decideBudgetMs <= 0)
+      return { failed: "timeout", ms: Date.now() - started } as const;
     const humans = channel.members.filter((pubkey) => !isAgent(pubkey)).length;
     const { state, labels, recent } = buildState({
       owner,
@@ -317,24 +355,39 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const community =
       (tagging[0] ?? ask[0])?.relay ?? ctx.relay.snapshot().origin;
     // The decisions service waits at least 1s; the placement deadline is
-    // shorter, so this call stops waiting on its own.
+    // shorter, so this call stops waiting on its own or when the hook aborts.
     let stop = () => {};
+    let onAbort: (() => void) | undefined;
+    const decide = ctx.decisions.decide({
+      state,
+      questions,
+      timeoutMs: decideBudgetMs,
+      ...(community ? { community } : {}),
+    });
+    void decide.catch(() => {});
     const result = await Promise.race([
-      ctx.decisions.decide({
-        state,
-        questions,
-        timeoutMs,
-        ...(community ? { community } : {}),
-      }),
-      new Promise<{ outcome: "failed"; reason: "timeout" }>((resolve) => {
-        const timer = setTimeout(
-          () => resolve({ outcome: "failed", reason: "timeout" }),
-          timeoutMs,
-        );
-        stop = () => clearTimeout(timer);
-      }),
-    ]).finally(() => stop());
+      decide,
+      new Promise<{ outcome: "failed"; reason: "timeout" | "cancelled" }>(
+        (resolve) => {
+          if (signal?.aborted)
+            return resolve({ outcome: "failed", reason: "cancelled" });
+          const timer = setTimeout(
+            () => resolve({ outcome: "failed", reason: "timeout" }),
+            decideBudgetMs,
+          );
+          stop = () => clearTimeout(timer);
+          if (signal) {
+            onAbort = () => resolve({ outcome: "failed", reason: "cancelled" });
+            signal.addEventListener("abort", onAbort, { once: true });
+          }
+        },
+      ),
+    ]).finally(() => {
+      stop();
+      if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+    });
     const ms = Date.now() - started;
+    if (signal?.aborted) return { failed: "cancelled", ms } as const;
     if (result.outcome !== "answered")
       return { failed: result.reason, ms } as const;
     const answers: Readonly<Record<string, DecisionAnswer>> = result.answers;
@@ -378,9 +431,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // asks only about the owner's own mentions.
   // Each message's where decision, shared by the agents it reaches: tagged
   // together, or picked by Jev and then asked about by the host.
-  const placing = new Map<string, Promise<Where | undefined>>();
-  const remember = (id: string, decided: Promise<Where | undefined>) => {
-    placing.set(id, decided);
+  type PendingPlace = {
+    promise: Promise<Where | undefined>;
+    controller?: AbortController | undefined;
+    waiters?: number;
+  };
+  const placing = new Map<string, PendingPlace>();
+  const remember = (id: string, entry: PendingPlace) => {
+    placing.set(id, entry);
     if (placing.size > 200) {
       const oldest = placing.keys().next().value;
       if (oldest) placing.delete(oldest);
@@ -388,17 +446,64 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   const placer: MentionPlacer = {
     id: "where",
-    async place({ channel: channelId, event }) {
+    async place({ channel: channelId, event }, signal) {
       const now = sessionNow();
-      if (!now || event.pubkey !== now.viewer || threadReference(event))
+      if (
+        !now ||
+        event.pubkey !== now.viewer ||
+        threadReference(event) ||
+        signal.aborted
+      )
         return undefined;
-      let decided = placing.get(event.id);
-      if (!decided) {
-        decided = placeOnce(now.session, now.viewer, event, channelId);
-        remember(event.id, decided);
+      let pending = placing.get(event.id);
+      if (!pending || pending.controller?.signal.aborted) {
+        const controller = new AbortController();
+        const entry: PendingPlace = {
+          controller,
+          waiters: 0,
+          promise: Promise.resolve(undefined),
+        };
+        entry.promise = placeOnce(
+          now.session,
+          now.viewer,
+          event,
+          channelId,
+          controller.signal,
+        ).finally(() => {
+          entry.controller = undefined;
+          if (controller.signal.aborted && placing.get(event.id) === entry)
+            placing.delete(event.id);
+        });
+        pending = entry;
+        remember(event.id, entry);
       }
-      const where = await decided;
-      if (!where) return undefined;
+      const current = pending;
+      const controller = current.controller;
+      if (controller) current.waiters = (current.waiters ?? 0) + 1;
+      let onAbort: (() => void) | undefined;
+      const where = await Promise.race([
+        current.promise,
+        new Promise<undefined>((resolve) => {
+          onAbort = () => {
+            if (controller && current.controller === controller) {
+              current.waiters = Math.max(0, (current.waiters ?? 1) - 1);
+              if (current.waiters === 0) {
+                if (placing.get(event.id) === current) placing.delete(event.id);
+                controller.abort();
+              }
+            }
+            resolve(undefined);
+          };
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+        }),
+      ]).finally(() => {
+        if (onAbort) signal.removeEventListener("abort", onAbort);
+      });
+      if (!where || signal.aborted) return undefined;
       return {
         ...placementOf(where.destination, event.id),
         ...(where.elsewhere ? { note: ELSEWHERE_NOTE } : {}),
@@ -410,6 +515,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     viewer: string,
     event: RelayEvent,
     channelId: string,
+    signal: AbortSignal,
   ): Promise<Where | undefined> {
     const channel = channelOf(session, channelId);
     const entry = base(event, channelId, channel?.name);
@@ -438,6 +544,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       [],
       tagging,
       PLACE_TIMEOUT_MS,
+      signal,
     );
     if ("failed" in decided || !decided.where) {
       record({
@@ -446,7 +553,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
         status: "failed",
         reason:
           "failed" in decided
-            ? `Jev ${decided.failed}`
+            ? decided.failed === "cancelled"
+              ? "placement cancelled"
+              : `Jev ${decided.failed}`
             : "no usable where answers",
         ms: decided.ms,
       });
@@ -629,7 +738,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     record({ ...picked, wake: "waking" });
     // The placement hook answers this message's place from the decision
     // already made, with no second Jev call.
-    if (!thread) remember(event.id, Promise.resolve(decided.where));
+    if (!thread)
+      remember(event.id, { promise: Promise.resolve(decided.where) });
     const deliver = ctx.agents.deliverMention;
     if (!deliver) {
       record({ ...picked, wake: "failed: this app can't deliver mentions" });

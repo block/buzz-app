@@ -76,7 +76,7 @@ vi.mock("../bundled", () => ({
     {
       manifest: { id: "test.surface-a", name: "Surface A", apiVersion: 1 },
       module: {
-        inject: ["pages"],
+        inject: ["pages", "panels"],
         apply(ctx: Context) {
           ctx.pages.register({
             id: "first",
@@ -88,6 +88,18 @@ vi.mock("../bundled", () => ({
             id: "crash",
             title: "Crash surface",
             component: CrashPage,
+          });
+          ctx.panels.register({
+            id: "companion",
+            title: "Surface companion",
+            matches: (target) => target === "fixture:companion",
+            launcher: { icon: "/buzz-mark.svg", target: "fixture:companion" },
+            component: () => (
+              <div>
+                <p>Companion body</p>
+                <input aria-label="Companion draft" defaultValue="" />
+              </div>
+            ),
           });
         },
       },
@@ -297,22 +309,67 @@ it("falls back to ordinary Reload behind Settings, modals, shadow modals, and er
   expect(state.firstReloads).toBe(1);
   expect(communityReloads).toHaveBeenCalledTimes(1);
 
-  // Behind an ordinary light-DOM modal dialog, the page does not intercept Reload.
+  // Modeless dialogs (dialog[open] without native :modal or aria-modal="true")
+  // leave the page interactive, so Reload Buzz still refreshes the page.
+  const modelessLight = document.createElement("dialog");
+  modelessLight.setAttribute("open", "");
+  document.body.append(modelessLight);
+  try {
+    press();
+    expect(state.firstReloads).toBe(2);
+    expect(communityReloads).toHaveBeenCalledTimes(1);
+  } finally {
+    modelessLight.remove();
+  }
+
+  // A closed <dialog aria-modal="true"> without `open` does not block page reload.
+  const closedAriaDialog = document.createElement("dialog");
+  closedAriaDialog.setAttribute("aria-modal", "true");
+  document.body.append(closedAriaDialog);
+  try {
+    press();
+    expect(state.firstReloads).toBe(3);
+    expect(communityReloads).toHaveBeenCalledTimes(1);
+  } finally {
+    closedAriaDialog.remove();
+  }
+
+  // Behind an ordinary light-DOM ARIA modal dialog, the page does not intercept Reload.
   const modal = document.createElement("div");
   modal.setAttribute("role", "dialog");
   modal.setAttribute("aria-modal", "true");
   document.body.append(modal);
   try {
     press();
-    expect(state.firstReloads).toBe(1);
+    expect(state.firstReloads).toBe(3);
     expect(communityReloads).toHaveBeenCalledTimes(2);
   } finally {
     modal.remove();
   }
 
-  // Behind an open shadow-root modal dialog — whether focus is inside the shadow
-  // root, on slotted light-DOM content, or outside on document.body — the page
-  // does not intercept Reload, and resumes once the shadow modal closes.
+  // Behind a native modal dialog (:modal), the page falls back to ordinary reload
+  // and resumes once closed.
+  const nativeModal = document.createElement("dialog");
+  nativeModal.setAttribute("open", "");
+  const originalMatches = nativeModal.matches.bind(nativeModal);
+  vi.spyOn(nativeModal, "matches").mockImplementation((selector) =>
+    selector === ":modal" ? true : originalMatches(selector),
+  );
+  document.body.append(nativeModal);
+  try {
+    press();
+    expect(state.firstReloads).toBe(3);
+    expect(communityReloads).toHaveBeenCalledTimes(3);
+  } finally {
+    nativeModal.remove();
+  }
+  press();
+  expect(state.firstReloads).toBe(4);
+  expect(communityReloads).toHaveBeenCalledTimes(3);
+
+  // Inside an open shadow root, a modeless <dialog open> leaves the page eligible,
+  // whereas an ARIA modal or native :modal dialog blocks page reload regardless of
+  // whether focus is inside the shadow root, on slotted content, or on document.body.
   const host = document.createElement("div");
   const slottedButton = document.createElement("button");
   slottedButton.textContent = "Slotted action";
@@ -321,33 +378,109 @@ it("falls back to ordinary Reload behind Settings, modals, shadow modals, and er
   const shadowDialog = document.createElement("dialog");
   shadowDialog.setAttribute("open", "");
   const shadowButton = document.createElement("button");
-  shadowButton.textContent = "Inside shadow modal";
+  shadowButton.textContent = "Inside shadow dialog";
   const slot = document.createElement("slot");
   shadowDialog.append(shadowButton, slot);
   shadow.append(shadowDialog);
   document.body.append(host);
   try {
+    // Modeless shadow dialog: page still handles Reload Buzz.
     shadowButton.focus();
     press(shadowButton);
-    expect(state.firstReloads).toBe(1);
+    expect(state.firstReloads).toBe(5);
     expect(communityReloads).toHaveBeenCalledTimes(3);
+
+    // Shadow ARIA modal: blocks page reload from shadow, slotted, and body targets.
+    shadowDialog.setAttribute("aria-modal", "true");
+    shadowButton.focus();
+    press(shadowButton);
+    expect(state.firstReloads).toBe(5);
+    expect(communityReloads).toHaveBeenCalledTimes(4);
 
     slottedButton.focus();
     press(slottedButton);
-    expect(state.firstReloads).toBe(1);
-    expect(communityReloads).toHaveBeenCalledTimes(4);
+    expect(state.firstReloads).toBe(5);
+    expect(communityReloads).toHaveBeenCalledTimes(5);
 
     slottedButton.blur();
     press(document.body);
-    expect(state.firstReloads).toBe(1);
-    expect(communityReloads).toHaveBeenCalledTimes(5);
+    expect(state.firstReloads).toBe(5);
+    expect(communityReloads).toHaveBeenCalledTimes(6);
+
+    // Shadow native :modal dialog without aria-modal: blocks page reload too.
+    shadowDialog.removeAttribute("aria-modal");
+    const originalShadowMatches = shadowDialog.matches.bind(shadowDialog);
+    vi.spyOn(shadowDialog, "matches").mockImplementation((selector) =>
+      selector === ":modal" ? true : originalShadowMatches(selector),
+    );
+    press(document.body);
+    expect(state.firstReloads).toBe(5);
+    expect(communityReloads).toHaveBeenCalledTimes(7);
   } finally {
     host.remove();
   }
   // Once the shadow modal is dismissed, the visible page handles Reload again.
   press();
-  expect(state.firstReloads).toBe(2);
-  expect(communityReloads).toHaveBeenCalledTimes(5);
+  expect(state.firstReloads).toBe(6);
+  expect(communityReloads).toHaveBeenCalledTimes(7);
+
+  // Companion panel: keeps ordinary community reload while focused or while
+  // its dock floats/covers the workspace, and restores page reload otherwise.
+  act(() => {
+    screen.getByRole("button", { name: "Surface companion" }).click();
+  });
+  const companion = await screen.findByRole("complementary", {
+    name: "Surface companion",
+  });
+  expect(companion).toBeVisible();
+  expect(companion).toHaveFocus();
+  press(companion);
+  expect(state.firstReloads).toBe(6);
+  expect(communityReloads).toHaveBeenCalledTimes(8);
+
+  const companionInput = screen.getByRole("textbox", {
+    name: "Companion draft",
+  });
+  companionInput.focus();
+  press(companionInput);
+  expect(state.firstReloads).toBe(6);
+  expect(communityReloads).toHaveBeenCalledTimes(9);
+
+  // Moving focus back to the page while the companion stays side-by-side lets the page reload.
+  const pageInput = screen.getByRole("textbox", { name: "First draft" });
+  pageInput.focus();
+  press(pageInput);
+  expect(state.firstReloads).toBe(7);
+  expect(communityReloads).toHaveBeenCalledTimes(9);
+
+  // When the dock floats over the page (narrow/overlay layout), Reload falls back
+  // to community reload even if focus is outside the companion.
+  const dock = companion.closest<HTMLElement>("[data-panel-dock]");
+  expect(dock).not.toBeNull();
+  if (dock) dock.style.position = "absolute";
+  press(pageInput);
+  expect(state.firstReloads).toBe(7);
+  expect(communityReloads).toHaveBeenCalledTimes(10);
+  pageInput.blur();
+  press(document.body);
+  expect(state.firstReloads).toBe(7);
+  expect(communityReloads).toHaveBeenCalledTimes(11);
+  if (dock) dock.style.position = "";
+
+  // Closing the companion restores page reload.
+  act(() => {
+    screen
+      .getByRole("button", { name: "Close Surface companion panel" })
+      .click();
+  });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("complementary", { name: "Surface companion" }),
+    ).toBeNull(),
+  );
+  press();
+  expect(state.firstReloads).toBe(8);
+  expect(communityReloads).toHaveBeenCalledTimes(11);
 
   // After a page crashes into PageBoundary, it cannot intercept Reload Buzz.
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -372,7 +505,7 @@ it("falls back to ordinary Reload behind Settings, modals, shadow modals, and er
     ).toBeVisible();
     press();
     expect(state.crashReloads).toBe(1);
-    expect(communityReloads).toHaveBeenCalledTimes(6);
+    expect(communityReloads).toHaveBeenCalledTimes(12);
   } finally {
     errorSpy.mockRestore();
   }

@@ -872,6 +872,113 @@ test.describe("surface reload", () => {
     ).toHaveCount(0);
     await expect(status).toHaveText("First reloads: 1; Second reloads: 1");
 
+    // Native <dialog> modality in both light DOM and open shadow DOM:
+    // dialog.show() (modeless) keeps page reload available, while dialog.showModal()
+    // falls back to ordinary community reload until closed.
+    for (const mode of ["light", "shadow"]) {
+      await page.evaluate((targetMode) => {
+        const dialog = document.createElement("dialog");
+        dialog.id = "surface-reload-native-dialog";
+        const action = document.createElement("button");
+        action.type = "button";
+        action.textContent = "Native dialog action";
+        dialog.append(action);
+        if (targetMode === "shadow") {
+          const host = document.createElement("div");
+          host.id = "surface-reload-shadow-host";
+          host.attachShadow({ mode: "open" }).append(dialog);
+          document.body.append(host);
+        } else {
+          document.body.append(dialog);
+        }
+        dialog.show();
+        action.focus();
+      }, mode);
+      const beforeModeless = mode === "light" ? 1 : 2;
+      await page.keyboard.press(`${modifier}+r`);
+      await expect(status).toHaveText(
+        `First reloads: 1; Second reloads: ${beforeModeless + 1}`,
+      );
+      expect(await sessionGeneration()).toBe(generation);
+
+      await page.evaluate((targetMode) => {
+        const dialog =
+          targetMode === "shadow"
+            ? document
+                .getElementById("surface-reload-shadow-host")
+                ?.shadowRoot?.getElementById("surface-reload-native-dialog")
+            : document.getElementById("surface-reload-native-dialog");
+        dialog.close();
+        dialog.showModal();
+      }, mode);
+      await page.keyboard.press(`${modifier}+r`);
+      generation = await waitForCommunityReload(generation);
+      await expect(status).toHaveText(
+        `First reloads: 1; Second reloads: ${beforeModeless + 1}`,
+      );
+
+      await page.evaluate((targetMode) => {
+        if (targetMode === "shadow") {
+          const host = document.getElementById("surface-reload-shadow-host");
+          host?.shadowRoot
+            ?.getElementById("surface-reload-native-dialog")
+            ?.close();
+          host?.remove();
+        } else {
+          const dialog = document.getElementById(
+            "surface-reload-native-dialog",
+          );
+          dialog?.close();
+          dialog?.remove();
+        }
+      }, mode);
+    }
+
+    // Companion panel: real Mod+R runs ordinary community reload while the
+    // companion has focus (wide) or covers the workspace (narrow), and routes
+    // back to the page when focused in the page side-by-side or after closing.
+    const viewport = page.viewportSize();
+    await button(page, "Companion fixture").click();
+    const companion = page.getByRole("complementary", {
+      name: "Companion fixture",
+    });
+    await expect(companion).toBeVisible();
+    await expect(companion).toBeFocused();
+    await page.keyboard.press(`${modifier}+r`);
+    generation = await waitForCommunityReload(generation);
+    await expect(status).toHaveText("First reloads: 1; Second reloads: 3");
+
+    // Wide side-by-side layout: clicking back into the page lets the page handle Mod+R.
+    await draftB.click();
+    await expect(draftB).toBeFocused();
+    await page.keyboard.press(`${modifier}+r`);
+    await expect(status).toHaveText("First reloads: 1; Second reloads: 4");
+    expect(await sessionGeneration()).toBe(generation);
+
+    // Narrow layout where the companion covers the full workspace: Mod+R runs
+    // ordinary community reload even when focus moves outside the companion.
+    await page.setViewportSize({ width: 600, height: 720 });
+    await expect
+      .poll(() =>
+        companion.evaluate(
+          (el) =>
+            getComputedStyle(el.closest("[data-panel-dock]") ?? el).position,
+        ),
+      )
+      .toBe("absolute");
+    await button(page, "Search Buzz").focus();
+    await expect(button(page, "Search Buzz")).toBeFocused();
+    await page.keyboard.press(`${modifier}+r`);
+    generation = await waitForCommunityReload(generation);
+    await expect(status).toHaveText("First reloads: 1; Second reloads: 4");
+
+    await button(page, "Close Companion fixture panel").click();
+    await expect(companion).toHaveCount(0);
+    await page.keyboard.press(`${modifier}+r`);
+    await expect(status).toHaveText("First reloads: 1; Second reloads: 5");
+    expect(await sessionGeneration()).toBe(generation);
+    if (viewport) await page.setViewportSize(viewport);
+
     // Behind Settings, Mod+R runs ordinary community reload; remapping Reload Buzz
     // moves surface reload to the new chord once Settings closes.
     await page.keyboard.press(`${modifier}+,`);
@@ -896,10 +1003,10 @@ test.describe("surface reload", () => {
     // Returning from Settings preserves the retained page's draft and resumed handler.
     await expect(draftB).toHaveValue("Draft B");
     await page.keyboard.press(`${modifier}+r`);
-    await expect(status).toHaveText("First reloads: 1; Second reloads: 1");
+    await expect(status).toHaveText("First reloads: 1; Second reloads: 5");
     expect(await sessionGeneration()).toBe(generation);
     await page.keyboard.press(`${modifier}+Shift+u`);
-    await expect(status).toHaveText("First reloads: 1; Second reloads: 2");
+    await expect(status).toHaveText("First reloads: 1; Second reloads: 6");
     expect(await sessionGeneration()).toBe(generation);
 
     // On Messages (ordinary conversation), the remapped Reload Buzz runs community reload
@@ -921,7 +1028,7 @@ test.describe("surface reload", () => {
     await button(row, "Reset shortcut for Reload Buzz").click();
     await closeSettings(page);
     await openPage(page, "Reload surface A");
-    await expect(status).toHaveText("First reloads: 1; Second reloads: 2");
+    await expect(status).toHaveText("First reloads: 1; Second reloads: 6");
     await page.keyboard.press(`${modifier}+,`);
     await selectSettingsSection(page, "Manage plugins");
     await pluginAction(page, "Reload fixture").click();

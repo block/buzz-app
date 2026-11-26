@@ -36,7 +36,11 @@ import type {
   Agents,
 } from "./service";
 import type { RoutedPick, TurnPick } from "./model-routes";
-import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
+import type {
+  LocalAgentActivity,
+  StepOrigin,
+  WorkOutcome,
+} from "./local-activity";
 import type { MentionRefusal } from "./owner-attestation";
 import type { MentionPlacement } from "./mention-placement";
 import { threadReference } from "../relay/thread-reference";
@@ -3878,8 +3882,8 @@ export class AgentRunners {
                 // While a route chooses, its Stop calls this one too.
                 if (!selecting) job.work?.interruptible(stop);
               },
-              step: (tool: string, target?: string) =>
-                job.work?.step(tool, target),
+              step: (tool: string, target?: string, origin?: StepOrigin) =>
+                job.work?.step(tool, target, origin),
             }
           : {}),
         ...(!job.work && type.sessionAdmission

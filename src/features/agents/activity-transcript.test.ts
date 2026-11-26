@@ -897,11 +897,8 @@ it.each([
   ["buzz__channel_list", "List channels"],
   ["buzz.channel_list", "List channels"],
   ["buzz: channel_list", "List channels"],
-  ["channel_list", "List channels"],
   ["  mcp__buzz__read\n", "Read messages"],
   ["buzz: send", "Send message"],
-  // No qualifier: the tool may not be Buzz's, so the title names no object.
-  ["search", "Search"],
 ])("titles the Buzz tool in %j", (title, expected) => {
   expect(buzzToolTitle({ title, kind: "other" })).toBe(expected);
   expect(buzzToolTitle({ title, kind: "" })).toBe(expected);
@@ -915,6 +912,11 @@ it.each([
   "other.read",
   "other: send",
   "buzz: other: send",
+  // No server named: the tool may be any server's, a Pi extension's included.
+  "search",
+  "read",
+  "edit",
+  "channel_list",
   // Not a Buzz tool's exact name, whatever the prefix.
   "mcp__buzz__notes_add",
   "buzz__channels",

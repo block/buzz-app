@@ -42,7 +42,7 @@ export type ToolResult = Readonly<{
 export type PiEvent = Readonly<
   { agent: string; conversation: number } & (
     | { type: "placed"; request: string; entry: number }
-    | { type: "step"; tool: string; target?: string }
+    | { type: "step"; tool: string; target?: string; origin?: "buzz" }
   )
 >;
 export type PiHookCall = Readonly<{

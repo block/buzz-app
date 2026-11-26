@@ -90,41 +90,16 @@ export const toolTitle = (name: string): string | undefined =>
     ? TOOL_TITLES[name as BuzzToolName]
     : undefined;
 
-/** Titles for the Buzz tools whose name is one common word that another
- * server's or a harness's own tool can share, such as a file `edit`. A name
- * that arrives with no `buzz` qualifier carries no server, so it gets a title
- * that is true of any tool with that name. The MCP `title` and a qualified
- * name keep the title above. */
-const BARE_TITLES: Partial<Record<BuzzToolName, string>> = {
-  send: "Send",
-  edit: "Edit",
-  delete: "Delete",
-  react: "React",
-  pin: "Pin",
-  read: "Read",
-  search: "Search",
-  users: "Look up users",
-  repo: "Get repository",
-  tabs: "Manage tabs",
-};
-
 /** The Buzz server's tool name in a title, as each harness writes it:
- * `mcp__buzz__read` (Claude Code), `buzz__read` or `buzz: read` (goose),
- * `buzz.read` (Codex and the local transcripts), or the bare `read`. The
- * first group is the qualifier, if any. Another server's prefix never
+ * `mcp__buzz__read` (Claude Code), `buzz__read` or `buzz: read` (goose), or
+ * `buzz.read` (Codex and the local transcripts). The qualifier is required: a
+ * bare `read` may be any server's tool. Another server's prefix never
  * matches. */
-const BUZZ_TOOL = /^((?:mcp__)?buzz__|buzz\.|buzz: )?([a-z_]+)$/;
+const BUZZ_TOOL = /^(?:(?:mcp__)?buzz__|buzz\.|buzz: )([a-z_]+)$/;
 
 /** The title of the Buzz tool a harness's tool title names; nothing for any
- * title that is not an exact Buzz tool name. A qualified name gets the tool's
- * own title. A bare name gets its generic title where it has one, because the
- * tool may be another server's. */
+ * title that does not name the Buzz server and one of its tools exactly. */
 export const namedToolTitle = (title: string): string | undefined => {
-  const [, qualifier, name] = BUZZ_TOOL.exec(title.trim()) ?? [];
-  if (!name) return undefined;
-  const bare =
-    !qualifier && Object.hasOwn(BARE_TITLES, name)
-      ? BARE_TITLES[name as BuzzToolName]
-      : undefined;
-  return bare ?? toolTitle(name);
+  const name = BUZZ_TOOL.exec(title.trim())?.[1];
+  return name ? toolTitle(name) : undefined;
 };

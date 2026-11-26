@@ -1401,7 +1401,7 @@ export class PiRuntime {
       this.notify();
     } else
       for (const receipt of active?.values() ?? [])
-        receipt.step?.(event.tool, event.target);
+        receipt.step?.(event.tool, event.target, event.origin);
   }
 
   /** Notes a conversation's newest message, `seen` in seconds, once the

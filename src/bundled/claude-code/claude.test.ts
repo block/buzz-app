@@ -288,7 +288,7 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   const b = fake.received.filter((m) => m.type === "user").at(-1);
   if (!b) throw new Error("Expected follow-up");
   emit(tool("Read"));
-  expect(first.step).toHaveBeenLastCalledWith("Read", undefined);
+  expect(first.step).toHaveBeenLastCalledWith("Read", undefined, undefined);
   expect(second.step).not.toHaveBeenCalled();
   // Neither a tool result nor a same-text echo with an unknown id admits work.
   emit({ type: "user", uuid: b.uuid, message: { content: "tool result" } });
@@ -303,8 +303,8 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   const watch = fake.received.filter((m) => m.type === "user").at(-1);
   emit({ ...watch, isReplay: true });
   emit(tool("Bash"));
-  expect(first.step).not.toHaveBeenCalledWith("Bash", undefined);
-  expect(second.step).toHaveBeenLastCalledWith("Bash", undefined);
+  expect(first.step).not.toHaveBeenCalledWith("Bash", undefined, undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Bash", undefined, undefined);
   expect(first.superseded).toHaveBeenCalledOnce();
   const other = {
     step: vi.fn(),
@@ -316,8 +316,8 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   emit({ ...third, isReplay: true });
   emit(tool("Grep"));
   expect(second.superseded).not.toHaveBeenCalled();
-  expect(second.step).toHaveBeenLastCalledWith("Grep", undefined);
-  expect(other.step).toHaveBeenLastCalledWith("Grep", undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Grep", undefined, undefined);
+  expect(other.step).toHaveBeenLastCalledWith("Grep", undefined, undefined);
   expect(claude.busy).toBe(true);
   fake.finish();
   await watched;
@@ -325,7 +325,7 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   await expect(sent).resolves.toEqual({ ok: true });
   await expect(steered).resolves.toEqual({ ok: true });
   emit(tool("Edit"));
-  expect(second.step).not.toHaveBeenCalledWith("Edit", undefined);
+  expect(second.step).not.toHaveBeenCalledWith("Edit", undefined, undefined);
 });
 
 it("settles on each result when Claude does not report idle", async () => {
@@ -1192,13 +1192,26 @@ describe("stepLabel", () => {
     ).toEqual({ tool: "Bash", target: "List files" });
     expect(
       stepLabel(msg([{ type: "tool_use", name: "mcp__buzz__send_message" }])),
-    ).toEqual({ tool: "send_message" });
-    // A Buzz tool is reported by its bare name, which the step text titles.
+    ).toEqual({ tool: "send_message", origin: "buzz" });
+    // A Buzz tool is reported by its bare name and its origin, which the
+    // step text titles.
     const buzz = stepLabel(
-      msg([{ type: "tool_use", name: "mcp__buzz__channel_list" }]),
+      msg([{ type: "tool_use", name: "mcp__buzz__search" }]),
     );
-    expect(buzz).toEqual({ tool: "channel_list" });
-    expect(buzz && stepText(buzz)).toBe("List channels");
+    expect(buzz).toEqual({ tool: "search", origin: "buzz" });
+    expect(buzz && stepText(buzz)).toBe("Search messages");
+    // Another server's tool of the same name is not Buzz's.
+    const docs = stepLabel(
+      msg([
+        {
+          type: "tool_use",
+          name: "mcp__docs__search",
+          input: { query: "release notes" },
+        },
+      ]),
+    );
+    expect(docs).toEqual({ tool: "search", target: "release notes" });
+    expect(docs && stepText(docs)).toBe("search · release notes");
     expect(stepLabel(msg([{ type: "thinking" }]))).toEqual({
       tool: "Thinking",
     });

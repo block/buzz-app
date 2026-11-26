@@ -1178,8 +1178,8 @@ describe("GooseProcess", () => {
     });
     await flush();
     expect(step.mock.calls).toEqual([
-      ["shell", "ls"],
-      ["Writing reply", undefined],
+      ["shell", "ls", undefined],
+      ["Writing reply", undefined, undefined],
     ]);
     process.turns[0]?.finish();
   });
@@ -1670,9 +1670,10 @@ describe("stepLabel", () => {
         title: "buzz: send",
         rawInput: { text: "hi", path: "/a/b/notes.md" },
       }),
-    ).toEqual({ tool: "send", target: "notes.md" });
+    ).toEqual({ tool: "send", target: "notes.md", origin: "buzz" });
     // goose spells a Buzz tool's name with spaces in the title and exactly in
-    // `_meta`. The step reports the bare name, which the step text titles.
+    // `_meta`, with its extension. The step reports the bare name and its
+    // origin, which the step text titles.
     const buzz = stepLabel({
       sessionUpdate: "tool_call",
       title: "buzz: channel list",
@@ -1682,8 +1683,21 @@ describe("stepLabel", () => {
         },
       },
     });
-    expect(buzz).toEqual({ tool: "channel_list" });
+    expect(buzz).toEqual({ tool: "channel_list", origin: "buzz" });
     expect(buzz && stepText(buzz)).toBe("List channels");
+    // goose's own `edit` and another extension's `search` are not Buzz's.
+    for (const [toolName, extensionName, tool] of [
+      ["edit", "developer", "edit"],
+      ["docs__search", "docs", "search"],
+    ]) {
+      const other = stepLabel({
+        sessionUpdate: "tool_call",
+        title: tool,
+        _meta: { goose: { toolCall: { toolName, extensionName } } },
+      });
+      expect(other).toEqual({ tool });
+      expect(other && stepText(other)).toBe(tool);
+    }
   });
 });
 

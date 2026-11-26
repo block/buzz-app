@@ -55,7 +55,7 @@ import {
   type AgentProtection,
   type ProtectionBinding,
 } from "../agent-protection/service";
-import { createLocalAgentActivity } from "./local-activity";
+import { createLocalAgentActivity, type StepOrigin } from "./local-activity";
 import { bindKeepAwake } from "./keep-awake";
 import {
   AgentConfigStore,
@@ -1030,7 +1030,8 @@ export type Delivery<Config = unknown> = Readonly<{
    * stopped: true }` says the owner's Stop ended its turn. */
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
-  step?(tool: string, target?: string): void;
+  /** `origin` is "buzz" only for a call the harness knows is a Buzz tool. */
+  step?(tool: string, target?: string, origin?: StepOrigin): void;
   /** The plugin declined this request; no work or successful outcome is implied.
    * A `refusal` shows its owner, on this device, why the agent didn't act. */
   ignored?(refusal?: MentionRefusal): void;

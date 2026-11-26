@@ -486,9 +486,56 @@ pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf 
             return executable;
         }
     }
+    #[cfg(windows)]
+    if program == "env" {
+        if let Some(env) = git_for_windows_env(effective_path) {
+            return env;
+        }
+    }
     #[cfg(not(target_os = "macos"))]
     let _ = effective_path;
     PathBuf::from(program)
+}
+
+/// Windows has no `env`; Git for Windows ships one, which also runs npm's
+/// extensionless and `.cmd` shims. A copy on `path` wins, then the install
+/// beside any `git.exe` on `path`, then the standard install folders.
+#[cfg(windows)]
+fn git_for_windows_env(effective_path: &OsStr) -> Option<PathBuf> {
+    let tail = Path::new("usr").join("bin").join("env.exe");
+    let on_path = std::env::split_paths(effective_path).find_map(|directory| {
+        let direct = directory.join("env.exe");
+        if direct.is_file() {
+            return Some(direct);
+        }
+        // `<root>\cmd\git.exe` or `<root>\bin\git.exe`.
+        let root = directory.parent()?;
+        directory
+            .join("git.exe")
+            .is_file()
+            .then(|| root.join(&tail))
+            .filter(|env| env.is_file())
+    });
+    on_path.or_else(|| {
+        [
+            "ProgramFiles",
+            "ProgramW6432",
+            "ProgramFiles(x86)",
+            "LocalAppData",
+        ]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(|base| {
+            let base = PathBuf::from(base);
+            if base.ends_with("Local") {
+                base.join("Programs")
+            } else {
+                base
+            }
+        })
+        .map(|base| base.join("Git").join(&tail))
+        .find(|env| env.is_file())
+    })
 }
 
 /// Runs a declared host command with the app's environment, the login-shell
@@ -1368,5 +1415,32 @@ mod windows_tests {
         let process_id = descendant_id(&marker).await;
         assert_eq!(reader.await.unwrap(), None);
         assert_descendant_exited(process_id);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod git_env_tests {
+    use super::git_for_windows_env;
+    use std::ffi::OsString;
+    use std::fs;
+
+    #[test]
+    fn env_is_found_beside_git_or_on_path() {
+        let root = tempfile::tempdir().unwrap();
+        let usr_bin = root.path().join("usr").join("bin");
+        let cmd = root.path().join("cmd");
+        fs::create_dir_all(&usr_bin).unwrap();
+        fs::create_dir_all(&cmd).unwrap();
+        fs::write(usr_bin.join("env.exe"), "").unwrap();
+        fs::write(cmd.join("git.exe"), "").unwrap();
+
+        let beside_git = std::env::join_paths([&cmd]).unwrap();
+        assert_eq!(
+            git_for_windows_env(&beside_git),
+            Some(usr_bin.join("env.exe"))
+        );
+        let direct = std::env::join_paths([&usr_bin]).unwrap();
+        assert_eq!(git_for_windows_env(&direct), Some(usr_bin.join("env.exe")));
+        let _ = OsString::new();
     }
 }

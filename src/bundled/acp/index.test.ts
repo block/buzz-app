@@ -6,7 +6,7 @@ import { apply, PROTECTION_UNAVAILABLE } from "./index";
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 
 function registered() {
-  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
   let type: AgentType | undefined;
   apply({
     pluginOwner: { id: "buzz.acp", revision: "r1" },

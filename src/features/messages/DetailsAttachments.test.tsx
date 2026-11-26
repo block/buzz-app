@@ -162,6 +162,70 @@ it("lists a details message's attachments in the dialog that opens it whole, as 
   expect(dialog.getByText("Ada's card")).toBeInTheDocument();
 });
 
+it("plays a details message's audio on in the dialog that opens it whole, and back in its row", async () => {
+  render(row([audio]));
+  const brief = document.querySelector("audio");
+  if (!brief) throw new Error("Missing brief audio");
+  fireEvent.click(screen.getByRole("button", { name: "Play voice.mp3" }));
+  brief.currentTime = 42;
+  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  // The row's clip falls silent, and the dialog's plays on from its place
+  // rather than offer Play at 0:00.
+  const dialog = within(screen.getByRole("dialog"));
+  const reader = screen.getByRole("dialog").querySelector("audio");
+  if (!reader) throw new Error("Missing reader audio");
+  expect(brief.paused).toBe(true);
+  expect(reader.paused).toBe(false);
+  expect(reader.currentTime).toBe(42);
+  expect(dialog.getByText("00:42")).toBeInTheDocument();
+
+  Object.defineProperty(reader, "readyState", { value: 1 });
+  fireEvent.loadedMetadata(reader);
+  fireEvent.click(dialog.getByRole("button", { name: "Pause voice.mp3" }));
+  reader.currentTime = 50;
+  fireEvent.click(dialog.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(brief.currentTime).toBe(50);
+  expect(brief.paused).toBe(true);
+  expect(await screen.findByText("00:50")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Play voice.mp3" }),
+  ).toBeInTheDocument();
+});
+
+// A plugin's player is its own, so the dialog's copy of it starts afresh.
+it("pauses audio a plugin plays in a details message's row when the dialog opens it whole", () => {
+  const clips = [
+    {
+      id: "clip",
+      title: "Clip",
+      key: "test.plugin/clip",
+      pluginId: "test.plugin",
+      revision: "one",
+      matches: (attachment: { kind: string }) => attachment.kind === "audio",
+      // biome-ignore lint/a11y/useMediaCaption: A fixture clip has no captions.
+      component: () => <audio />,
+    },
+  ];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  render(
+    row([audio], {
+      extensions: {
+        tools: empty,
+        inline: empty,
+        attachments: { snapshot: () => clips, subscribe: () => () => {} },
+      },
+    }),
+  );
+  const brief = document.querySelector("audio");
+  if (!brief) throw new Error("Missing plugin audio");
+  void brief.play();
+  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  expect(screen.getByRole("dialog").querySelector("audio")).not.toBeNull();
+  expect(brief.paused).toBe(true);
+});
+
 it("closes media opened from the reader's dialog on Escape, and leaves the dialog open", async () => {
   render(row([image("solo")]));
   fireEvent.click(screen.getByRole("button", { name: "Show more" }));

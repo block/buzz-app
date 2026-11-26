@@ -1616,10 +1616,13 @@ button.mediaPreview {
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
 }
+/* A fullscreen viewer is a modal on the dialog layer, so one opened from a
+   dialog is over it: both are portalled to the page, and the later is on
+   top. Toasts, menus and tooltips have their own layers above. */
 .mediaViewerBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--layer-dialog);
   display: grid;
   place-items: center;
   padding: var(--space-8);
@@ -1675,7 +1678,7 @@ button.mediaPreview {
   container: media-review / inline-size;
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--layer-dialog);
   padding: var(--space-6);
   background: var(--overlay);
 }

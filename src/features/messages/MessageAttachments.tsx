@@ -1,5 +1,11 @@
-import { type Ref, type SyntheticEvent, useSyncExternalStore } from "react";
+import {
+  type Ref,
+  type SyntheticEvent,
+  useLayoutEffect,
+  useSyncExternalStore,
+} from "react";
 import { AttachmentView } from "../conversation/AttachmentView";
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import { safeMessageUrl } from "../relay/message-content";
@@ -12,6 +18,7 @@ import { AudioAttachment } from "./AudioAttachment";
 import { FileAttachment } from "./FileAttachment";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import styles from "./Messages.module.css";
+import { briefOf, quietBriefs } from "./playback-handoff";
 
 type Attachment = ChannelMessage["attachments"][number];
 const none: readonly never[] = [];
@@ -120,25 +127,33 @@ export function MessageAttachments({
         attachments?: ChannelMessage["attachments"],
       ) => void)
     | undefined;
-  /** Whether a reader holds a video's playback it took from this row. */
+  /** Whether a reader holds playback it took from this row. */
   onLent?: ((lent: boolean) => void) | undefined;
   /** The row's own list, which its action bar and its media tracking find. */
   list?: Ref<HTMLDivElement> | undefined;
   /** Media events from the list's players, plugin ones included. */
   onMedia?: ((event: SyntheticEvent<HTMLDivElement>) => void) | undefined;
 }) {
-  // A details message's reader takes its videos' playback over from its row,
-  // and hands it back. A gallery's tiles never play, so they hand nothing.
+  // A details message's reader takes the playback of its videos and audio
+  // clips over from its row, and hands it back. A gallery's tiles never play,
+  // so they hand nothing.
   const handoff = reader
     ? { messageId: row.id, reader: true }
     : row.audience === "details"
       ? { messageId: row.id }
       : undefined;
+  // What its players do not take over, a plugin's player in the row, stops:
+  // nothing in the row plays on under a reader on screen.
+  const active = useConversationPresentation();
+  useLayoutEffect(() => {
+    if (reader && active) quietBriefs(row.id);
+  }, [reader, active, row.id]);
   if (!groups.length) return null;
   return (
     <div
       className={styles.messageAttachments}
       data-message-attachments={reader ? undefined : true}
+      {...(handoff && !reader ? { [briefOf]: row.id } : {})}
       ref={list}
       onPlay={onMedia}
       onPause={onMedia}
@@ -199,6 +214,7 @@ export function MessageAttachments({
                       <AudioAttachment
                         attachment={{ ...attachment, url }}
                         source={source}
+                        {...(handoff ? { handoff, onLent } : {})}
                       />
                     }
                   />
@@ -208,6 +224,7 @@ export function MessageAttachments({
                   key={url}
                   attachment={{ ...attachment, url }}
                   source={source}
+                  {...(handoff ? { handoff, onLent } : {})}
                 />
               );
             return (

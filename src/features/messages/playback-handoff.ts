@@ -1,7 +1,8 @@
 import { type RefObject, useLayoutEffect, useRef } from "react";
 
-/** Which message's video a player shows, and whether it is the player of the
- * reader that opens the message whole rather than of its brief in the chat. */
+/** Which message's video or audio clip a player plays, and whether it is the
+ * player of the reader that opens the message whole rather than of its brief
+ * in the chat. */
 export type PlaybackHandoff = Readonly<{
   messageId: string;
   reader?: boolean;
@@ -16,7 +17,8 @@ type Playback = Readonly<{
 }>;
 
 type Player = {
-  video: HTMLVideoElement;
+  /** A video, or an audio clip: that has no picture, so no poster or still. */
+  media: HTMLMediaElement;
   reader: boolean;
   /** Whether its presentation is on screen. A hidden player neither takes
    * playback over nor is handed it. */
@@ -27,7 +29,7 @@ type Player = {
    * it leaves its poster for good too. */
   start(posterless: boolean): void;
   /** Where a still of a frame it was handed lies over its video. */
-  still(): HTMLElement | null;
+  still(): HTMLElement | null | undefined;
   /** Tells a brief whether a reader holds the playback it took from it. */
   onLent?: ((lent: boolean) => void) | undefined;
   lent?: boolean;
@@ -41,14 +43,16 @@ type Player = {
   from?: Player;
 };
 
-/** The mounted players of one video of one message, oldest first. */
+/** The mounted players of one video or clip of one message, oldest first. */
 const players = new Map<string, Player[]>();
-/** The player of each video that holds its playback: the last to start, or the
- * last it was handed to. */
+/** The player of each that holds its playback: the last to start, or the last
+ * it was handed to. */
 const holders = new Map<string, Player>();
+/** The media of every mounted player. */
+const joined = new WeakSet<HTMLMediaElement>();
 
 function playbackOf(player: Player): Playback {
-  const { video, pending } = player;
+  const { media: video, pending } = player;
   return {
     seconds: pending?.seconds ?? video.currentTime,
     playing: !video.paused && !video.ended && !video.error,
@@ -72,7 +76,12 @@ function settle(player: Player) {
 }
 
 /** The frame `video` shows, drawn no larger than it or `target` draws it. */
-function frameOf(video: HTMLVideoElement, target: HTMLVideoElement) {
+function frameOf(video: HTMLMediaElement, target: HTMLMediaElement) {
+  if (
+    !(video instanceof HTMLVideoElement) ||
+    !(target instanceof HTMLVideoElement)
+  )
+    return undefined;
   const { videoWidth, videoHeight } = video;
   if (
     video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
@@ -305,13 +314,14 @@ function cover(
   seconds: number,
 ) {
   const slot = player.still();
-  if (!still || !slot) return undefined;
+  const { media: video } = player;
+  if (!still || !slot || !(video instanceof HTMLVideoElement)) return undefined;
   const lift = () => {
     if (player.cover?.still !== still) return;
     player.cover.remove();
     delete player.cover;
   };
-  const watch = whenShown(player.video, seconds, lift);
+  const watch = whenShown(video, seconds, lift);
   slot.replaceChildren(still);
   player.cover = {
     still,
@@ -361,12 +371,12 @@ function hand(from: Player, to: Player) {
   uncover(from);
   const playback = playbackOf(from);
   const still = playback.started
-    ? (held ?? frameOf(from.video, to.video))
+    ? (held ?? frameOf(from.media, to.media))
     : undefined;
   settle(from);
-  from.video.pause();
+  from.media.pause();
   settle(to);
-  const { video } = to;
+  const { media: video } = to;
   video.volume = playback.volume;
   video.muted = playback.muted;
   // The poster goes only for something better: the frame, or a position the
@@ -379,11 +389,17 @@ function hand(from: Player, to: Player) {
   const play = () => {
     if (playback.playing) void video.play().catch(() => {});
   };
+  // A paused player reports its position too.
+  const report = () => video.dispatchEvent(new Event("timeupdate"));
   const seek = () => {
     if (video.currentTime !== playback.seconds)
       video.currentTime = playback.seconds;
-    // A paused player reports its position too.
-    video.dispatchEvent(new Event("timeupdate"));
+    report();
+    // Again once the commit this runs in is over. A closing reader hands
+    // back while React removes it, when React passes no event on, so a
+    // player that follows its media through React would keep the position
+    // it had before.
+    queueMicrotask(report);
   };
   if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
     if (video.currentTime !== playback.seconds) {
@@ -422,6 +438,7 @@ const briefsOf = (group: readonly Player[]) =>
 function join(key: string, player: Player) {
   const group = players.get(key) ?? [];
   players.set(key, group);
+  joined.add(player.media);
   const holder = holders.get(key);
   const briefs = briefsOf(group);
   group.push(player);
@@ -442,15 +459,16 @@ function join(key: string, player: Player) {
     // A hand-off has paused it since: React replays a mount in development,
     // and that hands playback back and takes it again before this event of
     // the hand back arrives.
-    if (player.video.paused) return;
+    if (player.media.paused) return;
     hold(key, player);
     // One video never sounds from two players.
     for (const other of group)
-      if (other !== player && !other.video.paused) other.video.pause();
+      if (other !== player && !other.media.paused) other.media.pause();
   };
-  player.video.addEventListener("play", played);
+  player.media.addEventListener("play", played);
   return () => {
-    player.video.removeEventListener("play", played);
+    player.media.removeEventListener("play", played);
+    joined.delete(player.media);
     group.splice(group.indexOf(player), 1);
     if (!group.length) players.delete(key);
     if (holders.get(key) === player) {
@@ -468,28 +486,31 @@ function join(key: string, player: Player) {
   };
 }
 
-/** Joins a video player to the others showing the same video of the same
- * message. A reader's player takes playback over from the brief's when it
- * mounts, and hands it back when it unmounts if it still holds it: position,
- * play state, volume and mute. */
+const noStart = () => {};
+
+/** Joins a player to the others playing the same video or audio clip of the
+ * same message. A reader's player takes playback over from the brief's when
+ * it mounts, and hands it back when it unmounts if it still holds it:
+ * position, play state, volume and mute. An audio clip has no picture, so it
+ * passes no `started`, `start` or `still`. */
 export function usePlaybackHandoff(
-  video: RefObject<HTMLVideoElement | null>,
-  /** Undefined while the player draws no video. */
+  media: RefObject<HTMLMediaElement | null>,
+  /** Undefined while the player draws no video or clip. */
   key: string | undefined,
   {
     reader,
     active,
-    started,
-    start,
+    started = false,
+    start = noStart,
     still,
     onLent,
   }: {
     reader: boolean;
     active: boolean;
-    started: boolean;
+    started?: boolean;
     /** Must be stable. */
-    start(posterless: boolean): void;
-    still: RefObject<HTMLElement | null>;
+    start?(posterless: boolean): void;
+    still?: RefObject<HTMLElement | null>;
     onLent?: ((lent: boolean) => void) | undefined;
   },
 ) {
@@ -498,16 +519,32 @@ export function usePlaybackHandoff(
     latest.current = { active, started };
   }, [active, started]);
   useLayoutEffect(() => {
-    const element = video.current;
+    const element = media.current;
     if (!key || !element) return;
     return join(key, {
-      video: element,
+      media: element,
       reader,
       active: () => latest.current.active,
       started: () => latest.current.started,
       start,
-      still: () => still.current,
+      still: () => still?.current,
       onLent,
     });
-  }, [video, key, reader, start, still, onLent]);
+  }, [media, key, reader, start, still, onLent]);
+}
+
+/** Marks the list of a brief's attachments with its message, for
+ * `quietBriefs` to find. */
+export const briefOf = "data-brief-of";
+
+/** Pauses what plays in a message's briefs outside the hand-off, for a reader
+ * on screen. A player a plugin draws is its own: it hands nothing over and
+ * the reader's copy of it starts afresh, so the one in the chat must not
+ * sound on under it. */
+export function quietBriefs(messageId: string) {
+  for (const list of document.querySelectorAll(`[${briefOf}]`)) {
+    if (list.getAttribute(briefOf) !== messageId) continue;
+    for (const media of list.querySelectorAll<HTMLMediaElement>("audio, video"))
+      if (!joined.has(media) && !media.paused) media.pause();
+  }
 }

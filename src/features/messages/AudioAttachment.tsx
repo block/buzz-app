@@ -21,6 +21,7 @@ import styles from "./Messages.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
 import mediaStyles from "./VideoPlayer.module.css";
 import { MediaDownloadAction } from "./MediaDownloadAction";
+import { type PlaybackHandoff, usePlaybackHandoff } from "./playback-handoff";
 
 const ENDED_DURATION_CORRECTION_MIN_SECONDS = 0.05;
 // Old Buzz voice notes include a 1 fps 16x16 video track, so container
@@ -40,10 +41,17 @@ export function AudioAttachment({
   attachment,
   source,
   allowDownload = true,
+  handoff,
+  onLent,
 }: {
   attachment: Attachment;
   source: string;
   allowDownload?: boolean;
+  /** Shares the clip's playback between a message's brief and its reader. */
+  handoff?: PlaybackHandoff | undefined;
+  /** Whether a reader holds the playback it took from this brief, and will
+   * hand it back. Must be stable. */
+  onLent?: ((lent: boolean) => void) | undefined;
 }) {
   const active = useConversationPresentation();
   const audio = useRef<HTMLAudioElement>(null);
@@ -62,6 +70,11 @@ export function AudioAttachment({
   const element = useMediaElementSource(source);
   const elementSource = element.src;
   const failed = failedSource === source || element.unavailable;
+  usePlaybackHandoff(
+    audio,
+    handoff && !failed ? `${handoff.messageId}\n${attachment.url}` : undefined,
+    { reader: !!handoff?.reader, active, onLent },
+  );
   const playLabel = attachment.name ? `Play ${attachment.name}` : "Play audio";
   const pauseLabel = attachment.name
     ? `Pause ${attachment.name}`

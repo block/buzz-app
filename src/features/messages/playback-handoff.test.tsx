@@ -260,6 +260,45 @@ it("leaves a reader the browser will not start paused at the position", async ()
   expect(brief.video.currentTime).toBe(42);
 });
 
+// A read that fails once the video has loaded is retried by reloading it,
+// and a browser's reload starts a video over: paused, at 0:00, nothing loaded.
+it("keeps a reader's place through a reload after a network error, for the brief to take back", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(function (
+    this: HTMLMediaElement,
+  ) {
+    setPaused(this, true);
+    this.currentTime = 0;
+    Reflect.deleteProperty(this, "error");
+    Object.defineProperty(this, "readyState", {
+      configurable: true,
+      value: HTMLMediaElement.HAVE_NOTHING,
+    });
+  });
+  const brief = await player();
+  await brief.press("Play video");
+  brief.video.currentTime = 42;
+  const reader = await player({ reader: true, loaded: true });
+  reader.video.currentTime = 50;
+  Object.defineProperty(reader.video, "error", {
+    configurable: true,
+    // A network error.
+    value: { code: 2 },
+  });
+  await settled(() => reader.video.dispatchEvent(new Event("error")));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(reader.video.load).toHaveBeenCalledOnce();
+  // While it loads again, and once it has.
+  expect(reader.video.currentTime).toBe(50);
+  await reader.load();
+  expect(reader.video.currentTime).toBe(50);
+  expect(reader.controls.getByText("00:50")).toBeInTheDocument();
+
+  await reader.close();
+  expect(brief.video.currentTime).toBe(50);
+  expect(brief.controls.getByText("00:50")).toBeInTheDocument();
+});
+
 const define = (video: HTMLVideoElement, values: Record<string, unknown>) => {
   for (const [name, value] of Object.entries(values))
     Object.defineProperty(video, name, { configurable: true, value });

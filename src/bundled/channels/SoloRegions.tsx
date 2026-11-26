@@ -395,10 +395,16 @@ function RegionFrame({
               composing
                 ? {
                     ...destinationUi,
+                    Workspace: RegionWorkspace,
                     Chats: RegionChats,
                     ChatList: RegionChatList,
                   }
-                : destinationUi
+                : source.composeWorkspaces
+                  ? destinationUi
+                  : {
+                      ...destinationUi,
+                      Workspace: RegionWorkspace,
+                    }
             }
           />
         )}
@@ -431,7 +437,9 @@ function RegionFrame({
           headerNotice={headerNotice}
         >
           <RegionChannelGroups session={session}>
-            <RegionWorkspaceHostContext value={workspaceHost}>
+            <RegionWorkspaceHostContext
+              value={source?.composeWorkspaces ? undefined : workspaceHost}
+            >
               {contents}
             </RegionWorkspaceHostContext>
           </RegionChannelGroups>
@@ -562,7 +570,6 @@ const destinationUi = {
   Conversation: RegionConversation,
   Card: RegionCard,
   Disclosure: SoloDisclosure,
-  Workspace: RegionWorkspace,
   ChannelGroup: RegionChannelGroup,
   headerMenuActions: true as const,
 };

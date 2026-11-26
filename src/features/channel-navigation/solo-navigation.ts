@@ -510,10 +510,12 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         !item.hidden &&
         item.reason !== "disabled",
     );
-    const region = candidates.find((item) => !item.reason) ?? candidates[0];
+    const binding = this.value.binding;
+    const ready = binding ? candidates.find((item) => !item.reason) : undefined;
+    const region =
+      ready ?? candidates.find((item) => item.source?.composeWorkspaces);
     const source = region?.source;
     if (!source?.openWorkspace) return false;
-    const binding = this.value.binding;
     if (!binding || region?.reason)
       throw new Error("Workspace selection is not ready. Try again.");
     await source.openWorkspace(binding, workspaceId);

@@ -1547,6 +1547,90 @@ it.each([
   },
 );
 
+it("falls back to a host workspace draft when an independent openWorkspace source is unavailable", async () => {
+  const h = createSoloRegionFixture(viewer);
+  let saved: SidebarPreferences = {
+    sections: [],
+    assignments: {},
+    starred: [],
+    muted: [],
+  };
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    writeStar: async () => [],
+    read: async () => saved,
+    write: async () => saved,
+    createSection: async (section) => {
+      if (!saved.sections.some(({ id }) => id === section.id))
+        saved = {
+          ...saved,
+          sections: [...saved.sections, { ...section, order: 0 }],
+        };
+      return saved;
+    },
+  });
+  await preferences.queries.ensure();
+  Object.assign(h.session, {
+    sidebarPreferences: preferences.queries,
+  });
+  const select = vi.fn(async () => {});
+  const source = await h.register({
+    openWorkspace: select,
+    component: () => null,
+  });
+  source.update({
+    status: "unavailable",
+    binding: source.binding(),
+    revision: 2,
+  });
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigator = { ...h.navigator, open };
+  const view = render(
+    <ToastProvider>
+      <NewMenu relay={h.relay} navigator={navigator} />
+      <PrimarySidebar
+        relay={h.relay}
+        navigator={navigator}
+        target={conversationTarget(h.scope, "owned")}
+      >
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  try {
+    await user.click(screen.getByRole("button", { name: "New options" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "New workspace" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "New workspace",
+    });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Name" }),
+      "Fallback",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    const workspace = saved.sections[0];
+    if (!workspace) throw new Error("Missing saved workspace");
+    expect(select).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        kind: "page",
+        pageId: "channels",
+        route: expect.objectContaining({
+          params: { kind: "solo-draft", project: workspace.id },
+        }),
+      }),
+    );
+  } finally {
+    view.unmount();
+    preferences.dispose();
+    await h.dispose();
+  }
+});
+
 it("gives an independent source native workspace controls while preserving Solo, mixed workspaces and create actions", async () => {
   const h = createSoloRegionFixture(viewer);
   const preferences = createSidebarPreferencesStore({

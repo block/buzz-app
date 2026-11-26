@@ -670,17 +670,46 @@ it("exposes independentWorkspaces and routes new workspaces to an active non-com
   source.update({ status: "loading", binding: source.binding(), revision: 2 });
   await expect(
     h.service.openCreatedWorkspace("created-workspace"),
-  ).rejects.toThrow("Workspace selection is not ready");
+  ).resolves.toBe(false);
+
+  source.update({
+    status: "unavailable",
+    binding: source.binding(),
+    revision: 3,
+  });
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(false);
 
   source.update({
     status: "ready",
     binding: source.binding(),
-    revision: 3,
+    revision: 4,
     hidden: true,
   });
   await expect(
     h.service.openCreatedWorkspace("created-workspace"),
   ).resolves.toBe(false);
+
+  const composingOpen = vi.fn(async () => {});
+  const composing = await h.register(
+    {
+      order: 1,
+      id: "composing",
+      composeWorkspaces: true,
+      openWorkspace: composingOpen,
+    },
+    "composing",
+  );
+  composing.update({
+    status: "loading",
+    binding: composing.binding(),
+    revision: 2,
+  });
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).rejects.toThrow("Workspace selection is not ready");
+  expect(composingOpen).not.toHaveBeenCalled();
 });
 
 it("prefers a ready openWorkspace source over an earlier unready one and allows composing sources without openWorkspace", async () => {

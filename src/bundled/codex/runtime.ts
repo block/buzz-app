@@ -33,6 +33,7 @@ import {
 import {
   type ConversationWake,
   turnOf,
+  wakeAnchor,
 } from "../../features/agent-harness/plugin-wake";
 import { compactAt } from "../../features/agents/compact-at";
 import { routeFor } from "../../features/agents/model-routes";

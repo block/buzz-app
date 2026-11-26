@@ -128,17 +128,36 @@ export function App({ services }: { services: AppServices }) {
   );
 }
 
-/** True when any open modal (light DOM or active shadow root) covers the page. */
-function hasOpenModal(doc: Document) {
-  if (activeModal(doc)) return true;
-  let active = doc.activeElement;
-  while (active?.shadowRoot?.activeElement) {
-    active = active.shadowRoot.activeElement;
-    const modal = active.closest('dialog[open], [aria-modal="true"]');
-    if (modal && !modal.closest('[hidden], [inert], [aria-hidden="true"]'))
-      return true;
+const MODAL_SELECTOR = 'dialog[open], [aria-modal="true"]';
+const UNAVAILABLE_SELECTOR = '[hidden], [inert], [aria-hidden="true"]';
+
+function hasOpenShadowModal(root: Document | ShadowRoot): boolean {
+  const start = root instanceof Document ? root.body : root;
+  if (!start) return false;
+  const stack: Element[] =
+    start instanceof Element ? [start] : [...start.children];
+  while (stack.length) {
+    const element = stack.pop();
+    if (!element || element.matches(UNAVAILABLE_SELECTOR)) continue;
+    if (element.shadowRoot) {
+      const modal = [
+        ...element.shadowRoot.querySelectorAll(MODAL_SELECTOR),
+      ].find((candidate) => !candidate.closest(UNAVAILABLE_SELECTOR));
+      if (modal || hasOpenShadowModal(element.shadowRoot)) return true;
+    }
+    for (
+      let child = element.firstElementChild;
+      child;
+      child = child.nextElementSibling
+    )
+      stack.push(child);
   }
   return false;
+}
+
+/** True when any open modal (light DOM or open shadow root) covers the page. */
+function hasOpenModal(doc: Document) {
+  return !!activeModal(doc) || hasOpenShadowModal(doc);
 }
 
 /** Settings sections open in the selected community's scope, as the sidebar does. */
@@ -481,6 +500,9 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   // A page that presents its own failure in place stays on screen.
   const failedPage = route.state.status === "failed" && !route.state.presented;
+  // Navigation suspends covered/revoked visits; the shell additionally gates
+  // states navigation cannot see (launch, bootstrap, first-run, recovery,
+  // loading/failure cards, PageBoundary errors, and open DOM modals).
   const pageVisible =
     !launching &&
     !restoring &&

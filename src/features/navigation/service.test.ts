@@ -386,6 +386,22 @@ it("dispatches Reload to the active page newest-first and falls back when unhand
     errorSpy.mockRestore();
   }
 
+  // Unregistering an earlier handler during dispatch prevents it from running.
+  calls.length = 0;
+  let stopEarly: (() => void) | undefined;
+  stopEarly = request.onReload?.(() => {
+    calls.push("early");
+    return true;
+  });
+  const stopUnregistering = request.onReload?.(() => {
+    calls.push("unregistering");
+    stopEarly?.();
+    return false;
+  });
+  expect(t.host.reload()).toBe(false);
+  expect(calls).toEqual(["unregistering", "first"]);
+  stopUnregistering?.();
+
   // Reentrant reload calls do not recurse.
   let nestedResult: boolean | undefined;
   const stopReentrant = request.onReload?.(() => {
@@ -407,7 +423,7 @@ it("revokes page reload handlers synchronously on owner failure, navigation, res
   t.presentation.request.onReload?.(parentCalls);
   bound.onReload?.(sessionCalls);
 
-  // Session-bound handler runs before its parent while valid.
+  // Handlers run newest-first, so the later-registered session-bound handler runs first while valid.
   expect(t.host.reload()).toBe(true);
   expect(sessionCalls).toHaveBeenCalledTimes(1);
   expect(parentCalls).not.toHaveBeenCalled();

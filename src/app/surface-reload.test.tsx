@@ -310,14 +310,20 @@ it("falls back to ordinary Reload behind Settings, modals, shadow modals, and er
     modal.remove();
   }
 
-  // Behind an open shadow-root modal dialog, the page does not intercept Reload.
+  // Behind an open shadow-root modal dialog — whether focus is inside the shadow
+  // root, on slotted light-DOM content, or outside on document.body — the page
+  // does not intercept Reload, and resumes once the shadow modal closes.
   const host = document.createElement("div");
+  const slottedButton = document.createElement("button");
+  slottedButton.textContent = "Slotted action";
+  host.append(slottedButton);
   const shadow = host.attachShadow({ mode: "open" });
   const shadowDialog = document.createElement("dialog");
   shadowDialog.setAttribute("open", "");
   const shadowButton = document.createElement("button");
   shadowButton.textContent = "Inside shadow modal";
-  shadowDialog.append(shadowButton);
+  const slot = document.createElement("slot");
+  shadowDialog.append(shadowButton, slot);
   shadow.append(shadowDialog);
   document.body.append(host);
   try {
@@ -325,9 +331,23 @@ it("falls back to ordinary Reload behind Settings, modals, shadow modals, and er
     press(shadowButton);
     expect(state.firstReloads).toBe(1);
     expect(communityReloads).toHaveBeenCalledTimes(3);
+
+    slottedButton.focus();
+    press(slottedButton);
+    expect(state.firstReloads).toBe(1);
+    expect(communityReloads).toHaveBeenCalledTimes(4);
+
+    slottedButton.blur();
+    press(document.body);
+    expect(state.firstReloads).toBe(1);
+    expect(communityReloads).toHaveBeenCalledTimes(5);
   } finally {
     host.remove();
   }
+  // Once the shadow modal is dismissed, the visible page handles Reload again.
+  press();
+  expect(state.firstReloads).toBe(2);
+  expect(communityReloads).toHaveBeenCalledTimes(5);
 
   // After a page crashes into PageBoundary, it cannot intercept Reload Buzz.
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -352,7 +372,7 @@ it("falls back to ordinary Reload behind Settings, modals, shadow modals, and er
     ).toBeVisible();
     press();
     expect(state.crashReloads).toBe(1);
-    expect(communityReloads).toHaveBeenCalledTimes(4);
+    expect(communityReloads).toHaveBeenCalledTimes(6);
   } finally {
     errorSpy.mockRestore();
   }

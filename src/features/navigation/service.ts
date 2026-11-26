@@ -159,9 +159,10 @@ export function provideNavigation(
             ? {
                 onReload(handler: PageReloadHandler) {
                   if (typeof handler !== "function") return () => {};
+                  let registered = true;
                   const entry: ReloadRegistration = {
                     invoke() {
-                      if (!current()) return false;
+                      if (!registered || !current()) return false;
                       try {
                         return handler() === true;
                       } catch (error) {
@@ -172,6 +173,8 @@ export function provideNavigation(
                   };
                   reloadHandlers.push(entry);
                   return () => {
+                    if (!registered) return;
+                    registered = false;
                     const index = reloadHandlers.indexOf(entry);
                     if (index !== -1) reloadHandlers.splice(index, 1);
                   };

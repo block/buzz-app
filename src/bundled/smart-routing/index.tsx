@@ -7,6 +7,11 @@
 // share one where path (`where.ts`).
 import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
+import type { BuzzClient, BuzzEvent } from "../../buzz-mcp/client";
+import { communityDestination } from "../../features/communities/destination";
+import { openMetadata } from "../../features/relay/discovery";
+import { relayPartition, splitPartition } from "../../features/relay/partition";
+import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { RelayEvent } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
@@ -45,8 +50,8 @@ import {
 
 export const inject = ["relay", "agents", "decisions", "conversation"];
 
-const STORE_KEY = "buzz.smart-routing.log.v1";
-/** Entries kept on this device, newest last. */
+const STORE_KEY = "buzz.smart-routing.log.v2";
+/** Entries kept on this device per account and community, newest last. */
 const LOG_LIMIT = 300;
 const CONTEXT_LIMIT = 10;
 /** Decisions take at most 32 questions. */
@@ -82,9 +87,28 @@ export type Entry = Readonly<{
   ms?: number;
 }>;
 
-function readLog(): Entry[] {
+function originOf(value: string | undefined): string | undefined {
+  if (!value) return undefined;
   try {
-    const saved = JSON.parse(localStorage.getItem(STORE_KEY) ?? "[]");
+    return communityDestination(value).url;
+  } catch {
+    return value.trim() || undefined;
+  }
+}
+
+function scopeOf(
+  origin: string | undefined,
+  viewer: string | undefined,
+): string | undefined {
+  const normalized = originOf(origin);
+  return normalized && viewer ? relayPartition(normalized, viewer) : undefined;
+}
+
+function readLog(scope: string): Entry[] {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(`${STORE_KEY}:${scope}`) ?? "[]",
+    );
     return Array.isArray(saved) ? (saved as Entry[]) : [];
   } catch {
     return [];
@@ -92,15 +116,27 @@ function readLog(): Entry[] {
 }
 
 export const apply: PluginModule["apply"] = (ctx) => {
-  // ---- The log: marks read it, and agents read it through a tool ----
-  let log = readLog();
+  // ---- The log: partitioned by account and community ----
+  const logs = new Map<string, Entry[]>();
   const listeners = new Set<() => void>();
-  const record = (entry: Entry) => {
-    log = [...log.filter((item) => item.id !== entry.id), entry].slice(
-      -LOG_LIMIT,
-    );
+  const logFor = (scope: string | undefined): Entry[] => {
+    if (!scope) return [];
+    let entries = logs.get(scope);
+    if (!entries) {
+      entries = readLog(scope);
+      logs.set(scope, entries);
+    }
+    return entries;
+  };
+  const record = (scope: string | undefined, entry: Entry) => {
+    if (!scope) return;
+    const next = [
+      ...logFor(scope).filter((item) => item.id !== entry.id),
+      entry,
+    ].slice(-LOG_LIMIT);
+    logs.set(scope, next);
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(log));
+      localStorage.setItem(`${STORE_KEY}:${scope}`, JSON.stringify(next));
     } catch {
       // Keep it in memory.
     }
@@ -110,16 +146,60 @@ export const apply: PluginModule["apply"] = (ctx) => {
     listeners.add(listener);
     return () => void listeners.delete(listener);
   };
-  const entryOf = (id: string) => log.find((item) => item.id === id);
+  const entryOf = (scope: string | undefined, id: string) =>
+    logFor(scope).find((item) => item.id === id);
 
-  // ---- Shared: the context and one Jev request ----
+  // ---- Shared: sessions, context and one Jev request ----
 
-  const sessionNow = () => {
+  const sessionScope = (
+    session: RelaySession,
+    origin?: string,
+  ): string | undefined => {
+    const raw = (session as { scope?: string }).scope;
+    if (raw && raw !== "offline:" && raw !== "undefined:undefined") {
+      const split = splitPartition(raw);
+      if (split?.viewer) return scopeOf(split.communityOrigin, split.viewer);
+    }
     const snap = ctx.relay.snapshot();
-    return snap.status === "ready" && snap.session
-      ? { session: snap.session, viewer: snap.viewer ?? snap.session.viewer }
-      : undefined;
+    const viewer =
+      session.viewer ?? (snap.session === session ? snap.viewer : undefined);
+    const resolvedOrigin =
+      origin ?? (snap.session === session ? snap.origin : undefined);
+    return scopeOf(resolvedOrigin, viewer);
   };
+
+  const sessionFrom = (
+    relay: RelayData | undefined,
+    fallbackOrigin?: string,
+  ) => {
+    const snap = relay?.snapshot();
+    if (snap?.status !== "ready" || !snap.session) return undefined;
+    const viewer = snap.viewer ?? snap.session.viewer;
+    if (!viewer) return undefined;
+    const scope =
+      (snap.scope &&
+        snap.scope !== "offline:" &&
+        snap.scope !== "undefined:undefined" &&
+        (() => {
+          const split = splitPartition(snap.scope);
+          return split?.viewer
+            ? scopeOf(split.communityOrigin, split.viewer)
+            : undefined;
+        })()) ||
+      sessionScope(snap.session, snap.origin ?? fallbackOrigin);
+    const origin =
+      originOf(snap.origin ?? fallbackOrigin) ??
+      (scope ? splitPartition(scope)?.communityOrigin : undefined);
+    return {
+      session: snap.session,
+      viewer,
+      origin,
+      community: snap.origin ?? fallbackOrigin ?? origin,
+      scope,
+    };
+  };
+
+  const sessionNow = () => sessionFrom(ctx.relay);
 
   /** Up to CONTEXT_LIMIT earlier messages, oldest first: the thread's root
    * and latest replies, or the channel's top level with each message's
@@ -242,19 +322,41 @@ export const apply: PluginModule["apply"] = (ctx) => {
     }));
   }
 
-  /** The owner's local agents running here, in the channel. */
-  function localAgents(members: readonly string[], viewer: string) {
-    const agents = ctx.agents.snapshot();
-    const running = new Set(agents.running.map((agent) => agent.key));
-    return agents.agents.filter(
-      (agent) =>
-        agent.place === "here" &&
-        running.has(agent.key) &&
-        !agent.deleting &&
-        !agent.unfinished &&
-        agent.pubkey !== viewer &&
-        members.includes(agent.pubkey),
-    );
+  /** Agents known in `origin` (or all if `origin` is unknown). */
+  function communityAgents(origin: string | undefined) {
+    const snap = ctx.agents.snapshot();
+    const seen = new Map<string, Agent>();
+    for (const agent of [...snap.running, ...snap.agents]) {
+      if (origin && originOf(agent.relay) !== origin) continue;
+      if (!seen.has(agent.key)) seen.set(agent.key, agent);
+    }
+    return [...seen.values()];
+  }
+
+  /** The owner's local agents running here, in the channel and community.
+   * With `eligibleOnly`, keeps only agents this app copy can currently deliver
+   * mentions to (active harness runner and custody). */
+  function localAgents(
+    members: readonly string[],
+    viewer: string,
+    origin: string | undefined,
+    eligibleOnly = false,
+  ) {
+    const canDeliver = eligibleOnly
+      ? ctx.agents.canDeliverMention?.bind(ctx.agents)
+      : undefined;
+    return ctx.agents
+      .snapshot()
+      .running.filter(
+        (agent) =>
+          agent.place === "here" &&
+          (!origin || originOf(agent.relay) === origin) &&
+          !agent.deleting &&
+          !agent.unfinished &&
+          agent.pubkey !== viewer &&
+          members.includes(agent.pubkey) &&
+          (!canDeliver || canDeliver(agent.key)),
+      );
   }
 
   /** One Jev request: the where questions for a top-level message, and the
@@ -262,6 +364,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   async function ask(
     session: RelaySession,
     viewer: string,
+    origin: string | undefined,
+    community: string | undefined,
     event: RelayEvent,
     channel: Readonly<{
       id: string;
@@ -280,7 +384,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     if (signal?.aborted) return { failed: "cancelled", ms: 0 } as const;
     const thread = threadReference(event);
     const profiles = safe(() => session.profiles.snapshot());
-    const all = ctx.agents.snapshot().agents;
+    const all = communityAgents(origin);
     const isAgent = (pubkey: string) =>
       all.some((agent) => agent.pubkey === pubkey) ||
       safe(() => profiles?.get(pubkey)?.isAgent) === true;
@@ -352,42 +456,48 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ]),
       ),
     };
-    const community =
-      (tagging[0] ?? ask[0])?.relay ?? ctx.relay.snapshot().origin;
+    const billingCommunity = (tagging[0] ?? ask[0])?.relay ?? community;
     // The decisions service waits at least 1s; the placement deadline is
-    // shorter, so this call stops waiting on its own or when the hook aborts.
-    let stop = () => {};
+    // shorter, so abort the request through its signal when either the budget
+    // or caller/scope signal ends.
+    const decideTimeout = new AbortController();
+    const decideSignal = signal
+      ? AbortSignal.any([signal, decideTimeout.signal])
+      : decideTimeout.signal;
+    const timer = setTimeout(() => decideTimeout.abort(), decideBudgetMs);
     let onAbort: (() => void) | undefined;
-    const decide = ctx.decisions.decide({
-      state,
-      questions,
-      timeoutMs: decideBudgetMs,
-      ...(community ? { community } : {}),
-    });
+    const decide = ctx.decisions.decide(
+      {
+        state,
+        questions,
+        timeoutMs: decideBudgetMs,
+        ...(billingCommunity ? { community: billingCommunity } : {}),
+      },
+      { signal: decideSignal },
+    );
     void decide.catch(() => {});
     const result = await Promise.race([
       decide,
       new Promise<{ outcome: "failed"; reason: "timeout" | "cancelled" }>(
         (resolve) => {
-          if (signal?.aborted)
-            return resolve({ outcome: "failed", reason: "cancelled" });
-          const timer = setTimeout(
-            () => resolve({ outcome: "failed", reason: "timeout" }),
-            decideBudgetMs,
-          );
-          stop = () => clearTimeout(timer);
-          if (signal) {
-            onAbort = () => resolve({ outcome: "failed", reason: "cancelled" });
-            signal.addEventListener("abort", onAbort, { once: true });
-          }
+          const done = () =>
+            resolve({
+              outcome: "failed",
+              reason: signal?.aborted ? "cancelled" : "timeout",
+            });
+          if (decideSignal.aborted) return done();
+          onAbort = done;
+          decideSignal.addEventListener("abort", onAbort, { once: true });
         },
       ),
     ]).finally(() => {
-      stop();
-      if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+      clearTimeout(timer);
+      if (onAbort) decideSignal.removeEventListener("abort", onAbort);
     });
     const ms = Date.now() - started;
     if (signal?.aborted) return { failed: "cancelled", ms } as const;
+    if (decideTimeout.signal.aborted && result.outcome !== "answered")
+      return { failed: "timeout", ms } as const;
     if (result.outcome !== "answered")
       return { failed: result.reason, ms } as const;
     const answers: Readonly<Record<string, DecisionAnswer>> = result.answers;
@@ -437,25 +547,31 @@ export const apply: PluginModule["apply"] = (ctx) => {
     waiters?: number;
   };
   const placing = new Map<string, PendingPlace>();
-  const remember = (id: string, entry: PendingPlace) => {
-    placing.set(id, entry);
+  const placeKey = (scope: string | undefined, id: string) =>
+    `${scope ?? ""}:${id}`;
+  const remember = (key: string, entry: PendingPlace) => {
+    placing.set(key, entry);
     if (placing.size > 200) {
       const oldest = placing.keys().next().value;
       if (oldest) placing.delete(oldest);
     }
   };
-  const placer: MentionPlacer = {
+  const createPlacer = (scopeSignal: AbortSignal): MentionPlacer => ({
     id: "where",
-    async place({ channel: channelId, event }, signal) {
-      const now = sessionNow();
-      if (
-        !now ||
-        event.pubkey !== now.viewer ||
-        threadReference(event) ||
-        signal.aborted
-      )
-        return undefined;
-      let pending = placing.get(event.id);
+    async place({ agent, channel: channelId, event }, signal) {
+      const callerSignal = AbortSignal.any([signal, scopeSignal]);
+      if (callerSignal.aborted || threadReference(event)) return undefined;
+      const agentRecord = ctx.agents
+        .snapshot()
+        .running.find((item) => item.key === agent);
+      const boundRelay =
+        typeof ctx.agents.relay === "function"
+          ? ctx.agents.relay(agent)
+          : ctx.relay;
+      const now = sessionFrom(boundRelay, agentRecord?.relay);
+      if (!now || event.pubkey !== now.viewer) return undefined;
+      const key = placeKey(now.scope, event.id);
+      let pending = placing.get(key);
       if (!pending || pending.controller?.signal.aborted) {
         const controller = new AbortController();
         const entry: PendingPlace = {
@@ -466,16 +582,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
         entry.promise = placeOnce(
           now.session,
           now.viewer,
+          now.origin,
+          agentRecord?.relay ?? now.community,
+          now.scope,
           event,
           channelId,
           controller.signal,
         ).finally(() => {
           entry.controller = undefined;
-          if (controller.signal.aborted && placing.get(event.id) === entry)
-            placing.delete(event.id);
+          if (controller.signal.aborted && placing.get(key) === entry)
+            placing.delete(key);
         });
         pending = entry;
-        remember(event.id, entry);
+        remember(key, entry);
       }
       const current = pending;
       const controller = current.controller;
@@ -488,31 +607,34 @@ export const apply: PluginModule["apply"] = (ctx) => {
             if (controller && current.controller === controller) {
               current.waiters = Math.max(0, (current.waiters ?? 1) - 1);
               if (current.waiters === 0) {
-                if (placing.get(event.id) === current) placing.delete(event.id);
+                if (placing.get(key) === current) placing.delete(key);
                 controller.abort();
               }
             }
             resolve(undefined);
           };
-          if (signal.aborted) {
+          if (callerSignal.aborted) {
             onAbort();
             return;
           }
-          signal.addEventListener("abort", onAbort, { once: true });
+          callerSignal.addEventListener("abort", onAbort, { once: true });
         }),
       ]).finally(() => {
-        if (onAbort) signal.removeEventListener("abort", onAbort);
+        if (onAbort) callerSignal.removeEventListener("abort", onAbort);
       });
-      if (!where || signal.aborted) return undefined;
+      if (!where || callerSignal.aborted) return undefined;
       return {
         ...placementOf(where.destination, event.id),
         ...(where.elsewhere ? { note: ELSEWHERE_NOTE } : {}),
       };
     },
-  };
+  });
   async function placeOnce(
     session: RelaySession,
     viewer: string,
+    origin: string | undefined,
+    community: string | undefined,
+    scope: string | undefined,
     event: RelayEvent,
     channelId: string,
     signal: AbortSignal,
@@ -520,7 +642,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const channel = channelOf(session, channelId);
     const entry = base(event, channelId, channel?.name);
     if (!channel) {
-      record({
+      record(scope, {
         ...entry,
         flow: "where",
         status: "skipped",
@@ -533,12 +655,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
         name === "p" && value ? [value] : [],
       ),
     );
-    const tagging = localAgents(channel.members, viewer).filter((agent) =>
-      tagged.has(agent.pubkey),
+    const tagging = localAgents(channel.members, viewer, origin).filter(
+      (agent) => tagged.has(agent.pubkey),
     );
     const decided = await ask(
       session,
       viewer,
+      origin,
+      community,
       event,
       channel,
       [],
@@ -547,7 +671,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       signal,
     );
     if ("failed" in decided || !decided.where) {
-      record({
+      record(scope, {
         ...entry,
         flow: "where",
         status: "failed",
@@ -561,7 +685,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       });
       return undefined;
     }
-    record({
+    record(scope, {
       ...entry,
       flow: "where",
       status: "placed",
@@ -577,7 +701,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const handled = new Set<string>();
   const startedAt = Math.floor(Date.now() / 1000);
   /** Watches the owner's messages and wakes the agent Jev picks. */
-  const watchSends = () => {
+  const watchSends = (scopeSignal: AbortSignal) => () => {
     let bound: RelaySession | undefined;
     let unbind: (() => void) | undefined;
     const bind = () => {
@@ -588,14 +712,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
       bound = now?.session;
       if (!now) return;
       unbind = now.session.subscribeLive((batch) => {
-        for (const event of batch.events)
+        if (scopeSignal.aborted) return;
+        for (const event of batch.events) {
+          const handledKey = placeKey(now.scope, event.id);
           if (
             event.kind === 9 &&
             event.pubkey === now.viewer &&
-            !handled.has(event.id) &&
+            !handled.has(handledKey) &&
             event.created_at >= startedAt - 60
           ) {
-            handled.add(event.id);
+            handled.add(handledKey);
             if (handled.size > 2000) {
               const oldest = handled.values().next().value;
               if (oldest) handled.delete(oldest);
@@ -603,10 +729,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
             const channelId =
               event.tags.find(([name]) => name === "h")?.[1] ?? batch.channelId;
             if (channelId)
-              void route(now.session, now.viewer, event, channelId).catch(
-                (error: unknown) => console.error("[smart-routing]", error),
+              void route(
+                now.session,
+                now.viewer,
+                now.origin,
+                now.community,
+                now.scope,
+                event,
+                channelId,
+                scopeSignal,
+              ).catch((error: unknown) =>
+                console.error("[smart-routing]", error),
               );
           }
+        }
       });
     };
     const stop = ctx.relay.subscribe(bind);
@@ -630,12 +766,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     for (const listener of answerableListeners) listener();
   };
   ctx.inject(["decisionsAnswerable"], (scope) => {
+    const scopeAbort = new AbortController();
     scope.effect(() => {
       setAnswerable(true);
-      return () => setAnswerable(false);
+      return () => {
+        scopeAbort.abort();
+        setAnswerable(false);
+      };
     });
-    scope.agents.registerMentionPlacement?.(placer);
-    scope.effect(watchSends);
+    scope.agents.registerMentionPlacement?.(createPlacer(scopeAbort.signal));
+    scope.effect(watchSends(scopeAbort.signal));
   });
   // Its card says whether it is routing, or why not.
   ctx.inject(["settingsCards"], (scope) => {
@@ -659,14 +799,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
   async function route(
     session: RelaySession,
     viewer: string,
+    origin: string | undefined,
+    community: string | undefined,
+    scope: string | undefined,
     event: RelayEvent,
     channelId: string,
+    signal: AbortSignal,
   ) {
+    if (signal.aborted) return;
     // Tagged messages are the placement hook's.
     if (event.tags.some(([name]) => name === "p")) return;
     const channel = channelOf(session, channelId);
     if (!channel) return;
-    const candidates = localAgents(channel.members, viewer);
+    const candidates = localAgents(channel.members, viewer, origin, true);
     if (!candidates.length) return;
     const thread = threadReference(event);
     const entry = {
@@ -674,26 +819,32 @@ export const apply: PluginModule["apply"] = (ctx) => {
       flow: thread ? "who" : "who+where",
     } as const;
     // Only messages the owner typed in this app copy.
-    if (!(await confirmedOwnerSend(session, event, channelId))) {
-      record({
+    if (!(await confirmedOwnerSend(session, event, channelId, signal))) {
+      if (signal.aborted) return;
+      record(scope, {
         ...entry,
         status: "skipped",
         reason: "not sent from this app's composer",
       });
       return;
     }
+    if (signal.aborted) return;
     const decided = await ask(
       session,
       viewer,
+      origin,
+      community,
       event,
       channel,
       candidates,
       [],
       WHO_TIMEOUT_MS,
+      signal,
     );
-    // Jev down: no one is woken, as without the plugin.
+    // Jev down or routing scope ended: no one is woken, as without the plugin.
     if ("failed" in decided) {
-      record({
+      if (signal.aborted || decided.failed === "cancelled") return;
+      record(scope, {
         ...entry,
         status: "failed",
         reason: `Jev ${decided.failed}`,
@@ -701,6 +852,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       });
       return;
     }
+    if (signal.aborted) return;
     const ranked = Object.entries(decided.yes).sort((a, b) => b[1] - a[1]);
     const [top, probability = 0] = ranked[0] ?? [];
     const decision = {
@@ -712,7 +864,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const tie = ranked.filter(([, p]) => p === probability).length > 1;
     const agent = top === undefined ? undefined : decided.who.get(top);
     if (!agent || !(probability > WHO_THRESHOLD) || tie) {
-      record({
+      record(scope, {
         ...decision,
         status: "none",
         ...(top ? { agent: top, probability } : {}),
@@ -735,14 +887,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
       probability,
       destination,
     } as const;
-    record({ ...picked, wake: "waking" });
+    record(scope, { ...picked, wake: "waking" });
     // The placement hook answers this message's place from the decision
     // already made, with no second Jev call.
     if (!thread)
-      remember(event.id, { promise: Promise.resolve(decided.where) });
+      remember(placeKey(scope, event.id), {
+        promise: Promise.resolve(decided.where),
+      });
     const deliver = ctx.agents.deliverMention;
     if (!deliver) {
-      record({ ...picked, wake: "failed: this app can't deliver mentions" });
+      record(scope, {
+        ...picked,
+        wake: "failed: this app can't deliver mentions",
+      });
       return;
     }
     // Delivered as if the owner had tagged it: the agent sees the owner's
@@ -750,8 +907,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const note = `${safe(() => session.profiles.snapshot().get(viewer)?.name) || "The owner"} tagged no one in this message. Smart routing delivered it to you: Jev picked you (${pct(probability)}). Handle it if it is yours to do; if it is not, end the turn without posting.`;
     let wake = "";
     for (let attempt = 0; ; attempt++) {
-      // Not once routing has stopped.
-      if (!answerable) {
+      // Bound to the provider scope that started this decision.
+      if (signal.aborted) {
         wake = "dropped: routing stopped";
         break;
       }
@@ -764,16 +921,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }
       const delay = WAKE_RETRY_DELAYS_MS[attempt];
       if (wake !== "dropped: unavailable" || delay === undefined) break;
-      record({ ...picked, wake: "retrying" });
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      record(scope, { ...picked, wake: "retrying" });
+      if (!(await sleep(delay, signal))) {
+        wake = "dropped: routing stopped";
+        break;
+      }
     }
-    record({ ...picked, wake });
+    record(scope, { ...picked, wake });
   }
 
   async function confirmedOwnerSend(
     session: RelaySession,
     event: RelayEvent,
     channelId: string,
+    signal: AbortSignal,
   ) {
     const mentions = session.ownerMentions;
     if (!mentions) return true;
@@ -788,7 +949,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ];
     // Evidence lands after the relay acknowledges the send.
     for (const delay of [0, 300, 800, 1500, 3000]) {
-      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (delay && !(await sleep(delay, signal))) return false;
+      if (signal.aborted) return false;
       for (const rootId of places)
         if (
           safe(() =>
@@ -823,8 +985,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     );
   }
 
-  const useEntry = (id: string) =>
-    useSyncExternalStore(subscribe, () => entryOf(id));
+  const useEntry = (scope: string | undefined, id: string) =>
+    useSyncExternalStore(subscribe, () => entryOf(scope, id));
 
   function Marker({
     message,
@@ -833,7 +995,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     message: { id: string };
     session: RelaySession;
   }) {
-    const entry = useEntry(message.id);
+    const scope = sessionScope(session);
+    const origin = scope ? splitPartition(scope)?.communityOrigin : undefined;
+    const entry = useEntry(scope, message.id);
     const active = entry?.status === "picked";
     const agentsSub =
       active && typeof ctx.agents.subscribe === "function"
@@ -846,13 +1010,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const matchedAgent = useSyncExternalStore(agentsSub, () =>
       active
         ? safe(() =>
-            ctx.agents
-              .snapshot()
-              .agents.find((agent) =>
-                entry.agentPubkey
-                  ? agent.pubkey === entry.agentPubkey
-                  : agent.name === entry.agent,
-              ),
+            communityAgents(origin).find((agent) =>
+              entry.agentPubkey
+                ? agent.pubkey === entry.agentPubkey
+                : agent.name === entry.agent,
+            ),
           )
         : undefined,
     );
@@ -897,9 +1059,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerMessageAction({
     id: "smart-routing",
     title: "Smart routing",
-    matches: (message) => isInspectable(entryOf(message.id)),
-    component: ({ message, close }) => {
-      const entry = useEntry(message.id);
+    matches: (message, session) =>
+      isInspectable(entryOf(sessionScope(session), message.id)),
+    subscribe,
+    component: ({ message, session, close }) => {
+      const entry = useEntry(sessionScope(session), message.id);
       return (
         <Dialog
           size="compact"
@@ -919,7 +1083,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.agents.addTool({
     name: "smart_routing_log",
     description:
-      "Smart routing: the owner's recent routing decisions on this device, newest first: who Jev picked (each agent's yes), where the reply went (each where answer, the thresholds, the rule's reason and the destination), or why nothing happened.",
+      "Smart routing: the owner's recent routing decisions in this community for channels you can currently read, newest first: who Jev picked (each agent's yes), where the reply went (each where answer, the thresholds, the rule's reason and the destination), or why nothing happened.",
     inputSchema: {
       type: "object",
       properties: {
@@ -927,19 +1091,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
         channel_id: { type: "string" },
       },
     },
-    async call(_client, _context, args) {
+    async call(client, _context, args) {
       const { limit, channel_id } = (args ?? {}) as {
         limit?: number;
         channel_id?: string;
       };
-      const entries = log
+      const caller = callerScope(ctx.agents.snapshot(), client);
+      const scoped = caller ? logFor(caller) : [];
+      const channelIds = [...new Set(scoped.map((entry) => entry.channelId))];
+      const readable = channelIds.length
+        ? await readableChannels(client, channelIds)
+        : new Set<string>();
+      const allowed = scoped.filter((entry) => readable.has(entry.channelId));
+      const entries = allowed
         .filter((entry) => !channel_id || entry.channelId === channel_id)
         .slice(-Math.min(300, Math.max(1, Number(limit) || 20)))
         .reverse();
       return JSON.stringify(
         {
           thresholds: { who: WHO_THRESHOLD, ...WHERE_THRESHOLDS },
-          timeouts: timeouts(log),
+          timeouts: timeouts(allowed),
           entries,
         },
         null,
@@ -1045,4 +1216,100 @@ function safe<T>(read: () => T): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function callerScope(
+  snapshot: Readonly<{ agents: readonly Agent[]; running: readonly Agent[] }>,
+  client: Pick<BuzzClient, "key" | "pubkey" | "owner">,
+): string | undefined {
+  if (!client.owner) return undefined;
+  const agent = [...snapshot.running, ...snapshot.agents].find(
+    (item) =>
+      item.key === client.key &&
+      item.pubkey === client.pubkey &&
+      item.owner === client.owner,
+  );
+  return agent ? scopeOf(agent.relay, agent.owner) : undefined;
+}
+
+const CHANNEL_AUTH_BATCH = 100;
+
+/** The channel IDs in `channelIds` that `client` is currently authorized to
+ * read on its relay: either listed on the relay-signed roster (39002) or
+ * explicitly open in relay-signed metadata (39000). Fails closed when the
+ * relay authority is unknown. */
+async function readableChannels(
+  client: BuzzClient,
+  channelIds: readonly string[],
+): Promise<Set<string>> {
+  const readable = new Set<string>();
+  const authority = client.relayAuthor ?? (await client.relayAuthorLookup?.());
+  if (!authority) return readable;
+  const tagValue = (event: BuzzEvent, name: string) =>
+    event.tags.find(([key]) => key === name)?.[1];
+  const newer = (prev: BuzzEvent | undefined, next: BuzzEvent) =>
+    !prev ||
+    next.created_at > prev.created_at ||
+    (next.created_at === prev.created_at && next.id < prev.id)
+      ? next
+      : prev;
+  for (let i = 0; i < channelIds.length; i += CHANNEL_AUTH_BATCH) {
+    client.signal?.throwIfAborted();
+    const chunk = channelIds.slice(i, i + CHANNEL_AUTH_BATCH);
+    const events = await client.query([
+      {
+        kinds: [39002],
+        authors: [authority],
+        "#d": chunk,
+        "#p": [client.pubkey],
+        consistency: "strong",
+      },
+      {
+        kinds: [39000],
+        authors: [authority],
+        "#d": chunk,
+        consistency: "strong",
+      },
+    ]);
+    client.signal?.throwIfAborted();
+    const rosters = new Map<string, BuzzEvent>();
+    const metadata = new Map<string, BuzzEvent>();
+    for (const event of events) {
+      if (event.pubkey !== authority) continue;
+      const id = tagValue(event, "d");
+      if (!id || !chunk.includes(id)) continue;
+      if (event.kind === 39002) rosters.set(id, newer(rosters.get(id), event));
+      else if (event.kind === 39000)
+        metadata.set(id, newer(metadata.get(id), event));
+    }
+    for (const id of chunk) {
+      const roster = rosters.get(id);
+      if (
+        roster?.tags.some(
+          ([name, value]) => name === "p" && value === client.pubkey,
+        )
+      ) {
+        readable.add(id);
+        continue;
+      }
+      const meta = metadata.get(id);
+      if (meta && openMetadata(meta as unknown as RelayEvent)) readable.add(id);
+    }
+  }
+  return readable;
 }

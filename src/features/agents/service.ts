@@ -2021,6 +2021,10 @@ export type Agents = {
     event: RelayEvent,
     options?: Readonly<{ note?: string }>,
   ): Promise<import("./runner").MentionDelivery>;
+  /** Whether this copy of the app currently runs `agent` and can accept
+   * mention deliveries for it: its harness has a runner, its community is
+   * live, and no other copy holds custody. Feature-detect. */
+  canDeliverMention?(agent: AgentKey): boolean;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** Calls `listener` when a turn this copy of the app runs for the agent
@@ -5073,6 +5077,9 @@ export class AgentsService extends Service implements Agents {
     Transcript: TranscriptPanel,
   });
   readonly supportsGuardedWake = true as const;
+  canDeliverMention(key: AgentKey): boolean {
+    return !!this.ready(key) && this.runners.runs(key);
+  }
   async deliverMention(
     key: AgentKey,
     event: RelayEvent,

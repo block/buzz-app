@@ -85,15 +85,23 @@ function start() {
       confirmedOwnerSends: (_place: unknown, ids: readonly string[]) => ids,
     },
   };
-  const agent = (pubkey: string, name: string) => ({
-    key: pubkey,
+  const RELAY_AUTHOR = hex("9");
+  const agent = (
+    pubkey: string,
+    name: string,
+    extra: { key?: string; relay?: string; owner?: string } = {},
+  ) => ({
+    key: extra.key ?? pubkey,
     pubkey,
     name,
+    owner: extra.owner ?? OWNER,
     place: "here",
-    relay: "wss://relay.example",
+    relay: extra.relay ?? "wss://relay.example",
   });
   const agents = [agent(MBOT, "mbot"), agent(ART, "ART")];
+  const running = [...agents];
   const calls: DecisionRequest[] = [];
+  const decideSignals: (AbortSignal | undefined)[] = [];
   /** Mentions the plugin delivered, as the host took them. */
   const delivered: { key: string; event: RelayEvent; note?: string }[] = [];
   const state = {
@@ -102,10 +110,25 @@ function start() {
     delayMs: 0,
     where: {} as WhereAnswer,
     who: { ART: 0.84, mbot: 0.1 } as Record<string, number>,
+    deliverable: new Set<string>([MBOT, ART]),
     deliverResult: { status: "delivered" } as
       | { status: "delivered" }
       | { status: "dropped"; reason: string },
   };
+  const primaryRelay = {
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: OWNER,
+      origin: "wss://relay.example",
+    }),
+    subscribe: () => () => {},
+  };
+  let selectedRelay: {
+    snapshot(): Record<string, unknown>;
+    subscribe(listener: () => void): () => void;
+  } = primaryRelay;
+  const boundRelays = new Map<string, typeof selectedRelay>();
   /** Placers registered now; each is removed with the scope that added it. */
   const placers = new Set<MentionPlacer>();
   const deliverMention = async (
@@ -120,8 +143,10 @@ function start() {
     constructor(ctx: Context) {
       super(ctx, "agents");
     }
-    snapshot = () => ({ agents, running: agents });
+    snapshot = () => ({ agents, running });
     deliverMention = deliverMention;
+    canDeliverMention = (key: string) => state.deliverable.has(key);
+    relay = (key: string) => boundRelays.get(key) ?? primaryRelay;
     addTool = vi.fn();
     registerMentionPlacement(placer: MentionPlacer) {
       this.ctx.effect(() => {
@@ -132,20 +157,21 @@ function start() {
   }
   const root = new Context();
   root.provide("relay", {
-    snapshot: () => ({
-      status: "ready",
-      session,
-      viewer: OWNER,
-      origin: "wss://relay.example",
-    }),
-    subscribe: () => () => {},
+    snapshot: () => selectedRelay.snapshot(),
+    subscribe: (listener: () => void) => selectedRelay.subscribe(listener),
   } as never);
   const agentsService = new Agents(root);
   root.provide("decisions", {
-    async decide(request: DecisionRequest) {
+    async decide(
+      request: DecisionRequest,
+      options?: Readonly<{ signal?: AbortSignal }>,
+    ) {
       calls.push(request);
+      decideSignals.push(options?.signal);
       if (state.delayMs)
         await new Promise((resolve) => setTimeout(resolve, state.delayMs));
+      if (options?.signal?.aborted)
+        return { outcome: "failed", backend: "jev", reason: "cancelled" };
       if (state.down)
         return { outcome: "failed", backend: "jev", reason: "service_error" };
       const w = {
@@ -197,7 +223,8 @@ function start() {
   } as never);
   const actions: {
     id: string;
-    matches: (message: { id: string }) => boolean;
+    matches: (message: { id: string }, session: unknown) => boolean;
+    subscribe?: (listener: () => void) => () => void;
     marker?: ComponentType<{ message: { id: string }; session: unknown }>;
   }[] = [];
   root.provide("conversation", {
@@ -227,6 +254,60 @@ function start() {
       await new Promise((resolve) => setTimeout(resolve, 0));
     },
   };
+  const clientFor = (
+    pubkey = ART,
+    options: {
+      key?: string;
+      owner?: string;
+      memberOf?: readonly string[];
+      open?: readonly string[];
+      relayAuthor?: string | undefined;
+    } = {},
+  ) => {
+    const memberOf = new Set(options.memberOf ?? [CH]);
+    const open = new Set(options.open ?? []);
+    const authority =
+      "relayAuthor" in options ? options.relayAuthor : RELAY_AUTHOR;
+    return {
+      key: options.key ?? pubkey,
+      pubkey,
+      owner: options.owner ?? OWNER,
+      relayAuthor: authority,
+      async query(filters: readonly Record<string, unknown>[]) {
+        const out: Record<string, unknown>[] = [];
+        for (const filter of filters) {
+          const kinds = (filter.kinds as number[] | undefined) ?? [];
+          const ids = (filter["#d"] as string[] | undefined) ?? [];
+          for (const id of ids) {
+            if (kinds.includes(39002) && memberOf.has(id))
+              out.push({
+                id: hex("d"),
+                kind: 39002,
+                pubkey: authority,
+                created_at: 100,
+                content: "",
+                sig: "",
+                tags: [
+                  ["d", id],
+                  ["p", pubkey],
+                ],
+              });
+            if (kinds.includes(39000))
+              out.push({
+                id: hex("e"),
+                kind: 39000,
+                pubkey: authority,
+                created_at: 100,
+                content: "",
+                sig: "",
+                tags: [["d", id], [open.has(id) ? "public" : "private"]],
+              });
+          }
+        }
+        return out;
+      },
+    };
+  };
   const send = async (event: Record<string, unknown>) => {
     live?.({
       events: [
@@ -248,13 +329,14 @@ function start() {
   const place = (
     event: Record<string, unknown>,
     signal = new AbortController().signal,
+    options: { agent?: string; channel?: string } = {},
   ) => {
     const placer = [...placers][0];
     if (!placer) throw new Error("No placer registered");
     return placer.place(
       {
-        agent: ART,
-        channel: CH,
+        agent: options.agent ?? ART,
+        channel: options.channel ?? CH,
         event: { kind: 9, pubkey: OWNER, created_at: 200, ...event } as never,
       },
       signal,
@@ -290,7 +372,15 @@ function start() {
       if (!added) throw new Error("No log tool");
       return added;
     },
+    clientFor,
+    agent,
+    running,
+    boundRelays,
+    selectRelay(next: typeof selectedRelay) {
+      selectedRelay = next;
+    },
     calls,
+    decideSignals,
     delivered,
     state,
     skip: () => skipCount++,
@@ -443,7 +533,7 @@ describe("smart routing", () => {
     expect(waited).toBeGreaterThanOrEqual(790);
     expect(waited).toBeLessThan(1000);
     const tool = f.tool();
-    const log = JSON.parse(await tool.call({}, {}, {}));
+    const log = JSON.parse(await tool.call(f.clientFor(), {}, {}));
     expect(log.timeouts).toMatchObject({
       placeMs: 800,
       place: { asked: 1, timedOut: 1 },
@@ -496,7 +586,7 @@ describe("smart routing", () => {
     const slowWaited = Date.now() - slowStart;
     expect(slowWaited).toBeGreaterThanOrEqual(790);
     expect(slowWaited).toBeLessThan(1000);
-    const log = JSON.parse(await f.tool().call({}, {}, {}));
+    const log = JSON.parse(await f.tool().call(f.clientFor(), {}, {}));
     expect(log.entries[0]).toMatchObject({
       flow: "where",
       status: "failed",
@@ -527,7 +617,7 @@ describe("smart routing", () => {
     expect(readSignal?.aborted).toBe(true);
     expect(f.calls).toHaveLength(0);
     await vi.waitFor(async () => {
-      const log = JSON.parse(await f.tool().call({}, {}, {}));
+      const log = JSON.parse(await f.tool().call(f.clientFor(), {}, {}));
       expect(log.entries[0]).toMatchObject({
         flow: "where",
         status: "failed",
@@ -623,10 +713,15 @@ describe("smart routing", () => {
     const Marker = action.marker;
 
     // Picked and delivered: marker renders with no hover title.
+    const notified = vi.fn();
+    const stop = action.subscribe?.(notified);
+    expect(action.matches({ id: hex("1") }, f.session)).toBe(false);
     f.state.where = { place: "working" };
     await f.send(top("1", "check this"));
     await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
-    expect(action.matches({ id: hex("1") })).toBe(true);
+    expect(notified).toHaveBeenCalled();
+    stop?.();
+    expect(action.matches({ id: hex("1") }, f.session)).toBe(true);
     const picked = render(
       createElement(Marker, { message: { id: hex("1") }, session: f.session }),
     );
@@ -649,7 +744,7 @@ describe("smart routing", () => {
     // Tagged placement and below-threshold none stay silent in the timeline
     // but remain inspectable via the message action.
     await f.place(top("3", "@ART hi", [["p", ART]]));
-    expect(action.matches({ id: hex("3") })).toBe(true);
+    expect(action.matches({ id: hex("3") }, f.session)).toBe(true);
     const placed = render(
       createElement(Marker, { message: { id: hex("3") }, session: f.session }),
     );
@@ -658,11 +753,197 @@ describe("smart routing", () => {
 
     f.state.who = { ART: 0.2, mbot: 0.1 };
     await f.send(top("4", "just thinking aloud"));
-    await vi.waitFor(() => expect(action.matches({ id: hex("4") })).toBe(true));
+    await vi.waitFor(() =>
+      expect(action.matches({ id: hex("4") }, f.session)).toBe(true),
+    );
     const none = render(
       createElement(Marker, { message: { id: hex("4") }, session: f.session }),
     );
     expect(none.container.firstChild).toBeNull();
     none.unmount();
+  });
+
+  it("enforces account, community, and channel read access on smart_routing_log", async () => {
+    const f = await setup();
+    f.state.where = { place: "working" };
+    await f.send(top("a", "private channel secret"));
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
+
+    // A member of the channel reads its entry.
+    const memberLog = JSON.parse(
+      await f.tool().call(f.clientFor(ART, { memberOf: [CH] }), {}, {}),
+    );
+    expect(memberLog.entries).toHaveLength(1);
+    expect(memberLog.entries[0]?.snippet).toContain("private channel secret");
+
+    // An agent in the same community without read access to that private channel sees nothing.
+    const outsiderLog = JSON.parse(
+      await f
+        .tool()
+        .call(
+          f.clientFor(MBOT, { memberOf: ["other-chan"] }),
+          {},
+          { channel_id: CH },
+        ),
+    );
+    expect(outsiderLog.entries).toEqual([]);
+    expect(outsiderLog.timeouts.whoAndWhere.asked).toBe(0);
+
+    // An explicitly open channel is readable without membership.
+    const openLog = JSON.parse(
+      await f
+        .tool()
+        .call(f.clientFor(MBOT, { memberOf: [], open: [CH] }), {}, {}),
+    );
+    expect(openLog.entries).toHaveLength(1);
+
+    // Without a trusted relay authority, the tool fails closed.
+    const unverifiedLog = JSON.parse(
+      await f
+        .tool()
+        .call(
+          f.clientFor(ART, { memberOf: [CH], relayAuthor: undefined }),
+          {},
+          {},
+        ),
+    );
+    expect(unverifiedLog.entries).toEqual([]);
+
+    // An agent in another community sees none of this community's entries.
+    const otherKey = `other:${ART}`;
+    f.running.push(
+      f.agent(ART, "ART", { key: otherKey, relay: "wss://other.example" }),
+    );
+    const otherCommunityLog = JSON.parse(
+      await f
+        .tool()
+        .call(f.clientFor(ART, { key: otherKey, memberOf: [CH] }), {}, {}),
+    );
+    expect(otherCommunityLog.entries).toEqual([]);
+  });
+
+  it("resolves placement using the agent's bound relay when another community is selected", async () => {
+    const f = await setup();
+    const OTHER_CH = "chan-community-a";
+    const keyA = `a:${ART}`;
+    f.running.push(
+      f.agent(ART, "ART", { key: keyA, relay: "wss://community-a.example" }),
+    );
+    const sessionA = {
+      viewer: OWNER,
+      scope: `https://community-a.example:${OWNER}`,
+      channels: {
+        window: () => undefined,
+        list: () => ({
+          channels: [
+            {
+              id: OTHER_CH,
+              name: "community-a-work",
+              channelType: "stream",
+              members: [OWNER, ART],
+            },
+          ],
+        }),
+      },
+      read: vi.fn(async () => [
+        {
+          id: hex("7"),
+          kind: 9,
+          pubkey: PAT,
+          created_at: 100,
+          tags: [["h", OTHER_CH]],
+          content: "community A history",
+        },
+      ]),
+      profiles: {
+        snapshot: () => new Map([[OWNER, { name: "baxen" }]]),
+        subscribe: () => () => {},
+      },
+    };
+    f.boundRelays.set(keyA, {
+      snapshot: () => ({
+        status: "ready",
+        session: sessionA,
+        viewer: OWNER,
+        origin: "wss://community-a.example",
+      }),
+      subscribe: () => () => {},
+    });
+    // The owner currently has community B selected (which does not have OTHER_CH).
+    f.selectRelay({
+      snapshot: () => ({
+        status: "ready",
+        session: {
+          viewer: OWNER,
+          scope: `https://community-b.example:${OWNER}`,
+          channels: { window: () => undefined, list: () => ({ channels: [] }) },
+          read: vi.fn(async () => []),
+          profiles: { snapshot: () => new Map(), subscribe: () => () => {} },
+        },
+        viewer: OWNER,
+        origin: "wss://community-b.example",
+      }),
+      subscribe: () => () => {},
+    });
+    f.state.where = { place: "working" };
+
+    const result = await f.place(
+      {
+        id: hex("8"),
+        content: "@ART status in A?",
+        tags: [
+          ["h", OTHER_CH],
+          ["p", ART],
+        ],
+      },
+      new AbortController().signal,
+      { agent: keyA, channel: OTHER_CH },
+    );
+    expect(result).toEqual({ topLevel: true });
+    expect(sessionA.read).toHaveBeenCalled();
+    expect(f.calls[0]?.community).toBe("wss://community-a.example");
+    expect(f.calls[0]?.state).toContain("community A history");
+  });
+
+  it("cancels sleeping retries and aborts decision signals when the provider scope ends, even if restored immediately", async () => {
+    const f = await setup();
+    f.state.where = { place: "working" };
+    f.state.deliverResult = { status: "dropped", reason: "unavailable" };
+
+    await f.send(top("5", "check this please"));
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
+
+    // Withdraw and immediately restore the provider while the first retry sleeps.
+    await f.provider.remove();
+    f.provider.add();
+    await vi.waitFor(() => expect(f.placers.size).toBe(1));
+
+    // The old decision's retry is cancelled and records routing stopped.
+    await vi.waitFor(async () => {
+      const log = JSON.parse(await f.tool().call(f.clientFor(), {}, {}));
+      expect(log.entries[0]?.wake).toBe("dropped: routing stopped");
+    });
+    expect(f.delivered).toHaveLength(1);
+
+    // An in-flight placement's decision signal also aborts when the scope ends.
+    f.state.delayMs = 500;
+    const pending = f.place(top("6", "@ART hold on", [["p", ART]]));
+    await vi.waitFor(() => expect(f.decideSignals.length).toBeGreaterThan(1));
+    const inFlightSignal = f.decideSignals.at(-1);
+    expect(inFlightSignal?.aborted).toBe(false);
+    await f.provider.remove();
+    expect(inFlightSignal?.aborted).toBe(true);
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it("ranks only agents this app copy can actually deliver mentions to", async () => {
+    const f = await setup();
+    // ART has higher Jev score (0.84) than mbot (0.72), but this copy cannot deliver to ART.
+    f.state.who = { ART: 0.84, mbot: 0.72 };
+    f.state.deliverable.delete(ART);
+    await f.send(top("7", "who can take this?"));
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
+    expect(whoKeys(f.calls[0])).toEqual(["mbot"]);
+    expect(f.delivered[0]?.key).toBe(MBOT);
   });
 });

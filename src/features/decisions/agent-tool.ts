@@ -33,6 +33,7 @@ const FAILURES: Record<DecisionFailure, string> = {
     "The provider refused the request. state must not be empty; a choice takes 2 to 255 criteria and a score 2 to 10. Ask 1 to 32 questions, each named in at most 64 characters.",
   input_limit: "The request is over 128 KiB. Send less state.",
   timeout: "The provider did not answer within 30 seconds. Try again.",
+  cancelled: "The decision request was cancelled.",
   service_error: "The provider failed. Try again later.",
   invalid_response:
     "The provider's answer did not fit the questions. Try again later.",

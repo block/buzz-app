@@ -124,7 +124,7 @@ export function AgentToolAccess({
           const tools = roleTools(preset.id);
           return {
             value: preset.id,
-            title: `${preset.label}: tools this role permits`,
+            title: `${preset.label}: built-in tools this role permits`,
             content: (
               <dl className="m-0 grid gap-2 text-body-sm">
                 <ToolList title="Native tool examples, using Claude Code names">

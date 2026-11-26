@@ -326,3 +326,160 @@ it("keeps Settings alive under a join dialog over it, not under another Settings
   void t.host.navigation.open({ ...settings, section: "profile" });
   expect(request.signal.aborted).toBe(true);
 });
+
+it("dispatches Reload to the active page newest-first and falls back when unhandled or throwing", () => {
+  const t = setup();
+  const request = t.presentation.request;
+  expect(t.host.reload()).toBe(false);
+
+  const calls: string[] = [];
+  let handleFirst = true;
+  let handleSecond = false;
+  const stopFirst = request.onReload?.(() => {
+    calls.push("first");
+    return handleFirst;
+  });
+  const stopSecond = request.onReload?.(() => {
+    calls.push("second");
+    return handleSecond;
+  });
+
+  // Newest returns false, so the earlier handler on the same visit is tried.
+  expect(t.host.reload()).toBe(true);
+  expect(calls).toEqual(["second", "first"]);
+
+  // Once the newest handler consumes Reload, earlier handlers do not run.
+  calls.length = 0;
+  handleSecond = true;
+  expect(t.host.reload()).toBe(true);
+  expect(calls).toEqual(["second"]);
+
+  // Unregistering is scoped and idempotent.
+  calls.length = 0;
+  stopSecond?.();
+  stopSecond?.();
+  expect(t.host.reload()).toBe(true);
+  expect(calls).toEqual(["first"]);
+
+  // Returning false leaves Reload unhandled.
+  calls.length = 0;
+  handleFirst = false;
+  expect(t.host.reload()).toBe(false);
+  expect(calls).toEqual(["first"]);
+
+  // Non-true runtime values and thrown errors fall back safely.
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const stopBad = request.onReload?.((() =>
+      Promise.resolve(true)) as unknown as () => boolean);
+    const stopThrow = request.onReload?.(() => {
+      throw new Error("reload failed");
+    });
+    expect(t.host.reload()).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Page reload handler failed",
+      expect.any(Error),
+    );
+    stopThrow?.();
+    stopBad?.();
+  } finally {
+    errorSpy.mockRestore();
+  }
+
+  // Reentrant reload calls do not recurse.
+  let nestedResult: boolean | undefined;
+  const stopReentrant = request.onReload?.(() => {
+    nestedResult = t.host.reload();
+    return true;
+  });
+  expect(t.host.reload()).toBe(true);
+  expect(nestedResult).toBe(false);
+  stopReentrant?.();
+  stopFirst?.();
+});
+
+it("revokes page reload handlers synchronously on owner failure, navigation, resolution, and session replacement", async () => {
+  const t = setup();
+  const relay = provideRelay(t.ctx);
+  const parentCalls = vi.fn(() => true);
+  const sessionCalls = vi.fn(() => true);
+  const bound = t.presentation.request.forSession(relay, relay.snapshot());
+  t.presentation.request.onReload?.(parentCalls);
+  bound.onReload?.(sessionCalls);
+
+  // Session-bound handler runs before its parent while valid.
+  expect(t.host.reload()).toBe(true);
+  expect(sessionCalls).toHaveBeenCalledTimes(1);
+  expect(parentCalls).not.toHaveBeenCalled();
+
+  // Disconnecting revokes only the session-bound handler, not the parent.
+  relay.disconnect();
+  expect(bound.signal.aborted).toBe(true);
+  expect(t.host.reload()).toBe(true);
+  expect(sessionCalls).toHaveBeenCalledTimes(1);
+  expect(parentCalls).toHaveBeenCalledTimes(1);
+
+  // Registering on an already-revoked request is a no-op.
+  const staleCalls = vi.fn(() => true);
+  bound.onReload?.(staleCalls);
+  expect(t.host.reload()).toBe(true);
+  expect(staleCalls).not.toHaveBeenCalled();
+
+  // Owner invalidation without notification revokes before invoking the handler.
+  t.change(false, false);
+  expect(t.host.reload()).toBe(false);
+  expect(parentCalls).toHaveBeenCalledTimes(2);
+  expect(t.presentation.request.signal.aborted).toBe(true);
+
+  // Fresh presentation on a new visit gets its own reload handler; leaving revokes it.
+  t.change(true);
+  void t.host.navigation.open({ ...target, pageId: "first" });
+  const first = t.host.request(t.host.navigation.snapshot().attempt, t.owner);
+  const firstCalls = vi.fn(() => true);
+  first.request.onReload?.(firstCalls);
+  expect(t.host.reload()).toBe(true);
+  expect(firstCalls).toHaveBeenCalledTimes(1);
+
+  // Route normalization revokes the old presentation's reload handler.
+  expect(first.request.resolve({ ...target, pageId: "resolved" })).toBe(true);
+  expect(t.host.reload()).toBe(false);
+  expect(firstCalls).toHaveBeenCalledTimes(1);
+
+  // Host disposal clears registered reload handlers.
+  const second = t.host.request(t.host.navigation.snapshot().attempt, t.owner);
+  const secondCalls = vi.fn(() => true);
+  second.request.onReload?.(secondCalls);
+  await t.ctx.fiber.dispose();
+  expect(t.host.reload()).toBe(false);
+  expect(secondCalls).not.toHaveBeenCalled();
+});
+
+it("suspends a retained page's reload handler under Settings, resumes on return, and omits onReload for Settings", () => {
+  const t = setup(true);
+  const pageReload = vi.fn(() => true);
+  const request = t.presentation.request;
+  request.onReload?.(pageReload);
+  expect(t.host.reload()).toBe(true);
+  expect(pageReload).toHaveBeenCalledTimes(1);
+
+  void t.host.navigation.open(settings);
+  const settingsPresentation = t.host.request(
+    t.host.navigation.snapshot().attempt,
+    t.owner,
+    true,
+  );
+  // Settings is not a contributed page and does not expose onReload.
+  expect(settingsPresentation.request.onReload).toBeUndefined();
+  // Retained page stays alive beneath Settings without handling Reload while covered.
+  expect(request.signal.aborted).toBe(false);
+  expect(t.host.reload()).toBe(false);
+  expect(pageReload).toHaveBeenCalledTimes(1);
+
+  // Returning to the original visit resumes the same handler without remounting.
+  expect(t.host.returnTo(request.entryId)).toBe(true);
+  expect(t.presentation.resume(t.host.navigation.snapshot().attempt)).toBe(
+    true,
+  );
+  expect(t.host.reload()).toBe(true);
+  expect(pageReload).toHaveBeenCalledTimes(2);
+});

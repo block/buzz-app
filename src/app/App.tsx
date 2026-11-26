@@ -128,6 +128,19 @@ export function App({ services }: { services: AppServices }) {
   );
 }
 
+/** True when any open modal (light DOM or active shadow root) covers the page. */
+function hasOpenModal(doc: Document) {
+  if (activeModal(doc)) return true;
+  let active = doc.activeElement;
+  while (active?.shadowRoot?.activeElement) {
+    active = active.shadowRoot.activeElement;
+    const modal = active.closest('dialog[open], [aria-modal="true"]');
+    if (modal && !modal.closest('[hidden], [inert], [aria-hidden="true"]'))
+      return true;
+  }
+  return false;
+}
+
 /** Settings sections open in the selected community's scope, as the sidebar does. */
 function selectedSettingsScope(services: AppServices) {
   const client = services.communities.snapshot();
@@ -392,6 +405,11 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     return () => services.notifications.setEntered(false);
   }, [entered, services]);
   const select = route.select;
+  const pageVisibleRef = useRef(false);
+  const mountedPagesRef = useRef(0);
+  const onPagePresentedChange = useCallback((presented: boolean) => {
+    mountedPagesRef.current += presented ? 1 : -1;
+  }, []);
   useEffect(
     () =>
       registerAppShortcuts(
@@ -401,7 +419,16 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           void services.navigation.open({ version: 1, kind: "settings" });
         },
         true,
-        () => services.communities.reload(),
+        () => {
+          if (
+            pageVisibleRef.current &&
+            mountedPagesRef.current > 0 &&
+            !hasOpenModal(document) &&
+            services.navigationHost.reload()
+          )
+            return;
+          services.communities.reload();
+        },
         services.shortcutBindings,
       ),
     [services],
@@ -454,6 +481,19 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   // A page that presents its own failure in place stays on screen.
   const failedPage = route.state.status === "failed" && !route.state.presented;
+  const pageVisible =
+    !launching &&
+    !restoring &&
+    !firstRun &&
+    !settings &&
+    !joinShown &&
+    startup === "ready" &&
+    !route.waiting &&
+    !((!route.state.ingress && !!route.failure) || failedPage) &&
+    !!workspace.page;
+  useLayoutEffect(() => {
+    pageVisibleRef.current = pageVisible;
+  }, [pageVisible]);
   // A kept timeout keeps only a page that is drawn. If the deadline passed
   // while the host drew its loading state instead, report it as the host's own
   // failure, so its card and Retry show. Loading that starts later over a kept
@@ -904,6 +944,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                   <PageView
                     page={workspace.page}
                     navigation={request}
+                    onPresentedChange={onPagePresentedChange}
                     companion={pageOwnsCompanion ? companion : undefined}
                     companionOpening={
                       pageOwnsCompanion ? launcher.opening : undefined

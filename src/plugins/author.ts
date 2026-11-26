@@ -194,7 +194,10 @@ export type {
   NavigationScope,
   JsonValue,
 } from "../features/navigation/targets";
-export type { PageNavigation } from "../features/navigation/service";
+export type {
+  PageNavigation,
+  PageReloadHandler,
+} from "../features/navigation/service";
 
 export type {
   Notifications,

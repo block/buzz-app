@@ -135,6 +135,8 @@ close it after a pick. Messages under the overlay are not marked read.
 
 For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the same across reads. Return a new turn when it changes. Leave previously returned turns and their items untouched.
 
+A contributed page can opt into handling **Reload Buzz** (`⌘R` / `Ctrl+R`, or the user's rebound shortcut) while it is the visible, uncovered page by registering a synchronous handler on its `navigation` prop (check `navigation?.onReload` for older hosts): `const stop = navigation?.onReload?.(() => { refresh(); return true; });`. Return `true` synchronously to consume the reload and handle async refresh work yourself; return `false` to fall back to Buzz's ordinary community reload. The handler unregisters automatically when the page navigates away, its plugin disables or reloads, or its `navigation.forSession(...)` binding changes; still return `stop` from `useEffect` cleanup. Pages covered by Settings or another modal stay suspended until uncovered. **Reload Buzz and restart agents** (`⌘⇧R` / `Ctrl+Shift+R`) is unchanged.
+
 ### Installed plugin artifact hash
 
 The optional `pluginInstaller` service has an optional `getInstallationArtifactHash(id)` capability on newer hosts. It returns only the native SHA-256 recorded for that plugin's catalogued revision. The lookup and subscription read catalog state; neither rehashes the current package file, so an `available` result is not a fresh integrity check. The `PluginInstallationArtifactHash` result type is exported from `@buzz/author`:
@@ -150,7 +152,6 @@ if (result?.status === "available") {
 `available` includes a 64-character lowercase hexadecimal SHA-256 in `sha256`. `absent` means a ready catalog has no matching ID. `unavailable` means the catalog is not ready, the ID is ambiguous, or Buzz cannot confirm a supported stored artifact digest (for example, an errored entry, a bundled plugin, or invalid digest metadata). A disabled external plugin can still have an available digest. Subscribe with `subscribeInstallationStatus(id, listener)` before reading; its callback is an invalidation signal, so re-read the hash when it fires.
 
 Equal recorded digests mean the catalogued revisions have the same package digest. They do not verify current file bytes or prove a common source, publisher, trust level, or version order.
-
 ## Speech providers
 
 The host owns speech to text end to end: the microphone, a WebRTC peer

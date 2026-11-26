@@ -783,11 +783,8 @@ it("tags a member by the names the relay verified, ahead of names people gave th
   ]);
   const tagged = { ...client, relayAuthor: relay.pubkey };
   const context = { channel: "chan", root };
-  for (const text of [
-    "@Alice S see this",
-    "@asmith see this",
-    "@alice smith-jones see this",
-  ]) {
+  // Only the verified names, written exactly, show as her tag.
+  for (const text of ["@Alice S see this", "@Alice Smith-Jones see this"]) {
     await callTool(tagged, context, "send", { audience: "everyone", text });
     expect(published.at(-1)?.tags).toEqual([
       ["h", "chan"],
@@ -802,13 +799,122 @@ it("tags a member by the names the relay verified, ahead of names people gave th
         text: `@${name} hi`,
       }),
     ).rejects.toThrow(`No single channel member is @${name}`);
+  // Her username and a case change still find her, but would not show as her
+  // tag, so nothing is posted.
+  const sent = published.length;
+  for (const text of ["@asmith see this", "@alice smith-jones see this"])
+    await expect(
+      callTool(tagged, context, "send", { audience: "everyone", text }),
+    ).rejects.toThrow("Alice Smith-Jones is @Alice S.");
+  expect(published).toHaveLength(sent);
   // Without the relay's key, verified names are not read at all, so only
   // the names people gave themselves are left.
   await callTool(client, context, "send", {
     audience: "everyone",
-    text: "@asmith hi",
+    text: "@Alice S hi",
   });
   expect(published.at(-1)?.tags).toContainEqual(["p", bob]);
+});
+
+it("refuses an @name that would notify someone it tags but not show as their tag", async () => {
+  const relay = keypair();
+  const sam = "e".repeat(64);
+  const verified = (subject: string, names: readonly string[][]): BuzzEvent =>
+    eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: 100,
+        tags: [
+          ["d", subject],
+          ["p", subject],
+          ["active", "true"],
+          ["issuer_label", "Example"],
+          ["verified_at", "100"],
+          ...names,
+        ],
+      }),
+    );
+  const world = [
+    ...community,
+    event({
+      kind: 39002,
+      created_at: 101,
+      tags: [
+        ["d", "chan"],
+        ["p", alice, "", "member"],
+        ["p", bob, "", "admin"],
+        ["p", me, "", "bot"],
+        ["p", sam, "", "member"],
+      ],
+    }),
+    // Sam's own profile says "Sam"; the relay verified a handle and full name.
+    profile(sam, "Sam"),
+    verified(sam, [
+      ["display_name", "srivera"],
+      ["username", "srivera"],
+      ["full_name", "Sam Rivera"],
+    ]),
+  ];
+  const { client: plain, published } = fake(world);
+  const client = { ...plain, relayAuthor: relay.pubkey };
+  const context = { channel: "chan", root };
+  const send = (text: string, mentions?: string[]) =>
+    callTool(client, context, "send", {
+      audience: "everyone",
+      text,
+      ...(mentions ? { mentions } : {}),
+    });
+  // The name Sam gave their own profile notifies them, with or without
+  // mentions, but the app shows it as plain text, so the error names the tag.
+  for (const mentions of [[sam], undefined])
+    await expect(send("@Sam can you re-approve?", mentions)).rejects.toThrow(
+      "These would notify but not show as tags: @Sam: Sam Rivera is @srivera. Nothing was posted.",
+    );
+  await expect(send("@sam rivera hi", [sam])).rejects.toThrow(
+    "@sam rivera: Sam Rivera is @srivera.",
+  );
+  expect(published).toHaveLength(0);
+  for (const text of ["@srivera can you re-approve?", "@Sam Rivera hi"]) {
+    await send(text, [sam]);
+    await send(text);
+    expect(published.at(-1)?.tags).toContainEqual(["p", sam]);
+  }
+  // Text that names no one it tags is left alone, and so is code.
+  await send("@Carol and @srivera, see `@Sam`", [sam]);
+  expect(published).toHaveLength(5);
+  // Bob imitates Sam's full name. Tagging both, the bare name binds neither,
+  // so each gets the form that names one key.
+  const imitated = fake([
+    ...world,
+    event({
+      kind: 0,
+      pubkey: bob,
+      created_at: 101,
+      content: JSON.stringify({ display_name: "Sam Rivera" }),
+    }),
+  ]);
+  const both = { ...imitated.client, relayAuthor: relay.pubkey };
+  await expect(
+    callTool(both, context, "send", {
+      audience: "everyone",
+      text: "@Sam Rivera hi",
+      mentions: [sam, bob],
+    }),
+  ).rejects.toThrow(
+    `@Sam Rivera: Sam Rivera is @Sam Rivera (${bob}); Sam Rivera is @srivera.`,
+  );
+  await callTool(both, context, "send", {
+    audience: "everyone",
+    text: `@srivera and @Sam Rivera (${bob}) hi`,
+    mentions: [sam, bob],
+  });
+  expect(imitated.published.at(-1)?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+    ["p", sam],
+    ["p", bob],
+  ]);
 });
 
 it("replies to a message inside a thread at the thread's root, and posts a file's text and attachments", async () => {
@@ -4285,14 +4391,47 @@ function verifiedPeople(more: readonly BuzzEvent[] = []) {
   return { client, carol };
 }
 
+it("shows a verified person's handle when looked up by key", async () => {
+  const relay = keypair();
+  const sam = "e".repeat(64);
+  const { client: base } = fake([
+    ...community,
+    profile(sam, "Sam"),
+    eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: 100,
+        tags: [
+          ["d", sam],
+          ["p", sam],
+          ["active", "true"],
+          ["issuer_label", "Example"],
+          ["verified_at", "100"],
+          ["display_name", "srivera"],
+          ["username", "srivera"],
+          ["full_name", "Sam Rivera"],
+        ],
+      }),
+    ),
+  ]);
+  const client = { ...base, relayAuthor: relay.pubkey };
+  expect(await callTool(client, {}, "users", { ids: [sam, bob] })).toBe(
+    [
+      `${bob} "Bob"`,
+      `${sam} "Sam" (verified: Sam Rivera, handle @srivera)`,
+    ].join("\n"),
+  );
+});
+
 it("finds a user by a verified full name that differs from their profile name", async () => {
   const { client, carol } = verifiedPeople();
   const found = await callTool(client, {}, "users", { q: "Jordan Rivera" });
   expect(client.searchProfiles).toHaveBeenCalledWith("jordan rivera", 100);
   expect(found).toBe(
     [
-      `${alice} "Alice Smith" (verified: Jordan Rivera)`,
-      `${carol} (verified: Casey Quinn)`,
+      `${alice} "Alice Smith" (verified: Jordan Rivera, handle jrivera, tag as @Ally)`,
+      `${carol} (verified: Casey Quinn, handle cquinn, tag as @Cee)`,
     ].join("\n"),
   );
 });
@@ -4307,8 +4446,8 @@ it("learns the relay's key only when a people search needs it", async () => {
   const found = await callTool(lazy, {}, "users", { q: "Jordan Rivera" });
   expect(found).toBe(
     [
-      `${alice} "Alice Smith" (verified: Jordan Rivera)`,
-      `${carol} (verified: Casey Quinn)`,
+      `${alice} "Alice Smith" (verified: Jordan Rivera, handle jrivera, tag as @Ally)`,
+      `${carol} (verified: Casey Quinn, handle cquinn, tag as @Cee)`,
     ].join("\n"),
   );
 });
@@ -4400,8 +4539,8 @@ it("keeps the people the search found when reading verified names fails, but nam
   const found = await callTool(client, {}, "users", { q: "Jordan Rivera" });
   expect(found).toBe(
     [
-      `${alice} "Alice Smith" (verified: Jordan Rivera)`,
-      `${carol} (verified: Casey Quinn)`,
+      `${alice} "Alice Smith" (verified: Jordan Rivera, handle jrivera, tag as @Ally)`,
+      `${carol} (verified: Casey Quinn, handle cquinn, tag as @Cee)`,
     ].join("\n"),
   );
   await expect(
@@ -4419,7 +4558,7 @@ it("keeps the community's order for a person it found with no profile", async ()
   ]);
   const found = await callTool(client, {}, "users", { q: "q" });
   expect(found).toBe(
-    `${carol} (verified: Casey Quinn)\n${alice} "Alice Smith" (verified: Jordan Rivera)`,
+    `${carol} (verified: Casey Quinn, handle cquinn, tag as @Cee)\n${alice} "Alice Smith" (verified: Jordan Rivera, handle jrivera, tag as @Ally)`,
   );
 });
 

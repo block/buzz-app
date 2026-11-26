@@ -479,6 +479,9 @@ burstTest(
       root.dataset.colorMode = "dark";
       root.style.setProperty("--buzz-text-scale", "1.5");
     });
+    // The narrower, larger-text layout re-pins the reader with scrolls. In
+    // WebKit a scroll after the pointer lands takes the hover away.
+    await settle(page);
     await others.hover();
     await expect(popup).toBeVisible();
     await expect

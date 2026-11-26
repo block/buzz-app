@@ -338,6 +338,40 @@ it("ranks an exact name before a longer one that contains it", async () => {
   expect(onSelect).toHaveBeenCalledExactlyOnceWith("2");
 });
 
+it("finds a channel by its words in any order, after whole-text matches", async () => {
+  const user = userEvent.setup();
+  const onSelect = vi.fn();
+  render(
+    <WorkflowChannelPicker
+      channels={[
+        { id: "1", name: "buzz-community" },
+        { id: "2", name: "community buzz chat" },
+        { id: "3", name: "community" },
+        { id: "4", name: "team-launch-planning-notes" },
+      ]}
+      profiles={profileQueries()}
+      onSelect={onSelect}
+    />,
+  );
+  const input = screen.getByRole("combobox", { name: "Choose a channel" });
+  await user.type(input, "community buzz");
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["community buzz chat", "buzz-community"]);
+  await user.clear(input);
+  // Initials and a word in another order match only as words apart.
+  await user.type(input, "notes tlp");
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["team-launch-planning-notes"]);
+  await user.clear(input);
+  // One word lists what it always has.
+  await user.type(input, "community");
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["community", "community buzz chat", "buzz-community"]);
+});
+
 it("does not pick a channel with Enter before anything is typed", async () => {
   const user = userEvent.setup();
   const onSelect = vi.fn();

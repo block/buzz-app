@@ -456,6 +456,48 @@ it("completes open channels by word runs, without scattered letters", async () =
     vi.useRealTimers();
   }
 });
+
+it("does not ask for or complete a name that holds the typed words apart, as Command-K finds one", async () => {
+  vi.useFakeTimers();
+  try {
+    const apart = channel("apart", {
+      name: "team-launch-planning-notes",
+      members: [],
+      readOnly: true,
+    });
+    const prefixed = channel("prefixed", {
+      name: "notes tlp chat",
+      members: [],
+      readOnly: true,
+    });
+    const t = fixture([
+      channel("joined", { name: "team-launch-planning-notes-extra" }),
+    ]);
+    const previews = new Map(
+      [apart, prefixed].map((entry) => [entry.id, entry]),
+    );
+    // Were the answer to hold a name found word by word, completion would
+    // still drop it, so prose after `#name` closes the popup.
+    const searchPublic = vi.fn(async () => ({
+      channels: [prefixed, apart],
+      partial: false,
+    }));
+    Object.assign(t.session.channels, {
+      searchPublic,
+      get: (id: string) => previews.get(id),
+    });
+    render(t.element("notes tlp"));
+    await act(async () => vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS));
+    // The lookup is not asked for such names, so it resolves none of them.
+    expect(searchPublic).toHaveBeenCalledExactlyOnceWith(
+      "notes tlp",
+      expect.objectContaining({ terms: false }),
+    );
+    expect(t.result().items.map((item) => item.id)).toEqual(["prefixed"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it("finds multi-word open channel names by prefix", async () => {
   vi.useFakeTimers();
   try {

@@ -18,21 +18,25 @@ type Result = {
 
 /** Public channels the viewer has not joined, found by name for Command-K and
  * the composer's `#` completion. The store resolves each match, so opening one
- * reaches the read-only preview. */
+ * reaches the read-only preview. `rule` narrows or widens the name match:
+ * "exact" names one channel, and "terms" also finds a name that holds the
+ * typed words apart, which only a caller that shows such names asks for. */
 export function usePublicChannelSearch(
   session: ComposerSession,
   query: string,
   ready: boolean,
-  exact = false,
+  rule?: "exact" | "terms",
 ) {
+  const exact = rule === "exact";
+  const terms = rule === "terms";
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<Result>();
   const search = session.channels.searchPublic;
   // An exact lookup names a whole channel, so it may be a single character.
   const active = (exact ? !!query : searchable(query)) && ready && !!search;
   const owner = useMemo(
-    () => ({ session, query, exact, attempt }),
-    [session, query, exact, attempt],
+    () => ({ session, query, rule, attempt }),
+    [session, query, rule, attempt],
   );
   useEffect(() => {
     if (!active || !search) return;
@@ -48,6 +52,7 @@ export function usePublicChannelSearch(
             signal,
             priority: "foreground",
             exact,
+            terms,
             // An exact lookup names one channel, so it waits for every page.
             progress: exact
               ? undefined
@@ -81,7 +86,7 @@ export function usePublicChannelSearch(
       cancel();
       controller.abort();
     };
-  }, [query, active, search, exact, owner]);
+  }, [query, active, search, exact, terms, owner]);
   const current = result?.owner === owner ? result : undefined;
   const loading = active && (!current || !!current.pending);
   // While the next lookup runs, keep the last answer's rows that still
@@ -91,9 +96,9 @@ export function usePublicChannelSearch(
   const found = useMemo(() => {
     if (current) return current.channels;
     if (!loading || !match) return none;
-    const kept = match(query, { exact });
+    const kept = match(query, { exact, terms });
     return kept.length ? kept : none;
-  }, [current, loading, match, query, exact]);
+  }, [current, loading, match, query, exact, terms]);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
   return {
     loading,

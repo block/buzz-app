@@ -28,7 +28,11 @@ import type { AppServices } from "../services";
 import { HOST_SHORTCUT_ORDER } from "../shortcuts";
 import { conversationFocusTarget } from "../focus-navigation";
 import { orderPages, shellPresentation } from "./presentation";
-import { matchName } from "../../features/search/match";
+import {
+  matchedPositions,
+  nameField,
+  rankTerms,
+} from "../../features/search/match";
 import {
   DEFAULT_SEARCH_STEPS,
   SearchChoices,
@@ -285,25 +289,14 @@ export function PageSearch({
   const destinations: SearchDestination[] = searchPages
     .flatMap((page) => {
       if (!needle) return [{ page, rank: 0 }];
-      const labelMatch = matchName(page.label, needle);
-      const detailMatch = page.detail
-        ? matchName(page.detail, needle)
-        : undefined;
-      const rank = Math.min(
-        labelMatch?.rank ?? Infinity,
-        detailMatch?.rank ?? Infinity,
-      );
-      return Number.isFinite(rank)
-        ? [
-            {
-              page: {
-                ...page,
-                ...(labelMatch ? { matches: labelMatch.positions } : {}),
-              },
-              rank,
-            },
-          ]
-        : [];
+      const { label, detail } = page;
+      // Each typed word may match the label or the detail.
+      const fields = [nameField(label), nameField(detail)];
+      const rank = rankTerms(needle, fields);
+      const matches = matchedPositions(needle, fields);
+      return rank === undefined
+        ? []
+        : [{ page: { ...page, ...(matches ? { matches } : {}) }, rank }];
     })
     .sort((a, b) => a.rank - b.rank)
     .map(({ page }) => ({

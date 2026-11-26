@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { matchName } from "../../features/search/match";
+import { nameField, rankTerms } from "../../features/search/match";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { useChannelLabels } from "../channels/useChannelLabels";
@@ -56,7 +56,7 @@ export function WorkflowChannelPicker({
     if (!needle) return choices;
     return choices
       .flatMap((channel) => {
-        const rank = matchName(channel.name, needle)?.rank;
+        const rank = rankTerms(needle, [nameField(channel.name)]);
         return rank === undefined ? [] : [{ channel, rank }];
       })
       .sort((a, b) => a.rank - b.rank)

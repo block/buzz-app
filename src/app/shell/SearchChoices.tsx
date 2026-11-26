@@ -1,4 +1,4 @@
-import { matchRank } from "../../features/search/match";
+import { matchRank, nameField, rankTerms } from "../../features/search/match";
 import {
   createContext,
   useContext,
@@ -352,10 +352,9 @@ export function SearchChoices({
       ...group.destinations.map(
         (row) =>
           row.rank ??
-          Math.min(
-            matchRank(row.label, needle) ?? Infinity,
-            matchRank(row.detail ?? "", needle) ?? Infinity,
-          ),
+          // As the row was found: the whole text, or each of its words.
+          rankTerms(needle, [nameField(row.label), nameField(row.detail)]) ??
+          Infinity,
       ),
     );
   // Upstream order includes usage and remembered choices. Only insert the new

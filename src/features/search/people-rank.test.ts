@@ -147,3 +147,53 @@ it("matches a verified full name like the label", () => {
   // An exact shown name still comes first.
   expect(order(people, "fake")).toEqual(["Fake", "fname"]);
 });
+
+it("finds a person by several words apart only where the caller asks", () => {
+  const people = [
+    person("a", "Alice Fixture", { username: "afix" }),
+    person("b", "Fixture Reader"),
+    person("c", "Alice Chen"),
+    person("d", "Scout", { agentName: "alice-helper" }),
+  ];
+  const terms = (needle: string) =>
+    rankPeople(people, needle, noSearchUsage, undefined, { terms: true }).map(
+      ({ person, score }) => [person.label, score],
+    );
+  // The people rule matches a text with a space only from a name's start.
+  expect(order(people, "fixture alice")).toEqual([]);
+  // "fixture" is a whole later word (2) and "alice" starts the name (1), so
+  // the row ranks by the weaker, after every whole match.
+  expect(terms("fixture alice")).toEqual([["Alice Fixture", 102]]);
+  // Words may match different names of one person: the label and username.
+  expect(terms("afix alice")).toEqual([["Alice Fixture", 101]]);
+  // Each word keeps the people rule: no match inside a word.
+  expect(terms("ixture alice")).toEqual([]);
+  // An initial finds the other word of a name.
+  expect(terms("chen a")).toEqual([["Alice Chen", 102]]);
+  // A typed space says the words are different words of the names. Alice
+  // Fixture has "afix" for the "a". Alice Chen and the agent's "alice-helper"
+  // have only the "alice" already typed.
+  expect(terms("alice a")).toEqual([["Alice Fixture", 101]]);
+  // A hidden name still ranks after shown names, word by word too.
+  expect(terms("helper scout")).toEqual([["Scout", 106]]);
+  // The whole text and single words rank as they do without the option.
+  for (const needle of ["alice", "fixture", "alice f", "alice fixture", ""])
+    expect(terms(needle).map(([label]) => label)).toEqual(
+      order(people, needle),
+    );
+  expect(terms("alice fixture")).toEqual([["Alice Fixture", -2]]);
+});
+
+it("keeps people found word by word behind whole matches in every band", () => {
+  const people = [
+    // The closest band, found only word by word.
+    person("a", "Alice Fixture", { relationship: 0 }),
+    // The farthest band, found by the whole text.
+    person("b", "Fixture Alice Fan", { relationship: 4 }),
+  ];
+  expect(
+    rankPeople(people, "fixture alice", noSearchUsage, undefined, {
+      terms: true,
+    }).map(({ person }) => person.label),
+  ).toEqual(["Fixture Alice Fan", "Alice Fixture"]);
+});

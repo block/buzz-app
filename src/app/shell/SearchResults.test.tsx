@@ -58,6 +58,7 @@ import type {
 import type { SearchGroup } from "./SearchChoices";
 import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { messageSortPreference } from "../../features/search/message-sort-preference";
+import { MatchRank } from "../../features/search/match";
 import { SearchResults } from "./SearchResults";
 import { useSearchMessages } from "./useSearchMessages";
 import { useSearchSettings } from "./SearchSettings";
@@ -8804,6 +8805,201 @@ it("opens an existing DM from a person row, and a draft to someone without one",
   }
 });
 
+it("finds channels, direct messages and people by typed words in any order", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair(),
+    carol = keypair();
+  const discovery = [
+    metadata(relay, "buzz-community", "buzz-community", 1700000000),
+    roster(relay, "buzz-community", [viewer.pubkey]),
+    metadata(relay, "community", "community", 1700000001),
+    roster(relay, "community", [viewer.pubkey]),
+    metadata(relay, "dm", "opaque", 1700000002, [
+      ["hidden", ""],
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    // Open and not joined: only the store's public lookup finds it.
+    metadata(relay, "open", "buzz-open-community", 1700000003, [
+      ["public", ""],
+      ["t", "stream"],
+    ]),
+    roster(relay, "open", [carol.pubkey]),
+    metadata(relay, "team-ops", "team-ops", 1700000004),
+    roster(relay, "team-ops", [viewer.pubkey]),
+    metadata(relay, "team-support", "team-support", 1700000005),
+    roster(relay, "team-support", [viewer.pubkey]),
+    profile(alice, { display_name: "Alice Fixture" }),
+    profile(carol, { display_name: "Alice Q. Fixture" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  // The directory finds nobody for these words. Carol's profile is cached.
+  const t = peopleSession(owner.session);
+  const props = {
+    session: t.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openNewMessage: () => {},
+    openConversation: () => {},
+  };
+  const rows = async (group: string) =>
+    within(await screen.findByRole("group", { name: group }))
+      .getAllByRole("option")
+      .map((row) => [
+        // The label is the element that holds the underlined runs.
+        row.querySelector("mark")?.parentElement?.textContent,
+        [...row.querySelectorAll("mark")].map((mark) => mark.textContent),
+      ]);
+  try {
+    const view = render(<SearchResults {...props} query="community buzz" />);
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    await act(async () =>
+      owner.session.profiles.ensure([alice.pubkey, carol.pubkey]),
+    );
+    // Both words, each underlined; "community" alone holds no "buzz". The
+    // open channel follows: Command-K asks the public lookup for words apart.
+    await waitFor(async () =>
+      expect(await rows("Channels")).toEqual([
+        ["buzz-community", ["buzz", "community"]],
+        ["buzz-open-community", ["buzz", "community"]],
+      ]),
+    );
+    view.rerender(<SearchResults {...props} query="fixture alice" />);
+    await waitFor(async () =>
+      expect(await rows("Direct messages")).toEqual([
+        ["Alice Fixture", ["Alice", "Fixture"]],
+      ]),
+    );
+    // The directory is asked for the whole text, and finds nobody.
+    await waitFor(() =>
+      expect(t.people).toHaveBeenLastCalledWith(
+        "fixture alice",
+        1,
+        expect.anything(),
+      ),
+    );
+    // Alice's direct message already lists her. Carol has none, and is found
+    // by the people rule for each word, from her cached profile.
+    await waitFor(async () =>
+      expect(await rows("People")).toEqual([
+        ["Alice Q. Fixture", ["Alice", "Fixture"]],
+      ]),
+    );
+    // The people rule holds for each word: no match inside a word.
+    view.rerender(<SearchResults {...props} query="ixture alice" />);
+    await waitFor(() =>
+      expect(t.people).toHaveBeenLastCalledWith(
+        "ixture alice",
+        1,
+        expect.anything(),
+      ),
+    );
+    expect(screen.queryByRole("group", { name: "People" })).toBeNull();
+    // A typed space says the words are different words of the name: "b" has
+    // only the "buzz" already typed, in the joined and the open channel.
+    view.rerender(<SearchResults {...props} query="buzz b" />);
+    await waitFor(() =>
+      expect(t.people).toHaveBeenLastCalledWith("buzz b", 1, expect.anything()),
+    );
+    expect(screen.queryByRole("group", { name: "Channels" })).toBeNull();
+    // One typed letter must start a word of the name: "t" starts "team", and
+    // "p" is only inside "ops" and "support".
+    view.rerender(<SearchResults {...props} query="ops t" />);
+    await waitFor(async () =>
+      expect(await rows("Channels")).toEqual([["team-ops", ["t", "ops"]]]),
+    );
+    view.rerender(<SearchResults {...props} query="team p" />);
+    await waitFor(() =>
+      expect(t.people).toHaveBeenLastCalledWith("team p", 1, expect.anything()),
+    );
+    expect(screen.queryByRole("group", { name: "Channels" })).toBeNull();
+    // One word lists what it always has, in the same order.
+    view.rerender(<SearchResults {...props} query="community" />);
+    await waitFor(async () =>
+      expect(await rows("Channels")).toEqual([
+        ["community", ["community"]],
+        ["buzz-community", ["community"]],
+      ]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("lists a page found word by word through its detail after names that hold the words", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const discovery = [
+    metadata(relay, "reports", "reports-team-dashboards", 1700000000),
+    roster(relay, "reports", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    },
+  });
+  const page = (label: string, detail?: string) => ({
+    key: label,
+    label,
+    ...(detail ? { detail } : {}),
+    icon: ChatCircleIcon,
+    run: () => {},
+  });
+  // PageSearch found "Reports" by one word in its label and one in its
+  // detail. No name here holds the typed text whole.
+  const found = page("Reports", "Team dashboards");
+  const props = {
+    session: owner.session,
+    query: "dashboards reports",
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    openNewMessage: () => {},
+    openConversation: () => {},
+  };
+  try {
+    const view = render(<SearchResults {...props} pages={[found]} />);
+    await screen.findByRole("option", { name: /^reports-team-dashboards/ });
+    // The channel holds both words in its name, so its group comes first.
+    expect(
+      within(screen.getByRole("listbox"))
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label"))
+        .slice(0, 2),
+    ).toEqual(["Channels", "Pages"]);
+    // So does a page that holds both words in its label.
+    view.rerender(
+      <SearchResults
+        {...props}
+        pages={[found, page("Reports and dashboards")]}
+      />,
+    );
+    expect(
+      within(screen.getByRole("group", { name: "Pages" }))
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Reports and dashboards", expect.stringMatching(/^Reports/)]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("opens a DM from a person row through the confirmed open until the relay's hidden DMs load", async () => {
   // Before the first visibility snapshot, a DM the relay hides looks
   // visible. The confirmed open asks the relay to unhide it, so the sidebar
@@ -9856,6 +10052,216 @@ it.each([
     owner.dispose();
   }
 });
+
+// "build" matches bui-launch-ld by word runs only when tried as its own
+// term; unlike build-scout-notes, upstream's unordered-word rule misses it.
+it.each([
+  {
+    name: "lists a channel holding the whole text before an agent found word by word",
+    channel: "scout-build-notes",
+    groups: ["Channels", "Agents", "Chats"],
+    chats: ["Plan the week"],
+    first: /^scout-build-notes/,
+  },
+  {
+    name: "keeps an agent found word by word ahead of a channel found the same way",
+    channel: "bui-launch-ld-scout-notes",
+    groups: ["Agents", "Chats", "Channels"],
+    chats: ["Plan the week"],
+    first: /Build Scout.*New chat/,
+  },
+  {
+    name: "lists a chat holding the whole text before the agent's own chats",
+    channel: "bui-launch-ld-scout-notes",
+    chat: "scout build log",
+    groups: ["Chats", "Agents", "Channels"],
+    chats: ["scout build log", "Plan the week"],
+    first: /^scout build log/,
+  },
+  {
+    name: "lets a message hit pass an agent found word by word",
+    channel: "scout-build-notes",
+    hit: true,
+    groups: ["Messages", "Channels", "Agents", "Chats"],
+    chats: ["Plan the week"],
+    first: /scout build/,
+  },
+  {
+    name: "keeps a chat holding the whole text first when it contains the agent found word by word",
+    channel: "bui-launch-ld-scout-notes",
+    chat: "scout build log",
+    agentInChat: true,
+    groups: ["Chats", "Agents", "Channels"],
+    chats: ["scout build log", "Plan the week"],
+    first: /^scout build log/,
+  },
+  {
+    name: "lists a channel holding the whole text before a weaker chat holding it",
+    channel: "scout-builders",
+    chat: "xscoutxbuild",
+    groups: ["Channels", "Chats", "Agents"],
+    chats: ["xscoutxbuild", "Plan the week"],
+    first: /^scout-builders/,
+  },
+  {
+    name: "lets a message hit pass an agent found word by word when nothing holds the whole text",
+    channel: "bui-launch-ld-scout-notes",
+    hit: true,
+    groups: ["Messages", "Agents", "Chats", "Channels"],
+    chats: ["Plan the week"],
+    first: /scout build is green/,
+  },
+  {
+    name: "lists a setting holding the whole text before an agent found word by word",
+    channel: "bui-launch-ld-scout-notes",
+    setting: true,
+    groups: ["Settings", "Agents", "Chats", "Channels"],
+    chats: ["Plan the week"],
+    first: /Scout build defaults/,
+  },
+])(
+  "$name",
+  async ({
+    channel,
+    chat: chatName,
+    agentInChat,
+    hit,
+    setting,
+    groups,
+    chats: chatOrder,
+    first,
+  }) => {
+    localStorage.clear();
+    const relay = keypair(),
+      viewer = keypair(),
+      mine = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const chat = (id: string, name: string, at: number, members: string[]) => [
+      metadata(relay, id, name, at, [
+        ["t", "stream"],
+        ["private"],
+        ["t", "buzz.solo"],
+      ]),
+      roster(relay, id, [viewer.pubkey, ...members]),
+    ];
+    const discovery = [
+      ...chat("agent-chat", "Plan the week", 1700000002, [mine.pubkey]),
+      ...(chatName
+        ? chat(
+            "named-chat",
+            chatName,
+            1700000003,
+            agentInChat ? [mine.pubkey] : [],
+          )
+        : []),
+      metadata(relay, channel, channel),
+      roster(relay, channel, [viewer.pubkey]),
+      profile(mine, { name: "Build Scout", is_agent: true }),
+    ];
+    const owner = createRelaySession({
+      ...wire.transport,
+      query(filters, signal) {
+        if (filters.some((filter) => filter.search !== undefined))
+          return hit && !filters.some((filter) => filter.kinds?.includes(0))
+            ? wire.transport.query(filters, signal)
+            : Promise.resolve([]);
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => matchFilter(filter as Filter, event)),
+          ),
+        );
+      },
+    });
+    const source = owner.session.agentChoices;
+    const identities = [
+      { pubkey: mine.pubkey, name: "Build Scout", managed: true },
+    ];
+    const choices = {
+      ...source.snapshot(),
+      identities,
+      selectable: identities,
+    };
+    const session = {
+      ...owner.session,
+      agentChoices: {
+        ...source,
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+        ensure: () => {},
+      },
+    } as typeof owner.session;
+    try {
+      render(
+        <SearchResults
+          session={session}
+          query="scout build"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          usageScope={usage}
+          openNewMessage={() => {}}
+          openConversation={vi.fn()}
+          openAgentSession={vi.fn()}
+          inlineSettings={
+            setting
+              ? [
+                  {
+                    label: "Settings",
+                    destinations: [
+                      {
+                        key: "scout-setting",
+                        label: "Scout build defaults",
+                        rank: MatchRank.prefix,
+                        icon: ChatCircleIcon,
+                        content: (
+                          <button type="button">Scout build defaults</button>
+                        ),
+                        run: vi.fn(),
+                      },
+                    ],
+                  },
+                ]
+              : undefined
+          }
+        />,
+      );
+      // A setting with a control turns the list into a grid.
+      const [list, group, row] = setting
+        ? (["grid", "rowgroup", "row"] as const)
+        : (["listbox", "group", "option"] as const);
+      if (hit) {
+        // Message search is scripted; the one hit answers after the debounce.
+        await waitFor(() => expect(wire.pending).toHaveLength(1));
+        await act(async () =>
+          wire
+            .next()
+            .respond([
+              message(viewer, channel, "scout build is green", 1700000005),
+            ]),
+        );
+      }
+      await screen.findByRole(group, { name: "Channels" });
+      await screen.findByRole(group, { name: "Agents" });
+      const chats = within(await screen.findByRole(group, { name: "Chats" }));
+      await waitFor(() =>
+        expect(chats.getAllByRole(row).map((chat) => chat.textContent)).toEqual(
+          chatOrder.map((name) => expect.stringContaining(name)),
+        ),
+      );
+      const labels = within(screen.getByRole(list))
+        .getAllByRole(group)
+        .map((each) => each.getAttribute("aria-label"));
+      expect(labels.slice(0, groups.length)).toEqual(groups);
+      const top = screen.getAllByRole(row)[0];
+      expect(top?.textContent).toMatch(first);
+      if (setting) expect(top).toHaveAttribute("aria-selected", "true");
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 it.each([
   {

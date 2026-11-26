@@ -88,10 +88,17 @@ import {
   guideFilters,
   syntaxOf,
 } from "./SearchFilterGuide";
-import { MatchRank, matchName, matchRank } from "../../features/search/match";
+import {
+  MatchRank,
+  matchedPositions,
+  nameField,
+  rankTerms,
+  TERMS_APART,
+} from "../../features/search/match";
 import { useUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { messageSortPreference } from "../../features/search/message-sort-preference";
 import {
+  MAX_BOOST,
   noSearchUsage,
   readSearchUsage,
   recordChoice,
@@ -114,6 +121,7 @@ import {
 } from "../../shared/search-debounce";
 import { matchPerson, normalizeName } from "../../features/search/person-match";
 import {
+  personFields,
   personKey,
   rankPeople,
   type PersonCandidate,
@@ -653,7 +661,7 @@ export function SearchResults({
     session,
     needsPublicLookup ? operatorChannel : "",
     list.status === "ready",
-    true,
+    "exact",
   );
   const operatorLookupPending =
     needsPublicLookup &&
@@ -1088,6 +1096,8 @@ export function SearchResults({
     session,
     scopedChannelId || hasOperator || offline ? "" : parsed.text,
     list.status === "ready",
+    // Command-K shows names found word by word; `#` completion does not ask.
+    "terms",
   );
   // Scoped search passes no text, so the lookup is idle there.
   const slowChannels = useDelayedSearch(publicChannels.loading);
@@ -1270,9 +1280,11 @@ export function SearchResults({
     }
   }
   // Several passes below rank the same names; rank each once per render.
-  const ranks = new Map<string, MatchRank | undefined>();
+  // The whole typed text, or failing that each of its words (`rankTerms`).
+  const ranks = new Map<string, number | undefined>();
   const rankName = (label: string) => {
-    if (!ranks.has(label)) ranks.set(label, matchRank(label, needle));
+    if (!ranks.has(label))
+      ranks.set(label, rankTerms(needle, [nameField(label)]));
     return ranks.get(label);
   };
   // What the viewer chose before for this typed text. Only candidates that
@@ -1292,15 +1304,32 @@ export function SearchResults({
     ]),
   );
   // Rank before the limit, so an exact name beyond the first eight still shows.
-  // The store matches public channels by the same rule (`matchRank`).
+  // The store matches public channels by the same rule (`publicRank`).
   // The shared search order, with archived channels half a step behind live
   // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {
     const rank = rankName(label) ?? MatchRank.words + 1;
     return searchOrder(usage, picked, { key, rank }) + (archived ? 0.5 : 0);
   };
+  // A page comes from PageSearch, which matches its label or its detail. One
+  // found through its detail follows every name. One found only word by word
+  // follows every whole match, by its weakest word (`rankTerms`).
+  const pageRank = ({ key, label, detail }: SearchDestination) =>
+    searchOrder(usage, picked, {
+      key,
+      rank:
+        rankTerms(needle, [
+          nameField(label),
+          nameField(detail, { rank: MatchRank.words + 1 }),
+        ]) ?? MatchRank.words + 1,
+    });
   /** Whether a search order is an exact name, live (-2) or archived (-1.5). */
   const exact = (rank: number) => rank < -1;
+  /** Whether a search order is a row found only word by word (`rankTerms`):
+   * those ranks start at TERMS_APART, and usage lifts a rank by less than
+   * MAX_BOOST, while whole matches and earlier choices stay in single digits. */
+  const apartFloor = TERMS_APART - MAX_BOOST;
+  const apart = (rank: number) => rank > apartFloor;
   const byMatch = <T,>(rows: readonly T[], rank: (row: T) => number) =>
     rows
       .map((row) => ({ row, rank: rank(row) }))
@@ -1333,6 +1362,7 @@ export function SearchResults({
       peopleNeedle,
       usage,
       picked,
+      { terms: true },
     )
       .slice(0, PERSON_ROWS)
       .filter(({ person }) => sessionAgents.has(person.pubkey))
@@ -1341,6 +1371,10 @@ export function SearchResults({
         { score, label: person.label },
       ]),
   );
+  // Whether every shown agent was found only word by word. Such an agent
+  // leads only the groups found the same way: a group that holds the whole
+  // text comes before it.
+  const agentsApart = [...newChats.values()].every(({ score }) => apart(score));
   /** The best-placed shown agent among these members, if any. */
   const newChatAmong = (members: readonly string[] | undefined) =>
     (members ?? [])
@@ -1375,6 +1409,7 @@ export function SearchResults({
     peopleNeedle,
     usage,
     picked,
+    { terms: true },
   );
   // Solo chats, by name or by a shown agent among their members. A chat whose
   // name is the exact text comes first. Chats with that agent come next, in
@@ -1383,16 +1418,19 @@ export function SearchResults({
   // before older.
   // A chat's exactness comes from its own name only. A chat found through an
   // exactly named agent inherits the agent's score but is not an exact name.
+  // A name that holds the whole text keeps its own rank ahead of an agent
+  // found only word by word.
   const chatRank = (channel: ChannelSummary) => {
     const named = matchingAll.includes(channel)
       ? channelRank(channel)
       : Infinity;
-    return exact(named)
-      ? { rank: named, exactName: true }
-      : {
-          rank: newChatAmong(channel.members)?.score ?? named,
-          exactName: false,
-        };
+    if (exact(named)) return { rank: named, exactName: true };
+    const agent = newChatAmong(channel.members)?.score;
+    return {
+      rank:
+        agent !== undefined && (apart(named) || !apart(agent)) ? agent : named,
+      exactName: false,
+    };
   };
   const chatResults = channels
     .filter(
@@ -1408,6 +1446,7 @@ export function SearchResults({
     .sort(
       (a, b) =>
         Number(b.exactName) - Number(a.exactName) ||
+        Number(apart(a.rank)) - Number(apart(b.rank)) ||
         Number(b.agent) - Number(a.agent) ||
         a.rank - b.rank ||
         Number(!!a.channel.archived) - Number(!!b.channel.archived) ||
@@ -1446,7 +1485,9 @@ export function SearchResults({
     channel: ChannelSummary,
   ): SearchDestination => {
     const label = names.get(channel.id) ?? channel.name;
-    const matches = needle ? matchName(label, needle)?.positions : undefined;
+    const matches = needle
+      ? matchedPositions(needle, [nameField(label)])
+      : undefined;
     const key = `channel:${channel.id}`;
     return {
       key,
@@ -1588,7 +1629,7 @@ export function SearchResults({
   }: (typeof rankedPeople)[number]): SearchDestination & {
     score: number;
   } => {
-    const matches = matchPerson(person.label, peopleNeedle)?.positions;
+    const matches = matchedPositions(peopleNeedle, personFields(person));
     const key = personKey(person.pubkey);
     const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
     const dm = !!directMessageWith(list.channels, person.pubkey);
@@ -2148,8 +2189,9 @@ export function SearchResults({
   // the best match leads them, so Enter opens the "Work" page before a
   // channel that merely contains it. Every group scores on one scale, match
   // and usage, not the relationship band that orders rows inside People and
-  // Agents. An exact name always leads. After exact names, when the text
-  // finds one of the viewer's agents, its "New chat" row leads and its chats
+  // Agents. An exact name always leads. Groups that hold the whole text come
+  // before groups found only word by word. Within those, when the text finds
+  // one of the viewer's agents, its "New chat" row leads and its chats
   // follow. Messages then take their place among the rest by how strongly
   // they answer the text: a topic of three or more words, or many hits
   // against only weak name matches, puts them ahead.
@@ -2200,34 +2242,36 @@ export function SearchResults({
       icon: GearIcon,
       // PageSearch already ranked these by text and underlined them; here
       // usage and earlier choices adjust the order.
-      destinations: byMatch(pages, (page) => rankOf(page.label, page.key)).map(
-        (page) => ({
-          ...page,
-          action: `Open ${page.label}`,
-          run: choose(page.key, page.run),
-        }),
-      ),
-      best: Math.min(...pages.map((page) => rankOf(page.label, page.key))),
+      destinations: byMatch(pages, pageRank).map((page) => ({
+        ...page,
+        action: `Open ${page.label}`,
+        run: choose(page.key, page.run),
+      })),
+      best: Math.min(...pages.map(pageRank)),
     },
   ]
     .map(({ exactName, ...group }) => {
       const named = exactName ?? exact(group.best);
+      const wordByWord = apart(group.best);
       return {
         ...group,
         named,
+        wordByWord,
         lead:
           named ||
           (newChats.size > 0 &&
+            wordByWord === agentsApart &&
             (group.label === "Agents" || group.label === "Chats")),
       };
     })
     .sort(
       (a, b) =>
         Number(b.named) - Number(a.named) ||
+        Number(a.wordByWord) - Number(b.wordByWord) ||
         Number(b.lead) - Number(a.lead) ||
         (a.lead ? 0 : a.best - b.best),
     )
-    .map(({ best, lead, named, ...group }) => {
+    .map(({ best, lead, named, wordByWord, ...group }) => {
       const top = group.destinations[0];
       const tier = top ? rankName(top.label) : undefined;
       const remembered = !!top && top.key === picked;
@@ -2242,16 +2286,23 @@ export function SearchResults({
               : tier === MatchRank.wordStart
                 ? "Words in the name"
                 : "Part of a name";
+      // An agent found only word by word leads its tier, not messages.
       const strength =
-        named || lead || remembered
+        named || (lead && !wordByWord) || remembered
           ? 100
           : tier === MatchRank.prefix
             ? 85
             : tier === MatchRank.wordStart
               ? 60
               : 40;
-      // Inline settings slot in by rank, so they follow too.
-      return { ...group, why, strength, rank: lead ? -Infinity : best };
+      // Inline settings slot in by rank, so they follow too: a setting that
+      // holds the whole text goes above a word-by-word lead.
+      return {
+        ...group,
+        why,
+        strength,
+        rank: lead ? (wordByWord ? apartFloor : -Infinity) : best,
+      };
     });
   const words = parsed.text.split(/\s+/).filter(Boolean).length;
   const hits = messages.length;

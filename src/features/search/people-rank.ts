@@ -1,4 +1,5 @@
-import { matchTier, normalizeName } from "./person-match";
+import { rankTerms, type Field } from "./match";
+import { matchPerson, matchTier, normalizeName } from "./person-match";
 import { searchOrder, type SearchUsage } from "./usage";
 import { typedPublicKey } from "../../shared/identity/public-key";
 
@@ -51,6 +52,31 @@ function personMatch(
   return hidden.length ? 4 + Math.min(...hidden) : undefined;
 }
 
+const nameRule =
+  (penalty: number): Field["match"] =>
+  (name, text) => {
+    const found = matchPerson(name, text);
+    return found && { rank: found.tier + penalty, positions: found.positions };
+  };
+const shownName = nameRule(0);
+const hiddenName = nameRule(4);
+
+/** A person's names as search fields, ranked as `personMatch` ranks them. The
+ * shown label comes first, so it is the one underlined. */
+export const personFields = (person: PersonCandidate): Field[] =>
+  [
+    { label: person.label, match: shownName },
+    { label: person.username, match: shownName },
+    { label: person.fullName, match: shownName },
+    { label: person.agentName, match: hiddenName },
+    ...(person.profileNames ?? []).map((label) => ({
+      label,
+      match: hiddenName,
+    })),
+  ].flatMap(({ label, match }) =>
+    label === undefined ? [] : [{ label, match }],
+  );
+
 /**
  * Command-K order for people and agents, as New message orders recipients:
  * the shared search order (an exact name, then the earlier choice for this
@@ -58,20 +84,37 @@ function personMatch(
  * so callers list the directory's rows first, in the order the relay ranked
  * them. `score` is the same order without the band, on the scale channel and
  * page rows use, so a caller can place the whole group among other groups.
+ *
+ * With `terms`, as in Command-K, text of several words that matches no name
+ * whole also finds a person whose names hold every word, each by the name
+ * rule, in any order and in a different word of those names. Those rows
+ * follow every whole match (`rankTerms`).
  */
 export function rankPeople<T extends PersonCandidate>(
   people: readonly T[],
   needle: string,
   usage: SearchUsage,
   picked: string | undefined,
+  options?: { terms?: boolean },
 ) {
   // A pasted public key names its person exactly, though no name matches it.
   const key = typedPublicKey(needle);
-  // Fold the query once, not once per person.
-  const folded = needle.trim() ? [...normalizeName(needle)] : undefined;
+  // Fold each text once, not once per person.
+  const folds = new Map<string, readonly string[] | undefined>();
+  const fold = (text: string) => {
+    if (!folds.has(text))
+      folds.set(text, text.trim() ? [...normalizeName(text)] : undefined);
+    return folds.get(text);
+  };
+  const match = (person: T) =>
+    options?.terms
+      ? rankTerms(needle, personFields(person), (text) =>
+          personMatch(person, fold(text)),
+        )
+      : personMatch(person, fold(needle));
   return people
     .flatMap((person) => {
-      const rank = person.pubkey === key ? 0 : personMatch(person, folded);
+      const rank = person.pubkey === key ? 0 : match(person);
       if (rank === undefined) return [];
       const row = {
         key: personKey(person.pubkey),

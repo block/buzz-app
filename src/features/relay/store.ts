@@ -62,7 +62,7 @@ import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
 import { locate, SEEK_PAGE, type SeekRead } from "./history-seek";
 import type { WindowPage } from "./window";
-import { MatchRank, matchRank } from "../search/match";
+import { MatchRank, matchRank, nameField, rankTerms } from "../search/match";
 import { RESUME_READ_AGE } from "./live";
 
 type Listener = () => void;
@@ -253,13 +253,23 @@ const describe = (error: unknown) =>
 const AUX_PAGE = 50;
 const isAbort = (error: unknown) => readErrorKind(error) === "cancelled";
 /** An open channel name's match rank: the joined-channel rule (`matchRank`),
- * so "buzz community" finds "buzz-community"; an exact lookup names one. */
-const publicRank = (name: string, needle: string, exact?: boolean) =>
-  exact
+ * so "buzz community" finds "buzz-community"; an exact lookup names one. With
+ * `terms`, text that matches no name whole is matched word by word, so
+ * "notes tlp" finds "team-launch-planning-notes". The rule is chosen before
+ * any candidate is resolved, so a caller that never shows such names reads
+ * nothing for them. */
+const publicRank = (
+  name: string,
+  needle: string,
+  rule?: { exact?: boolean; terms?: boolean },
+) =>
+  rule?.exact
     ? name.toLowerCase() === needle
       ? MatchRank.exact
       : undefined
-    : matchRank(name, needle);
+    : rule?.terms
+      ? rankTerms(needle, [nameField(name)])
+      : matchRank(name, needle);
 /** How long a completed read answers a repeated trigger without asking again. */
 export const FRESH_FOR = 60_000;
 /** Pages a reconnect catch-up reads back from the head before it gives up on
@@ -3534,6 +3544,7 @@ export function createChannelStore(
     settings?: ReadOptions & {
       limit?: number;
       exact?: boolean;
+      terms?: boolean;
       progress?: ((found: PublicChannelSearch) => void) | undefined;
     },
     recover = true,
@@ -3580,7 +3591,7 @@ export function createChannelStore(
               ([key, value]) => key === "archived" && value === "true",
             ) &&
             !discovery.authorized(id)
-              ? publicRank(name, needle, settings?.exact)
+              ? publicRank(name, needle, settings)
               : undefined;
           return name && rank !== undefined ? [{ id, name, rank }] : [];
         })
@@ -3655,7 +3666,7 @@ export function createChannelStore(
         .flatMap((id) => {
           const channel = resolved.has(id) && previewable(id);
           return channel &&
-            publicRank(channel.name, needle, settings?.exact) !== undefined
+            publicRank(channel.name, needle, settings) !== undefined
             ? [channel]
             : [];
         })
@@ -3821,15 +3832,14 @@ export function createChannelStore(
   let recentPublic: { generation: number; ids: readonly string[] } | undefined;
   function matchPublic(
     query: string,
-    settings?: { exact?: boolean },
+    settings?: { exact?: boolean; terms?: boolean },
   ): readonly ChannelSummary[] {
     const needle = query.trim().toLowerCase().replace(/^#/, "");
     if (!needle || disposed || recentPublic?.generation !== epoch) return [];
     return recentPublic.ids
       .flatMap((id) => {
         const channel = previewable(id);
-        const rank =
-          channel && publicRank(channel.name, needle, settings?.exact);
+        const rank = channel && publicRank(channel.name, needle, settings);
         return channel && rank !== undefined ? [{ channel, rank }] : [];
       })
       .sort((a, b) => a.rank - b.rank)

@@ -424,11 +424,13 @@ function sections({
   } as unknown as AppServices["settingsCards"],
   plugins,
   notifications,
+  appearance,
 }: {
   selected?: string | null;
   cards?: AppServices["settingsCards"];
   plugins?: AppServices["plugins"];
   notifications?: AppServices["notifications"];
+  appearance?: AppServices["appearance"];
 } = {}) {
   const client = {
     selected,
@@ -446,6 +448,7 @@ function sections({
       communities,
       plugins,
       notifications,
+      appearance,
       navigation: {} as AppServices["navigation"],
       close: vi.fn(),
       openSection,
@@ -539,6 +542,287 @@ it("leads plugin switches with Manage plugins and notification switches with the
     "Sound — Notifications",
     "Notify while viewing — Notifications",
   ]);
+});
+
+function catalog(
+  ...manifests: {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+  }[]
+) {
+  const state = {
+    configuration: {
+      status: "ready",
+      catalog: {
+        plugins: manifests.map(({ category, ...manifest }) => ({
+          manifest: { ...manifest, discovery: { category } },
+          enabled: true,
+        })),
+      },
+    },
+    activation: {},
+    busy: false,
+  };
+  return {
+    subscribe: () => () => {},
+    snapshot: () => state,
+    change: vi.fn(),
+  } as unknown as AppServices["plugins"];
+}
+
+/** The rows `query` lists in a group, as "title — subtitle". */
+function listed(
+  { Palette }: ReturnType<typeof sections>,
+  query: string,
+  group: string,
+) {
+  const view = render(<Palette query={query} />);
+  const found = screen.queryByRole("rowgroup", { name: group });
+  // Rows are labelled only in the grid that a switch or select makes of the
+  // results. Plain sections alone are a listbox, which would read as empty.
+  if (!found) expect(screen.queryByRole("group", { name: group })).toBeNull();
+  // The group's notice is a row too; it has no label.
+  const names = found
+    ? within(found)
+        .getAllByRole("row")
+        .flatMap((row) => row.getAttribute("aria-label") ?? [])
+    : [];
+  view.unmount();
+  return names;
+}
+
+it("matches a plugin's description and a setting's keywords by contiguous text only", () => {
+  const plugins = catalog(
+    {
+      id: "buzz.agent-activity",
+      name: "Agent Activity",
+      description: "Show live and recent agent work alongside conversations.",
+      category: "agent-tools",
+    },
+    {
+      id: "buzz.huddles",
+      name: "Huddles",
+      description: "Start audio conversations with people in your channels.",
+      category: "communication",
+    },
+  );
+  const { notifications } = fixture();
+  const palette = sections({ plugins, notifications });
+  // A person's name is often in a sentence as letters merely in order.
+  expect(listed(palette, "alice", "Plugins")).toEqual([]);
+  // Word starts across a sentence: "[pl]ugins Show live [a]nd".
+  expect(listed(palette, "pla", "Plugins")).toEqual([]);
+  expect(listed(palette, "audio", "Plugins")).toEqual([
+    "Huddles — Communication",
+  ]);
+  expect(listed(palette, "plugins", "Plugins")).toEqual([
+    "Agent Activity — Agent tools",
+    "Huddles — Communication",
+  ]);
+  // "direct mess[a]ges co[n]versatio[n] [a]lerts"
+  expect(listed(palette, "anna", "Settings")).toEqual([]);
+  // Word starts across a keyword list: "[d]irect [m]essages [c]onversation".
+  expect(listed(palette, "dmc", "Settings")).toEqual([]);
+  expect(listed(palette, "alerts", "Settings")).toEqual([
+    "Sound — Notifications",
+    "Notify while viewing — Notifications",
+  ]);
+});
+
+it("matches a plugin's category by word runs but not by letters merely in order", () => {
+  const palette = sections({
+    plugins: catalog({
+      id: "buzz.profiles",
+      name: "Profiles",
+      description: "View member and agent profiles and recent activity.",
+      category: "people-and-communities",
+    }),
+  });
+  // "People & co[m]m[u]ni[t]i[e]s"
+  expect(listed(palette, "mute", "Plugins")).toEqual([]);
+  // The category's words in another order, typed as one word.
+  expect(listed(palette, "communities-people", "Plugins")).toEqual([]);
+  expect(listed(palette, "pc", "Plugins")).toEqual([
+    "Profiles — People & communities",
+  ]);
+});
+
+it("matches a row's name contiguously but not by scattered letters", () => {
+  const plugins = catalog({
+    id: "buzz.reminders",
+    name: "Reminders",
+    description: "Set message reminders and review what is due.",
+    category: "productivity",
+  });
+  const { notifications } = fixture();
+  const palette = sections({ plugins, notifications });
+  expect(listed(palette, "remnders", "Plugins")).toEqual([]);
+  expect(listed(palette, "remind", "Plugins")).toEqual([
+    "Reminders — Productivity",
+  ]);
+  expect(listed(palette, "sund", "Settings")).toEqual([]);
+  expect(listed(palette, "sound", "Settings")).toEqual([
+    "Sound — Notifications",
+  ]);
+});
+
+const huddles = {
+  id: "buzz.huddles",
+  name: "Huddles",
+  description: "Start audio conversations with people in your channels.",
+  category: "communication",
+};
+
+it("matches each typed word in any of a row's fields, in any order", () => {
+  const plugins = catalog(
+    huddles,
+    {
+      id: "buzz.voice-notes",
+      name: "Voice Notes",
+      description: "Record voice notes and play them in conversations.",
+      category: "communication",
+    },
+    {
+      id: "buzz.mermaid",
+      name: "Mermaid diagrams",
+      description: "Draw Mermaid code blocks in conversations as diagrams.",
+      category: "communication",
+    },
+    {
+      id: "buzz.agent-activity",
+      name: "Agent Activity",
+      description: "Show live and recent agent work alongside conversations.",
+      category: "agent-tools",
+    },
+  );
+  const { notifications } = fixture();
+  const mode = { preference: "system" };
+  const appearance = {
+    subscribe: () => () => {},
+    snapshot: () => mode,
+    setMode: vi.fn(),
+  } as unknown as AppServices["appearance"];
+  const palette = sections({ plugins, notifications, appearance });
+  // Two words apart in a description.
+  expect(listed(palette, "plugins audio", "Plugins")).toEqual([
+    "Huddles — Communication",
+  ]);
+  expect(listed(palette, "audio channels", "Plugins")).toEqual([
+    "Huddles — Communication",
+  ]);
+  // A name and a description, in either order.
+  expect(listed(palette, "voice play", "Plugins")).toEqual([
+    "Voice Notes — Communication",
+  ]);
+  expect(listed(palette, "code diagrams", "Plugins")).toEqual([
+    "Mermaid diagrams — Communication",
+  ]);
+  expect(listed(palette, "huddles audio", "Plugins")).toEqual([
+    "Huddles — Communication",
+  ]);
+  expect(listed(palette, "audio huddles", "Plugins")).toEqual([
+    "Huddles — Communication",
+  ]);
+  // A category and a description.
+  expect(listed(palette, "agent tools live", "Plugins")).toEqual([
+    "Agent Activity — Agent tools",
+  ]);
+  // Two words apart in a setting's keywords, the added "settings" included.
+  expect(listed(palette, "dark settings", "Settings")).toEqual([
+    "Color mode — Appearance",
+  ]);
+  expect(listed(palette, "audio settings", "Settings")).toEqual([
+    "Sound — Notifications",
+  ]);
+  // A control's name and its section, and its keywords and its section.
+  expect(listed(palette, "notifications sound", "Settings")).toEqual([
+    "Sound — Notifications",
+  ]);
+  expect(listed(palette, "dark appearance", "Settings")).toEqual([
+    "Color mode — Appearance",
+  ]);
+  // A typed space says the words are different words of the row: "au" is
+  // only in "audio".
+  expect(listed(palette, "audio au", "Plugins")).toEqual([]);
+  // Every word must match the row.
+  expect(listed(palette, "audio diagrams", "Plugins")).toEqual([]);
+  expect(listed(palette, "dark audio", "Settings")).toEqual([]);
+  // Each word keeps its field's cap. "alice" is in Huddles' description and
+  // "anna" in a keyword list only as letters in order.
+  expect(listed(palette, "huddles alice", "Plugins")).toEqual([]);
+  expect(listed(palette, "sound anna", "Settings")).toEqual([]);
+  // One word lists what it did before words were matched apart.
+  expect(listed(palette, "alice", "Plugins")).toEqual([]);
+  expect(listed(palette, "audio", "Plugins")).toEqual([
+    "Huddles — Communication",
+  ]);
+  expect(listed(palette, "dark", "Settings")).toEqual([
+    "Color mode — Appearance",
+  ]);
+});
+
+it("lists a row found only word by word after rows that hold the whole text", () => {
+  const palette = sections({
+    plugins: catalog(
+      {
+        id: "test.reader",
+        name: "Notes reader",
+        description: "Read a voice memo aloud.",
+        category: "communication",
+      },
+      {
+        id: "test.dictation",
+        name: "Dictation",
+        description: "Turn voice notes into text.",
+        category: "communication",
+      },
+      {
+        id: "buzz.voice-notes",
+        name: "Voice Notes",
+        description: "Record voice notes and play them in conversations.",
+        category: "communication",
+      },
+    ),
+  });
+  // The exact name, then the phrase in a description, then the words apart.
+  expect(listed(palette, "voice notes", "Plugins")).toEqual([
+    "Voice Notes — Communication",
+    "Dictation — Communication",
+    "Notes reader — Communication",
+  ]);
+});
+
+it("finds a section by words from its label and its group, underlining the label's", () => {
+  const { Palette, openSection } = sections();
+  const view = render(<Palette query="community prof" />);
+  const row = within(screen.getByRole("group", { name: "Settings" })).getByRole(
+    "option",
+  );
+  expect(row.textContent).toBe("ProfileCommunity");
+  expect(
+    [...row.querySelectorAll("mark")].map((mark) => mark.textContent),
+  ).toEqual(["Prof"]);
+  fireEvent.click(row);
+  expect(openSection).toHaveBeenCalledExactlyOnceWith("profile");
+  view.unmount();
+  // The section cap holds for each word: "wes" is in Software updates only
+  // as letters in order.
+  const capped = render(<Palette query="buzz wes" />);
+  expect(screen.queryByRole("group", { name: "Settings" })).toBeNull();
+  capped.unmount();
+  // "buzz" lists the Buzz group's sections. A second word needs another word
+  // of the row, and "bu" has only that "Buzz".
+  const group = render(<Palette query="buzz" />);
+  expect(
+    within(screen.getByRole("group", { name: "Settings" })).getAllByRole(
+      "option",
+    ).length,
+  ).toBeGreaterThan(1);
+  group.unmount();
+  render(<Palette query="buzz bu" />);
+  expect(screen.queryByRole("group", { name: "Settings" })).toBeNull();
 });
 
 it("lists only Personal space and app sections without a selected community", () => {

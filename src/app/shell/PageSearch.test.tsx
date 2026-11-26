@@ -849,6 +849,47 @@ it("ranks pages by match when no community is connected", async () => {
   }
 });
 
+it("finds a page by typed words in any order and underlines each", async () => {
+  const user = userEvent.setup();
+  const select = vi.fn();
+  const page = (key: string, title: string): RegisteredPage => ({
+    key,
+    pluginId: "test",
+    id: key,
+    title,
+    revision: "bundled",
+    component: () => null,
+  });
+  render(
+    <PageSearch
+      pages={[
+        page("test/drafts", "Drafts & sent"),
+        page("test/notes", "Shared notes"),
+        page("test/launch", "Team launch planning notes"),
+      ]}
+      onSelect={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+  const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+  // Initials and a word in another order match only as words apart.
+  await user.type(input, "notes tlp");
+  const apart = screen.getByRole("option");
+  expect(apart).toHaveTextContent("Team launch planning notes");
+  expect(
+    [...apart.querySelectorAll("mark")].map((mark) => mark.textContent),
+  ).toEqual(["T", "l", "p", "notes"]);
+  await user.clear(input);
+  await user.type(input, "sent dra");
+  const row = screen.getByRole("option");
+  expect(row).toHaveTextContent("Drafts & sent");
+  expect(
+    [...row.querySelectorAll("mark")].map((mark) => mark.textContent),
+  ).toEqual(["Dra", "sent"]);
+  await user.keyboard("{Enter}");
+  expect(select).toHaveBeenCalledExactlyOnceWith("test/drafts");
+});
+
 it.each(["pointer", "keyboard"])(
   "hands %s page selection to main, not its first control",
   async (method) => {

@@ -228,8 +228,7 @@ function SectionContents({
       !row.id ||
       ids.has(row.id) ||
       typeof row.label !== "string" ||
-      !row.label.trim() ||
-      (row.detail !== undefined && typeof row.detail !== "string")
+      !row.label.trim()
     )
       throw new Error("Sidebar rows need unique ids and non-empty labels");
     ids.add(row.id);
@@ -310,25 +309,20 @@ function SectionContents({
           .filter((value) => typeof value === "string" && value.trim())
           .join(" · ");
         const destination = entry.select(row);
-        const detail = row.detail?.trim();
         const item = (
           state?: Readonly<{ unread: boolean; working: ReactNode }>,
         ) => (
           <div
             key={row.id}
             className={styles.contributionNavigationItem}
+            // The card's resize grip counts these rows.
+            data-card-row=""
             data-ordinary={state?.unread || undefined}
           >
             <SpringLoadedNavigationItem
               label={
-                <span className={styles.contributionLabel}>
-                  <span className={styles.contributionTitle}>{row.label}</span>
-                  {detail && (
-                    <span className={styles.contributionDetail}>{detail}</span>
-                  )}
-                </span>
+                <span className={styles.contributionTitle}>{row.label}</span>
               }
-              multiline={!!detail}
               icon={row.icon}
               trailing={
                 state?.working ||

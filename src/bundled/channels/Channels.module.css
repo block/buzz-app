@@ -128,21 +128,6 @@
   min-width: 0;
   container-type: inline-size;
 }
-.contributionLabel {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-.contributionLabel > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.contributionDetail {
-  color: var(--text-secondary);
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-}
 /* Unread as the sidebar's own rows show it: the name only, by weight. */
 .contributionNavigationItem[data-ordinary] .contributionTitle {
   color: var(--text-navigation-unread);

@@ -76,18 +76,15 @@ it("lists Solo chats and threads you and your agent both wrote in, newest first"
       message(hex("6"), stranger, 300, "quiet", hex("4")),
     ],
   });
-  expect(
-    result.map(({ id, label, detail }) => ({ id, label, detail })),
-  ).toEqual([
+  expect(result.map(({ id, label }) => ({ id, label }))).toEqual([
     {
       id: `thread:team:${hex("1")}`,
       label: "Fix the build more",
-      detail: "team",
     },
     // You both talk at the team's top level too.
-    { id: "chat:team", label: "team", detail: undefined },
-    { id: "solo:solo", label: "solo", detail: undefined },
-    { id: `thread:team:${hex("2")}`, label: "Agent's root", detail: "team" },
+    { id: "chat:team", label: "team" },
+    { id: "solo:solo", label: "solo" },
+    { id: `thread:team:${hex("2")}`, label: "Agent's root" },
   ]);
 });
 

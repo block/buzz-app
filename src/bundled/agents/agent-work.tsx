@@ -151,7 +151,6 @@ export function agentWorkRows({
     const agentAt = theirs.threads.get(key);
     if (agentAt === undefined) continue;
     const [channelId = "", rootId = ""] = key.split(":");
-    const channel = byId.get(channelId);
     const root = text.get(rootId);
     const label = root === undefined ? "" : firstLine(root);
     rows.push({
@@ -159,7 +158,6 @@ export function agentWorkRows({
       kind: "thread",
       label: label || "Thread",
       icon: threadIcon,
-      ...(channel ? { detail: channel.name } : {}),
       channelId,
       rootId,
       at: Math.max(at, agentAt),
@@ -334,8 +332,5 @@ export function createAgentWork(relay: RelayData) {
 const sameRows = (a: readonly AgentWorkRow[], b: readonly AgentWorkRow[]) =>
   a.length === b.length &&
   a.every(
-    (row, index) =>
-      row.id === b[index]?.id &&
-      row.label === b[index].label &&
-      row.detail === b[index].detail,
+    (row, index) => row.id === b[index]?.id && row.label === b[index].label,
   );

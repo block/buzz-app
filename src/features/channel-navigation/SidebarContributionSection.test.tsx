@@ -528,7 +528,7 @@ it("draws a conversation row with the sidebar's unread, working and second line"
     pageId: "docs",
   };
   const rows: readonly SidebarSectionRow[] = [
-    { id: "thread", label: "Fix the build", detail: "team" },
+    { id: "thread", label: "Fix the build" },
     { id: "page", label: "Docs" },
   ];
   const entry: RegisteredSidebarSection = {
@@ -581,7 +581,7 @@ it("draws a conversation row with the sidebar's unread, working and second line"
     label: "Fix the build",
   });
   const button = screen.getByRole("button", { name: /Fix the build/ });
-  expect(button).toHaveTextContent("Fix the buildteam");
+  expect(button).toHaveTextContent("Fix the build");
   expect(button).toHaveAttribute("aria-current", "page");
   expect(button.closest("[data-ordinary]")).not.toBeNull();
   expect(

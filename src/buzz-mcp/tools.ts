@@ -33,6 +33,9 @@ import {
   referencedEmoji,
 } from "../features/relay/emoji";
 import { hasEventProof, newer } from "../features/relay/events";
+import { foldProfiles } from "../features/relay/profiles";
+import type { Profile } from "../features/relay/contracts";
+import { messageEditText } from "../features/messages/message-edit";
 import { createIdentityArchives } from "../features/relay/identity-archives";
 import type { RelayReader } from "../features/relay/reader";
 import { normalizeName } from "../features/search/person-match";
@@ -255,7 +258,12 @@ export const TOOLS: readonly Tool[] = [
     { channel: str, thread: str, text: str },
     ["channel", "text"],
   ),
-  tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
+  tool(
+    "edit",
+    "Edit your message. An @name for someone the message tagged stays a tag. An edit notifies no one, so it can't tag anyone new: send a new message for that.",
+    { id: str, text: str },
+    ["id", "text"],
+  ),
   tool(
     "delete",
     "Delete one of your own messages: only the message with this id, never another author's.",
@@ -816,7 +824,11 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const target = await tools.event(id);
     const channel = tag(target, "h");
     if (!channel) throw new Error(`${id} is not a channel message.`);
-    const content = required(args, "text");
+    const content = await tools.editMentions(
+      channel,
+      target,
+      required(args, "text"),
+    );
     if (!tools.client.effectiveEdit)
       throw new Error("This host cannot obtain effective edit state.");
     const effective = await tools.client.effectiveEdit(id, channel);
@@ -1184,7 +1196,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         thread && "in a thread",
       ].filter(Boolean);
       const body = snippet(
-        event.content.replace(/\s+/g, " ").trim(),
+        readableMentions(event.content).replace(/\s+/g, " ").trim(),
         words,
         400,
       );
@@ -2912,6 +2924,97 @@ class Tools {
     return aliases;
   }
 
+  /** The app's profiles for `pubkeys`, with their relay-verified names, so a
+   * body binds `@name` here as the message renderer binds it. */
+  async mentionProfiles(pubkeys: readonly string[]) {
+    const wanted = [...new Set(pubkeys)];
+    if (!wanted.length) return new Map<string, Profile>();
+    const [events, verified] = await Promise.all([
+      this.client.query([
+        { kinds: [0], authors: wanted, limit: wanted.length },
+      ]),
+      this.verifiedNames(wanted),
+    ]);
+    const profiles = foldProfiles(events as unknown as readonly RelayEvent[]);
+    for (const [pubkey, value] of verified) {
+      const { nameIsFallback: _fallback, ...base } = profiles.get(pubkey) ?? {};
+      profiles.set(pubkey, {
+        ...base,
+        name: value.displayName,
+        username: value.username,
+        verified: value,
+      });
+    }
+    return profiles;
+  }
+
+  /** `text` for an edit of `original`, written as the app's editor writes it.
+   * The app binds no names in an edited body, so each `@name` it would bind
+   * to someone the original tagged becomes their profile link. An edit
+   * notifies no one, so an `@name` for anyone else in the channel, or one for
+   * a tagged person that would not show as their tag, is refused. */
+  async editMentions(channel: string, original: BuzzEvent, text: string) {
+    if (!text.includes("@")) return text;
+    const keys = (tagged: (tag: readonly string[]) => boolean) => [
+      ...new Set(
+        original.tags.flatMap((tag) =>
+          tagged(tag) && HEX_KEY.test(tag[1] ?? "") ? [tag[1] as string] : [],
+        ),
+      ),
+    ];
+    // The recipients the app reads from the original (relay/fold.ts).
+    const mentions = keys((tag) => tag[0] === "p");
+    const mentionReferences = keys(
+      (tag) => tag.length === 2 && tag[0] === "mention",
+    );
+    const recipients = new Set([...mentions, ...mentionReferences]);
+    const profiles = await this.mentionProfiles([...recipients]);
+    const linked = messageEditText(
+      { content: text, mentions, mentionReferences },
+      profiles,
+    );
+    // What is left: `@name` that is not a link, outside code.
+    const prose = linked
+      .replace(/^```[\s\S]*?^```/gm, " ")
+      .replace(/`[^`\n]*`/g, " ");
+    if (!/(^|\s)@/.test(prose)) return linked;
+    const members = (await this.members(channel)).map(({ pubkey }) => pubkey);
+    const byName = await this.aliases([...members, ...recipients]);
+    const longest = [...byName.keys()].sort((a, b) => b.length - a.length);
+    const problems: string[] = [];
+    for (const match of prose.matchAll(/(^|\s)@/g)) {
+      const rest = prose.slice((match.index ?? 0) + match[0].length);
+      const name = longest.find(
+        (candidate) =>
+          rest.toLowerCase().startsWith(candidate) &&
+          /^($|[\s,;.!?:)\]}])/.test(rest.slice(candidate.length)),
+      );
+      if (!name) continue;
+      const written = `@${rest.slice(0, name.length)}`;
+      const person = bestNamed(byName.get(name)).find((key) =>
+        recipients.has(key),
+      );
+      if (!person) {
+        problems.push(
+          `${written} wasn't tagged in the original message, and an edit can't tag anyone new. Drop the @, or send a new message to tag them.`,
+        );
+        continue;
+      }
+      const profile = profiles.get(person);
+      const shown =
+        profile?.verified?.displayName ??
+        (profile?.nameIsFallback ? undefined : profile?.name);
+      // Two tagged people who share a name bind only by key.
+      const write =
+        shown && `@${shown}` !== written
+          ? `@${shown}`
+          : `@${shown ?? name} (${person})`;
+      problems.push(`${written} won't show as a tag. Write ${write}.`);
+    }
+    if (problems.length) throw new Error(`Not edited.\n${problems.join("\n")}`);
+    return linked;
+  }
+
   /** The relay's verified names (kind 30382) for `pubkeys`, read as the app
    * reads them, so `send` and the app agree on who is verified. None without
    * the connection's relay key. */
@@ -3143,10 +3246,19 @@ function messageLine(
       reference.parentId !== thread &&
       `reply_to ${reference.parentId}`,
     tags.length > 0 && `tags ${JSON.stringify(tags)}`,
-    `at ${time(event.created_at)}: ${event.content}`,
+    `at ${time(event.created_at)}: ${readableMentions(event.content)}`,
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/** A profile link, the form an edited message tags someone in, reads as the
+ * `@name` it shows, so an agent neither sees nor copies the link. */
+function readableMentions(content: string) {
+  return content.replace(
+    /\[(@(?:\\[!-/:-?[-`{-~]|[^\]\\\n])+)\]\(nostr:npub1[02-9ac-hj-np-z]{58}\)/g,
+    (_, label: string) => label.replace(/\\([!-/:-?[-`{-~])/g, "$1"),
+  );
 }
 
 /** The root of the thread `event` is in, by its NIP-10 markers. */

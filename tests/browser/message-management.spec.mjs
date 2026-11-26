@@ -142,6 +142,10 @@ test("manage a channel message, peer unread state, and its thread", async ({
   await editor.pressSequentially("? Management corrected");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(row).toContainText("Management corrected");
+  // An edited body binds no names, so the saved link is what keeps the tag.
+  await expect(
+    row.getByRole("button", { name: "View Morgarita profile" }),
+  ).toBeVisible();
   await expect
     .poll(() =>
       app.report.publications.some(({ event: item }) => item.kind === 40003),

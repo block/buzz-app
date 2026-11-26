@@ -32,7 +32,7 @@ const image = (name: string) => ({
   name: `${name}.png`,
 });
 
-it("reads a details message with the attachments its row lists, in a dialog where the view has no composer", () => {
+it("reads a details message with all of its attachments, in a dialog where the view has no composer", () => {
   const viewer = "a".repeat(64);
   const message: ChannelMessage = {
     id: "d".repeat(64),
@@ -100,8 +100,8 @@ it("reads a details message with the attachments its row lists, in a dialog wher
       supports: () => true,
     },
   } as unknown as RelaySession;
-  // A message renderer draws the first video in its own card, so the row
-  // leaves it out.
+  // A message renderer draws the first video in its own card. The reader
+  // draws the message's text and not that card, so it lists the video.
   const card = {
     key: "fixture/card",
     id: "card",
@@ -147,10 +147,10 @@ it("reads a details message with the attachments its row lists, in a dialog wher
   );
   const dialog = within(screen.getByRole("dialog"));
   expect(dialog.getByText("More of the findings follow.")).toBeInTheDocument();
-  expect(dialog.getAllByRole("button", { name: "Play video" })).toHaveLength(1);
+  expect(dialog.getAllByRole("button", { name: "Play video" })).toHaveLength(2);
   expect(
-    dialog.getByRole("button", { name: "Open video fullscreen" }),
-  ).toBeInTheDocument();
+    dialog.getAllByRole("button", { name: "Open video fullscreen" }),
+  ).toHaveLength(2);
   expect(
     dialog.getByRole("link", { name: "Download report.pdf" }),
   ).toBeInTheDocument();

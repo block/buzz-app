@@ -1,7 +1,6 @@
 import { type Ref, type SyntheticEvent, useSyncExternalStore } from "react";
 import { AttachmentView } from "../conversation/AttachmentView";
 import type { ConversationExtensions } from "../conversation/contracts";
-import { useMessageRenderer } from "../conversation/MessageBody";
 import type { ChannelMessage } from "../relay/contracts";
 import { safeMessageUrl } from "../relay/message-content";
 import type { RelaySession } from "../relay/session";
@@ -53,24 +52,17 @@ export function useAttachmentGroups(
   return { ...attachmentGroups(row, { claimed, drawn, gallery }), drawn };
 }
 
-/** The attachments a message's row lists, for a reader that opens from the
- * message's id and has no row to ask. A renderer's card that failed is known
- * only to its row, which then lists the attachments the card claimed; a
- * reader over such a row leaves those out. */
+/** Every attachment of a message, grouped as a row groups them, for a reader
+ * that opens from the message's id and has no row to ask. A message
+ * renderer's claims don't count here: the reader draws the message's text and
+ * never the renderer's card, so an attachment the card would draw is listed. */
 export function useReaderAttachments(
   row: ChannelMessage,
   extensions: ConversationExtensions | undefined,
   gallery: boolean,
 ) {
-  const renderer = useMessageRenderer(extensions?.messages, row);
   return useAttachmentGroups(row, extensions, {
-    claimed: (attachment) => {
-      try {
-        return !!renderer?.ownsAttachment?.(row, attachment);
-      } catch {
-        return false;
-      }
-    },
+    claimed: () => false,
     gallery,
   });
 }

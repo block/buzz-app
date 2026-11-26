@@ -4592,10 +4592,10 @@ html[data-keyboard-navigation]
   margin-inline: calc(-1 * var(--dialog-padding));
   padding-inline: var(--dialog-padding);
 }
-/* The whole message's attachments sit a step further from its text than a
-   row's sit from its bubble, which has its own padding. */
+/* The whole message's attachments stand clear of the end of its text. A
+   row's sit closer, under a bubble that has its own padding. */
 .detailsReader > .messageAttachments {
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
 }
 /* The details reader's sections sit below its dialog title in hierarchy. */
 .detailsReader .text :is(h1, h2) {

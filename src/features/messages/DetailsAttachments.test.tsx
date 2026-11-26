@@ -189,8 +189,10 @@ it("leaves Escape to media open over the reader's dialog", async () => {
   review.setAttribute("aria-modal", "true");
   document.body.append(review);
   fireEvent.keyDown(review, { key: "Escape" });
-  review.remove();
   expect(screen.getByRole("dialog", { name: "author" })).toBeInTheDocument();
+  // Closing, it is still in the page for its exit, and no longer over the
+  // dialog.
+  review.setAttribute("data-ending-style", "");
   fireEvent.keyDown(document.body, { key: "Escape" });
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "author" })).toBeNull(),

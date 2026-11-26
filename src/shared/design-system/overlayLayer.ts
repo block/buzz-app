@@ -1,8 +1,14 @@
 const unavailable = '[hidden], [inert], [aria-hidden="true"]';
 
-/** The topmost available modal: the last open one in document order. */
+/** The topmost available modal: the last open one in document order. One
+ * that is animating closed keeps `aria-modal` until it is gone, and no longer
+ * counts. */
 export function activeModal(document: Document) {
-  return [...document.querySelectorAll('[aria-modal="true"], dialog[open]')]
+  return [
+    ...document.querySelectorAll(
+      '[aria-modal="true"]:not([data-ending-style]), dialog[open]',
+    ),
+  ]
     .filter((candidate) => !candidate.closest(unavailable))
     .at(-1);
 }

@@ -60,7 +60,7 @@ export function useReaderMessage(
   return loaded ?? (read?.id === messageId ? read.message : undefined);
 }
 
-/** The attachments the message's row lists, as the row lists them. */
+/** All of the message's attachments, as a row lists them. */
 function ReaderAttachments({
   message,
   onOpenLink,

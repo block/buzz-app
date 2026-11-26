@@ -1,6 +1,7 @@
 // The owner's per-agent tool policy. One normalized config drives every
 // harness's native tool gates and the Buzz MCP server's listing and calls.
 export const TOOL_PRESETS = [
+  "builder",
   "super-agent",
   "reviewer",
   "coder",
@@ -206,6 +207,18 @@ export const classifiedBuzzTool = (name: string) => BUZZ_EFFECT.has(name);
 const ROLES: Readonly<
   Record<Exclude<ToolPreset, "coder" | "custom">, readonly Capability[]>
 > = {
+  builder: [
+    "native:read",
+    "native:write",
+    "native:shell",
+    "native:web",
+    "native:agents",
+    "native:meta",
+    "buzz:read",
+    "buzz:message",
+    "buzz:coordinate",
+    "buzz:builtin-deliverable",
+  ],
   "super-agent": [
     "native:read",
     "native:web",
@@ -254,26 +267,34 @@ export const PRESET_INFO: readonly RoleInfo[] = [
   {
     id: "coder",
     label: "All",
-    description: "Every tool, as agents have today. The default.",
-    can: "Everything Orchestrator can, plus editing files (Edit, Write) and Shell (Bash).",
+    description: "Uses every tool available to the agent. The default.",
+    can: "Everything Read / Write can, plus connected MCP tools and plugin tools that change things.",
   },
   {
-    id: "super-agent",
-    label: "Orchestrator",
-    description:
-      "Runs work like an assistant: plans, delegates and follows up in Buzz.",
-    can: "Everything Reviewer can, plus subagents (Task), creating channels, canvases, notes and repositories (channel_create, canvas_set, notes_set, repo), memory and attention (mem_set, watch_add) and handoffs (self_handoff).",
-    cannot: "Edit local files or run Shell.",
+    id: "builder",
+    label: "Read / Write",
+    description: "Edits files and runs builds and tests.",
+    can: "Read, edit and create files (Read, Edit, Write), run commands such as builds, tests and git (Bash), use the web, delegate to subagents (Task), and use built-in Buzz tools.",
+    cannot: "Use connected MCP tools or plugin tools that change things.",
   },
   {
     id: "reviewer",
-    label: "Reviewer",
-    description: "Inspects work and reports findings.",
-    can: "Read and search files (Read, Grep, Glob), the web (WebFetch, WebSearch), track steps and find tools (TodoWrite, ToolSearch), load skills (Skill), read Buzz (read, search) and send messages (send, react).",
+    label: "Read Only",
+    description: "Inspects files and answers in chat.",
+    can: "Read and search files (Read, Grep, Glob), use the web (WebFetch, WebSearch), load skills (Skill), read Buzz and send messages (read, send).",
     cannot:
-      "Edit files, run Shell, delegate, manage memory or attention, or create channels, canvases or notes.",
+      "Edit files, run commands, delegate, or create channels, canvases or notes.",
   },
 ];
+/** Shown only for an agent saved with Orchestrator by an earlier draft. */
+export const SAVED_ORCHESTRATOR: RoleInfo = {
+  id: "super-agent",
+  label: "Earlier selection",
+  description:
+    "This agent keeps the Orchestrator role it was saved with until you choose another.",
+  can: "Read files and the web, delegate to subagents, and use built-in Buzz tools. Choosing a role replaces it, and it can't be chosen again.",
+  cannot: "Edit files or run commands.",
+};
 /** Claude Code's names for one tool in each native group, to show a role's
  * native access in words an owner recognizes. */
 const SAMPLE_NATIVE = [

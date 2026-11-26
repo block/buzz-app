@@ -201,22 +201,22 @@ if that desktop app is up and running.
   sections, use **Save** or **Cancel**. **Options** lets you disable or enable
   a section, or put the default text back in the editor for you to save.
 - **Tools.** Local Claude Code, Codex, Goose and Pi agents have a per-device
-  **Tools** tab with three roles. **All**, the default, has every tool the
-  harness allows, as agents have always had. **Orchestrator** works like an
-  assistant: it can take every built-in Buzz action its identity can,
-  including creating channels, canvases and notes, and delegate to subagents.
-  **Reviewer** reads files, diffs and the web and reports findings in Buzz, but
-  can't create or change Buzz deliverables. Neither can change local files,
-  run Shell or use connected tools. Where the harness has a native Skill tool,
+  **Tools** tab with three roles. **All**, the default, uses every tool
+  available to the agent, as agents always have. **Read / Write** edits files
+  and runs builds and tests with Shell, delegates to subagents and uses built-in
+  Buzz tools, but not connected MCP tools or plugin tools that change things.
+  **Read Only** inspects files and the web and answers in chat; it can't edit
+  files, run Shell or delegate. An agent saved with Orchestrator or an
+  individual tool selection by an earlier version keeps it, shown as **Earlier
+  selection**, until you choose a role. Where the harness has a native Skill tool,
   such as Claude Code, every role can load skills; each action a skill takes
   still follows the role, and a connected server's tool named Skill doesn't
-  count. An agent saved with an individual tool selection by an earlier
-  version keeps it, shown as **Earlier selection**, until you choose a role.
+  count.
   Saving applies to the agent's next tool call, even in a running
   turn; hidden Buzz tools are also refused when called directly, and native
   subagents inherit the role. Read roles get each harness's own read tools:
   Claude Code, Codex and Pi can read and search files, while Goose's read tools only list
-  folders (`tree`) and view images (`read_image`), so a Goose Reviewer can't open
+  folders (`tree`) and view images (`read_image`), so a Goose Read Only agent can't open
   text files or diffs. Goose sessions list every developer tool and Buzz refuses
   the ones the current role disallows, so a resumed session follows role changes. A role without Shell can't run Attention command watches. Goose agents also obey the owner's saved Goose
   denials and approval requirements, but a saved "always allow" never overrides

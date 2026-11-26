@@ -4,6 +4,7 @@ import {
   joinToolSelection,
   PRESET_INFO,
   roleTools,
+  SAVED_ORCHESTRATOR,
   SAVED_SELECTION,
   toolPolicy,
   type ToolPolicy,
@@ -38,8 +39,11 @@ export function AgentToolAccess({
   }, [saved, dirty]);
   // A selection saved by an earlier draft stays as it is until the owner
   // chooses a role, so it never silently gains access.
-  const choices =
-    saved.preset === "custom" ? [...PRESET_INFO, SAVED_SELECTION] : PRESET_INFO;
+  const choices = [
+    ...PRESET_INFO,
+    ...(saved.preset === "super-agent" ? [SAVED_ORCHESTRATOR] : []),
+    ...(saved.preset === "custom" ? [SAVED_SELECTION] : []),
+  ];
   const choose = (preset: ToolPreset) => {
     setDraft(preset === "custom" ? saved : { preset, allow: [] });
     setError("");
@@ -120,23 +124,27 @@ export function AgentToolAccess({
       </Field>
       <Accordion
         variant="settings"
-        items={PRESET_INFO.map((preset) => {
-          const tools = roleTools(preset.id);
-          return {
-            value: preset.id,
-            title: `${preset.label}: built-in tools this role permits`,
-            content: (
-              <dl className="m-0 grid gap-2 text-body-sm">
-                <ToolList title="Native tool examples, using Claude Code names">
-                  {preset.id === "coder"
-                    ? "Every tool the harness has"
-                    : tools.native.join(", ")}
-                </ToolList>
-                <ToolList title="Buzz tools">{tools.buzz.join(", ")}</ToolList>
-              </dl>
-            ),
-          };
-        })}
+        items={choices
+          .filter((preset) => preset.id !== "custom")
+          .map((preset) => {
+            const tools = roleTools(preset.id);
+            return {
+              value: preset.id,
+              title: `${preset.label}: built-in tools this role permits`,
+              content: (
+                <dl className="m-0 grid gap-2 text-body-sm">
+                  <ToolList title="Native tool examples, using Claude Code names">
+                    {preset.id === "coder"
+                      ? "Every tool the harness has"
+                      : tools.native.join(", ")}
+                  </ToolList>
+                  <ToolList title="Buzz tools">
+                    {tools.buzz.join(", ")}
+                  </ToolList>
+                </dl>
+              ),
+            };
+          })}
       />
       <p className="m-0 text-body-sm text-subtle">
         Installed harness tools and the owner's own restrictions still decide

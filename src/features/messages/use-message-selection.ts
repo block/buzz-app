@@ -14,6 +14,7 @@ export function useMessageSelection(
   rows: readonly ChannelMessage[],
   session: RelaySession,
   conversationId: string | undefined,
+  keepMounted?: (id: string) => () => void,
 ) {
   const editScope = useMessageEditScope();
   const actions = useMessageKeyActions(session);
@@ -60,12 +61,13 @@ export function useMessageSelection(
       canQuote: () => !!quoteTarget(),
       quote: (html, sourceLinks) =>
         !!quoteTarget()?.insertQuote(html, sourceLinks),
+      ...(keepMounted && { keepMounted }),
     });
     return () => {
       unregister();
       if (editScope?.list.current === element) editScope.list.current = null;
     };
-  }, [list, editScope, session, conversationId]);
+  }, [list, editScope, session, conversationId, keepMounted]);
 }
 
 /** For lists that render their own edit scope provider. */

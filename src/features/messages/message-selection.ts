@@ -25,6 +25,8 @@ export type MessageList = Readonly<{
   /** Append copied message HTML and its source links to this list's own composer. */
   quote(html: string, sourceLinks?: readonly string[]): boolean;
   canQuote(): boolean;
+  /** Keeps a message rendered while it is scrolled away, until released. */
+  keepMounted?(id: string): () => void;
 }>;
 
 const ROW = "[data-message-id]";
@@ -37,8 +39,11 @@ export function registerMessageList(element: HTMLElement, list: MessageList) {
   };
 }
 
+/** Every registered list element, for plugins that track a per-list cursor. */
+export const messageListElements = () => [...lists.keys()];
+
 /** The row's message box, not its day divider, takes focus. */
-function focusTarget(row: HTMLElement) {
+export function focusTarget(row: HTMLElement) {
   return row.querySelector<HTMLElement>(":scope > [data-layout]") ?? row;
 }
 

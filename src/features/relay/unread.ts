@@ -1,6 +1,7 @@
+import { viewerMember } from "./membership";
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
-import { agentAudience } from "./audience";
+import { agentAudience, detailsBrief, messageAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelMessage, ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
@@ -330,11 +331,15 @@ const EVIDENCE_LOW_BYTES = 6 * 1024 * 1024;
 const eventBytes = (event: RelayEvent) =>
   new TextEncoder().encode(JSON.stringify(event)).byteLength;
 const noMentions = Object.freeze({ content: "", mentions: Object.freeze([]) });
+/** A message body as a preview shows it: a details message's brief, as the
+ * chat shows it before it opens, and any other body whole. */
+const previewBody = (content: string, audience: string | undefined) =>
+  audience === "details" ? detailsBrief(content) : content;
 /** A row's preview text: its body, or a plain description of its attachments
  * when attachment presentation left no text, so the row is never blank. */
 const previewText = (message: ChannelMessage) => {
-  if (message.content.trim() || !message.attachments.length)
-    return message.content;
+  const body = previewBody(message.content, message.audience);
+  if (body.trim() || !message.attachments.length) return body;
   const count = message.attachments.length;
   const [first] = message.attachments;
   const kind = message.attachments.every((item) => item.kind === first?.kind)
@@ -628,24 +633,12 @@ export function createUnread({
   }
 
   let bytes = 0;
-  // Per member list: a large channel would otherwise be scanned for the
-  // viewer on every event.
-  const viewerIn = new WeakMap<readonly string[], boolean>();
-  const member = (members: readonly string[] | undefined) => {
-    if (!members) return false;
-    let found = viewerIn.get(members);
-    if (found === undefined) {
-      found = members.includes(viewer);
-      if (Object.isFrozen(members)) viewerIn.set(members, found);
-    }
-    return found;
-  };
   const allowed = (id: string) =>
     channels
       .list()
       .channels.some(
         (channel) =>
-          channel.id === id && !channel.cached && member(channel.members),
+          channel.id === id && !channel.cached && viewerMember(channel, viewer),
       );
   const keyFor = (target: ReadTarget) =>
     `${target.channelId}:${targetKey(target)}`;
@@ -1443,7 +1436,10 @@ export function createUnread({
       presented ??= new Map(
         folded(channelId).map((message) => [message.id, previewText(message)]),
       );
-      return presented.get(event.id) ?? event.content;
+      return (
+        presented.get(event.id) ??
+        previewBody(event.content, messageAudience(event))
+      );
     };
     for (const evidence of byChannel.get(channelId) ?? []) {
       const { event, rootId } = evidence;
@@ -1692,7 +1688,7 @@ export function createUnread({
           channel.metadataPending ||
           channel.cached ||
           channel.archived ||
-          !channel.members?.includes(viewer)
+          !viewerMember(channel, viewer)
         )
           continue;
         const dm = channel.channelType === "dm";
@@ -1752,7 +1748,7 @@ export function createUnread({
               return event &&
                 !row.threadRootId &&
                 !row.membership &&
-                !row.audience &&
+                row.audience !== "agents" &&
                 row.authorId !== viewer &&
                 !elsewhere.has(row.id) &&
                 (!best || order(event, best) > 0)
@@ -1842,7 +1838,9 @@ export function createUnread({
                 : {}),
               authorId: shown.pubkey,
               workflowOwnerId: workflowOwner(shown, workflowAuthority),
-              preview: content.get(shown.id) ?? shown.content,
+              preview:
+                content.get(shown.id) ??
+                previewBody(shown.content, messageAudience(shown)),
               previewMessageId: shown.id,
               previewMentions: previewRows.get(shown.id) ?? noMentions,
               createdAt: shown.created_at,
@@ -2200,9 +2198,7 @@ export function createUnread({
   const types = (list: ReturnType<ChannelQueries["list"]>) =>
     new Map(
       list.channels
-        .filter(
-          (channel) => !channel.cached && channel.members?.includes(viewer),
-        )
+        .filter((channel) => !channel.cached && viewerMember(channel, viewer))
         .map((channel) => [
           channel.id,
           `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}`,
@@ -2218,9 +2214,7 @@ export function createUnread({
     list.channels
       .filter(
         (channel) =>
-          channel.archived &&
-          !channel.cached &&
-          channel.members?.includes(viewer),
+          channel.archived && !channel.cached && viewerMember(channel, viewer),
       )
       .map((channel) => channel.id)
       .sort()
@@ -2575,7 +2569,7 @@ export function createUnread({
       const ids = channels
         .list()
         .channels.filter(
-          (channel) => !channel.cached && channel.members?.includes(viewer),
+          (channel) => !channel.cached && viewerMember(channel, viewer),
         )
         .map((channel) => channel.id)
         // Batches key their marks, so they must not move when a channel is renamed.

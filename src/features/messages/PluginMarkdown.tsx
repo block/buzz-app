@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useContext, useMemo } from "react";
 import {
   DOCUMENT_PROFILE,
   fitsDocumentRenderBudget,
@@ -12,6 +12,7 @@ import { buzzLinkTarget } from "../navigation/buzz-links";
 import type { Navigation } from "../navigation/controller";
 import type { RelaySession } from "../relay/session";
 import { splitPartition } from "../relay/partition";
+import { openFromPanel, PanelPane } from "../panels/opening-pane";
 
 /** Host document rendering with optional local link handling before host navigation. */
 export type MarkdownProps = {
@@ -32,6 +33,8 @@ export function PluginMarkdown({
   navigation,
 }: MarkdownProps & { navigation?: Navigation | undefined }) {
   const plain = useMemo(() => !fitsDocumentRenderBudget(content), [content]);
+  // In a panel, the link opens from the pane the panel is in.
+  const pane = useContext(PanelPane);
   return plain ? (
     <MarkdownSource content={content} />
   ) : (
@@ -50,7 +53,7 @@ export function PluginMarkdown({
           if (!scope?.viewer || !navigation) return false;
           const target = buzzLinkTarget(url, scope);
           if (!target) return false;
-          void navigation.open(target);
+          openFromPanel(navigation, target, pane);
           return true;
         },
       }}

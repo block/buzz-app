@@ -466,6 +466,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         {
             return Err("Invalid agent presence".into());
         }
+    } else if matches!(event.kind, 40010 | 40011) {
+        if !valid_pin_command(event) {
+            return Err("Invalid pin command".into());
+        }
     } else if matches!(event.kind, 9030..=9032) {
         if !valid_member_command(event) {
             return Err("Invalid member change".into());
@@ -594,6 +598,26 @@ fn valid_reaction_deletion(event: &EventTemplate) -> bool {
             .tags
             .iter()
             .any(|tag| tag[0] == "e" && hex_key(&tag[1]))
+}
+
+/** A pin (40010) or unpin (40011): one channel and one message, as the
+ * broker's `validPinCommand`; the relay decides who may pin what. */
+fn valid_pin_command(event: &EventTemplate) -> bool {
+    let tag = |name: &str| {
+        event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some(name))
+            .collect::<Vec<_>>()
+    };
+    event.content.is_empty()
+        && event
+            .tags
+            .iter()
+            .all(|tag| tag.len() == 2 && matches!(tag[0].as_str(), "h" | "e" | "client-id"))
+        && matches!(tag("h").as_slice(), [h] if !h[1].is_empty() && h[1].len() <= 256)
+        && matches!(tag("e").as_slice(), [e] if hex_key(&e[1]))
+        && tag("client-id").len() <= 1
 }
 
 /** Keep the shared kind-5 writer aligned with the broker's channel-local deletion shape. */
@@ -1966,31 +1990,17 @@ pub(crate) async fn media_cache_clear(
         .map_err(|error| format!("Couldn't clear saved media: {error}"))
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MediaCacheUsage {
-    community: u64,
-    total: u64,
-    budget: u64,
-}
-
-/// How much this device saved for one community, in all, and the limit.
+/// Bytes of images this device saved for one community.
 #[tauri::command]
 pub(crate) async fn media_cache_usage(
     cache: tauri::State<'_, MediaCache>,
     community: String,
-) -> Result<MediaCacheUsage> {
+) -> Result<u64> {
     let origin = Url::parse(&community).map_err(|_| "Invalid community URL")?;
     let cache = cache.inner().clone();
-    let (community, total, budget) =
-        tauri::async_runtime::spawn_blocking(move || cache.usage(&origin))
-            .await
-            .map_err(|error| error.to_string())?;
-    Ok(MediaCacheUsage {
-        community,
-        total,
-        budget,
-    })
+    tauri::async_runtime::spawn_blocking(move || cache.usage(&origin))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// The serialized origin of a window's page (`tauri://localhost`,

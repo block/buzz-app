@@ -1,7 +1,10 @@
+import { createHuddleVoices } from "../huddle/voice";
+import type { RelayData } from "../relay/service";
 import { AcpProcess } from "../agent-harness/acp/process";
 import { GOOSE } from "../../bundled/goose/goose";
 import { fakeSpawn } from "../../bundled/goose/goose-testing";
 import { bundledOwner } from "../../plugins/provenance";
+import type { ModelRouteRequest } from "./model-routes";
 import { UnattestedProfile } from "../relay/identity-archives";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type {
@@ -106,6 +109,7 @@ import { typesafeProvider } from "../../bundled/typesafe";
 import {
   CATCH_UP_PREFIX,
   MENTIONS,
+  PRIVATE_MENTIONS,
   readCheckpoints,
   streamKey,
   writeCheckpoints,
@@ -183,6 +187,16 @@ const deploy = (id: string, patch: Partial<RelayEvent> = {}) =>
 
 // Cleanup's channel step has its own coverage (relay-removal); here only its
 // place in the order matters.
+/** Owner messages a test treats as the relay's verified records. */
+const proven = vi.hoisted(() => new WeakSet<object>());
+vi.mock("../relay/events", async (original) => {
+  const actual = await original<typeof import("../relay/events")>();
+  return {
+    ...actual,
+    hasEventProof: (event: Parameters<typeof actual.hasEventProof>[0]) =>
+      proven.has(event) || actual.hasEventProof(event),
+  };
+});
 const leaveChannels = vi.hoisted(() => vi.fn());
 // The viewer's kind 30177 records, as the community's outbox writes them.
 const records = vi.hoisted(() => ({
@@ -4224,6 +4238,281 @@ it("passes the model and effort its owner asked for, and no other", async () => 
   ]);
 });
 
+it("lets the harness ask a model route as its turn starts, once", async () => {
+  const { service, run, emit, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const select = vi.fn(async () => ({
+    model: "deep",
+    effort: "max",
+    rationale: "Hard task",
+  }));
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select,
+    });
+  const asked = (id: string, pubkey: string) =>
+    event(id, {
+      pubkey,
+      tags: [
+        ["h", channel],
+        ["p", bot],
+        ["model", bot, "route:auto"],
+      ],
+    });
+  emit({ events: [asked("1d1e", viewer)] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const delivery = run.mock.calls[0]?.[0];
+  // Nothing is chosen until the harness starts a turn: a steer never asks.
+  expect(delivery?.model).toBeUndefined();
+  expect(delivery?.effort).toBeUndefined();
+  expect(select).not.toHaveBeenCalled();
+  await expect(delivery?.route?.()).resolves.toEqual({
+    model: "deep",
+    effort: "max",
+  });
+  await expect(delivery?.route?.()).resolves.toEqual({
+    model: "deep",
+    effort: "max",
+  });
+  expect(select).toHaveBeenCalledTimes(1);
+  expect(select).toHaveBeenCalledWith(
+    expect.objectContaining({
+      harness: "echo",
+      route: "auto",
+      models: [
+        expect.objectContaining({ id: "fast" }),
+        expect.objectContaining({ id: "deep" }),
+      ],
+    }),
+  );
+  // Anyone else's mention never reaches the router.
+  emit({ events: [asked("57ee", "f".repeat(64))] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0]?.route).toBeUndefined();
+});
+
+it("lets the owner stop a model route while it chooses, running nothing", async () => {
+  const { service, run, emit, ctx, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let asked: AbortSignal | undefined;
+  const select = vi.fn(
+    ({ signal }: { signal: AbortSignal }) =>
+      new Promise<undefined>((_, reject) => {
+        asked = signal;
+        signal.addEventListener("abort", () => reject(signal.reason));
+      }),
+  );
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select,
+    });
+  // As a harness does, it asks the route as its turn starts.
+  let choosing: Promise<unknown> | undefined;
+  run.mockImplementationOnce(async ({ route }) => {
+    choosing = route?.();
+    await choosing;
+  });
+  emit({
+    events: [
+      event("1d1e", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["model", bot, "route:auto"],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(select).toHaveBeenCalled());
+  const work = activity.reader.work()[0];
+  if (!work) throw new Error("no work");
+  expect(work.stoppable).toBe(true);
+  await activity.reader.interrupt?.(work);
+  await expect(choosing).resolves.toBeUndefined();
+  expect(asked?.aborted).toBe(true);
+});
+
+it("gives a model route the turn's context and its conversation's last routed turn", async () => {
+  const earlier = (
+    id: string,
+    at: number,
+    pubkey: string,
+    tags: string[][] = [["h", dm]],
+  ) => event(id, { pubkey, created_at: at, tags });
+  const thread = "a1".padEnd(64, "0");
+  const { service, run, emit, ctx, session } = await setup({
+    history: [earlier("e1", 50, viewer), earlier("e2", 60, bot)],
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const seen: unknown[] = [];
+  const select = vi.fn(async (request: ModelRouteRequest) => {
+    seen.push({
+      context: await request.context(),
+      history: await request.history(),
+    });
+    return { model: "deep", effort: "max" };
+  });
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select,
+    });
+  const asked = (id: string, at: number, tags: string[][] = []) =>
+    event(id, {
+      pubkey: viewer,
+      created_at: at,
+      tags: [["h", dm], ["p", bot], ["model", bot, "route:auto"], ...tags],
+    });
+  emit({
+    events: [
+      asked("1d1e", 70, [
+        [
+          "imeta",
+          "url https://x.test/a.png",
+          "m image/png",
+          "size 12",
+          "filename a.png",
+        ],
+      ]),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await run.mock.calls[0]?.[0]?.route?.();
+  // A DM's top-level message reads the DM's earlier messages.
+  expect(seen[0]).toEqual({
+    context: {
+      trigger: "mention",
+      conversation: "dm",
+      channelHistory: true,
+      skills: [],
+      attachments: [{ name: "a.png", type: "image/png", size: 12 }],
+    },
+    history: [
+      { pubkey: viewer, content: "hello e1", createdAt: 50 },
+      { pubkey: bot, content: "hello e2", createdAt: 60 },
+    ],
+  });
+  // The next turn in the DM knows what the route chose last, and when.
+  emit({ events: [asked("2d2e", 80)] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await run.mock.calls[1]?.[0]?.route?.();
+  expect(seen[1]).toMatchObject({
+    context: {
+      attachments: [],
+      previous: {
+        route: "auto",
+        model: "deep",
+        effort: "max",
+        chosenAt: expect.any(Number),
+        endedAt: expect.any(Number),
+      },
+    },
+  });
+  // A reply in a thread reads the thread up to its own message.
+  emit({
+    events: [
+      event("3d3e", {
+        pubkey: viewer,
+        created_at: 90,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["e", thread, "", "reply"],
+          ["model", bot, "route:auto"],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  const reply = (id: string, at: number) =>
+    earlier(id, at, bot, [
+      ["h", channel],
+      ["e", thread, "", "reply"],
+    ]);
+  // The thread as the relay has it now: a reply came after the message.
+  vi.mocked(session.read).mockResolvedValueOnce([
+    earlier("a1", 50, viewer, [["h", channel]]),
+    reply("a2", 85),
+    reply("a3", 95),
+  ]);
+  await run.mock.calls[2]?.[0]?.route?.();
+  expect(seen[2]).toMatchObject({
+    context: { thread: true },
+    history: [
+      { pubkey: viewer, content: "hello a1", createdAt: 50 },
+      { pubkey: bot, content: "hello a2", createdAt: 85 },
+    ],
+  });
+});
+
+it("offers model routes only to agents whose turns can run on them", async () => {
+  const { service, ctx } = await setup();
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select: async () => undefined,
+    });
+  const type = service.types().find((item) => item.key === "example/echo");
+  const ids = async (listed: Agent) =>
+    (await type?.models?.(listed))?.models.map(({ id }) => id);
+  expect(await ids(agent)).toContain("route:auto");
+  // On another execution target it runs on that one's models.
+  expect(
+    await ids({ ...agent, executionBinding: { provider: "example.vm" } }),
+  ).not.toContain("route:auto");
+});
+
+it("lists model routes only from bundled plugins", async () => {
+  const { plugin } = await setup();
+  expect(() =>
+    plugin.agents.registerModelRouter({
+      id: "router",
+      routes: () => undefined,
+      select: async () => undefined,
+    }),
+  ).toThrow();
+});
+
 it("ignores the model and effort asked of an agent on Automatic", async () => {
   // A synthetic recommendation for the example type.
   setRuntimeRecommendation({
@@ -7423,6 +7712,254 @@ describe("an agent in several communities", () => {
     expect(native.setType).toHaveBeenCalledWith(bot, "other/relay");
     expect(service.find(bot)?.type).toBe("other/relay");
   });
+
+  const restarter = (ctx: Context) =>
+    ctx.extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "buzz.agents", revision: "bundled" }),
+      ),
+    }).agents;
+
+  it("restarts an agent by retiring each of its memberships, for bundled plugins only", async () => {
+    const retire = vi.fn(async (_key: string) => {});
+    const { ctx, plugin } = await joined({ retire });
+    await expect(plugin.agents.restartAgent(bot)).rejects.toThrow(
+      "available only to bundled plugins",
+    );
+    expect(retire).not.toHaveBeenCalled();
+    await restarter(ctx).restartAgent(bot);
+    expect(retire.mock.calls.map(([key]) => key).sort()).toEqual(
+      [bot, away].sort(),
+    );
+  });
+
+  it("refuses to restart an agent while a turn is working or a call is open", async () => {
+    const retire = vi.fn(async (_key: string) => {});
+    const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+      input: vi.fn(),
+      close: vi.fn(),
+    }));
+    const { service, ctx, run, second } = await joined({ retire, voice });
+    const agents = restarter(ctx);
+    let finish = () => {};
+    run.mockImplementationOnce(async ({ workingUntil }) =>
+      workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+    );
+    second.emit({ events: [mention("there")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    await expect(agents.restartAgent(bot)).rejects.toThrow(
+      "Echo is answering; restart it when it finishes",
+    );
+    finish();
+    await vi.waitFor(() =>
+      expect(service.sessionState(away, { channelId: channel })).not.toBe(
+        "working",
+      ),
+    );
+    const agent = service.find(bot);
+    const open = service
+      .types()
+      .find((type) => type.key === "example/echo")?.voice;
+    if (!agent || !open) throw new Error("Missing voice fixture");
+    const call = new AbortController();
+    await open({
+      agent,
+      conversation: { channelId: channel },
+      signal: call.signal,
+      output: async () => {},
+      ended: () => {},
+    });
+    await expect(agents.restartAgent(bot)).rejects.toThrow(
+      "Echo is in a call; restart it when the call ends",
+    );
+    expect(retire).not.toHaveBeenCalled();
+    call.abort();
+    await agents.restartAgent(bot);
+    expect(retire).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a restart while a Huddle seat is opening, and a seat while it restarts", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const retire = vi.fn(() => held);
+    const { ctx } = await joined({ retire });
+    const agents = restarter(ctx);
+    // A seat reserved before its bridge opens, as the Huddle owner does.
+    const end = agents.reserveVoice(bot);
+    await expect(agents.restartAgent(bot)).rejects.toThrow(
+      "Echo is in a call; restart it when the call ends",
+    );
+    expect(retire).not.toHaveBeenCalled();
+    end();
+    const restarting = agents.restartAgent(bot);
+    await vi.waitFor(() => expect(retire).toHaveBeenCalled());
+    expect(() => agents.reserveVoice(bot)).toThrow(
+      "This agent is restarting or changing provider",
+    );
+    release();
+    await restarting;
+    agents.reserveVoice(bot)();
+  });
+
+  /** The real Huddle owner seating `agent`, whose bridge opens only when
+   * `opened` resolves; reservation and restart are the service's own. */
+  function huddleOwner(agents: Agents, agent: Agent, opened: Promise<void>) {
+    const owner = "owner";
+    const destination = {
+      viewer: owner,
+      scope: "scope",
+      relayUrl: "https://relay.example.test",
+      channelId: "parent",
+      channelName: "Parent",
+    };
+    const seated = {
+      ...agent,
+      owner,
+      place: "here" as const,
+      relay: destination.relayUrl,
+    };
+    const quiet = () => () => {};
+    const bridge = {
+      available: true,
+      open: vi.fn(() => opened),
+      close: vi.fn(async () => {}),
+      touch: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    const report = vi.fn();
+    const relayed = {
+      status: "ready",
+      scope: "scope",
+      viewer: owner,
+      session: {
+        channels: {
+          get: () => ({
+            id: "room",
+            name: "Room",
+            members: [owner, agent.pubkey],
+          }),
+          subscribeList: quiet,
+          resolve: async () => {},
+        },
+      },
+    };
+    const relay = {
+      snapshot: () => relayed,
+      subscribe: quiet,
+    } as unknown as RelayData;
+    const start = () =>
+      createHuddleVoices(
+        {
+          snapshot: () => ({
+            phase: "connected",
+            id: "call",
+            room: "room",
+            muted: false,
+            participants: [owner],
+            destination,
+          }),
+          subscribe: quiet,
+          voiceListening: () => {},
+          voiceThinking: () => {},
+        },
+        {
+          snapshot: () => ({
+            status: "ready",
+            running: [seated],
+          }),
+          subscribe: quiet,
+          types: () => [
+            {
+              key: agent.type,
+              voice: async () => ({ input() {}, close() {} }),
+            },
+          ],
+          reserveVoice: (key: Agent["key"]) => agents.reserveVoice(key),
+        } as unknown as Agents,
+        relay,
+        bridge,
+        report,
+      );
+    return { bridge, report, start };
+  }
+
+  it("refuses a restart while the Huddle owner's bridge is still opening", async () => {
+    const retire = vi.fn(async (_key: string) => {});
+    const { ctx, service } = await joined({ retire });
+    const agents = restarter(ctx);
+    const agent = service.find(bot);
+    if (!agent) throw new Error("Missing agent");
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    const huddle = huddleOwner(agents, agent, opened);
+    const stop = huddle.start();
+    try {
+      await vi.waitFor(() => expect(huddle.bridge.open).toHaveBeenCalled());
+      // The bridge is still opening: the seat holds.
+      await expect(agents.restartAgent(bot)).rejects.toThrow(
+        "Echo is in a call; restart it when the call ends",
+      );
+      expect(retire).not.toHaveBeenCalled();
+      open();
+      await settle();
+      await expect(agents.restartAgent(bot)).rejects.toThrow("in a call");
+      expect(retire).not.toHaveBeenCalled();
+      // The seat ends with the call; the restart goes ahead.
+      await stop();
+      await agents.restartAgent(bot);
+      expect(retire).toHaveBeenCalled();
+    } finally {
+      open();
+      await stop();
+    }
+  });
+
+  it("opens no Huddle seat while the agent restarts", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const retire = vi.fn(() => held);
+    const { ctx, service } = await joined({ retire });
+    const agents = restarter(ctx);
+    const agent = service.find(bot);
+    if (!agent) throw new Error("Missing agent");
+    const restarting = agents.restartAgent(bot);
+    const huddle = huddleOwner(agents, agent, Promise.resolve());
+    let stop: (() => Promise<void>) | undefined;
+    try {
+      await vi.waitFor(() => expect(retire).toHaveBeenCalled());
+      stop = huddle.start();
+      await vi.waitFor(() =>
+        expect(huddle.report).toHaveBeenCalledWith(
+          "call",
+          expect.stringContaining("restarting or changing provider"),
+        ),
+      );
+      expect(huddle.bridge.open).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await restarting;
+      await stop?.();
+    }
+  });
+
+  it("admits no turn while an agent restarts", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const retire = vi.fn(() => held);
+    const { ctx, run, second } = await joined({ retire });
+    const restarting = restarter(ctx).restartAgent(bot);
+    await vi.waitFor(() => expect(retire).toHaveBeenCalled());
+    second.emit({ events: [mention("during-restart")] });
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    release();
+    await restarting;
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  });
 });
 
 it("keeps an agent running while its community reconnects, and stops it on disconnect or leave", async () => {
@@ -9902,6 +10439,57 @@ async function classifiedAgent(jev: FakeJev) {
   return { ...harness, typesafe };
 }
 
+it("delivers a message its watch's classifier turned down, or one it still classifies, as a plugin's mention, and runs it once", async () => {
+  const jev = fakeJev();
+  const app = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(app.service.classifier()).toBe("available"));
+  let deliver!: NonNullable<Agents["deliverMention"]>;
+  await app.ctx
+    .extend({ pluginOwner: { id: "router", revision: "one" } })
+    .plugin((plugin) => {
+      const bound = plugin.agents.deliverMention;
+      if (!bound) throw new Error("Expected deliverMention");
+      deliver = bound.bind(plugin.agents);
+    })
+    .await();
+  const owned = (content: string) => {
+    const event = {
+      ...eventDto(message(author, channel, content, nowSeconds())),
+      pubkey: viewer,
+    };
+    proven.add(event);
+    return event;
+  };
+  jev.decide.mockResolvedValueOnce(answered(0.1));
+  const turnedDown = owned("What's for lunch?");
+  app.emit({ events: [turnedDown], channelId: channel });
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(app.run).not.toHaveBeenCalled();
+  await expect(deliver(bot, turnedDown)).resolves.toEqual({
+    status: "delivered",
+  });
+  await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+  // Delivered while its classifier still thinks: the watch doesn't run it.
+  let answer!: (result: DecisionResult) => void;
+  jev.decide.mockImplementationOnce(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  const pending = owned("Is the deploy done?");
+  app.emit({ events: [pending], channelId: channel });
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(2));
+  await expect(deliver(bot, pending)).resolves.toEqual({
+    status: "delivered",
+  });
+  answer(yes);
+  await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(app.run.mock.calls.map(([input]) => input.trigger.type)).toEqual([
+    "mention",
+    "mention",
+  ]);
+});
+
 it("runs a watch's classifier after its selectors and passes the event with each answer", async () => {
   const jev = fakeJev();
   const { service, run, emit } = await classifiedAgent(jev);
@@ -10711,7 +11299,12 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 /** The saved checkpoints of watch streams, without the mention streams'. */
 const watchCheckpoints = (storage: Parameters<typeof readCheckpoints>[0]) =>
   Object.entries(readCheckpoints(storage))
-    .filter(([key]) => (JSON.parse(key) as unknown[])[1] !== MENTIONS)
+    .filter(
+      ([key]) =>
+        ![MENTIONS, PRIVATE_MENTIONS].includes(
+          (JSON.parse(key) as unknown[])[1] as string,
+        ),
+    )
     .map(([, checkpoint]) => checkpoint);
 
 it.each([false, true])(
@@ -10982,6 +11575,269 @@ describe("a turn closing or reloading the app stopped", () => {
     expect(third.run).not.toHaveBeenCalled();
   });
 
+  it("resumes a placed mention in the place, and with the notes, its first turn was given", async () => {
+    const first = await setup({ identities: [echo], resumes: true });
+    await first.ctx
+      .extend({ pluginOwner: { id: "where", revision: "one" } })
+      .plugin((plugin) => {
+        plugin.agents.registerMentionPlacement?.({
+          id: "where",
+          place: async () => ({ topLevel: true, note: "Answer up top." }),
+        });
+      })
+      .await();
+    first.run.mockImplementationOnce(({ workingUntil }) =>
+      workingUntil(working()),
+    );
+    const asked = { ...mention(), pubkey: viewer };
+    proven.add(asked);
+    first.emit({ events: [asked], channelId: channel });
+    await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(readInterrupted(first.storage)[bot]?.[asked.id]).toMatchObject({
+        mention: { placement: { topLevel: true }, notes: ["Answer up top."] },
+      }),
+    );
+    // It shows typing where it answers: the top level.
+    await vi.waitFor(async () =>
+      expect(
+        (await published(first.native, 20002)).map(({ tags }) => tags),
+      ).toEqual([[["h", channel]]]),
+    );
+    first.connect(false);
+    // No placer this time: the saved answer is the turn's.
+    const second = await setup({
+      storage: reopen(first.storage),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    second.service.resumeInterrupted();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+    const delivery = second.run.mock.calls[0]?.[0];
+    expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    expect(delivery?.place).toEqual({ channel, topLevel: true });
+    expect(delivery?.agent.notes?.(channel)).toEqual(["Answer up top."]);
+  });
+
+  it("hands the owner's top-level mention the place and note a plugin chose, and never asks about a thread reply or someone else's mention", async () => {
+    const app = await setup({ identities: [echo] });
+    const place = vi.fn(async () => ({
+      topLevel: true as const,
+      note: "It asks for #release-notes.",
+    }));
+    await app.ctx
+      .extend({ pluginOwner: { id: "where", revision: "one" } })
+      .plugin((plugin) => {
+        plugin.agents.registerMentionPlacement?.({ id: "where", place });
+      })
+      .await();
+    // The owner's mention: only those are placed.
+    const asked = { ...mention(), pubkey: viewer };
+    app.emit({ events: [asked], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    const delivery = app.run.mock.calls[0]?.[0];
+    if (!delivery) throw new Error("Expected a delivery");
+    expect(place).toHaveBeenCalledWith(
+      expect.objectContaining({ channel, event: asked }),
+      expect.any(AbortSignal),
+    );
+    expect(delivery.placement).toEqual({ topLevel: true });
+    // The host decides where the turn lives; harnesses only read it.
+    expect(delivery.place).toEqual({ channel, topLevel: true });
+    // A top-level turn takes the channel's notes.
+    expect(delivery.agent.notes?.(channel)).toEqual([
+      "It asks for #release-notes.",
+    ]);
+    const reply = {
+      ...eventDto(
+        message(author, channel, "Echo, and this", nowSeconds(), [
+          ["e", asked.id, "", "reply"],
+          ["p", bot],
+        ]),
+      ),
+      pubkey: viewer,
+    };
+    app.emit({ events: [reply], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
+    expect(place).toHaveBeenCalledOnce();
+    expect(app.run.mock.calls[1]?.[0].placement).toBeUndefined();
+    expect(app.run.mock.calls[1]?.[0].place).toEqual({
+      channel,
+      root: asked.id,
+    });
+    // Someone else's mention keeps its native place too.
+    const theirs = eventDto(
+      message(author, channel, "Echo, from me", nowSeconds() + 1, [["p", bot]]),
+    );
+    app.emit({ events: [theirs], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(3));
+    expect(place).toHaveBeenCalledOnce();
+    expect(app.run.mock.calls[2]?.[0].place).toEqual({
+      channel,
+      root: theirs.id,
+    });
+  });
+
+  it("delivers the owner's own message to an agent as a mention a plugin asked for, once, and placed like any other", async () => {
+    const app = await setup({ identities: [echo] });
+    // The plugin names a reply in an earlier thread; the turn goes to that
+    // thread's root, once the agent reads it in this channel.
+    let answer: { root: string } = { root: "f".repeat(64) };
+    const place = vi.fn(async () => answer);
+    let deliver!: NonNullable<Agents["deliverMention"]>;
+    await app.ctx
+      .extend({ pluginOwner: { id: "router", revision: "one" } })
+      .plugin((plugin) => {
+        plugin.agents.registerMentionPlacement?.({ id: "where", place });
+        const bound = plugin.agents.deliverMention;
+        if (!bound) throw new Error("Expected deliverMention");
+        deliver = bound.bind(plugin.agents);
+      })
+      .await();
+    const owned = (content: string, tags: string[][] = []) => {
+      const event = {
+        ...eventDto(message(author, channel, content, nowSeconds(), tags)),
+        pubkey: viewer,
+      };
+      proven.add(event);
+      return event;
+    };
+    const earlier = owned("Did the deploy finish?");
+    const followUp = owned("And the build?", [["e", earlier.id, "", "reply"]]);
+    const elsewhere = {
+      ...followUp,
+      id: "f".repeat(64),
+      tags: [["h", "private"]],
+    };
+    app.native.query.mockImplementation(async (_member, filters) =>
+      [earlier, followUp, elsewhere].filter((event) =>
+        (filters as { ids?: string[] }[])[0]?.ids?.includes(event.id),
+      ),
+    );
+    // Its lane full: refused, and still deliverable once it has room.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    app.run.mockImplementationOnce(({ workingUntil }) => workingUntil(held));
+    const busy = owned("Busy");
+    await expect(deliver(bot, busy)).resolves.toEqual({ status: "delivered" });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    // A root in another channel keeps the native place.
+    expect(app.run.mock.calls[0]?.[0].place).toEqual({
+      channel,
+      root: busy.id,
+    });
+    const queued: RelayEvent[] = [];
+    let refused: RelayEvent | undefined;
+    for (let i = 0; i < 40 && !refused; i++) {
+      const next = owned(`Queued ${i}`);
+      const result = await deliver(bot, next);
+      if (result.status === "delivered") queued.push(next);
+      else {
+        expect(result).toEqual({ status: "dropped", reason: "busy" });
+        refused = next;
+      }
+    }
+    if (!refused) throw new Error("Expected a full lane");
+    release();
+    await vi.waitFor(() =>
+      expect(app.run).toHaveBeenCalledTimes(queued.length + 1),
+    );
+    await expect(deliver(bot, refused)).resolves.toEqual({
+      status: "delivered",
+    });
+    await vi.waitFor(() =>
+      expect(app.run).toHaveBeenCalledTimes(queued.length + 2),
+    );
+    app.run.mockClear();
+    answer = { root: followUp.id };
+    let done!: () => void;
+    app.run.mockImplementationOnce(({ workingUntil }) =>
+      workingUntil(new Promise<void>((resolve) => (done = resolve))),
+    );
+    const asked = owned("Is the build green?");
+    await expect(
+      deliver(bot, asked, { note: "Smart routing picked you." }),
+    ).resolves.toEqual({ status: "delivered" });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    const delivery = app.run.mock.calls[0]?.[0];
+    if (!delivery) throw new Error("Expected a delivery");
+    // An ordinary mention: the owner's request, asked about and placed.
+    expect(delivery.trigger).toEqual({ type: "mention", event: asked });
+    expect(place).toHaveBeenCalledWith(
+      expect.objectContaining({ event: asked }),
+      expect.any(AbortSignal),
+    );
+    expect(delivery.place).toEqual({ channel, root: earlier.id });
+    // The note is the turn's own, whatever conversation its harness keys,
+    // and never another request's.
+    expect(delivery.agent.notes?.(channel, asked.id)).toEqual([
+      "Smart routing picked you.",
+    ]);
+    expect(delivery.agent.notes?.(channel, earlier.id)).toEqual([]);
+    // It shows typing in the thread it answers in.
+    await vi.waitFor(async () =>
+      expect((await published(app.native, 20002)).at(-1)?.tags).toEqual([
+        ["h", channel],
+        ["e", earlier.id, "", "reply"],
+      ]),
+    );
+    done();
+    // Once only, never for an agent the message tags, and only the owner's
+    // verified messages.
+    await expect(deliver(bot, asked)).resolves.toEqual({
+      status: "dropped",
+      reason: "delivered",
+    });
+    await expect(
+      deliver(bot, owned("@Echo look", [["p", bot]])),
+    ).resolves.toEqual({ status: "dropped", reason: "tagged" });
+    const copied = { ...owned("A copy") };
+    await expect(deliver(bot, copied)).resolves.toEqual({
+      status: "dropped",
+      reason: "not-owner",
+    });
+    await expect(
+      deliver(bot, eventDto(message(author, channel, "Theirs", nowSeconds()))),
+    ).resolves.toEqual({ status: "dropped", reason: "not-owner" });
+    await expect(deliver(other, owned("Nobody runs it"))).resolves.toEqual({
+      status: "dropped",
+      reason: "unavailable",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(app.run).toHaveBeenCalledOnce();
+    // Only a plugin delivers one.
+    await expect(
+      app.ctx.agents.deliverMention?.(bot, owned("No plugin")),
+    ).rejects.toThrow("Only an enabled plugin");
+    // One message is one turn: a watch's, or the delivered mention's.
+    app.run.mockClear();
+    await app.service.save(bot, {
+      attentionEnabled: true,
+      attention: everything,
+    });
+    const watched = owned("Anyone around?");
+    app.emit({ events: [watched], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    expect(app.run.mock.calls[0]?.[0].trigger.type).toBe("watch");
+    await expect(deliver(bot, watched)).resolves.toEqual({
+      status: "dropped",
+      reason: "watched",
+    });
+    const first = owned("Delivered first");
+    await expect(deliver(bot, first)).resolves.toEqual({
+      status: "delivered",
+    });
+    app.emit({ events: [first], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(app.run.mock.calls.map(([input]) => input.trigger.type)).toEqual([
+      "watch",
+      "mention",
+    ]);
+  });
+
   it.each([false, true])(
     "requires a durable native fallback only when a routing plugin matches (%s)",
     async (matches) => {
@@ -11248,6 +12104,43 @@ describe("a turn closing or reloading the app stopped", () => {
         [bot]: { [asked.id]: channel },
       });
       second.recover();
+      await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+      expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("is read again at once by a replacement session after a failed read", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    const read = vi.mocked(second.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let failed = false;
+    read.mockImplementation(async (filters, options) => {
+      if (!filters[0]?.ids || failed) return original(filters, options);
+      failed = true;
+      throw new Error("relay down");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      second.service.resumeInterrupted();
+      await vi.waitFor(() => expect(failed).toBe(true));
+      await settle();
+      expect(second.run).not.toHaveBeenCalled();
+      expect(readInterrupted(second.storage)).toEqual({
+        [bot]: { [asked.id]: channel },
+      });
+      second.connect(false);
+      second.connect(true);
       await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
       expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
     } finally {

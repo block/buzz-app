@@ -32,10 +32,7 @@ import {
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
-import {
-  wakeAnchor,
-  wakeLands,
-} from "../../features/agent-harness/plugin-wake";
+import { turnChannel, turnOf } from "../../features/agent-harness/plugin-wake";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import {
   coreMemorySection,
@@ -47,6 +44,7 @@ import {
   readProject,
   worksElsewhere,
 } from "../../features/agent-harness/project";
+import { referencedSkills } from "../../features/agent-harness/referenced-folders";
 import {
   placeOf,
   sectionsOf,
@@ -68,6 +66,11 @@ import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { withWakes } from "../../features/agents/session-usage";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
+import {
+  ownerLabel,
+  ownerRows,
+  ownerTurns,
+} from "../../features/agents/owner-view";
 import type {
   Agent,
   AgentHandle,
@@ -477,7 +480,14 @@ export class PiRuntime {
    * when shown, not with `places`, so a channel going private shows so at
    * once. */
   channelLabel(agent: AgentKey, channelId: string) {
-    return this.reads(agent)?.channelLabel(channelId);
+    return ownerLabel(this.reads(agent), channelId);
+  }
+  /** The places among `rows` whose conversation its owner can read. */
+  readablePlaces<T extends Readonly<{ channelId: string; community?: true }>>(
+    agent: AgentKey,
+    rows: readonly T[],
+  ) {
+    return ownerRows(rows, this.reads(agent));
   }
   /** Tells `listener` when `channelLabel` may answer differently: the
    * community's channel list changed, or the connection it is read through
@@ -585,7 +595,9 @@ export class PiRuntime {
       this.reads(agent)?.name(pubkey),
     ).then((transcript) => ({
       ...transcript,
-      turns: this.prompts(agent).shown(transcript.turns),
+      turns: this.prompts(agent).shown(
+        ownerTurns(transcript.turns, this.reads(agent), place),
+      ),
     }));
   }
   /** What each of the agent's sessions started with, by
@@ -763,9 +775,7 @@ export class PiRuntime {
       entry.handle = agent;
       entry.team = team ?? "";
     }
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
-    const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channel = turnChannel(trigger, delivery);
     if (!channel) return;
     // Where it answers needs the channel's kind, which a reconnecting
     // community, or one still listing its channels, does not know yet: it
@@ -779,8 +789,10 @@ export class PiRuntime {
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
-    const topLevel = solo || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // Where the host placed it; this harness has no rules of its own.
+    const turn = turnOf(trigger, delivery, channel, solo);
+    if (!turn) return ignored?.();
+    const { event, topLevel } = turn;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const { key, dm } = await this.key(
@@ -1907,6 +1919,12 @@ export class PiRuntime {
       scope === "community" && entry && current()
         ? entry.project.preview(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
+    const projectContext = [
+      project?.section,
+      referencedSkills(event, owner, agent.pubkey),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     return {
       event,
       scope,
@@ -1921,7 +1939,7 @@ export class PiRuntime {
       total: earlier.length + 1,
       names,
       ...(signingAuthority ? { signingAuthority } : {}),
-      ...(project ? { project: project.section } : {}),
+      ...(projectContext ? { project: projectContext } : {}),
       ...(scope === "community" && project && entry
         ? { acceptProject: () => entry.project.resolve(channelId, project) }
         : {}),

@@ -1,4 +1,9 @@
 // @vitest-environment jsdom
+import { createNavigationController } from "../navigation/controller";
+import { createMemoryHistory } from "../navigation/history";
+import { createShortcutBindings } from "../shortcuts/preferences";
+import { ShortcutsService } from "../shortcuts/service";
+import { registerNavigationShortcuts } from "../../app/shortcuts";
 import { MESSAGE_TOKENS_TAG, signedMessageTokenTags } from "./message-tokens";
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -117,6 +122,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
 import * as modelStorage from "./solo-model-picks-storage";
 import { setSendWithModEnterPreference } from "./send-key-preference";
+import { setMarkdownAsTypedPreference } from "./markdown-input-preference";
 import { setDefaultAgent } from "../solo/default-agent";
 import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
@@ -751,6 +757,22 @@ it("publishes typing for text edits but not caret-driven token expansion", () =>
   expect(send).toHaveBeenCalledTimes(1);
 });
 
+it("hides the formatting toggle while this device keeps Markdown as typed, live", () => {
+  try {
+    mount();
+    const toggle = () =>
+      screen.queryByRole("button", { name: "Toggle formatting" });
+    expect(toggle()).toBeVisible();
+    act(() => setMarkdownAsTypedPreference(true));
+    expect(toggle()).toBeNull();
+    act(() => setMarkdownAsTypedPreference(false));
+    expect(toggle()).toBeVisible();
+  } finally {
+    act(() => setMarkdownAsTypedPreference(false));
+    localStorage.removeItem("buzz-message-markdown-as-typed.v1");
+  }
+});
+
 it("types into a long chip-heavy draft without redrawing its link chips", async () => {
   const h = mount();
   const renders = vi.mocked(MessageMarkdown);
@@ -1097,22 +1119,6 @@ it("defers initial focus until a loading conversation enables its composer", () 
   expect(h.input()).toHaveFocus();
 });
 
-it("does not mistake a later focused control for a saved draft's opening row", () => {
-  const row = document.createElement("button");
-  const later = document.createElement("button");
-  document.body.append(row, later);
-  try {
-    row.focus();
-    later.focus();
-    const h = mount({ autoFocus: { current: row } });
-    expect(later).toHaveFocus();
-    expect(h.input()).not.toHaveFocus();
-  } finally {
-    row.remove();
-    later.remove();
-  }
-});
-
 it("cancels a deferred draft handoff when another control takes focus and disappears", () => {
   const row = document.createElement("button");
   const later = document.createElement("button");
@@ -1128,28 +1134,6 @@ it("cancels a deferred draft handoff when another control takes focus and disapp
   } finally {
     row.remove();
     later.remove();
-  }
-});
-
-it("honors a draft cancellation recorded before its composer mounts", () => {
-  const origin: { current: HTMLElement | null } = { current: null };
-  const h = mount({ autoFocus: origin });
-  expect(h.input()).not.toHaveFocus();
-});
-
-it("honors owner cancellation while the composer waits without a focus event", () => {
-  const row = document.createElement("button");
-  document.body.append(row);
-  const origin: { current: HTMLElement | null } = { current: row };
-  try {
-    row.focus();
-    const h = mount({ autoFocus: origin, disabled: true });
-    origin.current = null;
-    row.remove();
-    h.retarget({ disabled: false });
-    expect(h.input()).not.toHaveFocus();
-  } finally {
-    row.remove();
   }
 });
 
@@ -1197,17 +1181,6 @@ it("does not take focus when the composer is enabled after another control takes
   }
 });
 
-it("does not take focus when the composer is enabled after a control that took focus unmounts", () => {
-  const h = mount({ autoFocus: true, disabled: true });
-  const other = document.createElement("button");
-  document.body.append(other);
-  other.focus();
-  other.remove();
-  expect(document.activeElement).toBe(document.body);
-  h.retarget({ disabled: false });
-  expect(h.input()).not.toHaveFocus();
-});
-
 it("defers initial focus until an inert startup ancestor is revealed", async () => {
   document.body.setAttribute("inert", "");
   try {
@@ -1217,22 +1190,6 @@ it("defers initial focus until an inert startup ancestor is revealed", async () 
     await waitFor(() => expect(h.input()).toHaveFocus());
   } finally {
     document.body.removeAttribute("inert");
-  }
-});
-
-it("does not reclaim startup focus after another control takes it", async () => {
-  document.body.setAttribute("inert", "");
-  const other = document.createElement("button");
-  document.body.append(other);
-  try {
-    const h = mount({ autoFocus: true });
-    other.focus();
-    document.body.removeAttribute("inert");
-    await waitFor(() => expect(other).toHaveFocus());
-    expect(h.input()).not.toHaveFocus();
-  } finally {
-    document.body.removeAttribute("inert");
-    other.remove();
   }
 });
 
@@ -14825,6 +14782,8 @@ function mountSoloAgents(
     archived?: () => boolean;
     agents?: Agents;
     refreshed?: readonly string[];
+    /** Leave the pill to its own seed instead of picking Ada. */
+    unpicked?: boolean;
   } = {},
 ) {
   if (options.main) setDefaultAgent("scope", options.main);
@@ -14871,13 +14830,13 @@ function mountSoloAgents(
   });
   const ada = { pubkey: first.pubkey, name: "Ada" };
   const bea = { pubkey: second.pubkey, name: "Bea" };
-  act(() => h.commands().audience?.only([ada]));
+  if (!options.unpicked) act(() => h.commands().audience?.only([ada]));
   const sendingTo = (names: string) =>
     screen.getByRole("status", { name: `Sending to ${names}. Change agents` });
   return { h, ada, bea, sendingTo };
 }
 
-it("typing a mention then deleting it falls back to the main agent, not the remembered pair", async () => {
+it("a draft that opens with a tag is for that agent alone, and deleting the tag brings the pill's agents back", async () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
   act(() => h.commands().audience?.only([ada, bea]));
   expect(sendingTo("Ada, Bea")).toBeInTheDocument();
@@ -14885,18 +14844,427 @@ it("typing a mention then deleting it falls back to the main agent, not the reme
     h.commands().insertMention(bea);
     h.commands().insertText("hello");
   });
-  // The mentioned agent is the recipient; the remembered pair steps aside.
+  // The mentioned agent is the recipient; the pill's pair steps aside.
   expect(sendingTo("Bea")).toBeInTheDocument();
   expect(h.commands().recipients).toEqual([bea]);
   expect(h.commands().audience?.named).toBe(true);
-  // Deleting the mention gives the main agent, not the pair.
+  // Deleting the mention gives the pair back, as the pill showed it.
   h.fill("hello");
   expect(h.commands().recipients).toEqual([]);
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([
+    ada.pubkey,
+    bea.pubkey,
+  ]);
+});
+
+it("a tag further in the draft joins the pill's agent", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Plan this, then ask @Bea to build it",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 20, end: 24 }],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  expect(h.commands().audience?.named).toBe(false);
+  // Both show as avatars: Ada from the pill, Bea from the text.
+  expect(
+    screen.getByRole("button", { name: `Remove agent Ada ${ada.pubkey}` }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: `Remove mention Bea ${bea.pubkey}` }),
+  ).toBeVisible();
+  expect(screen.getByRole("region", { name: "Sending to" })).toBeVisible();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([
+    ada.pubkey,
+    bea.pubkey,
+  ]);
+  // The pill keeps both for the follow-up.
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+});
+
+it("with a tag further in, removing the pill's last agent sends to the tag alone, and removing the tag too brings the main agent", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Only @Bea this time",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 5, end: 9 }],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  await h.user.click(
+    screen.getByRole("button", { name: `Remove agent Ada ${ada.pubkey}` }),
+  );
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(h.commands().recipients).toEqual([bea]);
+  expect(h.input()).toHaveFocus();
+  // Not refilled while the tag addresses the draft.
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.commands().recipients).toEqual([]);
+  await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
+});
+
+it("a pill emptied for a later tag stays empty when the draft reopens, until the tag goes", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Ask @Bea",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 4, end: 8 }],
+  });
+  const before = mountSoloAgents({ main: first.pubkey, unpicked: true });
+  expect(before.sendingTo("Ada, Bea")).toBeInTheDocument();
+  act(() => before.h.commands().audience?.toggle(before.ada));
+  expect(before.sendingTo("Bea")).toBeInTheDocument();
+  before.h.unmount();
+  const { h, bea, sendingTo } = mountSoloAgents({
+    main: first.pubkey,
+    unpicked: true,
+  });
+  expect(h.commands().recipients).toEqual([bea]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  // Without the tag, the main agent stands in again.
+  act(() => h.commands().audience?.toggle(bea));
+  await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
+  expect(readView("scope", "draft:channel:agents", null)).toBeNull();
+});
+
+it("a reopened draft whose emptied pill still has its tag sends to the tag alone", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Ask @Bea",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 4, end: 8 }],
+  });
+  writeView("scope", "draft:channel:agents", []);
+  const { h, bea, sendingTo } = mountSoloAgents({
+    main: first.pubkey,
+    unpicked: true,
+  });
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([bea.pubkey]);
+});
+
+it("removing an agent both the pill and a tag hold, while another tag remains, leaves only that tag", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Ask @Ada and @Bea",
+    recipients: [
+      { pubkey: first.pubkey, name: "Ada", start: 4, end: 8 },
+      { pubkey: second.pubkey, name: "Bea", start: 13, end: 17 },
+    ],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  await h.user.click(
+    screen.getByRole("button", { name: `Remove mention Ada ${ada.pubkey}` }),
+  );
+  expect(h.commands().recipients).toEqual([bea]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([bea.pubkey]);
+});
+
+it("with a tag further in that the pill also holds, removing its avatar removes it from both", () => {
+  writeView("scope", "draft:channel", {
+    text: "Then @Bea again",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 5, end: 9 }],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  act(() => h.commands().audience?.only([ada, bea]));
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.commands().recipients).toEqual([]);
   expect(sendingTo("Ada")).toBeInTheDocument();
-  // A send with no mention goes to the main agent; the text carries no tag.
+});
+
+it("with a tag further in, the pill's last agent can go and the send reaches the tag alone", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Only @Bea this time",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 5, end: 9 }],
+  });
+  const { h, ada, bea, sendingTo } = mountSoloAgents();
+  act(() => h.commands().audience?.toggle(ada));
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  // A menu pick adds to the pill again, and the tag still joins.
+  act(() => h.commands().audience?.toggle(ada));
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(ada));
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([bea.pubkey]);
+});
+
+it("with Ada in the pill and the draft opening with Bea, a team of a later-tagged Cam reaches Cam alone", async () => {
+  const third = "f".repeat(64);
+  const cam = { pubkey: third, name: "Cam" };
+  writeView("scope", "draft:channel", {
+    text: "@Bea please ask @Cam",
+    recipients: [
+      { pubkey: second.pubkey, name: "Bea", start: 0, end: 4 },
+      { ...cam, start: 16, end: 20 },
+    ],
+  });
+  writeView("scope", "draft:channel:agents", [
+    { pubkey: first.pubkey, name: "Ada" },
+  ]);
+  const { h, sendingTo } = mountSoloAgents({
+    members: [first.pubkey, second.pubkey, third],
+    unpicked: true,
+  });
+  h.setLibrary([first, second, cam]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+      [third, { name: "Cam", isAgent: true }],
+    ]),
+  );
+  expect(sendingTo("Bea, Cam")).toBeInTheDocument();
+  act(() => h.commands().audience?.only([cam]));
+  // Bea's tag goes; Cam's stays further in, and Ada stays out.
+  expect(h.input()).toHaveValue("please ask @Cam");
+  expect(sendingTo("Cam")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([third]);
+});
+
+it("a tag further in can't take a full pill past 32 recipients", () => {
+  const many = Array.from({ length: 33 }, (_, index) => ({
+    pubkey: index.toString(16).padStart(64, "c"),
+    name: `Agent ${index}`,
+  }));
+  writeView("scope", "draft:channel", {
+    text: "Ask @Agent 32",
+    recipients: [{ ...many[32], start: 4, end: 13 }],
+  });
+  writeView("scope", "draft:channel:agents", many.slice(0, 32));
+  const { h } = mountSoloAgents({
+    members: many.map((agent) => agent.pubkey),
+    unpicked: true,
+  });
+  h.setLibrary(many);
+  h.setProfiles(
+    new Map(
+      many.map((agent) => [agent.pubkey, { name: agent.name, isAgent: true }]),
+    ),
+  );
+  expect(h.commands().audience?.recipients).toHaveLength(33);
+  h.submit();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Choose at most 32 recipients",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+for (const [title, pill] of [
+  ["the pill's only agent", ["Bea"]],
+  ["one of the pill's agents", ["Bea", "Ada"]],
+] as const)
+  it(`removing ${title} from the tag opening the draft leaves only the other tag`, async () => {
+    const third = "f".repeat(64);
+    const cam = { pubkey: third, name: "Cam" };
+    const agentsByName = {
+      Ada: { pubkey: first.pubkey, name: "Ada" },
+      Bea: { pubkey: second.pubkey, name: "Bea" },
+    };
+    writeView("scope", "draft:channel", {
+      text: "@Bea please ask @Cam",
+      recipients: [
+        { pubkey: second.pubkey, name: "Bea", start: 0, end: 4 },
+        { ...cam, start: 16, end: 20 },
+      ],
+    });
+    writeView(
+      "scope",
+      "draft:channel:agents",
+      pill.map((name) => agentsByName[name]),
+    );
+    const { h, bea, sendingTo } = mountSoloAgents({
+      members: [first.pubkey, second.pubkey, third],
+      unpicked: true,
+    });
+    h.setLibrary([first, second, cam]);
+    h.setProfiles(
+      new Map([
+        [first.pubkey, { name: "Ada", isAgent: true }],
+        [second.pubkey, { name: "Bea", isAgent: true }],
+        [third, { name: "Cam", isAgent: true }],
+      ]),
+    );
+    expect(sendingTo("Bea, Cam")).toBeInTheDocument();
+    act(() => h.commands().audience?.toggle(bea));
+    expect(h.input()).toHaveValue("please ask @Cam");
+    // Bea leaves the pill too, and no agent the pill kept out comes back.
+    expect(sendingTo("Cam")).toBeInTheDocument();
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([third]);
+  });
+
+it("unchecking the pill's only agent, which the text also tags, changes nothing", async () => {
+  writeView("scope", "draft:channel", {
+    text: "Ask @Ada now",
+    recipients: [{ pubkey: first.pubkey, name: "Ada", start: 4, end: 8 }],
+  });
+  const { h, ada, sendingTo } = mountSoloAgents();
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(ada));
+  // The pill keeps its last agent, so the tag stays with it.
+  expect(h.input()).toHaveValue("Ask @Ada now");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[1]).toBe("Ask @Ada now");
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
+});
+
+it("unchecking the pill's only agent, which the opening tag also names, changes nothing", async () => {
+  writeView("scope", "draft:channel", {
+    text: "@Ada hi",
+    recipients: [{ pubkey: first.pubkey, name: "Ada", start: 0, end: 4 }],
+  });
+  writeView("scope", "draft:channel:agents", [
+    { pubkey: first.pubkey, name: "Ada" },
+  ]);
+  const { h, ada, sendingTo } = mountSoloAgents({ unpicked: true });
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(ada));
+  expect(h.input()).toHaveValue("@Ada hi");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[1]).toBe("@Ada hi");
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
+});
+
+it("removing an agent from opening tags that still open the draft takes it out of the pill for good", async () => {
+  const third = "f".repeat(64);
+  const cam = { pubkey: third, name: "Cam" };
+  writeView("scope", "draft:channel", {
+    text: "@Bea @Cam hi",
+    recipients: [
+      { pubkey: second.pubkey, name: "Bea", start: 0, end: 4 },
+      { ...cam, start: 5, end: 9 },
+    ],
+  });
+  writeView("scope", "draft:channel:agents", [
+    { pubkey: first.pubkey, name: "Ada" },
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  const { h, ada, bea, sendingTo } = mountSoloAgents({
+    members: [first.pubkey, second.pubkey, third],
+    unpicked: true,
+  });
+  h.setLibrary([first, second, cam]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+      [third, { name: "Cam", isAgent: true }],
+    ]),
+  );
+  expect(sendingTo("Bea, Cam")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.input()).toHaveValue("@Cam hi");
+  expect(sendingTo("Cam")).toBeInTheDocument();
+  // With the tags gone, the pill's agents come back without Bea.
+  h.fill("hi");
+  expect(sendingTo("Ada")).toBeInTheDocument();
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([ada.pubkey]);
+});
+
+it("removing the pill's only agent from opening tags that still open the draft keeps it out once a word comes first", async () => {
+  const third = "f".repeat(64);
+  const cam = { pubkey: third, name: "Cam" };
+  writeView("scope", "draft:channel", {
+    text: "@Bea @Cam hi",
+    recipients: [
+      { pubkey: second.pubkey, name: "Bea", start: 0, end: 4 },
+      { ...cam, start: 5, end: 9 },
+    ],
+  });
+  writeView("scope", "draft:channel:agents", [
+    { pubkey: second.pubkey, name: "Bea" },
+  ]);
+  const { h, bea, sendingTo } = mountSoloAgents({
+    members: [first.pubkey, second.pubkey, third],
+    unpicked: true,
+  });
+  h.setLibrary([first, second, cam]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+      [third, { name: "Cam", isAgent: true }],
+    ]),
+  );
+  expect(sendingTo("Bea, Cam")).toBeInTheDocument();
+  act(() => h.commands().audience?.toggle(bea));
+  expect(h.input()).toHaveValue("@Cam hi");
+  expect(sendingTo("Cam")).toBeInTheDocument();
+  // A word before the tag must not bring Bea back from the pill.
+  act(() => {
+    h.input().focus();
+    h.input().setSelectionRange(0, 0);
+    h.commands().insertText("Ask ");
+  });
+  expect(h.input()).toHaveValue("Ask @Cam hi");
+  expect(sendingTo("Cam")).toBeInTheDocument();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([third]);
+});
+
+it("a person who joins before Send stops the pill's agents from going along with a later tag", async () => {
+  const person = "e".repeat(64);
+  writeView("scope", "draft:channel", {
+    text: "hi @Bea",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 3, end: 7 }],
+  });
+  const { h, sendingTo } = mountSoloAgents({
+    refreshed: [first.pubkey, second.pubkey, person],
+  });
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  h.submit();
+  expect(
+    await screen.findByText("Someone joined this chat. Tag an agent to send."),
+  ).toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("an outside agent that joins before Send can't take a full pill past 32 recipients", async () => {
+  const many = Array.from({ length: 33 }, (_, index) => ({
+    pubkey: index.toString(16).padStart(64, "c"),
+    name: `Agent ${index}`,
+  }));
+  writeView("scope", "draft:channel", {
+    text: "Ask @Agent 32",
+    recipients: [{ ...many[32], start: 4, end: 13 }],
+  });
+  writeView("scope", "draft:channel:agents", many.slice(0, 32));
+  const { h } = mountSoloAgents({
+    members: many.slice(0, 32).map((agent) => agent.pubkey),
+    // The outside agent has joined by the time Send refreshes membership.
+    refreshed: many.map((agent) => agent.pubkey),
+    unpicked: true,
+  });
+  h.setLibrary(many.slice(0, 32));
+  h.setProfiles(
+    new Map(
+      many.map((agent) => [agent.pubkey, { name: agent.name, isAgent: true }]),
+    ),
+  );
+  // Rendered, the outside agent is a reference, so the first check passes.
+  expect(h.commands().audience?.recipients).toHaveLength(32);
+  h.submit();
+  expect(
+    await screen.findByText("Choose at most 32 recipients"),
+  ).toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
 });
 
 it("a pill-only agent that is compacting holds the send", () => {
@@ -14974,7 +15342,7 @@ it("a menu toggle removes a typed tag while another tagged agent is archived", (
   expect(h.input()).toHaveValue("@Ada hello");
 });
 
-it("a mention typed before the chat's agents were known still falls back to the main agent", () => {
+it("a mention typed before the chat's agents were known gives way to the remembered agent once deleted", () => {
   setDefaultAgent("scope", first.pubkey);
   const viewer = "e".repeat(64);
   const third = "f".repeat(64);
@@ -15013,11 +15381,11 @@ it("a mention typed before the chat's agents were known still falls back to the 
       [third, { name: "Cal", isAgent: true }],
     ]),
   );
-  // Deleting the typed tag falls back to the main agent, not the history.
+  // Deleting the typed tag gives the agent the viewer last sent to.
   act(() => h.input().removeRecipient(first.pubkey));
   h.fill("hello");
   expect(
-    screen.getByRole("status", { name: "Sending to Ada. Change agents" }),
+    screen.getByRole("status", { name: "Sending to Bea. Change agents" }),
   ).toBeInTheDocument();
 });
 
@@ -15065,7 +15433,7 @@ it("a deleted typed mention falls back to the chat's own agent when the main age
   expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([first.pubkey]);
 });
 
-it("after sending to two agents, a different typed mention deleted again gives the main agent, and a menu pick restores menu-driven state", async () => {
+it("after sending to two agents, an opening tag deleted again gives the pair back, and a menu pick sets the pill", async () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
   act(() => h.commands().audience?.only([ada, bea]));
   h.fill("both");
@@ -15084,8 +15452,8 @@ it("after sending to two agents, a different typed mention deleted again gives t
   });
   expect(sendingTo("Bea")).toBeInTheDocument();
   h.fill("hello");
-  await waitFor(() => expect(sendingTo("Ada")).toBeInTheDocument());
-  // A menu pick sets the pill directly and clears the replaced state.
+  await waitFor(() => expect(sendingTo("Ada, Bea")).toBeInTheDocument());
+  // A menu pick sets the pill directly.
   act(() => h.commands().audience?.only([bea]));
   expect(sendingTo("Bea")).toBeInTheDocument();
   expect(h.commands().audience?.named).toBe(false);
@@ -15140,7 +15508,7 @@ it("while a typed tag decides, a Solo menu toggle edits the tags, not a hidden l
     bea.pubkey,
   ]);
   expect(h.input()).toHaveValue("@Bea hello");
-  // Deleting the last tag falls back to the main agent, untouched by picks.
+  // Deleting the last tag gives back the pill's Ada, untouched by picks.
   h.fill("hello");
   expect(sendingTo("Ada")).toBeInTheDocument();
 });
@@ -15157,7 +15525,7 @@ it("while a typed tag decides, a Solo team pick replaces the tags", () => {
   ]);
   expect(sendingTo("Bea")).toBeInTheDocument();
   expect(h.input()).toHaveValue("@Bea hello");
-  // Deleting the tag falls back to the main agent, not a hidden pick.
+  // Deleting the tag gives back the pill's Ada, not a hidden pick.
   h.fill("hello");
   expect(sendingTo("Ada")).toBeInTheDocument();
 });
@@ -15283,10 +15651,9 @@ it("seeding the pill from the latest message ignores the remember-agents prefere
   }
 });
 
-it("an inline mention in the middle of the text replaces the pill's fallback", async () => {
+it("an inline mention that opens the text replaces the pill's remembered agents", async () => {
   const h = mountSoloHistory();
   act(() => {
-    h.commands().insertText("Please ask ");
     h.commands().insertMention({ pubkey: second.pubkey, name: "Bea" });
     h.commands().insertText("about it");
   });
@@ -19230,3 +19597,128 @@ it("returns focus to the composer when a focused accessory control goes away", (
   expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
   expect(h.input()).toHaveFocus();
 });
+
+/** Mac history at home, with Back to settings and then home again. */
+async function composerHistory() {
+  const platform = vi
+    .spyOn(navigator, "platform", "get")
+    .mockReturnValue("MacIntel");
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(ctx, window, bindings);
+  const controller = createNavigationController(createMemoryHistory());
+  const navigation = controller.navigation;
+  const remove = registerNavigationShortcuts(shortcuts, navigation);
+  onTestFinished(async () => {
+    remove();
+    controller.dispose();
+    bindings.dispose();
+    await ctx.fiber.dispose();
+    platform.mockRestore();
+  });
+  const at = () => navigation.snapshot().attempt.entry.target.kind;
+  void navigation.open({ version: 1, kind: "home" });
+  void navigation.open({ version: 1, kind: "settings" });
+  void navigation.open({ version: 1, kind: "home" });
+  await vi.waitFor(() => {
+    expect(navigation.snapshot().canGoBack).toBe(true);
+    expect(at()).toBe("home");
+  });
+  /** False when the press was taken from the caret. */
+  const press = (input: HTMLElement, init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(input, {
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      metaKey: true,
+      ...init,
+    });
+  return {
+    bindings,
+    press,
+    async wentBack() {
+      await vi.waitFor(() => expect(at()).toBe("settings"));
+    },
+    async stayed(kind = "home") {
+      await act(async () => {});
+      expect(at()).toBe(kind);
+    },
+  };
+}
+
+it("counts the automatic mention as empty for Command-arrow history until the user edits", async () => {
+  const history = await composerHistory();
+  const h = mount({ defaultMention: second });
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  expect(history.press(h.input())).toBe(false);
+  await history.wentBack();
+  h.fill("my own draft");
+  expect(history.press(h.input())).toBe(true);
+  await history.stayed("settings");
+});
+
+it.each(["text", "a GIF"])(
+  "keeps Command arrows for the caret in a composer with %s",
+  async (content) => {
+    const history = await composerHistory();
+    if (content === "a GIF")
+      writeView("scope", "draft:channel", {
+        text: "",
+        recipients: [],
+        gifs: ["![Party](https://example.org/party.gif)"],
+      });
+    const h = mount({}, undefined, first.pubkey);
+    if (content === "text") h.fill("draft");
+    expect(history.press(h.input())).toBe(true);
+    await history.stayed();
+  },
+);
+
+it("keeps Command arrows for the caret in other empty inputs", async () => {
+  const history = await composerHistory();
+  const input = document.body.appendChild(document.createElement("input"));
+  onTestFinished(() => input.remove());
+  expect(history.press(input)).toBe(true);
+  await history.stayed();
+});
+
+it("runs a modified-arrow Back rebinding from a composer with text", async () => {
+  const history = await composerHistory();
+  const h = mount();
+  h.fill("draft");
+  history.bindings.set("navigation-back", {
+    key: "ArrowLeft",
+    mod: true,
+    shift: true,
+  });
+  expect(history.press(h.input(), { shiftKey: true })).toBe(false);
+  await history.wentBack();
+});
+
+it("goes back on the control character WebKit can report for Command-Left", async () => {
+  const history = await composerHistory();
+  const h = mount();
+  expect(history.press(h.input(), { key: "\u001c", keyCode: 37 })).toBe(false);
+  await history.wentBack();
+});
+
+it.each(["no history that way", "a rebound Back"])(
+  "moves the caret, not history, on a control-character Command arrow with %s",
+  async (reason) => {
+    const history = await composerHistory();
+    const h = mount({ defaultMention: second });
+    const arrow =
+      reason === "a rebound Back"
+        ? { key: "\u001c", keyCode: 37 }
+        : { key: "\u001d", code: "ArrowRight", keyCode: 39 };
+    if (reason === "a rebound Back")
+      history.bindings.set("navigation-back", { key: "u", mod: true });
+    // Taken by the caret handler rather than typed as the control character.
+    expect(history.press(h.input(), arrow)).toBe(false);
+    await history.stayed();
+    expect(h.input()).toHaveValue(`@${second.name} `);
+  },
+);

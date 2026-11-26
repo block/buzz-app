@@ -1,4 +1,5 @@
 import { hostComposerProvenance } from "./mention-draft";
+import { MessageLoading } from "./MessageLoading";
 import { TypingIndicator } from "./TypingIndicator";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
@@ -48,6 +49,7 @@ import { parseMediaTimeReply } from "./media-timecode";
 import { VideoReviewReactions } from "./VideoReviewReactions";
 import styles from "./Messages.module.css";
 import { MediaReviewFrame } from "./MediaReviewFrame";
+import { ComposerScopeProvider } from "./composer-overlay";
 import { avatarMedia } from "../../shared/avatar-source";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
@@ -112,8 +114,11 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
         request: current.request + 1,
       })),
   };
+  // The review's comment box is its own view's composer, not the page's.
   return (
-    <ResolvedReview {...activeProps} view={view} threadError={threadError} />
+    <ComposerScopeProvider local>
+      <ResolvedReview {...activeProps} view={view} threadError={threadError} />
+    </ComposerScopeProvider>
   );
 }
 
@@ -545,9 +550,11 @@ function ReviewShell({
                   />
                 </div>
               </MessageEditScope>
+            ) : !error ? (
+              <MessageLoading label="Loading comments…" />
             ) : (
-              <p className={styles.empty} role={error ? "alert" : "status"}>
-                {error ?? "Loading comments…"}
+              <p className={styles.empty} role="alert">
+                {error}
                 {retry && !unavailable && (
                   <Button size="sm" type="button" onClick={retryThread}>
                     Retry

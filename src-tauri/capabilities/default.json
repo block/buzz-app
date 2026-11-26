@@ -189,6 +189,8 @@
     "allow-app-agent-remember",
     "allow-app-agent-claim",
     "allow-app-agent-release",
+    "allow-agent-env-status",
+    "allow-agent-env-set",
     "allow-claude-api-key-status",
     "allow-claude-api-key-set",
     "allow-claude-api-key-clear",
@@ -198,6 +200,7 @@
     "allow-app-agent-state-load",
     "allow-app-agent-state-set",
     "allow-decide",
+    "allow-speech-connect",
 
     "allow-title-bar-double-click",
     "allow-notification-show",

@@ -11,6 +11,7 @@ import {
   canonicalDetailsName,
   detailsDraftErrors,
 } from "../features/relay/channel-details-protocol";
+import { detailsBrief } from "../features/relay/audience";
 import {
   lifecycleChannelId,
   lifecycleTemplate,
@@ -79,9 +80,9 @@ const strs = { type: "array", items: str } as const;
 // Shared by send and reply_in_subthread.
 const audience = {
   type: "string",
-  enum: ["everyone", "agents"],
+  enum: ["everyone", "details", "agents"],
   description:
-    "agents: only other agents need this (delegating, asking or answering an agent)",
+    "everyone: for the people here, a few sentences at most. details: a longer write-up for people, shown as its first paragraph, a brief of at most 50 words, until opened; send it last. agents: delegating to, asking or answering another agent",
 } as const;
 const request = {
   type: "string",
@@ -267,6 +268,12 @@ export const TOOLS: readonly Tool[] = [
     "React to a message.",
     { id: str, emoji: str, off: { type: "boolean" } },
     ["id", "emoji"],
+  ),
+  tool(
+    "pin",
+    "Pin a message to its channel for everyone; off unpins it.",
+    { id: str, off: { type: "boolean" } },
+    ["id"],
   ),
   tool("read", "Read a thread (default: current) or a channel's latest.", {
     channel: str,
@@ -465,14 +472,17 @@ export const TOOLS: readonly Tool[] = [
     ["name"],
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
-  tool("canvas_get", "Read a channel's canvas.", { channel: str }),
+  tool("canvas_get", "Read a channel's canvas and its version.", {
+    channel: str,
+  }),
   tool(
     "canvas_set",
-    `Replace a channel's canvas (at most ${LIVE_CANVAS_BYTES / 1024} KiB).`,
+    `Write a channel's canvas (at most ${LIVE_CANVAS_BYTES / 1024} KiB). To replace one, pass the version from your latest canvas_get or canvas_set of it as expected; without expected it only creates.`,
     {
       channel: str,
       content: str,
       path: str,
+      expected: str,
     },
   ),
   tool(
@@ -886,6 +896,23 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!reaction) return "no such reaction";
     await client.publish({ kind: 5, content: "", tags: [["e", reaction.id]] });
     return "removed";
+  },
+
+  async pin(tools, args) {
+    const id = required(args, "id");
+    const channel = tag(await tools.event(id), "h");
+    if (!channel) throw new Error(`${id} is not a channel message.`);
+    await tools.client.publish({
+      kind: args.off === true ? 40011 : 40010,
+      content: "",
+      tags: [
+        ["h", channel],
+        ["e", id],
+        // NIP-PM: each new command is a distinct event.
+        ["client-id", crypto.randomUUID()],
+      ],
+    });
+    return args.off === true ? "unpinned" : "pinned";
   },
 
   async read(tools, args) {
@@ -1706,7 +1733,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? tools.context.channel;
     if (!channel) throw new Error("channel is required here.");
     const head = await canvas(tools, channel);
-    return head?.content || "No canvas.";
+    return head ? `version: ${head.id}\n\n${head.content}` : "No canvas.";
   },
 
   async canvas_set(tools, args) {
@@ -1714,18 +1741,65 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? context.channel;
     if (!channel) throw new Error("channel is required here.");
     const content = (await tools.body(args, true, "content")) as string;
+    const expected = text(args.expected);
+    // A copied canvas_get reply would save its header into the canvas.
+    if (/^version: [0-9a-f]{64}\n/.test(content))
+      throw new Error(
+        "Leave out the version line from canvas_get; pass the version as expected.",
+      );
     if (new TextEncoder().encode(content).length > LIVE_CANVAS_BYTES)
       throw new Error(
         `The canvas is over its limit of ${LIVE_CANVAS_BYTES} bytes.`,
       );
     const head = await canvas(tools, channel);
+    // Others may have saved since this session read the canvas: replacing
+    // needs the version it was shown, so nothing it never saw is lost.
+    const changed = () =>
+      new Error(
+        head
+          ? `The canvas changed since version ${head.id}. Read it again with canvas_get, merge your change into it, and pass the new version as expected.`
+          : "Another canvas was just saved. Read it with canvas_get, merge your change into it, and pass its version as expected.",
+      );
+    if (!head && expected)
+      throw new Error(
+        `No canvas in ${channel} to replace; leave out expected to create it.`,
+      );
+    if (head && !expected)
+      throw new Error(
+        "The channel has a canvas. Read it with canvas_get, keep what still holds, and pass its version as expected.",
+      );
+    if (head && expected !== head.id)
+      throw new Error(
+        `The canvas changed since version ${expected}. Read it again with canvas_get, merge your change into it, and pass the new version as expected.`,
+      );
     // The newest canvas wins, so a write must be dated after the current one.
     const after = head ? (head.created_at + 1) * 1000 : 0;
     if (after - Date.now() > 5000)
       throw new Error("The canvas was just changed; try again.");
     await waitUntil(after);
-    await client.publish({ kind: 40100, content, tags: [["h", channel]] });
-    return "saved";
+    // The relay refuses it if the canvas moved past the head read above.
+    const saved = await client
+      .publish({
+        kind: 40100,
+        content,
+        tags: [
+          ["h", channel],
+          ["expected-revision", head?.id ?? "none"],
+        ],
+      })
+      .catch((error: unknown) => {
+        throw reason(error).includes("conflict:") ? changed() : error;
+      });
+    const selected = await canvas(tools, channel).catch((error: unknown) => {
+      throw new Error(
+        `saved as version ${saved.id}, but the canvas could not be read back to confirm it is current: ${reason(error)}. Read canvas_get before you write again.`,
+      );
+    });
+    if (selected?.id !== saved.id)
+      throw new Error(
+        `conflict: the canvas was saved as version ${saved.id}, but another (${selected?.id ?? "none"}) is now current. Read canvas_get, merge your change into it, and pass its version as expected.`,
+      );
+    return `saved; version ${saved.id}`;
   },
 
   async canvas_history(tools, args) {
@@ -1952,9 +2026,14 @@ function requestOf(args: Args): string[][] {
 
 /** The tags for a message's required audience. */
 function audienceOf(args: Args): string[][] {
-  if (args.audience !== "everyone" && args.audience !== "agents")
-    throw new Error("audience must be everyone or agents.");
-  return args.audience === "agents" ? [["audience", "agents"]] : [];
+  const { audience } = args;
+  if (
+    audience !== "everyone" &&
+    audience !== "details" &&
+    audience !== "agents"
+  )
+    throw new Error("audience must be everyone, details or agents.");
+  return audience === "everyone" ? [] : [["audience", audience]];
 }
 
 /** Publishes `args`' text, files and mentions as a message in `channel`,
@@ -1968,6 +2047,8 @@ async function post(
 ) {
   const paths = list(args.files);
   const body = (await tools.body(args, !paths.length)) ?? "";
+  // Refuse an overlong message before uploading its files.
+  checkLength(args.audience as "everyone" | "details" | "agents", body);
   // Uploads come after every refusal; their links name no one.
   const mentions = await tools.mentions(channel, body, list(args.mentions));
   // The runner suppresses every relay event authored by this agent. A post
@@ -3501,10 +3582,11 @@ async function leads(
 const unread = (error: unknown) =>
   new Error(`its state could not be read back: ${reason(error)}`);
 
-/** The channel's newest canvas, once the channel is known to be visible. */
+/** The channel's newest canvas, once the channel is known to be visible.
+ * Read from the writer, as the app does, so its version is the real head. */
 async function canvas(tools: Tools, channel: string) {
   const [head] = await tools.client.query([
-    { kinds: [40100], "#h": [channel], limit: 1 },
+    { kinds: [40100], "#h": [channel], limit: 1, consistency: "strong" },
   ]);
   if (!head && !(await tools.metadata(channel))) throw unseen(channel);
   return head;
@@ -3664,6 +3746,29 @@ function searchTime(args: Args, key: string) {
       `${key} must be a date (YYYY-MM-DD), a UTC time (YYYY-MM-DDTHH:MM:SSZ) or a span back from now (7d, 2w, 3m, 1y).`,
     );
   return ms / 1000;
+}
+
+/** The words people see before opening a message: a details message's brief,
+ * its first paragraph, and an `everyone` message, which the prompt asks to
+ * keep to a few sentences and this holds to a looser limit. */
+export const SHOWN_WORDS = { details: 50, everyone: 128 } as const;
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+
+function checkLength(
+  audience: "everyone" | "details" | "agents",
+  body: string,
+) {
+  if (audience === "agents") return;
+  // Count what people see: the brief the chat and notifications show.
+  const shown = audience === "details" ? detailsBrief(body) : body;
+  const count = words(shown);
+  const limit = SHOWN_WORDS[audience];
+  if (count <= limit) return;
+  throw new Error(
+    audience === "details"
+      ? `The brief, the first paragraph, is ${count} words: keep it to ${limit} and move the rest into later paragraphs.`
+      : `This is ${count} words, too long for everyone: say it in a few sentences, or send it as details with a short brief.`,
+  );
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */

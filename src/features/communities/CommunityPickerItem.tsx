@@ -42,9 +42,10 @@ import { writeClipboardText } from "../../shared/clipboard";
 /** The bundled moderation plugin's Membership card, addressed by contribution key. */
 export const MEMBERSHIP_SECTION = "buzz.moderation/membership";
 
-/** A community the menu can act on through its own ready session. Absent for
- * inactive communities: no item here ever acquires a session. */
-export type SelectedSession = {
+/** A community the menu can act on through its own ready session: the
+ * selected one's, or the one behind an inactive community's known unread. No
+ * item here ever acquires a session. */
+export type CommunitySession = {
   unread: Pick<
     UnreadCapability,
     "sync" | "subscribeSync" | "markAllChannelsRead"
@@ -92,8 +93,8 @@ export function CommunityPickerItem({
   icon: string | undefined;
   selected: boolean;
   viewer: string | undefined;
-  /** The selected community's session once it is ready; never another community's. */
-  session: SelectedSession | undefined;
+  /** This community's ready session, if the app already holds one. */
+  session: CommunitySession | undefined;
   /** This community's unread, once known; never the selected community's. */
   unread?: CommunityUnread | undefined;
   /** The viewer is an owner or admin of this community, and this build can mint invites. */
@@ -362,7 +363,7 @@ function MarkAllReadItem({
 }: {
   name: string;
   selected: boolean;
-  session: SelectedSession | undefined;
+  session: CommunitySession | undefined;
   notify: ReturnType<typeof useToastNotification>;
 }) {
   const noteId = useId();
@@ -378,14 +379,14 @@ function MarkAllReadItem({
     () => unread?.sync().capability,
   );
   // Read state is session-bound and validated against the relay snapshot, so an
-  // inactive community cannot be marked without acquiring it.
-  const reason = !selected
-    ? "Only the selected community can be marked as read."
-    : !unread
+  // inactive community is marked only through the session its unread came from.
+  const reason = !unread
+    ? selected
       ? `Waiting for ${name} to connect.`
-      : capability !== "frontier-sync"
-        ? "Read state can’t sync on this connection."
-        : undefined;
+      : `Open ${name} to mark it as read.`
+    : capability !== "frontier-sync"
+      ? "Read state can’t sync on this connection."
+      : undefined;
   return (
     <>
       <MenuItem

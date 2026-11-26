@@ -2687,7 +2687,11 @@ it.each(["Needs attention", "Session could not be saved"])(
   async (status) => {
     const f = fixture();
     vi.spyOn(f.runtime, "sessions").mockReturnValue([
-      { key: "unbound", status, detail: "First line\nSecond line" },
+      {
+        key: JSON.stringify(["channel", "channel"]),
+        status,
+        detail: "First line\nSecond line",
+      },
     ]);
     render(<f.tabs.ActivityTab {...f.props()} />);
     const diagnostic = await screen.findByText("First line Second line");
@@ -2700,13 +2704,43 @@ it.each(["Needs attention", "Session could not be saved"])(
 it("collapses Working command details", async () => {
   const f = fixture();
   vi.spyOn(f.runtime, "sessions").mockReturnValue([
-    { key: "unbound", status: "Working", detail: "git status" },
+    {
+      key: JSON.stringify(["channel", "channel"]),
+      status: "Working",
+      detail: "git status",
+    },
   ]);
   render(<f.tabs.ActivityTab {...f.props()} />);
   expect(
     (await screen.findByText("git status")).closest("details"),
   ).not.toHaveAttribute("open");
   expect(screen.getByText("Latest activity")).toBeVisible();
+});
+
+it("keeps a failed standalone watch run visible", async () => {
+  const f = fixture();
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key: "watch/deploys", status: "Needs attention", detail: "Watch failed" },
+  ]);
+  render(<f.tabs.ActivityTab {...f.props()} />);
+  expect(await screen.findByText("watch/deploys")).toBeInTheDocument();
+  expect(screen.getByText("Watch failed")).toBeInTheDocument();
+});
+
+it("hides a live session's details while it serves a channel its owner cannot read", async () => {
+  const f = fixture();
+  const key = JSON.stringify(["@community", "@community"]);
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key, status: "Working", detail: "cat private-dm-notes" },
+  ]);
+  const readable = vi.spyOn(f.runtime, "readableDetail").mockReturnValue(false);
+  const { rerender } = render(<f.tabs.ActivityTab {...f.props()} />);
+  await screen.findByText(key);
+  expect(screen.queryByText("cat private-dm-notes")).toBeNull();
+  expect(readable).toHaveBeenCalledWith(expect.anything(), key);
+  readable.mockReturnValue(true);
+  rerender(<f.tabs.ActivityTab {...f.props()} />);
+  expect(await screen.findByText("cat private-dm-notes")).toBeInTheDocument();
 });
 
 it("shows why the conversation it was opened from failed, as plain text", async () => {
@@ -2943,7 +2977,7 @@ it.each([true, false])(
     const agent = "a".repeat(64);
     const root = "e".repeat(64);
     const place = JSON.stringify(["channel", root]);
-    const prefix = `buzz.codex.sessions.v19:test:${agent}`;
+    const prefix = `buzz.codex.sessions.v20:test:${agent}`;
     const items = new Map([
       [
         prefix,
@@ -3031,7 +3065,7 @@ it.each([false, true])(
       JSON.stringify({ key: "old-session", intent: "existing" }),
     );
     await storage.set(
-      `buzz.codex.sessions.v19:test:${agent}:session:old-session`,
+      `buzz.codex.sessions.v20:test:${agent}:session:old-session`,
       JSON.stringify({
         [place]: { threadId: "old-thread", workspace: "/guest" },
       }),

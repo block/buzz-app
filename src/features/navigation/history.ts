@@ -10,10 +10,12 @@ export const HISTORY_CAPACITY = 100;
 
 /** Stable visit identity, distinct from the cancellable attempts to reveal it. */
 export type NavigationEntry = Readonly<{ id: string; target: OpenTarget }>;
-/** Match a logical dialog (including its sections), or exact content visits. */
+/** Match a logical dialog (including its sections), or exact content visits.
+ * A predicate also gets the visit's ID, to name both: visits it saw by ID,
+ * and ones restored after a reload, whose IDs it never saw, by address. */
 export type DismissedVisits =
   | readonly string[]
-  | ((target: OpenTarget) => boolean);
+  | ((target: OpenTarget, id: string) => boolean);
 /**
  * Which entries a dismissal retires: the visits it names, and every join
  * dialog presented over one of them, so Forward cannot reopen a closed view
@@ -25,8 +27,8 @@ export function dismissalOf(
 ) {
   const named = (entry: NavigationEntry) =>
     typeof visits === "function"
-      ? visits(entry.target) ||
-        (!!entry.target.join && visits(withoutJoin(entry.target)))
+      ? visits(entry.target, entry.id) ||
+        (!!entry.target.join && visits(withoutJoin(entry.target), entry.id))
       : visits.includes(entry.id);
   const closedViews = new Set(
     entries

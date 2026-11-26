@@ -4,6 +4,7 @@
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
 import { withProviderWords } from "../../features/agents/failure-words";
+import { routeOf } from "../../features/agents/model-routes";
 import type {
   ProtectedSpawn,
   ReviewPrompt,
@@ -155,6 +156,10 @@ export class GooseSetup {
   constructor(
     private readonly host: GooseHost | undefined,
     private readonly defaultsChanged: () => void = () => {},
+    /** Whether its goose gets the device's environment variables; the
+     * protection picker's does not, as the review worker it offers for
+     * never gets them. */
+    private readonly deviceEnv = true,
   ) {}
 
   snapshot = () => this.state;
@@ -279,9 +284,12 @@ export class GooseSetup {
     // A provider not set up offers only the model the agent names.
     const ready = Boolean(id && !listed?.needs);
     const offered = ready ? await this.models(id ?? "") : [];
-    // A model its provider does not list is still the one it runs on.
+    // A model its provider does not list is still the one it runs on; a
+    // saved route is the current choice, and the agents service lists it.
     const named =
-      !current || offered.some((model) => model.id === current)
+      !current ||
+      routeOf(current) ||
+      offered.some((model) => model.id === current)
         ? offered
         : [{ id: current, label: current }, ...offered];
     // Without levels a model offers no slider, so a failed read costs only it.
@@ -694,7 +702,7 @@ export class GooseSetup {
     run: (goose: GooseProcess, cwd: string) => Promise<T>,
     env: Readonly<Record<string, string>> = {},
   ): Promise<T> {
-    return briefly(this.host, run, env);
+    return briefly(this.host, run, env, undefined, this.deviceEnv);
   }
 }
 
@@ -720,12 +728,15 @@ export async function readNoProxy(spawn: Spawn): Promise<Inherited> {
 }
 
 /** Runs `run` against a `goose-acp` started for it in the home folder, and
- * stops it after. It serves no Buzz tools; `signal` stops its startup. */
+ * stops it after. It serves no Buzz tools; `signal` stops its startup. Unless
+ * `deviceEnv` is false it gets the device's environment variables, naming no
+ * agent, so a provider key kept only there counts as set up. */
 export async function briefly<T>(
   host: GooseHost | undefined,
   run: (goose: GooseProcess, cwd: string) => Promise<T>,
   env: Readonly<Record<string, string>> = {},
   signal?: AbortSignal,
+  deviceEnv = true,
 ): Promise<T> {
   if (!host) throw new Error("goose runs only in the desktop app");
   const cwd = await host.resolveDirectory("~");
@@ -733,6 +744,7 @@ export async function briefly<T>(
   const goose = await GooseProcess.start(host.spawn, {
     cwd,
     env,
+    ...(deviceEnv && { secrets: ["agent-env" as const] }),
     ...(signal && { signal }),
   });
   try {

@@ -28,7 +28,10 @@ import {
   fileStore,
   type AgentStore,
 } from "../../features/agents/state";
-import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  RESUMED_PROMPT,
+  TOP_LEVEL_MENTION_PROMPT,
+} from "../../buzz-mcp/prompt";
 import type {
   Agent,
   AgentHandle,
@@ -93,6 +96,21 @@ vi.mock("../../features/agents/gateway/route", async (importOriginal) => {
       actual.upstreamFor(harness),
   };
 });
+const env = vi.hoisted(() => ({
+  own: new Set<string>(),
+  unknown: new Set<string>(),
+  asked: 0,
+  gate: undefined as Promise<void> | undefined,
+  failure: undefined as Error | undefined,
+}));
+vi.mock("../agents/agent-env", () => ({
+  hasOwnEnv: async (agent: string) => {
+    env.asked++;
+    await env.gate;
+    if (env.failure) throw env.failure;
+    return env.unknown.has(agent) ? undefined : env.own.has(agent);
+  },
+}));
 
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
@@ -110,6 +128,8 @@ function deferred<T>() {
 }
 const runtimes: CodexRuntime[] = [];
 afterEach(() => {
+  env.own.clear();
+  env.unknown.clear();
   for (const runtime of runtimes) runtime.dispose();
   runtimes.length = 0;
   vi.useRealTimers();
@@ -970,6 +990,8 @@ it("hands over promptly and runs conversations independently on one server", asy
   await f.runtime.run(f.delivery("@Codex independent", "e".repeat(64)));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   expect(f.spawn).toHaveBeenCalledTimes(1);
+  // The shared server runs agents, so it asks for their variables.
+  expect(f.spawn.mock.calls[0]?.[1]?.secrets).toEqual(["agent-env"]);
   f.complete(0, "FIRST");
   f.complete(1, "OTHER");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
@@ -1328,7 +1350,7 @@ it("keeps an agent's two communities' threads apart, each under its membership's
   await f.complete(0, "HERE");
   await vi.waitFor(() => expect(f.runtime.sessions(elsewhere)).toHaveLength(1));
   const saved = (key: string) =>
-    f.storage.get(`buzz.codex.sessions.v19:${scope}:${key}`);
+    f.storage.get(`buzz.codex.sessions.v20:${scope}:${key}`);
   expect(saved(pubkey)).toBeTruthy();
   expect(saved(elsewhere)).toBeTruthy();
   expect(f.runtime.conversations(pubkey)).toHaveLength(1);
@@ -1562,6 +1584,366 @@ it("does not clean or log a cleanup error after the last agent closes the server
   } finally {
     vi.useRealTimers();
     error.mockRestore();
+  }
+});
+it("starts an agent with its own list on its own server, and the rest on the shared one", async () => {
+  const f = fixture();
+  const b = second(f);
+  env.own.add("9".repeat(64));
+  try {
+    await f.runtime.run(f.delivery("@Codex first"));
+    await f.runtime.run(b.delivery("@Other second"));
+    await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+    expect(servers(f).map(([, options]) => options?.envAgent)).toEqual([
+      undefined,
+      "9".repeat(64),
+    ]);
+    expect(
+      servers(f).every(([, options]) =>
+        options?.secrets?.includes("agent-env"),
+      ),
+    ).toBe(true);
+  } finally {
+    env.own.clear();
+    f.runtime.dispose();
+  }
+});
+it("moves a restarted agent to its own server on its first list, and back on its last", async () => {
+  const f = fixture();
+  const b = second(f);
+  const other = "9".repeat(64);
+  const driver = codexRun(f.runtime);
+  if (!driver.retire) throw new Error("Codex cannot retire its agents");
+  try {
+    await f.runtime.run(f.delivery("@Codex first"));
+    await f.runtime.run(b.delivery("@Other shared"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(servers(f)).toHaveLength(1);
+    await f.complete(1, "SHARED");
+    await f.complete(0, "FIRST");
+    env.own.add(other);
+    await driver.retire(other);
+    await f.runtime.run(b.delivery("@Other own"));
+    await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+    expect(servers(f)[1]?.[1]?.envAgent).toBe(other);
+    env.own.delete(other);
+    await driver.retire(other);
+    await f.runtime.run(b.delivery("@Other shared again"));
+    // Its own server goes; its next start is on one without its list.
+    await vi.waitFor(() => expect(servers(f)).toHaveLength(3));
+    expect(servers(f).map(([, options]) => options?.envAgent)).toEqual([
+      undefined,
+      other,
+      undefined,
+    ]);
+  } finally {
+    env.own.clear();
+    f.runtime.dispose();
+  }
+});
+it("starts an agent's own server only once the disconnected shared process has exited", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const replacement = fixture();
+  const silent = deferred<void>();
+  // The old process outlives its connection until the test lets it exit.
+  f.process.end.mockResolvedValue(undefined);
+  f.process.kill.mockResolvedValue(undefined);
+  try {
+    await f.runtime.run(f.delivery("first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    for (const method of ["thread/unsubscribe", "account/read", "config/read"])
+      f.held.set(method, silent.promise);
+    await f.complete(0, "FIRST FINISHED");
+    await f.runtime.run(f.delivery("queued follow-up"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    f.spawn.mockImplementation(replacement.spawn);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(f.process.end).toHaveBeenCalled();
+    // Its first list is saved, then new work comes while the old process
+    // is still stopping.
+    env.own.add(pubkey);
+    const b = second(f);
+    env.own.add("9".repeat(64));
+    await f.runtime.run(b.delivery("@Other new work"));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(servers(f).filter(([, options]) => options?.envAgent)).toHaveLength(
+      0,
+    );
+    f.exits.resolve(0);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() =>
+      expect(
+        servers(f).filter(
+          ([, options]) => options?.envAgent === "9".repeat(64),
+        ),
+      ).toHaveLength(1),
+    );
+  } finally {
+    silent.resolve();
+    env.own.clear();
+    f.runtime.dispose();
+    vi.useRealTimers();
+  }
+});
+it.each(["dispose", "retire"] as const)(
+  "drops a model preview whose presence answer comes after %s",
+  async (end) => {
+    // Previews route by the agent's live handle, as Buzz gives it.
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        host: undefined as never,
+        handle: (key) =>
+          key === pubkey ? ({ key, pubkey } as never) : undefined,
+      },
+    );
+    const agent = {
+      key: pubkey,
+      pubkey,
+      config: { workspace: "/tmp/codex-test" },
+    } as Agent;
+    env.asked = 0;
+    const answer = deferred<void>();
+    env.gate = answer.promise;
+    env.own.add(pubkey);
+    try {
+      const late = f.runtime.preview(agent);
+      late.catch(() => undefined);
+      await vi.waitFor(() => expect(env.asked).toBe(1));
+      // The ending finishes before the answer comes.
+      await (end === "dispose"
+        ? f.runtime.dispose()
+        : f.runtime.retire(pubkey));
+      answer.resolve();
+      await expect(late).rejects.toThrow();
+      expect(f.spawn).not.toHaveBeenCalled();
+      if (end === "retire") {
+        // A new preview after the retirement still starts its own server.
+        env.gate = undefined;
+        await expect(f.runtime.preview(agent)).resolves.toMatchObject({
+          current: "test-model",
+        });
+        expect(f.spawn).toHaveBeenCalledTimes(1);
+        expect(f.spawn.mock.calls[0]?.[1]?.envAgent).toBe(pubkey);
+      }
+    } finally {
+      env.gate = undefined;
+      env.asked = 0;
+      f.runtime.dispose();
+    }
+  },
+);
+it("ends a removed agent's turn quietly while its environment read is out", async () => {
+  const f = fixture();
+  const answer = deferred<void>();
+  env.gate = answer.promise;
+  env.asked = 0;
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(env.asked).toBe(1));
+    f.runtime.sync([]);
+    // Retirement and the turn settle while the read is still held.
+    await f.runtime.retire(pubkey);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.starts()).toHaveLength(0);
+    expect(f.spawn).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+    answer.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.starts()).toHaveLength(0);
+    expect(f.spawn).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    env.gate = undefined;
+    env.asked = 0;
+    f.runtime.dispose();
+  }
+});
+it("ends a removed agent's run-once quietly while its environment read is out", async () => {
+  const f = fixture();
+  const answer = deferred<void>();
+  env.gate = answer.promise;
+  env.asked = 0;
+  try {
+    const running = f.runtime.runOnce({
+      delivery: f.delivery("check"),
+      key: "source/check",
+      signal: new AbortController().signal,
+      prompt: async () => "check",
+    });
+    await vi.waitFor(() => expect(env.asked).toBe(1));
+    f.runtime.sync([]);
+    await f.runtime.retire(pubkey);
+    await expect(running).resolves.toEqual({
+      ok: false,
+      error: "Codex was stopped",
+    });
+    answer.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.starts()).toHaveLength(0);
+    expect(f.spawn).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    env.gate = undefined;
+    env.asked = 0;
+    f.runtime.dispose();
+  }
+});
+it("ends a run-once at its deadline while its environment read is out", async () => {
+  const f = fixture();
+  const answer = deferred<void>();
+  env.gate = answer.promise;
+  env.asked = 0;
+  const deadline = new AbortController();
+  try {
+    const running = f.runtime.runOnce({
+      delivery: f.delivery("check"),
+      key: "source/check",
+      signal: deadline.signal,
+      prompt: async () => "check",
+    });
+    await vi.waitFor(() => expect(env.asked).toBe(1));
+    deadline.abort(new Error("Deadline passed"));
+    await expect(running).resolves.toEqual({
+      ok: false,
+      error: "Deadline passed",
+    });
+    answer.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.spawn).not.toHaveBeenCalled();
+  } finally {
+    env.gate = undefined;
+    env.asked = 0;
+    f.runtime.dispose();
+  }
+});
+it("opens no server when the agent is removed just as its route is read", async () => {
+  const f = fixture();
+  const runtime = f.runtime as unknown as { route: () => Promise<void> };
+  const route = vi.spyOn(runtime, "route").mockImplementation(() => {
+    const read = Promise.resolve();
+    // Runs after the read is taken, before the start continues.
+    void read.then(() => {}).then(() => void f.runtime.retire(pubkey));
+    return read;
+  });
+  try {
+    await expect(
+      f.runtime.runOnce({
+        delivery: f.delivery("check"),
+        key: "source/check",
+        signal: new AbortController().signal,
+        prompt: async () => "check",
+      }),
+    ).resolves.toEqual({ ok: false, error: "Codex was stopped" });
+    expect(f.spawn).not.toHaveBeenCalled();
+    expect(f.starts()).toHaveLength(0);
+  } finally {
+    route.mockRestore();
+    f.runtime.dispose();
+  }
+});
+it("still reports a routing failure on a live agent", async () => {
+  const f = fixture();
+  env.failure = new Error("routing broke");
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(contents(f.publish)[0]).toContain("routing broke");
+    expect(f.starts()).toHaveLength(0);
+  } finally {
+    env.failure = undefined;
+    f.runtime.dispose();
+  }
+});
+it("chooses an agent's server again after its own one exits", async () => {
+  const f = fixture();
+  env.own.add(pubkey);
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(servers(f)[0]?.[1]?.envAgent).toBe(pubkey);
+    // Its last list is removed, then its process exits on its own.
+    env.own.delete(pubkey);
+    f.exits.resolve(3);
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    await f.runtime.run(f.delivery("again"));
+    await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+    expect(servers(f)[1]?.[1]?.envAgent).toBeUndefined();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+it("starts on the shared server when presence can't be read, and reads it again next time", async () => {
+  const f = fixture();
+  env.unknown.add(pubkey);
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(servers(f)[0]?.[1]?.envAgent).toBeUndefined();
+    f.exits.resolve(3);
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    env.unknown.delete(pubkey);
+    env.own.add(pubkey);
+    await f.runtime.run(f.delivery("again"));
+    await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+    expect(servers(f)[1]?.[1]?.envAgent).toBe(pubkey);
+  } finally {
+    env.unknown.clear();
+    f.runtime.dispose();
+  }
+});
+it("starts an agent's own server again after its start fails", async () => {
+  const f = fixture();
+  env.own.add(pubkey);
+  const spawn = f.spawn.getMockImplementation();
+  f.spawn.mockImplementationOnce(async (id, options) => {
+    if (id === "app-server") throw new Error("no Codex");
+    return spawn?.(id, options) as never;
+  });
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(f.starts()).toHaveLength(0);
+    await f.runtime.run(f.delivery("again"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(servers(f).map(([, options]) => options?.envAgent)).toEqual([
+      pubkey,
+      pubkey,
+    ]);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+it("keeps an agent's own server whose handshake fails tracked until its process exits", async () => {
+  const f = fixture();
+  env.own.add(pubkey);
+  f.failing.add("initialize");
+  // The failed process outlives its connection until the test lets it exit.
+  f.process.end.mockResolvedValue(undefined);
+  f.process.kill.mockResolvedValue(undefined);
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(f.process.end).toHaveBeenCalled());
+    let retired = false;
+    const retiring = f.runtime.retire(pubkey).then(() => {
+      retired = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retired).toBe(false);
+    f.exits.resolve(0);
+    await retiring;
+  } finally {
+    f.runtime.dispose();
   }
 });
 it("reopens the shared server after it exits", async () => {
@@ -2802,6 +3184,36 @@ it("starts a turn on the model its owner picked, at an effort that model support
     { model: "test-model", effort: "low" },
   ]);
 });
+it("starts a routed turn on its route's choice, and nothing when it was stopped", async () => {
+  const f = fixture();
+  const route = vi.fn(async () => ({ model: "deep-model", effort: "xhigh" }));
+  await f.runtime.run({ ...f.delivery("@Codex", "a".repeat(64)), route });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(route).toHaveBeenCalledTimes(1);
+  expect(f.starts()[0]?.params).toMatchObject({
+    model: "deep-model",
+    effort: "xhigh",
+  });
+  const stopped = vi.fn(async () => undefined);
+  await f.runtime.run({
+    ...f.delivery("@Codex", "b".repeat(64)),
+    route: stopped,
+  });
+  await vi.waitFor(() => expect(stopped).toHaveBeenCalled());
+  await f.runtime.run(f.delivery("@Codex next", "c".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // The next turn Codex starts is the plain one.
+  expect(JSON.stringify(f.starts()[1]?.params)).toContain("@Codex next");
+});
+it("shows a saved route no router offers as Codex's default", async () => {
+  const f = fixture();
+  const agent = {
+    key: pubkey,
+    pubkey,
+    config: { workspace: "/tmp/codex-test", model: "route:gone" },
+  } as Agent;
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
+});
 it("runs a mid-turn pick that differs from the running turn as the next turn instead of steering", async () => {
   const f = fixture();
   const settings = (wire: Wire) => {
@@ -4010,6 +4422,70 @@ it("takes a plugin's wake in its thread's conversation, as the plugin's and not 
   expect(input).toContain("CI failed: lint");
   expect(input).not.toContain("<buzz-event");
   expect(input).not.toContain(WAKE_ID);
+});
+it("answers a placed mention where the matching wake goes, framed as the owner's request", async () => {
+  const earlier = "d".repeat(64);
+  const turn = async (
+    make: (f: ReturnType<typeof fixture>) => Delivery,
+  ): Promise<{ context?: string; tags?: string[][]; text: string }> => {
+    const f = fixture();
+    try {
+      await f.runtime.run(make(f));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      const text = JSON.parse(inputText(f.starts()[0]) ?? "[]")
+        .map((part: { text?: string }) => part.text ?? "")
+        .join("\n");
+      await f.tool("send", { audience: "everyone", text: "Placed" });
+      const context = text.match(/<context>[\s\S]*?<\/context>/)?.[0];
+      const tags = tagsOf(f).at(-1);
+      await f.complete(0);
+      return {
+        ...(context ? { context } : {}),
+        ...(tags ? { tags } : {}),
+        text,
+      };
+    } finally {
+      f.runtime.dispose();
+    }
+  };
+  /** The owner's top-level mention, placed by a plugin. */
+  const placed =
+    (placement: NonNullable<Delivery["placement"]>) =>
+    (f: ReturnType<typeof fixture>): Delivery => {
+      const delivery = f.delivery("@Codex back to the checklist");
+      if (delivery.trigger.type !== "mention")
+        throw new Error("Expected a mention");
+      return {
+        ...delivery,
+        trigger: {
+          ...delivery.trigger,
+          event: { ...delivery.trigger.event, tags: [["h", "channel"]] },
+        },
+        placement,
+      };
+    };
+  const woken =
+    (extra: { topLevel: true } | { root: string }) =>
+    (f: ReturnType<typeof fixture>): Delivery => {
+      const wake = pluginWake(f);
+      if (wake.trigger.type !== "plugin") throw new Error("Expected a wake");
+      return { ...wake, trigger: { ...wake.trigger, ...extra } };
+    };
+  for (const place of [{ topLevel: true }, { root: earlier }] as const) {
+    const { text, ...answer } = await turn(placed(place));
+    const { text: wokenText, ...wake } = await turn(woken(place));
+    expect(answer.context, JSON.stringify(place)).toBeDefined();
+    expect(answer.tags, JSON.stringify(place)).toBeDefined();
+    // The same session, context and default `send` target as the wake.
+    expect(answer, JSON.stringify(place)).toEqual(wake);
+    // Framed as the owner's mention, not the wake's channel-level text.
+    expect(text).toContain("<buzz-event>");
+    expect(wokenText).not.toContain("<buzz-event>");
+    if ("topLevel" in place) {
+      expect(text).toContain(TOP_LEVEL_MENTION_PROMPT);
+      expect(text).not.toContain("Interest");
+    }
+  }
 });
 it("keeps a wake's text from posing as the turn's event", async () => {
   const f = fixture();
@@ -5558,13 +6034,13 @@ it.each([false, true])(
   },
 );
 
-it("lists saved conversations newest first from storage, and moves a started one to the front", async () => {
+it("lists readable saved conversations newest first from storage, and moves a started one to the front", async () => {
   const f = fixture();
   const thread = JSON.stringify(["channel", root]);
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v19:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v20:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -5573,13 +6049,6 @@ it("lists saved conversations newest first from storage, and moves a started one
     }),
   );
   expect(f.runtime.conversations(pubkey)).toEqual([
-    {
-      key: elsewhere,
-      channelId: "unlisted",
-      root,
-      threadId: "newer",
-      at: 2,
-    },
     {
       key: thread,
       channelId: "channel",
@@ -5603,7 +6072,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v19:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v20:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -5851,7 +6320,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v19:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v20:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -7839,7 +8308,7 @@ describe("voice seats", () => {
   it("ends a seat on a thread from before sections were kept once the owner changes one, and goes on in a fresh thread", async () => {
     const f = await seated({}, (f) =>
       f.storage.set(
-        `buzz.codex.sessions.v19:${scope}:${pubkey}`,
+        `buzz.codex.sessions.v20:${scope}:${pubkey}`,
         JSON.stringify({
           [JSON.stringify(["channel", "channel"])]: {
             threadId: "kept",
@@ -8695,7 +9164,7 @@ it("retries a refused first turn but requires New when an accepted remote rollou
 it("resumes the durably saved thread even when the host cache has no thread", async () => {
   const conversation = JSON.stringify(["channel", root]);
   const key = `buzz.codex.sessions.execution.v1:${scope}:${pubkey}:${conversation}`;
-  const savedKey = `buzz.codex.sessions.v19:${scope}:${pubkey}:session:durable-session`;
+  const savedKey = `buzz.codex.sessions.v20:${scope}:${pubkey}:session:durable-session`;
   const durable = new Map([
     [key, JSON.stringify({ key: "durable-session", intent: "existing" })],
     [
@@ -8768,7 +9237,7 @@ it.each([
         JSON.stringify({ key: "durable-session", intent: "existing" }),
       ],
       [
-        `buzz.codex.sessions.v19:${scope}:${pubkey}:session:durable-session`,
+        `buzz.codex.sessions.v20:${scope}:${pubkey}:session:durable-session`,
         JSON.stringify({
           [conversation]: { threadId: "kept", workspace: "/guest/project" },
         }),
@@ -8889,7 +9358,7 @@ it("keeps restored history when the next turn is refused after a lost first resp
     `buzz.codex.sessions.execution.v1:${scope}:${pubkey}:${conversation}`,
     JSON.stringify({ key: "restored", intent: "existing" }),
   );
-  const savedKey = `buzz.codex.sessions.v19:${scope}:${pubkey}:session:restored`;
+  const savedKey = `buzz.codex.sessions.v20:${scope}:${pubkey}:session:restored`;
   f.storage.set(
     savedKey,
     JSON.stringify({
@@ -9236,7 +9705,7 @@ it("keeps thread session context and defers its admission during New", async () 
 
 describe("a thread that keeps the base sections it started with", () => {
   const conversation = JSON.stringify(["channel", root]);
-  const bindings = `buzz.codex.sessions.v19:${scope}:${pubkey}`;
+  const bindings = `buzz.codex.sessions.v20:${scope}:${pubkey}`;
   const current = composeBase({ scope: "thread", place: "thread" });
   const context = (wire: Wire | undefined) =>
     Object.values(
@@ -9264,6 +9733,28 @@ describe("a thread that keeps the base sections it started with", () => {
     );
     return f;
   };
+
+  it("reports whether saved local conversations may restart for custom instructions", () => {
+    const empty = fixture();
+    const key = empty.delivery("check").agent.key;
+    expect(empty.runtime.mayRestartForBaseInstructions(key, scope)).toBe(false);
+    expect(resumed().runtime.mayRestartForBaseInstructions(key, scope)).toBe(
+      true,
+    );
+    expect(
+      resumed({
+        layout: 1,
+        parts: current.parts,
+      }).runtime.mayRestartForBaseInstructions(key, scope),
+    ).toBe(false);
+    const reconnecting = resumed();
+    reconnecting.snapshot.status = "connecting";
+    expect(reconnecting.runtime.mayRestartForBaseInstructions(key, scope)).toBe(
+      true,
+    );
+    empty.snapshot.status = "connecting";
+    expect(empty.runtime.mayRestartForBaseInstructions(key, scope)).toBe(false);
+  });
 
   it("saves them with a new thread and sends no update while they are current", async () => {
     const f = fixture();

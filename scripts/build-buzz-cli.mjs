@@ -1,15 +1,10 @@
 // Build the `buzz` CLI from the block/buzz revision this app already depends on
 // and stage it beside the other bundled helpers. Tauri ships src-tauri/resources/bin.
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  copyFileSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-} from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stageSidecar } from "./stage-sidecar.mjs";
 
 const pin =
   /buzz-audio-client\s*=\s*\{[^}]*\bgit\s*=\s*"(https:\/\/github\.com\/block\/buzz\.git)"[^}]*\brev\s*=\s*"([0-9a-f]{40})"/;
@@ -88,8 +83,8 @@ if (import.meta.main) {
   const destination = join(root, "src-tauri/resources/bin");
   mkdirSync(destination, { recursive: true });
   const binary = join(destination, name);
-  copyFileSync(join(prefix, "bin", name), `${binary}.new`);
-  chmodSync(`${binary}.new`, 0o755);
-  renameSync(`${binary}.new`, binary);
-  console.log(`buzz ${rev.slice(0, 12)} staged at ${binary}`);
+  const changed = stageSidecar(join(prefix, "bin", name), binary);
+  console.log(
+    `buzz ${rev.slice(0, 12)} ${changed ? "staged at" : "already staged at"} ${binary}`,
+  );
 }

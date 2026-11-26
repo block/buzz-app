@@ -1,8 +1,9 @@
 // Cargo does incremental source checks; Tauri ships the staged helper on every desktop.
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, renameSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stageSidecar } from "./stage-sidecar.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const triple = process.env.TAURI_ENV_TARGET_TRIPLE;
@@ -30,9 +31,7 @@ const destination = join(root, "src-tauri/resources/bin");
 const target = process.env.CARGO_TARGET_DIR || join(root, "target");
 mkdirSync(destination, { recursive: true });
 const binary = join(destination, name);
-copyFileSync(
+stageSidecar(
   join(target, triple ?? "", profile === "dev" ? "debug" : profile, name),
-  `${binary}.new`,
+  binary,
 );
-chmodSync(`${binary}.new`, 0o755);
-renameSync(`${binary}.new`, binary);

@@ -222,7 +222,7 @@ fn federated_identity(
 fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let local = root.join(".env.local");
-    println!("cargo:rerun-if-changed={}", local.display());
+    build_env::watch_local(&local);
     println!("cargo:rerun-if-env-changed={BUILDERLAB_URL_KEY}");
     println!("cargo:rerun-if-env-changed={BUILDERLAB_APPS_DOMAIN_KEY}");
     println!("cargo:rerun-if-env-changed={BUILDERLAB_APPS_CONTROL_PLANE_KEY}");

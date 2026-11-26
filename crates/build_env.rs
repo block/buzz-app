@@ -1,5 +1,18 @@
 use std::{collections::BTreeMap, path::Path};
 
+/// Watches .env.local without making an unchanged desktop launch rebuild when it is absent.
+pub fn watch_local(path: &Path) {
+    const PRESENCE: &str = "BUZZ_DESKTOP_DEV_ENV_LOCAL";
+    println!("cargo:rerun-if-env-changed={PRESENCE}");
+    // Without the launcher's presence check, keep watching the path so direct
+    // Cargo builds can still see a newly created .env.local.
+    if std::env::var(PRESENCE).as_deref() != Ok("missing")
+        || !matches!(path.try_exists(), Ok(false))
+    {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
 // Parse without mutating the process environment. Never propagate dotenv errors:
 // they can contain complete lines, including unrelated local credentials.
 pub fn load(

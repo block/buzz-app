@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +17,7 @@ import {
   cliBuildDir,
   cliTarget,
 } from "../../scripts/build-buzz-cli.mjs";
+import { stageSidecar } from "../../scripts/stage-sidecar.mjs";
 
 const read = (path) =>
   readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
@@ -73,6 +82,28 @@ test("each block/buzz revision builds in its own directory", () => {
   const other = "0e6037c74d67930de36143ed4661f469039d8dc7";
   assert.equal(cliBuildDir("/t", rev), join("/t", "buzz-cli-build", rev));
   assert.notEqual(cliBuildDir("/t", rev), cliBuildDir("/t", other));
+});
+
+test("staging a sidecar keeps identical bytes fresh for Cargo and replaces changed bytes", (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "buzz-sidecar-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const built = join(scratch, "built");
+  const staged = join(scratch, "staged");
+  writeFileSync(built, "first");
+  stageSidecar(built, staged);
+  assert.equal(readFileSync(staged, "utf8"), "first");
+
+  utimesSync(staged, 1, 1);
+  const previous = statSync(staged);
+  stageSidecar(built, staged);
+  const unchanged = statSync(staged);
+  assert.equal(unchanged.mtimeMs, previous.mtimeMs);
+  assert.equal(unchanged.ino, previous.ino);
+
+  writeFileSync(built, "other");
+  stageSidecar(built, staged);
+  assert.equal(readFileSync(staged, "utf8"), "other");
+  assert.notEqual(statSync(staged).mtimeMs, previous.mtimeMs);
 });
 
 test("desktop builds stage buzz after the other helpers", () => {

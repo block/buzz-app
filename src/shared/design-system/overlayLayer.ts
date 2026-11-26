@@ -7,6 +7,13 @@ export function activeModal(document: Document) {
     .at(-1);
 }
 
+/** Whether a modal the element is not in is on top of it, such as media
+ * opened from inside a dialog. Escape then belongs to that modal. */
+export function behindModal(element: Element | null) {
+  const modal = !!element && activeModal(element.ownerDocument);
+  return !!modal && !modal.contains(element);
+}
+
 /**
  * Native top-layer hover surfaces paint above ordinary portals regardless of
  * z-index. Reuse popup semantics and Base UI's rendered lifetime, not a second

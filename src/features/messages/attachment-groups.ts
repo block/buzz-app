@@ -45,17 +45,3 @@ export function attachmentGroups(
   }
   return { groups, copiedUrls };
 }
-
-/** The videos a row draws as players, named by their safe URLs. A group of
- * four or more is a grid of tiles that open the gallery instead. */
-export function playerVideos(groups: readonly (readonly Attachment[])[]) {
-  return groups.flatMap((group) =>
-    group.length >= 4
-      ? []
-      : group.flatMap((attachment) => {
-          const url =
-            attachment.kind === "video" && safeMessageUrl(attachment.url);
-          return url ? [{ ...attachment, url }] : [];
-        }),
-  );
-}

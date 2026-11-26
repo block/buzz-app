@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
 import { clickRow, open, settle } from "./timeline.mjs";
@@ -40,7 +41,7 @@ const reply = (scope) =>
 const side = (page) => page.locator("[data-panel-workspace]");
 const filler = "More of it follows here. ".repeat(30);
 /** A peer's details message: in `root`'s thread, or the channel's own. */
-const details = (app, text, root) =>
+const details = (app, text, root, attachments = []) =>
   app.append(
     "primary",
     "alpha",
@@ -49,7 +50,7 @@ const details = (app, text, root) =>
     false,
     root?.id,
     undefined,
-    [["audience", "details"]],
+    [["audience", "details"], ...attachments],
   );
 const showMore = (scope, text) =>
   scope
@@ -368,14 +369,51 @@ test.describe("Inline", () => {
   test("details in the conversation read over its composer", async ({
     page,
     app,
+    context,
   }) => {
+    await context.route("**/api/relay/primary/media?**", (route) =>
+      route.fulfill({
+        path: fileURLToPath(
+          new URL("../../public/shell-gradient.png", import.meta.url),
+        ),
+        contentType: "image/png",
+      }),
+    );
     await open(page, app);
-    details(app, "Channel findings");
+    details(app, "Channel findings", undefined, [
+      ["imeta", "url https://primary.example/media/photo.png", "m image/png"],
+      [
+        "imeta",
+        "url https://primary.example/media/report.pdf",
+        "m application/pdf",
+        "filename report.pdf",
+      ],
+    ]);
     const timeline = page.locator("[data-channel-timeline]");
     await showMore(timeline, "Channel findings").click();
     const reader = detailsSheet(page);
     await expect(reader).toBeVisible();
     await expect(reader).toBeFocused();
+    // The whole message lists its attachments, as its row does, and media
+    // opens over the reader and closes back to it.
+    const image = reader.getByRole("link", {
+      name: "Open image attachment",
+      exact: true,
+    });
+    await expect(image).toBeVisible();
+    await expect(
+      reader.getByRole("link", { name: "Download report.pdf", exact: true }),
+    ).toBeVisible();
+    await image.click();
+    const closeViewer = page.getByRole("button", {
+      name: "Close fullscreen viewer",
+      exact: true,
+    });
+    await expect(closeViewer).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(closeViewer).toHaveCount(0);
+    await expect(reader).toBeVisible();
+    await expect(image).toBeFocused();
     // The composer stays usable above the reader.
     const composer = page.getByRole("textbox", { name: "Message #Alpha" });
     await composer.click();

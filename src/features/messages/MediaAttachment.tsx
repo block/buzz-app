@@ -593,6 +593,14 @@ export function MediaViewer({
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) close();
       }}
+      // A dialog this opened from is its React ancestor, and takes an Escape
+      // that reaches it: pressed in the viewer, the key closes the viewer.
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.defaultPrevented) return;
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      }}
     >
       <section
         className={`${styles.mediaViewer} dark`}

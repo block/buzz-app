@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -48,6 +49,16 @@ const image = (name: string) => ({
   url: `https://files.test/${name}.png`,
   name: `${name}.png`,
 });
+const file = {
+  kind: "file" as const,
+  url: "https://files.test/report.pdf",
+  name: "report.pdf",
+};
+const audio = {
+  kind: "audio" as const,
+  url: "https://files.test/voice.mp3",
+  name: "voice.mp3",
+};
 const media = (url: string) =>
   `/api/relay/media?url=${encodeURIComponent(url)}`;
 
@@ -93,6 +104,97 @@ it("shows a details message's video in the dialog that opens it whole", () => {
   expect(
     dialog.getByRole("button", { name: "Open video fullscreen" }),
   ).toBeInTheDocument();
+});
+
+it("lists a details message's attachments in the dialog that opens it whole, as its row lists them", () => {
+  // A plugin draws one image itself, as a card.
+  const card = {
+    id: "card",
+    title: "Card",
+    key: "test.plugin/card",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: (attachment: { name?: string }) =>
+      attachment.name === "Ada.agent.png",
+    component: () => <span>Ada's card</span>,
+  };
+  const cards = [card];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  render(
+    row(
+      [
+        image("solo"),
+        file,
+        image("one"),
+        image("two"),
+        image("three"),
+        image("four"),
+        audio,
+        { ...image("ada"), name: "Ada.agent.png" },
+      ],
+      {
+        extensions: {
+          tools: empty,
+          inline: empty,
+          attachments: { snapshot: () => cards, subscribe: () => () => {} },
+        },
+      },
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  const dialog = within(screen.getByRole("dialog"));
+  expect(
+    dialog.getByRole("link", { name: "Open image attachment" }),
+  ).toBeInTheDocument();
+  expect(
+    dialog.getByRole("link", { name: "Download report.pdf" }),
+  ).toBeInTheDocument();
+  // Four or more are the row's grid of tiles.
+  expect(
+    within(dialog.getByRole("group", { name: "4 images" })).getByRole("link", {
+      name: "Open image 4 of 4",
+    }),
+  ).toBeInTheDocument();
+  expect(
+    dialog.getByRole("button", { name: "Play voice.mp3" }),
+  ).toBeInTheDocument();
+  expect(dialog.getByText("Ada's card")).toBeInTheDocument();
+});
+
+it("closes media opened from the reader's dialog on Escape, and leaves the dialog open", async () => {
+  render(row([image("solo")]));
+  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog")).getByRole("link", {
+      name: "Open image attachment",
+    }),
+  );
+  const close = screen.getByRole("button", { name: "Close fullscreen viewer" });
+  fireEvent.keyDown(close, { key: "Escape" });
+  await waitFor(() => expect(close).not.toBeInTheDocument());
+  expect(
+    within(screen.getByRole("dialog")).getByText(
+      "More of the findings follow.",
+    ),
+  ).toBeInTheDocument();
+});
+
+it("leaves Escape to media open over the reader's dialog", async () => {
+  render(row([video]));
+  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  // A page's media review opens over the dialog, outside it.
+  const review = document.createElement("div");
+  review.setAttribute("role", "dialog");
+  review.setAttribute("aria-modal", "true");
+  document.body.append(review);
+  fireEvent.keyDown(review, { key: "Escape" });
+  review.remove();
+  expect(screen.getByRole("dialog", { name: "author" })).toBeInTheDocument();
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "author" })).toBeNull(),
+  );
 });
 
 it("draws no player in the reader for a video the row shows as a gallery tile", () => {

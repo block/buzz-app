@@ -5,10 +5,11 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useConversation } from "../conversation/Conversation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import type { ChannelMessage } from "../relay/contracts";
+import { useListedChannel } from "../relay/listed-channel";
 import { useChannelWindow, useRowProfiles } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import { useComposerScope } from "./composer-overlay";
-import { DetailsVideos, useRowVideos } from "./DetailsVideos";
+import { MessageAttachments, useReaderAttachments } from "./MessageAttachments";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { useReferenceDirectory } from "./ReferenceText";
 import styles from "./Messages.module.css";
@@ -59,15 +60,38 @@ export function useReaderMessage(
   return loaded ?? (read?.id === messageId ? read.message : undefined);
 }
 
-/** The videos the message's row draws as players. */
-function ReaderVideos({ message }: { message: ChannelMessage }) {
-  const { session, extensions, onOpenMediaReview } = useConversation();
-  const videos = useRowVideos(message, extensions, !!onOpenMediaReview);
+/** The attachments the message's row lists, as the row lists them. */
+function ReaderAttachments({
+  message,
+  onOpenLink,
+}: {
+  message: ChannelMessage;
+  onOpenLink(url: string): boolean;
+}) {
+  const { session, extensions, canOpenLink, onOpenMediaReview } =
+    useConversation();
+  const { groups, drawn } = useReaderAttachments(
+    message,
+    extensions,
+    !!onOpenMediaReview,
+  );
+  const cached = useListedChannel(
+    session.channels,
+    message.channelId,
+    (channel) => !!channel?.cached,
+  );
   return (
-    <DetailsVideos
+    <MessageAttachments
+      reader
       row={message}
-      videos={videos}
-      media={(url) => session.media(url, undefined, message.channelId)}
+      groups={groups}
+      drawn={drawn}
+      session={session}
+      extensions={extensions}
+      media={(url, size) => session.media(url, size, message.channelId)}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+      cached={cached}
       onOpenMediaReview={onOpenMediaReview}
     />
   );
@@ -115,6 +139,11 @@ export function DetailsReader({
     (author === message.authorId && !!message.agentEnvelope) ||
     !!profile?.isAgent;
   const rootId = message.threadRootId ?? message.id;
+  const openLink = (url: string) =>
+    onOpenLink(url, {
+      rootId,
+      ...(composer && { view: { rootId: composer.rootId } }),
+    });
   return children({
     title: name,
     avatar: (
@@ -136,16 +165,11 @@ export function DetailsReader({
           row={message}
           extensions={extensions}
           media={session.media}
-          onOpenLink={(url) =>
-            onOpenLink(url, {
-              rootId,
-              ...(composer && { view: { rootId: composer.rootId } }),
-            })
-          }
+          onOpenLink={openLink}
           canOpenLink={canOpenLink}
           participantProfiles={profiles}
         />
-        <ReaderVideos message={message} />
+        <ReaderAttachments message={message} onOpenLink={openLink} />
       </div>
     ),
   });

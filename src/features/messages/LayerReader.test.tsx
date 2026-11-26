@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ConversationChannel } from "../conversation/Conversation";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -20,7 +26,13 @@ const video = (name: string) => ({
   name: `${name}.mp4`,
 });
 
-it("reads a details message with the videos its row plays, in a dialog where the view has no composer", () => {
+const image = (name: string) => ({
+  kind: "image" as const,
+  url: `https://files.test/${name}.png`,
+  name: `${name}.png`,
+});
+
+it("reads a details message with the attachments its row lists, in a dialog where the view has no composer", () => {
   const viewer = "a".repeat(64);
   const message: ChannelMessage = {
     id: "d".repeat(64),
@@ -31,7 +43,21 @@ it("reads a details message with the videos its row plays, in a dialog where the
     createdAt: 1,
     mentions: [],
     participants: [],
-    attachments: [video("card"), video("demo")],
+    attachments: [
+      video("card"),
+      video("demo"),
+      {
+        kind: "file",
+        url: "https://files.test/report.pdf",
+        name: "report.pdf",
+      },
+      image("solo"),
+      { kind: "audio", url: "https://files.test/voice.mp3", name: "voice.mp3" },
+      image("one"),
+      image("two"),
+      image("three"),
+      image("four"),
+    ],
     reactions: [],
     replyCount: 0,
   };
@@ -56,7 +82,7 @@ it("reads a details message with the videos its row plays, in a dialog where the
       snapshot: () => profiles,
       subscribe: none,
     },
-    media: (url: string) => `media:${url}`,
+    media: (url: string) => `/api/relay/media?url=${encodeURIComponent(url)}`,
     unread: {
       revision: () => 0,
       sync: () => ({ capability: "unsupported" }),
@@ -94,12 +120,13 @@ it("reads a details message with the videos its row plays, in a dialog where the
     tools: empty,
     inline: empty,
   } as unknown as ConversationExtensions;
+  const dismiss = vi.fn();
   render(
     <LayerAddressContext
       value={{
         open: { channelId: "c", messageId: message.id },
         show() {},
-        dismiss() {},
+        dismiss,
         renderPanel: () => undefined,
       }}
     >
@@ -124,4 +151,30 @@ it("reads a details message with the videos its row plays, in a dialog where the
   expect(
     dialog.getByRole("button", { name: "Open video fullscreen" }),
   ).toBeInTheDocument();
+  expect(
+    dialog.getByRole("link", { name: "Download report.pdf" }),
+  ).toBeInTheDocument();
+  expect(
+    dialog.getByRole("link", { name: "Open image attachment" }),
+  ).toBeInTheDocument();
+  expect(
+    dialog.getByRole("button", { name: "Play voice.mp3" }),
+  ).toBeInTheDocument();
+  // Four or more are the row's grid of tiles.
+  expect(
+    within(dialog.getByRole("group", { name: "4 images" })).getByRole("link", {
+      name: "Open image 4 of 4",
+    }),
+  ).toBeInTheDocument();
+
+  // Media open over the dialog, outside it, takes Escape.
+  const review = document.createElement("div");
+  review.setAttribute("role", "dialog");
+  review.setAttribute("aria-modal", "true");
+  document.body.append(review);
+  fireEvent.keyDown(review, { key: "Escape" });
+  review.remove();
+  expect(dismiss).not.toHaveBeenCalled();
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  expect(dismiss).toHaveBeenCalledOnce();
 });

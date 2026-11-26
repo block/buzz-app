@@ -13,7 +13,7 @@ import {
   SidebarRightIcon,
   XIcon,
 } from "../../shared/design-system/icons";
-import { activeModal } from "../../shared/design-system/overlayLayer";
+import { behindModal } from "../../shared/design-system/overlayLayer";
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
@@ -579,15 +579,6 @@ function SheetHeader({
   );
 }
 
-/** The dialog every sheet is: non-modal, so the rest of the app stays
- * interactive; an outside press dismisses it only on a scrim around it,
- * moving focus never does, and Escape leaves it to a modal over it, such as
- * media. Once closed, focus returns to what opened it. */
-const behindModal = (sheet: HTMLElement | null) => {
-  const modal = !!sheet && activeModal(sheet.ownerDocument);
-  return !!modal && !modal.contains(sheet);
-};
-
 /** A press on the sheet's own scrim, or on the scrim of a sheet it is drawn
  * in: a sheet over another dims only that sheet, so the view around a stack
  * is the scrim of the sheet at the bottom. A scrim's parent is its sheet's
@@ -602,6 +593,10 @@ const pressedScrim = (
   !!popup &&
   !!target.parentElement?.contains(popup);
 
+/** The dialog every sheet is: non-modal, so the rest of the app stays
+ * interactive; an outside press dismisses it only on a scrim around it,
+ * moving focus never does, and Escape leaves it to a modal over it, such as
+ * media. Once closed, focus returns to what opened it. */
 function SheetRoot({
   open,
   onOpenChange,

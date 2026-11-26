@@ -285,3 +285,72 @@ test("plugin pages stay jumpable without a connected community", async () => {
     pageId: "reminders",
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+test("closing the dialog cancels navigation for a pending decision", async () => {
+  const pending = deferred<ReturnType<typeof answer>>();
+  const { listens, decide, open } = await mount();
+  decide.mockReturnValueOnce(pending.promise);
+  press();
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+
+  act(() => (listens[0] as ListenOptions).onText("take me to design"));
+  expect(decide).toHaveBeenCalledTimes(1);
+
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+
+  await act(async () => {
+    pending.resolve(answer("#design", { "#design": 0.95, "#launch": 0.02 }));
+    await pending.promise;
+  });
+  expect(open).not.toHaveBeenCalled();
+});
+
+test("a newer transcript supersedes an in-flight live or pause decision", async () => {
+  const first = deferred<ReturnType<typeof answer>>();
+  const second = deferred<ReturnType<typeof answer>>();
+  const { listens, decide, open } = await mount();
+  decide.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+  const listen = listens[0] as ListenOptions;
+
+  act(() => {
+    listen.onText("design");
+    listen.onPause?.("design");
+    listen.onText("design, no, launch");
+  });
+  expect(decide).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    first.resolve(answer("#design", { "#design": 0.95, "#launch": 0.02 }));
+    await first.promise;
+  });
+  expect(open).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
+
+  await act(async () => {
+    second.resolve(answer("#launch", { "#launch": 0.95, "#design": 0.02 }));
+    await second.promise;
+  });
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin },
+      channelId: "launch",
+    }),
+  );
+  expect(open).toHaveBeenCalledTimes(1);
+});

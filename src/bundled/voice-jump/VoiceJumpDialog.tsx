@@ -211,18 +211,30 @@ function VoiceJumpBody({
     answers: Map<string, Promise<JumpResult>>;
     live: boolean;
     pending?: string | undefined;
+    latest?: string | undefined;
+    revision: number;
     /** The place a live check was last sure of, and at how many words. */
     lead?: LiveLead | undefined;
     done: boolean;
-  }>({ epoch: 0, answers: new Map(), live: false, done: false });
+  }>({ epoch: 0, answers: new Map(), live: false, revision: 0, done: false });
   const restart = useCallback(() => {
     run.current = {
       epoch: run.current.epoch + 1,
       answers: new Map(),
       live: false,
+      revision: 0,
       done: false,
     };
   }, []);
+  const noteTranscript = (said: string) => {
+    const current = run.current;
+    if (current.latest !== said) {
+      current.latest = said;
+      current.revision += 1;
+      current.pending = undefined;
+    }
+    return current.revision;
+  };
   const placesNow = () =>
     (run.current.places ??= jumpPlaces(
       sources(session, resolveName, pages, bestie, Boolean(scope)),
@@ -249,7 +261,7 @@ function VoiceJumpBody({
   /** While words are still landing: one check at a time, always on the
    * newest words, and a jump only once the decision stays sure of the same
    * place through another word, so a longer name still being said can win. */
-  const live = (said: string) => {
+  const live = (said: string, revision: number) => {
     const current = run.current;
     if (current.done || !said.trim() || !placesNow().length) return;
     if (current.live) {
@@ -260,13 +272,17 @@ function VoiceJumpBody({
     void ask(said, scope?.communityOrigin).then((result) => {
       if (run.current !== current || current.done) return;
       current.live = false;
-      show(result);
       const held = holdsLead(current.lead, result, said, current.places ?? []);
       current.lead = held.lead;
-      if (held.jump && result.outcome === "found") return goTo(result.place);
       const next = current.pending;
       current.pending = undefined;
-      if (next !== undefined && next !== said) live(next);
+      if (revision !== current.revision) {
+        if (next !== undefined) live(next, current.revision);
+        return;
+      }
+      show(result);
+      if (held.jump && result.outcome === "found") return goTo(result.place);
+      if (next !== undefined && next !== said) live(next, current.revision);
     });
   };
   /** A short pause in speech: jump if the words so far reach 0.5, and
@@ -274,8 +290,14 @@ function VoiceJumpBody({
   const settle = (said: string) => {
     const current = run.current;
     if (current.done || !said.trim() || !placesNow().length) return;
+    const revision = noteTranscript(said);
     void ask(said, scope?.communityOrigin).then((result) => {
-      if (run.current !== current || current.done) return;
+      if (
+        run.current !== current ||
+        current.done ||
+        revision !== current.revision
+      )
+        return;
       show(result);
       if (
         result.outcome === "found" &&
@@ -286,7 +308,11 @@ function VoiceJumpBody({
   };
   /** Once speech ends or Enter is pressed: the best match at 0.5 or more. */
   const submit = (spoken: string) => {
+    const current = run.current;
+    if (current.done) return;
     const said = spoken.trim();
+    noteTranscript(said);
+    current.pending = undefined;
     if (!said) return setPhase({ kind: "none", text: "" });
     if (!placesNow().length)
       return setPhase(
@@ -297,8 +323,6 @@ function VoiceJumpBody({
               message: "Choose a community to jump to its conversations.",
             },
       );
-    const current = run.current;
-    if (current.done) return;
     setPhase({ kind: "matching" });
     void ask(said, scope?.communityOrigin).then((result) => {
       if (run.current !== current || current.done) return;
@@ -329,7 +353,7 @@ function VoiceJumpBody({
       setPhase({ kind: "listening" });
       setText(next);
       // The dictation hook keeps the newest callbacks, so this is current.
-      live(next);
+      live(next, noteTranscript(next));
     },
     onPause: (spoken) => settle(spoken),
     onEnd: (spoken) => submitRef.current(spoken),
@@ -345,9 +369,12 @@ function VoiceJumpBody({
   };
   const listenRef = useRef(listen);
   listenRef.current = listen;
-  // Listening starts as the box opens.
+  // Listening starts as the box opens, and closing invalidates in-flight checks.
   useEffect(() => {
     listenRef.current();
+    return () => {
+      run.current.done = true;
+    };
   }, []);
   const listening = dictation.state !== "idle";
   useEffect(() => {

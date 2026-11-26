@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import type { ComponentType } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import type { RegisteredPage } from "../../features/pages/service";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import type { ListenOptions } from "../../features/speech/service";
 import type { PluginModule } from "../../plugins/api";
@@ -68,7 +69,34 @@ const answer = (pick: string, probabilities: Record<string, number>) => ({
   },
 });
 
-async function mount() {
+const defaultPages: RegisteredPage[] = [
+  {
+    key: "buzz.reminders/reminders",
+    pluginId: "buzz.reminders",
+    revision: "bundled",
+    id: "reminders",
+    title: "Reminders",
+    primary: true,
+    component: () => null,
+  },
+  {
+    key: "example.review-queue/queue",
+    pluginId: "example.review-queue",
+    revision: "1",
+    id: "queue",
+    title: "Review Queue",
+    primary: true,
+    component: () => null,
+  },
+];
+
+async function mount({
+  connected = true,
+  pages = defaultPages,
+}: {
+  connected?: boolean;
+  pages?: readonly RegisteredPage[];
+} = {}) {
   const ctx = new Context();
   contexts.push(ctx);
   const modules: Record<string, PluginModule> = {
@@ -88,7 +116,9 @@ async function mount() {
     answer("#design", { "#design": 0.9, "#launch": 0.05 }),
   );
   const open = vi.fn(async () => ({ status: "opened" }));
-  const relay = { status: "ready", session, viewer, origin: communityOrigin };
+  const relay = connected
+    ? { status: "ready", session, viewer, origin: communityOrigin }
+    : { status: "idle", session, viewer: undefined, origin: undefined };
   ctx.provide("relay", {
     snapshot: () => relay,
     subscribe: () => () => {},
@@ -99,6 +129,8 @@ async function mount() {
     subscribe: () => () => {},
   } as never);
   ctx.provide("pages", {
+    snapshot: () => pages,
+    subscribe: () => () => {},
     registerOverlay(overlay: { component: ComponentType }) {
       Overlay = overlay.component;
     },
@@ -207,4 +239,49 @@ test("the mic beside Search opens the box listening", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Jump by voice" }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
   await vi.waitFor(() => expect(listens).toHaveLength(1));
+});
+
+test("a sure match for a plugin page opens that page", async () => {
+  const { listens, decide, open } = await mount();
+  decide.mockResolvedValue(
+    answer("Page: Review Queue", {
+      "Page: Review Queue": 0.92,
+      "#design": 0.03,
+    }),
+  );
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+  act(() => (listens[0] as ListenOptions).onText("open review queue"));
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "page",
+      pluginId: "example.review-queue",
+      pageId: "queue",
+      scope: { viewer, communityOrigin },
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+});
+
+test("plugin pages stay jumpable without a connected community", async () => {
+  const { listens, decide, open } = await mount({ connected: false });
+  decide.mockResolvedValue(
+    answer("Page: Reminders", { "Page: Reminders": 0.4 }),
+  );
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+  act(() => (listens[0] as ListenOptions).onEnd("remind"));
+  expect(
+    await screen.findByText("Didn't find a great match. Closest places:"),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Reminders"));
+  expect(open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.reminders",
+    pageId: "reminders",
+  });
 });

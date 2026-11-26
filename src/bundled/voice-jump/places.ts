@@ -1,6 +1,7 @@
-// Voice jump: what someone says picks one place to go among the channels,
-// DMs, agent chats and threads this device already holds in memory. Nothing
-// is read from the relay; the decision provider (Jev) chooses among them.
+// Voice jump: what someone says picks one place to go among the plugin pages,
+// channels, DMs, agent chats and threads this device already holds in memory.
+// Nothing is read from the relay; the decision provider (Jev) chooses among
+// them.
 import type {
   DecisionFailure,
   Decisions,
@@ -32,24 +33,50 @@ const RECENT_MESSAGES = 3;
 const TEXT_LIMIT = 160;
 const NONE = "none";
 
-export type JumpKind = "channel" | "dm" | "chat" | "thread";
+export type JumpKind = "page" | "channel" | "dm" | "chat" | "thread";
 
-export type JumpPlace = Readonly<{
+type JumpPlaceBase = Readonly<{
   key: string;
-  kind: JumpKind;
-  channelId: string;
-  /** A thread's root message. */
-  rootId?: string;
   name: string;
-  /** Where a thread is: its conversation's name. */
-  in?: string;
   about?: string;
-  first?: string;
-  recent?: readonly string[];
   at: number;
 }>;
 
+export type PagePlace = JumpPlaceBase &
+  Readonly<{
+    kind: "page";
+    pluginId: string;
+    pageId: string;
+    /** Full contribution key (`${pluginId}/${pageId}`). */
+    pageKey: string;
+  }>;
+
+export type ConversationPlace = JumpPlaceBase &
+  Readonly<{
+    kind: "channel" | "dm" | "chat" | "thread";
+    channelId: string;
+    /** A thread's root message. */
+    rootId?: string;
+    /** Where a thread is: its conversation's name. */
+    in?: string;
+    first?: string;
+    recent?: readonly string[];
+  }>;
+
+export type JumpPlace = PagePlace | ConversationPlace;
+
+export type JumpPageInput = Readonly<{
+  key: string;
+  pluginId: string;
+  pageId: string;
+  name: string;
+  /** Optional alternate title or role (e.g. "Bestie" or "Channels"). */
+  about?: string;
+}>;
+
 export type JumpSources = Readonly<{
+  /** Registered plugin pages the person can open. */
+  pages?: readonly JumpPageInput[];
   channels: readonly ChannelSummary[];
   /** A conversation's display name: a DM's is its other people. */
   name: (channel: ChannelSummary) => string;
@@ -65,7 +92,9 @@ const clip = (text: string) => {
   return line.length > TEXT_LIMIT ? `${line.slice(0, TEXT_LIMIT - 1)}…` : line;
 };
 
-const kindOf = (channel: ChannelSummary): JumpKind | undefined =>
+const kindOf = (
+  channel: ChannelSummary,
+): ConversationPlace["kind"] | undefined =>
   channel.channelType === "dm"
     ? "dm"
     : channel.channelType === "solo"
@@ -74,10 +103,26 @@ const kindOf = (channel: ChannelSummary): JumpKind | undefined =>
         ? undefined
         : "channel";
 
-/** Every place a spoken request may name, most recently active first. */
+/** Every place a spoken request may name: plugin pages, then conversations
+ * most recently active first, then threads. */
 export function jumpPlaces(sources: JumpSources): JumpPlace[] {
-  const conversations: JumpPlace[] = [];
-  const threads = new Map<string, JumpPlace>();
+  const pagePlaces: PagePlace[] = [];
+  for (const page of sources.pages ?? []) {
+    const name = page.name.trim();
+    if (!name) continue;
+    pagePlaces.push({
+      key: `page:${page.key}`,
+      kind: "page",
+      pluginId: page.pluginId,
+      pageId: page.pageId,
+      pageKey: page.key,
+      name,
+      ...(page.about?.trim() ? { about: clip(page.about) } : {}),
+      at: 0,
+    });
+  }
+  const conversations: ConversationPlace[] = [];
+  const threads = new Map<string, ConversationPlace>();
   const byId = new Map<string, ChannelSummary>();
   for (const channel of sources.channels) {
     const kind = kindOf(channel);
@@ -164,7 +209,8 @@ export function jumpPlaces(sources: JumpSources): JumpPlace[] {
   const recentThreads = [...threads.values()]
     .sort(recentFirst)
     .slice(0, MAX_THREADS);
-  return [...detailed, ...recentThreads].slice(0, MAX_PLACES);
+  // Pages lead so a busy account with 200+ conversations never drops them.
+  return [...pagePlaces, ...detailed, ...recentThreads].slice(0, MAX_PLACES);
 }
 
 /** A place Jev gave a real share of its probability, with its option label. */
@@ -192,6 +238,7 @@ export type VoiceJump =
 
 const LABEL_LIMIT = 90;
 const KIND_LABEL: Record<JumpKind, string> = {
+  page: "Page: ",
   channel: "#",
   dm: "DM with ",
   chat: "Chat with ",
@@ -234,27 +281,39 @@ export async function pickPlace(
   const result = await decisions.decide({
     state: JSON.stringify({
       spoken_request: spoken,
-      places: places.map(
-        ({ kind, name, in: where, about, first, recent }, index) => {
-          // A thread's name is its message; only real names are heard.
-          const heard = kind === "thread" ? [] : soundsLike(spoken, name);
-          return {
-            option: labels[index],
-            kind,
-            ...(heard.length ? { sounds_like: heard } : {}),
-            ...(where ? { in: where } : {}),
-            ...(about ? { about } : {}),
-            ...(first ? { first_message: first } : {}),
-            ...(recent ? { recent_messages: recent } : {}),
-          };
-        },
-      ),
+      places: places.map((place, index) => {
+        // A thread's name is its message; only real names are heard. A page's
+        // `about` holds an alternate title (e.g. "Bestie" or "Channels").
+        const heard =
+          place.kind === "thread"
+            ? []
+            : place.kind === "page" && place.about
+              ? [
+                  ...new Set([
+                    ...soundsLike(spoken, place.name),
+                    ...soundsLike(spoken, place.about),
+                  ]),
+                ]
+              : soundsLike(spoken, place.name);
+        const where = place.kind === "page" ? undefined : place.in;
+        const first = place.kind === "page" ? undefined : place.first;
+        const recent = place.kind === "page" ? undefined : place.recent;
+        return {
+          option: labels[index],
+          kind: place.kind,
+          ...(heard.length ? { sounds_like: heard } : {}),
+          ...(where ? { in: where } : {}),
+          ...(place.about ? { about: place.about } : {}),
+          ...(first ? { first_message: first } : {}),
+          ...(recent ? { recent_messages: recent } : {}),
+        };
+      }),
     }),
     questions: {
       place: {
         type: "choice",
         instructions:
-          "A person said `spoken_request` aloud to jump to a place in a workplace chat app. It is an automatic speech transcript, not typed text. Place names are often product names, jargon or people's names that speech recognition doesn't know, so it often writes a name as a common word or name that sounds like it, splits or joins its words, or spells it another way. Compare how the words sound when said aloud, not how they are spelled: a word or phrase that sounds like a place's name counts as saying that name. A place's `sounds_like` lists words in the transcript that sound like its name. Each option is a place they can go to: a channel (#name), a DM (named by the other people in it), a chat with an agent, or a thread (named by its first message and where it is). `places` gives each option's details, most recently active first. Which place did they ask to go to? A place whose name matches what they said, by sound, beats one whose messages only mention it. Pick a thread only when they asked for a thread or a specific discussion. Pick none when nothing they said sounds like or describes any place.",
+          "A person said `spoken_request` aloud to jump to a place in a workplace chat app. It is an automatic speech transcript, not typed text. Place names are often product names, jargon or people's names that speech recognition doesn't know, so it often writes a name as a common word or name that sounds like it, splits or joins its words, or spells it another way. Compare how the words sound when said aloud, not how they are spelled: a word or phrase that sounds like a place's name counts as saying that name. A place's `sounds_like` lists words in the transcript that sound like its name. Each option is a place they can go to: a plugin page (Page: name), a channel (#name), a DM (named by the other people in it), a chat with an agent, or a thread (named by its first message and where it is). `places` gives each option's details (plugin pages first, then conversations most recently active first). Which place did they ask to go to? A place whose name matches what they said, by sound, beats one whose messages only mention it. Pick a thread only when they asked for a thread or a specific discussion. Pick none when nothing they said sounds like or describes any place.",
         options,
       },
     },

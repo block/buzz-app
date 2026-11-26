@@ -1,7 +1,7 @@
 // Voice jump: a shortcut opens a box that listens through the speech
-// service, and what was said picks a place to go among the conversations
-// this device already holds. The speech provider the person chose in
-// Settings transcribes; the decision provider picks the place.
+// service, and what was said picks a place to go among the plugin pages and
+// conversations this device already holds. The speech provider the person
+// chose in Settings transcribes; the decision provider picks the place.
 import { lazy, Suspense, useRef, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 import { MicrophoneIcon } from "../../shared/design-system/icons/index";
@@ -100,6 +100,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             onOpenChange={set}
             speech={ctx.speech}
             decisions={ctx.decisions}
+            pages={ctx.pages}
             session={relay.session}
             scope={
               relay.viewer && relay.origin

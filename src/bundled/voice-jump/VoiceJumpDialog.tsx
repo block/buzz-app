@@ -1,10 +1,14 @@
 import {
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
@@ -13,6 +17,7 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import {
+  BrowserIcon,
   ChatCircleIcon,
   MicrophoneIcon,
   ThreadIcon,
@@ -23,6 +28,7 @@ import {
 } from "../../features/channels/channel-icon";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { sortParticipantNames } from "../../features/identity-names/participant-order";
+import type { PagesReader, RegisteredPage } from "../../features/pages/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { Decisions } from "../../features/decisions/service";
@@ -30,6 +36,13 @@ import type { OpenTarget } from "../../features/navigation/targets";
 import type { Speech } from "../../features/speech/service";
 import { useDictation } from "../../features/speech/use-dictation";
 import { conversationFocusTarget } from "../../app/focus-navigation";
+import {
+  BESTIE_PAGE,
+  BestieNavigationContext,
+  type BestieMark,
+} from "../../app/shell/bestie-context";
+import { PageIcon } from "../../app/shell/PageIcon";
+import { orderPages, pagePresentation } from "../../app/shell/presentation";
 import {
   holdsLead,
   type JumpCandidate,
@@ -53,13 +66,26 @@ type Phase =
   | { kind: "none"; text: string }
   | { kind: "failed"; message: string };
 
+type OpenedDestination =
+  | { kind: "page" }
+  | { kind: "conversation"; channelId: string };
+
+function presentPage(page: RegisteredPage, bestie: BestieMark | undefined) {
+  return {
+    ...pagePresentation(page),
+    ...(page.key === BESTIE_PAGE ? bestie : undefined),
+  };
+}
+
 /** Say where to go: it listens as it opens, and the best match among the
- * conversations already in memory opens, while speaking when it is sure. */
+ * plugin pages and conversations already in memory opens, while speaking
+ * when it is sure. */
 export function VoiceJumpDialog({
   open,
   onOpenChange,
   speech,
   decisions,
+  pages,
   session,
   scope,
   navigate,
@@ -69,6 +95,7 @@ export function VoiceJumpDialog({
   onOpenChange(open: boolean): void;
   speech: Pick<Speech, "listen">;
   decisions: Decisions;
+  pages: PagesReader;
   session: RelaySession;
   /** The connected community, or undefined while there is none. */
   scope: VoiceJumpScope | undefined;
@@ -76,8 +103,8 @@ export function VoiceJumpDialog({
   again: { current: (() => void) | undefined };
 }) {
   const input = useRef<HTMLElement>(null);
-  // The conversation a jump opened, which takes focus as the box closes.
-  const opened = useRef<string | undefined>(undefined);
+  // The destination a jump opened, which takes focus as the box closes.
+  const opened = useRef<OpenedDestination | undefined>(undefined);
   useEffect(() => {
     if (open) opened.current = undefined;
   }, [open]);
@@ -91,21 +118,40 @@ export function VoiceJumpDialog({
       motion="none"
       dismissOnOutsideClick
       initialFocus={input}
-      finalFocus={() =>
-        opened.current ? conversationFocusTarget(opened.current) || false : true
-      }
+      finalFocus={() => {
+        if (!opened.current) return true;
+        if (opened.current.kind === "page")
+          return document.getElementById("main-content") || false;
+        return conversationFocusTarget(opened.current.channelId) || false;
+      }}
     >
       {open && (
         <VoiceJumpBody
           speech={speech}
           decisions={decisions}
+          pages={pages}
           session={session}
           scope={scope}
           input={input}
           again={again}
           go={(place) => {
+            if (place.kind === "page") {
+              opened.current = { kind: "page" };
+              onOpenChange(false);
+              navigate({
+                version: 1,
+                kind: "page",
+                pluginId: place.pluginId,
+                pageId: place.pageId,
+                ...(scope ? { scope } : {}),
+              });
+              return;
+            }
             if (!scope) return;
-            opened.current = place.channelId;
+            opened.current = {
+              kind: "conversation",
+              channelId: place.channelId,
+            };
             onOpenChange(false);
             navigate({
               version: 1,
@@ -126,6 +172,7 @@ export function VoiceJumpDialog({
 function VoiceJumpBody({
   speech,
   decisions,
+  pages: pagesReader,
   session,
   scope,
   input,
@@ -134,6 +181,7 @@ function VoiceJumpBody({
 }: {
   speech: Pick<Speech, "listen">;
   decisions: Decisions;
+  pages: PagesReader;
   session: RelaySession;
   scope: VoiceJumpScope | undefined;
   input: RefObject<HTMLElement | null>;
@@ -141,6 +189,15 @@ function VoiceJumpBody({
   go: (place: JumpPlace) => void;
 }) {
   const resolveName = useIdentityNames(session.names);
+  const pages = useSyncExternalStore(
+    pagesReader.subscribe,
+    pagesReader.snapshot,
+  );
+  const bestie = useContext(BestieNavigationContext);
+  const pageByKey = useMemo(
+    () => new Map(pages.map((page) => [page.key, page])),
+    [pages],
+  );
   const [text, setText] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "listening" });
   // The likeliest places for the words so far, refined as words land.
@@ -167,8 +224,10 @@ function VoiceJumpBody({
     };
   }, []);
   const placesNow = () =>
-    (run.current.places ??= jumpPlaces(sources(session, resolveName)));
-  const ask = (said: string, community: string) => {
+    (run.current.places ??= jumpPlaces(
+      sources(session, resolveName, pages, bestie, Boolean(scope)),
+    ));
+  const ask = (said: string, community: string | undefined) => {
     const current = run.current;
     const places = placesNow();
     let answer = current.answers.get(said);
@@ -180,7 +239,7 @@ function VoiceJumpBody({
     return answer;
   };
   const goTo = (place: JumpPlace) => {
-    if (!scope) return;
+    if (place.kind !== "page" && !scope) return;
     run.current.done = true;
     go(place);
   };
@@ -192,13 +251,13 @@ function VoiceJumpBody({
    * place through another word, so a longer name still being said can win. */
   const live = (said: string) => {
     const current = run.current;
-    if (current.done || !scope || !said.trim()) return;
+    if (current.done || !said.trim() || !placesNow().length) return;
     if (current.live) {
       current.pending = said;
       return;
     }
     current.live = true;
-    void ask(said, scope.communityOrigin).then((result) => {
+    void ask(said, scope?.communityOrigin).then((result) => {
       if (run.current !== current || current.done) return;
       current.live = false;
       show(result);
@@ -214,8 +273,8 @@ function VoiceJumpBody({
    * otherwise keep listening, so only a long pause can come up empty. */
   const settle = (said: string) => {
     const current = run.current;
-    if (current.done || !scope || !said.trim()) return;
-    void ask(said, scope.communityOrigin).then((result) => {
+    if (current.done || !said.trim() || !placesNow().length) return;
+    void ask(said, scope?.communityOrigin).then((result) => {
       if (run.current !== current || current.done) return;
       show(result);
       if (
@@ -229,15 +288,19 @@ function VoiceJumpBody({
   const submit = (spoken: string) => {
     const said = spoken.trim();
     if (!said) return setPhase({ kind: "none", text: "" });
-    if (!scope)
-      return setPhase({
-        kind: "failed",
-        message: "Choose a community to jump to its conversations.",
-      });
+    if (!placesNow().length)
+      return setPhase(
+        scope
+          ? { kind: "none", text: said }
+          : {
+              kind: "failed",
+              message: "Choose a community to jump to its conversations.",
+            },
+      );
     const current = run.current;
     if (current.done) return;
     setPhase({ kind: "matching" });
-    void ask(said, scope.communityOrigin).then((result) => {
+    void ask(said, scope?.communityOrigin).then((result) => {
       if (run.current !== current || current.done) return;
       show(result);
       if (
@@ -310,7 +373,7 @@ function VoiceJumpBody({
       <SearchField
         variant="palette"
         label="Where to"
-        placeholder="Say a channel, person, chat or thread"
+        placeholder="Say a page, channel, person, chat or thread"
         inputRef={input}
         value={text}
         onValueChange={(next) => {
@@ -350,8 +413,8 @@ function VoiceJumpBody({
           title="Didn't find anything"
           description={
             phase.text
-              ? `Nothing you have open matched “${phase.text}”. Try a channel, person or chat name.`
-              : "Didn't catch that. Try saying a channel, person or chat name."
+              ? `Nothing you have open matched “${phase.text}”. Try a page, channel, person or chat name.`
+              : "Didn't catch that. Try saying a page, channel, person or chat name."
           }
           action={
             <Button size="sm" variant="subtle" onClick={listen}>
@@ -378,7 +441,17 @@ function VoiceJumpBody({
                 <li key={place.key}>
                   <VoiceJumpRow
                     place={place}
-                    channel={session.channels.get?.(place.channelId)}
+                    page={
+                      place.kind === "page"
+                        ? pageByKey.get(place.pageKey)
+                        : undefined
+                    }
+                    bestie={bestie}
+                    channel={
+                      place.kind === "page"
+                        ? undefined
+                        : session.channels.get?.(place.channelId)
+                    }
                     probability={probability}
                     onChoose={() => {
                       cancel();
@@ -402,15 +475,66 @@ function VoiceJumpBody({
 
 function VoiceJumpRow({
   place,
+  page,
+  bestie,
   channel,
   probability,
   onChoose,
 }: {
   place: JumpPlace;
+  page: RegisteredPage | undefined;
+  bestie: BestieMark | undefined;
   channel: ChannelSummary | undefined;
   probability: number;
   onChoose: () => void;
 }) {
+  const trailing = (
+    <span className="text-body-sm tabular-nums">
+      {Math.round(probability * 100)}%
+      <span className="sr-only"> match score</span>
+    </span>
+  );
+  if (place.kind === "page") {
+    const presented = page ? presentPage(page, bestie) : undefined;
+    return (
+      <NavigationItem
+        variant="search"
+        icon={
+          presented?.avatar ? (
+            <Avatar
+              alt=""
+              fallback={place.name}
+              src={presented.avatar.src}
+              size="small"
+              shape={presented.avatar.shape}
+            />
+          ) : (
+            <span
+              className="search-peek-tile"
+              data-tone="page"
+              aria-hidden="true"
+            >
+              <PageIcon
+                icon={presented?.icon ?? BrowserIcon}
+                image={presented?.image}
+                size={15}
+              />
+            </span>
+          )
+        }
+        label={
+          <>
+            <span className="block truncate text-body-sm">{place.name}</span>
+            <span className="block truncate text-body-sm text-subtle">
+              {place.about ?? "Page"}
+            </span>
+          </>
+        }
+        trailing={trailing}
+        onClick={onChoose}
+      />
+    );
+  }
   const { kind } = place;
   const Icon =
     kind === "thread"
@@ -450,12 +574,7 @@ function VoiceJumpRow({
           )}
         </>
       }
-      trailing={
-        <span className="text-body-sm tabular-nums">
-          {Math.round(probability * 100)}%
-          <span className="sr-only"> match score</span>
-        </span>
-      }
+      trailing={trailing}
       onClick={onChoose}
     />
   );
@@ -465,6 +584,9 @@ function VoiceJumpRow({
 function sources(
   session: RelaySession,
   resolveName: ReturnType<typeof useIdentityNames>,
+  pages: readonly RegisteredPage[],
+  bestie: BestieMark | undefined,
+  includeConversations: boolean,
 ) {
   const profiles = session.profiles.snapshot();
   const person = (id: string, among?: readonly string[]) =>
@@ -476,10 +598,23 @@ function sources(
         ).join(", ") || "Notes to self"
       : channel.name;
   return {
-    channels: session.channels.list().channels,
+    pages: orderPages(pages).map((page) => {
+      const presented = presentPage(page, bestie);
+      const about =
+        presented.detail ??
+        (presented.label !== page.title ? page.title : undefined);
+      return {
+        key: page.key,
+        pluginId: page.pluginId,
+        pageId: page.id,
+        name: presented.label,
+        ...(about ? { about } : {}),
+      };
+    }),
+    channels: includeConversations ? session.channels.list().channels : [],
     name,
     window: (channelId: string) => session.channels.window(channelId),
-    activity: session.unread.inbox().items,
+    activity: includeConversations ? session.unread.inbox().items : [],
     author: (pubkey: string, channel: ChannelSummary) =>
       person(pubkey, channel.members),
   };

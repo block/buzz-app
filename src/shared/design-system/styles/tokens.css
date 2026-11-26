@@ -1234,6 +1234,9 @@
     transparent
   );
   --border-prominent: var(--neutral-8);
+  /* Where a dragged item will land: one weight and color for every list, card
+     and tab. Mid-grey, so the line marks the spot without shouting. */
+  --border-drop-line: var(--border-prominent);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);
   --border-warning: var(--amber-11);
@@ -1420,6 +1423,9 @@
     transparent
   );
   --border-prominent: var(--neutral-8);
+  /* Where a dragged item will land: one weight and color for every list, card
+     and tab. Mid-grey, so the line marks the spot without shouting. */
+  --border-drop-line: var(--border-prominent);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);
   --border-warning: var(--amber-9);
@@ -1580,6 +1586,8 @@
      aiming at an invisible 8px seam misses. Widening a transparent handle costs
      nothing on screen, so the two are separate decisions with separate names. */
   --size-resize-seam: 0.875rem;
+  /* The thickness of a drop line (border-drop-line), drawn with round ends. */
+  --size-drop-line: 0.1875rem;
   --radius-panel: var(--corner-panel);
   --radius-control: var(--corner-control);
   --radius-card: 2rem;
@@ -2213,6 +2221,7 @@
   --border-color-standard: var(--border-standard);
   --border-color-message-thread: var(--border-message-thread);
   --border-color-prominent: var(--border-prominent);
+  --border-color-drop-line: var(--border-drop-line);
   --border-color-floating-control: var(--border-floating-control);
   --border-color-focus: var(--border-focus);
   --border-color-danger: var(--border-danger);

@@ -382,7 +382,8 @@
         [data-icon-variant="chrome"],
         [data-icon-variant="avatar"],
         [data-icon-variant="media"],
-        [data-icon-variant="bare"]
+        [data-icon-variant="bare"],
+        [data-icon-variant="glyph"]
       ) {
       background: var(--interaction-hover);
     }
@@ -415,7 +416,8 @@
     [data-icon-variant="chrome"],
     [data-icon-variant="avatar"],
     [data-icon-variant="media"],
-    [data-icon-variant="bare"]
+    [data-icon-variant="bare"],
+    [data-icon-variant="glyph"]
   ) {
     background: var(--interaction-pressed);
   }
@@ -696,6 +698,26 @@
     > svg {
     width: var(--space-5);
     height: var(--space-5);
+  }
+
+  /* Glyph controls never fill: the icon carries the state, quiet at rest and
+     full strength on hover, press or keyboard focus. For actions inside a row
+     that has its own hover, so the two hovers don't stack. */
+  .buzz-button[data-icon-variant="glyph"] {
+    background: transparent;
+    color: var(--text-quiet-control);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="glyph"]:hover:not([data-disabled]) {
+      color: var(--text-standard);
+    }
+  }
+  .buzz-button[data-icon-variant="glyph"]:is(
+    :active,
+    :focus-visible,
+    [aria-expanded="true"]
+  ):not([data-disabled]) {
+    color: var(--text-standard);
   }
 
   /* Buzz's existing composer and workspace treatments remain explicit. */

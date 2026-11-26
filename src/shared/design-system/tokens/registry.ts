@@ -1052,6 +1052,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "border-drop-line",
+        variable: "--border-drop-line",
+        pointsAt: "border-prominent light / border-prominent dark",
+        use: "Where a dragged item will land, in lists, cards and tabs. Drawn size-drop-line thick with pill ends.",
+        status: "core",
+      },
+      {
         token: "border-floating-control",
         variable: "--border-floating-control",
         pointsAt: "border-prominent light / neutral-9 dark",

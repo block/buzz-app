@@ -21,10 +21,10 @@
     position: fixed;
     z-index: 1000;
     pointer-events: none;
-    width: calc(var(--space-1) / 2 + 1px);
+    width: var(--size-drop-line);
     transform: translateX(-50%);
     border-radius: var(--radius-pill);
-    background: var(--border-accent);
+    background: var(--border-drop-line);
   }
   .buzz-tab-drag-edge {
     position: fixed;

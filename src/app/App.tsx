@@ -85,6 +85,8 @@ import {
   SignInEnding,
 } from "../features/federated-identity/LaunchSignIn";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
+import { usePluginNavigation } from "./shell/plugin-navigation";
+import type { RegisteredPage } from "../features/pages/service";
 import { AgentCompletionNotifications } from "../features/notifications/AgentCompletionNotifications";
 
 export function App({ services }: { services: AppServices }) {
@@ -177,6 +179,8 @@ function Presented({
   );
   return children(resolve(presentation));
 }
+
+const noPages: readonly RegisteredPage[] = [];
 
 function ConnectedAppContent({ services }: { services: AppServices }) {
   const { plugins } = services;
@@ -439,6 +443,12 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     [services],
   );
   const workspace = route.workspace;
+  const pluginNavigation = usePluginNavigation({
+    plugins,
+    pages: startup === "ready" ? route.pages : noPages,
+    selected: workspace.selected,
+    onSelect: select,
+  });
   const presentation = workspace.page
     ? pagePresentation(workspace.page)
     : shellPresentation.settings;
@@ -860,6 +870,8 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           backdrop={<ShellBackdrops backdrops={services.backdrops} />}
           companion={pageOwnsCompanion ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}
+          pluginPins={pluginNavigation.pins}
+          allPlugins={pluginNavigation.allPlugins}
           selected={workspace.selected}
           navigationAttempt={workspace.attempt}
           onSelect={select}

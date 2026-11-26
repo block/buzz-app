@@ -596,6 +596,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "avatar",
       "media",
       "bare (no background in any state; glyph-state toggles use 20px artwork at sm; row-revealed actions retain standard artwork sizing)",
+      "glyph (no background in any state; the icon is quiet at rest and full strength on hover, press or focus; for actions inside a row with its own hover)",
       "shape: inset (container radius minus inset via --control-inset-radius) | control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
       "size: xs (20px, 12px icon) | sm (default, 32px, 16px icon) | md (40px) | lg (52px)",
       "emoji: a glyph in place of the icon, at --size-emoji-inline",

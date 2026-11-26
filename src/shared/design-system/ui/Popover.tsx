@@ -102,11 +102,18 @@ export function PopoverPopup({
   );
 }
 
-export function PopoverTitle(
-  props: Omit<ComponentProps<typeof BasePopover.Title>, "className">,
-) {
+export function PopoverTitle({
+  size = "md",
+  ...props
+}: Omit<ComponentProps<typeof BasePopover.Title>, "className"> & {
+  /** `sm` for a title sharing a row with compact controls. */
+  size?: "sm" | "md";
+}) {
   return (
-    <BasePopover.Title {...props} className="buzz-popover-title text-label" />
+    <BasePopover.Title
+      {...props}
+      className={`buzz-popover-title ${size === "sm" ? "text-label-sm" : "text-label"}`}
+    />
   );
 }
 

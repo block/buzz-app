@@ -61,6 +61,65 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.relay-notes/notes", NoteIcon],
   ["com.squareup.docs/docs", NoteIcon],
 ]);
+/** The plugins pinned to the sidebar's Plugins card, in the person's order.
+ * Before they ever choose, the built-in plugins' pages are the pins, in
+ * navigation order; undefined while it isn't known which plugins are built in. */
+export function resolvePluginPins(
+  saved: readonly string[] | undefined,
+  pages: readonly RegisteredPage[],
+  builtIn: ((pluginId: string) => boolean) | undefined,
+): readonly string[] | undefined {
+  if (saved) return saved;
+  if (!builtIn) return undefined;
+  return [
+    ...new Set(
+      orderPages(pages)
+        .filter((page) => builtIn(page.pluginId))
+        .map((page) => page.pluginId),
+    ),
+  ];
+}
+
+/** Pins A–Z by their page's label; pins without a page here (off or not
+ * installed) keep their saved order after them. */
+export function sortPinsByLabel(
+  pins: readonly string[],
+  pages: readonly RegisteredPage[],
+): readonly string[] {
+  const labels = new Map<string, string>();
+  for (const page of pages)
+    if (!labels.has(page.pluginId))
+      labels.set(page.pluginId, pagePresentation(page).label);
+  const shown = pins.filter((id) => labels.has(id));
+  shown.sort(
+    (a, b) =>
+      (labels.get(a) ?? "").localeCompare(labels.get(b) ?? "", undefined, {
+        sensitivity: "base",
+      }) || a.localeCompare(b),
+  );
+  return [...shown, ...pins.filter((id) => !labels.has(id))];
+}
+
+/** The card's rows: pinned plugins' pages in pin order, then the open page
+ * while it isn't pinned, so the open destination always shows. Without pins,
+ * every page. */
+export function pinnedPages(
+  pages: readonly RegisteredPage[],
+  pins: readonly string[] | undefined,
+  selected: string,
+) {
+  const ordered = orderPages(pages);
+  if (!pins) return ordered;
+  const rank = new Map(pins.map((id, index) => [id, index]));
+  const pinned = ordered
+    .filter((page) => rank.has(page.pluginId))
+    .sort((a, b) => (rank.get(a.pluginId) ?? 0) - (rank.get(b.pluginId) ?? 0));
+  const open = ordered.find(
+    (page) => page.key === selected && !rank.has(page.pluginId),
+  );
+  return open ? [...pinned, open] : pinned;
+}
+
 /** Resolve host navigation policy once, independently of icons and registrations. */
 export function pagePlacement(page: RegisteredPage) {
   if (!page.primary) return undefined;

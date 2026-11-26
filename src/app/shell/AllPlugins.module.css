@@ -1,0 +1,108 @@
+@reference "../../shared/styles/globals.css";
+
+/* The popup has no padding of its own: search stays put above the list,
+   which scrolls within the space the popover was given. */
+.frame {
+  display: flex;
+  max-height: var(--available-height);
+  flex-direction: column;
+}
+/* "Your plugins" and the pin sort share one centered row above the list. */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) 0 var(--space-3);
+}
+.search {
+  padding: var(--space-2) var(--space-2) 0;
+}
+.body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* Pinned plugins and the rest read as two groups without headings. */
+.list[data-after-pinned] {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border-standard);
+}
+.row {
+  position: relative;
+  border-radius: var(--radius-row);
+}
+.row[data-dragging] {
+  opacity: 0.4;
+}
+/* Where a dragged pin will land: the sidebar cards' landing line, a straight
+   bar with round ends along the row's top edge. */
+.row[data-drop-target]::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset-inline: var(--space-2);
+  top: 0;
+  height: var(--size-drop-line);
+  border-radius: var(--radius-pill);
+  background: var(--border-drop-line);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.actions {
+  display: inline-flex;
+  min-height: var(--size-row);
+  flex: none;
+  align-items: center;
+  padding-inline-end: var(--space-1);
+}
+/* Reorder leads the row and pin ends it. Both always show; unpinned rows keep
+   the reorder slot empty so every plugin's icon lines up. */
+.grip {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  width: var(--size-row);
+  /* The handle tucks into the row's leading inset so it sits close to the
+     plugin it moves; it stays above the row so it keeps its own clicks. */
+  margin-inline-end: calc(-1 * var(--space-2));
+  min-height: var(--size-row);
+  flex: none;
+  align-items: center;
+  justify-content: center;
+}
+.icon {
+  display: inline-flex;
+  width: 1rem;
+  flex: none;
+  justify-content: center;
+}
+.empty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-subtle);
+  text-align: center;
+}
+.dragOverlay {
+  @apply text-body-sm;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: max-content;
+  max-width: 20rem;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-popover);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-standard);
+  cursor: grabbing;
+}

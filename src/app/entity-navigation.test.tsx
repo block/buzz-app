@@ -1123,10 +1123,12 @@ it("lists active primary pages in the app dock", async () => {
   // Disabling optional pages removes their entries without hiding Messages.
   for (const id of ["buzz.inbox", "buzz.bestie", "buzz.repos"])
     await act(() => current.plugins.change("disable", id));
-  // Without sidebar pages, the sidebar lists no empty Plugins section.
+  // Without sidebar pages, the Plugins card keeps only its All plugins row.
   expect(
-    screen.queryByRole("navigation", { name: "Pages" }),
-  ).not.toBeInTheDocument();
+    within(pagesNav())
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["All plugins"]);
   expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   expect(
     screen.getByRole("complementary", { name: "Sidebar" }),

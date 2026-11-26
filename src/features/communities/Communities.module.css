@@ -36,9 +36,9 @@
   content: "";
   position: absolute;
   inset-inline: 0;
-  height: calc(var(--space-1) / 2 + 1px);
+  height: var(--size-drop-line);
   border-radius: var(--radius-pill);
-  background: var(--border-accent);
+  background: var(--border-drop-line);
   pointer-events: none;
 }
 .item[data-drop-edge="before"]::before {

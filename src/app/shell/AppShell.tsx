@@ -3,8 +3,8 @@ import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
 import {
   navigationOwner,
-  orderPages,
   pagePlacement,
+  pinnedPages,
   legacySidebarAvailable,
 } from "./presentation";
 import {
@@ -98,6 +98,8 @@ function AppShellContent({
   companion,
   creationAction,
   creationInSidebar = true,
+  pluginPins,
+  allPlugins,
   children,
 }: {
   pages: readonly RegisteredPage[];
@@ -112,6 +114,10 @@ function AppShellContent({
   /** Centered modal frame below window chrome. */
   workspaceRef?: Ref<HTMLDivElement>;
   sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
+  /** Plugin ids pinned to the Plugins card, in order; undefined lists every page. */
+  pluginPins?: readonly string[] | undefined;
+  /** The Plugins card's last row, which opens every plugin. */
+  allPlugins?: ReactNode;
   sidebarAvailable?: boolean;
   communities: Communities;
   /** Unread for communities other than the selected one, on the switcher. */
@@ -265,12 +271,14 @@ function AppShellContent({
   // sidebar subtree instead of re-rendering every row on each click.
   const navigation = useMemo(() => {
     // Sidebars retain their documented app-link and creation slots.
-    const sidebarPages = orderPages(
+    const sidebarPages = pinnedPages(
       pages.filter((page) => pagePlacement(page) === "sidebar"),
+      pluginPins,
+      selected,
     );
     const content = sidebar
       ? sidebar(
-          sidebarPages.length > 0 && (
+          (sidebarPages.length > 0 || !!allPlugins) && (
             <nav aria-label="Pages" className="shell-pages">
               <PageNavigation
                 pages={sidebarPages}
@@ -278,13 +286,22 @@ function AppShellContent({
                 onSelect={onSelect}
                 previews
               />
+              {allPlugins}
             </nav>
           ),
           creationInNavigation ? <div ref={setCreationContainer} /> : null,
         )
       : null;
     return content;
-  }, [pages, selected, sidebar, onSelect, creationInNavigation]);
+  }, [
+    pages,
+    selected,
+    sidebar,
+    onSelect,
+    creationInNavigation,
+    pluginPins,
+    allPlugins,
+  ]);
   return (
     <div
       data-shell-tone={tone}

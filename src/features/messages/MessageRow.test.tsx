@@ -577,17 +577,23 @@ it.each(["bare", "angle", "markdown", "escaped"] as const)(
 
 it.each([
   ["😀 🙏 👏", [], true],
-  ["😀".repeat(40), [], true],
+  ["😀".repeat(9), [], true],
+  ["😀".repeat(40), [], false],
+  [
+    ":party: ".repeat(9),
+    [{ shortcode: "party", url: "https://emoji.test/party.png" }],
+    true,
+  ],
   [
     ":party: ".repeat(24),
     [{ shortcode: "party", url: "https://emoji.test/party.png" }],
-    true,
+    false,
   ],
   ["😀 🙏 👏 😄 hello", [], false],
   [":unknown: 😀", [], false],
   ["  \n  ", [], false],
 ] as const)(
-  "keeps emoji-only message size independent of count: %s",
+  "shows up to nine emoji large, and longer runs as text: %s",
   (content, emoji, large) => {
     const html = renderToStaticMarkup(
       <MessageRow

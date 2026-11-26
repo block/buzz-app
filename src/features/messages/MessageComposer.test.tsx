@@ -8314,8 +8314,8 @@ it("keeps custom emoji text readable and sends repeated shortcodes unchanged", (
 
 it.each([
   ["  :party: \n\t :party:  ", true],
-  [":party:".repeat(24), true],
-  [`${Array(24).fill(":party:").join(" ")} 😀`, false],
+  [":party:".repeat(9), true],
+  [`${Array(8).fill(":party:").join(" ")} 😀`, false],
 ])(
   "classifies images-only emoji drafts without changing their text: %s",
   (draft, imagesOnly) => {
@@ -8329,6 +8329,13 @@ it.each([
     else expect(h.input()).not.toHaveAttribute("data-emoji-images-only");
   },
 );
+
+it("keeps a draft of more than nine emoji at text size", () => {
+  const h = mount();
+  h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
+  h.fill(":party:".repeat(10));
+  expect(h.input()).not.toHaveAttribute("data-single-emoji");
+});
 
 it("renders a leading custom emoji inline without changing trailing text", () => {
   const h = mount();

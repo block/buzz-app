@@ -139,10 +139,52 @@ it("retry saves the System choice even when its current palette is light", async
 it("describes what the emoji size choice changes", () => {
   render(<ToastProvider>{preferencesPage()}</ToastProvider>);
   expect(
-    screen.getByRole("combobox", { name: "Emoji size" }),
+    screen.getByRole("group", { name: "Emoji size" }),
   ).toHaveAccessibleDescription(
-    "Large shows emoji-only messages and reactions bigger.",
+    "Emoji-only messages show at this size. You can also drag the corner of one in a conversation.",
   );
+});
+
+it("keeps interface size buttons focusable at their limits", () => {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  appearance.setFontScale(2);
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const increase = screen.getByRole("button", {
+    name: "Increase interface size",
+  });
+  increase.focus();
+  expect(increase).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(increase);
+  expect(appearance.snapshot().fontScale).toBe(2);
+  expect(increase).toHaveFocus();
+});
+
+it("steps emoji size by ten percent within range", () => {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  appearance.setEmojiSize(100);
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const decrease = screen.getByRole("button", { name: "Decrease emoji size" });
+  // Stays focusable at the limit, so keyboard focus isn't dropped.
+  expect(decrease).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(decrease);
+  expect(appearance.snapshot().emojiSize).toBe(100);
+  fireEvent.click(screen.getByRole("button", { name: "Increase emoji size" }));
+  expect(appearance.snapshot().emojiSize).toBe(110);
+  expect(screen.getByRole("group", { name: "Emoji size" })).toHaveTextContent(
+    "110%",
+  );
+  fireEvent.click(decrease);
+  expect(appearance.snapshot().emojiSize).toBe(100);
 });
 
 it("shows reset only away from the default size and hides it after reset", () => {

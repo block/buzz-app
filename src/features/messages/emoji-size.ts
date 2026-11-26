@@ -1,4 +1,16 @@
+import { createContext } from "react";
+import type { Appearance } from "../../shared/theme/service";
 import type { CustomEmoji } from "../relay/emoji";
+
+/** The saved emoji size, which conversations can change in place. Absent in
+    previews and tests, where emoji-only messages show no size handle. */
+export type EmojiSizePreference = Pick<
+  Appearance,
+  "subscribe" | "snapshot" | "setEmojiSize"
+>;
+export const EmojiSizeContext = createContext<EmojiSizePreference | undefined>(
+  undefined,
+);
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const emojiPresentation =
   /\p{Extended_Pictographic}|\p{Regional_Indicator}|[\d#*]\uFE0F?\u20E3/u;
@@ -28,9 +40,18 @@ export const isEmojiOnly = (
   entries: readonly CustomEmoji[] = [],
 ) => isUnicodeEmojiOnly(renderedEmoji(value, entries));
 
+/** Most emoji a message can hold and still show large. More than this reads
+    as a run of text, so it keeps text size. */
+export const MAX_LARGE_EMOJI = 9;
+
 export function usesLargeEmojiPresentation(
   value: string,
   entries: readonly CustomEmoji[] = [],
 ) {
-  return isEmojiOnly(value, entries);
+  const rendered = renderedEmoji(value, entries);
+  if (!isUnicodeEmojiOnly(rendered)) return false;
+  let count = 0;
+  for (const { segment } of graphemes.segment(rendered.trim()))
+    if (!/^\s+$/u.test(segment) && ++count > MAX_LARGE_EMOJI) return false;
+  return true;
 }

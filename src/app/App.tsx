@@ -31,6 +31,7 @@ import { PluginUpdates } from "./PluginUpdates";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
 import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
+import { EmojiSizeContext } from "../features/messages/emoji-size";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
@@ -146,14 +147,16 @@ function ConnectedApp({ services }: { services: AppServices }) {
     >
       <AgentCompletionNotifications services={services} />
       <AgentsContext.Provider value={services.agents}>
-        <PluginUpdates
-          plugins={services.plugins}
-          relay={services.relay}
-          installRequests={services.pluginInstallRequests}
-          navigation={services.navigation}
-        >
-          <ConnectedAppContent services={services} />
-        </PluginUpdates>
+        <EmojiSizeContext value={services.appearance}>
+          <PluginUpdates
+            plugins={services.plugins}
+            relay={services.relay}
+            installRequests={services.pluginInstallRequests}
+            navigation={services.navigation}
+          >
+            <ConnectedAppContent services={services} />
+          </PluginUpdates>
+        </EmojiSizeContext>
       </AgentsContext.Provider>
     </ToastProvider>
   );

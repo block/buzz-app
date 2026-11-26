@@ -316,6 +316,80 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   font-size: var(--size-emoji-display);
   line-height: var(--size-emoji-line);
 }
+/* Emoji-only content sizes to its glyphs so the size handle sits at their
+   corner, clear of the message's hover toolbar. */
+.resizableEmoji {
+  position: relative;
+  inline-size: fit-content;
+  padding-inline-end: var(--space-6);
+}
+.emojiSizeHandle {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-end: 0;
+  inline-size: var(--space-6);
+  block-size: var(--space-6);
+  border-radius: var(--radius-chip);
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+}
+.emojiSizeHandle:dir(rtl) {
+  cursor: nesw-resize;
+}
+/* A rounded corner mark, like a resize grip. */
+.emojiSizeHandle::before {
+  content: "";
+  position: absolute;
+  inset: var(--space-2);
+  border-block-end: 2px solid var(--affordance-accent-prominent);
+  border-inline-end: 2px solid var(--affordance-accent-prominent);
+  border-end-end-radius: var(--radius-chip);
+}
+/* Your own messages sit at the far edge, so the handle moves to the emoji's
+   near corner, the side with room. */
+.message[data-viewer-message] .resizableEmoji {
+  padding-inline: var(--space-6) 0;
+}
+.message[data-viewer-message] .emojiSizeHandle {
+  inset-inline: 0 auto;
+  cursor: nesw-resize;
+}
+.message[data-viewer-message] .emojiSizeHandle:dir(rtl) {
+  cursor: nwse-resize;
+}
+.message[data-viewer-message] .emojiSizeHandle::before {
+  border-inline-end: 0;
+  border-inline-start: 2px solid var(--affordance-accent-prominent);
+  border-end-end-radius: 0;
+  border-end-start-radius: var(--radius-chip);
+}
+.resizableEmoji:hover .emojiSizeHandle,
+.resizableEmoji[data-resizing] .emojiSizeHandle,
+.emojiSizeHandle:focus-visible {
+  opacity: 1;
+}
+html[data-keyboard-navigation] .emojiSizeHandle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+@media (hover: none) {
+  .emojiSizeHandle {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .emojiSizeHandle {
+    transition: opacity var(--duration-state) var(--easing-enter);
+  }
+  /* Ease between sizes picked in Settings or with the keyboard. Off while
+     dragging, so the glyphs track the pointer without lag. */
+  .resizableEmoji:not([data-resizing]) .text[data-single-emoji] {
+    transition-property: font-size, line-height, min-height;
+    transition-duration: var(--duration-state);
+    transition-timing-function: var(--easing-enter);
+  }
+}
 .reactions {
   min-inline-size: 0;
   border: 0;

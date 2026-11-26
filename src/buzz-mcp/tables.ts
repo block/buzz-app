@@ -134,19 +134,23 @@ export const TABLE_HANDLERS: Readonly<
       );
     const tables: BuzzEvent[] = [];
     for (let offset = 0; ; offset += PAGE) {
-      if (offset >= MAX_TABLES)
-        throw new Error(
-          `You have more than ${MAX_TABLES} tables; table_list cannot list them all.`,
-        );
+      const beyond = offset >= MAX_TABLES;
       const page = await client.query([
         {
           artifact: "current",
           "#h": [h],
           "#type": [TABLE_FILE],
-          limit: PAGE,
+          limit: beyond ? 1 : PAGE,
           offset,
         },
       ]);
+      if (beyond) {
+        if (page.length)
+          throw new Error(
+            `You have more than ${MAX_TABLES} tables; table_list cannot list them all.`,
+          );
+        break;
+      }
       tables.push(...page.filter((table) => table.pubkey === me));
       if (page.length < PAGE) break;
     }

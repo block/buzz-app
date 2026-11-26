@@ -599,6 +599,35 @@ function reconnectHarness(
 }
 type ReconnectHarness = ReturnType<typeof reconnectHarness>;
 
+it("loads history on reopening after a stream drop cancels its first read", async () => {
+  const h = reconnectHarness();
+  const channels = h.owner.session.channels;
+  try {
+    await h.list();
+    // The socket is connected but the channel route has yet to establish.
+    h.live.state({ status: "connected", routes: [] });
+    const leave = channels.subscribeWindow("c", () => {});
+    channels.ensure("c");
+    const initial = h.read();
+    leave();
+    await h.drop();
+    expect(initial.signal?.aborted).toBe(true);
+
+    const leaveReopened = channels.subscribeWindow("c", () => {});
+    try {
+      channels.ensure("c");
+      const seen = message(h.alice, "c", "history after reopening", 10);
+      h.read().respond(h.page("head", [seen], null));
+      await flush();
+      expect(h.rows()).toEqual([seen.id]);
+    } finally {
+      leaveReopened();
+    }
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("a reconnect catch-up head newer than every loaded row pages back until it reaches one", async () => {
   // Live replay covers minutes. The head alone would leave the loaded rows on
   // screen with a silent gap before it; each page merges as it lands.

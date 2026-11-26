@@ -4354,9 +4354,11 @@ export function createChannelStore(
         return;
       }
       if (transport.demand?.(channelId)) return;
+      // A stream drop can cancel the initial head after the reader has left.
+      // On revisit, a loading window without a read still owes its head.
       if (
-        state.snapshot.status !== "idle" &&
-        state.snapshot.status !== "error"
+        state.snapshot.status === "ready" ||
+        (state.snapshot.status === "loading" && state.controller)
       ) {
         // Aux work a failed read left over resumes on revisit.
         void fillAux(state);

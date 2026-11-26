@@ -172,6 +172,7 @@ export function AppearanceSettings({
                   type="button"
                   aria-label="Decrease interface size"
                   disabled={fontScale <= 0.8}
+                  focusableWhenDisabled
                   onClick={() => appearance.setFontScale(fontScale - 0.1)}
                   icon={<MinusIcon size={16} aria-hidden="true" />}
                 />
@@ -186,6 +187,7 @@ export function AppearanceSettings({
                   ref={increaseButton}
                   aria-label="Increase interface size"
                   disabled={fontScale >= 2}
+                  focusableWhenDisabled
                   onClick={() => appearance.setFontScale(fontScale + 0.1)}
                   icon={<PlusIcon size={16} aria-hidden="true" />}
                 />

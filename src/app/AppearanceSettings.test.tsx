@@ -145,6 +145,25 @@ it("describes what the emoji size choice changes", () => {
   );
 });
 
+it("keeps interface size buttons focusable at their limits", () => {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  appearance.setFontScale(2);
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const increase = screen.getByRole("button", {
+    name: "Increase interface size",
+  });
+  increase.focus();
+  expect(increase).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(increase);
+  expect(appearance.snapshot().fontScale).toBe(2);
+  expect(increase).toHaveFocus();
+});
+
 it("steps emoji size by ten percent within range", () => {
   const appearance = createAppearance();
   preferenceAppearances.push(appearance);

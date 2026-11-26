@@ -11,15 +11,17 @@ it("commits microphone audio at a pause and updates a single transcript reply", 
     let options: ListenOptions | undefined;
     const commit = vi.fn();
     const cancel = vi.fn();
+    const stop = vi.fn(() => options?.onState?.("idle"));
     const speech = {
       backend: () => "hosted",
       status: () => "ready",
       subscribe: () => () => {},
-      listen(next: ListenOptions) {
+      listen: vi.fn((next: ListenOptions) => {
         options = next;
+        next.onCallLimit?.(5);
         next.onState?.("listening");
-        return { stop() {}, cancel, commit };
-      },
+        return { stop, cancel, commit };
+      }),
     } as unknown as Speech;
     const send = vi.fn((_event: unknown) => "transcript");
     const session = {
@@ -83,6 +85,9 @@ it("commits microphone audio at a pause and updates a single transcript reply", 
       },
     ]);
     expect(report).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(speech.listen).toHaveBeenCalledTimes(2);
     controller.abort();
     expect(cancel).toHaveBeenCalledOnce();
   } finally {

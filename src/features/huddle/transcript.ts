@@ -20,12 +20,12 @@ export function createMicrophoneTranscript(
     const shouldRecognize = voiced >= sampleRate * 0.12;
     frames = [];
     length = voiced = silence = 0;
-    if (!shouldRecognize || signal.aborted) return;
+    if (!shouldRecognize || signal.aborted) return queue;
     if (pending >= 3) {
       report(
         new Error("Speech recognition fell behind. A transcript was skipped."),
       );
-      return;
+      return queue;
     }
     pending++;
     queue = queue
@@ -49,6 +49,7 @@ export function createMicrophoneTranscript(
       .finally(() => {
         pending--;
       });
+    return queue;
   }
   return {
     input(frame: number[]) {

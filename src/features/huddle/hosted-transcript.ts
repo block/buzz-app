@@ -15,6 +15,7 @@ export function startHostedHuddleTranscript(
   active: () => boolean,
   live: () => boolean,
   report: (error: unknown) => void,
+  onReady?: () => void,
 ) {
   const backend = speech.backend();
   const outbox = session.outbox;
@@ -24,6 +25,9 @@ export function startHostedHuddleTranscript(
   let connection: Listening | undefined;
   let healthy = true;
   let ready = false;
+  let stopping: (() => void) | undefined;
+  const writes = new Set<Promise<void>>();
+  let renewal: ReturnType<typeof setTimeout> | undefined;
   let voiced = 0;
   let silence = 0;
   let duration = 0;
@@ -32,16 +36,19 @@ export function startHostedHuddleTranscript(
     voiced = silence = duration = 0;
   };
   const fail = (error: unknown) => {
-    healthy = ready = false;
+    clearTimeout(renewal);
+    healthy = ready = inputTrack.enabled = false;
     if (!signal.aborted) report(error);
   };
   const start = () => {
-    if (signal.aborted || !active() || !healthy) return;
+    if (signal.aborted || !active() || !healthy || stopping) return;
     const utterances = new Map<
       string,
       ReturnType<typeof streamVoiceTranscript>
     >();
     let expiresAt: number | undefined;
+    let renewing = false;
+    inputTrack.enabled = false;
     voiced = silence = duration = 0;
     connection = speech.listen({
       community,
@@ -50,6 +57,12 @@ export function startHostedHuddleTranscript(
       onEnd() {},
       onCallLimit(maxSeconds) {
         expiresAt = Date.now() + maxSeconds * 1000;
+        renewal = setTimeout(() => {
+          if (!active() || signal.aborted) return;
+          renewing = true;
+          ready = inputTrack.enabled = false;
+          connection?.stop();
+        }, maxSeconds * 1000);
       },
       continuous: {
         track: inputTrack,
@@ -110,17 +123,24 @@ export function startHostedHuddleTranscript(
           if ("delta" in update) line.append(update.delta);
           else {
             utterances.delete(id);
-            void line.finish(update.final).catch(report);
+            const write = line.finish(update.final).catch(report);
+            writes.add(write);
+            void write.finally(() => writes.delete(write));
           }
         },
       },
       onError(_failure, error) {
-        fail(error);
+        if (!(expiresAt && Date.now() >= expiresAt)) fail(error);
       },
       onState(state) {
-        ready = state === "listening";
-        if (state !== "idle" || !healthy || signal.aborted) return;
-        if (expiresAt && Date.now() >= expiresAt - 2000) queueMicrotask(start);
+        ready = inputTrack.enabled = state === "listening";
+        if (ready) onReady?.();
+        if (state !== "idle") return;
+        clearTimeout(renewal);
+        if (stopping) return stopping();
+        if (!healthy || signal.aborted) return;
+        if (renewing || (expiresAt && Date.now() >= expiresAt - 2000))
+          queueMicrotask(start);
         else fail("The hosted transcription connection closed early.");
       },
     });
@@ -137,15 +157,18 @@ export function startHostedHuddleTranscript(
   signal.addEventListener(
     "abort",
     () => {
+      clearTimeout(renewal);
+      inputTrack.enabled = false;
       unsubscribe();
       connection?.cancel();
+      stopping?.();
     },
     { once: true },
   );
   start();
   return {
-    get healthy() {
-      return healthy;
+    get ready() {
+      return ready;
     },
     input(frame: number[]) {
       if (!ready) return;
@@ -161,5 +184,16 @@ export function startHostedHuddleTranscript(
       if (silence >= sampleRate * 0.65 || duration >= sampleRate * 19) flush();
     },
     flush,
+    async finish() {
+      clearTimeout(renewal);
+      if (ready && connection) {
+        await new Promise<void>((resolve) => {
+          stopping = resolve;
+          inputTrack.enabled = false;
+          connection?.stop();
+        });
+      } else connection?.cancel();
+      await Promise.all(writes);
+    },
   };
 }

@@ -846,6 +846,27 @@ describe("automatic DM voice invitation", () => {
       await h.dispose();
     }
   });
+  it("still invites other eligible agents when one invitation fails", async () => {
+    vi.mocked(addChannelMember).mockClear();
+    vi.mocked(addChannelMember).mockRejectedValueOnce(new Error("Offline"));
+    const h = harness(
+      [{ ...parent, members: [...parent.members, "second-agent"] }, room],
+      () => ["agent", "second-agent"],
+    );
+    try {
+      await h.service.start(destination);
+      h.receive({ type: "connected", room: "room", participants: [] });
+      await vi.waitFor(() => expect(addChannelMember).toHaveBeenCalledTimes(2));
+      expect(addChannelMember).toHaveBeenLastCalledWith(
+        expect.anything(),
+        "room",
+        "second-agent",
+        expect.any(AbortSignal),
+      );
+    } finally {
+      await h.dispose();
+    }
+  });
   it.each(["leave", "ineligible", "wrong-parent", "already-member"])(
     "does not grant access after %s",
     async (scenario) => {
@@ -1329,6 +1350,12 @@ it.each([
       for (let i = 0; i < 10; i++) h.send(speech);
       for (let i = 0; i < 35; i++) h.send(silence);
       expect(h.bridge.recognize).toHaveBeenCalledTimes(3);
+      if (!root) {
+        h.service.mute();
+        for (let i = 0; i < 10; i++) h.send(speech);
+        await h.service.leave();
+        expect(h.transcribe).toHaveBeenCalledTimes(3);
+      }
     } finally {
       h.service.setRouting("agentCrossTalk", true);
       await h.dispose();

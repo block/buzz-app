@@ -90,6 +90,7 @@ export function remoteDmVoiceCalls(relay: RelayData, agents: Agents) {
   let stopChoices: (() => void) | undefined;
   let filterKey = "";
   let snapshot = idle;
+  let endingByOwner: string | undefined;
   let selectedAgent: string | undefined;
   let admissions: string[] = [];
   let epoch = 0;
@@ -170,6 +171,27 @@ export function remoteDmVoiceCalls(relay: RelayData, agents: Agents) {
           a.room.id.localeCompare(b.room.id),
       );
     const call = calls[0];
+    const previous = snapshot;
+    const parent = previous.destination?.channelId;
+    const room = previous.room;
+    const authority = current.session.relayAuthor;
+    if (
+      previous.id &&
+      parent &&
+      room &&
+      room !== call?.room.id &&
+      ownerAdmissions(events, room, parent, authority, viewer).length === 0 &&
+      events.some(
+        (event) =>
+          event.kind === 48102 &&
+          event.pubkey === authority &&
+          huddleRoom(event) === room &&
+          event.tags.some(([tag, value]) => tag === "h" && value === parent) &&
+          event.tags.some(([tag, value]) => tag === "p" && value === viewer) &&
+          admissions.includes(JSON.parse(event.content)?.admission_id),
+      )
+    )
+      endingByOwner = previous.id;
     if (!call) {
       selectedAgent = undefined;
       admissions = [];
@@ -193,6 +215,7 @@ export function remoteDmVoiceCalls(relay: RelayData, agents: Agents) {
       });
       deadline = Math.min(deadline ?? Infinity, call.room.startedAt + 3600);
     }
+    endingByOwner = undefined;
     if (deadline !== undefined)
       timer = setTimeout(refresh, Math.max(1, (deadline - now) * 1000));
   }
@@ -273,6 +296,7 @@ export function remoteDmVoiceCalls(relay: RelayData, agents: Agents) {
   return {
     snapshot: () => snapshot,
     voiceAgent: () => selectedAgent,
+    endedByOwner: (id: string) => endingByOwner === id,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -316,6 +340,7 @@ export function withRemoteDmVoiceCalls(
       ["connecting", "connected", "leaving"].includes(huddles.snapshot().phase)
         ? undefined
         : remote.voiceAgent(),
+    endedByOwner: remote.endedByOwner,
     subscribeLocalMicrophone: huddles.subscribeLocalMicrophone,
     voiceListening: huddles.voiceListening,
     voiceThinking: huddles.voiceThinking,

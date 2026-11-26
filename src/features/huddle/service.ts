@@ -37,11 +37,14 @@ export type HuddleSnapshot = Readonly<{
   thinking?: readonly string[];
   error?: string;
   transcriptError?: string;
+  cleanHangup?: true;
 }>;
 type Attempt = {
   id: string;
   connection: RelaySnapshot;
   abort: AbortController;
+  transcriptAbort: AbortController;
+  finishingTranscript?: true;
   audio?: HuddleAudio;
   transcript?: ReturnType<typeof createMicrophoneTranscript>;
   hostedTranscript?: ReturnType<typeof startHostedHuddleTranscript>;
@@ -174,6 +177,14 @@ export function createHuddles(
       !error && !remote && snapshot.phase === "connected"
         ? snapshot
         : undefined;
+    let transcript: Promise<unknown> | undefined;
+    if (previous && ending && !disposed) {
+      previous.finishingTranscript = true;
+      transcript = Promise.all([
+        previous.hostedTranscript?.finish(),
+        previous.transcript?.flush(),
+      ]);
+    } else previous?.transcriptAbort.abort();
     current = undefined;
     resetActivity();
     previous?.abort.abort();
@@ -198,10 +209,25 @@ export function createHuddles(
       ...snapshot,
       ...activitySnapshot(),
       phase: "leaving",
+      ...(ending && !disposed && { cleanHangup: true }),
       participants: [],
     });
     closing = Promise.resolve().then(async () => {
       try {
+        if (transcript) {
+          let deadline: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              transcript,
+              new Promise<void>((resolve) => {
+                deadline = setTimeout(resolve, 3000);
+              }),
+            ]);
+          } finally {
+            clearTimeout(deadline);
+            previous.transcriptAbort.abort();
+          }
+        }
         // A command that was dispatched may arrive after Cancel; close its exact ID.
         if (previous.opening) {
           await previous.opening.catch(() => {});
@@ -317,6 +343,7 @@ export function createHuddles(
       id,
       connection,
       abort,
+      transcriptAbort: new AbortController(),
       localPlayout: new Map(),
       microphoneListeners: new Set(),
       sender: createPcmSender(
@@ -350,10 +377,14 @@ export function createHuddles(
     const inviteAgent = async (roomId: string) => {
       if (!keys.length || invited) return;
       invited = true;
+      const reportInviteError = (error: unknown) => {
+        if (!valid(attempt) || keys.every((key) => seated(roomId, key))) return;
+        inviteError = `Couldn’t add the agent: ${message(error)}. Use Huddle options → Add someone to retry.`;
+        update({ ...snapshot, error: inviteError });
+      };
       try {
         await connection.session.channels.resolve?.([roomId]);
         if (!valid(attempt)) return;
-        const eligible = autoInvite();
         const channel = connection.session.channels.get?.(roomId);
         if (
           !channel?.huddle ||
@@ -361,20 +392,23 @@ export function createHuddles(
         )
           throw new Error("Couldn’t verify the Huddle room");
         for (const key of keys) {
-          if (!eligible.includes(key))
-            throw new Error("An agent is no longer available for voice");
-          if (!seated(roomId, key))
+          if (!valid(attempt)) return;
+          if (seated(roomId, key)) continue;
+          try {
+            if (!autoInvite().includes(key))
+              throw new Error("An agent is no longer available for voice");
             await addChannelMember(
               connection.session,
               roomId,
               key,
               attempt.abort.signal,
             );
+          } catch (error) {
+            reportInviteError(error);
+          }
         }
       } catch (error) {
-        if (!valid(attempt) || keys.every((key) => seated(roomId, key))) return;
-        inviteError = `Couldn’t add the agent: ${message(error)}. Use Huddle options → Add someone to retry.`;
-        update({ ...snapshot, error: inviteError });
+        reportInviteError(error);
       }
     };
     attempt.stopAccess = connection.session.channels.subscribeList(() => {
@@ -458,6 +492,7 @@ export function createHuddles(
         const roomId = event.room;
         void (async () => {
           await connection.session.channels.resolve?.([roomId], {
+            consistency: "strong",
             signal: attempt.abort.signal,
           });
           if (!valid(attempt)) return;
@@ -481,8 +516,18 @@ export function createHuddles(
               },
               transcriptDestination,
             });
-            const canTranscribe = () =>
-              valid(attempt) && accessible() === "allowed";
+            const canTranscribe = () => {
+              const active = relay.snapshot();
+              return (
+                !disposed &&
+                !attempt.transcriptAbort.signal.aborted &&
+                (valid(attempt) || attempt.finishingTranscript === true) &&
+                active.status === "ready" &&
+                active.session === connection.session &&
+                active.scope === connection.scope &&
+                accessible() === "allowed"
+              );
+            };
             const transcriptError = (error: unknown) => {
               if (valid(attempt))
                 update({ ...snapshot, transcriptError: message(error) });
@@ -495,15 +540,16 @@ export function createHuddles(
                 connection.session,
                 destination.relayUrl,
                 transcriptDestination,
-                attempt.abort.signal,
+                attempt.transcriptAbort.signal,
                 canTranscribe,
                 () => routing.liveTranscript,
                 transcriptError,
+                () => attempt.transcript?.flush(),
               );
             const recognize = bridge.recognize;
             if (parentAdmission && recognize)
               attempt.transcript = createMicrophoneTranscript(
-                attempt.abort.signal,
+                attempt.transcriptAbort.signal,
                 (text) => {
                   if (canTranscribe())
                     connection.session.messages.transcribe(
@@ -548,7 +594,7 @@ export function createHuddles(
           )
             return;
           activity(destination.viewer, samples);
-          if (attempt.hostedTranscript?.healthy)
+          if (attempt.hostedTranscript?.ready)
             attempt.hostedTranscript.input(samples);
           else attempt.transcript?.input(samples);
           void attempt.sender.send(samples);
@@ -732,7 +778,7 @@ export function createHuddles(
       const muted = !snapshot.muted;
       if (muted) {
         current.sender.clear();
-        if (current.hostedTranscript?.healthy) current.hostedTranscript.flush();
+        if (current.hostedTranscript?.ready) current.hostedTranscript.flush();
         else current.transcript?.flush();
       }
       current.audio?.mute(muted);

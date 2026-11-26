@@ -36,6 +36,7 @@ export function createHuddleVoices(
       >
     > & {
       voiceAgent?(): string | undefined;
+      endedByOwner?(call: string): boolean;
     },
   agents: Pick<Agents, "snapshot" | "subscribe" | "types" | "reserveVoice">,
   relay: RelayData,
@@ -59,6 +60,9 @@ export function createHuddleVoices(
   ): Seat {
     const id = crypto.randomUUID();
     const callSession = session;
+    const remoteCall = huddles.voiceAgent?.() === agent.pubkey;
+    let ownerPresent = false;
+    let ownerLeft = false;
     const abort = new AbortController();
     let connection: AgentVoiceConnection | undefined;
     let stopLocalMicrophone: (() => void) | undefined;
@@ -127,14 +131,19 @@ export function createHuddleVoices(
             if (abort.signal.aborted) return;
             if (event.type === "ended") {
               if (event.error) fail(event.error);
-              else void stop();
+              else {
+                ownerLeft = remoteCall && ownerPresent;
+                void stop();
+              }
               return;
             }
-            if (
-              (event.type === "participants" || event.type === "connected") &&
-              !event.participants.includes(agent.owner)
-            )
-              return void stop();
+            if (event.type === "participants" || event.type === "connected") {
+              if (!event.participants.includes(agent.owner)) {
+                ownerLeft = remoteCall && ownerPresent;
+                return void stop();
+              }
+              ownerPresent = true;
+            }
             // Defense in depth; privacy tests count at the native decode site.
             if (
               event.type === "audio" &&
@@ -190,7 +199,7 @@ export function createHuddleVoices(
                   abort.signal.aborted ||
                   huddles.snapshot().id !== call ||
                   event.kind !== 9 ||
-                  event.pubkey === agent.pubkey ||
+                  event.pubkey !== agent.owner ||
                   tag(event, "h") !== conversation.channelId ||
                   (threadReference(event)?.rootId !== conversation.root &&
                     threadReference(event)?.rootId !==
@@ -241,8 +250,9 @@ export function createHuddleVoices(
               const current = huddles.snapshot();
               const relayState = relay.snapshot();
               return (
-                current.id === call &&
-                current.phase === "leaving" &&
+                ((current.id === call && current.cleanHangup === true) ||
+                  (remoteCall &&
+                    (ownerLeft || huddles.endedByOwner?.(call) === true))) &&
                 relayState.session === callSession &&
                 relayState.scope === destination.scope &&
                 relayState.status === "ready"
@@ -325,7 +335,7 @@ export function createHuddleVoices(
       resolution = pending;
       // Resolve only for voice candidates. A failure leaves seats closed and
       // retries on the next notification, never from the rejection itself.
-      void session.channels.resolve?.([room]).then(
+      void session.channels.resolve?.([room], { consistency: "strong" }).then(
         () => {
           if (resolution !== pending) return;
           pending.ready = true;

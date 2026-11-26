@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { Agent, Agents } from "../agents/service";
+import type { Agent, Agents, AgentVoicePipe } from "../agents/service";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { EventData } from "../relay/events";
 import { remoteDmVoiceCalls, withRemoteDmVoiceCalls } from "./remote-dm-voice";
@@ -76,7 +76,15 @@ function fixture() {
   } as Agent;
   const input = vi.fn(),
     close = vi.fn();
-  const voice = vi.fn(async () => ({ input, close }));
+  const resume = vi.fn();
+  const voice = vi.fn(async (seat: AgentVoicePipe) => {
+    seat.signal.addEventListener(
+      "abort",
+      () => resume(seat.resumeOnClose?.()),
+      { once: true },
+    );
+    return { input, close };
+  });
   const agents = {
     snapshot: () => ({ status: "ready", running: [agent] }),
     subscribe: subscribe(channels),
@@ -155,6 +163,7 @@ function fixture() {
   cleanups.push(stop);
   return {
     remote,
+    resume,
     bridge,
     voice,
     close,
@@ -199,6 +208,7 @@ function fixture() {
 }
 it("seats a phone caller's Codex peer without opening a desktop human call, and stops on leave", async () => {
   const f = fixture();
+  Object.assign(f.backing, { huddleTranscript: { channelId: parent } });
   expect(f.bridge.open).not.toHaveBeenCalled();
   f.emit(48101);
   await vi.waitFor(() => expect(f.voice).toHaveBeenCalledOnce());
@@ -214,6 +224,7 @@ it("seats a phone caller's Codex peer without opening a desktop human call, and 
   expect(f.input).toHaveBeenCalledExactlyOnceWith([0]);
   f.emit(48102, authority, f.now + 1);
   await vi.waitFor(() => expect(f.close).toHaveBeenCalledOnce());
+  expect(f.resume).toHaveBeenCalledExactlyOnceWith(true);
 });
 it.each([
   "forged",

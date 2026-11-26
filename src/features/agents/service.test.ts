@@ -5595,6 +5595,7 @@ describe("voice launch and transcripts", () => {
             ...(root ? { root } : {}),
           },
           signal: controller.signal,
+          resumeOnClose: () => root !== undefined,
           output: async () => {},
           ended: () => {},
         });
@@ -5605,16 +5606,26 @@ describe("voice launch and transcripts", () => {
         await vi.waitFor(async () =>
           expect(await published(f.native, 9)).toHaveLength(1),
         );
-        await seat.transcript("agent", "Spoken answer");
-        stream = false;
-        seat.transcriptDelta?.("An unfinished line");
-        expect(await published(f.native, 9)).toHaveLength(1);
-        await seat.transcript("agent", "Finished line");
-        controller.abort();
+        if (root) {
+          seat.transcriptDelta?.(" answer");
+          await vi.waitFor(async () =>
+            expect(await published(f.native, 40003)).toHaveLength(1),
+          );
+          const correction = seat.transcript("agent", "Spoken answer.");
+          controller.abort();
+          await correction;
+        } else {
+          await seat.transcript("agent", "Spoken answer");
+          stream = false;
+          seat.transcriptDelta?.("An unfinished line");
+          expect(await published(f.native, 9)).toHaveLength(1);
+          await seat.transcript("agent", "Finished line");
+          controller.abort();
+        }
         seat.transcriptDelta?.("Late fragment");
         await seat.transcript("agent", "Late answer");
         const lines = await published(f.native, 9);
-        expect(lines).toHaveLength(2);
+        expect(lines).toHaveLength(root ? 1 : 2);
         expect(lines[0]).toMatchObject({
           pubkey: bot,
           tags: [
@@ -5624,7 +5635,7 @@ describe("voice launch and transcripts", () => {
           ],
           content: "Spoken",
         });
-        expect(lines[1]?.content).toBe("Finished line");
+        if (!root) expect(lines[1]?.content).toBe("Finished line");
         expect(await published(f.native, 40003)).toEqual([
           expect.objectContaining({
             pubkey: bot,
@@ -5634,6 +5645,9 @@ describe("voice launch and transcripts", () => {
             ],
             content: "Spoken answer",
           }),
+          ...(root
+            ? [expect.objectContaining({ content: "Spoken answer." })]
+            : []),
         ]);
       } finally {
         await f.ctx.fiber.dispose();
@@ -8134,6 +8148,7 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
       event("others", { tags: [["h", "dm-others"]] }),
       event("unknown", { tags: [["h", "dm-unknown"]] }),
       inDm("edit", { kind: 40003 }),
+      inDm("spoken", { tags: [["buzz:message-source", "huddle-transcript"]] }),
       inDm("like", { kind: 7, tags: [["e", "x".repeat(64)]] }),
       inDm("own", { pubkey: bot }),
     ],

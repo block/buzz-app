@@ -62,7 +62,7 @@ afterEach(async () => {
   await Promise.all(disposals.splice(0).map((dispose) => dispose()));
   vi.useRealTimers();
 });
-function setup() {
+function setup(owner = "owner") {
   const h = observable(),
     a = observable(),
     r = observable(),
@@ -72,9 +72,9 @@ function setup() {
     id: "human",
     room: "room",
     muted: false,
-    participants: ["owner", "stranger"],
+    participants: [owner, "stranger"],
     destination: {
-      viewer: "owner",
+      viewer: owner,
       scope: "scope",
       relayUrl: origin,
       channelId: "parent",
@@ -84,9 +84,9 @@ function setup() {
   let room: ChannelSummary = {
     id: "room",
     name: "Room",
-    members: ["owner", "a", "b"],
+    members: [owner, "a", "b"],
   };
-  let running = [agent("a"), agent("b")];
+  let running = [agent("a"), agent("b")].map((entry) => ({ ...entry, owner }));
   const connections = new Map<
     string,
     { input: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
@@ -114,11 +114,13 @@ function setup() {
     touch: vi.fn(async () => {}),
     send: vi.fn<HuddleBridge["send"]>(async () => {}),
   };
-  const resolveRoom = vi.fn(async () => {});
+  const resolveRoom = vi.fn<
+    NonNullable<RelaySnapshot["session"]["channels"]["resolve"]>
+  >(async () => {});
   let snapshot = {
     status: "ready",
     scope: "scope",
-    viewer: "owner",
+    viewer: owner,
     session: {
       subscribeLive(listener: LiveListener) {
         liveListeners.add(listener);
@@ -129,7 +131,7 @@ function setup() {
       profiles: {
         snapshot: () =>
           new Map([
-            ["owner", { name: "John" }],
+            [owner, { name: "John" }],
             [typedSender.pubkey, { name: "John" }],
           ]),
         subscribe: () => () => {},
@@ -137,7 +139,7 @@ function setup() {
       },
       channels: {
         get: (id: string) =>
-          id === "room" ? room : { id: "parent", members: ["a", "b", "owner"] },
+          id === "room" ? room : { id: "parent", members: ["a", "b", owner] },
         subscribeList: m.subscribe,
         resolve: resolveRoom,
       },
@@ -661,10 +663,13 @@ it("mixes other admitted local Codex seats and excludes self and unknown speaker
     listening: ["a", "b"],
     participants: ["owner", "a", "b", "stranger"],
   });
-  h.room({
-    huddle: true,
-    parentChannelId: "parent",
-    huddleTranscript: transcript,
+  h.resolveRoom.mockImplementationOnce(async (_ids, options) => {
+    if (options?.consistency === "strong")
+      h.room({
+        huddle: true,
+        parentChannelId: "parent",
+        huddleTranscript: transcript,
+      });
   });
   h.start();
   await vi.waitFor(() => expect(h.connections.size).toBe(2));
@@ -688,7 +693,7 @@ it("mixes other admitted local Codex seats and excludes self and unknown speaker
 });
 
 it("forwards only typed messages in the active Huddle conversation", async () => {
-  const h = setup();
+  const h = setup(typedSender.pubkey);
   const root = "ab".repeat(32);
   h.registerCodex();
   h.room({
@@ -702,8 +707,13 @@ it("forwards only typed messages in the active Huddle conversation", async () =>
   const stop = required(required(h.seatArgs.get("a")).subscribeTypedMessages)(
     receive,
   );
-  const event = (content: string, source: string, thread: string) =>
-    signed(typedSender, {
+  const event = (
+    content: string,
+    source: string,
+    thread: string,
+    sender = typedSender,
+  ) =>
+    signed(sender, {
       kind: 9,
       created_at: 10,
       content,
@@ -718,6 +728,7 @@ it("forwards only typed messages in the active Huddle conversation", async () =>
     events: [
       typed,
       typed,
+      event("A member’s typed message", "typed", root, keypair()),
       event("Already spoken", "huddle-transcript", root),
       event("Another thread", "typed", "ce".repeat(32)),
     ],

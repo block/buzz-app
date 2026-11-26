@@ -1338,19 +1338,36 @@ export class AgentRunners {
     seat.signal.throwIfAborted();
     const ownerName = this.host.displayName(agent, agent.owner) ?? agent.owner;
     const destination = seat.transcriptDestination;
+    const publication = new AbortController();
+    let finishing = 0;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     const streaming =
       destination && seat.streamTranscript
         ? streamVoiceTranscript(
             destination,
-            seat.signal,
+            publication.signal,
             seat.streamTranscript,
             (event) =>
-              handle.publish(event, () => seat.signal.throwIfAborted()),
+              handle.publish(event, () => publication.signal.throwIfAborted()),
           )
         : undefined;
+    if (streaming)
+      seat.signal.addEventListener(
+        "abort",
+        () => {
+          if (finishing && seat.resumeOnClose?.() === true)
+            deadline = setTimeout(() => publication.abort(), 3000);
+          else publication.abort();
+        },
+        { once: true },
+      );
     return voice({
       ...seat,
-      ...(streaming && { transcriptDelta: streaming.append }),
+      ...(streaming && {
+        transcriptDelta: (delta) => {
+          if (!seat.signal.aborted) streaming.append(delta);
+        },
+      }),
       agent,
       config: start.config,
       revisions: start.revisions,
@@ -1359,7 +1376,18 @@ export class AgentRunners {
       async transcript(speaker, text) {
         if (seat.signal.aborted || !text.trim()) return;
         if (destination && speaker === "owner") return;
-        if (streaming) return streaming.finish(text);
+        if (streaming) {
+          finishing++;
+          try {
+            await streaming.finish(text);
+          } finally {
+            if (--finishing === 0 && seat.signal.aborted) {
+              clearTimeout(deadline);
+              publication.abort();
+            }
+          }
+          return;
+        }
         const name = speaker === "owner" ? ownerName : agent.name;
         await handle.publish(
           {
@@ -3045,7 +3073,11 @@ export class AgentRunners {
       addressable &&
       event.kind === 9 &&
       event.pubkey !== agent.pubkey &&
-      this.host.dm(agent, event)
+      this.host.dm(agent, event) &&
+      !event.tags.some(
+        ([name, source]) =>
+          name === MESSAGE_SOURCE_TAG && source === "huddle-transcript",
+      )
     )
       return { triggers: [{ type: "mention", event }] };
     // An addressed event the owner's app hears for the owner never reaches a

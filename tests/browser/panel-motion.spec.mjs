@@ -282,25 +282,15 @@ for (const destination of ["Messages", "Workflows"]) {
     });
     const initial = await dock.boundingBox();
     const grip = await handle.boundingBox();
-    // The capsule sits centred in the gap between the cards, with no divider.
-    const gap = await page
-      .locator(".shell-content")
-      .evaluate(
-        (element) =>
-          Number.parseFloat(
-            getComputedStyle(element).getPropertyValue("--space-1"),
-          ) *
-          Number.parseFloat(
-            getComputedStyle(document.documentElement).fontSize,
-          ),
-      );
+    // The docked pane is flush with the conversation, divided by a 1px
+    // hairline on its inline-start edge. The capsule sits centred on it.
     expect(
       await handle.evaluate(
         (el) =>
           el.getBoundingClientRect().left +
           Number.parseFloat(getComputedStyle(el, "::after").left),
       ),
-    ).toBeCloseTo(initial.x - gap / 2);
+    ).toBeCloseTo(initial.x + 0.5);
     await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
     await page.mouse.down();
     try {

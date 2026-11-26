@@ -164,13 +164,6 @@ html[data-keyboard-input] .motion {
 .resize[data-panel-resize]::after {
   left: 0;
 }
-/* A split of floating cards centres the grip in the gap between them. This
-   rule lives beside `.resize` because an unlayered module rule outranks any
-   rule in the design system's components layer. */
-[data-panel-cards] > * > .resize[data-panel-resize] {
-  inset-inline-start: calc(-1 * var(--space-1) / 2);
-  translate: 0;
-}
 
 /* Inline feature details reuse the same panel header and motion as target drill-ins. */
 .subviewStage {

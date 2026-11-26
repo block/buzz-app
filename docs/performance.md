@@ -24,6 +24,10 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 - `--browser webkit`: only for the `thread-scroll` cases. Everything else is
   Chromium only.
 
+The `code-links` cases answer GitHub from this checkout. Run them with
+`PERF_PLAIN_LINKS=1` on a build without the code viewer, such as `main`, for a
+reference; only the channel cases apply there.
+
 Each run writes to a fresh `test-results/perf/run-*` directory, or to `--out`.
 The JSON has every sample and each metric's median, min and max. Only wholly
 passing samples count toward the summary, so check each run's status and
@@ -47,6 +51,9 @@ errors before trusting a number.
 | `thread-scroll-open`, `-fling`, `-reverse` | The [long-thread workload](#thread-scrolling) |
 | `background-traffic` | Reading one channel while 30 others get a message every 200ms for 30 seconds |
 | `background-traffic-large-sidebar` | The same, with 128 DMs and 1,001 participants |
+| `code-links-open-cold`, `-warm` | Opening a channel of short rows, every other one with a GitHub line link drawn as code; warm reopens it with the grammar and file loaded |
+| `code-links-scroll` | A 2,400px gesture through those rows |
+| `code-links-panel-open` | Opening a 2,753-line file link in the side panel |
 
 A case that can't finish its work (paging stalls, or the expected messages
 never arrive) fails instead of reporting a fast time.
@@ -64,6 +71,7 @@ never arrive) fails instead of reporting a fast time.
 | `domGapFrames` | Thread scroll frames with no loaded reply in view |
 | `idleTaskMsPerSec`, `trafficTaskMsPerSec`, `taskMsPerMessage` (and script, style and layout per message) | Background traffic cost |
 | `heapGrowthKBPerMessage`, `nodesDelta`, `listenersDelta` | Background traffic growth, measured after a forced GC |
+| `highlightedMs` | Code links: from the action until every code link on screen shows highlighted code |
 
 The task categories overlap, so don't add them up or read them as CPU
 percentages. Frame gaps show main-thread stalls, not compositor frame rate.

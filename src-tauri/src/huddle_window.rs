@@ -56,6 +56,8 @@ struct AudioDevice {
 struct Discussion {
     #[serde(default)]
     composer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conversation: Option<DiscussionConversation>,
     version: u64,
     history_limited: bool,
     status: String,
@@ -65,6 +67,15 @@ struct Discussion {
     sent: u64,
     has_more: bool,
     rows: Vec<DiscussionRow>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DiscussionConversation {
+    channel_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_id: Option<String>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -252,6 +263,13 @@ fn validate(view: &View) -> Result<()> {
             d.composer
                 .as_ref()
                 .is_some_and(|t| uuid::Uuid::parse_str(t).is_err())
+                || d.conversation.as_ref().is_some_and(|c| {
+                    uuid::Uuid::parse_str(&c.channel_id).is_err()
+                        || [&c.root, &c.parent_id]
+                            .into_iter()
+                            .flatten()
+                            .any(|id| id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()))
+                })
                 || !matches!(d.status.as_str(), "loading" | "ready" | "error")
                 || d.error.as_ref().is_some_and(|e| e.len() > 8192)
                 || d.rows.len() > 200
@@ -636,6 +654,7 @@ mod tests {
         let mut presentation = view("00000000-0000-4000-8000-000000000001");
         presentation.discussion = Some(Discussion {
             composer: None,
+            conversation: None,
             version: 1,
             history_limited: false,
             status: "ready".into(),
@@ -670,8 +689,19 @@ mod tests {
                 delivery: "unknown".into(),
             }],
         });
-        let encoded = serde_json::to_value(&presentation).unwrap();
+        let mut encoded = serde_json::to_value(&presentation).unwrap();
+        let conversation = serde_json::json!({
+            "channelId": "00000000-0000-4000-8000-000000000002",
+            "root": "aa".repeat(32),
+            "parentId": "bb".repeat(32),
+        });
+        encoded["discussion"]["conversation"] = conversation.clone();
         let decoded: View = serde_json::from_value(encoded).unwrap();
+        assert_eq!(
+            serde_json::to_value(&decoded).unwrap()["discussion"]["conversation"],
+            conversation
+        );
+        assert!(validate(&decoded).is_ok());
         let row = &decoded.discussion.as_ref().unwrap().rows[0];
         assert_eq!(row.mentions, vec!["cd".repeat(32)]);
         assert_eq!(row.mention_references, vec!["ef".repeat(32)]);

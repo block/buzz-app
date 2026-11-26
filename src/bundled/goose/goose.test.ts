@@ -1671,12 +1671,19 @@ describe("stepLabel", () => {
         rawInput: { text: "hi", path: "/a/b/notes.md" },
       }),
     ).toEqual({ tool: "send", target: "notes.md" });
-    // A Buzz tool is reported by its bare name, which the step text titles.
-    for (const title of ["buzz: channel_list", "buzz__channel_list"]) {
-      const buzz = stepLabel({ sessionUpdate: "tool_call", title });
-      expect(buzz, title).toEqual({ tool: "channel_list" });
-      expect(buzz && stepText(buzz), title).toBe("List channels");
-    }
+    // goose spells a Buzz tool's name with spaces in the title and exactly in
+    // `_meta`. The step reports the bare name, which the step text titles.
+    const buzz = stepLabel({
+      sessionUpdate: "tool_call",
+      title: "buzz: channel list",
+      _meta: {
+        goose: {
+          toolCall: { toolName: "buzz__channel_list", extensionName: "buzz" },
+        },
+      },
+    });
+    expect(buzz).toEqual({ tool: "channel_list" });
+    expect(buzz && stepText(buzz)).toBe("List channels");
   });
 });
 

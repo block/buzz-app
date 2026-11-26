@@ -18,9 +18,17 @@ export function stepLabel(
   switch (update.sessionUpdate) {
     case "tool_call": {
       const title = typeof update.title === "string" ? update.title : "";
-      // goose titles a call `shell · sleep 10`, or `buzz: send`.
+      // goose titles a call for people, `shell · sleep 10` or
+      // `buzz: channel list`, and names the tool, `buzz__channel_list`, in
+      // `_meta`. The title is the fallback for a harness without that field.
+      const meta = update._meta as
+        | { goose?: { toolCall?: { toolName?: unknown } } }
+        | undefined;
+      const named = meta?.goose?.toolCall?.toolName;
+      const name = typeof named === "string" && named ? named : undefined;
       const tool =
-        title.split(" · ")[0]?.split(/__|: /).at(-1)?.trim() || "Tool";
+        (name ?? title.split(" · ")[0])?.split(/__|: /).at(-1)?.trim() ||
+        "Tool";
       const input = (update.rawInput ?? {}) as Record<string, unknown>;
       const target = STEP_KEYS.map((key) => input[key]).find(
         (value): value is string => typeof value === "string" && !!value,

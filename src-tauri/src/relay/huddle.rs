@@ -968,26 +968,39 @@ mod tests {
                 vec!["t".into(), format!("huddle:root:1:{}", "cd".repeat(16))],
             ]
         );
-        let card = format!("{}{}", "ef".repeat(16), "01".repeat(16));
-        let with_card = create(
+        let channel_route = create(
             &room,
             &parent,
             Some(&TranscriptOrigin {
-                root: Some(root),
-                card: true,
+                root: None,
+                card: false,
             }),
-            Some(&card),
+            None,
         );
-        assert!(super::super::channel_writes::creation(&with_card));
-        assert_eq!(with_card.tags[4], e.tags[4]);
-        assert_eq!(with_card.tags[6..9], routed.tags[6..]);
-        assert_eq!(
-            with_card.tags[9..],
-            [
-                vec!["t".to_owned(), format!("huddle:card:0:{}", "ef".repeat(16))],
-                vec!["t".into(), format!("huddle:card:1:{}", "01".repeat(16))],
-            ]
-        );
+        assert!(super::super::channel_writes::creation(&channel_route));
+        assert_eq!(channel_route.tags[4], e.tags[4]);
+        assert_eq!(channel_route.tags[6..], [["t", "huddle:transcripts"]]);
+        let card = format!("{}{}", "ef".repeat(16), "01".repeat(16));
+        for (root, first, second) in [(Some(root), "ab", "cd"), (None, "ef", "01")] {
+            let with_card = create(
+                &room,
+                &parent,
+                Some(&TranscriptOrigin { root, card: true }),
+                Some(&card),
+            );
+            assert!(super::super::channel_writes::creation(&with_card));
+            assert_eq!(with_card.tags[4], e.tags[4]);
+            assert_eq!(
+                with_card.tags[6..],
+                [
+                    vec!["t".to_owned(), "huddle:transcripts".into()],
+                    vec!["t".into(), format!("huddle:root:0:{}", first.repeat(16))],
+                    vec!["t".into(), format!("huddle:root:1:{}", second.repeat(16))],
+                    vec!["t".into(), format!("huddle:card:0:{}", "ef".repeat(16))],
+                    vec!["t".into(), format!("huddle:card:1:{}", "01".repeat(16))],
+                ]
+            );
+        }
         let e = lifecycle(48100, &parent, &room);
         assert_eq!(e.tags, vec![vec!["h", &parent]]);
         assert_eq!(

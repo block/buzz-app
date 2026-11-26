@@ -90,6 +90,7 @@ import {
 } from "../plugins/installer";
 import { withTimeout } from "../plugins/timeout";
 import { createExternalApps } from "../features/agents/external-connection";
+import { provideMessages } from "../features/messages/messages-service";
 
 export function createServices() {
   const appearance = createAppearance();
@@ -137,6 +138,7 @@ export function createServices() {
   ctx.provide("ui", pluginUi);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
+  provideMessages(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const identityNames = new IdentityNamesService(ctx, localAgents.agents);
   const identity = nativeIdentityEnabled() ? createIdentity() : undefined;

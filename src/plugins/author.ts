@@ -80,6 +80,10 @@ export type { PanelSplit } from "../features/panels/usePanelSplit";
 export type { MarkdownProps } from "../features/messages/PluginMarkdown";
 export type { ImageViewerProps } from "../features/messages/ImageViewer";
 export type { Conversation } from "../features/conversation/service";
+export type {
+  Messages,
+  MessageListHandle,
+} from "../features/messages/messages-service";
 export type { ChannelMembersDialogProps } from "../bundled/channels/ChannelMembersDialog";
 export type {
   ChannelGeneralAccessProps,

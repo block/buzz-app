@@ -14688,19 +14688,35 @@ it.each([
   },
 );
 
-it.each([false, true])(
-  "publishes a completed typed Huddle answer only in its own conversation (steered elsewhere: %s)",
-  async (elsewhere) => {
+it.each([
+  ["threaded stream", false],
+  ["threaded stream", true],
+  ["threaded DM", false],
+  ["threaded DM", true],
+  ["top-level DM", false],
+] as const)(
+  "publishes a completed typed Huddle answer in a %s only in its own conversation (steered elsewhere: %s)",
+  async (where, elsewhere) => {
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
     const d = f.delivery("finish this");
+    const dm = where.endsWith("DM");
+    const topLevel = where === "top-level DM";
+    if (dm) {
+      f.snapshot.session.channels.list = () => ({
+        status: "ready",
+        channels: [{ id: "channel", name: "DM", channelType: "dm" }],
+      });
+      if (topLevel && d.trigger.type === "mention")
+        d.trigger.event.tags = [["h", "channel"]];
+    }
     const { config } = scoped(d, "channel");
     const output = vi.fn(async () => {});
     const signal = new AbortController();
     try {
       const connected = await join(f, d, {
         config,
-        conversation: { channelId: "channel", root },
+        conversation: { channelId: "channel", ...(!topLevel && { root }) },
         signal: signal.signal,
         resumeOnClose: () => true,
         output,

@@ -188,6 +188,8 @@ type Request = {
   /** Publish/activity root; unlike toolRoot, retained in DMs. */
   replyRoot?: string;
   sourceRoot?: string;
+  /** Conversation thread for a native Huddle, including threaded DMs. */
+  huddleOriginRoot?: string;
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
@@ -243,6 +245,17 @@ type Request = {
   /** Why a wake ran without the gateway, for its Activity status. */
   gatewayFallback?: Delivery["gatewayFallback"];
 };
+function matchesHuddleOrigin(
+  request: Request,
+  channelId: string,
+  root?: string,
+) {
+  return (
+    request.conversation.channelId === channelId &&
+    request.huddleOriginRoot === root
+  );
+}
+
 type TextRequest = Request & { event: EventData; adopted?: never };
 type VoiceContinuation = {
   entry: Entry;
@@ -2088,8 +2101,7 @@ export class CodexRuntime {
           !active.finished &&
           active !== interrupting &&
           (!seat.resumeOnClose ||
-            (active.reply.conversation.channelId === channelId &&
-              active.reply.toolRoot === root))
+            matchesHuddleOrigin(active.reply, channelId, root))
         ) {
           interrupting = active;
           interrupted = this.interruptForVoice(
@@ -2172,9 +2184,7 @@ export class CodexRuntime {
       if (
         active &&
         !finishPreemption &&
-        (!inOrigin ||
-          (active.reply.conversation.channelId === channelId &&
-            active.reply.toolRoot === root))
+        (!inOrigin || matchesHuddleOrigin(active.reply, channelId, root))
       )
         await this.interruptForVoice(entry, key, active, continuations);
     } catch (error) {
@@ -2206,7 +2216,12 @@ export class CodexRuntime {
         canvas,
         ...(settings.scope !== "community" && { project: canvas.section }),
       }),
-      ...(root && { toolRoot: root, replyRoot: root, sourceRoot: root }),
+      ...(root && {
+        toolRoot: root,
+        replyRoot: root,
+        sourceRoot: root,
+        huddleOriginRoot: root,
+      }),
       ...(seat.synced ? { synced: seat.synced } : {}),
       activityScope: channelId,
       conversation: {
@@ -2259,8 +2274,8 @@ export class CodexRuntime {
           (!active.stopped &&
             active.terminalStatus === "interrupted" &&
             active.adoptedVoice)) &&
-        source?.conversation.channelId === channelId &&
-        source.toolRoot === root
+        source &&
+        matchesHuddleOrigin(source, channelId, root)
       ) {
         if (active.adoptedVoice) active.resumeSpeechInText = handoffs;
         else
@@ -2751,6 +2766,15 @@ export class CodexRuntime {
         : configuredSettings;
     const toolRoot =
       channel?.dm || topLevel ? undefined : (route?.parent ?? rootOf(event));
+    // A DM's synthetic reply anchor can exist even when the mention was
+    // sent at the top level. Only a real thread reference or explicit
+    // placement in a thread identifies a threaded Huddle there.
+    const placement = delivery.placement;
+    const huddleOriginRoot =
+      channel?.dm && !topLevel
+        ? ((placement && "root" in placement ? placement.root : undefined) ??
+          threadReference(event)?.rootId)
+        : toolRoot;
     const root =
       route?.parent ?? (settings.scope === "channel" ? undefined : toolRoot);
     delivery.signal.throwIfAborted();
@@ -2851,6 +2875,7 @@ export class CodexRuntime {
       agent,
       settings,
       ...(toolRoot ? { toolRoot } : {}),
+      ...(huddleOriginRoot ? { huddleOriginRoot } : {}),
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
       ...(delivery.route ? { route: delivery.route } : {}),
@@ -4714,8 +4739,8 @@ export class CodexRuntime {
     let seat: Lane["voice"];
     const canPostHuddleReply = (reply: Request) =>
       !reply.wake &&
-      seat?.origin?.channelId === reply.conversation.channelId &&
-      seat.origin.root === reply.toolRoot &&
+      seat?.origin !== undefined &&
+      matchesHuddleOrigin(reply, seat.origin.channelId, seat.origin.root) &&
       !seat.signal.aborted;
     const speechContinuation = (): VoiceContinuation | undefined => {
       if (!adopted || !request.event || !active.threadId) return;

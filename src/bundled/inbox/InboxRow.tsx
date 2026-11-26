@@ -8,7 +8,11 @@ import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { ComponentProps, ReactNode } from "react";
 import { channelText } from "../../features/channels/channel-icon";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
-import type { InboxItem } from "../../features/relay/inbox";
+import {
+  senderKey,
+  type InboxItem,
+  type InboxSender,
+} from "../../features/relay/inbox";
 import type { InboxFeedSnapshot } from "../../features/relay/inbox-feed";
 import type { RelaySession } from "../../features/relay/session";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
@@ -86,12 +90,39 @@ export type RowIdentity = {
   more?: MoreUnread | undefined;
 };
 
-/** Unread messages a row's preview leaves out: how many, the other senders
- * its avatars show (newest first) and a sentence naming every sender. */
+/** Unread messages a row's preview leaves out: the other senders its
+ * avatars show, most messages first, and a sentence with their count that
+ * names the same senders. */
 type MoreUnread = {
-  people: readonly { id: string; name: string; profile?: Profile }[];
+  people: readonly {
+    id: string;
+    name: string;
+    profile?: Profile;
+    workflow: boolean;
+  }[];
   description: string;
 };
+
+/** A sender's name and profile: a workflow by its label and its owner's
+ * profile, which names it but never gives it the owner's face. */
+function senderName(
+  { authorId, workflowOwnerId }: InboxSender,
+  channel: ChannelSummary | undefined,
+  profiles: ReadonlyMap<string, Profile>,
+  name: ResolveName,
+) {
+  const id = workflowOwnerId ?? authorId;
+  const profile = profiles.get(id);
+  const resolved = name(
+    id,
+    profile?.name ?? formatPublicKey(id) ?? "Unknown sender",
+    channel?.members,
+  );
+  return {
+    name: workflowOwnerId ? workflowLabel(resolved) : resolved,
+    profile,
+  };
+}
 
 export function rowIdentity(
   item: InboxItem,
@@ -99,14 +130,7 @@ export function rowIdentity(
   profiles: ReadonlyMap<string, Profile>,
   name: ResolveName,
 ): RowIdentity {
-  const displayId = item.workflowOwnerId ?? item.authorId;
-  const profile = profiles.get(displayId);
-  const resolved = name(
-    displayId,
-    profile?.name ?? formatPublicKey(displayId) ?? "Unknown sender",
-    channel?.members,
-  );
-  const sender = item.workflowOwnerId ? workflowLabel(resolved) : resolved;
+  const { name: sender, profile } = senderName(item, channel, profiles, name);
   const context =
     channel?.channelType === "dm"
       ? dmContext(
@@ -124,7 +148,7 @@ export function rowIdentity(
     sender,
     context,
     profile,
-    more: moreUnread(item, displayId, channel, profiles, name),
+    more: moreUnread(item, channel, profiles, name),
   };
 }
 
@@ -133,34 +157,38 @@ const SUMMARY_PEOPLE = 3;
 
 function moreUnread(
   item: InboxItem,
-  sender: string,
   channel: ChannelSummary | undefined,
   profiles: ReadonlyMap<string, Profile>,
   name: ResolveName,
 ): MoreUnread | undefined {
   const more = item.moreUnread;
   if (!more) return;
-  const { count, authorIds } = more;
-  const people = authorIds.map((id) => {
-    const profile = profiles.get(id);
+  // The row already shows its own sender.
+  const own = senderKey(item);
+  const others = more.senders.filter((sender) => senderKey(sender) !== own);
+  const people = others.slice(0, SUMMARY_PEOPLE).map((sender) => {
+    const { name: resolved, profile } = senderName(
+      sender,
+      channel,
+      profiles,
+      name,
+    );
     return {
-      id,
-      name: name(
-        id,
-        profile?.name ?? formatPublicKey(id) ?? "Unknown sender",
-        channel?.members,
-      ),
+      id: senderKey(sender),
+      name: resolved,
+      workflow: !!sender.workflowOwnerId,
       ...(profile ? { profile } : {}),
     };
   });
-  const names = people.slice(0, SUMMARY_PEOPLE).map((person) => person.name);
-  const rest = people.length - names.length;
+  const names = people.map((person) => person.name);
+  const rest = others.length - people.length;
   if (rest) names.push(`${rest} ${rest === 1 ? "other" : "others"}`);
-  const label = `and ${count} more ${count === 1 ? "message" : "messages"}`;
+  const label = `and ${more.count} more ${more.count === 1 ? "message" : "messages"}`;
   return {
-    // The row already shows its own sender.
-    people: people.filter((person) => person.id !== sender),
-    description: `${label} from ${new Intl.ListFormat(undefined, { type: "conjunction" }).format(names)}`,
+    people,
+    description: names.length
+      ? `${label} from ${new Intl.ListFormat(undefined, { type: "conjunction" }).format(names)}`
+      : label,
   };
 }
 
@@ -172,7 +200,9 @@ export const rowProfileIds = (
   channel: ChannelSummary | undefined,
 ): string[] => [
   ...(item.workflowOwnerId ? [item.workflowOwnerId] : []),
-  ...(item.moreUnread?.authorIds.slice(0, SUMMARY_PEOPLE + 1) ?? []),
+  ...(item.moreUnread?.senders
+    .slice(0, SUMMARY_PEOPLE + 1)
+    .map((sender) => sender.workflowOwnerId ?? sender.authorId) ?? []),
   ...(channel?.channelType === "dm"
     ? (channel.participants?.slice(0, 3) ?? [])
     : []),
@@ -234,14 +264,19 @@ export function InboxRowButton({
             animateChanges
             // Later avatars overlap earlier ones, so the sender with the
             // most unread messages renders last: on top, in the corner.
-            items={(more?.people ?? [])
-              .slice(0, SUMMARY_PEOPLE)
+            items={[...(more?.people ?? [])]
               .reverse()
-              .map(({ id, name, profile }) => ({
+              .map(({ id, name, profile, workflow }) => ({
                 id,
                 name,
-                src: avatarMedia(profile?.picture, session.media),
-                shape: profile?.isAgent ? "squircle" : "circle",
+                // A workflow wears its own artwork, as the row's avatar does.
+                src: workflow
+                  ? undefined
+                  : avatarMedia(profile?.picture, session.media),
+                ...(workflow && {
+                  fallbackContent: <LightningIcon size={9} />,
+                }),
+                shape: workflow || profile?.isAgent ? "squircle" : "circle",
               }))}
           />
           {more && (

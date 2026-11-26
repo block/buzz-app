@@ -4,6 +4,7 @@ import {
   useReducedMotion,
   type HTMLMotionProps,
 } from "motion/react";
+import type { ReactNode } from "react";
 import { Avatar } from "./Avatar";
 import styles from "./AvatarStack.module.css";
 
@@ -11,6 +12,8 @@ type StackAvatar = {
   id: string;
   name: string;
   src?: string | undefined;
+  /** Shown instead of the name's initial, such as a workflow's icon. */
+  fallbackContent?: ReactNode;
   shape: "circle" | "squircle";
 };
 
@@ -57,11 +60,12 @@ export function AvatarStack({
         alt=""
         fallback={item.name}
         fallbackContent={
-          size === "mini" || size === "badge" ? (
+          item.fallbackContent ??
+          (size === "mini" || size === "badge" ? (
             <span className={`${styles.miniInitial} text-caption`}>
               {Array.from(item.name.trim())[0]?.toUpperCase() || "?"}
             </span>
-          ) : undefined
+          ) : undefined)
         }
         shape={item.shape}
         size="fill"

@@ -5586,35 +5586,64 @@ it("inbox describes a row by its newest message within the same second", () => {
     });
 });
 
-it("an inbox row counts its other unread messages by sender, most messages first", async () => {
-  const h = setup();
+it("an inbox row counts its other unread messages by sender as their bylines name them, most messages first", async () => {
+  const h = setup({}, true, undefined, true);
   h.grant("room");
   const bob = keypair(),
     carol = keypair();
   const root = message(h.viewer, "room", "Plan", 10);
-  const reply = (author: typeof h.alice, content: string, time: number) =>
-    message(author, "room", content, time, [["e", root.id, "", "reply"]]);
+  const reply = (
+    author: typeof h.alice,
+    content: string,
+    time: number,
+    tags: string[][] = [],
+  ) =>
+    message(author, "room", content, time, [
+      ["e", root.id, "", "reply"],
+      ...tags,
+    ]);
+  // The relay signs for Bob and Carol, and for Alice's workflow.
+  const actor = (person: typeof bob, content: string, time: number) =>
+    reply(h.relay, content, time, [["actor", person.pubkey]]);
   const first = reply(h.alice, "Thoughts?", 11);
   h.emit([
     root,
     first,
     reply(h.alice, "Can you review?", 12),
-    reply(bob, "Looks good", 13),
-    reply(carol, "Shipping it", 14),
+    actor(bob, "Looks good", 13),
+    eventDto(
+      reply(h.relay, "Build passed", 14, [
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", h.alice.pubkey],
+      ]),
+    ),
+    actor(carol, "Shipping it", 15),
   ]);
   const row = () =>
     h.session.unread.inbox().items.find((item) => item.rootId === root.id);
+  const workflow = {
+    authorId: h.relay.pubkey,
+    workflowOwnerId: h.alice.pubkey,
+  };
   expect(row()).toMatchObject({
     preview: "Shipping it",
-    unreadCount: 4,
-    moreUnread: { count: 3, authorIds: [h.alice.pubkey, bob.pubkey] },
+    authorId: carol.pubkey,
+    unreadCount: 5,
+    moreUnread: {
+      count: 4,
+      senders: [
+        { authorId: h.alice.pubkey },
+        workflow,
+        { authorId: bob.pubkey },
+      ],
+    },
   });
 
   // Read messages leave the count; tied senders put the newest first.
   await h.session.unread.markMessageRead("room", first.id);
   expect(row()?.moreUnread).toEqual({
-    count: 2,
-    authorIds: [bob.pubkey, h.alice.pubkey],
+    count: 3,
+    senders: [workflow, { authorId: bob.pubkey }, { authorId: h.alice.pubkey }],
   });
 });
 

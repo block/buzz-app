@@ -200,7 +200,16 @@ it.each([
   },
 );
 
-it("shows a row's other unread senders on its avatar, leaving out its own, until they are read", async () => {
+it("shows a row's other unread senders on its avatar, naming the same ones, until they are read", async () => {
+  const carol = keypair(),
+    dan = keypair(),
+    photo = "data:image/png;base64,AAAA";
+  const people = new Map<string, Profile>([
+    ...profiles,
+    [alice.pubkey, { name: "Alice", picture: photo }],
+    [carol.pubkey, { name: "Carol" }],
+    [dan.pubkey, { name: "Dan" }],
+  ]);
   const item = {
     id: "row",
     channelId: "room",
@@ -209,18 +218,28 @@ it("shows a row's other unread senders on its avatar, leaving out its own, until
     messageIds: [],
     preview: "Shipping it",
     previewMentions: { content: "Shipping it", mentions: [] },
-    unreadCount: 4,
-    moreUnread: { count: 3, authorIds: [alice.pubkey, bob.pubkey] },
+    unreadCount: 8,
+    // Bob, the row's own sender, sent the most.
+    moreUnread: {
+      count: 7,
+      senders: [
+        { authorId: bob.pubkey },
+        { authorId: alice.pubkey },
+        { authorId: relay.pubkey, workflowOwnerId: alice.pubkey },
+        { authorId: carol.pubkey },
+        { authorId: dan.pubkey },
+      ],
+    },
     manual: false,
   } as unknown as InboxItem;
   const row = (item: InboxItem) => (
     <InboxRowButton
       item={item}
-      identity={rowIdentity(item, undefined, profiles, name)}
+      identity={rowIdentity(item, undefined, people, name)}
       session={
         {
           ...session,
-          profiles: { subscribe: () => () => {}, snapshot: () => profiles },
+          profiles: { subscribe: () => () => {}, snapshot: () => people },
           channels: {
             list: () => ({ channels: [] }),
             subscribeList: () => () => {},
@@ -233,14 +252,23 @@ it("shows a row's other unread senders on its avatar, leaving out its own, until
     />
   );
   const view = render(row(item));
+  const workflow = workflowLabel("Alice");
   expect(view.getByRole("button")).toHaveAccessibleDescription(
-    "Shipping it and 3 more messages from Alice and Bob",
+    `Shipping it and 7 more messages from ${new Intl.ListFormat(undefined, {
+      type: "conjunction",
+    }).format(["Alice", workflow, "Carol", "1 other"])}`,
   );
   const faces = () =>
     [...view.container.querySelectorAll("[data-avatar-stack] [title]")].map(
       (face) => face.getAttribute("title"),
     );
-  expect(faces()).toEqual(["Alice"]);
+  // The top sender sits on top, last.
+  expect(faces()).toEqual(["Carol", workflow, "Alice"]);
+  // A workflow never wears its owner's face.
+  const face = (title: string) =>
+    view.container.querySelector(`[data-avatar-stack] [title="${title}"]`);
+  expect(face("Alice")?.querySelector("img")).toHaveAttribute("src", photo);
+  expect(face(workflow)?.querySelector("img")).toBeNull();
 
   // Reading the row lets its faces leave.
   const { moreUnread: _, ...read } = item;

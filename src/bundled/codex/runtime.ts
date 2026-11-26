@@ -133,7 +133,7 @@ import {
 
 /** Why a restricted Codex agent doesn't run where its role can't be checked. */
 export const CODEX_UNENFORCEABLE =
-  "Codex's native hooks are off for this agent, so Buzz can't enforce its Tools role. Turn Codex hooks on, or choose the Builder role.";
+  "Codex's native hooks are off for this agent, so Buzz can't enforce its Tools role. Turn Codex hooks on, or choose the All role.";
 import { buzzHome } from "./setup";
 import {
   contextText,

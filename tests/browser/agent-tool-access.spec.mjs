@@ -43,58 +43,6 @@ test.afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
-test("starts Custom from a role, adjusts tools and a connected server, then saves", async ({
-  page,
-}) => {
-  const { errors } = watchPageErrors(page);
-  await page.goto(url);
-  await page.getByRole("radio", { name: "Orchestrator" }).click();
-  await expect(page.getByRole("switch", { name: "Shell" })).not.toBeChecked();
-  await expect(page.getByRole("switch", { name: "Subagents" })).toBeChecked();
-  await page.getByRole("radio", { name: "Custom" }).click();
-  await page.getByRole("switch", { name: "Subagents" }).click();
-  await page
-    .getByRole("textbox", { name: "Connected server or tool" })
-    .fill("github");
-  await page
-    .getByRole("button", { name: "Add connected server or tool" })
-    .click();
-  await expect(page.getByRole("switch", { name: "github" })).toBeChecked();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect
-    .poll(() => page.evaluate(() => window.toolSave))
-    .toEqual({
-      config: {
-        model: "sonnet",
-        instructions: "Keep these",
-        toolPreset: "custom",
-        toolAllow:
-          "buzz:builtin-deliverable,buzz:coordinate,buzz:message,buzz:read,connected:github,native:meta,native:read,native:web",
-      },
-    });
-  expect(errors).toEqual([]);
-});
-
-test("keeps a saved catch-all grant visible beside named native tools", async ({
-  page,
-}) => {
-  await page.goto(`${url}?custom&legacy`);
-  await expect(
-    page.getByRole("switch", { name: "Every other native tool" }),
-  ).toBeChecked();
-  await page
-    .getByRole("textbox", { name: "Native tool name" })
-    .fill("NotebookRead");
-  await page.getByRole("button", { name: "Add native tool name" }).click();
-  await expect(
-    page.getByRole("switch", { name: "notebookread" }),
-  ).toBeChecked();
-  await page.getByRole("switch", { name: "Every other native tool" }).click();
-  await expect(
-    page.getByRole("switch", { name: "Every other native tool" }),
-  ).not.toBeChecked();
-});
-
 for (const { name, width, height, query } of [
   { name: "light wide", width: 1280, height: 900, query: "" },
   { name: "light narrow", width: 420, height: 760, query: "" },
@@ -116,12 +64,8 @@ for (const { name, width, height, query } of [
       page.getByRole("radiogroup", { name: "Tool access role" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("switch", { name: "Files: read", exact: true }),
+      page.getByRole("radio", { name: "All", exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("searchbox")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /Advanced:/ })).toHaveCount(
-      0,
-    );
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

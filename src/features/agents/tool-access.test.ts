@@ -10,7 +10,6 @@ import {
   nativeToolAllowed,
   nativeToolDenial,
   pickToolConfig,
-  presetSelection,
   toolPolicy,
   toolPolicyKey,
 } from "./tool-access";
@@ -166,26 +165,7 @@ it("gives Orchestrator Buzz's own deliverables but leaves plugin ones opt-in, wh
   ).rejects.toThrow("disabled by this agent's Tools setting");
 });
 
-it("keeps Orchestrator's access when it becomes Custom, and a saved legacy deliverable grant's", () => {
-  const custom = {
-    toolPreset: "custom",
-    toolAllow: presetSelection("super-agent").join(","),
-  };
-  const added = [...TASKS, ...UNDECLARED];
-  for (const name of [
-    "canvas_set",
-    "channel_delete",
-    "tasks_update",
-    "apps_deploy",
-    "mem_set",
-  ])
-    expect(buzzToolAllowed(name, custom, added)).toBe(
-      buzzToolAllowed(name, SUPER, added),
-    );
-  for (const name of ["Read", "Edit", "Bash", "Task", "mcp__github__x"])
-    expect(nativeToolAllowed(name, custom)).toBe(
-      nativeToolAllowed(name, SUPER),
-    );
+it("keeps a saved legacy deliverable grant's access", () => {
   const legacy = { toolPreset: "custom", toolAllow: "buzz:deliverable" };
   expect(buzzToolAllowed("canvas_set", legacy)).toBe(true);
   expect(buzzToolAllowed("apps_deploy", legacy, UNDECLARED)).toBe(true);

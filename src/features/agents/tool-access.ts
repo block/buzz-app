@@ -105,44 +105,6 @@ export const namedNativeTool = (name: string) =>
 export const alwaysNativeTool = (name: string) =>
   ALWAYS_NATIVE.has(name.replace(/^native-tool:/, "").toLowerCase());
 
-export const BUZZ_TOOL_GROUPS: readonly Described<BuzzCapability>[] = [
-  {
-    id: "buzz:read",
-    label: "Buzz: read",
-    description: "Read messages, channels, people, notes, canvases and status.",
-  },
-  {
-    id: "buzz:message",
-    label: "Buzz: messages",
-    description: "Send, edit and react to messages, and open DMs.",
-  },
-  {
-    id: "buzz:coordinate",
-    label: "Buzz: coordinate",
-    description:
-      "Memory, attention, handoffs, solo workers, agent drafts and plugin tools that manage work, such as Tasks.",
-  },
-  {
-    id: "buzz:builtin-deliverable",
-    label: "Buzz: deliverables",
-    description:
-      "Create and change repositories, canvases, notes, channels, members and settings.",
-  },
-  {
-    id: "plugins:deliverable",
-    label: "Plugin tools that change things",
-    description:
-      "Plugin tools that create or change something, possibly outside Buzz, such as app deploys, and plugin tools that don't say what they do.",
-  },
-];
-
-export const CONNECTED_TOOLS: Described<typeof CONNECTED> = {
-  id: CONNECTED,
-  label: "Connected tools",
-  description:
-    "Tools from every other MCP server the harness connects to, such as GitHub or Linear.",
-};
-
 /** What a plugin tool does, which decides the roles it is available to.
  * A plugin tool that declares none is treated as changing deliverables. */
 export type ToolEffect = "read" | "message" | "coordinate" | "deliverable";
@@ -284,9 +246,17 @@ export function hookedToolName(input: unknown): string | undefined {
   return typeof name === "string" ? name : undefined;
 }
 
-/** Saved ids stay as earlier drafts wrote them; only the labels changed. */
-export const PRESET_INFO: readonly (Described<ToolPreset> &
-  Readonly<{ can: string; cannot?: string }>)[] = [
+type RoleInfo = Described<ToolPreset> &
+  Readonly<{ can: string; cannot?: string }>;
+/** The roles an owner chooses from. Saved ids stay as earlier drafts wrote
+ * them; only the labels changed. */
+export const PRESET_INFO: readonly RoleInfo[] = [
+  {
+    id: "coder",
+    label: "All",
+    description: "Every tool, as agents have today. The default.",
+    can: "Use every tool the agent's harness allows, including files, Shell, connected tools, plugin tools and every Buzz action.",
+  },
   {
     id: "super-agent",
     label: "Orchestrator",
@@ -294,7 +264,7 @@ export const PRESET_INFO: readonly (Described<ToolPreset> &
       "Runs work like an assistant: plans, delegates and follows up in Buzz.",
     can: "Take every built-in Buzz action its identity can, such as messaging, creating channels, canvases and notes, and managing memory and attention, plus plugin tools that coordinate work, such as Tasks. Read files and the web, track steps and delegate to subagents.",
     cannot:
-      "Edit local files, run commands, use connected MCP tools such as GitHub, or use plugin tools that change things, such as app deploys, unless Custom allows them.",
+      "Edit local files, run commands, use connected MCP tools such as GitHub, or use plugin tools that change things, such as app deploys.",
   },
   {
     id: "reviewer",
@@ -304,19 +274,15 @@ export const PRESET_INFO: readonly (Described<ToolPreset> &
     cannot:
       "Edit files, run commands, delegate, use connected tools, manage Tasks or memory, or change deliverables.",
   },
-  {
-    id: "coder",
-    label: "Builder",
-    description: "Edits, tests and ships changes.",
-    can: "Use every tool the agent's harness allows, including Shell, connected tools and every Buzz tool.",
-  },
-  {
-    id: "custom",
-    label: "Custom",
-    description: "Only the tools you select below.",
-    can: "Start from a role, then turn individual groups, connected tools and plugin tools on or off.",
-  },
 ];
+/** Shown only for an agent an earlier draft saved with its own selection. */
+export const SAVED_SELECTION: RoleInfo = {
+  id: "custom",
+  label: "Earlier selection",
+  description:
+    "This agent keeps the individual tools chosen in an earlier version until you choose a role.",
+  can: "Only the tools selected then. Choosing a role replaces it, and it can't be chosen again.",
+};
 
 const list = (value: string | undefined): readonly string[] => [
   ...new Set(
@@ -376,19 +342,6 @@ export function toolPolicy(
 export function toolPolicyKey(config: ToolConfig | ToolPolicy | unknown) {
   const policy = toolPolicy(config);
   return policy.preset === "coder" ? "" : JSON.stringify(policy);
-}
-
-/** What a role starts Custom from, so switching keeps its access. */
-export function presetSelection(preset: ToolPreset): readonly string[] {
-  if (preset === "custom") return [];
-  if (preset === "coder")
-    return [
-      ...NATIVE_TOOLS.map((tool) => tool.id),
-      OTHER_NATIVE.id,
-      ...BUZZ_TOOL_GROUPS.map((group) => group.id),
-      CONNECTED,
-    ];
-  return ROLES[preset];
 }
 
 /** Whether the role allows any of `ids`, the tool's own id then its group. */

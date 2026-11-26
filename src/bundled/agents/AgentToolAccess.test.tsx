@@ -24,45 +24,51 @@ const agentWith = (config: Record<string, unknown>) =>
     attentionEnabled: true,
   }) satisfies Agent;
 
-it("saves a Custom selection that starts from the chosen role", async () => {
+const agentsWith = (save = vi.fn(async () => {})) =>
+  ({ save, subscribe: () => () => {}, tools: () => [] }) as unknown as Agents;
+
+it("defaults to All and saves a chosen role without a selection", async () => {
   const user = userEvent.setup();
-  const agent = agentWith({
-    model: "sonnet",
-    instructions: "Keep these",
-    toolDeny: "native:web",
-  });
+  const agent = agentWith({ model: "sonnet", toolDeny: "native:web" });
   const save = vi.fn(async () => {});
-  const agents = {
-    save,
-    subscribe: () => () => {},
-    tools: () => [
-      {
-        name: "tasks_update",
-        description: "Update a Task",
-        effect: "coordinate",
-      },
-    ],
-  } as unknown as Agents;
-  render(<AgentToolAccess agents={agents} agent={agent} />);
+  render(<AgentToolAccess agents={agentsWith(save)} agent={agent} />);
 
+  expect(screen.getByRole("radio", { name: "All" })).toBeChecked();
+  expect(screen.getAllByRole("radio")).toHaveLength(3);
   await user.click(screen.getByRole("radio", { name: "Reviewer" }));
-  expect(screen.getByRole("switch", { name: "Shell" })).not.toBeChecked();
-  await user.click(screen.getByRole("radio", { name: "Custom" }));
-  expect(screen.getByRole("switch", { name: "Files: read" })).toBeChecked();
-  await user.click(screen.getByRole("switch", { name: "tasks_update" }));
-  await user.type(
-    screen.getByRole("textbox", { name: "Connected server or tool" }),
-    "github{Enter}",
-  );
-
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledExactlyOnceWith(agent.key, {
-    config: {
-      model: "sonnet",
-      instructions: "Keep these",
-      toolPreset: "custom",
-      toolAllow:
-        "buzz:message,buzz:read,connected:github,native:meta,native:read,native:web,plugin:tasks_update",
-    },
+    config: { model: "sonnet", toolPreset: "reviewer", toolAllow: "" },
   });
+});
+
+it("keeps an earlier saved selection until the owner chooses a role", async () => {
+  const user = userEvent.setup();
+  const config = { toolPreset: "custom", toolAllow: "buzz:read,native:read" };
+  const save = vi.fn(async () => {});
+  const { rerender } = render(
+    <AgentToolAccess agents={agentsWith(save)} agent={agentWith(config)} />,
+  );
+
+  const earlier = screen.getByRole("radio", { name: "Earlier selection" });
+  expect(earlier).toBeChecked();
+  await user.click(screen.getByRole("radio", { name: "All" }));
+  await user.click(earlier);
+  expect(earlier).toBeChecked();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+
+  await user.click(screen.getByRole("radio", { name: "Orchestrator" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledExactlyOnceWith(agentWith(config).key, {
+    config: { toolPreset: "super-agent", toolAllow: "" },
+  });
+  rerender(
+    <AgentToolAccess
+      agents={agentsWith(save)}
+      agent={agentWith({ toolPreset: "super-agent", toolAllow: "" })}
+    />,
+  );
+  expect(
+    screen.queryByRole("radio", { name: "Earlier selection" }),
+  ).not.toBeInTheDocument();
 });

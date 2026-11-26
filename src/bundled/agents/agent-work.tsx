@@ -27,7 +27,8 @@ export const AGENT_WORK_LIMIT = 50;
 const OWN_LIMIT = 500;
 /** Threads and top levels checked for the viewer's agents. */
 const THREAD_CANDIDATES = 300;
-const TOP_LEVEL_CANDIDATES = 30;
+/** One filter each, within the relay's ten filters a request. */
+const TOP_LEVEL_CANDIDATES = 10;
 
 /** Where the viewer recently talked: each thread, by its root (a top-level
  * message of theirs may have become one), and each channel or DM top level. */

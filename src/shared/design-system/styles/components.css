@@ -1064,6 +1064,19 @@
     box-shadow: var(--shadow-panel);
   }
 
+  /* A sidebar card takes the panel surface, but its rows are sidebar
+     navigation: restore the sidebar's selection and hover the panel recipe
+     reset, so any row in any card, a plugin's included, selects and inks as
+     the sidebar's own rows do. */
+  :where([data-sidebar-cards] [data-sidebar-card]) {
+    --interaction-selected: var(--surface-sidebar-selected);
+    --interaction-selected-text: var(--text-sidebar-selected);
+    --interaction-selected-metadata: var(--text-sidebar-selected);
+    --interaction-row-hover: var(--affordance-navigation-quiet);
+    --interaction-row-text: var(--text-sidebar-hover);
+    --interaction-row-metadata: var(--text-sidebar-hover);
+  }
+
   /* Shared with Builderlab/Auth0 standalone account setup cards. */
   .panel[data-shape="card"] {
     height: auto;

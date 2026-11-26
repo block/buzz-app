@@ -2057,6 +2057,12 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
     addressedPreview.length > 280
       ? `${addressedPreview.slice(0, 279).join("")}…`
       : addressedPreview.join("");
+  const replyLabel =
+    props.onOpenThread && row.replyCount > 0
+      ? row.replyCount === 1
+        ? "1 reply"
+        : `${row.replyCount} replies`
+      : undefined;
   const avatar = (who: typeof author) => (
     <span className={styles.audienceAvatar} title={who.name}>
       <AgentAvatar
@@ -2171,7 +2177,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                 ref={trigger}
                 data-buzz-ui=""
                 className={styles.audienceLine}
-                aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`}
+                aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}${replyLabel ? `, ${replyLabel}` : ""}`}
               >
                 {!bubble && avatar(author)}
                 {!open && (
@@ -2190,6 +2196,11 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                   </span>
                 )}
                 {!open && row.edited && <EditedMarker />}
+                {!open && replyLabel && (
+                  <span className={styles.audienceReplyCount}>
+                    {replyLabel}
+                  </span>
+                )}
               </Collapsible.Trigger>
               <Collapsible.Panel
                 className={`${styles.audiencePanel} ${styles.audienceBody}`}

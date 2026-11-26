@@ -196,16 +196,15 @@ export function createAgentWork(relay: RelayData) {
           const view = session.observe([
             { kinds: [9], ids, limit: ids.length },
           ]);
+          // Held before it can report, so a report reuses it, not another.
+          const held = { key, view, stop: () => view.dispose() };
+          roots = held;
           const stopView = view.subscribe(compute);
-          void view.refresh();
-          roots = {
-            key,
-            view,
-            stop() {
-              stopView();
-              view.dispose();
-            },
+          held.stop = () => {
+            stopView();
+            view.dispose();
           };
+          void view.refresh();
         }
       }
       const next = roots

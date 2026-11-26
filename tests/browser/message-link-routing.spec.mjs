@@ -1,12 +1,13 @@
 import { pauseClock } from "./clock.mjs";
 import { test, expect } from "./fixture.mjs";
+import { hoverMessage } from "./message-actions.mjs";
 import {
   closeSettings,
   openSettings,
   selectSettingsSection,
 } from "./navigation.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
-import { activate, clickRow, open } from "./timeline.mjs";
+import { activate, open } from "./timeline.mjs";
 
 test.use({
   pluginFixtures: true,
@@ -566,19 +567,22 @@ test.describe("Inline thread placement", () => {
       sourceRoot.id,
     );
     app.append("primary", "alpha", "Inline reply", true, false, inlineRoot.id);
-    const viewThread = (id) =>
-      page
-        .locator(`[data-channel-timeline] [data-message-id="${id}"]`)
-        .getByRole("button", { name: /^View thread:/ });
+    const openThread = async (id) => {
+      const message = page.locator(
+        `[data-channel-timeline] [data-message-id="${id}"]`,
+      );
+      await hoverMessage(message);
+      await message.getByRole("button", { name: "Reply", exact: true }).click();
+    };
     const side = page.locator("[data-panel-workspace]");
     const linkedTab = side.locator(
       `[role="tab"][data-tab-value="thread:alpha:${linkedRoot.id}"]`,
     );
-    await clickRow(page, viewThread(sourceRoot.id));
+    await openThread(sourceRoot.id);
     await sheet(page)
       .getByRole("button", { name: "Move to side panel", exact: true })
       .click();
-    await clickRow(page, viewThread(inlineRoot.id));
+    await openThread(inlineRoot.id);
     await expect(
       sheet(page).getByRole("textbox", {
         name: "Reply to thread",

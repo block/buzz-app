@@ -425,17 +425,24 @@ export function createChannelWrites(
     }
     return [...ids];
   }
-  /** Whether this channel's current relay-signed roster lists `pubkey`. Throws
-   * when no roster is readable, so missing evidence never counts as absence. */
-  async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
+  /** Channels among `ids` whose current relay-signed roster lists `pubkey`.
+   * Throws when any channel's roster is unreadable, so missing evidence never
+   * counts as absence. */
+  async function listedChannels(
+    ids: readonly string[],
+    pubkey: string,
+    caller: AbortSignal,
+  ) {
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    const unique = [...new Set(ids)];
+    if (!unique.length) return [];
     const events = await discovery.read(
       [
         {
           kinds: [39002],
           authors: [relayAuthor],
-          "#d": [id],
-          limit: 1,
+          "#d": unique,
+          limit: unique.length,
           consistency: "strong",
         },
       ],
@@ -445,19 +452,34 @@ export function createChannelWrites(
         priority: "foreground",
       },
     );
-    const roster = events.find(
-      (event) =>
-        event.kind === 39002 &&
-        event.pubkey === relayAuthor &&
-        event.tags.some(([name, value]) => name === "d" && value === id),
-    );
-    if (!roster)
-      throw new Error(
-        "Could not refresh channel membership. Retry to continue.",
-      );
-    return roster.tags.some(
-      ([name, value]) => name === "p" && value === pubkey,
-    );
+    const rosters = new Map<string, (typeof events)[number]>();
+    for (const event of events) {
+      const id = event.tags.find(([name]) => name === "d")?.[1];
+      if (!id || event.kind !== 39002 || event.pubkey !== relayAuthor) continue;
+      const prior = rosters.get(id);
+      if (
+        !prior ||
+        event.created_at > prior.created_at ||
+        (event.created_at === prior.created_at && event.id < prior.id)
+      )
+        rosters.set(id, event);
+    }
+    const listed: string[] = [];
+    for (const id of unique) {
+      const roster = rosters.get(id);
+      if (!roster)
+        throw new Error(
+          "Could not refresh channel membership. Retry to continue.",
+        );
+      if (roster.tags.some(([name, value]) => name === "p" && value === pubkey))
+        listed.push(id);
+    }
+    return listed;
+  }
+  /** Whether this channel's current relay-signed roster lists `pubkey`. Throws
+   * when no roster is readable, so missing evidence never counts as absence. */
+  async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
+    return (await listedChannels([id], pubkey, caller)).length > 0;
   }
   async function addAgents(
     id: string,
@@ -712,6 +734,7 @@ export function createChannelWrites(
     refreshMembership,
     memberChannels,
     listsMember,
+    listedChannels,
     prepareOpening,
     createChannel(
       id: string,

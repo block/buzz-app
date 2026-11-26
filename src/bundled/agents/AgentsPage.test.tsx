@@ -3682,27 +3682,46 @@ it("moves focus from Finish setup to the first tab once the setup finishes", asy
   expect(await screen.findByRole("tab", { name: "Reply" })).toHaveFocus();
 });
 
-it("keeps a failed Delete's agent and its warning on screen", async () => {
+it("closes the dialog immediately on Delete, shows Deleting… on the card, and surfaces a failure inline", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const { agents, show } = setup([ada]);
-  const failure = "Ada isn't deleted yet and may still be in some channels.";
-  agents.remove.mockImplementationOnce(async () => {
-    show([{ ...ada, deleting: true }]);
-    throw new Error(failure);
-  });
+  const failure =
+    "Ada isn't deleted yet and may still be in some channels. (Actor not authorized)";
+  let failDelete!: (error: Error) => void;
+  agents.remove.mockImplementationOnce(
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        show([{ ...ada, deleting: true, removing: true }]);
+        failDelete = (error) => {
+          show([{ ...ada, deleting: true, removeError: error.message }]);
+          reject(error);
+        };
+      }),
+  );
   await user.click(screen.getByRole("gridcell", { name: "Ada" }));
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   await user.click(screen.getByRole("button", { name: "Delete agent" }));
   const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
   await user.click(within(dialog).getByRole("button", { name: "Delete" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(failure);
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  expect(screen.getByText(/Its Delete didn't finish/)).toBeInTheDocument();
-  expect(screen.getByRole("gridcell", { name: "Ada" })).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(
+    within(screen.getByRole("gridcell", { name: /Ada/ })).getByRole("status"),
+  ).toHaveTextContent("Deleting…");
+  failDelete(new Error(failure));
+  expect(
+    await within(screen.getByRole("gridcell", { name: /Ada/ })).findByRole(
+      "alert",
+    ),
+  ).toHaveTextContent(failure);
+  expect(
+    within(screen.getByRole("gridcell", { name: /Ada/ })).getByRole("button", {
+      name: "Retry delete",
+    }),
+  ).toBeInTheDocument();
 });
 
-it("keeps a failed Remove from this community open to retry here alone", async () => {
+it("keeps a failed Remove from this community visible to retry here alone", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const { agents, show } = setup([ada]);
@@ -3723,7 +3742,7 @@ it("keeps a failed Remove from this community open to retry here alone", async (
   const failure = "Ada hasn't left relay.example yet.";
   agents.leave.mockImplementationOnce(async () => {
     leaving = true;
-    show([{ ...ada, deleting: true }]);
+    show([{ ...ada, deleting: true, removeError: failure }]);
     throw new Error(failure);
   });
   // Ada's card shows her second community once the page next renders, as it
@@ -3740,16 +3759,20 @@ it("keeps a failed Remove from this community open to retry here alone", async (
     name: "Remove Ada from relay.example?",
   });
   await user.click(within(dialog).getByRole("button", { name: "Remove" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(failure);
-  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  expect(screen.getByText(/Its Remove didn't finish/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(
+    await within(screen.getByRole("gridcell", { name: /Ada/ })).findByRole(
+      "alert",
+    ),
+  ).toHaveTextContent(failure);
   expect(screen.queryByText(/Its Delete didn't finish/)).toBeNull();
   await remove();
   dialog = await screen.findByRole("dialog", {
     name: "Remove Ada from relay.example?",
   });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(failure);
   await user.click(within(dialog).getByRole("button", { name: "Remove" }));
-  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(agents.leave).toHaveBeenCalledTimes(2);
   expect(agents.leave).toHaveBeenLastCalledWith(ada.key);
   expect(agents.remove).not.toHaveBeenCalled();

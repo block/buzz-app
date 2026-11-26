@@ -589,19 +589,27 @@ export function AgentDetails({
                       <PreferenceRow
                         title="Remove from this community"
                         subtitle={
-                          agent.deleting
-                            ? "Its Remove didn't finish, so it stays stopped here. Remove it again to finish."
-                            : `Also in ${agents
-                                .memberships(agent.pubkey)
-                                .filter(
-                                  (membership) =>
-                                    membership.key !== agent.key &&
-                                    !membership.deleting,
-                                )
-                                .map(({ origin }) =>
-                                  origin.replace(/^https:\/\//, ""),
-                                )
-                                .join(", ")}, where it stays.`
+                          agent.removing ? (
+                            "Removing from this community…"
+                          ) : agent.removeError ? (
+                            <span role="alert" className="text-danger">
+                              {agent.removeError}
+                            </span>
+                          ) : agent.deleting ? (
+                            "Its Remove didn't finish, so it stays stopped here. Remove it again to finish."
+                          ) : (
+                            `Also in ${agents
+                              .memberships(agent.pubkey)
+                              .filter(
+                                (membership) =>
+                                  membership.key !== agent.key &&
+                                  !membership.deleting,
+                              )
+                              .map(({ origin }) =>
+                                origin.replace(/^https:\/\//, ""),
+                              )
+                              .join(", ")}, where it stays.`
+                          )
                         }
                         trailing={
                           <AgentRemoveHere
@@ -613,6 +621,8 @@ export function AgentDetails({
                                 size="compact"
                                 variant="outline"
                                 aria-label="Remove from this community"
+                                loading={Boolean(agent.removing)}
+                                disabled={Boolean(agent.removing)}
                                 onClick={open}
                               >
                                 Remove
@@ -625,9 +635,17 @@ export function AgentDetails({
                     <PreferenceRow
                       title="Delete agent"
                       subtitle={
-                        agent.deleting &&
-                        !inSeveral(agents, agent) &&
-                        "Its Delete didn't finish, so it stays stopped. Delete it again to finish."
+                        agent.removing ? (
+                          "Deleting…"
+                        ) : !inSeveral(agents, agent) && agent.removeError ? (
+                          <span role="alert" className="text-danger">
+                            {agent.removeError}
+                          </span>
+                        ) : (
+                          agent.deleting &&
+                          !inSeveral(agents, agent) &&
+                          "Its Delete didn't finish, so it stays stopped. Delete it again to finish."
+                        )
                       }
                       trailing={
                         <AgentDelete
@@ -639,6 +657,8 @@ export function AgentDetails({
                               size="compact"
                               variant="destructive"
                               aria-label="Delete agent"
+                              loading={Boolean(agent.removing)}
+                              disabled={Boolean(agent.removing)}
                               onClick={open}
                             >
                               Delete

@@ -373,6 +373,10 @@ export type Agent<Config = unknown> = Readonly<{
   /** Its Delete, or its Remove from this community, did not finish: it is
    * stopped here until that runs again. */
   deleting?: true;
+  /** Its Delete, or its Remove from this community, is running right now. */
+  removing?: true;
+  /** Why its last Delete or Remove did not finish in this session. */
+  removeError?: string;
   protection?: ProtectionBinding;
   protectionRevision?: number;
   /** Saved execution selection for this membership on this device. */
@@ -2802,6 +2806,8 @@ export class AgentsService extends Service implements Agents {
   private unarchiving: Set<AgentKey>;
   /** Each Delete running, by pubkey, so pressing it again joins it. */
   private deleting = new Map<string, Promise<void>>();
+  /** Last Delete or Remove error per agent key or pubkey, cleared on retry. */
+  private removeErrors = new Map<string, string>();
   /** The synced settings head each agent last tried to take its type from. */
   private followedType = new Map<string, string>();
   /** Agents whose type is changing here. No community attaches them
@@ -7635,16 +7641,51 @@ export class AgentsService extends Service implements Agents {
     return this.retypePlan(identity, kinds.get(identity.type), kind).preview;
   }
 
+  private isRemoving(key: AgentKey, pubkey: string) {
+    return this.deleting.has(pubkey) || this.leaving.has(key);
+  }
+  private removeErrorOf(key: AgentKey, pubkey: string) {
+    if (this.isRemoving(key, pubkey)) return undefined;
+    return this.removeErrors.get(key) ?? this.removeErrors.get(pubkey);
+  }
+  private clearRemoveError(key: AgentKey, pubkey: string) {
+    this.removeErrors.delete(key);
+    this.removeErrors.delete(pubkey);
+    for (const row of this.identities)
+      if (row.pubkey === pubkey) this.removeErrors.delete(row.key);
+  }
+
   async remove(key: AgentKey): Promise<void> {
     const pubkey = pubkeyOf(key);
-    if (!this.identities.some((identity) => identity.pubkey === pubkey))
-      return this.removeHosted(pubkey);
+    const local = this.identities.some(
+      (identity) => identity.pubkey === pubkey,
+    );
+    if (
+      !local &&
+      this.state.agents.some(
+        (agent) => agent.pubkey === pubkey && agent.place === "elsewhere",
+      )
+    )
+      throw new Error("Delete it on the device that runs it");
     const running = this.deleting.get(pubkey);
     if (running) return running;
-    const work = this.removeLocal(pubkey).finally(() =>
-      this.deleting.delete(pubkey),
-    );
+    this.clearRemoveError(key, pubkey);
+    const work = (local ? this.removeLocal(pubkey) : this.removeHosted(pubkey))
+      .catch((error: unknown) => {
+        this.removeErrors.set(
+          pubkey,
+          error instanceof Error ? error.message : String(error),
+        );
+        throw error;
+      })
+      .finally(() => {
+        this.deleting.delete(pubkey);
+        this.update();
+        this.notify();
+      });
     this.deleting.set(pubkey, work);
+    this.update();
+    this.notify();
     return work;
   }
   /** Keeps its key until each community it is in confirms it left every
@@ -7693,6 +7734,7 @@ export class AgentsService extends Service implements Agents {
     const here = rows.filter((member) => originOf(member.relay) === shown);
     const left: Member[] = [];
     let offline = false;
+    let reason: string | undefined;
     for (const member of [
       ...rows.filter((row) => !here.includes(row)),
       ...here,
@@ -7701,17 +7743,22 @@ export class AgentsService extends Service implements Agents {
       const departed = await this.depart(member, true);
       if (departed === "done") continue;
       left.push(member);
-      offline ||= departed === "offline";
+      if (departed === "offline") offline = true;
+      else reason ??= departed.reason;
     }
     if (left.length && rows.length === 1)
       throw new Error(
-        offline ? `${unfinished} Its community isn't connected.` : unfinished,
+        offline
+          ? `${unfinished} Its community isn't connected.`
+          : reason
+            ? `${unfinished} (${reason})`
+            : unfinished,
       );
     if (left.length) {
       // Shows it gone from the communities it did leave.
       await refresh();
       throw new Error(
-        `${unfinished} It is still in ${left.map(hostOf).join(", ")}.`,
+        `${unfinished} It is still in ${left.map(hostOf).join(", ")}.${reason ? ` (${reason})` : ""}`,
       );
     }
     for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
@@ -7767,6 +7814,22 @@ export class AgentsService extends Service implements Agents {
           binding.controller.signal,
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
+        // The agent removes itself from channels first (which works even on
+        // channels the owner isn't in or DMs before its profile is attested),
+        // falling back to owner-signed removal for any channel that refuses.
+        const selfRemove = (channelId: string, abort: AbortSignal) => {
+          abort.throwIfAborted();
+          return native
+            .publish(member, {
+              kind: 9001,
+              content: "",
+              tags: [
+                ["h", channelId],
+                ["p", pubkey],
+              ],
+            })
+            .then(() => {});
+        };
         // Only an owner proves ownership with a proof issued now; its key,
         // still here, force-republishes its own profile naming that owner.
         await leaveCommunity(
@@ -7779,6 +7842,7 @@ export class AgentsService extends Service implements Agents {
                 attest: () => native.publishProfile(member, true),
               }
             : undefined,
+          selfRemove,
         );
         await unshare(binding.session, binding.viewer, pubkey, signal);
         await deleteAgentRecord(
@@ -7800,7 +7864,10 @@ export class AgentsService extends Service implements Agents {
           `Agent ${member.name} did not leave ${member.relay}`,
           error,
         );
-        return "failed";
+        return {
+          status: "failed" as const,
+          reason: error instanceof Error ? error.message : String(error),
+        };
       }
       await native.remove(member);
       this.setArchiveUnchecked(member.key, false);
@@ -7845,7 +7912,11 @@ export class AgentsService extends Service implements Agents {
       await native.releaseRemoval(member);
     }
     await this.refresh();
-    if (!this.liveRows(member.pubkey).length) forgetDefaultAgent(member.pubkey);
+    this.removeErrors.delete(key);
+    if (!this.liveRows(member.pubkey).length) {
+      this.removeErrors.delete(member.pubkey);
+      forgetDefaultAgent(member.pubkey);
+    }
     // So the community's agent choices no longer offer it.
     await this.bindingOf(member)?.session.agentChoices.refresh(true, {
       fresh: true,
@@ -7936,8 +8007,23 @@ export class AgentsService extends Service implements Agents {
   leave(key: AgentKey): Promise<void> {
     const running = this.leaving.get(key);
     if (running) return running;
-    const work = this.leaveHere(key).finally(() => this.leaving.delete(key));
+    this.removeErrors.delete(key);
+    const work = this.leaveHere(key)
+      .catch((error: unknown) => {
+        this.removeErrors.set(
+          key,
+          error instanceof Error ? error.message : String(error),
+        );
+        throw error;
+      })
+      .finally(() => {
+        this.leaving.delete(key);
+        this.update();
+        this.notify();
+      });
     this.leaving.set(key, work);
+    this.update();
+    this.notify();
     return work;
   }
   /** Takes it out of one community, as Delete does, and keeps its key and
@@ -7963,7 +8049,7 @@ export class AgentsService extends Service implements Agents {
     const departed = await this.depart(member);
     if (departed !== "done")
       throw new Error(
-        `${name} hasn't left ${hostOf(member)} yet and may still be in some of its channels. It stays stopped there; Remove it again to finish.${departed === "offline" ? " That community isn't connected." : ""}`,
+        `${name} hasn't left ${hostOf(member)} yet and may still be in some of its channels. It stays stopped there; Remove it again to finish.${departed === "offline" ? " That community isn't connected." : departed.reason ? ` (${departed.reason})` : ""}`,
       );
     // Its home record keeps the agent's settings, but not what it paid
     // attention to there.
@@ -8730,6 +8816,8 @@ export class AgentsService extends Service implements Agents {
       | "protectionRevision"
     >,
   ): Agent {
+    const removing = this.isRemoving(fields.pubkey, fields.pubkey);
+    const removeError = this.removeErrorOf(fields.pubkey, fields.pubkey);
     const prior = this.shown.get(fields.pubkey);
     if (
       prior &&
@@ -8741,7 +8829,9 @@ export class AgentsService extends Service implements Agents {
       prior.place === fields.place &&
       prior.unfinished === fields.unfinished &&
       prior.protectionRevision === fields.protectionRevision &&
-      prior.protection === fields.protection
+      prior.protection === fields.protection &&
+      prior.removing === (removing ? true : undefined) &&
+      prior.removeError === removeError
     )
       return prior;
     const agent: Agent = Object.freeze({
@@ -8753,6 +8843,8 @@ export class AgentsService extends Service implements Agents {
       timers: EMPTY,
       attentionEnabled: false,
       config: undefined,
+      ...(removing && { removing: true }),
+      ...(removeError && { removeError }),
     });
     this.shown.set(fields.pubkey, agent);
     return agent;
@@ -9008,6 +9100,7 @@ export class AgentsService extends Service implements Agents {
   private view(identity: Member, record: AgentRecord): Agent {
     const editor = this.editorConfig(identity, record.config as object);
     const executionBinding = this.executions.read(identity.key);
+    const removeError = this.removeErrorOf(identity.key, identity.pubkey);
     return Object.freeze({
       key: identity.key,
       pubkey: identity.pubkey,
@@ -9031,6 +9124,10 @@ export class AgentsService extends Service implements Agents {
       ...(editor?.problem && { configProblem: editor.problem }),
       ...(this.archiveUnchecked(identity.key) && { archiveUnchecked: true }),
       ...(identity.deleting && { deleting: true }),
+      ...(this.isRemoving(identity.key, identity.pubkey) && {
+        removing: true,
+      }),
+      ...(removeError ? { removeError } : {}),
     });
   }
   /** What the agent starts with: its row, with each synced side's confirmed
@@ -9691,7 +9788,13 @@ export class AgentsService extends Service implements Agents {
           sameConfig(prior, editor?.config ?? record.config, editor?.base) &&
           prior.configProblem === editor?.problem &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&
-          prior.deleting === identity.deleting
+          prior.deleting === identity.deleting &&
+          prior.removing ===
+            (this.isRemoving(identity.key, identity.pubkey)
+              ? true
+              : undefined) &&
+          prior.removeError ===
+            this.removeErrorOf(identity.key, identity.pubkey)
           ? prior
           : this.view(identity, record),
       );
@@ -9993,8 +10096,9 @@ async function leaveCommunity(
   pubkey: string,
   signal: AbortSignal,
   owner?: OwnerConsent,
+  selfRemove?: (channelId: string, signal: AbortSignal) => Promise<void>,
 ) {
-  await removeAgentFromChannels(session, pubkey, signal);
+  await removeAgentFromChannels(session, pubkey, signal, selfRemove);
   await archiveAgent(session, pubkey, signal, owner);
 }
 /** After a finished Delete, rereads the shared agent choices, superseding any

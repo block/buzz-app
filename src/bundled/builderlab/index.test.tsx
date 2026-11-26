@@ -1607,7 +1607,12 @@ it.for([
       await waitFor(() =>
         expect(signIns).toHaveBeenCalledTimes(beforeDeleteLogin + 1),
       );
-      expect(remove).toHaveAttribute("aria-disabled", "true");
+      expect(
+        screen.queryByRole("dialog", { name: "Delete Browser?" }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Delete agent" }),
+      ).toBeDisabled();
       expect(requestsTo("delete-agent")).toHaveLength(beforeDelete);
       expect(agents.find(browserKey)).toBeDefined();
     } finally {

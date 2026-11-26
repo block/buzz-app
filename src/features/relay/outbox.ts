@@ -535,26 +535,27 @@ export function createOutbox(
           if (attempts.has(old)) throw new Error(EARLIER_SAVE_SENDING);
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
-        const records = [
-          ...(action === "dismiss"
-            ? visible.filter((item) => item.event.id !== id)
-            : action === "acknowledge"
-              ? visible.map((item) =>
-                  item.event.id === id
-                    ? {
-                        ...item,
-                        recovery: undefined,
-                        acknowledged: true as const,
-                      }
-                    : item,
-                )
-              : visible),
-          ...(addition ? [addition] : []),
-        ].filter(({ event }) => !retired?.has(event.id));
+        const collect = () =>
+          [
+            ...(action === "dismiss"
+              ? visible.filter((item) => item.event.id !== id)
+              : action === "acknowledge"
+                ? visible.map((item) =>
+                    item.event.id === id
+                      ? {
+                          ...item,
+                          recovery: undefined,
+                          acknowledged: true as const,
+                        }
+                      : item,
+                  )
+                : visible),
+            ...(addition ? [addition] : []),
+          ].filter(({ event }) => !retired?.has(event.id));
         const own = addition?.event.id ?? id;
         const save = () => {
           // A refused row stays out of other saves until its own save fits.
-          const kept = records.filter(
+          const kept = collect().filter(
             ({ event }) => event.id === own || !refused.has(event.id),
           );
           if (action === "recover")

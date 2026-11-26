@@ -549,3 +549,146 @@ for (const order of ["replaced-first", "publishing-first"])
           },
     );
   });
+
+async function savedMessages(page, sourceOrigin, count) {
+  await page
+    .context()
+    .route(`${sourceOrigin}/outbox-storage-test`, (route) =>
+      route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
+    );
+  await page.goto(`${sourceOrigin}/outbox-storage-test`);
+  const { finalizeEvent } = await import("nostr-tools");
+  return Array.from({ length: count }, (_, index) =>
+    finalizeEvent(
+      { kind: 9, created_at: 1, content: `Saved ${index}`, tags: [["h", "c"]] },
+      new Uint8Array(32).fill(7),
+    ),
+  );
+}
+
+test("two windows sending at the limit never leave a journal neither can load", async ({
+  page,
+  sourceOrigin,
+}) => {
+  const events = await savedMessages(page, sourceOrigin, 255);
+  const result = await page.evaluate(async (events) => {
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
+      "/src/features/relay/outbox-storage.ts"
+    );
+    const { createOutbox } = await import("/src/features/relay/outbox.ts");
+    const scope = `overfill-${crypto.randomUUID()}`;
+    const seed = browserOutboxStorage(scope);
+    await seed.load();
+    await seed.save(
+      events.map((event) => ({ event, signed: event, delivery: "failed" })),
+    );
+    seed.close();
+    const writer = {
+      sign: () => new Promise(() => {}),
+      publish: () => new Promise(() => {}),
+    };
+    const open = () =>
+      createOutbox(events[0].pubkey, writer, browserOutboxStorage(scope));
+    const a = open();
+    const b = open();
+    const reader = browserOutboxStorage(scope);
+    const send = (session, content) =>
+      session.outbox.send({ kind: 9, content, tags: [["h", "c"]] });
+    const settled = async (session, id) => {
+      for (;;) {
+        const item = session.outbox.snapshot().find((i) => i.event.id === id);
+        if (item?.error) return item.error;
+        const stored = await reader.load({ readOnly: true });
+        if (stored.some((row) => row.event.id === id)) return "";
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+    try {
+      await Promise.all([a.ready, b.ready]);
+      const first = await settled(a, send(a, "From A"));
+      const second = await settled(b, send(b, "From B"));
+      let next = "";
+      try {
+        send(b, "From B again");
+      } catch (error) {
+        next = error.message;
+      }
+      const c = open();
+      await c.ready;
+      const loaded = c.outbox.snapshot().length;
+      c.dispose();
+      const stored = await reader.load({ readOnly: true });
+      return { first, second, next, stored: stored.length, loaded };
+    } finally {
+      a.dispose();
+      b.dispose();
+      reader.close();
+      await purgeOutboxStorage(scope);
+    }
+  }, events);
+  const full = "Too many outstanding operations; resolve a pending operation";
+  expect(result).toEqual({
+    first: "",
+    second: full,
+    next: full,
+    stored: 256,
+    loaded: 256,
+  });
+});
+
+test("an already overfilled journal loads, and sends wait until it is back under the limit", async ({
+  page,
+  sourceOrigin,
+}) => {
+  const events = await savedMessages(page, sourceOrigin, 257);
+  const result = await page.evaluate(async (events) => {
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
+      "/src/features/relay/outbox-storage.ts"
+    );
+    const { createOutbox } = await import("/src/features/relay/outbox.ts");
+    const scope = `overfilled-${crypto.randomUUID()}`;
+    const seed = browserOutboxStorage(scope);
+    await seed.load();
+    await seed.save(
+      events.map((event) => ({ event, signed: event, delivery: "failed" })),
+    );
+    seed.close();
+    const writer = {
+      sign: () => new Promise(() => {}),
+      publish: () => new Promise(() => {}),
+    };
+    const session = createOutbox(
+      events[0].pubkey,
+      writer,
+      browserOutboxStorage(scope),
+    );
+    const send = () => {
+      try {
+        session.outbox.send({ kind: 9, content: "New", tags: [["h", "c"]] });
+        return "";
+      } catch (error) {
+        return error.message;
+      }
+    };
+    try {
+      await session.ready;
+      const loaded = session.outbox.snapshot().length;
+      const blocked = send();
+      await session.outbox.dismiss(events[0].id);
+      const stillBlocked = send();
+      await session.outbox.dismiss(events[1].id);
+      const allowed = send();
+      return { loaded, blocked, stillBlocked, allowed };
+    } finally {
+      session.dispose();
+      await purgeOutboxStorage(scope);
+    }
+  }, events);
+  const full = "Too many outstanding operations; resolve a pending operation";
+  expect(result).toEqual({
+    loaded: 257,
+    blocked: full,
+    stillBlocked: full,
+    allowed: "",
+  });
+});

@@ -169,7 +169,8 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
         const fits = options?.fits;
         // Other windows write to the same journal, so only the stored rows
         // show whether a new row still fits.
-        if (fits && [...next.keys()].some((id) => !persisted.has(id))) {
+        const adds = (id: string) => !persisted.has(id) && !legacyIds.has(id);
+        if (fits && [...next.keys()].some(adds)) {
           const stored = events.index("scope").getAll(IDBKeyRange.only(scope));
           stored.onsuccess = () => {
             const before = stored.result.map((row: Row) => row.operation);
@@ -181,7 +182,8 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
               // Another window removed it, and this save will not restore it.
               if (!after.has(id) && persisted.has(id) && id !== options?.force)
                 continue;
-              if (!after.has(id)) added.push(id);
+              if (!after.has(id) && (adds(id) || id === options?.force))
+                added.push(id);
               after.set(id, operation);
             }
             if (!added.length || fits([...after.values()])) return;

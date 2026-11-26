@@ -3,16 +3,50 @@ import type { EventData } from "../relay/events";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const prefix = "Buzz Huddle (buzz.huddles/v1)\nparent:";
 export const huddleDescription = (parent: string) => `${prefix}${parent}`;
+function transcriptLabelId(tags: EventData["tags"], name: "root" | "card") {
+  const prefix = `huddle:${name}:`;
+  const halves = tags.flatMap(([tag, label]) =>
+    tag === "t" && label?.startsWith(prefix)
+      ? [label.slice(prefix.length)]
+      : [],
+  );
+  if (!halves.length) return;
+  const first = halves.find((half) => /^0:[0-9a-f]{32}$/.test(half));
+  const second = halves.find((half) => /^1:[0-9a-f]{32}$/.test(half));
+  return halves.length === 2 && first && second
+    ? first.slice(2) + second.slice(2)
+    : null;
+}
+
 export function huddleRoomMetadata(
   description: string | undefined,
-  transcriptTag?: string,
+  tags: EventData["tags"] = [],
 ) {
   if (!description?.startsWith(prefix)) return;
   const [parent, previewOrigin, ...extra] = description
     .slice(prefix.length)
     .split("\n");
   if (!parent || !uuid.test(parent) || extra.length) return;
-  const origin = transcriptTag ?? previewOrigin;
+  if (
+    tags.some(([tag, label]) => tag === "t" && label === "huddle:transcripts")
+  ) {
+    const root = transcriptLabelId(tags, "root");
+    const parentId = transcriptLabelId(tags, "card");
+    if (root === null || parentId === null || (parentId && !root))
+      return { parent };
+    return {
+      parent,
+      transcriptDestination: {
+        channelId: parent,
+        ...(root && { root }),
+        ...(parentId && { parentId }),
+      },
+    };
+  }
+  // Read the two formats emitted before the canonical creation labels.
+  const origin =
+    tags.find(([tag]) => tag === "buzz:huddle-transcript")?.[1] ??
+    previewOrigin;
   if (origin === undefined) return { parent };
   if (origin === "transcripts:channel")
     return { parent, transcriptDestination: { channelId: parent } };

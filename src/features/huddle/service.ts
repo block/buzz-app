@@ -272,7 +272,7 @@ export function createHuddles(
     if (current && relay.snapshot() !== current.connection) {
       const next = relay.snapshot();
       if (
-        next.status !== "ready" ||
+        (next.status !== "ready" && next.status !== "connecting") ||
         next.session !== current.connection.session ||
         next.scope !== current.connection.scope
       )
@@ -522,7 +522,7 @@ export function createHuddles(
                 !disposed &&
                 !attempt.transcriptAbort.signal.aborted &&
                 (valid(attempt) || attempt.finishingTranscript === true) &&
-                active.status === "ready" &&
+                (active.status === "ready" || active.status === "connecting") &&
                 active.session === connection.session &&
                 active.scope === connection.scope &&
                 accessible() === "allowed"

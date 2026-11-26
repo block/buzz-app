@@ -499,10 +499,7 @@ export class DiscoveryState {
     const creation = this.creations.get(id);
     const huddle =
       event && creation && huddleCreation(creation, event)
-        ? huddleRoomMetadata(
-            tag(creation, "about"),
-            tag(creation, "buzz:huddle-transcript"),
-          )
+        ? huddleRoomMetadata(tag(creation, "about"), creation.tags)
         : undefined;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);

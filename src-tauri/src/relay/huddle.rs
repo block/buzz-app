@@ -173,19 +173,19 @@ fn create(
         vec!["about".into(), about],
         vec!["ttl".into(), "3600".into()],
     ];
-    let transcript = if let Some(card_id) = card_id {
-        let root = origin
-            .and_then(|origin| origin.root.as_deref())
-            .unwrap_or(card_id);
-        Some(format!("transcripts:card:{root}:{card_id}"))
-    } else {
-        origin.map(|origin| match &origin.root {
-            Some(root) => format!("transcripts:thread:{root}"),
-            None => "transcripts:channel".into(),
-        })
-    };
-    if let Some(transcript) = transcript {
-        tags.push(vec!["buzz:huddle-transcript".into(), transcript]);
+    if let Some(origin) = origin {
+        tags.push(vec!["t".into(), "huddle:transcripts".into()]);
+        // NIP-CL labels are limited to 64 characters, including the prefix.
+        for (name, id) in [
+            ("root", origin.root.as_deref().or(card_id)),
+            ("card", card_id),
+        ] {
+            if let Some(id) = id {
+                let (first, second) = id.split_at(32);
+                tags.push(vec!["t".into(), format!("huddle:{name}:0:{first}")]);
+                tags.push(vec!["t".into(), format!("huddle:{name}:1:{second}")]);
+            }
+        }
     }
     template(9007, tags, String::new())
 }
@@ -959,13 +959,16 @@ mod tests {
             None,
         );
         assert_eq!(routed.tags[4], e.tags[4]);
-        assert_eq!(
-            routed.tags[6],
-            [
-                "buzz:huddle-transcript",
-                &format!("transcripts:thread:{root}")
-            ]
+        assert!(super::super::channel_writes::creation(&routed));
+        let card = "cd".repeat(32);
+        let with_card = create(
+            &room,
+            &parent,
+            Some(&TranscriptOrigin { root: None, card: true }),
+            Some(&card),
         );
+        assert!(super::super::channel_writes::creation(&with_card));
+        assert_eq!(with_card.tags[4], e.tags[4]);
         let e = lifecycle(48100, &parent, &room);
         assert_eq!(e.tags, vec![vec!["h", &parent]]);
         assert_eq!(

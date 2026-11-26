@@ -14,6 +14,7 @@ import { createRelaySession } from "../relay/session";
 import type { HuddleAudio, OpenHuddleAudio } from "./audio";
 import type { HuddleBridge, HuddleDestination, HuddleUpdate } from "./bridge";
 import { createHuddles, provideHuddleStatus } from "./service";
+import { huddleDescription } from "./lifecycle";
 import { createHuddleVoices } from "./voice";
 
 const viewerKey = keypair();
@@ -160,6 +161,10 @@ function harness(
       channels = next;
       partial = incomplete;
       for (const fn of accessListeners) fn();
+    },
+    reconnect() {
+      connection = { ...connection, status: "connecting" };
+      for (const fn of changes) fn();
     },
     replace() {
       connection = { ...connection, generation: 2, status: "disconnected" };
@@ -1076,6 +1081,52 @@ describe("explicit last-human hangup", () => {
     expect(h.service.snapshot().phase).toBe("idle");
     await h.dispose();
   });
+  it("keeps the transcript card on the end event without cached room details", async () => {
+    const h = await connected();
+    const card = "c".repeat(64);
+    const creation = signed(viewerKey, {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", room],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["about", huddleDescription(destination.channelId)],
+        ["t", "huddle:transcripts"],
+        ["t", `huddle:root:0:${card.slice(0, 32)}`],
+        ["t", `huddle:root:1:${card.slice(32)}`],
+        ["t", `huddle:card:0:${card.slice(0, 32)}`],
+        ["t", `huddle:card:1:${card.slice(32)}`],
+      ],
+    });
+    h.snapshotRead.mockImplementationOnce(async (filters) => [
+      ...records(),
+      ...(filters.some(
+        (filter) =>
+          filter.kinds?.includes(9007) &&
+          filter.authors?.includes(destination.viewer) &&
+          filter["#h"]?.includes(room),
+      )
+        ? [creation]
+        : []),
+    ]);
+    try {
+      await h.service.leave();
+      expect(h.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 48103,
+          content: JSON.stringify({
+            ephemeral_channel_id: room,
+            transcripts_in_origin: true,
+            card_id: card,
+          }),
+        }),
+        expect.anything(),
+      );
+    } finally {
+      await h.dispose();
+    }
+  });
   it.each([
     "second device",
     "another human",
@@ -1321,6 +1372,8 @@ it.each([
       h.service.setRouting("agentCrossTalk", true);
       h.receive({ type: "audio", peer: botKey.pubkey, samples: speech });
       expect(peerAudio).toHaveBeenCalledOnce();
+      h.reconnect();
+      expect(h.service.snapshot().phase).toBe("connected");
       for (let i = 0; i < 35; i++) h.send(silence);
       await vi.waitFor(() =>
         expect(h.transcribe).toHaveBeenCalledWith(

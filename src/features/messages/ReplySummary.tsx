@@ -5,7 +5,8 @@ import type { Profile } from "../relay/contracts";
 import styles from "./Messages.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
-const SHOWN_PARTICIPANTS = 3;
+/** The stack's width, counting an overflow count as one slot. */
+const PARTICIPANT_SLOTS = 4;
 
 /** Shared summary contents for channel threads and collapsed reply branches. */
 export function ReplySummary({
@@ -44,17 +45,20 @@ export function ReplySummary({
   const newest = [...new Set(participants)].filter(
     (id) => !workingParticipants.includes(id),
   );
+  // A count stands in for at least two people, never for a single avatar
+  // that would fit in its place.
+  const shown =
+    newest.length > PARTICIPANT_SLOTS
+      ? PARTICIPANT_SLOTS - 1
+      : PARTICIPANT_SLOTS;
   // Later avatars overlap earlier ones, so the newest replier renders last:
   // on top, beside the count.
-  const stacked = [
-    ...newest.slice(0, SHOWN_PARTICIPANTS).reverse(),
-    ...newest.slice(SHOWN_PARTICIPANTS),
-  ];
+  const stacked = [...newest.slice(0, shown).reverse(), ...newest.slice(shown)];
   return (
     <>
       <AvatarStack
         size="small"
-        max={SHOWN_PARTICIPANTS}
+        max={shown}
         items={stacked.map((id) => {
           const profile = profiles?.get(id);
           return {

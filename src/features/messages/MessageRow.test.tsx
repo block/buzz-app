@@ -2316,6 +2316,26 @@ it("bounds reply participants and projects artwork with fallback initials", () =
   }
 });
 
+it("shows a fourth replier instead of a +1 count", () => {
+  const view = renderMessage({
+    row: { ...row, participants: ["p1", "p2", "p3", "p4"] },
+    onOpenThread: () => {},
+  });
+  try {
+    const trigger = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    expect(
+      [...trigger.querySelectorAll("[title]")].map((e) =>
+        e.getAttribute("title"),
+      ),
+    ).toEqual(["p4", "p3", "p2", "p1"]);
+    expect(trigger).not.toHaveTextContent("+");
+  } finally {
+    view.unmount();
+  }
+});
+
 it.each([1, 2, 3, 4, 5, 6, 10])(
   "caps %i images at four tiles while keeping the full gallery count",
   (count) => {

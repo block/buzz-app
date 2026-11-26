@@ -1,5 +1,6 @@
 import { Context } from "@deepseek-ai/cordis";
-import { expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
 import {
   createPluginInstallCore,
   createPluginInstallRequests,
@@ -1654,4 +1655,134 @@ it("advertises URL sources and admits a URL request for review", async () => {
   expect(open).toHaveBeenCalledOnce();
   settleRequest(requests, "cancelled");
   await expect(outcome).resolves.toBe("cancelled");
+});
+
+describe("matching an exact URL artifact pin", () => {
+  const id = "example.target";
+  const artifact = (version: string) => {
+    const bytes = JSON.stringify({ manifest: { id, version }, code: "" });
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    return {
+      id,
+      sha256,
+      url: `https://plugins.example.com/artifacts/${id}-${sha256}.json`,
+    };
+  };
+  const old = artifact("1.0.0");
+  const next = artifact("1.1.0");
+  const mirror = {
+    ...old,
+    url: old.url.replace("plugins.example.com", "mirror.example.net"),
+  };
+  const urlInstall = (pin: typeof old, change: Partial<PluginInfo> = {}) => ({
+    ...info(id),
+    enabled: false,
+    revision: pin.sha256,
+    updateSource: { url: pin.url, sha256: pin.sha256 },
+    ...change,
+  });
+
+  it("answers only whether the saved URL install is exactly the expected pin", async () => {
+    const { as, fibers, set } = setup({ plugins: [urlInstall(old)] });
+    const first = await as("example.first-store");
+    const second = await as("example.second-store");
+    const listener = vi.fn();
+    second.subscribeInstallationStatus(id, listener);
+
+    expect(first.matchInstallationUrlPin?.(old)).toBe("match");
+    expect(
+      first.matchInstallationUrlPin?.({
+        ...old,
+        url: old.url.replace("plugins.example.com", "PLUGINS.example.com:443"),
+        sha256: old.sha256.toUpperCase(),
+      }),
+    ).toBe("match");
+    expect(first.matchInstallationUrlPin?.(next)).toBe("mismatch");
+    expect(
+      first.matchInstallationUrlPin?.({ ...old, sha256: next.sha256 }),
+    ).toBe("mismatch");
+    for (const url of [mirror.url, old.url.replace("/artifacts/", "/other/")])
+      expect(first.matchInstallationUrlPin?.({ ...old, url })).toBe("mismatch");
+
+    await fibers[0]?.dispose();
+    expect(first.matchInstallationUrlPin?.(old)).toBe("unknown");
+    expect(second.matchInstallationUrlPin?.(old)).toBe("match");
+
+    // Reinstalling the same bytes from another URL changes only the saved URL.
+    set(ready([urlInstall(mirror)]));
+    expect(listener).toHaveBeenCalledWith("installed");
+    expect(second.matchInstallationUrlPin?.(old)).toBe("mismatch");
+    expect(second.matchInstallationUrlPin?.(mirror)).toBe("match");
+  });
+
+  it("never matches an invalid pin or an install it cannot confirm", async () => {
+    const duplicate = urlInstall(old, {
+      manifest: { id: "example.duplicate", name: "Duplicate", apiVersion: 1 },
+    });
+    const installs: PluginInfo[] = [
+      duplicate,
+      { ...duplicate },
+      urlInstall(old, {
+        manifest: { ...info("example.errored").manifest },
+        error: "Broken",
+      }),
+      urlInstall(old, {
+        manifest: { ...info("example.stale").manifest },
+        revision: next.sha256,
+      }),
+      urlInstall(old, {
+        manifest: { ...info("example.bundled").manifest },
+        source: "bundled",
+      }),
+      urlInstall(old, {
+        manifest: { ...info("example.git").manifest },
+        updateSource: { ...base, path: ".", commit },
+      }),
+      urlInstall(old, {
+        manifest: { ...info("example.folder").manifest },
+        updateSource: { root: "/plugins/example-folder", path: "." },
+      }),
+      urlInstall(old, {
+        manifest: { ...info("example.extra").manifest },
+        updateSource: { url: old.url, sha256: old.sha256, token: "x" } as never,
+      }),
+      urlInstall(old),
+    ];
+    const { as, set } = setup({ plugins: installs });
+    const installer = await as("example.store");
+    expect(installer.matchInstallationUrlPin?.(old)).toBe("match");
+
+    for (const other of [
+      "example.missing",
+      "example.duplicate",
+      "example.errored",
+      "example.stale",
+      "example.bundled",
+      "example.git",
+      "example.folder",
+      "example.extra",
+    ])
+      expect(installer.matchInstallationUrlPin?.({ ...old, id: other })).toBe(
+        "unknown",
+      );
+    for (const invalid of [
+      null,
+      [old],
+      { ...old, url: old.url.replace("https:", "http:") },
+      { ...old, url: `${old.url}?token=x` },
+      { ...old, url: `${old.url}?` },
+      { ...old, url: `${old.url}#` },
+      { ...old, url: old.url.replace(".json", " .json") },
+      { ...old, sha256: old.sha256.slice(0, 40) },
+      { url: old.url, sha256: old.sha256 },
+      { ...old, path: "." },
+      { ...base, path: ".", commit },
+    ])
+      expect(installer.matchInstallationUrlPin?.(invalid as never)).toBe(
+        "unknown",
+      );
+
+    set({ status: "loading" } as ConfigurationState);
+    expect(installer.matchInstallationUrlPin?.(old)).toBe("unknown");
+  });
 });

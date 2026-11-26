@@ -74,7 +74,7 @@ Each line is the main call. Read the types for every field.
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, community })`. It never rejects. |
 | `speech` | Speech to text | `ctx.speech.listen({ community, onText, onPause?, onEnd, onError? })` returns `{ stop, cancel }`; failures arrive on `onError`. To be a provider, `ctx.speech.registerProvider(...)`, below. |
 | `browser` | An embedded website (macOS) | `ctx.browser.View` inside a panel |
-| `pluginInstaller` (optional) | Inspect one installed plugin package digest | `ctx.reflect.get("pluginInstaller")?.getInstallationArtifactHash?.(id)` |
+| `pluginInstaller` (optional) | Inspect one installed plugin package digest or URL pin | `ctx.reflect.get("pluginInstaller")?.getInstallationArtifactHash?.(id)` |
 | `notices` (optional) | A notice on any page, with up to three buttons | `await ctx.reflect.get("notices")?.show({ title, description?, actions? }, { signal? })` resolves with the picked action's `id`, or `undefined` if dismissed or aborted. Proceed only on an allow `id`. Pass a tool call's `client.signal` to ask the owner before it runs. |
 | `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`, and `Menu` (newer hosts: check `ui.Menu`). `Menu` takes `items` (`label`, `onSelect`, `tone: "destructive"`, `disabled`), a `label` or `aria-label`, `icon` and `align`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
@@ -150,6 +150,23 @@ if (result?.status === "available") {
 `available` includes a 64-character lowercase hexadecimal SHA-256 in `sha256`. `absent` means a ready catalog has no matching ID. `unavailable` means the catalog is not ready, the ID is ambiguous, or Buzz cannot confirm a supported stored artifact digest (for example, an errored entry, a bundled plugin, or invalid digest metadata). A disabled external plugin can still have an available digest. Subscribe with `subscribeInstallationStatus(id, listener)` before reading; its callback is an invalidation signal, so re-read the hash when it fires.
 
 Equal recorded digests mean the catalogued revisions have the same package digest. They do not verify current file bytes or prove a common source, publisher, trust level, or version order.
+
+### Installed URL artifact pin
+
+On newer hosts, `pluginInstaller.matchInstallationUrlPin?.({ id, url, sha256 })` checks whether the plugin with that ID was installed from exactly this artifact URL and SHA-256. It is read-only and never reveals the saved URL. The `PluginInstallationUrlPinMatch` result type is exported from `@buzz/author`:
+
+```js
+const installer = ctx.reflect.get("pluginInstaller");
+const result = installer?.matchInstallationUrlPin?.({
+  id: "example.helper",
+  url: "https://plugins.example.com/artifacts/example.helper-<sha256>.json",
+  sha256: "<sha256>",
+});
+```
+
+`match` means a healthy URL install of that ID is saved with this URL (compared after URL normalization) and digest, and its recorded revision is that digest. `mismatch` means a healthy URL install is saved with a different URL or digest, so the same bytes served from a mirror or another folder are a `mismatch`. The answer alone doesn't say which part differs, but `getInstallationArtifactHash` reports the installed digest. `unknown` covers everything else: an invalid pin, a missing, duplicate, errored, bundled, Git or folder install, a catalog that is not ready, inconsistent metadata, or a caller that has been disposed. A disabled plugin can still match. Re-read after `subscribeInstallationStatus` fires, and again just before acting on the answer.
+
+A `match` only says this is the pin that was saved. It does not say who published it, whether it is trusted, or whether another pin is newer, and it grants nothing to install or update.
 
 ## Speech providers
 

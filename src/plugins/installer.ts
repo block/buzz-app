@@ -55,6 +55,7 @@ export type PluginReleaseComparison =
   | "different"
   | "review"
   | "unknown";
+export type PluginInstallationUrlPinMatch = "match" | "mismatch" | "unknown";
 export type PluginInstaller = Readonly<{
   /** The source kinds `requestInstall` accepts. Missing on hosts that accept only Git. */
   sources?: readonly ("git" | "url")[];
@@ -81,6 +82,15 @@ export type PluginInstaller = Readonly<{
     id: string,
     candidate: PluginReleaseCandidate,
   ): PluginReleaseComparison;
+  /**
+   * Checks whether the saved URL install for `pin.id` is exactly this complete pin. "mismatch" means a
+   * healthy URL install has a different URL or SHA-256; the answer alone doesn't say which, or whether either is
+   * newer or trusted. Invalid pins, Git, folder or bundled installs, and incomplete or inconsistent metadata are
+   * "unknown".
+   */
+  matchInstallationUrlPin?(
+    pin: UrlPluginInstallSource,
+  ): PluginInstallationUrlPinMatch;
   /**
    * Subscribe before reading current status. The callback is an invalidation
    * signal for membership or release/source identity changes and may repeat the
@@ -213,8 +223,8 @@ export function pluginArtifactUrl(value: unknown) {
       !url.hostname.startsWith("-") &&
       !url.username &&
       !url.password &&
-      !url.search &&
-      !url.hash &&
+      // Native rejects even an empty query or fragment, which leaves search and hash empty here.
+      !/[?#]/.test(url.href) &&
       url.pathname.replaceAll("/", "") !== ""
       ? value
       : null;
@@ -673,6 +683,27 @@ export function createPluginInstallCore({
       ? "review"
       : "different";
   };
+  const matchInstallationUrlPin = (
+    pin: UrlPluginInstallSource,
+  ): PluginInstallationUrlPinMatch => {
+    const expected = parsePluginInstallSource(pin);
+    if (!expected || !isUrlInstallSource(expected)) return "unknown";
+    const { plugin } = getInstallationIdentity(expected.id);
+    if (
+      !plugin ||
+      plugin.error !== null ||
+      savedInstallationSourceKind(plugin) !== "url"
+    )
+      return "unknown";
+    const saved = plugin.updateSource as { url: string; sha256: string };
+    const savedSha256 = saved.sha256.toLowerCase();
+    // Native URL imports record the artifact digest as the revision; anything else is not this install.
+    if (plugin.revision !== savedSha256) return "unknown";
+    return savedSha256 === expected.sha256 &&
+      comparableSourceUrl(saved.url) === comparableSourceUrl(expected.url)
+      ? "match"
+      : "mismatch";
+  };
 
   return {
     holdReview: requests.holdReview,
@@ -683,6 +714,7 @@ export function createPluginInstallCore({
     getInstallationArtifactHash,
     getInstallationSource,
     compareInstallationRelease,
+    matchInstallationUrlPin,
     subscribeInstallationStatus(
       id: string,
       listener: (status: PluginInstallationStatus) => void,
@@ -834,6 +866,13 @@ export function createPluginInstallerService(
       candidate: PluginReleaseCandidate,
     ): PluginReleaseComparison {
       return host.core.compareInstallationRelease(id, candidate);
+    }
+
+    matchInstallationUrlPin(
+      pin: UrlPluginInstallSource,
+    ): PluginInstallationUrlPinMatch {
+      if (this.ctx.fiber.uid === null) return "unknown";
+      return host.core.matchInstallationUrlPin(pin);
     }
 
     subscribeInstallationStatus(

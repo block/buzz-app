@@ -401,6 +401,7 @@ export function apply(ctx: Context) {
 import type {
   Context,
   PluginInstallationArtifactHash,
+  PluginInstallationUrlPinMatch,
   PluginInstaller,
 } from "@buzz/author";
 type OptionalArtifactHash = {} extends Pick<
@@ -410,6 +411,10 @@ type OptionalArtifactHash = {} extends Pick<
   ? true
   : false;
 const artifactHashRemainsOptional: OptionalArtifactHash = true;
+type OptionalUrlPinMatch = {} extends Pick<PluginInstaller, "matchInstallationUrlPin">
+  ? true
+  : false;
+const urlPinMatchRemainsOptional: OptionalUrlPinMatch = true;
 const availableHash: PluginInstallationArtifactHash = {
   status: "available",
   sha256: "a".repeat(64),
@@ -423,6 +428,15 @@ export function observePlugin(ctx: Context) {
     const sha256: string = hash.sha256;
     void sha256;
   }
+  const pinInstaller: PluginInstaller | undefined = installer;
+  const pinMatch: PluginInstallationUrlPinMatch | undefined =
+    pinInstaller?.matchInstallationUrlPin?.({
+      id: "example.plugin",
+      url: "https://plugins.example.com/artifacts/example.plugin.json",
+      sha256: "a".repeat(64),
+    });
+  // @ts-expect-error A pin needs its id, url and sha256 together.
+  pinInstaller?.matchInstallationUrlPin?.({ id: "example.plugin", sha256: "a".repeat(64) });
   const owner = ctx.pluginOwner;
   if (!owner) return;
   const id: string = owner.id;
@@ -443,6 +457,8 @@ export function observePlugin(ctx: Context) {
     settled,
     withoutReadiness,
     artifactHashRemainsOptional,
+    urlPinMatchRemainsOptional,
+    pinMatch,
     availableHash,
     absentHash,
     unavailableHash,

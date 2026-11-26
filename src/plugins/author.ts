@@ -58,6 +58,7 @@ export type {
 } from "../features/channel-navigation/sidebar-sections-service";
 export type {
   PluginInstallationArtifactHash,
+  PluginInstallationUrlPinMatch,
   PluginInstallOutcome,
   PluginInstallSource,
   PluginInstaller,

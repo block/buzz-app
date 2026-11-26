@@ -3,7 +3,7 @@ import type { PluginModule } from "../../plugins/api";
 import type { RelaySession } from "../../features/relay/session";
 import { relayPartition } from "../../features/relay/partition";
 import { activeModal } from "../../shared/design-system/overlayLayer";
-import { createCorpus } from "./corpus.ts";
+import { createCorpus } from "../../features/search/fuzzy/corpus.ts";
 import { noteInterest, topInterest } from "./interest";
 import type { FinderScope } from "./FinderDialog";
 import {

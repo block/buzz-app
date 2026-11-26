@@ -9,7 +9,10 @@ import { deletionApplies } from "../../features/relay/fold";
 import { readErrorKind } from "../../features/relay/errors";
 import type { RelaySession } from "../../features/relay/session";
 import { threadReference } from "../../features/relay/thread-reference";
-import type { FinderCorpus, FinderDoc } from "./corpus.ts";
+import type {
+  FinderCorpus,
+  FinderDoc,
+} from "../../features/search/fuzzy/corpus.ts";
 
 const KINDS = [9, 40002];
 const DAYS = 90;

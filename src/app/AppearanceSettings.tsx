@@ -42,6 +42,10 @@ import {
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
 import {
+  setDeviceSearchPreference,
+  useDeviceSearchPreference,
+} from "../features/search/device-search-preference";
+import {
   setMessageSortPreference,
   useMessageSortPreference,
 } from "../features/search/message-sort-preference";
@@ -88,6 +92,7 @@ export function AppearanceSettings({
   const autocorrect = useMessageAutocorrectPreference();
   const markdownAsTyped = useMarkdownAsTypedPreference();
   const unreadFirst = useUnreadFirstPreference();
+  const deviceSearch = useDeviceSearchPreference();
   const messageSort = useMessageSortPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
@@ -508,6 +513,12 @@ export function AppearanceSettings({
               description="With nothing typed, search leads with unread channels and DMs and selects the newest."
               checked={unreadFirst.enabled}
               onCheckedChange={setUnreadFirstPreference}
+            />
+            <SwitchPreferenceRow
+              label="Search this device as you type"
+              description="Search shows matching messages this device already received while you type, above the community’s results."
+              checked={deviceSearch.enabled}
+              onCheckedChange={setDeviceSearchPreference}
             />
             <PreferenceRow
               title="Sort messages by"

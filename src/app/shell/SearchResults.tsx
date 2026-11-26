@@ -104,11 +104,21 @@ import {
   channelIconLabel,
 } from "../../features/channels/channel-icon";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
+import {
+  type DeviceIndex,
+  useDeviceMessages,
+} from "../../features/search/device-index";
+import {
+  type DeviceMerge,
+  mergedMessages,
+  nextDeviceMerge,
+} from "../../features/search/device-merge";
 import type { Decisions } from "../../features/decisions/service";
 import { RERANK_PAGES, useCanRerank, useMessageRerank } from "./message-rerank";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
   SEARCH_MIN_CHARS,
+  messageSearchable,
   searchDebounce,
   searchable,
 } from "../../shared/search-debounce";
@@ -130,6 +140,7 @@ import {
   normalizeInChannel,
   operatorMatches,
   parseSearchOperators,
+  searchTextSyntax,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
@@ -259,8 +270,12 @@ export function SearchResults({
   openAsk,
   decisions,
   community,
+  deviceIndex,
 }: {
   session: RelaySession;
+  /** Messages this device already received, matched on every key above
+   * the relay's hits. */
+  deviceIndex?: DeviceIndex | undefined;
   /** Reranks message hits by how well each answers the query. */
   decisions?: Decisions | undefined;
   /** The community (its relay URL) a decision call bills. */
@@ -779,6 +794,61 @@ export function SearchResults({
     session.searchSort &&
     !!parsed.text;
   const order = search.newestFirst ? "Most recent" : "Most relevant";
+  // The search whose results the person has started moving through: a
+  // rerank that lands after that is dropped. Moving through one
+  // conversation's hits doesn't hold the next search's.
+  const [movedFor, setMovedFor] = useState<string>();
+  if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
+  // This device's matches show on every key, and the relay's join below them
+  // (device-merge.ts). An author or date filter, an `in:` that names no
+  // single conversation, or quotes and `-` exclusions, which the fuzzy match
+  // doesn't read, leave messages to the relay.
+  const deviceText =
+    !offline &&
+    !asking &&
+    parsed.from === null &&
+    parsed.since === null &&
+    parsed.until === null &&
+    (parsed.in === null || !!effectiveChannelId) &&
+    messageSearchable(parsed.text) &&
+    !searchTextSyntax(parsed.text).fullText
+      ? parsed.text
+      : "";
+  const deviceMessages = useDeviceMessages(
+    deviceIndex,
+    deviceText,
+    effectiveChannelId,
+  );
+  // The relay is asked after the same pause in typing as useSearchMessages.
+  const [askedFor, setAskedFor] = useState<string>();
+  useEffect(
+    () =>
+      deviceIndex ? searchDebounce(() => setAskedFor(searchKey)) : undefined,
+    [deviceIndex, searchKey],
+  );
+  const [merge, setMerge] = useState<DeviceMerge>();
+  // With the setting off there is no merge, and the relay's hits show as on main.
+  const nextMerge =
+    deviceIndex &&
+    nextDeviceMerge(merge, {
+      key: searchKey,
+      device: deviceMessages,
+      asked: askedFor === searchKey || !search.loading,
+      moved: movedFor === searchKey,
+    });
+  if (nextMerge && nextMerge !== merge) setMerge(nextMerge);
+  const messageHits = nextMerge
+    ? mergedMessages(nextMerge, search.messages, (message) => {
+        if (offline) return false;
+        const channel = session.channels.get?.(message.channelId);
+        return (
+          deviceIndex.has(message.id) &&
+          !!channel &&
+          !channel.huddle &&
+          !channel.metadataPending
+        );
+      })
+    : search.messages;
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -1098,7 +1168,7 @@ export function SearchResults({
       ...channels.flatMap((channel) =>
         channel.channelType === "dm" ? (channel.participants ?? []) : [],
       ),
-      ...search.messages.flatMap((message) => [
+      ...messageHits.flatMap((message) => [
         message.authorId,
         ...(message.workflowOwnerId ? [message.workflowOwnerId] : []),
       ]),
@@ -1106,7 +1176,7 @@ export function SearchResults({
         person.ownerPubkey ? [person.ownerPubkey] : [],
       ),
     ],
-    search.messages.map((message) => message.mentioned),
+    messageHits.map((message) => message.mentioned),
   )
     .sort()
     .slice(0, 1024)
@@ -1861,16 +1931,11 @@ export function SearchResults({
       : name;
   };
   const terms = useMemo(() => searchTerms(parsed.text), [parsed.text]);
-  // The search whose results the person has started moving through: a
-  // rerank that lands after that is dropped. Moving through one
-  // conversation's hits doesn't hold the next search's.
-  const [movedFor, setMovedFor] = useState<string>();
-  if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
   const rerank = useMessageRerank({
     decisions,
     community,
     query: parsed.text,
-    messages: search.messages,
+    messages: messageHits,
     enabled:
       rerankable && !!parsed.text && !search.newestFirst && !search.loading,
     facts: (message) => {

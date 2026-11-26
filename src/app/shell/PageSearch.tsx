@@ -51,6 +51,11 @@ import { attachmentDraftCount } from "../../features/messages/attachment-draft";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { usageScope } from "../../features/search/usage";
 import { unreadFirstPreference } from "../../features/search/unread-first-preference";
+import { useDeviceSearchPreference } from "../../features/search/device-search-preference";
+import {
+  type DeviceIndex,
+  useDeviceIndex,
+} from "../../features/search/device-index";
 
 export type SearchServices = Pick<
   AppServices,
@@ -91,6 +96,11 @@ export function PageSearch({
   services?: SearchServices | undefined;
 }) {
   const pagePresentation = usePagePresentation();
+  // The index fills while search is closed, from what the app receives.
+  const deviceIndex = useDeviceIndex(
+    services?.communities?.relay,
+    useDeviceSearchPreference().enabled,
+  );
   const [open, setOpen] = useState(false);
   const [contentPresent, setContentPresent] = useState(false);
   const [query, setQuery] = useState("");
@@ -402,6 +412,7 @@ export function PageSearch({
               }}
               open={open}
               isOpen={() => openRef.current}
+              deviceIndex={deviceIndex}
               close={(channelId) => {
                 composerChannel.current = channelId;
                 returnFocus.current = document.getElementById("main-content");
@@ -445,6 +456,7 @@ function CommunitySearch({
   isOpen,
   close,
   openSection,
+  deviceIndex,
 }: {
   /** Where the results were, kept for the next opening. */
   place: SearchPlace;
@@ -461,6 +473,7 @@ function CommunitySearch({
   isOpen: () => boolean;
   close: (channelId?: string) => void;
   openSection: (section: string) => void;
+  deviceIndex?: DeviceIndex | undefined;
 } & SearchInputProps) {
   const inlineSettings = useSearchSettings({
     query: scopedChannelId ? "" : query,
@@ -623,6 +636,7 @@ function CommunitySearch({
         usageScope={usageScope(scope)}
         sidebarScope={connection.scope}
         decisions={services.decisions}
+        deviceIndex={deviceIndex}
         community={scope.communityOrigin}
         views={views}
         offline={saved ? offline : undefined}

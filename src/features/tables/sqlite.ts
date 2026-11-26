@@ -1,3 +1,4 @@
+/// <reference path="./sql-wasm-inline.d.ts" />
 import type { SqlJsStatic } from "sql.js";
 
 let loading: Promise<SqlJsStatic> | undefined;

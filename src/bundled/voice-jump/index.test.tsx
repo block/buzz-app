@@ -116,12 +116,25 @@ async function mount({
     answer("#design", { "#design": 0.9, "#launch": 0.05 }),
   );
   const open = vi.fn(async () => ({ status: "opened" }));
-  const relay = connected
+  let relay: {
+    status: string;
+    session: typeof session;
+    viewer: string | undefined;
+    origin: string | undefined;
+  } = connected
     ? { status: "ready", session, viewer, origin: communityOrigin }
     : { status: "idle", session, viewer: undefined, origin: undefined };
+  const relayListeners = new Set<() => void>();
+  const setRelay = (next: typeof relay) => {
+    relay = next;
+    for (const listener of relayListeners) listener();
+  };
   ctx.provide("relay", {
     snapshot: () => relay,
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      relayListeners.add(listener);
+      return () => void relayListeners.delete(listener);
+    },
   } as never);
   ctx.provide("navigation", {
     open,
@@ -178,7 +191,7 @@ async function mount({
       <Overlay />
     </>,
   );
-  return { listens, decide, open };
+  return { listens, decide, open, setRelay };
 }
 
 // Off Apple platforms, ⌘ is Ctrl.
@@ -353,4 +366,151 @@ test("a newer transcript supersedes an in-flight live or pause decision", async 
     }),
   );
   expect(open).toHaveBeenCalledTimes(1);
+});
+
+test("a late decision after a speech error does not navigate", async () => {
+  const pending = deferred<ReturnType<typeof answer>>();
+  const { listens, decide, open } = await mount();
+  decide.mockReturnValueOnce(pending.promise);
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+  const listen = listens[0] as ListenOptions;
+
+  act(() => {
+    listen.onText("design");
+    listen.onError?.("service_error", "Microphone lost.");
+  });
+  expect(await screen.findByText("Microphone lost.")).toBeInTheDocument();
+
+  await act(async () => {
+    pending.resolve(answer("#design", { "#design": 0.95, "#launch": 0.02 }));
+    await pending.promise;
+  });
+  expect(open).not.toHaveBeenCalled();
+});
+
+test("switching communities while open invalidates cached places and restarts listening", async () => {
+  const stale = deferred<ReturnType<typeof answer>>();
+  const { listens, decide, open, setRelay } = await mount();
+  decide.mockReturnValueOnce(stale.promise);
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+
+  act(() => (listens[0] as ListenOptions).onText("design"));
+  expect(decide).toHaveBeenCalledTimes(1);
+
+  const otherOrigin = "wss://other.example.org";
+  const otherChannels = [
+    { id: "ops", name: "ops", channelType: "stream", lastActivityAt: 3 },
+  ];
+  const otherSession = {
+    ...session,
+    channels: {
+      list: () => ({ channels: otherChannels }),
+      get: (id: string) => otherChannels.find((channel) => channel.id === id),
+      window: session.channels.window,
+    },
+  };
+  decide.mockResolvedValueOnce(answer("#ops", { "#ops": 0.94 }));
+  act(() =>
+    setRelay({
+      status: "ready",
+      session: otherSession,
+      viewer,
+      origin: otherOrigin,
+    }),
+  );
+  await vi.waitFor(() => expect(listens).toHaveLength(2));
+  expect(listens[1]?.community).toBe(otherOrigin);
+
+  // An in-flight answer from the old community must not navigate back.
+  await act(async () => {
+    stale.resolve(answer("#design", { "#design": 0.95, "#launch": 0.02 }));
+    await stale.promise;
+  });
+  expect(open).not.toHaveBeenCalled();
+
+  // The new community sends its own places, not the old community's cache.
+  act(() => (listens[1] as ListenOptions).onText("ops"));
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin: otherOrigin },
+      channelId: "ops",
+    }),
+  );
+  const secondRequest = decide.mock.calls[1]?.[0] as {
+    state: string;
+    community?: string;
+  };
+  expect(secondRequest.community).toBe(otherOrigin);
+  expect(secondRequest.state).toContain("#ops");
+  expect(secondRequest.state).not.toContain("#design");
+});
+
+test("Enter retries after a transient provider failure", async () => {
+  const { listens, decide, open } = await mount();
+  decide
+    .mockResolvedValueOnce({
+      outcome: "failed",
+      backend: "test",
+      reason: "timeout",
+    } as never)
+    .mockResolvedValueOnce(
+      answer("#design", { "#design": 0.9, "#launch": 0.05 }),
+    );
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+
+  const field = screen.getByRole("searchbox", { name: "Where to" });
+  fireEvent.change(field, { target: { value: "design" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(
+    await screen.findByText("Couldn't match that just now. Try again."),
+  ).toBeInTheDocument();
+  expect(decide).toHaveBeenCalledTimes(1);
+
+  fireEvent.keyDown(field, { key: "Enter" });
+  await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin },
+      channelId: "design",
+    }),
+  );
+});
+
+test("without a community, hosted invalid_request falls back to local page matching or explains why", async () => {
+  const { listens, decide, open } = await mount({ connected: false });
+  decide.mockResolvedValue({
+    outcome: "failed",
+    backend: "builderlab",
+    reason: "invalid_request",
+  } as never);
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+
+  const field = screen.getByRole("searchbox", { name: "Where to" });
+  fireEvent.change(field, { target: { value: "design" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(
+    await screen.findByText(
+      "Choose a community to use your Decisions provider, or enter a page name.",
+    ),
+  ).toBeInTheDocument();
+  expect(open).not.toHaveBeenCalled();
+
+  fireEvent.change(field, { target: { value: "Review Queue" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "page",
+      pluginId: "example.review-queue",
+      pageId: "queue",
+    }),
+  );
 });

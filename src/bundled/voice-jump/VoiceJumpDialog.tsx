@@ -70,6 +70,17 @@ type OpenedDestination =
   | { kind: "page" }
   | { kind: "conversation"; channelId: string };
 
+let nextSessionId = 0;
+const sessionIds = new WeakMap<RelaySession, number>();
+function sessionKey(session: RelaySession): number {
+  let id = sessionIds.get(session);
+  if (id === undefined) {
+    id = ++nextSessionId;
+    sessionIds.set(session, id);
+  }
+  return id;
+}
+
 function presentPage(page: RegisteredPage, bestie: BestieMark | undefined) {
   return {
     ...pagePresentation(page),
@@ -127,6 +138,7 @@ export function VoiceJumpDialog({
     >
       {open && (
         <VoiceJumpBody
+          key={`${sessionKey(session)}:${scope?.viewer ?? ""}:${scope?.communityOrigin ?? ""}`}
           speech={speech}
           decisions={decisions}
           pages={pages}
@@ -245,7 +257,22 @@ function VoiceJumpBody({
     let answer = current.answers.get(said);
     if (!answer) {
       // Threshold 0: the caller decides how sure is sure enough.
-      answer = pickPlace(decisions, said, places, community, 0);
+      const pending = pickPlace(decisions, said, places, community, 0).then(
+        (result) => {
+          if (
+            result.outcome === "failed" &&
+            current.answers.get(said) === pending
+          )
+            current.answers.delete(said);
+          return result;
+        },
+        (error) => {
+          if (current.answers.get(said) === pending)
+            current.answers.delete(said);
+          throw error;
+        },
+      );
+      answer = pending;
       current.answers.set(said, answer);
     }
     return answer;
@@ -342,7 +369,9 @@ function VoiceJumpBody({
             result.reason === "unauthorized" ||
             result.reason === "unavailable"
               ? "Set up the Decisions API in Settings to jump by voice."
-              : "Couldn't match that just now. Try again.",
+              : result.reason === "invalid_request" && !scope
+                ? "Choose a community to use your Decisions provider, or enter a page name."
+                : "Couldn't match that just now. Try again.",
         });
     });
   };
@@ -357,7 +386,10 @@ function VoiceJumpBody({
     },
     onPause: (spoken) => settle(spoken),
     onEnd: (spoken) => submitRef.current(spoken),
-    onError: (_failure, message) => setPhase({ kind: "failed", message }),
+    onError: (_failure, message) => {
+      restart();
+      setPhase({ kind: "failed", message });
+    },
   });
   const { start, stop, cancel } = dictation;
   const listen = () => {

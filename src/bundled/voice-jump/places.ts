@@ -320,8 +320,16 @@ export async function pickPlace(
     timeoutMs: 8_000,
     ...(community ? { community } : {}),
   });
-  if (result.outcome !== "answered")
+  if (result.outcome !== "answered") {
+    // Hosted providers that bill a community refuse requests without one.
+    // Outside any community, match plugin page names locally so typed or
+    // spoken page names still jump.
+    if (!community && result.reason === "invalid_request") {
+      const local = matchPagesLocally(spoken, places, labels, threshold);
+      if (local) return local;
+    }
     return { outcome: "failed", reason: result.reason };
+  }
   const answer = result.answers.place;
   if (answer?.type !== "choice") return { outcome: "none", candidates: [] };
   const candidates = labels
@@ -339,6 +347,68 @@ export async function pickPlace(
   const place = places[labels.indexOf(answer.choice)];
   if (!place || probability < threshold) return { outcome: "none", candidates };
   return { outcome: "found", place, probability, candidates };
+}
+
+function scorePageName(spoken: string, name: string): number {
+  const said = nameWords(spoken).map((word) => word.toLowerCase());
+  const target = nameWords(name).map((word) => word.toLowerCase());
+  if (!said.length || !target.length) return 0;
+  if (said.join(" ") === target.join(" ")) return 1;
+  const saidSet = new Set(said);
+  if (target.every((word) => saidSet.has(word))) return 0.95;
+  const strong = said.filter((word) => word.length >= 3);
+  if (
+    strong.length &&
+    target.every((word) => strong.some((part) => word.startsWith(part)))
+  )
+    return 0.75;
+  const query = said.filter((word) => word.length >= 2);
+  if (query.length) {
+    const matched = target.filter((word) =>
+      query.some((part) => word.startsWith(part)),
+    ).length;
+    if (matched > 0) return (0.45 * matched) / target.length;
+  }
+  if (soundsLike(spoken, name).length > 0) return 0.65;
+  return 0;
+}
+
+function matchPagesLocally(
+  spoken: string,
+  places: readonly JumpPlace[],
+  labels: readonly string[],
+  threshold: number,
+): VoiceJump | undefined {
+  const candidates: JumpCandidate[] = [];
+  for (let index = 0; index < places.length; index++) {
+    const place = places[index] as JumpPlace;
+    if (place.kind !== "page") continue;
+    const names = place.about ? [place.name, place.about] : [place.name];
+    const probability = Math.max(
+      ...names.map((name) => scorePageName(spoken, name)),
+    );
+    if (probability >= CANDIDATE_MIN)
+      candidates.push({
+        place,
+        label: labels[index] ?? place.name,
+        probability,
+      });
+  }
+  if (!candidates.length) return undefined;
+  candidates.sort((a, b) => b.probability - a.probability);
+  const top = candidates.slice(0, MAX_CANDIDATES);
+  const first = top[0] as JumpCandidate;
+  const second = top[1];
+  if (second && second.probability === first.probability)
+    return { outcome: "none", candidates: top };
+  if (first.probability < threshold)
+    return { outcome: "none", candidates: top };
+  return {
+    outcome: "found",
+    place: first.place,
+    probability: first.probability,
+    candidates: top,
+  };
 }
 
 export type LiveLead = Readonly<{ key: string; words: number }>;

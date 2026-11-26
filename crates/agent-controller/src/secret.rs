@@ -260,19 +260,18 @@ impl Secret {
             .map(Zeroizing::new)
             .map_err(|_| "Invalid encrypted payload".into())
     }
-    /// A table key sealed to `peer`. Only a 32-byte key in lowercase hex is
-    /// sealed, so this cannot encrypt arbitrary text as the agent.
-    pub fn table_key_wrap(&self, peer: &str, key: &str) -> Result<String> {
+    /// A table key sealed to this key itself. Only a 32-byte key in
+    /// lowercase hex is sealed, so this cannot encrypt arbitrary text.
+    pub fn table_key_seal(&self, key: &str) -> Result<String> {
         if !table_key(key) {
             return Err("Invalid table key".into());
         }
-        self.nip44_encrypt(peer, key)
+        self.nip44_encrypt(self.pubkey(), key)
     }
-    /// The table key `peer` sealed to this key, or between this key and
-    /// `peer`. Anything other than a table key is refused, so this cannot
-    /// decrypt the agent's other messages.
-    pub fn table_key_unwrap(&self, peer: &str, wrapped: &str) -> Result<Zeroizing<String>> {
-        let key = self.nip44_decrypt(peer, wrapped)?;
+    /// A table key this key sealed to itself. Anything else stays sealed,
+    /// so this cannot decrypt the agent's other messages.
+    pub fn table_key_open(&self, sealed: &str) -> Result<Zeroizing<String>> {
+        let key = self.nip44_decrypt(self.pubkey(), sealed)?;
         if !table_key(&key) {
             return Err("Invalid table key".into());
         }
@@ -459,22 +458,16 @@ mod memory_tests {
     };
     use sha2::Sha256;
     #[test]
-    fn table_keys_only_cross_as_table_keys() {
+    fn table_keys_only_seal_to_and_open_from_the_same_key() {
         let agent = Secret::generate().unwrap();
-        let member = Secret::generate().unwrap();
+        let other = Secret::generate().unwrap();
         let key = "ab".repeat(32);
-        let wrapped = agent.table_key_wrap(member.pubkey(), &key).unwrap();
-        assert_eq!(
-            *member.table_key_unwrap(agent.pubkey(), &wrapped).unwrap(),
-            key
-        );
-        assert_eq!(
-            *agent.table_key_unwrap(member.pubkey(), &wrapped).unwrap(),
-            key
-        );
-        assert!(agent.table_key_wrap(member.pubkey(), "a secret").is_err());
-        let message = member.nip44_encrypt(agent.pubkey(), "a message").unwrap();
-        assert!(agent.table_key_unwrap(member.pubkey(), &message).is_err());
+        let sealed = agent.table_key_seal(&key).unwrap();
+        assert_eq!(*agent.table_key_open(&sealed).unwrap(), key);
+        assert!(other.table_key_open(&sealed).is_err());
+        assert!(agent.table_key_seal("a secret").is_err());
+        let message = agent.nip44_encrypt(agent.pubkey(), "a message").unwrap();
+        assert!(agent.table_key_open(&message).is_err());
     }
 
     #[test]

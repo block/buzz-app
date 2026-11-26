@@ -2,6 +2,7 @@
  * with NIP-44 under a random per-table key. Each member receives that key
  * NIP-44 encrypted to them, so a grant opens exactly one table. */
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
+import { getPublicKey } from "nostr-tools/pure";
 import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 
 export const TABLE_FILE = "buzz.table";
@@ -29,19 +30,19 @@ export function newTableKey() {
 }
 
 /** The table key for `member`, encrypted by `granter`. */
-export function wrapKey(granter: Uint8Array, member: string, key: Uint8Array) {
-  return encrypt(bytesToHex(key), getConversationKey(granter, member));
+/** The table key sealed by `secret`'s holder to itself. */
+export function sealKey(secret: Uint8Array, key: Uint8Array) {
+  return encrypt(bytesToHex(key), selfKey(secret));
 }
 
-export function unwrapKey(
-  member: Uint8Array,
-  granter: string,
-  wrapped: string,
-) {
-  const hex = decrypt(wrapped, getConversationKey(member, granter));
+export function openKey(secret: Uint8Array, sealed: string) {
+  const hex = decrypt(sealed, selfKey(secret));
   if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error("Invalid table key");
   return hexToBytes(hex);
 }
+
+const selfKey = (secret: Uint8Array) =>
+  getConversationKey(secret, getPublicKey(secret));
 
 function base64(bytes: Uint8Array) {
   let binary = "";

@@ -816,8 +816,8 @@ export type RunnerHost = {
         | "media"
         | "gitAuth"
         | "remember"
-        | "tableKeyWrap"
-        | "tableKeyUnwrap"
+        | "tableKeySeal"
+        | "tableKeyOpen"
       >
     | undefined;
   /** This device's view of each agent's work. */
@@ -4191,15 +4191,13 @@ export class AgentRunners {
           return this.require().gitAuth(agent, owner, repo);
         },
         tableKeys: {
-          wrap: async (member: string, key: Uint8Array) => {
+          seal: async (key: Uint8Array) => {
             lifetime.throwIfAborted();
-            return this.require().tableKeyWrap(agent, member, bytesToHex(key));
+            return this.require().tableKeySeal(agent, bytesToHex(key));
           },
-          unwrap: async (peer: string, wrapped: string) => {
+          open: async (sealed: string) => {
             lifetime.throwIfAborted();
-            return hexToBytes(
-              await this.require().tableKeyUnwrap(agent, peer, wrapped),
-            );
+            return hexToBytes(await this.require().tableKeyOpen(agent, sealed));
           },
         },
         relayInfo: async () => {

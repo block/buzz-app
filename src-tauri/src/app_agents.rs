@@ -1525,33 +1525,28 @@ pub(crate) async fn app_agent_remember(
         .await
 }
 
-/// A table key sealed by the agent to `member`; only a table key is sealed.
+/// A table key sealed by the agent to itself; only a table key is sealed.
 #[tauri::command]
-pub(crate) async fn app_agent_table_key_wrap(
+pub(crate) async fn app_agent_table_key_seal(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
-    member: String,
     key: String,
 ) -> Result<String, String> {
     let (_, secret) = state.caller_key(pubkey, relay).await?;
-    secret.table_key_wrap(&member, &key)
+    secret.table_key_seal(&key)
 }
 
-/// The table key in a grant between the agent and `peer`; anything else the
-/// agent was sent stays sealed.
+/// A table key the agent sealed to itself; anything else stays sealed.
 #[tauri::command]
-pub(crate) async fn app_agent_table_key_unwrap(
+pub(crate) async fn app_agent_table_key_open(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
-    peer: String,
-    wrapped: String,
+    sealed: String,
 ) -> Result<String, String> {
     let (_, secret) = state.caller_key(pubkey, relay).await?;
-    secret
-        .table_key_unwrap(&peer, &wrapped)
-        .map(|key| key.to_string())
+    secret.table_key_open(&sealed).map(|key| key.to_string())
 }
 
 /// Adds the agent's NIP-FI assertion, beside its NIP-98 `Authorization`, for

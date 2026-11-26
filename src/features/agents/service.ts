@@ -770,11 +770,11 @@ export type AgentHandle = Readonly<{
     body: string | null,
     after: number,
   ): Promise<RelayEvent>;
-  /** Table keys sealed to and opened from another identity with the
-   * agent's key, which stays in the app. */
+  /** Table keys the agent seals to and opens from itself, with its key,
+   * which stays in the app. */
   tableKeys?: Readonly<{
-    wrap(member: string, key: Uint8Array): Promise<string>;
-    unwrap(peer: string, wrapped: string): Promise<Uint8Array>;
+    seal(key: Uint8Array): Promise<string>;
+    open(sealed: string): Promise<Uint8Array>;
   }>;
   /** Its community's advertised extensions and message size limit. */
   relayInfo?(): Promise<RelayInfo>;

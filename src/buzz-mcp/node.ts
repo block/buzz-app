@@ -15,7 +15,7 @@ import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { CANVAS_MAX_EVENT_BYTES } from "../features/channel-templates/canvas-limits.ts";
 import { eventsDto } from "../features/relay/events";
-import { unwrapKey, wrapKey } from "../features/tables/file";
+import { openKey, sealKey } from "../features/tables/file";
 import {
   effectiveEditDto,
   effectiveEditFilter,
@@ -172,7 +172,6 @@ export function nodeClient(
   return {
     pubkey,
     key: pubkey,
-    owner,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
     async effectiveEdit(id, channel) {
@@ -207,8 +206,8 @@ export function nodeClient(
       return relayInfoOf(await response.json());
     },
     tableKeys: {
-      wrap: async (member, key) => wrapKey(secret, member, key),
-      unwrap: async (granter, wrapped) => unwrapKey(secret, granter, wrapped),
+      seal: async (key) => sealKey(secret, key),
+      open: async (sealed) => openKey(secret, sealed),
     },
     publish(event) {
       const tags = event.tags.filter(

@@ -158,11 +158,11 @@ export interface BuzzClient {
   /** The relay's NIP-11 `supported_extensions` and `max_message_length`;
    * only where the host can read them. */
   relayInfo?(): Promise<RelayInfo>;
-  /** Table keys sealed to and opened from another identity with the
-   * agent's key, which stays in the host. */
+  /** Table keys the agent seals to and opens from itself, with its key,
+   * which stays in the host. */
   readonly tableKeys?: Readonly<{
-    wrap(member: string, key: Uint8Array): Promise<string>;
-    unwrap(granter: string, wrapped: string): Promise<Uint8Array>;
+    seal(key: Uint8Array): Promise<string>;
+    open(sealed: string): Promise<Uint8Array>;
   }>;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;

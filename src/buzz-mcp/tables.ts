@@ -78,7 +78,7 @@ export const TABLE_HANDLERS: Readonly<
     if (head) return alreadyCreated(client, head, h, me);
 
     const mine = await grantsFor(client, h, d, me);
-    const key = (await recoverKey(keys, me, mine)) ?? newTableKey();
+    const key = (await recoverKey(keys, mine)) ?? newTableKey();
     const grant = mine.length ? undefined : await keyGrant(keys, h, d, me, key);
     const file = artifact(
       [
@@ -164,6 +164,7 @@ export const TABLE_HANDLERS: Readonly<
     return withTable(client, args, (db) => {
       db.run("PRAGMA query_only = ON");
       const statement = db.prepare(sql);
+      refuseAttach(statement.getSQL());
       try {
         if (!statement.getColumnNames().length)
           throw new Error("table_query runs one SELECT; nothing was changed.");
@@ -188,7 +189,7 @@ export const TABLE_HANDLERS: Readonly<
     const db = new (await sqlite()).Database(bytes);
     let next: Uint8Array;
     try {
-      db.run(sql);
+      runEach(db, sql);
       db.run("VACUUM");
       next = db.export();
     } catch (error) {
@@ -225,19 +226,27 @@ export const TABLE_HANDLERS: Readonly<
 /** The relay's NIP-01 reason prefixes for a refused table version. */
 const REFUSALS = { "conflict:": "conflict", "restricted:": "denied" } as const;
 
-/** The newest version of table `d`, opened with the key granted to this
- * agent. The file is decrypted in memory and never written back here. */
+/** The newest version of table `d`, when it is this agent's own table:
+ * in its private tables channel, written by it, and opened with the key it
+ * sealed to itself. The file is decrypted in memory and never written back
+ * here. */
 export async function openTableFor(client: BuzzClient, d: string) {
-  if (!client.tableKeys)
-    throw new Error("Tables are not available on this host.");
+  const keys = client.tableKeys;
+  if (!keys) throw new Error("Tables are not available on this host.");
+  const me = client.pubkey;
+  const h = await tablesChannel(me);
   const [file] = await client.query([{ artifact: "head", "#d": [d] }]);
-  const h = tag(file, "h");
-  if (!file || tag(file, "type") !== TABLE_FILE || !h)
+  if (
+    !file ||
+    file.pubkey !== me ||
+    tag(file, "type") !== TABLE_FILE ||
+    tag(file, "h") !== h ||
+    channelProblem(await channelState(client, h), me)
+  )
     throw new Error(`You have no table ${d}.`);
-  const grants = await grantsFor(client, h, d, client.pubkey);
-  for (const grant of grants) {
+  for (const grant of await grantsFor(client, h, d, me)) {
     try {
-      const key = await client.tableKeys.unwrap(grant.pubkey, grant.content);
+      const key = await keys.open(grant.content);
       return { file, h, key, bytes: openTable(key, file.content) };
     } catch {
       // A grant that does not open this file is skipped; another may.
@@ -252,7 +261,7 @@ const keyGrant = async (
   keys: TableKeys,
   h: string,
   d: string,
-  member: string,
+  me: string,
   key: Uint8Array,
 ) =>
   artifact(
@@ -262,10 +271,10 @@ const keyGrant = async (
       ["type", TABLE_KEY],
       ["title", "Table key"],
       ["op", "create"],
-      ["for", member],
+      ["for", me],
       ["table", d],
     ],
-    await keys.wrap(member, key),
+    await keys.seal(key),
   );
 
 async function withTable(
@@ -308,6 +317,26 @@ function refusal(message: string) {
   return prefix && { prefix, text: reason };
 }
 
+/** Runs `sql` one statement at a time, as SQLite itself splits it. */
+function runEach(db: Database, sql: string) {
+  for (const statement of db.iterateStatements(sql)) {
+    try {
+      refuseAttach(statement.getSQL());
+      while (statement.step());
+    } finally {
+      statement.free();
+    }
+  }
+}
+
+/** The SQLite runtime's in-memory files outlive a call, so an attached file
+ * could carry one table's rows into another call. Nothing else in this
+ * build reads files, so refusing ATTACH keeps each call to its own table. */
+function refuseAttach(statement: string) {
+  if (/^(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*attach\b/i.test(statement))
+    throw new Error("Tables cannot attach other databases.");
+}
+
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 const tag = (event: BuzzEvent | undefined, name: string) =>
   event?.tags.find((t) => t[0] === name)?.[1];
@@ -323,7 +352,7 @@ async function build(sql: string) {
   const db = new SQL.Database();
   try {
     db.run("PRAGMA page_size=512");
-    db.run(sql);
+    runEach(db, sql);
     db.run("VACUUM");
     return db.export();
   } catch (error) {
@@ -428,41 +457,35 @@ function fits(
 
 /** The table key from this agent's own grant, so a resumed creation keeps
  * the key its earlier grant carries. */
-async function recoverKey(
-  keys: TableKeys,
-  me: string,
-  grants: readonly BuzzEvent[],
-) {
+async function recoverKey(keys: TableKeys, grants: readonly BuzzEvent[]) {
   for (const grant of grants) {
-    if (grant.pubkey !== me) continue;
     try {
-      return await keys.unwrap(me, grant.content);
+      return await keys.open(grant.content);
     } catch {
-      // Not a key this agent can open; another grant may be.
+      // Not a key this agent sealed; another grant may be.
     }
   }
   return undefined;
 }
 
-/** Table key grants in channel `h`, newest first: for table `d` and to
- * `member` when given. */
-async function grantsFor(
-  client: BuzzClient,
-  h: string,
-  d?: string,
-  member?: string,
-) {
+/** The key grants this agent wrote for its table `d` in channel `h`, newest
+ * first. The relay filters by table, so no page of other tables' grants
+ * can hide them. */
+async function grantsFor(client: BuzzClient, h: string, d: string, me: string) {
   return (
     await client.query([
       {
+        kinds: [45010],
         artifact: "current",
         "#h": [h],
         "#type": [TABLE_KEY],
-        ...(member && { "#for": [member] }),
+        "#for": [me],
+        "#table": [d],
+        limit: 100,
       },
     ])
   )
-    .filter((grant) => d === undefined || tag(grant, "table") === d)
+    .filter((grant) => grant.pubkey === me && tag(grant, "table") === d)
     .sort((a, b) => b.created_at - a.created_at);
 }
 

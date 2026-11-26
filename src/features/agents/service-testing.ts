@@ -597,8 +597,8 @@ export function fakeNative(identities: AgentIdentity[] = []) {
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
     media: vi.fn(async () => ({ path: "", type: "", size: 0 })),
     gitAuth: vi.fn(async () => ({ url: "", header: "" })),
-    tableKeyWrap: vi.fn(async () => ""),
-    tableKeyUnwrap: vi.fn(async () => ""),
+    tableKeySeal: vi.fn(async () => ""),
+    tableKeyOpen: vi.fn(async () => ""),
     remember: vi.fn(async ({ pubkey }: Membership) =>
       event(`m${++published}`, { pubkey }),
     ),

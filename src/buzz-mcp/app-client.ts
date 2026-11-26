@@ -38,13 +38,13 @@ function tableAccess(agent: AgentHandle, check: () => void) {
   return {
     ...(tableKeys && {
       tableKeys: {
-        wrap: (member: string, key: Uint8Array) => {
+        seal: (key: Uint8Array) => {
           check();
-          return tableKeys.wrap(member, key);
+          return tableKeys.seal(key);
         },
-        unwrap: (peer: string, wrapped: string) => {
+        open: (sealed: string) => {
           check();
-          return tableKeys.unwrap(peer, wrapped);
+          return tableKeys.open(sealed);
         },
       },
     }),

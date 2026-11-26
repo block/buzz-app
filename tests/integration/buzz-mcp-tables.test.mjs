@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -26,8 +27,14 @@ test("the packaged MCP server reads a table's fields and rows", async (t) => {
   );
   assert.equal(build.status, 0, build.stderr);
 
-  const owner = generateSecretKey();
   const agent = generateSecretKey();
+  const me = getPublicKey(agent);
+  const relayKey = generateSecretKey();
+  // The agent's own private tables channel, as every session derives it.
+  const digest = createHash("sha256")
+    .update(`buzz.tables:channel:${me}`)
+    .digest("hex");
+  const channel = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-${((Number.parseInt(digest[16], 16) & 3) | 8).toString(16)}${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
   const SQL = await initSqlJs();
   const db = new SQL.Database();
   db.run(
@@ -41,29 +48,42 @@ test("the packaged MCP server reads a table's fields and rows", async (t) => {
       content: encrypt(Buffer.from(db.export()).toString("base64"), key),
       tags: [
         ["d", "t1"],
-        ["h", "c1"],
+        ["h", channel],
         ["type", "buzz.table"],
       ],
     },
-    owner,
+    agent,
   );
   const grant = finalizeEvent(
     {
       kind: 45010,
       created_at: 1,
-      content: encrypt(
-        bytesToHex(key),
-        getConversationKey(owner, getPublicKey(agent)),
-      ),
+      content: encrypt(bytesToHex(key), getConversationKey(agent, me)),
       tags: [
-        ["h", "c1"],
+        ["h", channel],
         ["type", "buzz.table-key"],
-        ["for", getPublicKey(agent)],
+        ["for", me],
         ["table", "t1"],
       ],
     },
-    owner,
+    agent,
   );
+  const relayState = (kind) =>
+    finalizeEvent(
+      {
+        kind,
+        created_at: 1,
+        content: "",
+        tags:
+          kind === 39000
+            ? [["d", channel], ["private"]]
+            : [
+                ["d", channel],
+                ["p", me, "", "owner"],
+              ],
+      },
+      relayKey,
+    );
   const relay = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => (body += chunk));
@@ -71,8 +91,15 @@ test("the packaged MCP server reads a table's fields and rows", async (t) => {
       response.setHeader("content-type", "application/json");
       if (request.url !== "/query") return response.end("{}");
       const [filter] = JSON.parse(body);
+      const kind = filter?.kinds?.[0];
       response.end(
-        JSON.stringify(filter?.artifact === "head" ? [head] : [grant]),
+        JSON.stringify(
+          kind === 39000 || kind === 39002
+            ? [relayState(kind)]
+            : filter?.artifact === "head"
+              ? [head]
+              : [grant],
+        ),
       );
     });
   }).listen(0, "127.0.0.1");

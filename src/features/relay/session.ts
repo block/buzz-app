@@ -1241,6 +1241,8 @@ export function createRelaySession(
           restored: (events) => unread.accept(events),
           verifyStored: transport.verifyStored?.bind(transport),
           demand: (channelId) => demandChannel(channelId),
+          catchUpPending: (channelId) =>
+            catchups.get(channelId)?.state === "pending",
           rosterChanged: (strong) => {
             if (channels.roster().state === "verified")
               rosterReadAt = Date.now();

@@ -268,6 +268,7 @@ it("post-subscribe demand supersedes a pre-stream head and prioritizes the curre
     const current = wire.next();
     expect(current.filters[0]?.["#h"]).toEqual(["z"]);
     expect(oldZ.signal?.aborted).toBe(true);
+    expect(owner.session.channels.window("z").status).toBe("loading");
     expect(priority.mock.lastCall?.[0][0]).toBe("z");
     current.respond([
       bounds(relay, "z", "head", { has_more: false, next_cursor: null }),
@@ -612,6 +613,7 @@ it("loads history on reopening after a stream drop cancels its first read", asyn
     leave();
     await h.drop();
     expect(initial.signal?.aborted).toBe(true);
+    expect(h.window().status).toBe("idle");
 
     const leaveReopened = channels.subscribeWindow("c", () => {});
     try {

@@ -342,10 +342,14 @@ function refusal(message: string) {
   } catch {
     // Not JSON: the relay's message is the reason.
   }
-  const prefix = (Object.keys(REFUSALS) as (keyof typeof REFUSALS)[]).find(
-    (p) => reason.startsWith(p),
+  // The desktop host prefixes the relay's reason with its own words.
+  const match = /(?:^|: )((conflict|restricted): [\s\S]*)$/.exec(reason);
+  return (
+    match && {
+      prefix: `${match[2]}:` as keyof typeof REFUSALS,
+      text: match[1] as string,
+    }
   );
-  return prefix && { prefix, text: reason };
 }
 
 /** Applies `sql` with foreign keys enforced and returns the compacted file.

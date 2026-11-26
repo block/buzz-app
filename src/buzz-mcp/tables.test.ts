@@ -360,7 +360,7 @@ it("reports a refusal the desktop host sends as a string", async () => {
   const client = session(a);
   const publish = client.publish.bind(client);
   client.publish = async () => {
-    throw "409 conflict: artifact head changed";
+    throw "The community refused the agent event: conflict: artifact head changed";
   };
   expect(
     String(

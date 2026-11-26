@@ -2490,6 +2490,33 @@ describe("AcpRuntime", () => {
     expect(JSON.stringify(sent?.tags)).not.toContain(b.id);
   });
 
+  it("stamps a pinned session's tool posts with its context size, in its own place", async () => {
+    const config = await confirmed({ scope: "channel" });
+    const { fake, deliver, sync, published } = setup({ hold: true });
+    sync(config);
+    const root = message("1", "@Opal one");
+    const a = message("2", "@Opal in one");
+    a.tags.push(["e", root.id, "", "root"]);
+    await deliver(a, config).run;
+    await vi.waitFor(() => expect(fake.harnesses[0]?.turns).toHaveLength(1));
+    const harness = fake.harnesses[0];
+    const sessionId = harness?.turns[0]?.sessionId ?? "";
+    harness?.update(sessionId, {
+      sessionUpdate: "usage_update",
+      used: 43_210,
+      size: 200_000,
+    });
+    await flush(5);
+    await harness?.mcp(sessionId, "tools/call", {
+      name: "send",
+      arguments: { text: "sized answer", audience: "everyone" },
+    });
+    const sent = published.find((item) => item.content === "sized answer");
+    expect(sent?.tags).toContainEqual(["buzz:context", "43210"]);
+    // The pinned session's own place: it answers in A's thread.
+    expect(sent?.tags).toContainEqual(["e", a.id, "", "reply"]);
+  });
+
   it("acts with each conversation's own delivery handle", async () => {
     const config = await confirmed();
     const { fake, deliver, sync, agent } = setup({ hold: true });

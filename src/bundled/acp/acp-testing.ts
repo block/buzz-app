@@ -32,6 +32,8 @@ export type FakeHarness = {
   /** Exits, as one held by `holdExit` finally does. */
   exit(): void;
   sent(method: string): Message[];
+  /** Sends `update` as a `session/update` for `sessionId`. */
+  update(sessionId: string, update: Record<string, unknown>): void;
   /** An MCP message for the Buzz tools from `sessionId`, sent to the server
    * its `session/new` declared. */
   mcp(
@@ -132,6 +134,8 @@ export function fakeHarness(
       killed: false,
       exit: () => end(null),
       sent: (method) => fake.received.filter((m) => m.method === method),
+      update: (sessionId, update) =>
+        send({ method: "session/update", params: { sessionId, update } }),
       mcp: async (sessionId, method, params = {}) => {
         const server = servers.find((s) => s.url === declared.get(sessionId));
         if (!server || server.closed)

@@ -26,6 +26,23 @@ afterEach(() => {
   localStorage.clear();
 });
 
+it("saves the default session scope across Settings mounts", async () => {
+  const user = userEvent.setup();
+  const view = render(<AgentSettings keepAwakeAvailable={false} />);
+  const scope = () =>
+    screen.getByRole("combobox", { name: "Default session scope" });
+
+  expect(scope()).toHaveTextContent("One session per thread");
+  await user.click(scope());
+  await user.click(
+    screen.getByRole("option", { name: "One session per channel" }),
+  );
+  view.unmount();
+
+  render(<AgentSettings keepAwakeAvailable={false} />);
+  expect(scope()).toHaveTextContent("One session per channel");
+});
+
 it("offers keeping the Mac awake only where the app can, with a wait after agents finish", async () => {
   const user = userEvent.setup();
   const view = render(<AgentSettings keepAwakeAvailable={false} />, {

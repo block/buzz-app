@@ -200,8 +200,11 @@ if that desktop app is up and running.
   gives agents on this device. Open a section to read it. For editable
   sections, use **Save** or **Cancel**. **Options** lets you disable or enable
   a section, or put the default text back in the editor for you to save.
-- **Sessions.** By default an agent starts a fresh conversation for each
-  thread. Its settings can make it one per channel or one per community.
+- **Sessions.** In **Settings → Agent setup → Agent behavior**, choose a
+  **Default session scope** for new agents. The default starts at one session
+  per thread. You can also choose one per channel or one per community, and
+  override the choice when creating an agent. Existing agents keep their scope,
+  which you can change in each agent’s settings.
 - **Auto models.** Some builds add choices such as **Auto Balanced** to the
   Model menu of Claude Code, Codex and Goose agents. Before each new turn, the build
   picks a model and thinking level for that message, and the turn's activity

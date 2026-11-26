@@ -41,6 +41,11 @@ import {
   emojiAvatarScale,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
+import { sessionScope } from "../../features/agent-harness/session-scope";
+import {
+  readDefaultSessionScope,
+  writeDefaultSessionScope,
+} from "../../features/agents/default-session-scope";
 import { CHECK_MS } from "../../features/agents/recommended";
 import {
   resetModelRoutesForTests,
@@ -225,6 +230,46 @@ const remoteEcho = {
   title: "Builderlab",
   remote: {},
 } as RegisteredAgentType;
+
+it.each(["channel", "community", "thread"] as const)(
+  "prefills the saved scope and creates with %s",
+  async (scope) => {
+    onTestFinished(() => localStorage.clear());
+    writeDefaultSessionScope("channel");
+    const local = {
+      ...echo,
+      adopt: (carry, config) => ({
+        ...(config as Echo),
+        scope: carry.sessionScope,
+      }),
+      sessionControls: {
+        scope: (agent) =>
+          sessionScope((agent.config as { scope?: unknown }).scope),
+        state: () => "idle",
+        run: async () => {},
+        subscribe: () => () => {},
+      },
+    } satisfies RegisteredAgentType;
+    const { user, agents } = setup([local]);
+    const select = screen.getByRole("combobox", { name: "Session scope" });
+
+    expect(select).toHaveTextContent("One session per channel");
+    if (scope !== "channel") {
+      await user.click(select);
+      await user.click(
+        screen.getByRole("option", { name: `One session per ${scope}` }),
+      );
+    }
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Nova");
+    await user.click(createButton());
+    await waitFor(() =>
+      expect(agents.create).toHaveBeenCalledWith(
+        expect.objectContaining({ config: { reply: "", scope } }),
+      ),
+    );
+    expect(readDefaultSessionScope()).toBe("channel");
+  },
+);
 
 it("places the provider action beside Harness and disables it while creating", async () => {
   let finish = (_agent: Agent) => {};

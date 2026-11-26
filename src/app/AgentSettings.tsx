@@ -1,6 +1,12 @@
 import { useState, useSyncExternalStore } from "react";
 import type { PageNavigation } from "../features/navigation/service";
 import type { Agents } from "../features/agents/service";
+import { sessionScope } from "../features/agent-harness/session-scope";
+import {
+  SESSION_SCOPE_GROUPS,
+  useDefaultSessionScope,
+  writeDefaultSessionScope,
+} from "../features/agents/default-session-scope";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
 import { AgentEnvironment } from "../bundled/agents/AgentEnvironment";
 import { BaseInstructions } from "../features/agents/BaseInstructions";
@@ -70,6 +76,8 @@ export function AgentSettings({
         );
     },
   );
+  const defaultScope = useDefaultSessionScope();
+  const [scopeError, setScopeError] = useState(false);
   const rememberAgents = useRememberAgentsPreference();
   const keepAwake = useKeepAwakePreference();
   const keepAwakeApplyError = useKeepAwakeApplyError();
@@ -95,6 +103,21 @@ export function AgentSettings({
       <div className="mt-section-gap">
         <InlineHeader title="Agent behavior" />
         <SettingsGroup>
+          <Select
+            variant="preference"
+            label="Default session scope"
+            description="Preselected when you create a new agent. You can choose a different scope for each agent."
+            value={defaultScope}
+            groups={SESSION_SCOPE_GROUPS}
+            error={
+              scopeError
+                ? "Couldn’t save this on this device. Try again."
+                : undefined
+            }
+            onValueChange={(value) =>
+              setScopeError(!writeDefaultSessionScope(sessionScope(value)))
+            }
+          />
           <SwitchPreferenceRow
             label="Remember mentioned agents"
             description="Keep the same agents selected for your next message in this channel or thread."

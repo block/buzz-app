@@ -11,6 +11,10 @@ import {
   useState,
 } from "react";
 import { sessionScope } from "../../features/agent-harness/session-scope";
+import {
+  readDefaultSessionScope,
+  SESSION_SCOPE_GROUPS,
+} from "../../features/agents/default-session-scope";
 import type { AgentCardDraft } from "../../features/agents/agent-card";
 import {
   agentAvatars,
@@ -364,6 +368,9 @@ export function AgentCreateDialog({
       : config;
   };
   const [config, setConfig] = useState(() => seed(type));
+  const [scope, setScope] = useState(readDefaultSessionScope);
+  const adoptScope =
+    !update && !type?.remote && type?.sessionControls ? type.adopt : undefined;
   const proposedSettings =
     update && type?.key === (update.request.type ?? update.request.agentType)
       ? update.request.settings
@@ -594,18 +601,22 @@ export function AgentCreateDialog({
       const picture =
         (await avatarRef.current?.prepare()) ??
         (avatar.kind === "emoji" ? "" : avatar.picture);
+      const configured =
+        adoptScope && config !== undefined
+          ? adoptScope({ sessionScope: scope }, config)
+          : config;
       const input = {
         type: type.key,
         name: name.trim(),
         ...(picture ? { picture } : {}),
         ...(settings
           ? { config: settings.config }
-          : config !== undefined
+          : configured !== undefined
             ? {
                 config:
                   automatic && pick?.type.key === type.key
-                    ? withRecommended(config as object)
-                    : config,
+                    ? withRecommended(configured as object)
+                    : configured,
               }
             : {}),
       };
@@ -977,6 +988,22 @@ export function AgentCreateDialog({
               />
             ) : (
               <SettingsGroup>{localRows}</SettingsGroup>
+            )}
+            {adoptScope && (
+              <SettingsGroup>
+                <Select
+                  variant="preference"
+                  label="Session scope"
+                  value={scope}
+                  groups={SESSION_SCOPE_GROUPS}
+                  disabled={pending}
+                  onValueChange={(value) => {
+                    setScope(sessionScope(value));
+                    setDirty(true);
+                    setError("");
+                  }}
+                />
+              </SettingsGroup>
             )}
             {admission.state === "held" && (
               <p className="m-0 flex items-center gap-2 text-body-sm">

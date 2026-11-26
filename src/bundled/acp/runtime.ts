@@ -927,6 +927,7 @@ export class AcpRuntime {
       _conversation,
       message,
       signal,
+      contextTokens,
       pinned,
     ) => {
       const place = pinned ? entry.places.get(pinned as Snap) : undefined;
@@ -944,6 +945,8 @@ export class AcpRuntime {
           ...appClient(handle, {
             // The serving work's lifetime: nothing acts after it ends.
             ...(signal && { signal, callSignal: signal }),
+            // Each message it posts carries its session's context size.
+            contextTokens: () => contextTokens,
             relayAuthor: this.relay(agent)?.snapshot().session.relayAuthor,
             signingAuthority:
               this.relay(agent)?.snapshot().session.workflowAuthority,

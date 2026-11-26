@@ -61,7 +61,10 @@ if that desktop app is up and running.
   sheet over the conversation's message box; Back or **X** closes it. **Move to
   side panel** on the sheet moves that thread into a tab. To open them as tabs
   instead, set **Settings → Appearance → Open threads in** to **Side pane** or
-  **Main pane**. Calls, canvases and apps always open as tabs on the right.
+  **Main pane**. A thread opened from the side pane, as from a link in a thread
+  or canvas there or from **Pinned messages**, opens as a tab in its channel's
+  side pane, not as a sheet, and a sheet already open stays. Calls, canvases
+  and apps always open as tabs on the right.
 - **Left Sidebar**: **Activity** and other pinned pages at the top, then workspaces
   which organize groups of channels/chats/dms. It includes "new" buttons for creating
   more of the same.
@@ -80,8 +83,9 @@ if that desktop app is up and running.
   - **Community admin**: **Membership** for owners and admins.
   - **Buzz**: **Identity**, **Security** (desktop only), **Appearance**,
     **Notifications**, **Shortcuts**, **Agent setup**, **Decisions API**,
-    **External apps** and **Software updates**. In the Mac app, **Buzz →
-    Check for Updates…** opens **Software updates** and checks.
+    **Speech to text**, **External apps** and **Software updates**. In the
+    Mac app, **Buzz → Check for Updates…** opens **Software updates** and
+    checks.
   - **Plugins**: **Manage plugins**, plus each plugin's own page (Builderlab,
     Attention, Claude, GitHub, Focus and so on).
 
@@ -249,6 +253,8 @@ plugins. Existing notes remain available to agents through `notes_get`,
 For a Git-installed plugin, an agent's update request or a pinned install link
 can switch the tracked branch even when the code is unchanged. Review and
 confirm the update to save the new source; no reinstall is needed.
+
+Manage plugins shows **Update** as soon as the background check finds a newer version. Buzz checks saved folders and eligible Git sources at startup and hourly while the app is visible. Saved folders are checked offline too. Opening Settings or returning to the window does not start a separate check. Automatic Git checks require update support and a network connection. To check a saved folder or Git source yourself, open the plugin’s details and choose **Check for updates**. Choosing **Update** opens a review before installing anything.
 
 A plugin runs with the same reach as Buzz itself, with no sandbox. Install
 one only if you trust its author with your account and your computer. An optional

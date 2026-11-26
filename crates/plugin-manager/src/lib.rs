@@ -1,5 +1,6 @@
 //! Installation and settings never execute plugin code. Both desktop and CLI use this crate.
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use cap_fs_ext::DirExt as _;
 use nostr::{
     event::{Event, EventBuilder, FinalizeEvent, Kind, Tag},
     key::{Keys, SecretKey},
@@ -721,6 +722,15 @@ impl ReloadSource {
         }
         validate_candidate_path(&path)?;
         Ok(Self { root, path })
+    }
+
+    fn read_error(&self, reason: String) -> String {
+        let label = if self.path == "." {
+            "Selected folder"
+        } else {
+            &self.path
+        };
+        format!("{label}: {reason}")
     }
 }
 // Untagged keeps existing {root, path} folder metadata readable without migration.
@@ -1777,17 +1787,24 @@ fn prepare_reload_artifact(source: &InstallSource) -> Result<Release> {
     let InstallSource::Folder(source) = source else {
         return Err("Plugin was not installed from a reloadable folder".into());
     };
-    let relative = validate_candidate_path(&source.path)?;
-    if !fs::symlink_metadata(&source.root)
-        .map_err(err)?
-        .file_type()
-        .is_dir()
-    {
-        return Err("Reload source root must be a regular folder".into());
-    }
-    let directory = cap_std::fs::Dir::open_ambient_dir(&source.root, cap_std::ambient_authority())
-        .map_err(err)?;
-    imports::read_package(&directory, &relative)
+    let read = || {
+        let relative = validate_candidate_path(&source.path)?;
+        if !fs::symlink_metadata(&source.root)
+            .map_err(err)?
+            .file_type()
+            .is_dir()
+        {
+            return Err("Reload source root must be a regular folder".into());
+        }
+        let mut directory =
+            cap_std::fs::Dir::open_ambient_dir(&source.root, cap_std::ambient_authority())
+                .map_err(err)?;
+        for part in relative.iter() {
+            directory = directory.open_dir_nofollow(part).map_err(err)?;
+        }
+        imports::read_package(&directory, Path::new("."))
+    };
+    read().map_err(|reason| source.read_error(reason))
 }
 fn validate_candidate_path(path: &str) -> Result<PathBuf> {
     // Recorded paths are lossless folder identities; spaces are part of valid names.

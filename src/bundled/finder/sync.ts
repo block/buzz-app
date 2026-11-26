@@ -6,6 +6,7 @@ import type {
   RelayEvent,
 } from "../../features/relay/events";
 import { deletionApplies } from "../../features/relay/fold";
+import { readErrorKind } from "../../features/relay/errors";
 import type { RelaySession } from "../../features/relay/session";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { FinderCorpus, FinderDoc } from "./corpus.ts";
@@ -119,6 +120,28 @@ function placeOf(session: RelaySession, channelId: string) {
 }
 const nameOf = (session: RelaySession, pubkey: string) =>
   session.profiles.snapshot().get(pubkey)?.name ?? pubkey.slice(0, 10);
+
+/** Whether the viewer has lost `channelId`: the channel list is loaded and
+ * the channel is gone from it, or is private and no longer yours. Its
+ * messages must not be shown or opened. Unjoined public channels aren't lost;
+ * their previews stay readable. */
+export function lost(session: RelaySession, channelId: string) {
+  const found = session.channels.get?.(channelId);
+  if (!found) {
+    const list = session.channels.list();
+    // A capped roster read's omissions don't prove removal; a revocation does.
+    return (
+      list.status === "ready" &&
+      (list.coverage !== "partial" || !!session.channels.revoked?.(channelId))
+    );
+  }
+  return (
+    !!found.private &&
+    !!found.readOnly &&
+    !found.cached &&
+    found.viewerRole !== "guest"
+  );
+}
 
 /** A message, from the relay or its search, as Finder indexes it: named
  * by who wrote it and where, for `session`'s viewer. */
@@ -402,7 +425,12 @@ export function startFinderSync({
           { signal, priority: "background" },
         );
       } catch (error) {
-        if (signal.aborted) throw error;
+        lastRead = Date.now();
+        // A refusal won't change by asking again; the caller decides. The
+        // session cancels reads when access changes; those are asked again.
+        const kind = readErrorKind(error);
+        if (signal.aborted || kind === "denied" || kind === "invalid-response")
+          throw error;
         await sleep(delay + Math.random() * 1000, signal);
         delay = Math.min(delay * 2, BACKOFF_CAP_MS);
         continue;
@@ -453,8 +481,26 @@ export function startFinderSync({
         (c) => c.channelType === "dm" && (!channelId || c.id === channelId),
       )
       .map((c) => c.id);
-    for (const ids of chunks(dms, 50))
-      await readAll(`dms:${ids.join()}`, { kinds: KINDS, "#h": ids });
+    for (const ids of chunks(dms, 50)) {
+      try {
+        await readAll(`dms:${ids.join()}`, { kinds: KINDS, "#h": ids });
+      } catch (error) {
+        if (signal.aborted || channelId) throw error;
+        // One refused DM refuses its whole group: read the others alone,
+        // from where the group got to. A refused one is tried again at the
+        // next reconnect.
+        const group = fills.get(`dms:${ids.join()}`);
+        for (const id of ids) {
+          if (group?.complete && !fills.has(`dms:${id}`))
+            fills.set(`dms:${id}`, { ...group, channelIds: [id] });
+          await readAll(`dms:${id}`, { kinds: KINDS, "#h": [id] }).catch(
+            (error) => {
+              if (signal.aborted) throw error;
+            },
+          );
+        }
+      }
+    }
     // Replies in threads you replied in, and the roots themselves.
     for (const ids of chunks([...roots], 100)) {
       await readAll(`roots-e:${ids.join()}${at}`, {
@@ -470,6 +516,12 @@ export function startFinderSync({
     }
   }
 
+  /** A later rejoin reads this channel's history from the start. */
+  function forget(channelId: string) {
+    for (const [key, progress] of fills)
+      if (progress.channelIds?.includes(channelId)) fills.delete(key);
+  }
+
   async function fill() {
     // Start at a random moment, so a fleet reconnecting at once spreads out.
     await sleep(Math.random() * 3000, signal);
@@ -478,10 +530,17 @@ export function startFinderSync({
     observed();
     publish({ phase: "filling" });
     await readHistory();
-    // Rejoined channels get back what lost access removed.
+    // Rejoined channels get back what lost access removed. One the relay
+    // still refuses is tried again at the next reconnect, without holding up
+    // the rest.
     for (const id of [...revoked].filter(relevant)) {
-      await readHistory(id);
-      revoked.delete(id);
+      try {
+        await readHistory(id);
+        revoked.delete(id);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        forget(id);
+      }
     }
     publish({ phase: "ready" });
     // ponytail: a failed read ends the read-ahead; it is a head start, and
@@ -495,10 +554,15 @@ export function startFinderSync({
       // Messages posted while disconnected, beyond what live replay brings.
       if (resumable.has(id) && progress.top !== undefined) {
         const started = Math.floor(Date.now() / 1000);
-        await readPages(
-          { kinds: KINDS, "#h": [id] },
-          Math.max(since, progress.top - RESUME_SLACK_S),
-        );
+        try {
+          await readPages(
+            { kinds: KINDS, "#h": [id] },
+            Math.max(since, progress.top - RESUME_SLACK_S),
+          );
+        } catch (error) {
+          if (signal.aborted) throw error;
+          return;
+        }
         progress.top = started;
         continue;
       }
@@ -517,14 +581,14 @@ export function startFinderSync({
   }
 
   // New messages the session receives anyway: live traffic and other reads.
-  const live = session.observe([{ kinds: [...KINDS, 5], limit: PAGE }]);
+  const live = session.observe([{ kinds: [...KINDS, 5, 9005], limit: PAGE }]);
   // Deletions are applied before the messages beside them are taken, and
   // kept, so a page read later can't add a deleted message back.
   const observed = () => {
     const events = live.snapshot().events as readonly RelayEvent[];
     const gone = new Set<string>();
     for (const event of events) {
-      if (event.kind !== 5) continue;
+      if (event.kind !== 5 && event.kind !== 9005) continue;
       for (const [name, id] of event.tags) {
         if (name !== "e" || !id) continue;
         const known = tombstones.get(id) ?? [];
@@ -547,14 +611,18 @@ export function startFinderSync({
   };
   const stopLive = live.subscribe(observed);
 
-  // Lost access drops the channel's messages; names arriving relabel rows.
-  const relabel = () => {
+  // Lost access drops the channel's messages at once, so nothing from it can
+  // be read or opened; names arriving relabel rows a moment later.
+  const evict = () => {
     const list = session.channels.list();
     if (list.status === "ready") {
+      // ponytail: walks every doc per list change (live traffic too); keep a
+      // per-channel doc count if large indexes make that show.
+      const ids = new Set([...docs.values()].map((doc) => doc.channelId));
       const gone = new Set(
-        [...docs.values()]
-          .filter((doc) => !relevant(doc.channelId))
-          .map((doc) => doc.channelId),
+        [...ids].filter(
+          (id) => !relevant(id) && (!!channel(id) || lost(session, id)),
+        ),
       );
       if (gone.size) {
         for (const [id, doc] of docs)
@@ -566,12 +634,13 @@ export function startFinderSync({
         for (const id of gone) {
           cursors.delete(id);
           revoked.add(id);
-          // A later rejoin reads this channel's history from the start.
-          for (const [key, progress] of fills)
-            if (progress.channelIds?.includes(id)) fills.delete(key);
+          forget(id);
         }
+        publish({});
       }
     }
+  };
+  const relabel = () => {
     const relabeled = [...docs.values()].map((doc) => finderDoc(session, doc));
     for (const doc of relabeled) docs.set(doc.id, doc);
     corpus.add(relabeled);
@@ -582,7 +651,10 @@ export function startFinderSync({
     clearTimeout(pending);
     pending = setTimeout(relabel, 1000);
   };
-  const stopList = session.channels.subscribeList(soon);
+  const stopList = session.channels.subscribeList(() => {
+    evict();
+    soon();
+  });
   const stopProfiles = session.profiles.subscribe(soon);
 
   fill().catch((error) => {

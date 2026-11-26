@@ -5,6 +5,8 @@ import { scanMarkdown, visibleHtmlSource } from "../relay/message-content";
 import type { NotificationCategory } from "./preferences";
 import { prepareMarkdown } from "../messages/markdown-preparation";
 import { remarkSpoilers } from "../messages/remark-spoilers";
+import { messageLinkParts } from "../messages/message-link-parts";
+import { placeholderCharacters } from "../messages/placeholder-characters";
 
 export type NotificationText = Readonly<{ title: string; body: string }>;
 
@@ -25,14 +27,52 @@ function shortText(value: string, limit: number) {
     : points.join("");
 }
 
-type TextNode = { type: string; value?: string; children?: TextNode[] };
-function prose(node: TextNode): string {
+type TextNode = {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: TextNode[];
+};
+/** A link's text in place of a URL that reads as itself, or undefined to keep
+ * the URL. */
+type LinkText = (url: string) => string | undefined;
+
+/** Each run of text between placeholder characters. */
+const placeholderRuns = new RegExp(`[^${placeholderCharacters}]+`, "g");
+
+/** `value` with each bare URL in it through `link`, as the conversation splits
+ * text into links. A caller's placeholders are private-use characters, and
+ * each ends a URL, as the protected part it holds does in the conversation. */
+function textLinks(value: string, link: LinkText) {
+  let result = "";
+  let at = 0;
+  for (const { 0: run, index: offset } of value.matchAll(placeholderRuns))
+    messageLinkParts(run, undefined, (start, end, url) => {
+      // Only a URL that reads as itself; a labelled or wrapped one keeps its
+      // text.
+      if (run.slice(start, end) !== url) return;
+      const text = link(url);
+      if (text === undefined) return;
+      result += value.slice(at, offset + start) + text;
+      at = offset + end;
+    });
+  return result + value.slice(at);
+}
+
+function prose(node: TextNode, link?: LinkText): string {
   if (node.type === "spoiler") return "[Spoiler]";
   if (node.type === "definition") return "";
   if (node.type === "html") return visibleHtmlSource(node.value ?? "");
   if (node.type === "image" || node.type === "imageReference") return "[Image]";
   if (node.type === "break" || node.type === "thematicBreak") return " ";
+  if (link && node.type === "text" && node.value !== undefined)
+    return textLinks(node.value, link);
   if (node.value !== undefined) return node.value;
+  if (link && (node.type === "link" || node.type === "linkReference")) {
+    // A label is its own text; only a link that reads as its URL resolves.
+    const text = (node.children ?? []).map((child) => prose(child)).join("");
+    return (text === node.url && link(text)) || text;
+  }
   const separator = [
     "paragraph",
     "heading",
@@ -43,7 +83,9 @@ function prose(node: TextNode): string {
   ].includes(node.type)
     ? ""
     : " ";
-  return (node.children ?? []).map(prose).join(separator);
+  return (node.children ?? [])
+    .map((child) => prose(child, link))
+    .join(separator);
 }
 
 type PreviewOptions = Readonly<{
@@ -95,12 +137,18 @@ export function plainText(content: string, options: PreviewOptions = {}) {
 export function spoilerText(
   source: string,
   delimiter: string,
-  options: Readonly<{ truncated?: boolean; limit?: number | undefined }> = {},
+  options: Readonly<{
+    truncated?: boolean;
+    limit?: number | undefined;
+    /** Text for a URL that reads as itself, outside code; the URL when
+     * undefined. */
+    link?: LinkText | undefined;
+  }> = {},
 ) {
   const { tree, tooDeep } = scanMarkdown(source);
   if (tooDeep) return "";
   remarkSpoilers(delimiter, options.truncated ?? false)(tree);
-  return shortText(prose(tree), options.limit ?? 200);
+  return shortText(prose(tree, options.link), options.limit ?? 200);
 }
 
 /** Bounded CommonMark text, not rendered HTML or a fetch of linked/attached content. */

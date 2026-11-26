@@ -227,7 +227,9 @@ export function useTrailingSheet(
       }}
     >
       <div className={styles.trailingSpacer} />
-      <div className={styles.trailingCard}>{trailing.content(state)}</div>
+      <div className={styles.trailingCard} data-own-drops="">
+        {trailing.content(state)}
+      </div>
     </div>
   );
   return {

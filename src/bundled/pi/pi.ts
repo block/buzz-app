@@ -30,6 +30,9 @@ export type ToolCall = Readonly<{
   conversation: number;
   /** Where the tools default to for that conversation. */
   context: Context;
+  /** That conversation's context size when it called: the tokens of its
+   * latest model call; absent when unknown. */
+  contextTokens?: number;
   name: string;
   arguments: Record<string, unknown>;
 }>;
@@ -42,7 +45,7 @@ export type ToolResult = Readonly<{
 export type PiEvent = Readonly<
   { agent: string; conversation: number } & (
     | { type: "placed"; request: string; entry: number }
-    | { type: "step"; tool: string; target?: string }
+    | { type: "step"; tool: string; target?: string; origin?: "buzz" }
   )
 >;
 export type PiHookCall = Readonly<{

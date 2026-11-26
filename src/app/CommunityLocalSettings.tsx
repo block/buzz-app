@@ -18,6 +18,7 @@ import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { useToastNotification } from "../shared/design-system/ui/Toast";
 import { writeClipboardText } from "../shared/clipboard";
 import { relayCacheUsage } from "../features/relay/partition-purge";
+import { CopyLabel, useCopyFeedback } from "../shared/CopyFeedback";
 import { formatFileSize } from "../features/messages/FileAttachment";
 
 const size = (bytes: number) => (bytes ? formatFileSize(bytes) : "0 MB");
@@ -36,6 +37,7 @@ export function CommunityLocalSettings({
   viewer: string | undefined;
 }) {
   const notify = useToastNotification();
+  const { copied, copy, status } = useCopyFeedback();
   const address = communityDestination(community.id).url;
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState("");
@@ -43,14 +45,9 @@ export function CommunityLocalSettings({
     if (copying) return;
     setCopying(true);
     setCopyError("");
-    try {
-      await writeClipboardText(address);
-      notify("Community URL copied.", "success");
-    } catch {
+    if ((await copy(() => writeClipboardText(address))) === "failed")
       setCopyError("Couldn’t copy the URL. Select it and copy manually.");
-    } finally {
-      setCopying(false);
-    }
+    setCopying(false);
   };
   const [usage, setUsage] = useState<number>();
   useEffect(() => {
@@ -198,11 +195,13 @@ export function CommunityLocalSettings({
             <Button
               type="button"
               size="xs"
+              aria-label="Copy URL"
               loading={copying}
               onClick={() => void copyUrl()}
             >
-              Copy URL
+              <CopyLabel label="Copy URL" copied={copied} />
             </Button>
+            {status}
             <Button
               type="button"
               size="xs"

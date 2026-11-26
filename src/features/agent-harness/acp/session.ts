@@ -1,6 +1,7 @@
 import { steerPrompt } from "../../../bundled/claude-code/prompt";
 import { unsupportedSynced } from "../../agents/agent-config";
 import type { HostMcpServer } from "../../host/service";
+import { ContextMeter } from "../context-meter";
 import { NO_OPTIONS, offers, optionState, values } from "./options";
 import { type AcpProcess, REQUEST_TIMEOUT_MS } from "./process";
 import { AUTH_REQUIRED, codeOf, errorMessage, stepLabel } from "./steps";
@@ -155,6 +156,8 @@ export class AcpSession {
    * provider failure comes back as text, and text is never posted. */
   private acted = false;
   private written = "";
+  /** The session's context size, from the harness's `usage_update`. */
+  private readonly context = new ContextMeter();
   private closed = false;
   /** A final message ended the work: the id of its tool call, whose result
    * cancels the running turn once the harness reports it, then `true` until
@@ -188,6 +191,11 @@ export class AcpSession {
 
   get busy() {
     return this.pending > 0;
+  }
+  /** The session's context size now: the tokens of its last model call, as
+   * the harness last reported them; undefined when unknown. */
+  get contextTokens() {
+    return this.context.tokens;
   }
   get working() {
     return !this.quiet();
@@ -340,6 +348,8 @@ export class AcpSession {
       this.ending = true;
       this.acp.notify("session/cancel", { sessionId: this.id });
     }
+    // ACP's `used` is the tokens of the session's last model call.
+    if (kind === "usage_update") this.context.report(update.used);
     if (kind === "agent_message_chunk" && !this.acted) {
       const content = update.content as { text?: unknown } | undefined;
       if (typeof content?.text === "string")
@@ -366,11 +376,11 @@ export class AcpSession {
     if (kind === "session_info_update" || runId !== null) return;
     const step = stepLabel(update);
     if (!step) return;
-    const label = `${step.tool}\u0000${step.target ?? ""}`;
+    const label = `${step.tool}\u0000${step.target ?? ""}\u0000${step.origin ?? ""}`;
     if (label === this.lastStep) return;
     this.lastStep = label;
     for (const receipt of this.active.values())
-      receipt.step?.(step.tool, step.target);
+      receipt.step?.(step.tool, step.target, step.origin);
   }
 
   /** Ends the session's work with `error`; nothing more is sent to it. */

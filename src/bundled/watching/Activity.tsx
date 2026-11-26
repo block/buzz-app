@@ -17,6 +17,7 @@ import {
   useRowProfiles,
 } from "../../features/relay/react";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { openFromPanel, PanelPane } from "../../features/panels/opening-pane";
 import { plainText } from "../../features/notifications/content";
 import { rowProfileIds } from "../../features/relay/membership";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
@@ -56,6 +57,7 @@ export function createAttentionActivity(navigation: Context["navigation"]) {
     prefix?: string;
     compact?: boolean;
   }) {
+    const pane = React.useContext(PanelPane);
     const text = (
       <span className="attention-destination-label">
         {prefix}
@@ -83,16 +85,20 @@ export function createAttentionActivity(navigation: Context["navigation"]) {
           compact ? `Open reference ${name}` : `Open destination ${name}`
         }
         onClick={() =>
-          void navigation.open({
-            version: 1,
-            kind: "conversation",
-            scope: {
-              communityOrigin: scope.slice(0, at),
-              viewer: scope.slice(at + 1),
+          openFromPanel(
+            navigation,
+            {
+              version: 1,
+              kind: "conversation",
+              scope: {
+                communityOrigin: scope.slice(0, at),
+                viewer: scope.slice(at + 1),
+              },
+              channelId: channel,
+              ...(root ? { messageId: root, threadRootId: root } : {}),
             },
-            channelId: channel,
-            ...(root ? { messageId: root, threadRootId: root } : {}),
-          })
+            pane,
+          )
         }
       >
         {text}
@@ -113,6 +119,7 @@ export function createAttentionActivity(navigation: Context["navigation"]) {
     session?: RelaySession | undefined;
     scope?: string | undefined;
   }) {
+    const pane = React.useContext(PanelPane);
     const row = React.useMemo(
       () => ({
         id: entry.id ?? `${author}:${entry.at}`,
@@ -158,7 +165,7 @@ export function createAttentionActivity(navigation: Context["navigation"]) {
                 viewer: scope.slice(at + 1),
               });
             if (!target) return false;
-            void navigation.open(target);
+            openFromPanel(navigation, target, pane);
             return true;
           }}
           day={false}

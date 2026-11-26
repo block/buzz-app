@@ -221,22 +221,31 @@ function MessageWork(
     const threadScoped =
       props.threadScoped ??
       (props.messageLayout === "thread" || !!message?.threadRootId);
-    if (!threadScoped) {
-      const local = (snapshot?.local ?? []).filter(
+    const local = (snapshot?.local ?? []).filter(
+      (work) =>
+        work.agent === entry.agent &&
+        work.channelId === channelId &&
+        work.messageId === messageId,
+    );
+    // Live local work shows where its turn is; an outcome stays on its
+    // request, in the channel too while the request has no thread to open.
+    const outcome = settledOutcome(entry);
+    if (threadScoped && local.length && !outcome)
+      return local.some(
         (work) =>
-          work.agent === entry.agent &&
-          work.channelId === channelId &&
-          work.messageId === messageId,
+          !work.thread ||
+          work.threadRootId === (message?.threadRootId ?? messageId),
       );
+    if (!threadScoped) {
       if (local.length)
-        return local.some(
-          (work) =>
-            !work.thread &&
-            !(
-              message &&
-              message.replyCount > 0 &&
-              work.threadRootId === message.id
-            ),
+        return local.some((work) =>
+          work.thread
+            ? outcome && message?.replyCount === 0
+            : !(
+                message &&
+                message.replyCount > 0 &&
+                work.threadRootId === message.id
+              ),
         );
       const turns = activityTranscript(entry.selected.records, {
         agent: entry.agent,

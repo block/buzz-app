@@ -12,21 +12,44 @@ const STEP_KEYS = [
 ];
 
 /** A `session/update` as the step it shows: a tool call by its title and
- * target, thinking, or writing. */
+ * target, thinking, or writing. `origin` marks a call to the Buzz server. */
 export function stepLabel(
   update: Record<string, unknown>,
-): { tool: string; target?: string } | undefined {
+): { tool: string; target?: string; origin?: "buzz" } | undefined {
   switch (update.sessionUpdate) {
     case "tool_call": {
       const title = typeof update.title === "string" ? update.title : "";
-      // goose titles a call `shell · sleep 10`, or `buzz: send`.
-      const tool =
-        title.split(" · ")[0]?.split(/__|: /).at(-1)?.trim() || "Tool";
+      // goose titles a call for people, `shell · sleep 10` or
+      // `buzz: channel list`, and names the tool, `buzz__channel_list`, and
+      // its extension, `buzz`, in `_meta`. The title is the fallback for a
+      // harness without that field.
+      const meta = update._meta as
+        | {
+            goose?: {
+              toolCall?: { toolName?: unknown; extensionName?: unknown };
+            };
+          }
+        | undefined;
+      const call = meta?.goose?.toolCall;
+      const name =
+        typeof call?.toolName === "string" && call.toolName
+          ? call.toolName
+          : undefined;
+      const full = name ?? title.split(" · ")[0] ?? "";
+      const tool = full.split(/__|: /).at(-1)?.trim() || "Tool";
+      // The extension as goose names it, else the name's own server prefix.
+      const buzz =
+        typeof call?.extensionName === "string"
+          ? call.extensionName === "buzz"
+          : /^(?:(?:mcp__)?buzz__|buzz: )/.test(full);
+      const origin = buzz ? { origin: "buzz" as const } : {};
       const input = (update.rawInput ?? {}) as Record<string, unknown>;
       const target = STEP_KEYS.map((key) => input[key]).find(
         (value): value is string => typeof value === "string" && !!value,
       );
-      return target ? { tool, target: shortTarget(target) } : { tool };
+      return target
+        ? { tool, target: shortTarget(target), ...origin }
+        : { tool, ...origin };
     }
     case "agent_thought_chunk":
       return { tool: "Thinking" };

@@ -1,3 +1,4 @@
+import { TOP_LEVEL_MENTION_PROMPT } from "../../buzz-mcp/prompt";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { SectionChoices } from "../../features/agent-harness/sections/choices";
 import { afterEach, expect, it, vi } from "vitest";
@@ -15,7 +16,8 @@ import { STANDALONE_PREFIX } from "../../features/agents/standalone-sessions";
 import { type AgentStore, localStore } from "../../features/agents/store";
 import { memoryStorage } from "../../features/agents/test-fakes";
 import { assignConversationFolder } from "../../features/agents/conversation-folders";
-import { type AgentReads, ownerReads } from "../../features/agents/reads";
+import { messageTokenTags } from "../../features/messages/message-tokens";
+import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
   Agent,
@@ -24,8 +26,6 @@ import type {
   StandaloneTurn,
 } from "../../features/agents/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
-import { eventDto } from "../../features/relay/events";
-import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import { turnContext } from "../../features/agents/gateway/turn";
@@ -269,6 +269,37 @@ const assign = (store: AgentStore, conversation = `${channel}/${root.id}`) =>
     conversation,
     "/repos/worktree",
   );
+
+it("stamps a message with the context size its Pi conversation reported", async () => {
+  const f = setup();
+  try {
+    await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+    const send = (text: string, contextTokens?: unknown) =>
+      f.runtime.tool({
+        agent: self,
+        conversation: CONVERSATION,
+        context: { channel, root: root.id },
+        ...(contextTokens !== undefined
+          ? { contextTokens: contextTokens as number }
+          : {}),
+        name: "send",
+        arguments: { text, audience: "agents" },
+      });
+    await send("sized", 435_123);
+    await send("unknown");
+    await send("malformed", "lots");
+    const sent = f.published.filter((event) =>
+      ["sized", "unknown", "malformed"].includes(event.content),
+    );
+    expect(
+      sent.map((event) =>
+        event.tags.filter(([name]) => name === "buzz:context"),
+      ),
+    ).toEqual([[["buzz:context", "435123"]], [], []]);
+  } finally {
+    await f.runtime.dispose();
+  }
+});
 
 it("contains delegated file reads with the current Pi handle's policy", async () => {
   const f = setup();
@@ -876,6 +907,128 @@ it("ends a turn's prompt with its conversation's instructions", async () => {
   expect(conversationInstructions).toHaveBeenCalledWith(channel, root.id);
 });
 
+it("includes only the owner-selected skill chip addressed to this Pi agent", async () => {
+  const path = "/home/test/.agents/skills/pr-r-fixture/SKILL.md";
+  const skill = (target: string) => ({
+    kind: "skill" as const,
+    id: path,
+    label: "pr-r-fixture",
+    target,
+  });
+  const promptFor = async (event: RelayEvent) => {
+    const f = setup();
+    try {
+      await f.deliver({ type: "mention", event }).run;
+      return String(f.host.requests("deliver")[0]?.params.text ?? "");
+    } finally {
+      f.runtime.dispose();
+    }
+  };
+  const reference =
+    "<referenced-skills>\nThe owner's message asks you to use these skills on this device.";
+  const selected = await promptFor(
+    message("2", "@Pi use pr-r-fixture", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+        ...messageTokenTags([skill(self)]),
+      ],
+    }),
+  );
+  expect(selected).toContain(reference);
+  expect(selected).toContain(JSON.stringify(path));
+  expect(
+    selected.match(/<referenced-skills>\nThe owner's message asks/g),
+  ).toHaveLength(1);
+
+  const wrongTarget = await promptFor(
+    message("3", "@Pi use pr-r-fixture", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+        ...messageTokenTags([skill(bob)]),
+      ],
+    }),
+  );
+  expect(wrongTarget).not.toContain(reference);
+
+  const plainText = await promptFor(
+    message("4", "@Pi use pr-r-fixture", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    }),
+  );
+  expect(plainText).not.toContain(reference);
+
+  const f = setup();
+  try {
+    await f.deliver({
+      type: "mention",
+      event: message("5", "@Pi use pr-r-fixture", {
+        pubkey: bob,
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+          ["p", self],
+          ...messageTokenTags([skill(self)]),
+        ],
+      }),
+    }).run;
+    expect(
+      String(f.host.requests("deliver")[0]?.params.text ?? ""),
+    ).not.toContain(reference);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("adds a selected skill once to a mid-turn Pi steer", async () => {
+  const path = "/home/test/.agents/skills/pr-r-fixture/SKILL.md";
+  const finished = deferred<unknown>();
+  const f = setup({ wait: () => finished.promise });
+  const reference =
+    "<referenced-skills>\nThe owner's message asks you to use these skills on this device.";
+  try {
+    await f.deliver({ type: "mention", event: reply("2", "start") }).run;
+    expect(
+      String(f.host.requests("deliver")[0]?.params.text ?? ""),
+    ).not.toContain(reference);
+
+    await f.deliver({
+      type: "mention",
+      event: message("3", "@Pi use pr-r-fixture", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+          ["p", self],
+          ...messageTokenTags([
+            {
+              kind: "skill",
+              id: path,
+              label: "pr-r-fixture",
+              target: self,
+            },
+          ]),
+        ],
+      }),
+    }).run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    const steer = String(f.host.requests("deliver")[1]?.params.steer ?? "");
+    expect(steer).toContain(JSON.stringify(path));
+    expect(
+      steer.match(/<referenced-skills>\nThe owner's message asks/g),
+    ).toHaveLength(1);
+  } finally {
+    finished.resolve(undefined);
+    f.runtime.dispose();
+  }
+});
+
 it("gives a turn the notes plugins left for its conversation, taken when Pi builds its prompt", async () => {
   let refreshed: unknown;
   const { host, deliver, agent } = setup({
@@ -1024,98 +1177,6 @@ it("shows a conversation only the messages it was not shown, nor its own replies
   expect(text).not.toContain("Earlier from Pi");
 });
 
-it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
-  const { host, deliver, session } = setup();
-  const relay = keypair();
-  session.workflowAuthority = relay.pubkey;
-  const turn = deliver({
-    type: "mention",
-    event: eventDto(
-      signed(relay, {
-        kind: 9,
-        content: "@Agent workflow",
-        tags: [
-          ["h", channel],
-          ["p", self],
-          ["buzz:workflow", "true"],
-          ["buzz:workflow-owner", alice],
-        ],
-      }),
-    ),
-  });
-  await turn.run;
-  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith("workflow");
-  expect(host.processes).toEqual([]);
-});
-
-it("waits for a workflow mention's community before its check, and for its owner's before it routes", async () => {
-  const { deliver, runtime } = setup();
-  const relay = keypair();
-  const readyReads = vi.fn(async () => runtime["reads"](self));
-  Object.assign(runtime, { readyReads });
-  const event = eventDto(
-    signed(relay, {
-      kind: 9,
-      content: "@Agent workflow",
-      tags: [
-        ["h", channel],
-        ["p", self],
-        ["buzz:workflow", "true"],
-        ["buzz:workflow-owner", alice],
-      ],
-    }),
-  );
-  await deliver({ type: "mention", event }).run;
-  expect(readyReads).toHaveBeenCalledOnce();
-  await deliver({ type: "mention", event: { ...event, pubkey: alice } }).run;
-  expect(readyReads).toHaveBeenCalledTimes(2);
-  expect(readyReads).toHaveBeenLastCalledWith(
-    expect.anything(),
-    expect.anything(),
-    channel,
-    "This turn",
-  );
-});
-
-it.each([
-  ["checks authority with the reads it waited for", true, "workflow"],
-  ["ignores it when the agent was replaced during the wait", false, undefined],
-])("a waited-for workflow mention %s", async (_name, stays, reason) => {
-  const { host, deliver, runtime } = setup();
-  const relay = keypair();
-  const waited = {
-    workflowAuthority: vi.fn(() => relay.pubkey),
-    profiles: async () => {},
-    profile: () => undefined,
-  } as unknown as AgentReads;
-  let live = true;
-  Object.assign(runtime, {
-    readyReads: async () => {
-      live = stays;
-      return waited;
-    },
-  });
-  const event = eventDto(
-    signed(relay, {
-      kind: 9,
-      content: "@Agent workflow",
-      tags: [
-        ["h", channel],
-        ["p", self],
-        ["buzz:workflow", "true"],
-        ["buzz:workflow-owner", alice],
-      ],
-    }),
-  );
-  const turn = deliver({ type: "mention", event }, { current: () => live });
-  await turn.run;
-  if (reason) expect(waited.workflowAuthority).toHaveBeenCalled();
-  expect(turn.ignored).toHaveBeenCalledExactlyOnceWith(
-    ...(reason ? [reason] : []),
-  );
-  expect(host.processes).toEqual([]);
-});
-
 it("keeps steering a busy run's effort through a follow-up without a pick", async () => {
   const finished = deferred<unknown>();
   const { host, deliver } = setup({ wait: () => finished.promise });
@@ -1193,7 +1254,7 @@ it("shows a conversation's activity on the request Pi took last", async () => {
     },
   });
   await vi.waitFor(() =>
-    expect(second.step).toHaveBeenCalledWith("bash", "npm test"),
+    expect(second.step).toHaveBeenCalledWith("bash", "npm test", undefined),
   );
   expect(first.step).not.toHaveBeenCalled();
 });
@@ -1440,6 +1501,60 @@ const pluginWake = (root?: string, where = channel) => ({
   at: 200_000,
 });
 
+it("answers a placed mention where the matching wake goes, framed as the owner's request", async () => {
+  const mention = message("2", "@Pi back to the build", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  // Pi's tools post from the context each delivery hands it.
+  const turn = async (
+    trigger: Delivery["trigger"],
+    extra: Partial<Delivery<Config>> = {},
+  ) => {
+    const { host, deliver } = setup();
+    await deliver(trigger, extra).run;
+    const params = host.requests("deliver")[0]?.params ?? {};
+    return {
+      key: params.key,
+      context: params.context,
+      block: String(params.text).match(/<context>[\s\S]*?<\/context>/)?.[0],
+    };
+  };
+  for (const [placement, wake] of [
+    [{ topLevel: true }, { ...pluginWake(), topLevel: true }],
+    [{ root: root.id }, pluginWake(root.id)],
+  ] as const) {
+    const placed = await turn(
+      { type: "mention", event: mention },
+      { placement },
+    );
+    const woken = await turn(wake);
+    const where = (context = "") =>
+      context
+        .split("\n")
+        .filter((line) =>
+          /^(Scope|Session scope|Channel|Thread root):/.test(line),
+        );
+    expect(placed.context, JSON.stringify(placement)).toEqual(
+      "topLevel" in placement ? { channel } : { channel, root: root.id },
+    );
+    // The same session and the same context for Pi's tools as the wake.
+    expect(placed.key, JSON.stringify(placement)).toEqual(woken.key);
+    expect(placed.context, JSON.stringify(placement)).toEqual(woken.context);
+    expect(where(placed.block), JSON.stringify(placement)).toEqual(
+      where(woken.block),
+    );
+    // Framed as a mention: no wake or Interest wording at the top level.
+    if ("topLevel" in placement) {
+      expect(placed.block).toContain(TOP_LEVEL_MENTION_PROMPT);
+      expect(placed.block).not.toContain("Interest");
+    } else expect(placed.block).toEqual(woken.block);
+  }
+});
+
 it("keeps a Pi run going until every placed destination has its final reply", async () => {
   const finished = deferred<unknown>();
   const { host, deliver, runtime } = setup({ wait: () => finished.promise });
@@ -1655,29 +1770,6 @@ it("takes a plugin's wake in its thread's conversation as the plugin's, and repo
     ["p", alice],
   ]);
   expect(JSON.stringify(published)).not.toContain(WAKE_ID);
-});
-
-it("takes a wake with no thread only in a Solo chat", async () => {
-  const { host, deliver, solo } = setup();
-  const stream = deliver(pluginWake());
-  await stream.run;
-  expect(stream.ignored).toHaveBeenCalled();
-  expect(host.requests("deliver")).toEqual([]);
-  solo.add("solo-1");
-  const chat = deliver(pluginWake(undefined, "solo-1"), {
-    channelId: "solo-1",
-  });
-  await chat.run;
-  expect(chat.ignored).not.toHaveBeenCalled();
-  const [delivered] = host.requests("deliver");
-  expect(delivered?.params).toMatchObject({
-    key: "solo-1",
-    context: { channel: "solo-1", topLevel: true },
-  });
-  expect(String(delivered?.params.text)).toContain(
-    '<plugin-wake plugin="github">',
-  );
-  expect(String(delivered?.params.text)).not.toContain(WAKE_ID);
 });
 
 it("hands a Solo chat's Canvas to each turn, and no one else's", async () => {
@@ -3468,10 +3560,12 @@ it("keeps mention activity when a watch joins without presentation callbacks", a
       agent: self,
       conversation: CONVERSATION,
       type: "step",
-      tool: "read",
+      tool: "search",
+      origin: "buzz",
     });
     expect(mention.superseded).not.toHaveBeenCalled();
-    expect(mention.step).toHaveBeenCalledWith("read", undefined);
+    // The host marks a `buzz_` tool; the origin reaches the step with it.
+    expect(mention.step).toHaveBeenCalledWith("search", undefined, "buzz");
   } finally {
     f.runtime.dispose();
   }

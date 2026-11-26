@@ -699,9 +699,16 @@ export class AcpProcess {
     const request = { id, method, params };
     const signal =
       session?.signal ?? AbortSignal.abort(new Error("The turn has ended"));
+    const context = session?.contextTokens;
     const response = (await (pinned === undefined
-      ? tools(session?.conversation, request, signal)
-      : tools(session?.conversation, request, signal, pinned))) as Wire;
+      ? tools(session?.conversation, request, signal, context)
+      : tools(
+          session?.conversation,
+          request,
+          signal,
+          context,
+          pinned,
+        ))) as Wire;
     const call = (params ?? {}) as {
       name?: unknown;
       arguments?: { final?: unknown };

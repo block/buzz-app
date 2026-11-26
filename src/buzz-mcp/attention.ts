@@ -16,6 +16,7 @@ import type {
   WriteOptions,
 } from "../features/agents/attention-objects";
 import type { AgentAttention } from "../features/agents/service";
+import { type BuzzToolName, TOOL_TITLES } from "./tool-titles";
 import type { Tool } from "./tools";
 
 const str = { type: "string" } as const;
@@ -133,12 +134,13 @@ const watchFields = {
 const WRITES =
   "A successful write is authoritative; show again only when a later decision needs the current object or the result is ambiguous. wrong-scope means the object belongs to another Interest than the one you named. Report conflicts or failures; do not blindly retry an ambiguous write. Attention does not grant channel membership or authority to act. These tools work only while your owner has attention on; the end of each turn says when it is off.";
 const tool = (
-  name: string,
+  name: BuzzToolName,
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[] = [],
 ): Tool => ({
   name,
+  title: TOOL_TITLES[name],
   description,
   inputSchema: {
     type: "object",

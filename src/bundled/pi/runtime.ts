@@ -23,6 +23,7 @@ import {
 // turn that fails; what Pi writes without `send` stays in local activity.
 import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
+import { contextSize } from "../../features/agent-harness/context-meter";
 import type { BuzzClient, Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
 import {
@@ -32,10 +33,7 @@ import {
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
-import {
-  wakeAnchor,
-  wakeLands,
-} from "../../features/agent-harness/plugin-wake";
+import { turnChannel, turnOf } from "../../features/agent-harness/plugin-wake";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import {
   coreMemorySection,
@@ -47,6 +45,7 @@ import {
   readProject,
   worksElsewhere,
 } from "../../features/agent-harness/project";
+import { referencedSkills } from "../../features/agent-harness/referenced-folders";
 import {
   placeOf,
   sectionsOf,
@@ -777,9 +776,7 @@ export class PiRuntime {
       entry.handle = agent;
       entry.team = team ?? "";
     }
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
-    const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channel = turnChannel(trigger, delivery);
     if (!channel) return;
     // Where it answers needs the channel's kind, which a reconnecting
     // community, or one still listing its channels, does not know yet: it
@@ -793,8 +790,10 @@ export class PiRuntime {
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
-    const topLevel = solo || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // Where the host placed it; this harness has no rules of its own.
+    const turn = turnOf(trigger, delivery, channel, solo);
+    if (!turn) return ignored?.();
+    const { event, topLevel } = turn;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const { key, dm } = await this.key(
@@ -1311,6 +1310,8 @@ export class PiRuntime {
     const client = () =>
       entry?.handle &&
       appClient(entry.handle, {
+        // Each message it posts carries its conversation's context size.
+        contextTokens: () => contextSize(call.contextTokens),
         protectionContext: () =>
           this.pi.request("protectionContext", {
             agent: call.agent,
@@ -1403,7 +1404,7 @@ export class PiRuntime {
       this.notify();
     } else
       for (const receipt of active?.values() ?? [])
-        receipt.step?.(event.tool, event.target);
+        receipt.step?.(event.tool, event.target, event.origin);
   }
 
   /** Notes a conversation's newest message, `seen` in seconds, once the
@@ -1921,6 +1922,12 @@ export class PiRuntime {
       scope === "community" && entry && current()
         ? entry.project.preview(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
+    const projectContext = [
+      project?.section,
+      referencedSkills(event, owner, agent.pubkey),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     return {
       event,
       scope,
@@ -1935,7 +1942,7 @@ export class PiRuntime {
       total: earlier.length + 1,
       names,
       ...(signingAuthority ? { signingAuthority } : {}),
-      ...(project ? { project: project.section } : {}),
+      ...(projectContext ? { project: projectContext } : {}),
       ...(scope === "community" && project && entry
         ? { acceptProject: () => entry.project.resolve(channelId, project) }
         : {}),

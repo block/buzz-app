@@ -88,23 +88,6 @@ test("reactions under an unboxed own table stay contained and readable", async (
 });
 
 for (const theme of ["light", "dark"]) {
-  test(`standalone table and diff hover stays transparent in ${theme}`, async ({
-    page,
-  }) => {
-    await page.goto(
-      `/tests/fixtures/message-gallery.html?group=references&theme=${theme}`,
-    );
-    for (const id of ["table-received", "table-links", "code-diff"]) {
-      const example = specimen(page, id);
-      const bubble = example.locator("[data-message-action-anchor]");
-      await bubble.hover();
-      await expect(example.locator("[data-actions-revealed]")).toBeVisible();
-      await expect(bubble).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    }
-  });
-}
-
-for (const theme of ["light", "dark"]) {
   test(`message references and inset surfaces remain legible in ${theme}`, async ({
     page,
     browserName,
@@ -181,9 +164,9 @@ for (const theme of ["light", "dark"]) {
     await page.keyboard.press(tabKey(browserName));
     await expect(receivedLink).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(received.getByRole("status")).toContainText(
-      "Sample link selected",
-    );
+    await expect(
+      received.getByRole("status").filter({ hasText: "Sample link selected" }),
+    ).toBeVisible();
     await page
       .getByRole("button", { name: "Narrow preview", exact: true })
       .click();
@@ -231,7 +214,9 @@ test("long links wrap inside their bubble in a narrow pane", async ({
   await long.screenshot({ path: info.outputPath("long-links.png") });
   // A wrapped link still opens its destination.
   await links.first().click();
-  await expect(long.getByRole("status")).toContainText("Sample link selected");
+  await expect(
+    long.getByRole("status").filter({ hasText: "Sample link selected" }),
+  ).toBeVisible();
 });
 
 test("file anchors and native download buttons stay readable and keyboard reachable", async ({

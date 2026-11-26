@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from "react";
+import { viewerMember } from "../../features/relay/membership";
+import { useContext, useSyncExternalStore } from "react";
 import type { Context } from "@deepseek-ai/cordis";
 import { useListedChannel } from "../../features/relay/listed-channel";
 import type { PanelProps } from "../../features/panels/service";
@@ -8,13 +9,14 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import { CanvasEditor } from "./CanvasEditor";
+import { openFromPanel, PanelPane } from "../../features/panels/opening-pane";
 import { canvasReadOnly } from "../../features/channel-templates/capability";
 
 function eligible(channel: ChannelSummary, session: RelaySession) {
   return (
     !channel.cached &&
     (!channel.readOnly || channel.viewerRole === "guest") &&
-    !!channel.members?.includes(session.viewer ?? "")
+    viewerMember(channel, session.viewer)
   );
 }
 
@@ -24,6 +26,7 @@ const tabIcon = <FileTextIcon size="1rem" />;
 export function registerCanvas(ctx: Context) {
   function Panel({ channelContext }: PanelProps) {
     usePanelTabTitle("Canvas", tabIcon);
+    const pane = useContext(PanelPane);
     const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
     const readOnly = useListedChannel(
       state.status === "ready" ? state.session.channels : undefined,
@@ -47,7 +50,7 @@ export function registerCanvas(ctx: Context) {
         viewer &&
         buzzLinkTarget(url, { viewer, communityOrigin: origin });
       if (!target) return false;
-      void ctx.navigation.open(target);
+      openFromPanel(ctx.navigation, target, pane);
       return true;
     };
     return (

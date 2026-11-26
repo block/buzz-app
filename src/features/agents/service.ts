@@ -12,6 +12,12 @@ import {
   type AgentSessionSource,
   type RoutedInvocation,
 } from "./session-admission";
+import {
+  createMentionPlacements,
+  PLACEMENT_NOTE_LIMIT,
+  type MentionPlacement,
+  type MentionPlacer,
+} from "./mention-placement";
 import type {} from "../navigation/service";
 import {
   createAgentExecutions,
@@ -38,13 +44,18 @@ import type {
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
-import { interestPaused, sourceCompleted, sourceSignature } from "./attention";
+import {
+  CHAT_KINDS,
+  interestPaused,
+  sourceCompleted,
+  sourceSignature,
+} from "./attention";
 import {
   AgentProtectionService,
   type AgentProtection,
   type ProtectionBinding,
 } from "../agent-protection/service";
-import { createLocalAgentActivity } from "./local-activity";
+import { createLocalAgentActivity, type StepOrigin } from "./local-activity";
 import { bindKeepAwake } from "./keep-awake";
 import {
   AgentConfigStore,
@@ -197,6 +208,7 @@ import {
 import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import {
+  eventDto,
   hasEventProof,
   newer,
   type EventData,
@@ -847,6 +859,11 @@ export type AgentAttention = Readonly<{
   ): Promise<Shown>;
 }>;
 export type { ClassifierOutcome } from "./classifier";
+export type {
+  MentionPlacement,
+  MentionPlacer,
+  MentionPlacerAnswer,
+} from "./mention-placement";
 export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
@@ -939,10 +956,26 @@ export type StandaloneTurn<Config = unknown> = Readonly<{
 }>;
 /** How a standalone turn ended. */
 export type TurnResult = Readonly<{ ok: boolean; error?: string }>;
+/** Where a turn lives: its channel, at the top level or in the thread of
+ * the message `root`. */
+export type TurnPlace = Readonly<
+  { channel: string } & ({ topLevel: true } | { root: string })
+>;
+
 export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
   session?: AgentSessionAssociation;
   sessionContext?: string;
+  /** Where this turn lives, decided once by the host for mentions, placed
+   * mentions and wakes alike: its channel, at the top level or in a
+   * message's thread. A harness takes its session, its prompt's context and
+   * the default `send` target from it (`turnOf`), and needs no rules of its
+   * own. Absent when the host could not tell, or the turn has no
+   * conversation; `turnOf` then works it out the same way. */
+  place?: TurnPlace;
+  /** What a plugin's placement hook answered for this mention, which
+   * `place` already follows. For hosts and tests that send no `place`. */
+  placement?: MentionPlacement;
   /** Resolve an opt-in task subthread after authority and chat-scope checks. */
   routeConversation?(
     placement: Readonly<{
@@ -997,7 +1030,8 @@ export type Delivery<Config = unknown> = Readonly<{
    * stopped: true }` says the owner's Stop ended its turn. */
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
-  step?(tool: string, target?: string): void;
+  /** `origin` is "buzz" only for a call the harness knows is a Buzz tool. */
+  step?(tool: string, target?: string, origin?: StepOrigin): void;
   /** The plugin declined this request; no work or successful outcome is implied.
    * A `refusal` shows its owner, on this device, why the agent didn't act. */
   ignored?(refusal?: MentionRefusal): void;
@@ -1769,6 +1803,19 @@ export type Agents = {
   readonly invocationIntentVersion?: 1;
   readonly invocationTurnContext?: true;
   registerSessionRouter(router: AgentSessionRouter): void;
+  /** Decides where the owner's top-level mentions of local agents are
+   * answered: the top level, or the thread of a message such as an earlier
+   * one the mention follows up on, plus an optional private note for that
+   * turn. Asked when the mention is delivered, for at most a second; no
+   * answer keeps a thread on the message. A `root` must be a message the
+   * agent can read in the mention's channel; a reply stands for its
+   * thread's root. A mention inside a thread stays there, a Solo chat's are
+   * at its top level and aren't asked about, and with two plugins
+   * registered neither decides. Every harness answers a placed mention as
+   * it would a wake with that `topLevel` or `root` (`deliveryPlace`). A
+   * reload that stops the turn resumes it in the same place, with the same
+   * notes. Feature-detect. */
+  registerMentionPlacement?(placer: MentionPlacer): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
   bindExecution(
@@ -1957,6 +2004,23 @@ export type Agents = {
         }
     >
   >;
+  /** Delivers one of the owner's own signed messages to a local agent as if
+   * the owner had tagged it in that message: nothing is edited or
+   * published, and from then on it is an ordinary mention, placed like any
+   * other. The agent sees the owner's request, not a plugin's data; `note`
+   * is private text a plugin adds to that turn, such as why it delivered it.
+   * Only for an agent this copy runs, from a plugin while it is enabled. It
+   * does nothing for an agent the message tags, one it was already
+   * delivered to, or one a watch turn was already queued for (`watched`),
+   * which then answers it; one
+   * refused as `busy` can be tried again. The event needs the owner's valid
+   * signature, not a relay record: a plugin can publish as the owner
+   * anyway. Feature-detect. */
+  deliverMention?(
+    agent: AgentKey,
+    event: RelayEvent,
+    options?: Readonly<{ note?: string }>,
+  ): Promise<import("./runner").MentionDelivery>;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** Calls `listener` when a turn this copy of the app runs for the agent
@@ -2549,6 +2613,10 @@ export class AgentsService extends Service implements Agents {
   registerSessionRouter(router: AgentSessionRouter) {
     this.sessionAdmissions.register(this.ctx, router);
   }
+  private readonly mentionPlacements;
+  registerMentionPlacement(placer: MentionPlacer) {
+    this.mentionPlacements.register(this.ctx, placer);
+  }
   private readonly executions;
   private async checkExecution(key: AgentKey, type: string) {
     if (!(await this.executions.inspect(key))) return;
@@ -2812,6 +2880,7 @@ export class AgentsService extends Service implements Agents {
       executionStorage(storage),
     );
     this.executions = createAgentExecutions(ctx, executionStorage(storage));
+    this.mentionPlacements = createMentionPlacements(ctx);
     this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
@@ -2937,6 +3006,8 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
+      placeMention: (agent, channel, event, signal) =>
+        this.mentionPlacements.place(agent.key, channel, event, signal),
       routeConversation: (
         agent,
         type,
@@ -3679,6 +3750,24 @@ export class AgentsService extends Service implements Agents {
       channel: (agent, event) => this.channelOf(agent, event),
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
+      flatChannel: (agent, channel) => {
+        // Only a community that knows the channel's kind now: one
+        // reconnecting, or still listing its channels, leaves the turn's
+        // place to the harness, which waits for it.
+        const snapshot = this.relay(agent.key)?.snapshot();
+        if (
+          snapshot?.status !== "ready" ||
+          snapshot.cached ||
+          snapshot.viewer !== agent.owner
+        )
+          return undefined;
+        const { channels } = snapshot.session;
+        const kind = (
+          channels.get?.(channel) ??
+          channels.list().channels.find(({ id }) => id === channel)
+        )?.channelType;
+        return kind ? kind === "solo" : undefined;
+      },
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
       woke: (key, object, events) => {
         const at = Math.floor(Date.now() / 1000);
@@ -4984,6 +5073,37 @@ export class AgentsService extends Service implements Agents {
     Transcript: TranscriptPanel,
   });
   readonly supportsGuardedWake = true as const;
+  async deliverMention(
+    key: AgentKey,
+    event: RelayEvent,
+    options: Readonly<{ note?: string }> = {},
+  ): Promise<import("./runner").MentionDelivery> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !this.ctx.pluginStatus.isActive(owner.id, owner.revision))
+      throw new Error("Only an enabled plugin delivers a mention");
+    let signed: RelayEvent;
+    try {
+      signed = hasEventProof(event) ? event : eventDto(event);
+    } catch {
+      return { status: "dropped", reason: "not-owner" };
+    }
+    const agent = this.ready(key);
+    if (!agent) return { status: "dropped", reason: "unavailable" };
+    const channel = signed.tags.find(([name]) => name === "h")?.[1];
+    if (
+      signed.pubkey !== agent.owner ||
+      !CHAT_KINDS.includes(signed.kind) ||
+      !channel
+    )
+      return { status: "dropped", reason: "not-owner" };
+    if (this.member(agent, signed) !== true)
+      return { status: "dropped", reason: "unavailable" };
+    const note =
+      typeof options.note === "string" && options.note.trim()
+        ? options.note.trim().slice(0, PLACEMENT_NOTE_LIMIT)
+        : undefined;
+    return this.runners.deliverMention(key, signed, channel, note);
+  }
   wake(key: AgentKey, wake: AgentWake): void;
   wake(
     key: AgentKey,

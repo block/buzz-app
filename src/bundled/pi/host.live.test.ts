@@ -863,10 +863,13 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         agent: "b".repeat(64),
         conversation: out.a.conversation,
         context: { channel: "chan", root: "root" },
+        // The size of the model call that asked for it.
+        contextTokens: expect.any(Number),
         name: "send",
         arguments: { text: "hi", final: true },
       },
     ]);
+    expect(out.a.tools[0].contextTokens).toBeGreaterThan(0);
     expect(out.blocked.steps).toEqual([]);
     expect(out.blocked.hooks).toEqual(["beforeTool"]);
     expect(out.blocked).toMatchObject({

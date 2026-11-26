@@ -1,6 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 import { animationsSettled } from "./animations.mjs";
+import { pauseClock } from "./clock.mjs";
 
 // Real Members -> Profiles wiring must retain a visible distinction after the
 // browser collapses trailing whitespace, without changing the clicked key.
@@ -603,21 +604,31 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
       value: { writeText: async (value) => window.profileCopies.push(value) },
     });
   });
-  await panel.getByRole("button", { name: "Copy npub" }).click();
-  await expect(panel.getByRole("status")).toHaveText("Public key copied.");
+  // The button shows a copy for 1.5 seconds. Hold the clock so the result
+  // stays until it has been read.
+  await pauseClock(page);
+  const copy = panel.getByRole("button", { name: "Copy npub", exact: true });
+  // Each result is also announced: a status that the browser exposes, filled.
+  const announced = (result) =>
+    panel.getByRole("status").filter({ hasText: result });
+  await copy.click();
+  await expect(copy).toHaveText("Copied");
+  await expect(announced(/^Copied$/)).toHaveCount(1);
   expect(await page.evaluate(() => window.profileCopies)).toEqual([
     npubs.viewer,
   ]);
+  await page.clock.runFor(1500);
+  await expect(copy).toHaveText("Copy");
   await page.evaluate(() => {
     navigator.clipboard.writeText = async () => {
       throw new Error("denied");
     };
   });
-  await panel.getByRole("button", { name: "Copy npub" }).click();
-  await expect(panel.getByRole("status")).toHaveText(
-    "Could not copy. Select the public key above to copy it.",
-  );
+  await copy.click();
+  await expect(copy).toHaveText("Couldn’t copy");
+  await expect(announced(/^Couldn’t copy$/)).toHaveCount(1);
   await expect(key).toHaveText(npubs.viewer);
+  await page.clock.resume();
   await page.clock.install();
   await page.getByRole("region", { name: "Profile details" }).press("Escape");
   await expect(panel).toHaveCount(0);
@@ -723,7 +734,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(
     identity.getByRole("button", { name: "Open owner profile: Viewer (you)" }),
   ).toBeVisible();
-  // Existing navigation journey also proves keyboard copy and host toast wiring.
+  // Existing navigation journey also proves keyboard copy in the host.
   await expect(panel.getByRole("tab", { name: "Memories" })).toHaveCount(0);
   await expect(panel.getByRole("tab", { name: "Runtime" })).toHaveCount(0);
   await expect(
@@ -744,12 +755,18 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     navigator.clipboard.writeText = async (value) =>
       window.profileCopies.push(value);
   });
+  await pauseClock(page);
   await nip05.press("Enter");
-  await expect(page.getByText("Copied nip-05", { exact: true })).toBeVisible();
   await expect(nip05).toHaveText("Copied");
   expect(await page.evaluate(() => window.profileCopies.slice(-1))).toEqual([
     "pinky@example.test",
   ]);
+  // The button is the only confirmation. A toast mounts on the clock, so
+  // run it before looking for one.
+  await page.clock.runFor(1500);
+  await expect(nip05).toHaveText("Copy");
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  await page.clock.resume();
 
   await panel.getByRole("tab", { name: "Channels" }).click();
   await expect(panel.getByRole("region", { name: "Channels" })).toContainText(

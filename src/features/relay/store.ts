@@ -1,5 +1,10 @@
 import { retryRead } from "./read-retry";
-import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
+import {
+  channelRowKind,
+  rowProfileIds,
+  messagePreview,
+  viewerMember,
+} from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
@@ -49,11 +54,7 @@ import {
   type WindowCursor,
 } from "./window";
 import { ByteLru, byteSize, listByteSize, PROFILE_CACHE_BASE } from "./budget";
-import {
-  MAX_BYTES as MIRROR_BYTES,
-  type HeadPersistence,
-  type SavedHead,
-} from "./persistence";
+import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
@@ -551,6 +552,8 @@ export function createChannelStore(
         old.metadataCached === metadataCached &&
         old.visibility === channel.visibility &&
         old.joinRole === channel.joinRole &&
+        old.viewerMembership?.pubkey === channel.viewerMembership?.pubkey &&
+        old.viewerMembership?.joined === channel.viewerMembership?.joined &&
         old.viewerRole === channel.viewerRole &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
@@ -2062,26 +2065,17 @@ export function createChannelStore(
       ].slice(-PROFILE_CACHE_BASE);
     }
     const events = [...directory.recent(PROFILE_CACHE_BASE), ...savedVerified];
-    // Statuses take only the room names leave, newest first and never cut,
-    // so large tags cannot push the mirror past what the host writes.
-    let room = MIRROR_BYTES - listByteSize(events);
-    const statuses = [...(transport?.statuses?.saved() ?? [])].reverse();
-    const kept = statuses.filter((event) => {
-      // Its bytes plus the comma before it.
-      const size = listByteSize([event]) - 1;
-      if (size > room) return false;
-      room -= size;
-      return true;
-    });
-    events.push(...kept.reverse());
+    // Statuses are optional: they take the room the store leaves, least
+    // recently changed giving way first.
+    const statuses = transport?.statuses?.saved() ?? [];
     // Sorted, so reads that only reorder the LRU never rewrite the mirror.
-    const signature = events
+    const signature = [...events, ...statuses]
       .map((event) => event.id)
       .sort()
       .join(":");
     if (signature === mirrored) return;
     mirrored = signature;
-    void persistence.writeProfiles(events).catch(() => {
+    void persistence.writeProfiles(events, statuses).catch(() => {
       mirrored = undefined;
     });
   }
@@ -4064,7 +4058,7 @@ export function createChannelStore(
   function describeReference(id: string): ChannelReference {
     const channel = discovery?.get(id);
     if (channel) {
-      const joined = !!discovery && channel.members?.includes(discovery.viewer);
+      const joined = !!discovery && viewerMember(channel, discovery.viewer);
       return {
         state: "found",
         name: channel.name,

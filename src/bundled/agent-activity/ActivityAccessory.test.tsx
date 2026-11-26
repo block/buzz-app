@@ -1483,6 +1483,62 @@ it("retries a failed local request from its row, before Dismiss, which begins it
   }
 });
 
+it("shows a mention's live work only where its turn is, and its failure on the mention until it has a reply", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const earlier = "e".repeat(64);
+  const shown = (replyCount: number) => (
+    <>
+      <div data-testid="channel">
+        <ActivityAccessory
+          {...f.props}
+          threadRootId={undefined}
+          message={{ ...f.props.message, replyCount }}
+          messageLayout="timeline"
+        />
+      </div>
+      <div data-testid="thread">
+        <ActivityAccessory {...f.props} messageLayout="thread" />
+      </div>
+    </>
+  );
+  const view = render(shown(0));
+  try {
+    let work!: ReturnType<typeof local.begin>;
+    act(() => {
+      work = local.begin(
+        {
+          scope: "test",
+          agent: A,
+          channelId: "c",
+          messageId: root,
+          threadRootId: root,
+          thread: true,
+        },
+        () => {},
+      );
+    });
+    // Live work is in the mention's thread; the channel shows its summary.
+    expect(screen.getByTestId("channel")).toBeEmptyDOMElement();
+    expect(screen.getByTestId("thread")).not.toBeEmptyDOMElement();
+    // Placed in an earlier thread, it leaves the mention's thread too.
+    act(() => work.placed(earlier));
+    expect(screen.getByTestId("thread")).toBeEmptyDOMElement();
+    // Its failure stays on the mention, where Retry is keyed.
+    act(() => work.finish({ ok: false, error: "Provider unavailable" }));
+    for (const id of ["channel", "thread"])
+      expect(
+        within(screen.getByTestId(id)).getByText("Couldn’t finish"),
+      ).toBeInTheDocument();
+    // Once the mention has a thread to open, the failure is only there.
+    view.rerender(shown(1));
+    expect(screen.getByTestId("channel")).toBeEmptyDOMElement();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it("says why a failed request could not be retried, keeping it to try again or dismiss", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);

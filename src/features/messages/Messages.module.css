@@ -57,6 +57,16 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+/* A docked workspace aside sits over the history's end edge, left of its
+   scrollbar; WorkspaceRow marks the reader and sets --timeline-aside-width to
+   its width. The rows keep to the space beside it. A docked reader is wider
+   than the narrow rules that follow. */
+[data-aside-docked] .feed {
+  padding-inline-end: calc(
+    var(--space-panel-inset) +
+    var(--timeline-aside-width)
+  );
+}
 /* Narrow conversations keep the shared compact inset beside the app dock. */
 @container messages (max-width: 30rem) {
   .feed {
@@ -94,8 +104,8 @@
 /* A workspace's trailing card covers the end of the history, and a box of its
    rest height ends the scroll range so the latest message stays above it.
    The history inset would only add a gap between the two. Focus scrolls into
-   view above the card's visible top. */
-.feed[data-trailing] {
+   view above the card's visible top. A thread's inset is already none. */
+:is(.feed, .threadHistory)[data-trailing] {
   --history-bottom-inset: 0px;
   scroll-padding-bottom: var(--timeline-trailing-rest, 0px);
 }
@@ -363,8 +373,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   align-items: center;
   gap: var(--space-1);
   margin: var(--space-1h) 0 0;
-  /* Reactions and reply summaries are controls, not conversation text;
-     a copy states reaction counts from the group's data-copy-text. */
+  /* Keep reaction groups out of text selection; copy uses data-copy-text. */
   user-select: none;
 }
 .reactions[data-populated],
@@ -383,16 +392,22 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 .reactions:empty {
   margin-top: 0;
 }
-.reactionFallback > span:not([role]) {
+.reactionFallback > [data-reaction] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-half);
   min-width: var(--size-control-sm);
+  max-width: 100%;
   padding-inline: var(--space-2);
   height: calc(var(--size-control-sm) - var(--space-1));
   font-size: var(--text-caption);
   --inline-emoji-size: 0.75rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.reactionFallbackLabel {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -403,7 +418,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionItem,
 .inlineReactionTool,
-.reactionFallback > span:not([role]) {
+.reactionFallback > [data-reaction] {
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
 }
@@ -430,8 +445,13 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   max-width: none;
   gap: var(--space-1);
 }
+.reactionFallback .reactionGlyph[data-grouped] {
+  min-width: 0;
+  max-width: 100%;
+}
 .reactionCount {
   @apply text-caption;
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
 .reactionItem [data-reaction] {
@@ -856,11 +876,16 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-width: 0;
   align-self: stretch;
   flex-shrink: 0;
-  width: min(calc(100% - 2 * var(--space-4)), var(--buzz-message-width, 52rem));
+  width: min(
+    calc(100% - var(--timeline-aside-width, 0px) - 2 * var(--space-4)),
+    var(--buzz-message-width, 52rem)
+  );
   margin: 0 auto var(--space-4);
+  /* Beside a docked workspace aside, centered in the history's width. */
+  inset-inline-start: calc(var(--timeline-aside-width, 0px) / -2);
 }
 :where(html[data-message-density="compact"]) .composerDock {
-  width: calc(100% - 2 * var(--space-4));
+  width: calc(100% - var(--timeline-aside-width, 0px) - 2 * var(--space-4));
 }
 @media (max-width: 40.625rem) {
   .composerDock {
@@ -1145,6 +1170,10 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+}
+/* Beside a docked workspace aside, as in .feed. */
+[data-aside-docked] .threadHistory {
+  padding-inline-end: calc(var(--space-4) + var(--timeline-aside-width));
 }
 /* Compact gives conversations the window's full width, as list layouts do. */
 :where(html[data-message-density="compact"]) :is(.feed, .threadHistory) {
@@ -4566,6 +4595,9 @@ html[data-keyboard-navigation]
   align-items: flex-start;
   min-width: 0;
 }
+/* Expanded or not, the body takes the bubble's width, so a wide table
+   scrolls inside it rather than widening it. */
+.detailsBody,
 .detailsClip {
   align-self: stretch;
   min-width: 0;
@@ -4620,4 +4652,40 @@ html[data-keyboard-navigation]
 .detailsMore {
   display: flex;
   margin-top: var(--space-1);
+}
+
+/* Under a thread's quick open, the view's composer stays drawn
+   over the sheet until the thread's reply box takes its place, and its
+   placeholder turns into the reply box's in place. */
+.composer[data-composer-above] {
+  z-index: 2;
+}
+.composer[data-thread-placeholder]
+  .composerInput:has([data-placeholder])::after {
+  content: var(--thread-placeholder);
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--space-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-metadata);
+  pointer-events: none;
+  animation: thread-placeholder-in 150ms var(--easing-enter) both;
+}
+.composer[data-thread-placeholder] .composerInput > .channelPlaceholder,
+.composer[data-thread-placeholder] .composerInput [data-placeholder]::before {
+  animation: thread-placeholder-out 150ms var(--easing-enter) forwards;
+}
+@keyframes thread-placeholder-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@keyframes thread-placeholder-out {
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
 }

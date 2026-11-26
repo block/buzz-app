@@ -1,3 +1,4 @@
+import { viewerMember } from "../../features/relay/membership";
 import {
   useCallback,
   useEffect,
@@ -16,6 +17,7 @@ import { diagnosticsAvailable } from "../../features/developer/mode";
 import { ChannelBody } from "../channels/ChannelBody";
 import { InlineThreadSheet } from "../channels/InlineThreadSheet";
 import { composesIn, placeOpening } from "../channels/placement";
+import { openFromTab } from "../../features/panels/opening-pane";
 import {
   historyPanel,
   useConversationTabs,
@@ -302,14 +304,14 @@ export function BestieConversation({
       }),
     );
   };
-  const openLink = (url: string) => {
+  const openLink = (url: string, pane?: "main" | "side") => {
     if (!session.viewer) return false;
     const target = buzzLinkTarget(url, {
       viewer: session.viewer,
       communityOrigin: scope.slice(0, -65),
     });
     if (!target || !ownsCurrentVisit()) return false;
-    void navigator.open(target);
+    openFromTab(navigator, target, pane);
     return true;
   };
   const secondary = useConversationTabs({
@@ -674,9 +676,7 @@ export function BestieConversation({
                               current.cached ||
                               (current.readOnly &&
                                 current.viewerRole !== "guest") ||
-                              !current.members?.includes(
-                                session.viewer ?? "",
-                              ) ||
+                              !viewerMember(current, session.viewer) ||
                               !host.panels.snapshot().includes(panel) ||
                               !panel.channelMenu?.eligible(current, session)
                             )

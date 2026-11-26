@@ -55,13 +55,18 @@ export function fakeRelay(origin = "https://relay.example.test") {
   const rows: {
     id: string;
     name?: string;
-    channelType?: "dm";
+    channelType?: "dm" | "stream";
     visibility?: "public";
     members: string[];
     cached?: true;
   }[] = [
     { id: lobby, name: "lobby", visibility: "public", members: [viewer] },
-    { id: channel, name: "general", members: [viewer, bot] },
+    {
+      id: channel,
+      name: "general",
+      channelType: "stream",
+      members: [viewer, bot],
+    },
     { id: "private", name: "private", members: [viewer] },
     { id: dm, channelType: "dm", members: [viewer, bot] },
     { id: groupDm, channelType: "dm", members: [viewer, other, bot] },

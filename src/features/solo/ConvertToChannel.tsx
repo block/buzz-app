@@ -2,6 +2,7 @@ import { prepareSoloMove } from "../channel-navigation/solo-navigation";
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
@@ -10,6 +11,8 @@ import type { ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import {
+  canonicalDetailsName,
+  detailsDraftErrors,
   sameLabels,
   type ChannelDetails,
 } from "../relay/channel-details-protocol";
@@ -36,6 +39,9 @@ import {
   generalAccessValue,
   type GeneralAccess,
 } from "../channels/general-access";
+import { channelIcon, channelIconLabel } from "../channels/channel-icon";
+import { ChannelTextField } from "../../bundled/channels/ChannelTextField";
+import styles from "./ConvertToChannel.module.css";
 
 /** Presentation gating only; fresh signed details authorize the actual write. */
 export function canConvertToChannel(
@@ -97,6 +103,9 @@ export function ConvertToChannel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [access, setAccess] = useState<GeneralAccess>();
+  // Unset until edited, so the chat's current title stays the default.
+  const [name, setName] = useState<string>();
+  const formId = useId();
   const lifetime = useRef<AbortController | undefined>(undefined);
   const pending = useRef(false);
   const conversionAttempt =
@@ -106,7 +115,8 @@ export function ConvertToChannel({
   const matchingAttempt = !!(
     base &&
     conversionAttempt?.draft.labels &&
-    conversionAttempt.draft.name === base.name &&
+    // An uncertain conversion carries the name chosen here, kept in its receipt.
+    conversionAttempt.draft.name === (receipt?.draft.name ?? base.name) &&
     conversionAttempt.draft.description === base.description &&
     conversionAttempt.draft.ttlSeconds === base.ttlSeconds &&
     sameLabels(conversionAttempt.draft.labels, withoutSolo(base.labels))
@@ -126,6 +136,21 @@ export function ConvertToChannel({
   const selectedAccess = savedDraft
     ? generalAccessValue(savedDraft)
     : (access ?? (base ? generalAccessValue(base) : "private"));
+  const shownName = savedDraft ? savedDraft.name : (name ?? base?.name ?? "");
+  const channelName = canonicalDetailsName(shownName);
+  const nameError =
+    base && eligible && !savedDraft
+      ? detailsDraftErrors({ ...base, name: channelName }).name
+      : undefined;
+  const preview = { private: selectedAccess === "private" || undefined };
+  const PreviewIcon = channelIcon(preview);
+  const locked =
+    busy ||
+    converted ||
+    !!receipt?.running ||
+    !!attempt ||
+    !eligible ||
+    !!signal?.aborted;
 
   const acceptDetails = useCallback(
     (next: ChannelDetails) => {
@@ -154,6 +179,7 @@ export function ConvertToChannel({
     ]);
     setBase(undefined);
     setAccess(undefined);
+    setName(undefined);
     setError("");
     setBusy(false);
     pending.current = false;
@@ -199,14 +225,14 @@ export function ConvertToChannel({
           (!base ||
             (action === "check"
               ? !matchingAttempt || attempt?.status !== "unconfirmed"
-              : !eligible || !!attempt))
+              : !eligible || !!attempt || !!nameError))
         )
           return;
         if (action === "finish" && !canFinish) return;
         if (!base && !receipt) return;
         exact = chatConversion(session, id) ?? {
           draft: {
-            name: base?.name ?? "",
+            name: channelName,
             description: base?.description ?? "",
             ...generalAccessPolicy(selectedAccess, base?.joinRole),
             ttlSeconds: base?.ttlSeconds,
@@ -314,15 +340,17 @@ export function ConvertToChannel({
             </Button>
           ) : (
             <Button
+              type="submit"
+              form={formId}
               variant="prominent"
               disabled={
                 busy ||
                 !!receipt?.running ||
                 !!attempt ||
                 !eligible ||
+                !!nameError ||
                 !!signal?.aborted
               }
-              onClick={() => void run("convert")}
             >
               Convert to channel
             </Button>
@@ -330,26 +358,44 @@ export function ConvertToChannel({
         </>
       }
     >
-      <Select
-        label="General access"
-        variant="field"
-        value={selectedAccess}
-        groups={[{ label: "", options: Object.values(generalAccessOptions) }]}
-        disabled={
-          busy ||
-          converted ||
-          !!receipt?.running ||
-          !!attempt ||
-          !eligible ||
-          !!signal?.aborted
-        }
-        onValueChange={(value) => {
-          const option = Object.values(generalAccessOptions).find(
-            (option) => option.value === value,
-          );
-          if (option) setAccess(option.value);
+      <form
+        id={formId}
+        className={styles.form}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void run("convert");
         }}
-      />
+      >
+        <ChannelTextField
+          field="name"
+          // The icon the sidebar will show for the chosen access.
+          leading={
+            <PreviewIcon
+              size={16}
+              role="img"
+              aria-hidden={false}
+              aria-label={channelIconLabel(preview)}
+            />
+          }
+          value={shownName}
+          error={nameError}
+          disabled={locked}
+          onChange={setName}
+        />
+        <Select
+          label="General access"
+          variant="field"
+          value={selectedAccess}
+          groups={[{ label: "", options: Object.values(generalAccessOptions) }]}
+          disabled={locked}
+          onValueChange={(value) => {
+            const option = Object.values(generalAccessOptions).find(
+              (option) => option.value === value,
+            );
+            if (option) setAccess(option.value);
+          }}
+        />
+      </form>
       {converted && (
         <p role="status">
           Channel converted. Finish to return to the conversation.

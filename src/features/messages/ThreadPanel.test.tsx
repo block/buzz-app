@@ -500,7 +500,10 @@ it("keeps initial thread loading until available content has been positioned", (
   h.snapshot.status = "loading";
   h.snapshot.root = undefined;
   const section = h.render();
-  // The placeholders show at once; the label is announced after a delay.
+  // No placeholders flash while a thread opens; the label is announced to
+  // screen readers after a delay.
+  expect(section.querySelector("[data-message-waiting]")).not.toBeNull();
+  expect(section.querySelector("[data-message-loading]")).toBeNull();
   expect(within(section).queryByRole("status")).toBeNull();
   act(() => vi.advanceTimersByTime(1000));
   expect(within(section).getByRole("status")).toHaveTextContent(
@@ -1782,7 +1785,6 @@ it("routes media in replies through the resolved root review workspace", () => {
     attachment,
     0,
     true,
-    undefined,
     undefined,
   );
 });

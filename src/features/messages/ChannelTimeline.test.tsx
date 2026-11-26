@@ -353,12 +353,14 @@ function setup({
       });
     }
     key = scoped.key;
-    // The feed renders inside the list's message context menu host.
-    section = (
-      scoped.type as (
-        props: typeof scoped.props,
-      ) => ReactElement<{ children: Section }>
+    // The feed renders inside the list's message context menu host, before
+    // the trailing sheet.
+    const [menus] = (
+      scoped.type as (props: typeof scoped.props) => ReactElement<{
+        children: [ReactElement<{ children: Section }>, unknown];
+      }>
     )(scoped.props).props.children;
+    section = menus.props.children;
     section.props.ref.current = element;
     const edge = section.props.children[0] as ReactElement<{
       ref: { current: unknown };
@@ -1196,42 +1198,34 @@ it("keeps bottom restoration through repeated late list measurements without ano
   h.measureRows();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
 });
-it("ignores non-height list styles and coalesces measured height changes", () => {
+it("ignores non-height list styles and follows a measured height change before paint", () => {
   const h = setup();
   h.handle.scrollToIndex.mockClear();
   h.scrollStyle();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  // A row that grows while the reader follows the latest message must not
+  // paint pushed down for a frame before the follow scroll lands.
   h.measureRows(false);
-  h.measureRows(false);
-  h.flush();
   expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
     align: "end",
   });
   h.handle.scrollToIndex.mockClear();
   h.scrollStyle(); // The new height has already been consumed.
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
-  h.measureRows(false);
   h.unmount();
-  h.flush();
-  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
 });
-it.each([false, true])(
-  "a new gesture cancels late bottom reflow, including queued=%s",
-  (queued) => {
-    const h = setup();
-    h.element.scrollTop = 3038;
-    h.scroll();
-    h.element.clientWidth = 650;
-    h.resize();
-    h.handle.scrollToIndex.mockClear();
-    if (queued) h.measureRows(false);
-    h.gesture();
-    if (queued) h.flush();
-    else h.measureRows();
-    expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
-    h.unmount();
-  },
-);
+it("a new gesture cancels late bottom reflow", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.resize();
+  h.handle.scrollToIndex.mockClear();
+  h.gesture();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+});
 it("late measurements restore the reading anchor instead of converting it to bottom follow", () => {
   const h = setup({ mounted: [{ id: "last", y: 42 }] });
   h.scroll();
@@ -1244,21 +1238,18 @@ it("late measurements restore the reading anchor instead of converting it to bot
     offset: -42,
   });
   h.handle.scrollToIndex.mockClear();
-  h.measureRows(false);
   h.gesture();
-  h.flush();
   h.measureRows();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
   h.unmount();
 });
-it("prepending retires the preceding bottom-reflow observer and its queued frame", () => {
+it("prepending retires the preceding bottom-reflow observer", () => {
   const h = setup();
   h.element.scrollTop = 3038;
   h.scroll();
   h.element.clientWidth = 650;
   h.resize();
   h.handle.scrollToIndex.mockClear();
-  h.measureRows(false);
   h.prepend();
   h.measureRows();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
@@ -1822,26 +1813,22 @@ it("membership append retains bottom intent across intermediate scroll geometry 
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
 });
 
-it.each([false, true])(
-  "a reader gesture cancels membership late-follow, queued=%s",
-  (queued) => {
-    const first = membershipRow("first", 1);
-    const h = setup({ initialRows: [first] });
-    h.element.scrollTop = 3038;
-    h.scroll();
-    h.setRows([first, membershipRow("second", 2)]);
-    h.handle.scrollToIndex.mockClear();
-    if (queued) h.measureRows(false);
-    h.gesture();
-    h.element.scrollTop = 2000;
-    h.scroll();
-    h.measureRows();
-    h.setRows([first, membershipRow("second", 2), membershipRow("third", 3)]);
-    expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
-    h.unmount();
-    expect(h.saved().bottom).toBe(false);
-  },
-);
+it("a reader gesture cancels membership late-follow", () => {
+  const first = membershipRow("first", 1);
+  const h = setup({ initialRows: [first] });
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.setRows([first, membershipRow("second", 2)]);
+  h.handle.scrollToIndex.mockClear();
+  h.gesture();
+  h.element.scrollTop = 2000;
+  h.scroll();
+  h.measureRows();
+  h.setRows([first, membershipRow("second", 2), membershipRow("third", 3)]);
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(false);
+});
 
 it.each([false, true])(
   "a restored membership anchor survives delayed group growth until a gesture=%s",
@@ -2063,9 +2050,9 @@ it("virtualizer correction plus native shrink clamping retains bottom follow", (
   // then Virtua applies its own resize correction before native scroll delivery.
   h.element.scrollHeight -= 640;
   h.element.scrollTop -= 1279;
+  h.handle.scrollToIndex.mockClear();
   h.measureRows(false);
   h.dispatchScroll();
-  h.handle.scrollToIndex.mockClear();
   h.flush();
   expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
     align: "end",
@@ -2148,10 +2135,10 @@ it("records a measured shrink before an append hides its queued native scroll cl
   h.append();
   h.element.scrollHeight -= 200;
   h.element.scrollTop -= 200;
+  h.handle.scrollToIndex.mockClear();
   h.measureRows(false); // Mutation delivery precedes the queued native scroll.
   h.element.scrollHeight += 300; // A new event arrives before that scroll.
   h.dispatchScroll();
-  h.handle.scrollToIndex.mockClear();
   h.flush();
   expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
     align: "end",

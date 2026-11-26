@@ -164,6 +164,9 @@ export interface BuzzClient {
   /** The relay's NIP-11 self key as the app host knows it: `null` when the
    * relay advertises none; absent when the host can't tell. */
   readonly signingAuthority?: string | null;
+  /** The posting session's context size: the tokens of its last model call;
+   * undefined when unknown. Each message it posts carries it. */
+  contextTokens?(): number | undefined;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
   /** Latest live attachment state, read as this agent from a primary snapshot. */

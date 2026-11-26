@@ -2209,7 +2209,7 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   expect(rowOpeners.get(`${roots.r1}:reply`)?.("https://example.com/")).toBe(
     true,
   );
-  expect(latest).toHaveBeenCalledWith("https://example.com/");
+  expect(latest).toHaveBeenCalledWith("https://example.com/", "side");
   expect(first).not.toHaveBeenCalled();
   // Rows decide which links are openable while rendering, so new panels reach them.
   available = [{ key: "app", title: "App" } as RegisteredPanel];
@@ -2479,6 +2479,16 @@ it.each([
     current: { cached: true as const, readOnly: true as const },
     cachedOnly: true,
     text: "This conversation will appear once Buzz reconnects.",
+  },
+  {
+    name: "a Solo chat with denied viewer membership and retained peers",
+    kind: "conversation",
+    listed: {
+      channelType: "solo",
+      members: ["viewer"],
+      viewerMembership: { pubkey: "viewer", joined: false },
+    },
+    text: "This conversation is no longer available.",
   },
   {
     name: "an archived channel",

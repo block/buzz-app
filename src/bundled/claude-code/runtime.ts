@@ -16,6 +16,7 @@ import {
 } from "../../features/agent-harness/session-scope";
 import { protectionTranscript } from "./protection-transcript";
 import { compactAt } from "../../features/agents/compact-at";
+import { launchModel, routeOf } from "../../features/agents/model-routes";
 import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
@@ -80,10 +81,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { threadReference } from "../../features/relay/thread-reference";
-import {
-  wakeAnchor,
-  wakeLands,
-} from "../../features/agent-harness/plugin-wake";
+import { turnChannel, turnOf } from "../../features/agent-harness/plugin-wake";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
 import {
@@ -206,9 +204,9 @@ export type SavedConversation = Conversation &
  * process. */
 const STOP_WAIT_MS = 5_000;
 /** An agent's own `claude`, and the check of which custom headers it starts
- * with, ask for the environment variables saved for that agent; its pinned
- * protected copy and other setup steps never do. A spare, started for no
- * agent yet, asks with none named and gets none. */
+ * with, ask for the device's environment variables and that agent's; its
+ * pinned protected copy and other setup steps never do. A spare, started for
+ * no agent yet, asks with none named and gets the device's alone. */
 const agentEnv = (
   id: string,
   options: Parameters<Spawn>[1],
@@ -271,9 +269,11 @@ type Entry = {
  * compaction. */
 const where = ({ workspace, model, effort, ...config }: Config) => {
   const tokens = compactAt(config.compactAt);
+  // A saved model route picks per turn; the process starts on the default.
+  const launch = launchModel(model.trim());
   return {
     cwd: workspace,
-    ...(model.trim() ? { model: model.trim() } : {}),
+    ...(launch ? { model: launch } : {}),
     ...(effort ? { effort } : {}),
     ...(tokens ? { compactAt: tokens } : {}),
   };
@@ -761,7 +761,8 @@ export class ClaudeRuntime {
   /** `models`, saying whether Claude itself lists the current model. */
   private async catalog(agent: AgentKey) {
     const entry = this.agents.get(agent);
-    const configured = entry?.config.model.trim();
+    const saved = entry?.config.model.trim();
+    const configured = saved && launchModel(saved);
     const {
       models: listed,
       model: reported,
@@ -781,6 +782,9 @@ export class ClaudeRuntime {
         ...resting(offeredEfforts),
       };
     });
+    // A saved route is the current choice; the agents service lists it.
+    if (saved && routeOf(saved))
+      return { current: saved, models, listed: true };
     const current =
       offered.find(
         (model) => own === model.value || own === model.resolvedModel,
@@ -1277,6 +1281,7 @@ export class ClaudeRuntime {
       channelId,
       model,
       effort,
+      route: chooseModel,
       synced,
       team,
       workingUntil,
@@ -1354,16 +1359,15 @@ export class ClaudeRuntime {
       const refused = kept && (await this.refusal(agent.key, kept));
       if (refused) throw new Error(refused);
     };
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
-    const channel =
-      channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
+    const channel = turnChannel(trigger, delivery);
     if (!channel) return;
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
-    const topLevel = solo || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // Where the host placed it; this harness has no rules of its own.
+    const turn = turnOf(trigger, delivery, channel, solo);
+    if (!turn) return ignored?.();
+    const { event, topLevel } = turn;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const native = await this.key(
@@ -1632,6 +1636,7 @@ export class ClaudeRuntime {
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
           },
+          ...(chooseModel ? { route: chooseModel } : {}),
           admit,
           // Mentions already show the host's fallback under the request.
           ...this.turnAttribution(
@@ -1986,6 +1991,8 @@ export class ClaudeRuntime {
   private async refusal(agent: AgentKey, kept: string | undefined) {
     if (!kept) return undefined;
     const { current, models, listed } = await this.catalog(agent);
+    // A route picks its own effort each turn.
+    if (routeOf(current)) return undefined;
     const own = models.find((model) => model.id === current);
     // A model Claude doesn't list has no levels to check the effort against.
     if (!listed || !own)
@@ -2277,11 +2284,13 @@ export class ClaudeRuntime {
     // it was given, until it is replaced.
     const tools =
       (cwd: string): ToolServer =>
-      async (conversation, message, signal, check) => {
+      async (conversation, message, signal, check, contextTokens) => {
         const handle = entry.handle;
         const client = () =>
           handle &&
           appClient(handle, {
+            // Each message it posts carries its session's context size.
+            contextTokens: () => contextTokens,
             // Its PreToolUse hook reviews every tool, Buzz's included.
             ...(!this.target && check ? { nativeCall: check } : {}),
             nativeToolGate: true,

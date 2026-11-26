@@ -534,6 +534,22 @@ export function createRelaySession(
   ) {
     return isProfileRead(filters) && cleared === cacheClearEpoch;
   }
+  // Signed archive snapshots and role consent are relay-wide. Channel changes
+  // and live-socket outages cannot retire their independent HTTP/IPC reads.
+  const isArchiveFilter = (filter: ReadFilter) =>
+    !!transport?.archiveAuthority &&
+    filter.kinds?.length === 1 &&
+    (filter.kinds[0] === 13535 || filter.kinds[0] === 13534) &&
+    filter.authors?.length === 1 &&
+    filter.authors[0] === transport.archiveAuthority &&
+    Object.keys(filter).every((key) =>
+      ["kinds", "authors", "limit"].includes(key),
+    );
+  const isArchiveRead = (filters: readonly ReadFilter[]) =>
+    filters.some(isArchiveFilter) &&
+    filters.every(
+      (filter) => isArchiveFilter(filter) || isProfileFilter(filter),
+    );
   function revokeAccess(commit: () => void, ids?: readonly string[]) {
     revoking++;
     try {
@@ -554,7 +570,8 @@ export function createRelaySession(
           (filter) =>
             !isOwnerInventoryFilter(filter, transport?.viewer) &&
             !isOwnReadStateFilter(filter, transport?.viewer) &&
-            !isProfileFilter(filter),
+            !isProfileFilter(filter) &&
+            !isArchiveFilter(filter),
         );
       requests.invalidate(retired);
       retireBackoffs(retired);
@@ -578,7 +595,6 @@ export function createRelaySession(
       presence.clear();
       channelActivity.retain(canReadRemote);
       activityRosterKey = undefined;
-      archives.clear();
       workflows.clear();
       for (const purge of views.values()) purge();
       // The relay reapplies access to a new sync; nothing held survives.
@@ -2743,6 +2759,19 @@ export function createRelaySession(
     ? createRecovery([
         liveRecovery,
         recoverable(
+          archives.queries.subscribe,
+          () => loadState(archives.queries.snapshot()),
+          () => {
+            const state = archives.queries.snapshot();
+            if (
+              state.status !== "idle" &&
+              state.status !== "unavailable" &&
+              Date.now() >= (state.retryAt ?? 0)
+            )
+              void archives.retry(liveSnapshot.status === "connected");
+          },
+        ),
+        recoverable(
           channelKit.capability.subscribe,
           () => loadState(channelKit.capability.snapshot()),
           () => void channelKit.capability.refresh(),
@@ -3005,6 +3034,7 @@ export function createRelaySession(
       searchProfiles,
       () => profiles.queries.verifiedAuthority?.(),
       profiles.queries,
+      identityNames,
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
@@ -4233,6 +4263,14 @@ export function createRelaySession(
         typing.clear();
         memories.clear();
       }
+      // Resume once per reconnect. A first connection can reuse a startup
+      // read already in flight or ready; only its failure needs restarting.
+      if (
+        snapshot.status === "connected" &&
+        liveSnapshot.status !== "connected" &&
+        (liveGeneration > 0 || archives.queries.snapshot().status === "error")
+      )
+        archives.stale();
       if (
         snapshot.status !== "connected" &&
         liveSnapshot.status === "connected"
@@ -4246,10 +4284,9 @@ export function createRelaySession(
         catchups.clear();
         catchupQueue.clear();
         dropHintConfirmations();
-        requests.invalidate();
+        requests.invalidate((filters) => !isArchiveRead(filters));
         repositories.clearHomes();
         agentLibrary.clear();
-        archives.stale();
         workflows.interrupt();
         streamDropped = true;
         channels.staleHeads();

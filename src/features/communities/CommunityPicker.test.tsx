@@ -15,6 +15,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { SettingsCardsService } from "../settings/service";
 import type { RelayData, RelaySnapshot } from "../relay/service";
+import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { CommunityPicker } from "./CommunityPicker";
@@ -308,7 +309,7 @@ it("offers the original's actions on the selected community and only reads its r
   });
   expect(markAll).toHaveAttribute("aria-disabled", "true");
   expect(markAll).toHaveAccessibleDescription(
-    "Only the selected community can be marked as read.",
+    "Open Secondary to mark it as read.",
   );
   fireEvent.click(markAll);
   expect(h.markAllChannelsRead).not.toHaveBeenCalled();
@@ -566,6 +567,37 @@ it("marks every channel read through the selected session and reports failures",
   );
   await screen.findByText("Couldn’t mark everything as read.");
   expect(h.select).not.toHaveBeenCalled();
+});
+
+it("marks an inactive community read through its own session without selecting it", async () => {
+  const user = userEvent.setup();
+  const h = harness();
+  const markAllChannelsRead = vi.fn(async () => []);
+  const background = {
+    unread: {
+      sync: () => ({ capability: "frontier-sync" as const }),
+      subscribeSync: () => () => {},
+      markAllChannelsRead,
+    },
+  };
+  // Known unread, even when all read, is what exposes the session.
+  const states = new Map([[secondary, { unread: false, attention: 0 }]]);
+  const unreads = {
+    snapshot: () => states,
+    subscribe: () => () => {},
+    session: (id: string) =>
+      id === secondary ? (background as unknown as RelaySession) : undefined,
+  };
+  render(<CommunityPicker communities={h.communities} unreads={unreads} />);
+  const menu = await openMenu("Secondary");
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Mark all as read" }),
+  );
+  await screen.findByText("Marked all as read.");
+  expect(markAllChannelsRead).toHaveBeenCalledTimes(1);
+  expect(h.markAllChannelsRead).not.toHaveBeenCalled();
+  expect(h.select).not.toHaveBeenCalled();
+  expect(button("Primary")).toHaveAttribute("aria-current", "true");
 });
 
 it.each([
@@ -1497,6 +1529,7 @@ it("badges other communities' unread on their rows and the closed switcher", () 
         listeners.delete(listener);
       };
     },
+    session: () => undefined,
   };
   const change = (next: typeof states) =>
     act(() => {

@@ -106,11 +106,7 @@ import { useReferenceDirectory } from "./ReferenceText";
 import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
 import { DetailsMessage } from "./DetailsMessage";
-import {
-  composerHost,
-  type MediaReviewOrigin,
-  useComposerScope,
-} from "./composer-overlay";
+import { useComposerScope } from "./composer-overlay";
 import {
   safeMessageUrl,
   projectMarkdownAttachments,
@@ -183,6 +179,8 @@ export type MessageRowProps = {
   retry: ((id: string) => void) | undefined;
   /** Pins this row in a virtualized list; returns the release. */
   keepMounted?: ((messageId: string) => () => void) | undefined;
+  /** A details message in this row expanded or folded in place. */
+  onExpandDetails?: (() => void) | undefined;
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
@@ -210,7 +208,6 @@ export type MessageRowProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
-    opening?: MediaReviewOrigin,
   ) => void;
 };
 
@@ -288,6 +285,7 @@ function MessageRowContent({
   day,
   retry,
   keepMounted,
+  onExpandDetails,
   onOpenThread,
   onReply,
   startsThreads = true,
@@ -319,6 +317,15 @@ function MessageRowContent({
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
   const reactions = row.reactions;
+  const interactiveReactionContext =
+    session && scope && extensions ? { session, scope, extensions } : undefined;
+  const fallbackReactions = interactiveReactionContext
+    ? undefined
+    : reactions.flatMap((reaction) => {
+        const count = new Set(reaction.events.map((event) => event.authorId))
+          .size;
+        return count > 0 ? [{ reaction, count }] : [];
+      });
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -344,11 +351,6 @@ function MessageRowContent({
   const composerView = useComposerScope();
   const inView = !!composerView;
   const viewRoot = composerView?.rootId;
-  // Media opens over the view this row reads in, while its composer shows.
-  const mediaOpening = () => {
-    const host = composerHost(composerView?.handle);
-    return host ? { host, rootId } : undefined;
-  };
   const openLink = useCallback(
     (url: string) =>
       onOpenLink(url, {
@@ -573,6 +575,16 @@ function MessageRowContent({
   );
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  // The summary leaves when its thread's last work ends with no reply; a
+  // focused one hands focus to the row's menu, as its activity bubble did.
+  const handBackSummaryFocus = useCallback((node: HTMLButtonElement) => {
+    const document = node.ownerDocument;
+    if (!node.contains(document.activeElement)) return;
+    queueMicrotask(() => {
+      if (!document.activeElement || document.activeElement === document.body)
+        menuTrigger.current?.focus({ preventScroll: true });
+    });
+  }, []);
   const active = useConversationPresentation();
   const forward = useForwardMessage();
   const [reporting, setReporting] = useState<"open" | "sent">();
@@ -935,7 +947,6 @@ function MessageRowContent({
                                 (!!row.threadRootId &&
                                   row.threadRootId !== row.id),
                               row.attachments,
-                              mediaOpening(),
                             ),
                         }
                       : {})}
@@ -990,7 +1001,6 @@ function MessageRowContent({
                               (!!row.threadRootId &&
                                 row.threadRootId !== row.id),
                             row.attachments,
-                            mediaOpening(),
                           ),
                       }
                     : {})}
@@ -1013,7 +1023,9 @@ function MessageRowContent({
               </div>
             ) : files ? (
               <div className={styles.fileGroup} key={group[0]?.url}>
-                {items}
+                {/* A block each, so a copied selection puts every
+                    card on its own line. */}
+                {items.map((item) => item && <div key={item.key}>{item}</div>)}
               </div>
             ) : (
               items
@@ -1111,6 +1123,7 @@ function MessageRowContent({
         author={name}
         createdAt={row.createdAt}
         keepMounted={keepMounted}
+        onExpand={onExpandDetails}
         preview={
           <MessageMarkdown
             directory={directory}
@@ -1399,7 +1412,16 @@ function MessageRowContent({
         activity) &&
         onOpenThread && (
           <Button
-            ref={activity?.ref}
+            ref={(node: HTMLButtonElement | null) => {
+              const forwarded = activity?.ref;
+              if (typeof forwarded === "function") forwarded(node);
+              else if (forwarded) forwarded.current = node;
+              return () => {
+                if (typeof forwarded === "function") forwarded(null);
+                else if (forwarded) forwarded.current = null;
+                if (node) handBackSummaryFocus(node);
+              };
+            }}
             variant="ghost"
             size="sm"
             data-thread-summary=""
@@ -1490,59 +1512,70 @@ function MessageRowContent({
     !attachmentOnly && !row.huddle && !shownRow && !emojiOnly && !row.diff;
   // A plugin card keeps reactions in its bubble, so its mark goes above them.
   const editedInBubble = !editedInBody && reactionsInBubble;
-  const reactionContent =
-    session && scope && extensions ? (
-      <MessageReactions
-        onFocusedRemoval={() =>
-          menuTrigger.current?.focus({ preventScroll: true })
-        }
-        row={row}
-        session={session}
-        scope={scope}
-        tools={extensions.tools}
-        inline={extensions.inline}
-        profiles={directory.profiles}
-        disabled={
-          !canReact ||
-          (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
-        }
-      />
-    ) : (
-      reactions.length > 0 && (
-        <div
-          className={`${styles.reactions} ${styles.reactionFallback}`}
-          data-message-reactions
-        >
-          {reactions.flatMap((reaction) =>
-            [...new Set(reaction.events.map((event) => event.authorId))].map(
-              (authorId) => (
-                <span
-                  key={JSON.stringify([
-                    reaction.content,
-                    reaction.emoji?.url,
-                    authorId,
-                  ])}
-                >
-                  {extensions ? (
-                    <InlineText
-                      registry={extensions.inline}
-                      content={{
-                        text: reaction.content,
-                        message: row,
-                        reaction,
-                      }}
-                      media={media}
-                    />
-                  ) : (
-                    reaction.content
-                  )}
-                </span>
-              ),
-            ),
-          )}
-        </div>
-      )
-    );
+  const reactionContent = interactiveReactionContext ? (
+    <MessageReactions
+      onFocusedRemoval={() =>
+        menuTrigger.current?.focus({ preventScroll: true })
+      }
+      row={row}
+      session={interactiveReactionContext.session}
+      scope={interactiveReactionContext.scope}
+      tools={interactiveReactionContext.extensions.tools}
+      inline={interactiveReactionContext.extensions.inline}
+      profiles={directory.profiles}
+      disabled={
+        !canReact ||
+        (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+      }
+    />
+  ) : (
+    fallbackReactions &&
+    fallbackReactions.length > 0 && (
+      // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
+      <div
+        className={`${styles.reactions} ${styles.reactionFallback}`}
+        data-message-reactions
+        role="group"
+        aria-label="Reactions"
+        data-copy-text={fallbackReactions
+          .map(({ reaction, count }) => `${reaction.content} ${count}`)
+          .join(", ")}
+      >
+        {fallbackReactions.map(({ reaction, count }) => (
+          <span
+            key={JSON.stringify([reaction.content, reaction.emoji?.url])}
+            aria-label={`${reaction.content}: ${count} ${count === 1 ? "person" : "people"}`}
+            data-reaction={reaction.content}
+            data-reaction-url={reaction.emoji?.url}
+            role="img"
+          >
+            <span
+              className={styles.reactionGlyph}
+              data-grouped=""
+              aria-hidden="true"
+            >
+              <span className={styles.reactionFallbackLabel}>
+                {extensions ? (
+                  <InlineText
+                    registry={extensions.inline}
+                    content={{
+                      text: reaction.content,
+                      message: row,
+                      reaction,
+                    }}
+                    media={media}
+                  />
+                ) : (
+                  reaction.content
+                )}
+              </span>
+              <span className={styles.reactionCount}>{count}</span>
+            </span>
+          </span>
+        ))}
+      </div>
+    )
+  );
   const message = (
     <div
       data-message-id={renderMessage ? undefined : row.id}
@@ -1801,6 +1834,7 @@ function MessageRowContent({
                   messageId={row.id}
                   registry={linkPreviewRegistry}
                   onOpenLink={openLink}
+                  settings={extensions?.settings}
                 />
               )}
               {attachmentContent()}

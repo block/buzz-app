@@ -167,6 +167,8 @@ export type LinkPreviewProps = Readonly<{
    * plugin's own panel. Absent on hosts that predate it. */
   opener?: TargetOpener | undefined;
 }>;
+/** Whether a link preview renderer can draw its cards. */
+export type LinkPreviewStatus = "checking" | "ready" | "needs-setup";
 /** A card below a message for one of its links. The lowest `order` among
  * matches draws it, so a plugin can claim its own URLs ahead of the default
  * web card; a component that renders nothing leaves the link without a card.
@@ -178,6 +180,15 @@ export type LinkPreviewRenderer = Readonly<{
   /** Claim strength when several renderers match a URL; see `MatchOrder`. */
   order?: MatchOrder | undefined;
   component: ComponentType<LinkPreviewProps>;
+  /** Side-effect free, like a decision provider's `status()`. While it is
+   * `checking` the link has no card; while it is `needs-setup` the host draws
+   * a card that opens `settings`. Absent means always `ready`. Needs
+   * `subscribe` and `settings`. */
+  status?: (() => LinkPreviewStatus) | undefined;
+  /** Calls `listener` when `status()` may have changed. */
+  subscribe?: ((listener: () => void) => () => void) | undefined;
+  /** The id of a Settings card this plugin registers, where setup happens. */
+  settings?: string | undefined;
 }>;
 /** Presentation for a fenced code block, chosen by its info-string language.
  * The host retains the frame and copy action; failure or removal restores the code. */
@@ -297,6 +308,12 @@ export type IdentityMarkProps = Readonly<{
   pubkey: string;
   profiles: RelaySession["profiles"];
 }>;
+export type LinkPreviewSettings = Readonly<{
+  /** True while that plugin Settings card is registered and visible, so Settings can open it. */
+  has(section: string): boolean;
+  subscribe(listener: () => void): () => void;
+  open(section: string): void;
+}>;
 export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
@@ -308,6 +325,8 @@ export type ConversationExtensions = Readonly<{
   completions?: ContributionReader<ComposerCompletion>;
   links?: ContributionReader<LinkRenderer>;
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
+  /** Plugin Settings cards by `plugin/card` key, for a link preview's setup card. */
+  settings?: LinkPreviewSettings | undefined;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
   annotators?: ContributionReader<ComposerAnnotator>;
   sendGates?: ContributionReader<SendGate>;
@@ -509,8 +528,13 @@ export type PageTabTarget = {
   unreadSince?: number;
 };
 /** Optional `ConversationWorkspaceProps` a workspace provider renders. */
+/** An aside's width in pixels. A later host may also accept an object form,
+ * such as a share of a wide reader. */
+export type WorkspaceAsideWidth = number;
 export type WorkspaceSlots = Readonly<{
   headerActions?: true;
+  trailing?: true;
+  aside?: true;
 }>;
 /** A page-owned conversation with the host's reader, composer, and side pane. */
 export type ConversationWorkspaceProps = {
@@ -527,6 +551,39 @@ export type ConversationWorkspaceProps = {
   intro?: ReactNode;
   /** Controls in the main tab's toolbar, before the actions menu. */
   headerActions?: ReactNode;
+  /** A card over the bottom of the main tab's history: the channel
+   * timeline, or the replies when `target` names a thread, so the page
+   * already knows which. At rest its first `restHeight` pixels show below
+   * the latest message. Scrolling over the card grows it, then slides it
+   * up; `expanded` is true once it has grown. `toggle()` grows it to near
+   * the view's top, or back. Render the whole card at rest too: growing
+   * scrolls it into view. */
+  trailing?: {
+    restHeight: number;
+    content(state: { expanded: boolean; toggle(): void }): ReactNode;
+  };
+  /** Content beside the main tab's history. The host places it in a box of
+   * `asideWidth` over the history's end edge, beside its scrollbar, from the
+   * history's top to the reader's bottom; the history and composer keep to
+   * the width beside it. When the reader would get too narrow, the aside
+   * floats over the history and the composer's end instead, shown only
+   * while open. The box draws nothing: the content draws its own card, sizes
+   * to it, and scrolls itself when taller than the box.
+   * Only the content takes pointer input, so the wheel beside or below it
+   * scrolls the history. */
+  aside?: ReactNode;
+  /** The aside's width. Defaults to 320. */
+  asideWidth?: WorkspaceAsideWidth;
+  /** Whether the aside shows: docked by default, floating once opened. The
+   * host closes a floating aside when the reader narrows to it, restores the
+   * docked state when it widens again, and closes the overlay on Escape or a
+   * press outside it, reporting each change. A page drives it from its own
+   * control; without one, a floating aside stays closed. */
+  asideOpen?: boolean;
+  onAsideOpenChange?(open: boolean): void;
+  /** Called with whether the aside floats, once the host first places it and
+   * whenever it moves between docked and floating. */
+  onAsideFloatingChange?(floating: boolean): void;
   /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */

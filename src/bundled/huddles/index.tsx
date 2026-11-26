@@ -6,6 +6,7 @@ import {
 import { dmVoiceAgent } from "../../features/huddle/dm-agent";
 import { createHuddleVoices } from "../../features/huddle/voice";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { openFromPanel } from "../../features/panels/opening-pane";
 import { createHuddleRing } from "../../features/huddle/ring";
 import type { PluginModule } from "../../plugins/api";
 import { nativeHuddles } from "../../features/huddle/bridge";
@@ -66,7 +67,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   provideHuddleStatus(ctx, huddles);
   const stopRing = createHuddleRing(huddles);
-  const openLink = (url: string) => {
+  // The Huddle window has no pane; the side column's panel passes its own.
+  const openLink = (url: string, pane?: "main" | "side") => {
     const connection = ctx.relay.snapshot();
     if (!connection.viewer || !connection.origin) return false;
     const target = buzzLinkTarget(url, {
@@ -74,7 +76,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       communityOrigin: connection.origin,
     });
     if (!target) return false;
-    void ctx.navigation.open(target);
+    openFromPanel(ctx.navigation, target, pane);
     return true;
   };
   const companion = createHuddleWindow(

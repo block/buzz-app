@@ -34,8 +34,10 @@ vi.mock("./ConversationTab", () => ({
     onResolvedRoot,
     parent,
     intro,
+    trailing,
   }: {
     intro?: import("react").ReactNode;
+    trailing?: { content(state: object): import("react").ReactNode };
     tab: Tab;
     channel: { name: string };
     visit: boolean;
@@ -52,6 +54,7 @@ vi.mock("./ConversationTab", () => ({
     >
       {intro}
       {tab.kind} in {channel.name}
+      {trailing?.content({ expanded: false, toggle() {} })}
       {!visit && " unvisited"}
       {onResolvedRoot && (
         <button type="button" onClick={() => onResolvedRoot("older")}>
@@ -491,6 +494,54 @@ it("a workspace owns its main reader, intro, menu, and no initial detail", async
   );
   expect(source).toHaveBeenCalledOnce();
 });
+
+it("a workspace gives its trailing content to its main reader", () => {
+  const f = fixture();
+  cleanup();
+  render(
+    <ConversationWorkspace
+      id="task"
+      session={f.session}
+      scope="origin:viewer"
+      target={{ channelId: "alpha" }}
+      label="Task"
+      host={f.host}
+      trailing={{ restHeight: 100, content: () => <p>Decision card</p> }}
+    />,
+  );
+  expect(screen.getByText("Decision card")).toBeVisible();
+});
+
+it.each([
+  ["channel", { channelId: "alpha" }, "conversation in alpha"],
+  ["thread", { channelId: "alpha", threadId: "root" }, "thread in alpha"],
+] as const)(
+  "a workspace docks its aside beside a %s reader",
+  (_, target, label) => {
+    const f = fixture();
+    cleanup();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1200, 600),
+    );
+    render(
+      <ConversationWorkspace
+        id="task"
+        session={f.session}
+        scope="origin:viewer"
+        target={target}
+        label="Task"
+        host={f.host}
+        aside={<aside aria-label="Task dashboard" />}
+        asideWidth={280}
+      />,
+    );
+    const reader = screen.getByText(label, { exact: false });
+    const aside = screen.getByRole("complementary", { name: "Task dashboard" });
+    expect(reader.parentElement?.nextElementSibling).toBe(aside.parentElement);
+    expect(aside.parentElement).toHaveStyle({ inlineSize: "280px" });
+    expect(screen.getByRole("tabpanel")).toContainElement(aside);
+  },
+);
 
 it.each([false, true])(
   "a workspace shows its header actions before the actions menu (menu=%s)",

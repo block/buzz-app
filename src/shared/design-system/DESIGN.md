@@ -39,7 +39,7 @@ and token in both themes.
 | A preview of an object | `PreviewCard` |
 | A settled empty or setup state | `EmptyState` with the next action |
 | Content that's loading | `LoadingRegion`: it stays quiet for the first second, so fast loads don't flicker |
-| A transient result | The shared Toast |
+| A transient result | The shared Toast; a copy button shows its own result, see [Copy feedback](#copy-feedback) |
 | A person or agent | `Avatar`; see [Identity shapes](#identity-shapes) |
 
 Use `NavigationSectionHeading` for workspace and channel headings. Its
@@ -102,6 +102,31 @@ Keyboard focus is always visible. Shared components draw the ring, shown when
 `html[data-keyboard-navigation]` is set, so pointer use doesn't leave rings
 behind. Shared text fields replace the ring with a border stroke. Don't add
 local focus rings.
+
+## Copy feedback
+
+A new copy button that stays in view shows a copy that works in the button
+itself, for 1.5 seconds, and raises no toast: a labelled button's label becomes
+a check and “Copied” without changing width, and an icon button's icon becomes a
+check. The button keeps its accessible name, and a screen-reader status beside
+it says “Copied”. That status is in the page, empty, as soon as the button is.
+Build these from `useCopyFeedback`, which hands back that status, and
+`CopyLabel`, in `src/shared/CopyFeedback.tsx`.
+
+- Keep the button focusable while the copy is pending
+  (`focusableWhenDisabled`), so focus, and a surface that follows it, stays.
+- A surface that closes when the pointer or focus leaves, such as floating
+  message actions, stays open from the press until the check reverts.
+- Words a person needs after the copy, such as where to paste it, stay beside
+  the button whenever it can be pressed. A result that needs a sentence, such
+  as text cut at a limit, goes on a line of its own, so no control moves.
+- Report a refusal in words: keep the line, notice or toast that says how to
+  recover, or let a labelled button hold a warning and “Couldn’t copy” until
+  the next attempt.
+- A menu item or toast action closes when chosen, so a toast confirms its copy.
+
+Some older copy buttons confirm in a hint or in their own way. Don't copy their
+feedback into new work; converting one is its own change.
 
 ## Identity shapes
 

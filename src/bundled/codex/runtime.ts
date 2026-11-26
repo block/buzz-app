@@ -32,10 +32,10 @@ import {
 } from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
-  wakeAnchor,
-  wakeLands,
+  turnOf,
 } from "../../features/agent-harness/plugin-wake";
 import { compactAt } from "../../features/agents/compact-at";
+import { routeFor } from "../../features/agents/model-routes";
 import {
   composeBase,
   sectionsKey,
@@ -211,6 +211,9 @@ type Request = {
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
+  /** Chooses them as the turn this request starts begins
+   * (`Delivery.route`); one that steers asks nothing. */
+  route?: Delivery["route"];
   /** The synced settings in `settings`. */
   synced?: Delivery["synced"];
   /** Called once a final send answers this request, or one steered after it
@@ -221,7 +224,7 @@ type Request = {
   /** A failed final delivery stays pending until this request gets a reply. */
   finalDelivery?: Error | true;
   voiceContinuation?: VoiceContinuation;
-  step?: (tool: string, target?: string) => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -1135,10 +1138,13 @@ export class CodexRuntime {
       throw new Error("The protected agent has no live policy binding");
     handle?.protection?.assertAvailable();
     const settings = this.resolveConfig(agent.config);
+    // A saved route is current only while a router offers it.
+    const routed = routeFor("codex", settings.model) !== undefined;
     const key = JSON.stringify([
       settings.model,
       settings.effort,
       handle?.protection?.key,
+      routed,
     ]);
     const existing = this.previews.get(agent.key);
     if (existing?.key === key) return existing.ready;
@@ -1183,6 +1189,10 @@ export class CodexRuntime {
       });
       // A configured model this Codex does not list still leaves the
       // listed ones to pick, so the picker stays.
+      // A saved route is the current choice; the agents service lists it.
+      // One no router offers runs on Codex's default, which is current.
+      if (routed)
+        return { current: settings.model, models: offered, sendDefaults: true };
       return !model || models.some((row) => row.model === model)
         ? { current: model ?? "", models: offered, sendDefaults: true }
         : {
@@ -1507,7 +1517,7 @@ export class CodexRuntime {
       if (!host?.serveMcp)
         throw new Error("Protected Codex requires the desktop security host");
       const serveMcp = host.serveMcp.bind(host);
-      const rpc = new AppServer((call) => this.tool(call));
+      const rpc = new AppServer((call, tokens) => this.tool(call, tokens));
       const server: Server = {
         rpc,
         protection,
@@ -1683,7 +1693,7 @@ export class CodexRuntime {
   }
   private shared() {
     if (this.server) return this.server;
-    const rpc = new AppServer((call) => this.tool(call));
+    const rpc = new AppServer((call, tokens) => this.tool(call, tokens));
     // Threads set their own cwd; the process just needs a directory that exists.
     const open = () => rpc.open(this.spawnOrdinary(), defaults.workspace);
     const previous = this.closingSharedServer;
@@ -1843,12 +1853,20 @@ export class CodexRuntime {
       ...new Map([...saved, ...held].map((row) => [row.key, row])).values(),
     ].sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
   }
-  private localConversations(agent: AgentKey) {
-    const reads = this.reads(agent);
-    const saved =
+  mayRestartForBaseInstructions(agent: AgentKey, scope: string) {
+    return Object.values(this.localBindings(agent, scope)).some(
+      ({ sections }) =>
+        !this.keepsSections(sections, { custom: true, plugin: false }),
+    );
+  }
+  private localBindings(agent: AgentKey, scope = this.reads(agent)?.scope) {
+    return (
       this.entries.get(agent)?.saved ??
-      (reads ? this.load(this.storageKey(reads.scope, agent)) : {});
-    return this.savedConversations(agent, saved);
+      (scope === undefined ? {} : this.load(this.storageKey(scope, agent)))
+    );
+  }
+  private localConversations(agent: AgentKey) {
+    return this.savedConversations(agent, this.localBindings(agent));
   }
   private savedConversations(agent: AgentKey, saved: Record<string, Saved>) {
     const reads = this.reads(agent);
@@ -1982,8 +2000,9 @@ export class CodexRuntime {
     // canvas_set; v15 removes message keywords; v16 splits channel and
     // channels into the channel_* tools; v17 split members into the
     // member_* tools; v18 adds search and removes read's q; v19 replaces
-    // solo_workspace_list with workspace_list and adds channel_move.
-    return `buzz.codex.sessions.v19:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
+    // solo_workspace_list with workspace_list and adds channel_move; v20
+    // adds canvas versions.
+    return `buzz.codex.sessions.v20:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -2612,8 +2631,6 @@ export class CodexRuntime {
     // code, and the agent's own handoff comes from a turn already acting
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     // A workflow's mention waits out a reconnect; the check below decides.
     const ready =
       trigger.type === "mention" && workflowMarked(trigger.event, agent.owner)
@@ -2648,8 +2665,12 @@ export class CodexRuntime {
     const channel = await reads.channel(channelId);
     const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
     const huddle = isHuddleRoom(channel?.about);
-    const topLevel = solo || huddle || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
+    // Where the host placed it. A Huddle room is Codex's own reason to
+    // answer at the top level.
+    const turn = turnOf(trigger, delivery, channelId, solo || huddle);
+    if (!turn) return delivery.ignored?.();
+    const { event } = turn;
+    const topLevel = turn.topLevel || huddle;
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
     const [canvasRead, folders] = await Promise.all([
@@ -2820,6 +2841,7 @@ export class CodexRuntime {
       ...(toolRoot ? { toolRoot } : {}),
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
+      ...(delivery.route ? { route: delivery.route } : {}),
       ...(delivery.synced ? { synced: delivery.synced } : {}),
       activityScope: topLevel
         ? channelId
@@ -3657,20 +3679,50 @@ export class CodexRuntime {
           for (const pending of requests) pending.answered();
           return;
         }
-        await entry.after;
-        // A rerun waits for the retired Huddle seat to let go of the lane.
-        while (
-          await this.execute(
-            request,
-            text,
-            key,
-            current,
-            entry,
-            next,
-            continuation,
+        // Its model route chooses as the turn begins; messages behind it
+        // steer in on that choice.
+        if (request.route) {
+          let chosen: Awaited<ReturnType<NonNullable<Delivery["route"]>>>;
+          try {
+            chosen = await request.route();
+          } finally {
+            delete request.route;
+          }
+          if (!chosen) {
+            for (const pending of requests) pending.answered(true);
+            return;
+          }
+          if (chosen.model) request.model = chosen.model;
+          if (chosen.effort) request.effort = chosen.effort;
+          if (entry.abort.signal.aborted) {
+            for (const pending of requests)
+              pending.failActivity("Codex was stopped");
+            return;
+          }
+          if (request.current && !request.current()) {
+            for (const pending of requests) pending.answered();
+            return;
+          }
+        }
+        try {
+          await entry.after;
+          // A rerun waits for the retired Huddle seat to let go of the lane.
+          while (
+            await this.execute(
+              request,
+              text,
+              key,
+              current,
+              entry,
+              next,
+              continuation,
+            )
           )
-        )
-          await current.voice?.rejectedSpeechClosing;
+            await current.voice?.rejectedSpeechClosing;
+        } catch (error) {
+          request.failActivity(message(error));
+          throw error;
+        }
       })
       // Messages that joined a turn that never began queue on their own.
       .finally(() => {
@@ -3793,7 +3845,10 @@ export class CodexRuntime {
       ],
     });
   }
-  private async tool(call: ToolCall): Promise<ToolReply> {
+  private async tool(
+    call: ToolCall,
+    contextTokens?: number,
+  ): Promise<ToolReply> {
     const entries = [...this.entries.values()];
     const matches = (turn?: { threadId?: string; turnId?: string }) =>
       turn?.threadId === call?.threadId && turn?.turnId === call?.turnId;
@@ -3851,6 +3906,8 @@ export class CodexRuntime {
     const { agent } = owner;
     const client = () =>
       appClient(agent, {
+        // Each message it posts carries its thread's context size.
+        contextTokens: () => contextTokens,
         // Its tool registry reviews every call, Buzz's dynamic tools included.
         ...(!this.target ? { nativeCall: check } : {}),
         nativeToolGate: true,
@@ -4610,7 +4667,7 @@ export class CodexRuntime {
         const step = method === "item/started" ? codexStep(item) : undefined;
         if (step)
           for (const taken of active.activity.values())
-            taken.step?.(step.tool, step.target);
+            taken.step?.(step.tool, step.target, step.origin);
         if (method === "item/started" && item.command)
           this.status(agent.key, key, "Working", item.command);
         if (method === "item/completed" && item.type === "commandExecution")
@@ -5218,10 +5275,12 @@ function continueSession(
 }
 
 /** A started Codex item as a step, named in the shared step vocabulary.
- * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase). */
+ * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase).
+ * `origin` marks a call in the `buzz` tool namespace or to a `buzz` MCP
+ * server. */
 export function codexStep(
   item: Record<string, unknown> | undefined,
-): { tool: string; target?: string } | undefined {
+): { tool: string; target?: string; origin?: "buzz" } | undefined {
   const text = (value: unknown) =>
     typeof value === "string" && value ? value : undefined;
   const step = (tool: string, target?: unknown) => {
@@ -5251,8 +5310,14 @@ export function codexStep(
       return step("Edit", file(first?.path));
     }
     case "mcpToolCall":
-    case "dynamicToolCall":
-      return text(item.tool) ? step(String(item.tool)) : undefined;
+    case "dynamicToolCall": {
+      if (!text(item.tool)) return undefined;
+      const from = item.type === "mcpToolCall" ? item.server : item.namespace;
+      return {
+        tool: String(item.tool),
+        ...(from === "buzz" ? { origin: "buzz" as const } : {}),
+      };
+    }
     case "collabAgentToolCall":
       return step("Agent", item.prompt);
     case "webSearch":

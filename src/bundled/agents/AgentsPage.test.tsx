@@ -526,11 +526,13 @@ function setup(
     controlAttention: () => {},
     recommend: () => {},
     gatewayHarnesses: () => {},
+    registerModelRouter: () => {},
     registerSessionRouter: () => {},
     registerExecution: () => {},
     bindExecution: async () => {},
     executionBinding: () => undefined,
     inspectExecution: async () => undefined,
+    startsProtected: async () => false,
     execution: async () => undefined,
     harness: {} as Agents["harness"],
     subscribeSteps: () => () => {},
@@ -4227,10 +4229,16 @@ it("keeps the copy and delete rows in Settings, below the agent identity", async
   expect(
     within(identity).queryByRole("button", { name: "Delete agent" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Copy public key" }));
+  const copyKey = screen.getByRole("button", { name: "Copy public key" });
+  await user.click(copyKey);
   expect(copy).toHaveBeenCalledWith(expect.stringMatching(/^npub1/));
+  // The button shows the copy under the name it always has; its status says it.
+  await waitFor(() =>
+    expect(copyKey.querySelector(".tabler-icon-check")).not.toBeNull(),
+  );
+  expect(copyKey).toHaveAccessibleName("Copy public key");
   expect(
-    await screen.findByRole("button", { name: "Copied" }),
+    screen.getByText("Copied", { selector: '[role="status"]' }),
   ).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Delete agent" }));
   const dialog = screen.getByRole("dialog", { name: "Delete Ada?" });
@@ -4242,12 +4250,13 @@ it("keeps the copy and delete rows in Settings, below the agent identity", async
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Settings" }));
   copy.mockRejectedValueOnce(new Error("Clipboard denied"));
-  await user.click(
-    screen.getByRole("button", { name: /Copied|Copy public key/ }),
-  );
+  const refused = screen.getByRole("button", { name: "Copy public key" });
+  await user.click(refused);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not copy the public key",
   );
+  // The line reports it: the button shows no check.
+  expect(refused.querySelector(".tabler-icon-copy")).not.toBeNull();
   copy.mockRestore();
 });
 

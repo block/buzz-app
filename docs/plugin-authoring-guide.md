@@ -66,13 +66,15 @@ Each line is the main call. Read the types for every field.
 | `settingsCards` | A Settings destination | `ctx.settingsCards.register({ id, title, component })`. The host supplies navigation and the column, not a heading. |
 | `accountActions` | An account menu entry | `ctx.accountActions.register({ id, title, component })` |
 | `sidebarSections` (optional) | A Team sidebar section | `register({ version: 1, id, title, icon, rows, select })` |
-| `conversation` | Composer and message UI | `registerAccessory`, `registerMessage`, `registerMessageAction`, `registerLink`, `registerLinkPreview`, `registerSendGate`, and host components under `ctx.conversation.ui` (Markdown, DocumentEditor, ImageViewer, MembersDialog, Workspace) |
+| `conversation` | Composer and message UI | `registerAccessory`, `registerMessage`, `registerMessageAction`, `registerLink`, `registerLinkPreview` (a link-preview renderer that needs setup first adds `status()`, `subscribe(listener)` and `settings`, its Settings card id; while `status()` is `"needs-setup"` the host draws a card that opens that Settings card), `registerSendGate`, and host components under `ctx.conversation.ui` (Markdown, DocumentEditor, ImageViewer, MembersDialog, Workspace) |
 | `agents` | Agent tools and instructions | `ctx.agents.addTool({ name, description, inputSchema, call })`; `addInstructions({ id, text })`; `wake`; hooks need `host.agentHooks` |
 | `shortcuts` | Key bindings | `ctx.shortcuts.register({ id, title, binding, run })` |
 | `navigation` | Open a destination | `await ctx.navigation.open({ version: 1, kind: "plugin", pluginId, pageId? })` |
 | `notifications` | OS notifications | `ctx.notifications.register({ id, label }).submit({ sourceKey, target, title?, body? })` |
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, community })`. It never rejects. |
+| `speech` | Speech to text | `ctx.speech.listen({ community, onText, onPause?, onEnd, onError? })` returns `{ stop, cancel }`; failures arrive on `onError`. To be a provider, `ctx.speech.registerProvider(...)`, below. |
 | `browser` | An embedded website (macOS) | `ctx.browser.View` inside a panel |
+| `pluginInstaller` (optional) | Inspect one installed plugin package digest | `ctx.reflect.get("pluginInstaller")?.getInstallationArtifactHash?.(id)` |
 | `notices` (optional) | A notice on any page, with up to three buttons | `await ctx.reflect.get("notices")?.show({ title, description?, actions? }, { signal? })` resolves with the picked action's `id`, or `undefined` if dismissed or aborted. Proceed only on an allow `id`. Pass a tool call's `client.signal` to ask the owner before it runs. |
 | `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`, and `Menu` (newer hosts: check `ui.Menu`). `Menu` takes `items` (`label`, `onSelect`, `tone: "destructive"`, `disabled`), a `label` or `aria-label`, `icon` and `align`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
@@ -83,7 +85,13 @@ In a Solo region, check `ui.headerMenuActions === true` before passing
 `headerMenuActions` to `ui.Workspace` or `ui.ChannelGroup`. Each **Actions**
 entry has a unique `id`, a `label`, and an `onSelect` callback.
 `onSelect` can return a promise. The host reports callback failures in the
-heading. With `placement: "team-row"`, the channel group uses the native
+heading.
+
+In a Solo channel group, entries follow **View channel details**. An optional
+`icon` supplies decorative artwork and `hint` adds short help on focus or hover.
+The host rechecks the row’s channel membership before calling `onSelect`.
+
+With `placement: "team-row"`, the channel group uses the native
 Team menu and ignores these entries.
 
 Check `ctx.conversation.workspaceSlots?.headerActions === true` when you
@@ -96,7 +104,71 @@ then. Use compact icon buttons with an `aria-label` and `title`, and set
 workspace with `registerWorkspace(component, { slots })` names the optional
 props its component renders.
 
+Check `ctx.conversation.workspaceSlots?.trailing === true` in the same way
+before passing `trailing` to `ui.Workspace`. The Channels workspace shows that
+content as a card over the bottom of the main tab's history, in its own scroll
+layer: scrolling over the card grows it, then slides it up. When your `target`
+names a thread, the card sits over that thread's replies, so build it from the
+same `channelId` and `threadId` you passed. Render the whole card at rest too,
+since growing scrolls it into view: let `expanded` change labels, not what the
+card holds. Keep its controls in view with `position: sticky; bottom: 0` and an
+opaque background, and draw its outline with a box shadow rather than a bottom
+border.
+
+Check `ctx.conversation.workspaceSlots?.aside === true` before passing `aside`
+to `ui.Workspace`. The host places it in a box of `asideWidth` (default 320)
+over the history's end edge, left of its scrollbar, from the history's top to
+the reader's bottom. Docked, the history's rows and the composer keep to the
+width beside it; when the reader would get too narrow, it floats over the
+history instead, and over the composer's end while open. The box draws nothing
+in either mode: draw your own card, let it size to its content,
+and scroll inside it when it is taller than the box. Only your content takes
+pointer input, so the wheel beside or below it scrolls the history. A popover
+escapes over the history only from a portal, as `ui.Menu`'s does.
+Drive it from your own header control with `asideOpen` and
+`onAsideOpenChange`: docked, it shows by default; floating, it shows only once
+opened. The host closes it as it floats, restores the docked state when the
+reader widens, and closes the overlay on Escape or a press elsewhere in the
+reader, reporting each change. Without that control a floating aside stays
+closed. `onAsideFloatingChange` tells you whether it floats, for example to
+close it after a pick. Messages under the overlay are not marked read.
+
 For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the same across reads. Return a new turn when it changes. Leave previously returned turns and their items untouched.
+
+### Installed plugin artifact hash
+
+The optional `pluginInstaller` service has an optional `getInstallationArtifactHash(id)` capability on newer hosts. It returns only the native SHA-256 recorded for that plugin's catalogued revision. The lookup and subscription read catalog state; neither rehashes the current package file, so an `available` result is not a fresh integrity check. The `PluginInstallationArtifactHash` result type is exported from `@buzz/author`:
+
+```js
+const installer = ctx.reflect.get("pluginInstaller");
+const result = installer?.getInstallationArtifactHash?.("example.helper");
+if (result?.status === "available") {
+  console.log(result.sha256);
+}
+```
+
+`available` includes a 64-character lowercase hexadecimal SHA-256 in `sha256`. `absent` means a ready catalog has no matching ID. `unavailable` means the catalog is not ready, the ID is ambiguous, or Buzz cannot confirm a supported stored artifact digest (for example, an errored entry, a bundled plugin, or invalid digest metadata). A disabled external plugin can still have an available digest. Subscribe with `subscribeInstallationStatus(id, listener)` before reading; its callback is an invalidation signal, so re-read the hash when it fires.
+
+Equal recorded digests mean the catalogued revisions have the same package digest. They do not verify current file bytes or prove a common source, publisher, trust level, or version order.
+
+## Speech providers
+
+The host owns speech to text end to end: the microphone, a WebRTC peer
+connection with one audio track and an `oai-events` data channel, the
+transcript, pauses and the end of a listen. A provider only answers the call.
+`ctx.speech.registerProvider({ id, label, description, status, subscribe,
+connect, Settings? })` adds it to Settings > Speech to text, and the user
+chooses it there. Builderlab is the default; audio never goes to a provider
+the user didn't choose.
+
+`connect({ offer, community?, maxSeconds?, timeoutMs }, { signal })` gets the
+host's SDP offer and resolves with `{ outcome: "answered", sdp, maxSeconds? }`,
+an OpenAI Realtime transcription session's SDP answer, or `{ outcome: "failed",
+reason }`. The session must send Realtime transcription events (`…delta`,
+`…completed`, `input_audio_buffer.committed`) and leave turn detection off: the
+host commits the audio at each pause and at the end. `status()` reports
+`ready`, `checking`, `unconfirmed` or `needs-setup`, and `Settings` is its
+sign-in or setup UI.
 
 ## Migration writes
 
@@ -149,6 +221,7 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 - Use the `ui` controls for buttons, fields, switches, dialogs and action menus. Use `className="ui-card"` for a card, `var(--space-panel-inset)` and `var(--space-2)` for spacing, and inline styles for layout. Plain `h1`–`h3`, `p` and `button` get host styling.
 - Use host color tokens (`var(--...)`) so light and dark themes both work. Rely only on the `core` roles in `src/shared/design-system/tokens/registry.ts`; other custom properties, classes and `data-*` attributes are internal.
 - Avoid fixed widths; pages can be narrow.
+- The legacy `buzz.relay-notes/notes` page uses the host's Notes icon even when installed as an external plugin.
 - A canonical plugin page link can open beside a conversation if the named
   plugin registers a matching panel with `addressable: true`. Links fall back
   to the plugin page if the panel does not qualify.

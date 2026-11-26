@@ -1,12 +1,11 @@
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
-import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
 import type { Panel } from "../../features/panels/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
 
 /** What the viewer opened from a view: a thread, a panel (a profile, a pull
  * request, a diff, a plugin's link panel), media, or a link to a Solo chat. */
 export type Opening =
   | Readonly<{ kind: "thread" }>
-  | Readonly<{ kind: "media" }>
   | Readonly<{ kind: "panel"; panel: Pick<Panel, "inline"> }>
   | Readonly<{ kind: "chat" }>;
 
@@ -40,10 +39,18 @@ export function placeOpening(
   return "inline";
 }
 
-/** Whether media opened from a view reads in a sheet over it. */
-export const inlineMedia = (opening: MediaReviewOrigin | undefined) =>
-  placeOpening({ kind: "media" }, { hasTab: false, canHold: !!opening }) ===
-  "inline";
+/** Whether `channel` shows a composer box, which an inline thread takes the
+ * place of: not archived, not a guest's, writable unless only saved, on a
+ * connection that can write. */
+export const composesIn = (
+  channel: ChannelSummary | undefined,
+  readingOnly: boolean,
+) =>
+  !!channel &&
+  !channel.archived &&
+  channel.viewerRole !== "guest" &&
+  (!channel.readOnly || !!channel.cached) &&
+  !readingOnly;
 
 /** What the page on screen can hold inline, read when something is opened. */
 export type InlineHost = Readonly<{
@@ -63,13 +70,18 @@ export type InlineHost = Readonly<{
 export type InlineView = Readonly<{
   channelId: string;
   rootId?: string | undefined;
+  /** It was opened from a tab in the side pane, not from the conversation. */
+  fromSide?: boolean | undefined;
 }>;
 
 /** Whether `host` can hold `opening` read from `view`: the one answer for
  * `placeOpening`'s `canHold`. A thread needs the conversation it belongs to,
- * on screen with its composer. A panel needs a view of this page: the
- * conversation on screen, or a thread view; without a composer it reads as
- * a centered dialog. A link to a Solo chat goes to the chat itself. */
+ * on screen with its composer, and to be opened from outside the side pane:
+ * one opened from a tab there opens beside that tab, where the viewer is
+ * reading, not over a conversation they didn't touch. A panel needs a view
+ * of this page: the conversation on screen, or a thread view; without a
+ * composer it reads as a centered dialog. A link to a Solo chat goes to the
+ * chat itself. */
 export function canHoldInline(
   opening: Opening,
   host: InlineHost,
@@ -79,7 +91,10 @@ export function canHoldInline(
   if (!host.addressed || !host.channelId) return false;
   if (opening.kind === "thread")
     return (
-      host.composes && !host.threadsInPane && view.channelId === host.channelId
+      host.composes &&
+      !host.threadsInPane &&
+      !view.fromSide &&
+      view.channelId === host.channelId
     );
   if (opening.kind === "panel")
     return view.rootId !== undefined || view.channelId === host.channelId;

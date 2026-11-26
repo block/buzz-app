@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
-import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
-import { canHoldInline, inlineMedia, placeOpening } from "./placement";
+import { canHoldInline, placeOpening } from "./placement";
 
 const open = { hasTab: false, canHold: true };
 const live = { kind: "panel", panel: { inline: false } } as const;
@@ -51,15 +50,6 @@ describe("placeOpening", () => {
       "tab",
     );
   });
-
-  it("reads media in a sheet only under inline, over a view on screen", () => {
-    const opening = {} as MediaReviewOrigin;
-    setThreadPlacementPreference("inline");
-    expect(inlineMedia(opening)).toBe(true);
-    expect(inlineMedia(undefined)).toBe(false);
-    setThreadPlacementPreference("side");
-    expect(inlineMedia(opening)).toBe(false);
-  });
 });
 
 describe("canHoldInline", () => {
@@ -83,6 +73,20 @@ describe("canHoldInline", () => {
       expect(
         canHoldInline(thread, { ...host, ...change }, { channelId: "alpha" }),
       ).toBe(false);
+  });
+
+  it("leaves a thread opened from a side-pane tab to that pane", () => {
+    expect(
+      canHoldInline(thread, host, { channelId: "alpha", fromSide: true }),
+    ).toBe(false);
+    // What the tab's own rows open over it is not the thread's concern.
+    expect(
+      canHoldInline(panel, host, {
+        channelId: "alpha",
+        rootId: "root",
+        fromSide: true,
+      }),
+    ).toBe(true);
   });
 
   it("holds a panel over the conversation or a thread view, with or without a composer", () => {

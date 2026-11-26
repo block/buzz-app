@@ -227,6 +227,8 @@ describe("AgentSessions", () => {
       "chan/root",
       { id: expect.anything(), method: "tools/list", params: {} },
       expect.objectContaining({ aborted: true }),
+      // It has made no model call yet.
+      undefined,
     );
     await goose?.mcp("session-1", "tools/list");
     expect(ada).toHaveBeenCalledOnce();

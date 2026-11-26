@@ -61,6 +61,8 @@ export function appClient(
     localAttachments?: boolean;
     /** Set only by the native runtime for an active tool request. */
     nativeCall?: () => void;
+    /** The calling session's context size, as `BuzzClient.contextTokens`. */
+    contextTokens?: () => number | undefined;
   }>,
 ): BuzzClient {
   const check = () => {
@@ -87,6 +89,7 @@ export function appClient(
   const signal = options.callSignal ?? options.signal;
   const client: BuzzClient = {
     ...(signal ? { signal } : {}),
+    ...(options.contextTokens ? { contextTokens: options.contextTokens } : {}),
     ...(agent.settle
       ? {
           settle: async () => {

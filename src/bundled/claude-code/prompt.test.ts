@@ -561,6 +561,7 @@ it("keeps each context message's meaningful tags, not its bookkeeping", () => {
     ["p", bob],
     ["q", "1".repeat(64)],
     ["buzz:request", "1".repeat(64)],
+    ["buzz:context", "435123"],
   ];
   const signature = "8".repeat(128);
   const prompt = turnPrompt({

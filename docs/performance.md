@@ -118,6 +118,9 @@ between arms (ABBA) over one Rust build.
 Before you start:
 - It needs a logged-in macOS session, Screen Recording and Accessibility
   permission for the terminal, an idle machine and the main display at 60 Hz.
+- It places the window at the `1504×916` reference size when the main display's
+  usable area holds it, and otherwise fits it to the display (minimum
+  `1280×700` usable) for within-run ABBA comparisons.
 - It opens a real Buzz window, takes over the pointer with synthetic trackpad
   gestures, and records the screen. Don't use the computer while it runs.
 - It signs with an ephemeral fixture key, but shares the Keychain and plugin
@@ -138,11 +141,11 @@ within one run, not across machines or sessions.
 
 ### Current measurements
 
-Native medians on one MacBook Pro with a 60 Hz display, four ABBA runs per build
-in one session (2026-11-05). Each change that moves these numbers adds its row.
+Native medians on one Apple silicon macOS VM with a 60 Hz display (`1920×1200`,
+1×), four ABBA runs per build in one session (2026-11-24). Each change that
+moves these numbers adds its row.
 
 | Build | p95 frame interval | Frames over two 60 Hz frames | Dropped frames | Blank frames | Longest blank |
 | --- | --- | --- | --- | --- | --- |
-| Before thread scrolling fixes | 85 ms | 76 | 194 | 54 | 300 ms |
-| Closed action bars skip the glass | 50 ms | 44 | 94 | 9 | 133 ms |
-| Thread rows isolated in the scroller | 30 ms | 10 | 44 | 6 | 67 ms |
+| 2026-11-05 (`83c48be0aa`, before scrolling fixes) | 88 ms | 77 | 208 | 48 | 233 ms |
+| 2026-11-24 (`20c9e4c154`, `main`) | 31 ms | 12 | 27 | 0 | 0 ms |

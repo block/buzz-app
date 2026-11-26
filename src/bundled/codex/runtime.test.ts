@@ -21,6 +21,7 @@ import {
 import { pubkeyOf } from "../../features/agents/membership";
 import { createSessionAdmissions } from "../../features/agents/session-admission";
 import { memoryStorage } from "../../features/agents/test-fakes";
+import { stepText } from "../../features/agents/local-activity";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
@@ -28,7 +29,10 @@ import {
   fileStore,
   type AgentStore,
 } from "../../features/agents/state";
-import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  RESUMED_PROMPT,
+  TOP_LEVEL_MENTION_PROMPT,
+} from "../../buzz-mcp/prompt";
 import type {
   Agent,
   AgentHandle,
@@ -1349,7 +1353,7 @@ it("keeps an agent's two communities' threads apart, each under its membership's
   await f.complete(0, "HERE");
   await vi.waitFor(() => expect(f.runtime.sessions(elsewhere)).toHaveLength(1));
   const saved = (key: string) =>
-    f.storage.get(`buzz.codex.sessions.v19:${scope}:${key}`);
+    f.storage.get(`buzz.codex.sessions.v20:${scope}:${key}`);
   expect(saved(pubkey)).toBeTruthy();
   expect(saved(elsewhere)).toBeTruthy();
   expect(f.runtime.conversations(pubkey)).toHaveLength(1);
@@ -3183,6 +3187,36 @@ it("starts a turn on the model its owner picked, at an effort that model support
     { model: "test-model", effort: "low" },
   ]);
 });
+it("starts a routed turn on its route's choice, and nothing when it was stopped", async () => {
+  const f = fixture();
+  const route = vi.fn(async () => ({ model: "deep-model", effort: "xhigh" }));
+  await f.runtime.run({ ...f.delivery("@Codex", "a".repeat(64)), route });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(route).toHaveBeenCalledTimes(1);
+  expect(f.starts()[0]?.params).toMatchObject({
+    model: "deep-model",
+    effort: "xhigh",
+  });
+  const stopped = vi.fn(async () => undefined);
+  await f.runtime.run({
+    ...f.delivery("@Codex", "b".repeat(64)),
+    route: stopped,
+  });
+  await vi.waitFor(() => expect(stopped).toHaveBeenCalled());
+  await f.runtime.run(f.delivery("@Codex next", "c".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // The next turn Codex starts is the plain one.
+  expect(JSON.stringify(f.starts()[1]?.params)).toContain("@Codex next");
+});
+it("shows a saved route no router offers as Codex's default", async () => {
+  const f = fixture();
+  const agent = {
+    key: pubkey,
+    pubkey,
+    config: { workspace: "/tmp/codex-test", model: "route:gone" },
+  } as Agent;
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
+});
 it("runs a mid-turn pick that differs from the running turn as the next turn instead of steering", async () => {
   const f = fixture();
   const settings = (wire: Wire) => {
@@ -4392,6 +4426,70 @@ it("takes a plugin's wake in its thread's conversation, as the plugin's and not 
   expect(input).not.toContain("<buzz-event");
   expect(input).not.toContain(WAKE_ID);
 });
+it("answers a placed mention where the matching wake goes, framed as the owner's request", async () => {
+  const earlier = "d".repeat(64);
+  const turn = async (
+    make: (f: ReturnType<typeof fixture>) => Delivery,
+  ): Promise<{ context?: string; tags?: string[][]; text: string }> => {
+    const f = fixture();
+    try {
+      await f.runtime.run(make(f));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      const text = JSON.parse(inputText(f.starts()[0]) ?? "[]")
+        .map((part: { text?: string }) => part.text ?? "")
+        .join("\n");
+      await f.tool("send", { audience: "everyone", text: "Placed" });
+      const context = text.match(/<context>[\s\S]*?<\/context>/)?.[0];
+      const tags = tagsOf(f).at(-1);
+      await f.complete(0);
+      return {
+        ...(context ? { context } : {}),
+        ...(tags ? { tags } : {}),
+        text,
+      };
+    } finally {
+      f.runtime.dispose();
+    }
+  };
+  /** The owner's top-level mention, placed by a plugin. */
+  const placed =
+    (placement: NonNullable<Delivery["placement"]>) =>
+    (f: ReturnType<typeof fixture>): Delivery => {
+      const delivery = f.delivery("@Codex back to the checklist");
+      if (delivery.trigger.type !== "mention")
+        throw new Error("Expected a mention");
+      return {
+        ...delivery,
+        trigger: {
+          ...delivery.trigger,
+          event: { ...delivery.trigger.event, tags: [["h", "channel"]] },
+        },
+        placement,
+      };
+    };
+  const woken =
+    (extra: { topLevel: true } | { root: string }) =>
+    (f: ReturnType<typeof fixture>): Delivery => {
+      const wake = pluginWake(f);
+      if (wake.trigger.type !== "plugin") throw new Error("Expected a wake");
+      return { ...wake, trigger: { ...wake.trigger, ...extra } };
+    };
+  for (const place of [{ topLevel: true }, { root: earlier }] as const) {
+    const { text, ...answer } = await turn(placed(place));
+    const { text: wokenText, ...wake } = await turn(woken(place));
+    expect(answer.context, JSON.stringify(place)).toBeDefined();
+    expect(answer.tags, JSON.stringify(place)).toBeDefined();
+    // The same session, context and default `send` target as the wake.
+    expect(answer, JSON.stringify(place)).toEqual(wake);
+    // Framed as the owner's mention, not the wake's channel-level text.
+    expect(text).toContain("<buzz-event>");
+    expect(wokenText).not.toContain("<buzz-event>");
+    if ("topLevel" in place) {
+      expect(text).toContain(TOP_LEVEL_MENTION_PROMPT);
+      expect(text).not.toContain("Interest");
+    }
+  }
+});
 it("keeps a wake's text from posing as the turn's event", async () => {
   const f = fixture();
   const delivery = pluginWake(f, root);
@@ -5553,7 +5651,7 @@ it.each([
         params: { threadId, item: { type: "commandExecution", command } },
       });
     step("sleep 20");
-    expect(first.step).toHaveBeenLastCalledWith("Shell", "sleep");
+    expect(first.step).toHaveBeenLastCalledWith("Shell", "sleep", undefined);
     const requested = deferred<void>();
     const response = deferred<void>();
     const write = f.process.write;
@@ -5576,7 +5674,7 @@ it.each([
       await f.runtime.run({ ...delivery("follow-up"), ...next });
       await requested.promise;
       step("ls");
-      expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
+      expect(first.step).toHaveBeenLastCalledWith("Shell", "ls", undefined);
       expect(first.superseded).not.toHaveBeenCalled();
       expect(next.acknowledged).not.toHaveBeenCalled();
       expect(next.step).not.toHaveBeenCalled();
@@ -5587,8 +5685,8 @@ it.each([
         );
         expect(first.superseded).toHaveBeenCalledOnce();
         step("pwd");
-        expect(next.step).toHaveBeenLastCalledWith("Shell", "pwd");
-        expect(first.step).toHaveBeenLastCalledWith("Shell", "ls");
+        expect(next.step).toHaveBeenLastCalledWith("Shell", "pwd", undefined);
+        expect(first.step).toHaveBeenLastCalledWith("Shell", "ls", undefined);
         await f.tool("send", {
           audience: "everyone",
           text: "Updated answer",
@@ -5603,7 +5701,7 @@ it.each([
         expect(first.superseded).not.toHaveBeenCalled();
         expect(next.acknowledged).not.toHaveBeenCalled();
         step("pwd");
-        expect(first.step).toHaveBeenLastCalledWith("Shell", "pwd");
+        expect(first.step).toHaveBeenLastCalledWith("Shell", "pwd", undefined);
         await f.tool("send", {
           audience: "everyone",
           text: "Original answer",
@@ -5694,8 +5792,16 @@ it.each(["stream", "dm"])(
       method: "item/started",
       params: { threadId, item: { type: "reasoning" } },
     });
-    expect(first.step).toHaveBeenLastCalledWith("Thinking", undefined);
-    expect(second.step).toHaveBeenLastCalledWith("Thinking", undefined);
+    expect(first.step).toHaveBeenLastCalledWith(
+      "Thinking",
+      undefined,
+      undefined,
+    );
+    expect(second.step).toHaveBeenLastCalledWith(
+      "Thinking",
+      undefined,
+      undefined,
+    );
     expect(first.superseded).not.toHaveBeenCalled();
     expect(second.superseded).not.toHaveBeenCalled();
     expect(watched.acknowledged).not.toHaveBeenCalled();
@@ -5945,7 +6051,7 @@ it("lists readable saved conversations newest first from storage, and moves a st
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v19:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v20:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -5977,7 +6083,7 @@ it("lists readable saved conversations newest first from storage, and moves a st
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v19:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v20:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -6225,7 +6331,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v19:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v20:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -6526,6 +6632,23 @@ describe("codexStep", () => {
     expect(codexStep({ type: "mcpToolCall", tool: "send_message" })).toEqual({
       tool: "send_message",
     });
+    // A Buzz tool is a dynamic tool in the `buzz` namespace, reported by its
+    // bare name and its origin, which the step text titles.
+    const buzz = codexStep({
+      type: "dynamicToolCall",
+      namespace: "buzz",
+      tool: "search",
+    });
+    expect(buzz).toEqual({ tool: "search", origin: "buzz" });
+    expect(buzz && stepText(buzz)).toBe("Search messages");
+    // Another server's tool of the same name is not Buzz's.
+    const docs = codexStep({
+      type: "mcpToolCall",
+      server: "docs",
+      tool: "search",
+    });
+    expect(docs).toEqual({ tool: "search" });
+    expect(docs && stepText(docs)).toBe("search");
     expect(codexStep({ type: "reasoning" })).toEqual({ tool: "Thinking" });
     expect(codexStep({ type: "userMessage" })).toBeUndefined();
     expect(codexStep(undefined)).toBeUndefined();
@@ -8225,7 +8348,7 @@ describe("voice seats", () => {
   it("ends a seat on a thread from before sections were kept once the owner changes one, and goes on in a fresh thread", async () => {
     const f = await seated({}, (f) =>
       f.storage.set(
-        `buzz.codex.sessions.v19:${scope}:${pubkey}`,
+        `buzz.codex.sessions.v20:${scope}:${pubkey}`,
         JSON.stringify({
           [JSON.stringify(["channel", "channel"])]: {
             threadId: "kept",
@@ -9081,7 +9204,7 @@ it("retries a refused first turn but requires New when an accepted remote rollou
 it("resumes the durably saved thread even when the host cache has no thread", async () => {
   const conversation = JSON.stringify(["channel", root]);
   const key = `buzz.codex.sessions.execution.v1:${scope}:${pubkey}:${conversation}`;
-  const savedKey = `buzz.codex.sessions.v19:${scope}:${pubkey}:session:durable-session`;
+  const savedKey = `buzz.codex.sessions.v20:${scope}:${pubkey}:session:durable-session`;
   const durable = new Map([
     [key, JSON.stringify({ key: "durable-session", intent: "existing" })],
     [
@@ -9154,7 +9277,7 @@ it.each([
         JSON.stringify({ key: "durable-session", intent: "existing" }),
       ],
       [
-        `buzz.codex.sessions.v19:${scope}:${pubkey}:session:durable-session`,
+        `buzz.codex.sessions.v20:${scope}:${pubkey}:session:durable-session`,
         JSON.stringify({
           [conversation]: { threadId: "kept", workspace: "/guest/project" },
         }),
@@ -9275,7 +9398,7 @@ it("keeps restored history when the next turn is refused after a lost first resp
     `buzz.codex.sessions.execution.v1:${scope}:${pubkey}:${conversation}`,
     JSON.stringify({ key: "restored", intent: "existing" }),
   );
-  const savedKey = `buzz.codex.sessions.v19:${scope}:${pubkey}:session:restored`;
+  const savedKey = `buzz.codex.sessions.v20:${scope}:${pubkey}:session:restored`;
   f.storage.set(
     savedKey,
     JSON.stringify({
@@ -9622,7 +9745,7 @@ it("keeps thread session context and defers its admission during New", async () 
 
 describe("a thread that keeps the base sections it started with", () => {
   const conversation = JSON.stringify(["channel", root]);
-  const bindings = `buzz.codex.sessions.v19:${scope}:${pubkey}`;
+  const bindings = `buzz.codex.sessions.v20:${scope}:${pubkey}`;
   const current = composeBase({ scope: "thread", place: "thread" });
   const context = (wire: Wire | undefined) =>
     Object.values(
@@ -9650,6 +9773,28 @@ describe("a thread that keeps the base sections it started with", () => {
     );
     return f;
   };
+
+  it("reports whether saved local conversations may restart for custom instructions", () => {
+    const empty = fixture();
+    const key = empty.delivery("check").agent.key;
+    expect(empty.runtime.mayRestartForBaseInstructions(key, scope)).toBe(false);
+    expect(resumed().runtime.mayRestartForBaseInstructions(key, scope)).toBe(
+      true,
+    );
+    expect(
+      resumed({
+        layout: 1,
+        parts: current.parts,
+      }).runtime.mayRestartForBaseInstructions(key, scope),
+    ).toBe(false);
+    const reconnecting = resumed();
+    reconnecting.snapshot.status = "connecting";
+    expect(reconnecting.runtime.mayRestartForBaseInstructions(key, scope)).toBe(
+      true,
+    );
+    empty.snapshot.status = "connecting";
+    expect(empty.runtime.mayRestartForBaseInstructions(key, scope)).toBe(false);
+  });
 
   it("saves them with a new thread and sends no update while they are current", async () => {
     const f = fixture();

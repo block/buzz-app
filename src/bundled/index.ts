@@ -51,6 +51,8 @@ import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
+import finderManifest from "./finder/manifest.json";
+import * as finder from "./finder";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
@@ -78,9 +80,6 @@ import * as performanceDiagnostics from "./performance-diagnostics";
 import docsManifest from "./docs/manifest.json";
 import * as docs from "./docs";
 
-import relayNotesManifest from "./relay-notes/manifest.json";
-import * as relayNotes from "./relay-notes";
-
 const codexHarness: BundledPlugin = {
   manifest: { ...codexManifest, apiVersion: 1 },
   module: codex,
@@ -97,11 +96,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
     // Opt-in: it reads community membership in the background once enabled.
-    enabledByDefault: false,
-  },
-  {
-    manifest: { ...relayNotesManifest, apiVersion: 1 },
-    module: relayNotes,
     enabledByDefault: false,
   },
   {
@@ -213,6 +207,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...finderManifest, apiVersion: 1 },
+    module: finder,
     enabledByDefault: false,
   },
   {

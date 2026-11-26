@@ -273,10 +273,12 @@ it("discloses tool arguments and results without raw details, including a posted
       state={() => "ended"}
     />,
   );
-  const tool = screen.getByText("buzz.read").closest("details");
+  // A Buzz tool reads by its title; opened, it also gives the name as sent.
+  const tool = screen.getByText("Read messages").closest("details");
   expect(tool).not.toHaveAttribute("open");
-  await user.click(screen.getByText("buzz.read"));
+  await user.click(screen.getByText("Read messages"));
   expect(tool).toHaveAttribute("open");
+  expect(screen.getByText("buzz.read", { selector: "pre" })).toBeVisible();
   expect(screen.getByText('{ "limit": 2 }')).toBeVisible();
   expect(screen.getByText("two messages")).toBeVisible();
   expect(screen.getByText("Done", { selector: "summary span" })).toBeVisible();
@@ -1193,4 +1195,60 @@ it("resolves author avatars by identity and falls back when that identity is abs
     for (const listener of listeners) listener();
   });
   expect(container.querySelector("img")).toBeNull();
+});
+
+it("titles a Buzz tool's row and leaves another server's tool as sent", async () => {
+  const at = Date.parse("2026-10-08T12:00:00Z");
+  const call = (id: string, title: string) => ({
+    id,
+    at,
+    type: "tool" as const,
+    toolCallId: id,
+    title,
+    kind: "other",
+    status: "completed",
+    input: "{}",
+    output: "",
+    paths: [],
+    diffs: [],
+    truncated: false,
+  });
+  render(
+    <ActivityTranscript
+      transcript={{
+        turns: [
+          {
+            turnId: "turn",
+            channelId: "channel",
+            threadRootId: null,
+            triggeringEventIds: [],
+            newSession: true,
+            config: [],
+            startedAt: at,
+            endedAt: at + 1,
+            partial: false,
+            items: [
+              call("buzz", "mcp__buzz__channel_list"),
+              call("other", "mcp__other__read"),
+            ],
+          },
+        ],
+      }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  const user = userEvent.setup();
+  const buzz = screen.getByText("List channels");
+  expect(buzz).toHaveTextContent(/^List channels$/);
+  await user.click(buzz);
+  expect(
+    screen.getByText("mcp__buzz__channel_list", { selector: "pre" }),
+  ).toBeVisible();
+  // Not "Read messages": the server is not Buzz, so nothing is made of it.
+  expect(screen.getByText("mcp__other__read")).not.toHaveProperty(
+    "tagName",
+    "PRE",
+  );
+  expect(screen.queryByText("Read messages")).not.toBeInTheDocument();
 });

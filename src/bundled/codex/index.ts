@@ -1,6 +1,8 @@
 import { nativeHookOutput } from "../hook-output";
 import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
+import { communityDestination } from "../../features/communities/destination";
+import { relayPartition } from "../../features/relay/partition";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
@@ -16,8 +18,10 @@ import { reviewModel } from "./security-review";
 import {
   candidatesFor,
   followRecommended,
+  onAutomatic,
   recommendationReady,
 } from "../../features/agents/recommended";
+import { activeRoute, routeLabel } from "../../features/agents/model-routes";
 import { AppServer, listModels } from "./rpc";
 import { CODEX_ROUTES, HARNESS } from "./gateway";
 /** How often Buzz's copy of Codex looks for a new release. */
@@ -182,6 +186,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.agents.inspectExecution(key),
   );
   ctx.agents.register<Config>({
+    mayRestartForBaseInstructions: ({ key, owner, relay }) =>
+      !ctx.agents.executionBinding(key) &&
+      runtime.mayRestartForBaseInstructions(
+        key,
+        ctx.agents.relay(key)?.snapshot().scope ??
+          relayPartition(communityDestination(relay).url, owner),
+      ),
     id: TYPE_ID,
     conversationFolders: true,
     conversationSections: true,
@@ -273,12 +284,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ];
     },
     migrationWarning: "Any commands Codex left running will stop.",
-    summary: (agent) =>
-      followRecommended(
+    summary: (agent) => {
+      const { model } = followRecommended(
         agent.config,
         config(agent.config),
         providerController.recommended(),
-      ).model || "Codex",
+      );
+      return (
+        activeRoute(TYPE_ID, model, onAutomatic(agent.config, TYPE_ID))
+          ?.label ??
+        routeLabel(TYPE_ID, model) ??
+        (model || "Codex")
+      );
+    },
     recommends: (candidate) => providerController.recommends(candidate),
     ...(spawn &&
       readFile && {

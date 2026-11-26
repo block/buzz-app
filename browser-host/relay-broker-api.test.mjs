@@ -2657,6 +2657,32 @@ test("an addition can ask the relay first, and its refusal reaches the app as wo
   }
 });
 
+test("direct-message passes on which agent's add policy refused it", async () => {
+  const agent = "d".repeat(64);
+  const reasons = [
+    `forbidden: policy:owner_only — only the agent owner can add this agent (agent ${agent})`,
+    `forbidden: policy:nobody — this agent has disabled external channel additions (agent ${agent})`,
+  ];
+  const h = await harness(() =>
+    Response.json({ error: reasons.shift() }, { status: 400 }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const person = "a".repeat(64);
+    await expect(
+      transport.openDirectMessage([person], new AbortController().signal),
+    ).rejects.toThrow(`policy:owner_only (agent ${agent})`);
+    await expect(
+      transport.openDirectMessage([person], new AbortController().signal, {
+        channelId: "11111111-1111-4111-8111-111111111111",
+        includeHistory: "ask",
+      }),
+    ).rejects.toThrow(`policy:nobody (agent ${agent})`);
+  } finally {
+    await h.close();
+  }
+});
+
 test.each([
   {
     accepted: false,
@@ -4533,7 +4559,8 @@ test("Builderlab HTTP accepts full agent instructions and isolates the fixed nat
       }
       if (
         path.endsWith("/v3/builderlab/decisions") ||
-        path.endsWith("/v1/auth/hosted-site/native-session")
+        path.endsWith("/v1/auth/hosted-site/native-session") ||
+        path.endsWith("/v3/builderlab/transcription/calls")
       ) {
         nativeCalls.push({
           path,
@@ -4581,6 +4608,7 @@ test("Builderlab HTTP accepts full agent instructions and isolates the fixed nat
         can_use_remote_agents: true,
         can_use_builderlab_decisions: false,
         can_delete_buzz_communities: false,
+        can_use_hosted_transcription: false,
       },
     });
     const reads = accountReads;
@@ -4619,6 +4647,11 @@ test("Builderlab HTTP accepts full agent instructions and isolates the fixed nat
         "/v1/auth/hosted-site/native-session",
         "X-Buzz-Builderlab-Revision",
       ],
+      [
+        "transcription/calls",
+        "/v3/builderlab/transcription/calls",
+        "X-BB-Session-Credential",
+      ],
     ]) {
       const refused = await fetch(`${h.base}/api/builderlab/request`, {
         method: "POST",
@@ -4640,8 +4673,9 @@ test("Builderlab HTTP accepts full agent instructions and isolates the fixed nat
         headers: { "X-BB-Session-Credential": "fixture-only" },
       });
     }
-    expect(nativeCalls).toHaveLength(2);
+    expect(nativeCalls).toHaveLength(3);
     expect(nativeCalls[0].headers["X-Buzz-Community"]).toBe("buzz.example");
+    expect(nativeCalls[2].headers["X-Buzz-Community"]).toBe("buzz.example");
   } finally {
     await h.close();
   }

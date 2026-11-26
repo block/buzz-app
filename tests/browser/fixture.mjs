@@ -288,6 +288,7 @@ export const test = base.extend({
       key = relayKey,
       time = 1700000000,
     ) => finalizeEvent({ kind, tags, content, created_at: time }, key);
+    let identityArchives = sign(13535, [["-"]]);
     const profiles = new Map(
       ["primary", "secondary"].map((community) => [
         community,
@@ -1181,7 +1182,7 @@ export const test = base.extend({
           authors: [getPublicKey(relayKey)],
           limit: 1,
         });
-        return [sign(13535, [["-"]])];
+        return [identityArchives];
       }
       if (filter.kinds?.includes(13534)) {
         // Relay-signed roster for archive consent; the viewer is a plain member.
@@ -2585,11 +2586,16 @@ export const test = base.extend({
         ];
         for (const { id } of result) served.add(id);
         // An older page's aux closure, read apart from its rows, is not held.
+        // A thread window page carries aux too, but it is the page itself.
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
           filter["#h"]?.length &&
-          !(filter.include_aux && !filter.include_summaries)
+          !(
+            filter.include_aux &&
+            !filter.include_summaries &&
+            !filter.thread_window
+          )
         ) {
           const queuedAt = performance.now();
           const receipt = {
@@ -2868,6 +2874,15 @@ export const test = base.extend({
         },
         signRelay: (template) => finalizeEvent(template, relayKey),
         ownerAgent,
+        setArchivedIdentities(keys) {
+          identityArchives = sign(
+            13535,
+            [["-"], ...keys.map((key) => ["p", key])],
+            "",
+            relayKey,
+            identityArchives.created_at + 1,
+          );
+        },
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);
           return sign(13534, [["member", viewer, role]], "", relayKey);

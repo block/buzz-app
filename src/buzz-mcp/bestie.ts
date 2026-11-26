@@ -2,6 +2,7 @@
 // community start with, as Make my bestie saves it. An agent running here can
 // read and change it for its owner.
 import type { BuzzClient } from "./client";
+import { TOOL_TITLES } from "./tool-titles";
 import type { Tool } from "./tools";
 
 const none = {
@@ -13,6 +14,7 @@ const none = {
 export const BESTIE_TOOLS: readonly Tool[] = [
   {
     name: "bestie_get",
+    title: TOOL_TITLES.bestie_get,
     description:
       "Your owner's Bestie in this community, the agent new Solo chats start with: device is the agent saved on this device and account the one saved to their account, null for none; here says whether device's agent is one your owner can tag here.",
     inputSchema: none,
@@ -20,6 +22,7 @@ export const BESTIE_TOOLS: readonly Tool[] = [
   },
   {
     name: "bestie_set",
+    title: TOOL_TITLES.bestie_set,
     description:
       "Make one of your owner's agents in this community their Bestie, saved on this device and their account as Make my bestie saves it. Unlike Make my bestie, it doesn't turn on Remembers you; your owner does that in the agent's Bestie tab. The answer is bestie_get's.",
     inputSchema: {
@@ -34,6 +37,7 @@ export const BESTIE_TOOLS: readonly Tool[] = [
   },
   {
     name: "bestie_clear",
+    title: TOOL_TITLES.bestie_clear,
     description:
       "Save that your owner has no Bestie, on this device and their account, as Remove as bestie does. The answer is bestie_get's.",
     inputSchema: none,

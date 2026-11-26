@@ -347,9 +347,11 @@ it("links bare and labelled Buzz URLs in prose without changing code or nesting 
   expect(screen.getByText("buzz://unknown")).toBeVisible();
   expect(screen.getByText("Invalid").closest("a")).toBeNull();
   fireEvent.click(within(screen.getByText(/^Evidence:/)).getByRole("link"));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "This Buzz link couldn’t be opened here.",
-  );
+  expect(
+    screen.getByText("This Buzz link couldn’t be opened here.", {
+      selector: '[role="status"]',
+    }),
+  ).toBeVisible();
 });
 
 it("resolves shared message labels and icons only when expanded and opens the original destination", async () => {

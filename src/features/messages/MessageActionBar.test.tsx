@@ -31,6 +31,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 it.each([true, false])(
@@ -757,9 +758,14 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
     />,
   );
   const link = screen.getByRole("button", { name: "Copy link" });
+  link.focus();
   fireEvent.click(link);
   try {
-    expect(link.hasAttribute("disabled")).toBe(true);
+    // Disabled in behavior only: a natively disabled button would drop the
+    // keyboard focus that keeps its toolbar, and so its check, on screen.
+    expect(link.getAttribute("aria-disabled")).toBe("true");
+    expect(link.hasAttribute("disabled")).toBe(false);
+    expect(document.activeElement).toBe(link);
     fireEvent.click(link);
     expect(write).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledWith("buzz://link");
@@ -769,8 +775,47 @@ it("prevents duplicate clipboard writes until the first settles", async () => {
   } finally {
     finish();
   }
-  await screen.findByText("Link copied");
-  expect(link.hasAttribute("disabled")).toBe(false);
+  await waitFor(() =>
+    expect(link.querySelector(".tabler-icon-check")).not.toBeNull(),
+  );
+  expect(link.getAttribute("aria-disabled")).toBe("false");
+});
+
+it("shows the toolbar's copied link as a check in its button for 1.5 seconds, with no toast", async () => {
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  render(<MessageActionBar link="buzz://link" copyText={() => "Hello"} />);
+  const link = screen.getByRole("button", { name: "Copy link" });
+  vi.useFakeTimers();
+  await act(async () => fireEvent.click(link));
+  expect(write).toHaveBeenCalledExactlyOnceWith("buzz://link");
+  expect(link.querySelector(".tabler-icon-check")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Copy link" })).toBe(link);
+  expect(screen.getByRole("status").textContent).toBe("Copied");
+
+  act(() => vi.advanceTimersByTime(1499));
+  expect(link.querySelector(".tabler-icon-check")).not.toBeNull();
+  // The clock a toast mounts on has run: the status is all that says so.
+  expect(screen.getAllByText(/copied/i)).toHaveLength(1);
+  expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+  act(() => vi.advanceTimersByTime(1));
+  expect(link.querySelector(".tabler-icon-link")).not.toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("");
+});
+
+it("reports the toolbar's refused link copy in a toast, and shows no check", async () => {
+  vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+    new Error("denied"),
+  );
+  render(<MessageActionBar link="buzz://link" copyText={() => "Hello"} />);
+  const link = screen.getByRole("button", { name: "Copy link" });
+  fireEvent.click(link);
+  const refusal = await screen.findByText(
+    "Couldn’t copy. Try again from the message menu.",
+  );
+  expect(refusal.closest(".buzz-toast")).not.toBeNull();
+  expect(link.querySelector(".tabler-icon-link")).not.toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("");
+  expect(link.getAttribute("aria-disabled")).toBe("false");
 });
 
 it.each([false, true])(

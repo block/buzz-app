@@ -65,11 +65,13 @@ vi.mock("./ChannelBody", () => ({
     inlineTarget,
     marksRead,
     onOpenThread,
+    trailing,
   }: {
     holding?: boolean;
     inlineTarget?: { messageId: string };
     marksRead?: boolean;
     onOpenThread(id: string, root: string, intent?: "reply"): void;
+    trailing?: { content(state: object): import("react").ReactNode };
   }) => {
     threadOpeners.push(onOpenThread);
     return (
@@ -79,6 +81,7 @@ vi.mock("./ChannelBody", () => ({
         data-marks-read={marksRead}
       >
         Conversation content
+        {trailing?.content({ expanded: false, toggle() {} })}
       </div>
     );
   },

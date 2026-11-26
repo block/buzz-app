@@ -57,6 +57,7 @@ export type {
   SidebarSections,
 } from "../features/channel-navigation/sidebar-sections-service";
 export type {
+  PluginInstallationArtifactHash,
   PluginInstallOutcome,
   PluginInstallSource,
   PluginInstaller,
@@ -93,6 +94,7 @@ export type {
 export type {
   ConversationWorkspaceProps,
   WorkspaceSlots,
+  WorkspaceAsideWidth,
   PageTabTarget,
   PageTabOptions,
   PageTabsProps,
@@ -158,6 +160,7 @@ export type {
 
 export type {
   Decisions,
+  DecisionsAnswerable,
   DecisionProvider,
   DecisionProviderStatus,
   DecisionReply,
@@ -167,6 +170,18 @@ export type {
   DecisionFailure,
   DecisionResult,
 } from "../features/decisions/service";
+
+export type {
+  Speech,
+  SpeechProvider,
+  SpeechProviderStatus,
+  SpeechConnectRequest,
+  SpeechConnectReply,
+  SpeechFailure,
+  ListenOptions,
+  Listening,
+  ListenState,
+} from "../features/speech/service";
 
 export type {
   Navigation,

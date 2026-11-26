@@ -602,6 +602,7 @@ export class AcpProcess {
       session?.conversation,
       { id, method, params },
       session?.signal ?? AbortSignal.abort(new Error("The turn has ended")),
+      session?.contextTokens,
     )) as Wire;
     const call = (params ?? {}) as {
       name?: unknown;

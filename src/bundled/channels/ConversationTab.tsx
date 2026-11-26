@@ -5,11 +5,13 @@ import {
   useRef,
   useState,
   type ReactNode,
-  useContext,
 } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type {
+  ConversationExtensions,
+  ConversationWorkspaceProps,
+} from "../../features/conversation/contracts";
 import {
   ConversationChannel,
   ConversationComposer,
@@ -27,13 +29,14 @@ import { rootOfTab, type ConversationTab as Tab } from "./useChannelTabState";
 import { ComposerScopeProvider } from "../../features/messages/composer-overlay";
 import { LayerReader } from "../../features/messages/LayerReader";
 import type { PageNavigation } from "../../features/navigation/service";
-import { LayerAddressContext } from "../../features/messages/view-layer";
-import { inlineMedia } from "./placement";
 import styles from "./ChannelTabs.module.css";
 
 type ConversationTabProps = {
   tab: Tab;
   intro?: ReactNode;
+  /** The channel timeline and a thread tab show it, not a thread a
+   * conversation tab opens in place. */
+  trailing?: ConversationWorkspaceProps["trailing"];
   subthreadId?: string | undefined;
   latestRequest?: AbortSignal | undefined;
   active: boolean;
@@ -62,6 +65,7 @@ type ConversationTabProps = {
 export function ConversationTab({
   tab,
   intro,
+  trailing,
   subthreadId,
   latestRequest,
   active,
@@ -134,11 +138,7 @@ export function ConversationTab({
     return () => request.abort();
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
-  // Media reads inline only on a page that addresses its views' layers;
-  // Bestie's thread tabs keep the fullscreen viewer.
-  const media = useMediaReview(
-    useContext(LayerAddressContext) ? inlineMedia : undefined,
-  );
+  const media = useMediaReview();
   // A retained tab re-renders with its page. Its memoized rows open links and
   // threads through stable openers that consult the latest handlers when chosen.
   const latest = useRef({ openLink, openThread });
@@ -180,6 +180,7 @@ export function ConversationTab({
           <ComposerScopeProvider rootId={rootOfTab(tab)} shown={active}>
             <ConversationThread
               intro={intro}
+              trailing={trailing}
               latestRequest={active ? latestRequest : undefined}
               active={active}
               shown={active}
@@ -225,6 +226,7 @@ export function ConversationTab({
               <SoloColumn enabled={soloConversation}>
                 <ChannelBody
                   intro={intro}
+                  trailing={trailing}
                   latestRequest={active ? latestRequest : undefined}
                   viewer={session.viewer}
                   cached={!!channel.cached}

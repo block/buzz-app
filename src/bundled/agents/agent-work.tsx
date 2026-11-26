@@ -1,16 +1,10 @@
 import type { SidebarSectionRow } from "../../features/channel-navigation/sidebar-sections-service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import type { InboxItem } from "../../features/relay/inbox";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  UPDATE_KINDS,
-  UPDATE_LIMIT,
-  accepted,
-  sentEntries,
-  threadRoot,
-  type ReadEvent,
-} from "../../features/drafts-sent/model";
+import type { ReadEvent } from "../../features/drafts-sent/model";
 import { plainText } from "../../features/notifications/content";
 import { channelIcon } from "../../features/channels/channel-icon";
 import {
@@ -23,47 +17,6 @@ const threadIcon = <CornerDownRightIcon size={16} aria-hidden="true" />;
 
 /** The card shows this many conversations, as Activity's card does. */
 export const AGENT_WORK_LIMIT = 50;
-/** The viewer's own recent messages, which name the conversations to check. */
-const OWN_LIMIT = 500;
-/** Threads and top levels checked for the viewer's agents. */
-const THREAD_CANDIDATES = 300;
-/** One filter each, within the relay's ten filters a request. */
-const TOP_LEVEL_CANDIDATES = 10;
-
-/** Where the viewer recently talked: each thread, by its root (a top-level
- * message of theirs may have become one), and each channel or DM top level. */
-export function agentWorkCandidates(
-  sent: readonly ReadEvent[],
-  viewer: string,
-  channels: readonly ChannelSummary[],
-) {
-  const talks = new Set(
-    channels.flatMap((channel) =>
-      !channel.archived &&
-      (channel.channelType === "stream" ||
-        channel.channelType === "forum" ||
-        channel.channelType === "dm")
-        ? [channel.id]
-        : [],
-    ),
-  );
-  const roots = new Set<string>();
-  const tops = new Set<string>();
-  // Newest first.
-  for (const entry of sentEntries(sent, viewer)) {
-    if (!talks.has(entry.channelId)) continue;
-    if (roots.size < THREAD_CANDIDATES)
-      roots.add(entry.threadRootId ?? entry.id);
-    if (!entry.threadRootId && tops.size < TOP_LEVEL_CANDIDATES)
-      tops.add(entry.channelId);
-  }
-  return { roots: [...roots], tops: [...tops] };
-}
-
-const chunks = <T,>(values: readonly T[], size: number) =>
-  Array.from({ length: Math.ceil(values.length / size) }, (_, index) =>
-    values.slice(index * size, index * size + size),
-  );
 
 /** A row and where it opens. */
 export type AgentWorkRow = SidebarSectionRow &
@@ -74,27 +27,24 @@ export type AgentWorkRow = SidebarSectionRow &
     at: number;
   }>;
 
-/** Agent work: Solo chats; channels and DMs where the viewer and one of their
- * agents both talk at the top level; and channel threads they both wrote in,
- * the root included. */
+/** Agent work, from Activity's own conversations: every Solo chat, and each
+ * channel or DM top level and each thread where an agent wrote to you. */
 export function agentWorkRows({
   channels,
-  sent,
-  agentEvents,
-  agents,
+  items,
+  isAgent,
   roots,
-  viewer,
 }: {
   channels: readonly ChannelSummary[];
-  sent: readonly ReadEvent[];
-  agentEvents: readonly ReadEvent[];
-  agents: ReadonlySet<string>;
+  /** Activity's conversations. */
+  items: readonly InboxItem[];
+  isAgent(pubkey: string): boolean;
+  /** Thread roots, which name their rows. */
   roots: readonly ReadEvent[];
-  viewer: string;
 }): readonly AgentWorkRow[] {
   const byId = new Map(channels.map((channel) => [channel.id, channel]));
-  const open = (id: string | undefined) => {
-    const channel = id ? byId.get(id) : undefined;
+  const open = (id: string) => {
+    const channel = byId.get(id);
     return channel &&
       !channel.archived &&
       !channel.huddle &&
@@ -102,10 +52,14 @@ export function agentWorkRows({
       ? channel
       : undefined;
   };
-  const rows: AgentWorkRow[] = [];
+  const rows = new Map<string, AgentWorkRow>();
+  const keep = (row: AgentWorkRow) => {
+    const found = rows.get(row.id);
+    if (!found || row.at > found.at) rows.set(row.id, row);
+  };
   for (const channel of channels)
     if (channel.channelType === "solo" && open(channel.id))
-      rows.push({
+      keep({
         id: `solo:${channel.id}`,
         kind: "solo",
         label: channel.name,
@@ -113,103 +67,46 @@ export function agentWorkRows({
         channelId: channel.id,
         at: channel.lastActivityAt ?? 0,
       });
-  // A Solo chat is already its own row. In a channel or DM, its top level is
-  // one conversation and each thread is another.
-  const inChannel = (id: string) => {
-    const type = open(id)?.channelType;
-    return type === "stream" || type === "forum";
-  };
-  const talks = (id: string) => inChannel(id) || open(id)?.channelType === "dm";
-  type Said = { channelId: string; root: string; top: boolean; at: number };
-  const latest = (entries: readonly Said[]) => {
-    const threads = new Map<string, number>();
-    const tops = new Map<string, number>();
-    const keep = (found: Map<string, number>, key: string, at: number) =>
-      found.set(key, Math.max(found.get(key) ?? 0, at));
-    for (const { channelId, root, top, at } of entries) {
-      if (talks(channelId)) keep(threads, `${channelId}:${root}`, at);
-      if (top && talks(channelId)) keep(tops, channelId, at);
+  const text = new Map(roots.map((event) => [event.id, event.content]));
+  for (const item of items) {
+    const channel = open(item.channelId);
+    if (!channel || !isAgent(item.authorId)) continue;
+    const at = item.createdAt;
+    // A Solo chat is already its own row; it has no threads.
+    if (channel.channelType === "solo") {
+      const solo = rows.get(`solo:${channel.id}`);
+      if (solo && at > solo.at) rows.set(solo.id, { ...solo, at });
+      continue;
     }
-    return { threads, tops };
-  };
-  const mine = latest(
-    sentEntries(sent, viewer).flatMap((entry) =>
-      entry.createdAt === undefined
-        ? []
-        : [
-            {
-              channelId: entry.channelId,
-              root: entry.threadRootId ?? entry.id,
-              top: !entry.threadRootId,
-              at: entry.createdAt,
-            },
-          ],
-    ),
-  );
-  const channelOf = (event: ReadEvent) =>
-    event.tags.find(([name]) => name === "h")?.[1];
-  const theirs = latest(
-    agentEvents.flatMap((event) => {
-      const channelId = channelOf(event);
-      return event.kind === 9 &&
-        agents.has(event.pubkey) &&
-        accepted(event) &&
-        channelId
-        ? [
-            {
-              channelId,
-              root: threadRoot(event) ?? event.id,
-              top: !threadRoot(event),
-              at: event.created_at,
-            },
-          ]
-        : [];
-    }),
-  );
-  const text = new Map<string, string>();
-  for (const entry of sentEntries(sent, viewer)) text.set(entry.id, entry.text);
-  for (const event of [...agentEvents, ...roots])
-    if (event.kind === 9 && !text.has(event.id))
-      text.set(event.id, event.content);
-  for (const [channelId, at] of mine.tops) {
-    const agentAt = theirs.tops.get(channelId);
-    const channel = byId.get(channelId);
-    if (agentAt === undefined || !channel) continue;
+    if (item.rootId) {
+      const root = text.get(item.rootId);
+      keep({
+        id: `thread:${channel.id}:${item.rootId}`,
+        kind: "thread",
+        label: (root && plainText(root).trim()) || "Thread",
+        icon: threadIcon,
+        channelId: channel.id,
+        rootId: item.rootId,
+        at,
+      });
+      continue;
+    }
     const Icon = channelIcon(channel);
-    rows.push({
-      id: `chat:${channelId}`,
+    keep({
+      id: `chat:${channel.id}`,
       kind: "chat",
       label: channel.name,
       icon: <Icon size={16} aria-hidden="true" />,
-      channelId,
-      at: Math.max(at, agentAt),
+      channelId: channel.id,
+      at,
     });
   }
-  for (const [key, at] of mine.threads) {
-    const agentAt = theirs.threads.get(key);
-    if (agentAt === undefined) continue;
-    const [channelId = "", rootId = ""] = key.split(":");
-    const root = text.get(rootId);
-    const label = root === undefined ? "" : firstLine(root);
-    rows.push({
-      id: `thread:${key}`,
-      kind: "thread",
-      label: label || "Thread",
-      icon: threadIcon,
-      channelId,
-      rootId,
-      at: Math.max(at, agentAt),
-    });
-  }
-  return rows
+  return [...rows.values()]
     .sort((a, b) => b.at - a.at || a.id.localeCompare(b.id))
     .slice(0, AGENT_WORK_LIMIT);
 }
 
-/** The start of a message as one line; the row cuts it to fit. */
-const firstLine = (content: string) => plainText(content).trim();
-
-/** Where a row opens: a Solo chat, or a thread beside its channel. */
+/** Where a row opens: a conversation, or a thread beside its channel. */
 export function agentWorkTarget(
   row: Pick<AgentWorkRow, "channelId" | "rootId">,
   scope: { viewer: string; communityOrigin: string },
@@ -254,7 +151,7 @@ export function createAgentWork(relay: RelayData) {
       }
       if (!key || !viewer || !origin) return;
       scope = { viewer, communityOrigin: origin };
-      current = { key, stop: watch(session, viewer) };
+      current = { key, stop: watch(session) };
     };
     connect();
     const stopRelay = relay.subscribe(connect);
@@ -263,100 +160,80 @@ export function createAgentWork(relay: RelayData) {
       current?.stop();
     };
   };
-  const watch = (session: RelaySession, viewer: string) => {
-    type Open = { view: View; dispose(): void };
-    const views: Partial<
-      Record<"sent" | "threads" | "tops" | "roots", Open | undefined>
-    > = {};
-    let lookupKey = "";
-    const open = (filters: Parameters<RelaySession["observe"]>[0]): Open => {
-      const view = session.observe(filters);
-      const stopView = view.subscribe(compute);
-      void view.refresh();
-      return {
-        view,
-        dispose() {
-          stopView();
-          view.dispose();
-        },
-      };
-    };
-    const agentsOf = () =>
-      new Set(
-        session.agentChoices.snapshot().identities.map(({ pubkey }) => pubkey),
-      );
-    const events = (name: keyof typeof views) =>
-      views[name]?.view.snapshot().events ?? none;
+  const watch = (session: RelaySession) => {
+    let roots: { key: string; view: View; stop(): void } | undefined;
+    let asked = "";
+    // An agent is one of yours, or anyone whose profile says so, as
+    // Activity's Agents filter counts them.
+    const isAgent = (pubkey: string) =>
+      session.agentChoices
+        .snapshot()
+        .identities.some((agent) => agent.pubkey === pubkey) ||
+      !!session.profiles.snapshot().get(pubkey)?.isAgent;
     function compute() {
-      const agents = agentsOf();
-      const channels = session.channels.list().channels;
-      const sent = events("sent");
-      // Look up your agents in each conversation you recently talked in, so a
-      // busy agent elsewhere never pushes an older conversation out.
-      const { roots, tops } = agentWorkCandidates(sent, viewer, channels);
-      const authors = [...agents].sort();
-      const nextKey = `${authors}|${roots}|${tops}`;
-      if (nextKey !== lookupKey) {
-        lookupKey = nextKey;
-        for (const name of ["threads", "tops", "roots"] as const) {
-          views[name]?.dispose();
-          views[name] = undefined;
-        }
-        if (authors.length && roots.length)
-          views.threads = open(
-            chunks(roots, 100).map((ids) => ({
-              kinds: [9],
-              authors,
-              "#e": ids,
-              limit: 500,
-            })),
-          );
-        if (authors.length && tops.length)
-          views.tops = open(
-            tops.map((id) => ({ kinds: [9], authors, "#h": [id], limit: 20 })),
-          );
-        // Each thread's first message: its label, and an agent's when one
-        // began it.
-        if (roots.length)
-          views.roots = open(
-            chunks(roots, 100).map((ids) => ({
-              kinds: [9],
-              ids,
-              limit: ids.length,
-            })),
-          );
+      const items = session.unread.inbox().items;
+      const authors = [...new Set(items.map((item) => item.authorId))].sort();
+      const ask = authors.join(",");
+      if (ask !== asked) {
+        asked = ask;
+        void session.profiles.ensure(authors, "background").catch(() => {});
       }
-      const found = [
-        ...events("threads"),
-        ...events("tops"),
-        ...events("roots"),
-      ];
-      const next = agentWorkRows({
-        channels,
-        sent,
-        agentEvents: found,
-        roots: found,
-        agents,
-        viewer,
+      const draft = agentWorkRows({
+        channels: session.channels.list().channels,
+        items,
+        isAgent,
+        roots: roots?.view.snapshot().events ?? none,
       });
+      // Each thread's first message names its row.
+      const ids = [
+        ...new Set(draft.flatMap((row) => (row.rootId ? [row.rootId] : []))),
+      ].sort();
+      const key = ids.join(",");
+      if (key !== (roots?.key ?? "")) {
+        roots?.stop();
+        roots = undefined;
+        if (ids.length) {
+          const view = session.observe([
+            { kinds: [9], ids, limit: ids.length },
+          ]);
+          const stopView = view.subscribe(compute);
+          void view.refresh();
+          roots = {
+            key,
+            view,
+            stop() {
+              stopView();
+              view.dispose();
+            },
+          };
+        }
+      }
+      const next = roots
+        ? agentWorkRows({
+            channels: session.channels.list().channels,
+            items,
+            isAgent,
+            roots: roots.view.snapshot().events,
+          })
+        : draft;
       if (!sameRows(rows, next)) {
         rows = next;
         notify();
       }
     }
-    views.sent = open([
-      { kinds: [9], authors: [viewer], limit: OWN_LIMIT },
-      { kinds: UPDATE_KINDS, authors: [viewer], limit: UPDATE_LIMIT },
-    ]);
     session.channels.ensureList();
     session.agentChoices.ensure();
-    const stopChannels = session.channels.subscribeList(compute);
-    const stopAgents = session.agentChoices.subscribe(compute);
+    void session.unread.ensure();
+    const stops = [
+      session.unread.subscribeInbox(compute),
+      session.channels.subscribeList(compute),
+      session.agentChoices.subscribe(compute),
+      session.profiles.subscribe(compute),
+    ];
     compute();
     return () => {
-      stopChannels();
-      stopAgents();
-      for (const view of Object.values(views)) view?.dispose();
+      for (const stopOne of stops) stopOne();
+      roots?.stop();
     };
   };
   return {
@@ -383,5 +260,8 @@ export function createAgentWork(relay: RelayData) {
 const sameRows = (a: readonly AgentWorkRow[], b: readonly AgentWorkRow[]) =>
   a.length === b.length &&
   a.every(
-    (row, index) => row.id === b[index]?.id && row.label === b[index].label,
+    (row, index) =>
+      row.id === b[index]?.id &&
+      row.label === b[index].label &&
+      row.icon === b[index].icon,
   );

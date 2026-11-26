@@ -1,129 +1,73 @@
 import { expect, it } from "vitest";
 import type { ReadEvent } from "../../features/drafts-sent/model";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import {
-  agentWorkCandidates,
-  agentWorkRows,
-  agentWorkTarget,
-} from "./agent-work";
+import type { InboxItem } from "../../features/relay/inbox";
+import { agentWorkRows, agentWorkTarget } from "./agent-work";
 
 const viewer = "a".repeat(64);
 const agent = "b".repeat(64);
-const stranger = "c".repeat(64);
+const person = "c".repeat(64);
 const hex = (digit: string) => digit.repeat(64);
 const channel = (
   id: string,
   channelType: ChannelSummary["channelType"],
   lastActivityAt = 0,
 ) => ({ id, name: id, channelType, lastActivityAt }) as ChannelSummary;
-const message = (
-  id: string,
-  pubkey: string,
-  at: number,
+const item = (
   channelId: string,
+  authorId: string,
+  createdAt: number,
   rootId?: string,
-  content = `message ${id.slice(0, 1)}`,
 ) =>
   ({
+    id: `${channelId}:${rootId ?? ""}:${createdAt}`,
+    channelId,
+    authorId,
+    createdAt,
+    ...(rootId ? { rootId } : {}),
+  }) as InboxItem;
+const root = (id: string, content: string) =>
+  ({
     id,
-    pubkey,
+    pubkey: person,
     kind: 9,
-    created_at: at,
+    created_at: 1,
     content,
-    tags: [
-      ["h", channelId],
-      ...(rootId
-        ? [
-            ["e", rootId, "", "root"],
-            ["e", rootId, "", "reply"],
-          ]
-        : []),
-    ],
+    tags: [],
   }) as ReadEvent;
 const rows = (input: Partial<Parameters<typeof agentWorkRows>[0]>) =>
   agentWorkRows({
     channels: [],
-    sent: [],
-    agentEvents: [],
+    items: [],
+    isAgent: (pubkey) => pubkey === agent,
     roots: [],
-    agents: new Set([agent]),
-    viewer,
     ...input,
   });
 
-it("lists Solo chats and threads you and your agent both wrote in, newest first", () => {
+it("lists Solo chats, and each top level and thread an agent wrote to you in, newest first", () => {
   const result = rows({
     channels: [
       channel("solo", "solo", 50),
       channel("team", "stream"),
-      channel("quiet", "stream"),
+      channel("dm", "dm"),
     ],
-    sent: [
-      // Your root, which your agent answered.
-      message(
-        hex("1"),
-        viewer,
-        100,
-        "team",
-        undefined,
-        "**Fix** the build\nmore",
-      ),
-      // Your reply to your agent's root.
-      message(hex("3"), viewer, 30, "team", hex("2")),
-      // A thread no agent of yours wrote in.
-      message(hex("4"), viewer, 200, "quiet"),
+    items: [
+      item("team", agent, 100, hex("1")),
+      item("team", agent, 80),
+      item("dm", agent, 60, hex("2")),
+      item("solo", agent, 70),
+      // A person's conversation isn't agent work.
+      item("team", person, 200, hex("3")),
     ],
-    agentEvents: [
-      message(hex("5"), agent, 120, "team", hex("1")),
-      message(hex("2"), agent, 20, "team", undefined, "Agent's root"),
-      // Someone else's agent doesn't count.
-      message(hex("6"), stranger, 300, "quiet", hex("4")),
-    ],
+    roots: [root(hex("1"), "**Fix** the build\nmore")],
   });
   expect(result.map(({ id, label }) => ({ id, label }))).toEqual([
-    {
-      id: `thread:team:${hex("1")}`,
-      label: "Fix the build more",
-    },
-    // You both talk at the team's top level too.
+    { id: `thread:team:${hex("1")}`, label: "Fix the build more" },
     { id: "chat:team", label: "team" },
     { id: "solo:solo", label: "solo" },
-    { id: `thread:team:${hex("2")}`, label: "Agent's root" },
+    { id: `thread:dm:${hex("2")}`, label: "Thread" },
   ]);
-});
-
-it("gives DM threads their own rows, leaves out Solo threads, and names roots", () => {
-  const result = rows({
-    channels: [
-      channel("dm", "dm"),
-      channel("solo", "solo"),
-      channel("team", "stream"),
-    ],
-    sent: [
-      message(hex("1"), viewer, 10, "dm", hex("9")),
-      message(hex("2"), viewer, 10, "solo", hex("8")),
-      message(hex("3"), viewer, 10, "team", hex("7")),
-    ],
-    agentEvents: [
-      message(hex("4"), agent, 11, "dm", hex("9")),
-      message(hex("5"), agent, 11, "solo", hex("8")),
-      message(hex("6"), agent, 11, "team", hex("7")),
-    ],
-  });
-  expect(result.map(({ id }) => id)).toEqual([
-    `thread:dm:${hex("9")}`,
-    `thread:team:${hex("7")}`,
-    "solo:solo",
-  ]);
-  const named = rows({
-    channels: [channel("team", "stream")],
-    sent: [message(hex("3"), viewer, 10, "team", hex("7"))],
-    agentEvents: [message(hex("6"), agent, 11, "team", hex("7"))],
-    roots: [
-      message(hex("7"), stranger, 1, "team", undefined, "Their question"),
-    ],
-  });
-  expect(named[0]?.label).toBe("Their question");
+  expect(result[2]?.at).toBe(70);
 });
 
 it("caps the list at 50 and opens a thread beside its channel", () => {
@@ -150,18 +94,4 @@ it("caps the list at 50 and opens a thread beside its channel", () => {
     scope,
     channelId: "solo",
   });
-});
-
-it("looks up each recent thread, your top-level messages included, and top levels", () => {
-  const sent = [
-    message(hex("1"), viewer, 30, "mobile"),
-    message(hex("2"), viewer, 20, "mobile", hex("9")),
-    message(hex("3"), viewer, 10, "solo"),
-  ];
-  expect(
-    agentWorkCandidates(sent, viewer, [
-      channel("mobile", "stream"),
-      channel("solo", "solo"),
-    ]),
-  ).toEqual({ roots: [hex("1"), hex("9")], tops: ["mobile"] });
 });

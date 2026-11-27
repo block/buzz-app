@@ -200,6 +200,7 @@ export function PageSearch({
       services?.shortcuts.registerHost({
         id: SEARCH_ID,
         title: "Search Buzz",
+        forPlugins: true,
         binding: SEARCH_BINDINGS,
         order: HOST_SHORTCUT_ORDER.search,
         allowInEditable: true,
@@ -212,6 +213,7 @@ export function PageSearch({
       services?.shortcuts.registerHost({
         id: CONVERSATION_SEARCH_ID,
         title: "Search this conversation",
+        forPlugins: true,
         binding: CONVERSATION_SEARCH_BINDING,
         order: HOST_SHORTCUT_ORDER.search + 1,
         allowInEditable: true,

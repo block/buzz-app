@@ -1,4 +1,4 @@
-import type { Context } from "@deepseek-ai/cordis";
+import { type Context, Service } from "@deepseek-ai/cordis";
 import {
   activeMessageList,
   focusTarget,
@@ -20,7 +20,8 @@ export type MessageListHandle = Readonly<{
   newest(): string | undefined;
   /** Whether the list holds this message, rendered or not. */
   has(id: string): boolean;
-  /** Keep a message rendered while it is scrolled away, until released. */
+  /** Keep a message rendered while it is scrolled away, until released or
+   * the plugin stops. */
   keepMounted(id: string): () => void;
   /** The list's message box editor; pass it to `composerOf`. */
   composer(): HTMLElement | undefined;
@@ -48,7 +49,8 @@ export type MessageBox = Readonly<{
   insertText(text: string, range?: { start: number; end: number }): boolean;
   /** Undo, or redo when `redo` is true. */
   undo(redo: boolean): void;
-  /** A short status beside Send, such as a key mode; undefined clears it. */
+  /** A short status beside Send, such as a key mode; undefined clears it, and
+   * so does the plugin stopping. */
   setStatus(status: string | undefined): void;
 }>;
 
@@ -102,12 +104,17 @@ function editorOf(element: Element | null) {
     : undefined;
 }
 
-const boxes = new WeakMap<ComposerInputElement, MessageBox>();
-const handles = new WeakMap<object, MessageListHandle>();
-function messageBox(editor: ComposerInputElement): MessageBox {
-  const known = boxes.get(editor);
-  if (known) return known;
-  const box: MessageBox = Object.freeze({
+/** One plugin's handles, so each carries that plugin's cleanup and stays the
+ * same object across calls. */
+type Owned = {
+  boxes: WeakMap<ComposerInputElement, MessageBox>;
+  lists: WeakMap<object, MessageListHandle>;
+};
+
+function messageBox(ctx: Context, editor: ComposerInputElement): MessageBox {
+  /** Removes the plugin's cleanup for its label, while one is shown. */
+  let clearOnStop: (() => void) | undefined;
+  return Object.freeze({
     element: editor,
     get value() {
       return editor.value;
@@ -132,32 +139,72 @@ function messageBox(editor: ComposerInputElement): MessageBox {
     insertText: (text, range) =>
       editor.insertText(text, undefined, range) !== false,
     undo: (redo) => editor.undo(redo),
-    setStatus: (status) => setComposerStatus(editor, status),
+    setStatus(status) {
+      setComposerStatus(editor, status);
+      if (status && !clearOnStop) {
+        const remove = ctx.effect(
+          () => () => setComposerStatus(editor, undefined),
+          "messages.setStatus",
+        );
+        clearOnStop = () => void remove();
+      } else if (!status && clearOnStop) {
+        const remove = clearOnStop;
+        clearOnStop = undefined;
+        remove();
+      }
+    },
   });
-  boxes.set(editor, box);
-  return box;
 }
 
-export const messages: Messages = Object.freeze({
-  lists: messageListElements,
+/** Methods see the calling plugin as `this.ctx`, so what a plugin holds (a
+ * kept row, a label) is let go when it stops, as Cordis does for the rest. */
+export class MessagesService extends Service implements Messages {
+  /** Keyed by the plugin's fiber: `this.ctx` is a new object on each call. */
+  private readonly owned = new WeakMap<object, Owned>();
+  constructor(ctx: Context) {
+    super(ctx, "messages");
+  }
+  private ownedBy(ctx: Context) {
+    let owned = this.owned.get(ctx.fiber);
+    if (!owned) {
+      owned = { boxes: new WeakMap(), lists: new WeakMap() };
+      this.owned.set(ctx.fiber, owned);
+    }
+    return owned;
+  }
+  lists() {
+    return messageListElements();
+  }
   listOf(node: Node) {
     const owner = messageListOf(node);
     if (!owner) return undefined;
     const { element, list } = owner;
+    const ctx = this.ctx;
+    const handles = this.ownedBy(ctx).lists;
     const known = handles.get(list);
     if (known?.element === element) return known;
     const handle: MessageListHandle = Object.freeze({
       element,
       newest: () => list.newest(),
       has: (id: string) => !!list.row(id),
-      keepMounted: (id: string) => list.keepMounted?.(id) ?? (() => {}),
+      keepMounted(id: string) {
+        const release = ctx.effect(
+          () => list.keepMounted?.(id) ?? (() => {}),
+          "messages.keepMounted",
+        );
+        return () => void release();
+      },
       composer: () => list.composer() ?? undefined,
     });
     handles.set(list, handle);
     return handle;
-  },
-  active: activeMessageList,
-  focusTarget,
+  }
+  active() {
+    return activeMessageList();
+  }
+  focusTarget(row: HTMLElement) {
+    return focusTarget(row);
+  }
   selected() {
     const selected = selectedMessage();
     const id = selected?.element.dataset.messageId;
@@ -165,11 +212,13 @@ export const messages: Messages = Object.freeze({
     return selected && id && list
       ? { row: selected.element, id, list }
       : undefined;
-  },
+  }
   select(row: HTMLElement) {
     if (row.isConnected) selectMessage(row);
-  },
-  selectNewest: (list: HTMLElement) => selectNewestMessage(list),
+  }
+  selectNewest(list: HTMLElement) {
+    return selectNewestMessage(list);
+  }
   openActions(element: HTMLElement) {
     const event = new KeyboardEvent("keydown", {
       key: "ContextMenu",
@@ -179,19 +228,24 @@ export const messages: Messages = Object.freeze({
     });
     element.dispatchEvent(event);
     return event.defaultPrevented;
-  },
-  hasThread: (row: HTMLElement) => !!threadSummary(row),
+  }
+  hasThread(row: HTMLElement) {
+    return !!threadSummary(row);
+  }
   openThread(row: HTMLElement) {
     const summary = threadSummary(row);
     summary?.click();
     return !!summary;
-  },
+  }
   composerOf(element: Element | null) {
     const editor = editorOf(element);
-    return editor && messageBox(editor);
-  },
-});
-
-export function provideMessages(ctx: Context) {
-  ctx.provide("messages", messages);
+    if (!editor) return undefined;
+    const boxes = this.ownedBy(this.ctx).boxes;
+    let box = boxes.get(editor);
+    if (!box) {
+      box = messageBox(this.ctx, editor);
+      boxes.set(editor, box);
+    }
+    return box;
+  }
 }

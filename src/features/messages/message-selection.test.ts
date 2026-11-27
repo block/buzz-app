@@ -11,8 +11,10 @@ import {
   selectNewestMessage,
   type MessageList,
 } from "./message-selection";
-import { messages } from "./messages-service";
+import { Context } from "@deepseek-ai/cordis";
+import { MessagesService } from "./messages-service";
 
+const messages = new MessagesService(new Context());
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
@@ -185,7 +187,7 @@ it("leaves keys native while the newest message is scrolled out of the window", 
   expect(document.activeElement).toBe(box("two"));
 });
 
-it("gives plugins the lists, selection, kept rows and threads through the messages service", () => {
+it("gives plugins the lists, selection, kept rows and threads through the messages service", async () => {
   const { list, box, controller, composer } = fixture();
   const release = vi.fn();
   const keep = vi.fn(() => release);
@@ -197,8 +199,14 @@ it("gives plugins the lists, selection, kept rows and threads through the messag
   expect(handle?.newest()).toBe("three");
   expect(handle?.has("two")).toBe(true);
   expect(handle?.has("gone")).toBe(false);
-  expect(handle?.keepMounted("two")).toBe(release);
+  handle?.keepMounted("two")();
   expect(keep).toHaveBeenCalledWith("two");
+  expect(release).toHaveBeenCalledOnce();
+  // A kept row is let go when its owner stops, if not released before.
+  const owner = new Context();
+  new MessagesService(owner).listOf(row)?.keepMounted("two");
+  await owner.fiber.dispose();
+  expect(release).toHaveBeenCalledTimes(2);
   expect(handle?.composer()).toBe(composer);
   // One handle per list, so a plugin can tell whether its owner changed.
   expect(messages.listOf(list)).toBe(handle);

@@ -135,6 +135,7 @@ function ReadyNewMenu({
           title: actions[kind].label,
           run: () => latest.current.run(kind),
           when: () => !latest.current.disabled(kind),
+          forPlugins: true,
         }),
       ),
       shortcuts.registerHostAction({
@@ -142,6 +143,7 @@ function ReadyNewMenu({
         title: "New workspace",
         run: () => latest.current.startWorkspace(),
         when: () => !!latest.current.preferences.sectionCreationWritable,
+        forPlugins: true,
       }),
     ];
     return () => {

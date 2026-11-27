@@ -22,18 +22,21 @@ export type { KeyBinding, NormalizedShortcut, Shortcut } from "./bindings";
 type HostShortcutDefinition = Shortcut & {
   /** Keyboard-only eligibility; programmatic host actions still use when(). */
   whenKeyboard?: ((event: KeyboardEvent) => boolean) | undefined;
+  /** Plugins may run it with `runHost`. Each id marked here is a promise to
+   * plugins, listed in the authoring guide. */
+  forPlugins?: boolean | undefined;
 };
 export type RegisteredShortcut = Contribution<NormalizedShortcut>;
 /** Host-only: a field matches it itself, so it is listed in Settings but never reserved or run. */
 export type HostShortcut = NormalizedShortcut &
   Pick<HostShortcutDefinition, "whenKeyboard"> &
-  Readonly<{ local: boolean }>;
+  Readonly<{ local: boolean; forPlugins: boolean }>;
 export type Shortcuts = {
   register(shortcut: Shortcut): void;
   snapshot(): readonly RegisteredShortcut[];
   subscribe(listener: () => void): () => void;
-  /** Run one of Buzz's own shortcuts or actions by id, such as `new-dm`, if
-   * it can run now. True when it ran. The ids are in the authoring guide. */
+  /** Run one of Buzz's own commands by id, such as `new-dm`, if it can run
+   * now. True when it ran. Plugins reach only the ids in the authoring guide. */
   runHost(id: string): boolean;
 };
 /** A Buzz action plugins can run by id, with no key of its own. */
@@ -42,6 +45,8 @@ export type HostAction = Readonly<{
   title: string;
   run: () => void | Promise<void>;
   when?: () => boolean;
+  /** Plugins may run it with `runHost`, as for a host shortcut. */
+  forPlugins?: boolean;
 }>;
 /** Device-local user rebinds, keyed by host id or namespaced contribution key. */
 export type BindingOverrides = {
@@ -178,14 +183,15 @@ export class ShortcutsService extends Service implements Shortcuts {
     };
     // A non-keyboard request for a host shortcut, such as macOS mouse
     // back/forward: the chord's own eligibility, outside any editable.
-    this.runHost = (id: string) => {
+    this.runEligible = (id: string, byPlugin: boolean) => {
       const shortcut = this.hostBindings.get(id);
       const action = shortcut ? undefined : this.hostActions.get(id);
+      const entry = shortcut ?? action;
+      if (!entry || (byPlugin && !entry.forPlugins)) return false;
       const runnable = shortcut
         ? !shortcut.local && eligibleIn(shortcut, false, modalOpen())
         : !!action && whenHolds(action);
-      const entry = shortcut ?? action;
-      if (!entry || !runnable) return false;
+      if (!runnable) return false;
       runShortcut(entry);
       return true;
     };
@@ -204,7 +210,12 @@ export class ShortcutsService extends Service implements Shortcuts {
       };
     });
   }
-  readonly runHost: (id: string) => boolean;
+  private readonly runEligible: (id: string, byPlugin: boolean) => boolean;
+  /** Buzz runs any of its commands; a plugin, only those marked `forPlugins`.
+   * Running Buzz's commands was host-only before plugins needed a few. */
+  runHost(id: string) {
+    return this.runEligible(id, !!this.ctx.pluginOwner);
+  }
   snapshot = () => this.contributions.snapshot();
   subscribe = (listener: () => void) => this.contributions.subscribe(listener);
   register(shortcut: Shortcut) {
@@ -216,6 +227,7 @@ export class ShortcutsService extends Service implements Shortcuts {
       ...normalizeShortcut(shortcut),
       local,
       whenKeyboard: shortcut.whenKeyboard,
+      forPlugins: shortcut.forPlugins === true,
     });
     if (this.hostBindings.has(entry.id))
       throw new Error(`Host shortcut already registered: ${entry.id}`);

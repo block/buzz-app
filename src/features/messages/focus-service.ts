@@ -1,12 +1,12 @@
-import type { Context } from "@deepseek-ai/cordis";
+import { type Context, Service } from "@deepseek-ai/cordis";
 
 /** Where focus goes when a conversation or thread opens, for plugins. */
 export type Focus = Readonly<{
   /**
    * While held, opening a conversation or thread selects one of its messages
    * instead of focusing its message box: the row `pick` returns for the list,
-   * or the newest. Returns a release; call it when the plugin stops, for
-   * example from `ctx.effect`.
+   * or the newest. Buzz releases it when the plugin stops; the returned
+   * function releases it sooner.
    */
   preferMessagesOnOpen(
     pick?: (list: HTMLElement) => HTMLElement | undefined,
@@ -25,17 +25,20 @@ const newest: Pick = () => undefined;
 /** The latest holder's choice, or undefined when no plugin holds it. */
 export const messagesOnOpen = () => holders.at(-1)?.pick;
 
-export const focus: Focus = Object.freeze({
+export class FocusService extends Service implements Focus {
+  constructor(ctx: Context) {
+    super(ctx, "focus");
+  }
   preferMessagesOnOpen(pick: Pick = newest) {
     const holder = { pick };
-    holders.push(holder);
-    return () => {
-      const index = holders.indexOf(holder);
-      if (index >= 0) holders.splice(index, 1);
-    };
-  },
-});
-
-export function provideFocus(ctx: Context) {
-  ctx.provide("focus", focus);
+    // An effect on the caller's context, so a stopped plugin lets go.
+    const release = this.ctx.effect(() => {
+      holders.push(holder);
+      return () => {
+        const index = holders.indexOf(holder);
+        if (index >= 0) holders.splice(index, 1);
+      };
+    }, "focus.preferMessagesOnOpen");
+    return () => void release();
+  }
 }

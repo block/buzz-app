@@ -14,8 +14,8 @@ import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { mentionHistory } from "./mention-history";
-import { focus } from "./focus-service";
-import { messages } from "./messages-service";
+import { FocusService } from "./focus-service";
+import { MessagesService } from "./messages-service";
 import { registerMessageList } from "./message-selection";
 import {
   composerDOMFixture,
@@ -1128,6 +1128,7 @@ it("selects the newest message instead while a plugin prefers messages on open",
     '<div data-message-id="old"><div data-layout="timeline"></div></div>' +
     '<div data-message-id="new"><div data-layout="timeline"></div></div>';
   document.body.append(list);
+  const focus = new FocusService(new Context());
   const release = focus.preferMessagesOnOpen();
   try {
     const h = mount({ autoFocus: true, disabled: true });
@@ -1190,11 +1191,40 @@ it("selects the newest message instead while a plugin prefers messages on open",
   expect(h.input()).toHaveFocus();
 });
 
-it("gives plugins a handle on the message box that edits, undoes and shows a status", () => {
+it("gives plugins a message box handle, and undoes what a plugin set when it stops", async () => {
+  const root = new Context();
+  new MessagesService(root);
+  new FocusService(root);
+  let plugin: Context | undefined;
+  const runtime = new PluginRuntime(root, async () => ({
+    inject: ["messages", "focus"],
+    apply(ctx) {
+      plugin = ctx;
+    },
+  }));
+  onTestFinished(async () => {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  });
+  const info = {
+    manifest: { id: "example.keys", name: "Keys", apiVersion: 1 as const },
+    enabled: true,
+    source: "external" as const,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  };
+  runtime.reconcile([info]);
+  await vi.waitFor(() => expect(plugin).toBeDefined());
+  const messages = plugin?.messages;
+  if (!messages) throw new Error("Missing messages service");
+
   const h = mount();
   expect(messages.composerOf(document.body)).toBeUndefined();
   const box = messages.composerOf(h.input());
   if (!box) throw new Error("Missing message box handle");
+  expect(messages.composerOf(h.input())).toBe(box);
   expect(box.element).toBe(h.input());
   expect(box.undoDepth).toBe(0);
   act(() => {
@@ -1215,6 +1245,16 @@ it("gives plugins a handle on the message box that edits, undoes and shows a sta
   expect(screen.getByText("NORMAL")).toBeVisible();
   act(() => box.setStatus(undefined));
   expect(screen.queryByText("NORMAL")).toBeNull();
+
+  // Turning the plugin off clears its label and its opening-focus choice.
+  act(() => box.setStatus("NORMAL"));
+  plugin?.focus.preferMessagesOnOpen();
+  act(() => runtime.reconcile([]));
+  await vi.waitFor(() => expect(screen.queryByText("NORMAL")).toBeNull());
+  h.input().blur();
+  const next = mount({ autoFocus: true, disabled: true });
+  next.retarget({ disabled: false });
+  expect(next.input()).toHaveFocus();
 });
 
 it("cancels a deferred draft handoff when another control takes focus and disappears", () => {

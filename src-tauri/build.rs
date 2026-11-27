@@ -156,6 +156,7 @@ fn main() {
             "relay_git_authorization",
             "relay_agent_log_proof",
             "relay_agent_observer",
+            "relay_agent_control",
             "relay_archive",
             "relay_agent_memories_read",
             "relay_agent_library",

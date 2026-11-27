@@ -51,6 +51,7 @@ import {
   type RelayReader,
 } from "./reader";
 import { createAgentActivity } from "../agents/activity";
+import { createAgentControl } from "../agents/agent-control";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
 import {
@@ -3355,6 +3356,28 @@ export function createRelaySession(
     channelDetails: details.capability,
     memberAdministration: memberAdministration.capability,
     agentActivity: activity.queries,
+    /** Asks one of the viewer's agents on another device to stop a turn;
+     * only where the host signs control frames and the live socket sends. */
+    agentControl:
+      transport?.signAgentControl && transport.agentActivity
+        ? createAgentControl({
+            sign: transport.signAgentControl,
+            publish(event, signal) {
+              if (!traffic?.publish)
+                return Promise.reject(
+                  new Error("Agent control needs a live connection"),
+                );
+              return traffic.publish(event, signal);
+            },
+            activity: {
+              activate: activity.queries.activate,
+              listening: () =>
+                activity.queries.snapshot().status === "listening",
+              subscribe: (listener) => activity.queries.subscribe(listener),
+              controlResults: activity.queries.controlResults,
+            },
+          })
+        : undefined,
     agentMemories: memories.capability,
     archives: archives.queries,
     media: (url: string, size?: "small", channel?: string) =>

@@ -14,6 +14,7 @@ import {
   terminalOutcome,
   type ObserverFrame,
 } from "./observer";
+import { controlResult, type ControlResult } from "./agent-control";
 
 export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
@@ -168,6 +169,7 @@ export function createAgentActivity(
   const typing = new Map<string, Typing>();
   const listeners = new Set<() => void>();
   const workingListeners = new Set<() => void>();
+  const controlListeners = new Set<(result: ControlResult) => void>();
   const channelListeners = new Map<string, Set<() => void>>();
   let channels = new Map<string, Snapshot>();
   const projectedTurns = new WeakMap<Turn, ActivityTurn>();
@@ -574,6 +576,8 @@ export function createAgentActivity(
     }
     liveAgents.add(frame.agent);
     for (const item of items) fold(frame.agent, item);
+    const answer = controlResult(frame.agent, raw);
+    if (answer) for (const listener of controlListeners) listener(answer);
     const record = Object.freeze({
       id: frame.id,
       agent: frame.agent,
@@ -650,6 +654,16 @@ export function createAgentActivity(
         if (!local?.source.retry || closed || !canAccess(channelId))
           throw new Error("This request can't be retried here");
         local.source.retry({ scope: local.scope, agent, messageId });
+      },
+      /** Whether telemetry from `agent` reached this session since it last
+       * started listening. The relay sends an agent's telemetry only to its
+       * owner, so this proves the viewer owns it. */
+      reports: (agent: string) => liveAgents.has(agent),
+      /** Hears each `cancel_turn` answer an agent sends the viewer. */
+      controlResults(listener: (result: ControlResult) => void) {
+        if (closed) return () => {};
+        controlListeners.add(listener);
+        return () => controlListeners.delete(listener);
       },
       workingSnapshot: () => workingChannels,
       subscribeWorking(listener: () => void) {
@@ -853,6 +867,7 @@ export function createAgentActivity(
       restart();
       listeners.clear();
       workingListeners.clear();
+      controlListeners.clear();
       channelListeners.clear();
     },
   };

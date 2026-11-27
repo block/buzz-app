@@ -92,6 +92,7 @@
     "allow-relay-git-authorization",
     "allow-relay-agent-log-proof",
     "allow-relay-agent-observer",
+    "allow-relay-agent-control",
     "allow-relay-archive",
     "allow-relay-agent-memories-read",
     "allow-relay-agent-library",

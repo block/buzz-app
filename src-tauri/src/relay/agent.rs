@@ -1,7 +1,7 @@
 //! Purpose-bound agent operations. Never return key material or unscoped plaintext.
 use super::{origin, send, Result};
 use crate::federated_identity::FederatedIdentity;
-use crate::identity::IdentityHost;
+use crate::identity::{EventTemplate, IdentityHost};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use buzz_agent_controller::AppAgents;
 use hmac::{Hmac, Mac};
@@ -191,6 +191,95 @@ pub(crate) async fn relay_agent_observer(
     origin(&community)?;
     host.with_key(move |secret, viewer| decode_observer_with_key(secret, viewer, &event))
         .await
+}
+/// The only control frame the owner may send: stop an agent's turn in one
+/// conversation (NIP-AO `cancel_turn`). Unknown fields are refused.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub(crate) struct CancelTurn {
+    #[serde(rename = "type")]
+    kind: String,
+    channel_id: String,
+    thread_root_id: Option<String>,
+    request_id: String,
+}
+/// Signs a NIP-AO control frame asking one of the owner's agents to stop its
+/// turn: encrypted to the agent with the owner's key, for the session to send
+/// on the owner's connection. Purpose-bound: never a general encrypt-as-owner
+/// or kind 24200 signer. The relay delivers it only to an agent the signer owns.
+#[tauri::command]
+pub(crate) async fn relay_agent_control(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    agent: String,
+    payload: CancelTurn,
+) -> Result<Value> {
+    origin(&community)?;
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "Invalid clock")?
+        .as_secs();
+    let (template, viewer) = host
+        .with_key(move |secret, viewer| {
+            Ok((
+                control_template(secret, viewer, &agent, &payload, created_at)?,
+                viewer.to_string(),
+            ))
+        })
+        .await?;
+    let signed = host.sign(template).await?;
+    if signed["pubkey"].as_str() != Some(viewer.as_str()) {
+        return Err("Set up your identity first".into());
+    }
+    Ok(signed)
+}
+fn control_template(
+    secret: &[u8; 32],
+    viewer: &str,
+    agent: &str,
+    payload: &CancelTurn,
+    created_at: u64,
+) -> Result<EventTemplate> {
+    let channel = &payload.channel_id;
+    if !key(agent)
+        || agent == viewer
+        || payload.kind != "cancel_turn"
+        || channel.is_empty()
+        || channel.len() > 128
+        || !channel
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        || payload
+            .thread_root_id
+            .as_deref()
+            .is_some_and(|root| !key(root))
+        || payload.request_id.len() != 36
+        || uuid::Uuid::parse_str(&payload.request_id).is_err()
+    {
+        return Err("Invalid agent control".into());
+    }
+    let mut body = json!({
+        "type": "cancel_turn",
+        "channelId": channel,
+        "requestId": payload.request_id,
+    });
+    if let Some(root) = &payload.thread_root_id {
+        body["threadRootId"] = json!(root);
+    }
+    let secret = NostrSecretKey::from_slice(secret).map_err(|_| "Invalid identity")?;
+    let recipient = NostrPublicKey::from_hex(agent).map_err(|_| "Invalid agent control")?;
+    let content = nip44::encrypt(&secret, &recipient, body.to_string(), nip44::Version::V2)
+        .map_err(|_| "Invalid agent control")?;
+    Ok(EventTemplate {
+        created_at,
+        kind: 24200,
+        tags: vec![
+            vec!["p".into(), agent.into()],
+            vec!["agent".into(), agent.into()],
+            vec!["frame".into(), "control".into()],
+        ],
+        content,
+    })
 }
 fn decode_observer_with_key(secret: &[u8; 32], viewer: &str, event: &AgentEvent) -> Result<Value> {
     if event.kind != 24200 {
@@ -1238,6 +1327,85 @@ mod tests {
         let listing = read(&events);
         assert_eq!(listing["entries"][0]["body"], "again");
         assert!(listing.get("deleted").is_none());
+    }
+
+    #[test]
+    fn cancel_turn_control_frame() {
+        let (owner_secret, owner) = fixture();
+        let agent_secret = [2; 32];
+        let agent = signed_event(&agent_secret, 1, vec![], String::new()).pubkey;
+        let payload = |value: Value| serde_json::from_value::<CancelTurn>(value);
+        let request = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        let root = "a".repeat(64);
+        let stop = payload(json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": root, "requestId": request})).unwrap();
+        let frame = control_template(&owner_secret, &owner, &agent, &stop, 1_700_000_000).unwrap();
+        assert_eq!(frame.kind, 24200);
+        assert_eq!(
+            frame.tags,
+            vec![
+                vec!["p".to_string(), agent.clone()],
+                vec!["agent".to_string(), agent.clone()],
+                vec!["frame".to_string(), "control".to_string()],
+            ]
+        );
+        // Only the agent reads it, with the owner as the sender.
+        let text = nip44::decrypt(
+            &NostrSecretKey::from_slice(&agent_secret).unwrap(),
+            &NostrPublicKey::from_hex(&owner).unwrap(),
+            &frame.content,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap(),
+            json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": root, "requestId": request})
+        );
+        // A Solo chat or DM stops the whole conversation: no root.
+        let whole = payload(json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": null, "requestId": request})).unwrap();
+        let frame = control_template(&owner_secret, &owner, &agent, &whole, 1_700_000_000).unwrap();
+        let text = nip44::decrypt(
+            &NostrSecretKey::from_slice(&agent_secret).unwrap(),
+            &NostrPublicKey::from_hex(&owner).unwrap(),
+            &frame.content,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap(),
+            json!({"type": "cancel_turn", "channelId": "c-1", "requestId": request})
+        );
+        // Any other control, extra field or malformed target is refused.
+        assert!(payload(
+            json!({"type": "cancel_turn", "channelId": "c-1", "requestId": request, "model": "x"})
+        )
+        .is_err());
+        for (target, value) in [
+            (
+                agent.as_str(),
+                json!({"type": "switch_model", "channelId": "c-1", "requestId": request}),
+            ),
+            (
+                agent.as_str(),
+                json!({"type": "cancel_turn", "channelId": "c 1", "requestId": request}),
+            ),
+            (
+                agent.as_str(),
+                json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": "root", "requestId": request}),
+            ),
+            (
+                agent.as_str(),
+                json!({"type": "cancel_turn", "channelId": "c-1", "requestId": "1"}),
+            ),
+            (
+                owner.as_str(),
+                json!({"type": "cancel_turn", "channelId": "c-1", "requestId": request}),
+            ),
+            (
+                "agent",
+                json!({"type": "cancel_turn", "channelId": "c-1", "requestId": request}),
+            ),
+        ] {
+            let stop = payload(value).unwrap();
+            assert!(control_template(&owner_secret, &owner, target, &stop, 1_700_000_000).is_err());
+        }
     }
 
     #[test]

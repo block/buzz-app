@@ -109,6 +109,7 @@ use identity::{
     identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
     identity_sign_builderlab_binding, IdentityHost,
 };
+use relay::relay_agent_control;
 use relay::{
     file_download, media_copy_image, media_download, media_lift_subject, media_stream_base,
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
@@ -837,6 +838,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_agent_log_proof,
         relay_archive,
         relay_agent_observer,
+        relay_agent_control,
         relay_agent_memories_read,
         relay_agent_library,
         relay_upload_begin,

@@ -160,6 +160,7 @@ import {
   steps,
   viewer,
 } from "./service-testing";
+import { ControlUnanswered } from "./agent-control";
 import {
   mentionAdmission,
   pastedMentionRecipient,
@@ -16227,6 +16228,58 @@ it("refuses to stop a hosted agent whose provider cannot", async () => {
       threadRootId: "m1",
     }),
   ).rejects.toThrow("This agent can't be stopped here");
+});
+
+it("stops an agent on another of the owner's devices by asking that device", async () => {
+  const { service, session } = await setup({ listed: [record(sibling)] });
+  await vi.waitFor(() =>
+    expect(service.find(sibling)?.place).toBe("elsewhere"),
+  );
+  // A host that can't send control frames offers no Stop.
+  expect(service.interruptible(sibling)).toBe(false);
+  const cancelTurn = vi.fn(async (..._: unknown[]) => "sent");
+  Object.assign(session, { agentControl: { cancelTurn } });
+  expect(service.interruptible(sibling)).toBe(true);
+  const thread = { channelId: channel, threadRootId: "m1" };
+  await expect(service.interrupt(sibling, thread)).resolves.toBe(true);
+  expect(cancelTurn).toHaveBeenLastCalledWith(
+    sibling,
+    thread,
+    expect.any(AbortSignal),
+  );
+  // A DM is one conversation, so the request names no thread.
+  cancelTurn.mockResolvedValueOnce("no_active_turn");
+  await expect(
+    service.interrupt(sibling, { channelId: dm, threadRootId: "m1" }),
+  ).resolves.toBe(false);
+  expect(cancelTurn).toHaveBeenLastCalledWith(
+    sibling,
+    { channelId: dm },
+    expect.any(AbortSignal),
+  );
+  cancelTurn.mockResolvedValueOnce("ambiguous_target");
+  await expect(service.interrupt(sibling, thread)).rejects.toThrow(
+    "too old to stop one thread",
+  );
+  cancelTurn.mockRejectedValueOnce(new ControlUnanswered());
+  await expect(service.interrupt(sibling, thread)).rejects.toThrow(
+    "Far didn't respond. Its device may be offline or need an update.",
+  );
+});
+
+it("offers Stop for an unlisted agent only once its telemetry proves it the owner's", async () => {
+  const { service, session } = await setup();
+  const remote = "e".repeat(64);
+  const reports = vi.fn((agent: string) => agent === remote || agent === bot);
+  Object.assign(session, {
+    agentControl: { cancelTurn: vi.fn() },
+    agentActivity: { ...session.agentActivity, reports },
+  });
+  expect(service.interruptible(remote)).toBe(true);
+  expect(service.interruptible("f".repeat(64))).toBe(false);
+  // An agent here stops its own way, whatever telemetry says.
+  await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.interruptible(bot)).toBe(false);
 });
 
 it("keeps an unfinished hosted agent whose Delete agent storage could not save", async () => {

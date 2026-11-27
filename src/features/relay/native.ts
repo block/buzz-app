@@ -72,7 +72,7 @@ import {
   type MemoryListing,
 } from "../agents/memory";
 import type { AgentLibrary } from "../agents/library";
-import { observerFrame } from "../agents/observer";
+import { OBSERVER_KIND, observerFrame } from "../agents/observer";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import {
   acceptPublish,
@@ -768,6 +768,29 @@ export async function connectNativeTransport(
     },
 
     agentActivity: true,
+    async signAgentControl(agent, payload, signal) {
+      signal.throwIfAborted();
+      const event = eventDto(
+        await invoke("relay_agent_control", {
+          community: origin,
+          agent,
+          payload,
+        }),
+      );
+      signal.throwIfAborted();
+      if (
+        event.kind !== OBSERVER_KIND ||
+        event.pubkey !== transport.viewer ||
+        JSON.stringify(event.tags) !==
+          JSON.stringify([
+            ["p", agent],
+            ["agent", agent],
+            ["frame", "control"],
+          ])
+      )
+        throw new Error("Invalid agent control");
+      return event;
+    },
     subscribe(callbacks) {
       let active = true;
       let observerGeneration: number | null = null;

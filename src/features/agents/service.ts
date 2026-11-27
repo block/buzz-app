@@ -133,6 +133,7 @@ import {
   workflowMarked,
   type AgentReads,
 } from "./reads";
+import { type CancelTurnStatus, ControlUnanswered } from "./agent-control";
 import { AgentInbox } from "./inbox";
 import { createToolOperation, type AgentToolProvider } from "./tool-operation";
 import {
@@ -2171,7 +2172,11 @@ export type Agents = {
   /** Takes the agent out of its community, as Delete does, and keeps it in
    * its others. Refused for its last one, which only Delete leaves. */
   leave(agent: AgentKey): Promise<void>;
-  /** Whether the owner can stop a hosted agent's turns through its provider. */
+  /** Whether the owner can stop the agent's turns from here: a hosted
+   * agent's through its provider, or one on another of the owner's devices
+   * with a NIP-AO `cancel_turn`. That one must be proven the owner's: its
+   * telemetry reached this session, or the owner's agent list has it
+   * elsewhere. */
   interruptible(agent: AgentKey): boolean;
   /** A hosted agent's instructions, through its provider; undefined unless
    * the agent is hosted here and its provider offers them. Each call stops
@@ -2252,8 +2257,10 @@ export type Agents = {
     agent: AgentKey,
     place: SessionPlace,
   ): Promise<Readonly<Record<string, ConversationSection>> | undefined>;
-  /** Has a hosted agent's provider stop its turn in one conversation. False
-   * when nothing there was running. */
+  /** Stops the agent's turn in one conversation: through a hosted agent's
+   * provider, or by asking the device running it. True once the turn was
+   * told to stop, which may end a little later; false when nothing there was
+   * running. Rejects when the agent's device doesn't answer. */
   interrupt(
     agent: AgentKey,
     place: Readonly<{ channelId: string; threadRootId: string }>,
@@ -7175,8 +7182,32 @@ export class AgentsService extends Service implements Agents {
         entry.place === "hosted" &&
         !entry.unfinished,
     );
-    return !!this.types().find((entry) => entry.key === agent?.type)?.remote
-      ?.interrupt;
+    return (
+      !!this.types().find((entry) => entry.key === agent?.type)?.remote
+        ?.interrupt || !!this.remoteStop(pubkey)
+    );
+  }
+  /** Where the owner can ask the device running `pubkey` to stop it: a live
+   * session that sends control frames, in the community of its listing
+   * elsewhere, or one its telemetry reached. Never for an agent here or
+   * hosted, which stop their own way. */
+  private remoteStop(pubkey: string) {
+    const listed = this.state.agents.filter((entry) => entry.pubkey === pubkey);
+    if (listed.some((entry) => entry.place !== "elsewhere")) return undefined;
+    const viewer = this.communities.snapshot().viewer;
+    const usable = (binding: Binding | undefined) =>
+      binding?.session.agentControl && binding.viewer === viewer
+        ? binding
+        : undefined;
+    for (const entry of listed) {
+      const binding = usable(this.bindingOf(entry));
+      if (binding && entry.owner === viewer && !entry.unfinished)
+        return binding;
+    }
+    for (const { binding } of this.bound.values())
+      if (usable(binding)?.session.agentActivity.reports(pubkey))
+        return binding;
+    return undefined;
   }
   hostedInstructions(pubkey: AgentKey): HostedInstructions | undefined {
     const agent = this.state.agents.find(
@@ -7212,6 +7243,8 @@ export class AgentsService extends Service implements Agents {
     pubkey: AgentKey,
     place: Readonly<{ channelId: string; threadRootId: string }>,
   ) {
+    const elsewhere = this.remoteStop(pubkey);
+    if (elsewhere) return this.interruptElsewhere(pubkey, elsewhere, place);
     const { agent, remote, binding } = this.hosted(pubkey);
     if (!remote.interrupt) throw new Error("This agent can't be stopped here");
     return remote.interrupt({
@@ -7220,6 +7253,48 @@ export class AgentsService extends Service implements Agents {
       ...place,
       signal: binding.controller.signal,
     });
+  }
+
+  /** Asks the device running the owner's agent to stop its turn in `place`.
+   * A Solo chat or DM is one conversation, so it names no thread. */
+  private async interruptElsewhere(
+    pubkey: string,
+    binding: Binding,
+    place: Readonly<{ channelId: string; threadRootId: string }>,
+  ) {
+    const control = binding.session.agentControl;
+    if (!control) throw new Error("This agent can't be stopped here");
+    const { signal } = binding.controller;
+    const relay = this.bound.get(binding.origin)?.relay;
+    const reads = ownerReads(relay, pubkey);
+    const whole =
+      (await reads?.channel(place.channelId))?.dm ||
+      !!(await reads?.soloChat(binding.viewer, place.channelId, signal));
+    const name =
+      this.state.agents.find((entry) => entry.pubkey === pubkey)?.name ??
+      binding.session.profiles.snapshot().get(pubkey)?.name ??
+      "The agent";
+    let status: CancelTurnStatus;
+    try {
+      status = await control.cancelTurn(
+        pubkey,
+        whole
+          ? { channelId: place.channelId }
+          : { channelId: place.channelId, threadRootId: place.threadRootId },
+        signal,
+      );
+    } catch (error) {
+      if (error instanceof ControlUnanswered)
+        throw new Error(
+          `${name} didn't respond. Its device may be offline or need an update.`,
+        );
+      throw error;
+    }
+    if (status === "ambiguous_target")
+      throw new Error(
+        "Its device runs a version too old to stop one thread. Update it there.",
+      );
+    return status === "sent";
   }
 
   /** A hosted agent shown now, its provider, and its community's live session. */

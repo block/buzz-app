@@ -167,6 +167,27 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
             }
             delete process.env.BUZZ_DATABRICKS_HOST;
+            // A packaged Databricks AI Gateway model filter is trimmed;
+            // control characters fail the build without echoing the value.
+            for (const [command, filter, expected] of [
+              ['build', 'system.ai.*', 'system.ai.*'],
+              ['serve', ' system.ai.*, goose-* ', 'system.ai.*, goose-*'],
+              ['build', '', ''],
+              ['build', undefined, ''],
+            ]) {
+              if (filter === undefined) delete process.env.BUZZ_DATABRICKS_MODEL_FILTER;
+              else process.env.BUZZ_DATABRICKS_MODEL_FILTER = filter;
+              const result = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
+              assert.equal(result.define['import.meta.env.VITE_BUZZ_DATABRICKS_MODEL_FILTER'], JSON.stringify(expected));
+            }
+            for (const invalid of ['system.ai.*\\nsecret', 'system.ai.*\\x07secret']) {
+              process.env.BUZZ_DATABRICKS_MODEL_FILTER = invalid;
+              await assert.rejects(
+                configure({ command: 'build', mode: 'production' }),
+                error => !String(error).includes('secret') && /BUZZ_DATABRICKS_MODEL_FILTER/.test(String(error)),
+              );
+            }
+            delete process.env.BUZZ_DATABRICKS_MODEL_FILTER;
             // The gateway descriptor is read from the process only (never
             // .env files), compiled canonically, and off when unset.
             const descriptor = (communities, gateway = 'https://gateway.example') => ({

@@ -26,7 +26,14 @@ import { activeRoute, routeLabel } from "../../features/agents/model-routes";
 import { REQUEST_TIMEOUT_MS } from "./goose";
 import { gooseRun } from "./run";
 import { readModelSettings } from "../../features/agents/model-settings";
-import { explainTurn, GooseSetup, readNoProxy, REVIEW_REFUSED } from "./setup";
+import { formatModelChoices } from "../../features/agents/formatModelDisplayName";
+import {
+  DATABRICKS_LABEL_PREFIXES,
+  explainTurn,
+  GooseSetup,
+  readNoProxy,
+  REVIEW_REFUSED,
+} from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 import { readUsage } from "./usage";
@@ -100,7 +107,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
               provider.configured && !REVIEW_REFUSED.has(provider.id),
           )
           .map(async (provider) =>
-            (await review.models(provider.id)).map((model) => ({
+            formatModelChoices(
+              await review.models(provider.id),
+              provider.id.startsWith("databricks")
+                ? DATABRICKS_LABEL_PREFIXES
+                : undefined,
+            ).map((model) => ({
               provider: provider.id,
               id: model.id,
               label: `${provider.name} · ${model.label}`,

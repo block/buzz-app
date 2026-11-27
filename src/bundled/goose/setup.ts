@@ -3,6 +3,7 @@
 // call runs a short-lived `goose-acp`; keys go to goose's secret store, never
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
+import { formatModelChoices } from "../../features/agents/formatModelDisplayName";
 import { withProviderWords } from "../../features/agents/failure-words";
 import { routeOf } from "../../features/agents/model-routes";
 import type {
@@ -94,21 +95,29 @@ type Entry = {
   models?: { id: string; recommended?: boolean }[];
 };
 
+/** Prefixes stripped when formatting Databricks model labels for display. */
+export const DATABRICKS_LABEL_PREFIXES: readonly string[] = [
+  "databricks-",
+  "goose-",
+];
+
 /** A special case for the goose plugin's Databricks provider: goose's catalog
  * keeps one endpoint per model name, which can be another team's
  * (`auto-labeler-…-gpt-6-luna` for GPT-6 Luna). Offer the provider's own list,
  * only the workspace's endpoints and goose's own. */
 const PREFIXES: Readonly<Record<string, readonly string[]>> = {
-  databricks: ["databricks-", "goose-"],
+  databricks: DATABRICKS_LABEL_PREFIXES,
 };
 
 const MODEL_FILTER = "DATABRICKS_MODEL_FILTER";
 
 /** Which Databricks models are listed, from goose's `DATABRICKS_MODEL_FILTER`
- * (its environment, else its config): comma-separated patterns, each matched
- * against a whole model ID, case-sensitively, with `*` for any characters and
- * `?` for one. A model matching any pattern is listed; without patterns every
- * model is. It only hides models: Databricks still decides access. */
+ * (its environment, else its config), or a build's `BUZZ_DATABRICKS_MODEL_FILTER`
+ * default for `databricks_v2` when goose's filter is unset: comma-separated
+ * patterns, each matched against a whole model ID, case-sensitively, with `*`
+ * for any characters and `?` for one. A model matching any pattern is listed;
+ * without patterns every model is. It only hides models from pickers:
+ * Databricks still decides access, and `offers()` checks the unfiltered list. */
 export function modelFilter(value: unknown): (id: string) => boolean {
   const patterns = String(value ?? "")
     .split(",")
@@ -142,10 +151,17 @@ const refused = (provider = "") =>
 const TEST_PROMPT = "Reply with exactly: OK";
 const TEST_TIMEOUT_MS = 60_000;
 
+type SupportedModels = Readonly<{
+  /** Every model the provider currently serves (unfiltered). */
+  all: readonly ModelChoice[];
+  /** Models kept after `DATABRICKS_MODEL_FILTER` / build default filtering. */
+  listed: readonly ModelChoice[];
+}>;
+
 export class GooseSetup {
   private listing: Promise<Providers> | undefined;
   private current: Promise<string | undefined> | undefined;
-  private readonly live = new Map<string, Promise<readonly ModelChoice[]>>();
+  private readonly live = new Map<string, Promise<SupportedModels>>();
   private readonly thinking = new Map<string, Promise<Efforts>>();
 
   private state: AgentProviderSnapshot = { readiness: "checking" };
@@ -292,22 +308,26 @@ export class GooseSetup {
       offered.some((model) => model.id === current)
         ? offered
         : [{ id: current, label: current }, ...offered];
+    const formatted = formatModelChoices(
+      named,
+      id?.startsWith("databricks") ? DATABRICKS_LABEL_PREFIXES : undefined,
+    );
     // Without levels a model offers no slider, so a failed read costs only it.
     const levels = ready
       ? await Promise.all(
           this.levels(
             provider,
-            named.map((model) => model.id),
+            formatted.map((model) => model.id),
           ).map((read) => read.catch(() => undefined)),
         )
       : [];
-    const models = named.map(({ id, label }, index) => {
+    const models = formatted.map(({ id: modelId, label }, index) => {
       const offers = levels[index] ?? { current: "", levels: [] };
       const resting = [choice.effort ?? "", offers.current].find(
         (level) => level && offers.levels.includes(level),
       );
       return {
-        id,
+        id: modelId,
         label,
         efforts: offers.levels.map((level) => ({
           id: level,
@@ -426,9 +446,9 @@ export class GooseSetup {
     })();
   }
 
-  /** Whether `provider` is set up here, lists `model` in its live list, as
-   * the model picker reads it, and offers `effort` on it, which goose would
-   * otherwise refuse each turn. */
+  /** Whether `provider` is set up here, serves `model` (even when a picker
+   * filter hides it from `models()`), and offers `effort` on it, which goose
+   * would otherwise refuse each turn. */
   async offers({
     provider = "",
     model,
@@ -439,7 +459,9 @@ export class GooseSetup {
     );
     return (
       !!listed?.configured &&
-      (await this.models(provider)).some((item) => item.id === model) &&
+      (await this.models(provider, { filter: false })).some(
+        (item) => item.id === model,
+      ) &&
       (await this.efforts({ provider, model })).levels.includes(effort)
     );
   }
@@ -447,7 +469,10 @@ export class GooseSetup {
   /** Databricks catalogs can lag its endpoints and AI Gateway services;
    * configured providers use live discovery for both Databricks versions.
    * A provider not set up offers none: its catalog's would not run. */
-  async models(id: string): Promise<readonly ModelChoice[]> {
+  async models(
+    id: string,
+    { filter = true }: Readonly<{ filter?: boolean }> = {},
+  ): Promise<readonly ModelChoice[]> {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
     );
@@ -456,7 +481,7 @@ export class GooseSetup {
     const models =
       listed?.configured &&
       (prefixes || id === "databricks_v2" || !listed.models.length)
-        ? await this.supported(id)
+        ? (await this.supported(id))[filter ? "listed" : "all"]
         : (listed?.models ?? []);
     return prefixes
       ? models.filter((model) =>
@@ -465,7 +490,7 @@ export class GooseSetup {
       : models;
   }
 
-  private supported(id: string): Promise<readonly ModelChoice[]> {
+  private supported(id: string): Promise<SupportedModels> {
     let models = this.live.get(id);
     if (!models) {
       models = this.with(async (goose) => {
@@ -486,10 +511,22 @@ export class GooseSetup {
               )
             : undefined,
         ])) as [{ models: string[] }, { value?: unknown } | undefined];
-        const listed = modelFilter(filter?.value);
-        return models
-          .filter(listed)
-          .map((model) => ({ id: model, label: model }));
+        const configuredFilter = filter?.value;
+        // Build-time default applies only to Databricks AI Gateway (databricks_v2)
+        // when goose's own DATABRICKS_MODEL_FILTER is unset; an explicit value
+        // (including "" or "*") wins.
+        const defaultFilter =
+          id === "databricks_v2"
+            ? import.meta.env.VITE_BUZZ_DATABRICKS_MODEL_FILTER
+            : undefined;
+        const listed = modelFilter(
+          configuredFilter != null ? configuredFilter : defaultFilter,
+        );
+        const all = models.map((model) => ({ id: model, label: model }));
+        return {
+          all,
+          listed: all.filter((model) => listed(model.id)),
+        };
       });
       models.catch(() => this.live.delete(id));
       this.live.set(id, models);

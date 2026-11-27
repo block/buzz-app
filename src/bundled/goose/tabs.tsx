@@ -75,6 +75,7 @@ import {
 import {
   type GooseSetup,
   keyLabel,
+  DATABRICKS_LABEL_PREFIXES,
   type Provider,
   type Providers,
   type Tested,
@@ -312,7 +313,7 @@ export function createTabs({
             }
             modelLabelPrefixes={
               id.startsWith("databricks")
-                ? ["databricks-", "goose-"]
+                ? DATABRICKS_LABEL_PREFIXES
                 : undefined
             }
             defaultLabel="Provider default"
@@ -578,7 +579,7 @@ export function createTabs({
             groupByFamily
             modelLabelPrefixes={
               id.startsWith("databricks")
-                ? ["databricks-", "goose-"]
+                ? DATABRICKS_LABEL_PREFIXES
                 : undefined
             }
             label="Model"
@@ -1346,7 +1347,7 @@ export function createTabs({
             }
             modelLabelPrefixes={
               provider.startsWith("databricks")
-                ? ["databricks-", "goose-"]
+                ? DATABRICKS_LABEL_PREFIXES
                 : undefined
             }
             disabled={disabled}

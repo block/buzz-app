@@ -4726,15 +4726,35 @@ it.each([
   [
     "Read guide",
     'Read <img src="https://example.com/image.png"><img alt=""> <a href="https://example.com">guide</a>',
-    "Read  [guide](https://example.com/)",
+    "Read [guide](https://example.com/)",
   ],
   [
     "Read <img src=x onerror=alert(1)> guide",
     'Read <img alt="&lt;img src=x onerror=alert(1)&gt;"> <a href="https://example.com">guide</a>',
     "Read <img src=x onerror=alert(1)> [guide](https://example.com/)",
   ],
+  [
+    "Ship 🚀 guide",
+    'Ship <img alt="different"> <a href="https://example.com">guide</a>',
+    "Ship 🚀 [guide](https://example.com/)",
+  ],
+  [
+    "Read guide",
+    'Read <img alt="extra"> <a href="https://example.com">guide</a>',
+    "Read [guide](https://example.com/)",
+  ],
+  [
+    "guide",
+    '<span hidden>hidden</span><a href="https://example.com">guide</a>',
+    "[guide](https://example.com/) ",
+  ],
+  [
+    "guide",
+    '<noscript>hidden</noscript><a href="https://example.com">guide</a>',
+    "[guide](https://example.com/) ",
+  ],
 ])(
-  "preserves image alt text and safe external links: %s",
+  "preserves plain text and safe external links across image alt and hidden HTML: %s",
   (plain, html, expected) => {
     const h = mount();
     paste(h.input, plain, html);
@@ -4748,41 +4768,176 @@ it.each([
 it.each([
   [
     "Ship 🚀 guide",
-    'Ship <img alt="different"> <a href="https://example.com">guide</a>',
-  ],
-  [
-    "Read guide",
-    'Read <img alt="extra"> <a href="https://example.com">guide</a>',
-  ],
-  [
-    "Ship 🚀 guide",
     'Ship <img alt="🚀" onerror="alert(1)"> <a href="javascript:alert(1)">guide</a>',
   ],
   [
-    "guide",
-    '<span hidden>hidden</span><a href="https://example.com">guide</a>',
+    "Read guide",
+    'Read <span hidden><a href="https://evil.example">guide</a></span>guide',
   ],
   [
-    "guide",
-    '<noscript>hidden</noscript><a href="https://example.com">guide</a>',
+    "Read guide",
+    'Read <noscript><a href="https://evil.example">guide</a></noscript>guide',
   ],
-])("keeps plain clipboard text authoritative: %s", (plain, html) => {
-  const h = mount();
-  paste(h.input, plain, html);
-  expect(h.markdown()).toBe(plain);
-});
+  [
+    "Read guide",
+    'Read <span style="display: none"><a href="https://evil.example">guide</a></span>guide',
+  ],
+  [
+    "Send $100 to Alice today",
+    '<p>Completely different message mentioning <a href="https://evil.example">Alice</a> here</p>',
+  ],
+  ["Click Alice", 'Pay <a href="https://evil.example">Alice</a>'],
+])(
+  "refuses unsafe, hidden or mismatched external HTML links: %s",
+  (plain, html) => {
+    const h = mount();
+    paste(h.input, plain, html);
+    expect(h.markdown()).toBe(plain);
+  },
+);
 
-it("accepts matching normalized whitespace and HTML without a plain flavor", () => {
+it("preserves plain whitespace when matching external HTML and handles HTML without a plain flavor", () => {
   const h = mount();
   paste(
     h.input,
     "Read   guide",
     '<p>Read <a href="https://example.com">guide</a></p>',
   );
-  expect(h.markdown()).toBe("Read [guide](https://example.com/)");
+  expect(h.markdown()).toBe("Read   [guide](https://example.com/)");
   const htmlOnly = mount();
   paste(htmlOnly.input, "", '<a href="https://example.com">guide</a>');
   expect(htmlOnly.markdown()).toBe("[guide](https://example.com/) ");
+});
+
+it("preserves multi-line links pasted from Slack with timestamps, emoji and paragraph breaks", () => {
+  const h = mount("", { links: true });
+  const plain = [
+    "[2:43 PM]:robot_face: Current open PRs, all drafts.",
+    "",
+    "2 PRs are below 500 lines.",
+    "example-service",
+    "",
+    "PR #296 - Accept proxying dependencies. +62 / -14",
+    "PR #322 - Prepare cached cohorts. +370 / -5",
+    "PR #323 - Handle patch conflicts. +479 / -0",
+  ].join("\n");
+  const html = [
+    "<meta charset='utf-8'>",
+    '<div class="c-message_kit__gutter">',
+    '<div class="c-message_kit__gutter__left"><a href="https://example.slack.com/archives/C1/p1"><span class="c-timestamp__label">2:43 PM</span></a></div>',
+    '<div class="c-message_kit__gutter__right">',
+    '<div class="p-rich_text_section">',
+    '<span class="c-emoji"><img alt="🤖" data-stringify-type="emoji" data-stringify-emoji=":robot_face:" src="https://example.com/emoji.png"></span>',
+    " Current open PRs, all drafts.",
+    '<span class="c-mrkdwn__br" data-stringify-type="paragraph-break"></span>',
+    "2 PRs are below 500 lines.<br>",
+    "<b>example-service</b>",
+    "</div>",
+    '<ul class="p-rich_text_list" data-stringify-type="unordered-list">',
+    '<li><a href="https://github.com/org/repo/pull/296" target="_blank" rel="noopener noreferrer">PR #296</a> - Accept proxying dependencies. +62 / -14</li>',
+    '<li><a href="https://github.com/org/repo/pull/322" target="_blank" rel="noopener noreferrer">PR #322</a> - Prepare cached cohorts. +370 / -5</li>',
+    '<li><a href="https://github.com/org/repo/pull/323" target="_blank" rel="noopener noreferrer">PR #323</a> - Handle patch conflicts. +479 / -0</li>',
+    "</ul>",
+    "</div></div>",
+  ].join("");
+  paste(h.input, plain, html);
+  expect(h.markdown()).toBe(
+    [
+      "[[2:43 PM](https://example.slack.com/archives/C1/p1)]:robot_face: Current open PRs, all drafts.",
+      "",
+      "2 PRs are below 500 lines.",
+      "example-service",
+      "",
+      "[PR #296](https://github.com/org/repo/pull/296) - Accept proxying dependencies. +62 / -14",
+      "[PR #322](https://github.com/org/repo/pull/322) - Prepare cached cohorts. +370 / -5",
+      "[PR #323](https://github.com/org/repo/pull/323) - Handle patch conflicts. +479 / -0",
+    ].join("\n"),
+  );
+  expect(scanMarkdown(h.markdown()).links.map((link) => link.url)).toEqual([
+    "https://example.slack.com/archives/C1/p1",
+    "https://github.com/org/repo/pull/296",
+    "https://github.com/org/repo/pull/322",
+    "https://github.com/org/repo/pull/323",
+  ]);
+});
+
+it("preserves links pasted from Codex across lists, code-block chrome, icons and repeated labels", () => {
+  const h = mount("", { links: true });
+  const plain = [
+    "Run tests:",
+    "```bash",
+    "pnpm test",
+    "```",
+    "Copy the output and review the guide before opening the guide:",
+    "- View diff (PR #296) in `src/parser.ts`",
+    "- View diff (PR #322) — already linked [PR #322](https://github.com/org/repo/pull/322)",
+  ].join("\n");
+  const html = [
+    "<meta charset='utf-8'>",
+    "<p>Run tests:</p>",
+    '<div><div><span>bash</span><button type="button">Copy</button></div><pre><code>pnpm test</code></pre></div>',
+    '<p>Copy the output and review the guide before opening <a href="https://example.com/guide">the guide<svg><title>External link</title><path d="M0 0"/></svg></a>:</p>',
+    "<ul>",
+    '<li><p><a href="https://github.com/org/repo/pull/296/files">View diff</a> (<a href="https://github.com/org/repo/pull/296">PR #296</a>) in <a href="https://github.com/org/repo/blob/main/src/parser.ts"><code>src/parser.ts</code></a></p></li>',
+    '<li><p><a href="https://github.com/org/repo/pull/322/files">View diff</a> (<a href="https://github.com/org/repo/pull/322">PR #322</a>) — already linked <a href="https://github.com/org/repo/pull/322">PR #322</a></p></li>',
+    "</ul>",
+  ].join("");
+  paste(h.input, plain, html);
+  expect(h.markdown()).toBe(
+    [
+      "Run tests:",
+      "```bash",
+      "pnpm test",
+      "```",
+      "Copy the output and review the guide before opening [the guide](https://example.com/guide):",
+      "- [View diff](https://github.com/org/repo/pull/296/files) ([PR #296](https://github.com/org/repo/pull/296)) in [`src/parser.ts`](https://github.com/org/repo/blob/main/src/parser.ts)",
+      "- [View diff](https://github.com/org/repo/pull/322/files) ([PR #322](https://github.com/org/repo/pull/322)) — already linked [PR #322](https://github.com/org/repo/pull/322)",
+    ].join("\n"),
+  );
+  expect(scanMarkdown(h.markdown()).links.map((link) => link.url)).toEqual([
+    "https://example.com/guide",
+    "https://github.com/org/repo/pull/296/files",
+    "https://github.com/org/repo/pull/296",
+    "https://github.com/org/repo/blob/main/src/parser.ts",
+    "https://github.com/org/repo/pull/322/files",
+    "https://github.com/org/repo/pull/322",
+    "https://github.com/org/repo/pull/322",
+  ]);
+});
+
+it("preserves links in ordered and indented lists without altering fenced code blocks", () => {
+  const h = mount("", { links: true });
+  const plain = [
+    "1. PR #1 - first",
+    "2. PR #2 - second",
+    "",
+    "    PR #3 - indented item",
+    "",
+    "```",
+    "PR #4",
+    "```",
+  ].join("\n");
+  const html = [
+    "<ol>",
+    '<li><a href="https://github.com/org/repo/pull/1">PR #1</a> - first</li>',
+    '<li><a href="https://github.com/org/repo/pull/2">PR #2</a> - second</li>',
+    "</ol>",
+    '<div><a href="https://github.com/org/repo/pull/3">PR #3</a> - indented item</div>',
+    '<pre><code><a href="https://github.com/org/repo/pull/4">PR #4</a></code></pre>',
+  ].join("");
+  paste(h.input, plain, html);
+  expect(h.markdown()).toBe(
+    [
+      "1. [PR #1](https://github.com/org/repo/pull/1) - first",
+      "2. [PR #2](https://github.com/org/repo/pull/2) - second",
+      "",
+      "    [PR #3](https://github.com/org/repo/pull/3) - indented item",
+      "",
+      "```",
+      "PR #4",
+      "```",
+    ].join("\n"),
+  );
 });
 
 it.each([

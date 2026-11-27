@@ -15,7 +15,7 @@ import {
   composerMarkdown,
   type ComposerMarkdownMode,
 } from "./composer-markdown";
-import { messageLinkParts } from "./message-link-parts";
+import { bareHostParts, messageLinkParts } from "./message-link-parts";
 import { documentEditorDraft } from "./document-editor-markdown";
 import {
   copyDocument,
@@ -286,6 +286,291 @@ export function pastedFiles(data: DataTransfer | null): File[] {
     : files;
 }
 
+const hiddenStylePattern =
+  /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i;
+const blockElementTag =
+  /^(DIV|P|LI|OL|UL|SECTION|ARTICLE|HEADER|FOOTER|MAIN|ASIDE|NAV|TABLE|THEAD|TBODY|TFOOT|TR|TD|TH|BLOCKQUOTE|PRE|H[1-6]|BR|DT|DD|DL|FIGCAPTION)$/;
+const tokenPattern = /[\p{L}\p{N}_]+|[^\s\u200b\ufeff]/gu;
+const wordPattern = /^[\p{L}\p{N}_]+$/u;
+
+type TextToken = {
+  value: string;
+  word: boolean;
+  start: number;
+  end: number;
+};
+
+type HtmlToken = {
+  value: string;
+  word: boolean;
+  linkIndex: number;
+};
+
+type ExtractedLink = {
+  href: string;
+  rawHref: string;
+  tokenCount: number;
+};
+
+type TextRange = { start: number; end: number };
+
+function tokenize(text: string): TextToken[] {
+  const tokens: TextToken[] = [];
+  for (const match of text.matchAll(tokenPattern)) {
+    const value = match[0];
+    const start = match.index ?? 0;
+    tokens.push({
+      value,
+      word: wordPattern.test(value),
+      start,
+      end: start + value.length,
+    });
+  }
+  return tokens;
+}
+
+/** Longest increasing subsequence of `[htmlIndex, plainIndex]` pairs by `plainIndex`. */
+function increasingAnchors(
+  pairs: readonly [number, number][],
+): Array<[number, number]> {
+  if (pairs.length <= 1) return [...pairs];
+  const tails: number[] = [];
+  const prev = new Int32Array(pairs.length).fill(-1);
+  for (let i = 0; i < pairs.length; i++) {
+    const pair = pairs[i];
+    if (!pair) continue;
+    const target = pair[1];
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const tailIndex = tails[mid];
+      const tailPair = tailIndex !== undefined ? pairs[tailIndex] : undefined;
+      if (tailPair && tailPair[1] < target) lo = mid + 1;
+      else hi = mid;
+    }
+    const previousTail = lo > 0 ? tails[lo - 1] : undefined;
+    if (previousTail !== undefined) prev[i] = previousTail;
+    tails[lo] = i;
+  }
+  const result: Array<[number, number]> = [];
+  let idx = tails[tails.length - 1] ?? -1;
+  while (idx >= 0) {
+    const pair = pairs[idx];
+    if (pair) result.push(pair);
+    idx = prev[idx] ?? -1;
+  }
+  return result.reverse();
+}
+
+/** Align `htmlTokens` to `plainTokens` in monotonic order using Patience-style
+ * unique-token anchors with exact LCS DP on small unresolved gaps. */
+function alignTokens(
+  htmlTokens: readonly HtmlToken[],
+  plainTokens: readonly TextToken[],
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  const alignRange = (
+    hStart: number,
+    hEnd: number,
+    pStart: number,
+    pEnd: number,
+  ) => {
+    while (
+      hStart < hEnd &&
+      pStart < pEnd &&
+      htmlTokens[hStart]?.value === plainTokens[pStart]?.value
+    ) {
+      out.push([hStart, pStart]);
+      hStart++;
+      pStart++;
+    }
+    const suffix: Array<[number, number]> = [];
+    while (
+      hStart < hEnd &&
+      pStart < pEnd &&
+      htmlTokens[hEnd - 1]?.value === plainTokens[pEnd - 1]?.value
+    ) {
+      suffix.push([hEnd - 1, pEnd - 1]);
+      hEnd--;
+      pEnd--;
+    }
+    if (hStart < hEnd && pStart < pEnd) {
+      const htmlUnique = new Map<string, number>();
+      for (let i = hStart; i < hEnd; i++) {
+        const token = htmlTokens[i];
+        if (!token) continue;
+        htmlUnique.set(token.value, htmlUnique.has(token.value) ? -1 : i);
+      }
+      const plainUnique = new Map<string, number>();
+      for (let j = pStart; j < pEnd; j++) {
+        const token = plainTokens[j];
+        if (!token) continue;
+        plainUnique.set(token.value, plainUnique.has(token.value) ? -1 : j);
+      }
+      const uniquePairs: Array<[number, number]> = [];
+      for (let i = hStart; i < hEnd; i++) {
+        const token = htmlTokens[i];
+        if (!token || htmlUnique.get(token.value) !== i) continue;
+        const pj = plainUnique.get(token.value);
+        if (pj !== undefined && pj >= 0) uniquePairs.push([i, pj]);
+      }
+      const anchors = increasingAnchors(uniquePairs);
+      if (anchors.length) {
+        let curH = hStart;
+        let curP = pStart;
+        for (const [ah, ap] of anchors) {
+          alignRange(curH, ah, curP, ap);
+          out.push([ah, ap]);
+          curH = ah + 1;
+          curP = ap + 1;
+        }
+        alignRange(curH, hEnd, curP, pEnd);
+      } else {
+        const hLen = hEnd - hStart;
+        const pLen = pEnd - pStart;
+        if (hLen * pLen <= 10_000) {
+          const stride = pLen + 1;
+          const dp = new Int32Array((hLen + 1) * stride);
+          for (let i = hLen - 1; i >= 0; i--) {
+            const hVal = htmlTokens[hStart + i]?.value;
+            const row = i * stride;
+            const nextRow = (i + 1) * stride;
+            for (let j = pLen - 1; j >= 0; j--) {
+              dp[row + j] =
+                hVal !== undefined && hVal === plainTokens[pStart + j]?.value
+                  ? (dp[nextRow + j + 1] ?? 0) + 1
+                  : Math.max(dp[nextRow + j] ?? 0, dp[row + j + 1] ?? 0);
+            }
+          }
+          let i = 0;
+          let j = 0;
+          while (i < hLen && j < pLen) {
+            if (
+              htmlTokens[hStart + i]?.value === plainTokens[pStart + j]?.value
+            ) {
+              out.push([hStart + i, pStart + j]);
+              i++;
+              j++;
+            } else if (
+              (dp[(i + 1) * stride + j] ?? 0) >= (dp[i * stride + j + 1] ?? 0)
+            ) {
+              i++;
+            } else {
+              j++;
+            }
+          }
+        } else {
+          // Bounded fallback for pathological repetitive inputs.
+          let j = pStart;
+          for (let i = hStart; i < hEnd && j < pEnd; i++) {
+            const hVal = htmlTokens[i]?.value;
+            const limit = Math.min(pEnd, j + 32);
+            for (let k = j; k < limit; k++) {
+              if (hVal !== undefined && plainTokens[k]?.value === hVal) {
+                out.push([i, k]);
+                j = k + 1;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = suffix.length - 1; i >= 0; i--) {
+      const pair = suffix[i];
+      if (pair) out.push(pair);
+    }
+  };
+  alignRange(0, htmlTokens.length, 0, plainTokens.length);
+  return out;
+}
+
+function markdownRanges(plain: string): {
+  blocked: TextRange[];
+  inlineCodes: TextRange[];
+} {
+  const blocked: TextRange[] = [];
+  const inlineCodes: TextRange[] = [];
+  const { tree } = scanMarkdown(plain);
+  const pending = [tree];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!node) continue;
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start !== undefined && end !== undefined) {
+      if (
+        (node.type === "code" &&
+          /^ {0,3}(`{3,}|~{3,})/.test(plain.slice(start, end))) ||
+        node.type === "link" ||
+        node.type === "linkReference" ||
+        node.type === "image" ||
+        node.type === "imageReference"
+      ) {
+        blocked.push({ start, end });
+        continue;
+      }
+      if (node.type === "inlineCode") {
+        inlineCodes.push({ start, end });
+        continue;
+      }
+    }
+    for (const child of node.children ?? []) pending.push(child);
+  }
+  return { blocked, inlineCodes };
+}
+
+function overlaps(
+  ranges: readonly TextRange[],
+  start: number,
+  end: number,
+): boolean {
+  return ranges.some((range) => start < range.end && end > range.start);
+}
+
+function isEntireInlineCodeContent(
+  plain: string,
+  codeStart: number,
+  codeEnd: number,
+  start: number,
+  end: number,
+): boolean {
+  if (!(codeStart < start && end < codeEnd)) return false;
+  return (
+    /^`+\s*$/.test(plain.slice(codeStart, start)) &&
+    /^\s*`+$/.test(plain.slice(end, codeEnd))
+  );
+}
+
+function isBareLinkLabel(
+  label: string,
+  href: string,
+  rawHref: string,
+): boolean {
+  if (label === href || label === rawHref) return true;
+  const bare = bareHostParts(label);
+  return (
+    bare.length === 3 &&
+    bare[1]?.text === label &&
+    safeLinkUrl(bare[1].url ?? "") === href
+  );
+}
+
+function formatExternalMarkdownLink(
+  label: string,
+  href: string,
+  rawCode: boolean,
+): string {
+  const escapedLabel = rawCode
+    ? label
+    : label.replace(/[\\`[\]*_~<>&|]/g, "\\$&");
+  const escapedHref = href
+    .replace(/\\|&(?=#?\w+;)/g, "\\$&")
+    .replace(/[()]/g, (character) => (character === "(" ? "%28" : "%29"));
+  return `[${escapedLabel}](${escapedHref})`;
+}
+
 /** External HTML contributes web links, never Buzz identity metadata or styling. */
 export function externalLinkMarkdown(
   html: string,
@@ -293,27 +578,52 @@ export function externalLinkMarkdown(
 ): string | undefined {
   if (!html) return;
   const body = new DOMParser().parseFromString(html, "text/html").body;
-  // Rules and checkboxes would copy as Markdown source; they are styling here.
+  // Remove non-content, hidden, and styling-only elements before reading links
+  // or text so hidden/scripted markup can never inject text or hijack a link.
   for (const node of body.querySelectorAll(
-    "script, style, template, iframe, object, hr, input",
+    "script, style, template, iframe, object, noscript, svg, hr, input, button, [hidden]",
   ))
     node.remove();
-  // Browser text/plain can include an inline image's alt text. Preserve it as
-  // literal text before stripping attributes, including inside link labels.
-  for (const image of body.querySelectorAll("img"))
-    image.replaceWith(
-      body.ownerDocument.createTextNode(image.getAttribute("alt") ?? ""),
-    );
+  for (const element of [...body.querySelectorAll("[style]")]) {
+    if (hiddenStylePattern.test(element.getAttribute("style") ?? ""))
+      element.remove();
+  }
+  // Slack uses empty paragraph-break spans instead of <br> or block tags.
+  for (const br of body.querySelectorAll(
+    '[data-stringify-type="paragraph-break"]',
+  )) {
+    if (!br.textContent)
+      br.replaceWith(body.ownerDocument.createTextNode("\n"));
+  }
+  // Browser text/plain can include an inline image's alt text or Slack emoji
+  // shortcodes. Preserve them as literal text before stripping attributes.
+  for (const image of body.querySelectorAll("img")) {
+    const alt = image.getAttribute("alt") ?? "";
+    const emoji = image.getAttribute("data-stringify-emoji") ?? "";
+    const replacement =
+      emoji && plain && !plain.includes(alt) && plain.includes(emoji)
+        ? emoji
+        : alt || emoji;
+    image.replaceWith(body.ownerDocument.createTextNode(replacement));
+  }
+  for (const emojiNode of body.querySelectorAll("[data-stringify-emoji]")) {
+    if (!emojiNode.textContent) {
+      const emoji = emojiNode.getAttribute("data-stringify-emoji") ?? "";
+      if (emoji)
+        emojiNode.replaceWith(body.ownerDocument.createTextNode(emoji));
+    }
+  }
+  const rawHrefs = new WeakMap<Element, string>();
   let linked = false;
   for (const element of body.querySelectorAll("*")) {
-    const href =
-      element.tagName === "A"
-        ? safeLinkUrl(element.getAttribute("href") ?? "")
-        : undefined;
+    const rawHref =
+      element.tagName === "A" ? (element.getAttribute("href") ?? "") : "";
+    const href = rawHref ? safeLinkUrl(rawHref) : undefined;
     for (const attribute of [...element.attributes])
       element.removeAttribute(attribute.name);
     if (href && element.textContent?.trim()) {
       element.setAttribute("href", href);
+      rawHrefs.set(element, rawHref);
       linked = true;
     }
     // Keep text and line boundaries; importing other rich formatting is separate.
@@ -331,19 +641,173 @@ export function externalLinkMarkdown(
   for (const anchor of body.querySelectorAll("a[href]")) {
     const label = body.ownerDocument.createElement("div");
     label.append(...anchor.childNodes);
-    anchor.textContent = serializeNode(label, "text")
-      .replace(/\s+/g, " ")
-      .trim();
+    const normalized = serializeNode(label, "text").replace(/\s+/g, " ").trim();
+    if (!normalized) anchor.removeAttribute("href");
+    else anchor.textContent = normalized;
   }
-  if (plain !== undefined) {
-    // Compare the serializer's actual labels, not the source HTML's textContent:
-    // serialization can lose image emoji or boundaries inside an anchor.
-    const visible = body.ownerDocument.createElement("div");
-    visible.innerHTML = serializeNode(body, "html");
-    for (const anchor of visible.querySelectorAll("a"))
-      anchor.replaceWith(...anchor.childNodes);
-    const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
-    if (normalize(serializeNode(visible, "text")) !== normalize(plain)) return;
+  if (!body.querySelector("a[href]")) return;
+  if (plain === undefined) return serializeNode(body, "markdown");
+  // Keep `text/plain` authoritative: project safe links from HTML onto the
+  // aligned spans in `plain` so extra HTML chrome, emojis, list markers, or
+  // timestamp formatting differences never inject text or drop links.
+  const htmlTokens: HtmlToken[] = [];
+  const links: ExtractedLink[] = [];
+  let buffer = "";
+  const flush = () => {
+    if (!buffer) return;
+    for (const token of tokenize(buffer))
+      htmlTokens.push({ value: token.value, word: token.word, linkIndex: -1 });
+    buffer = "";
+  };
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      buffer += (node as Text).data;
+      return;
+    }
+    if (!(node instanceof Element)) {
+      for (const child of node.childNodes) walk(child);
+      return;
+    }
+    const tag = node.tagName.toUpperCase();
+    if (tag === "BR") {
+      buffer += "\n";
+      return;
+    }
+    if (tag === "A" && node.hasAttribute("href")) {
+      const href = node.getAttribute("href") ?? "";
+      const tokens = tokenize(node.textContent ?? "");
+      if (href && tokens.length) {
+        flush();
+        const linkIndex = links.length;
+        links.push({
+          href,
+          rawHref: rawHrefs.get(node) ?? href,
+          tokenCount: tokens.length,
+        });
+        for (const token of tokens)
+          htmlTokens.push({ value: token.value, word: token.word, linkIndex });
+        return;
+      }
+    }
+    const isBlock = blockElementTag.test(tag);
+    if (isBlock) buffer += "\n";
+    for (const child of node.childNodes) walk(child);
+    if (isBlock) buffer += "\n";
+  };
+  walk(body);
+  flush();
+  const plainTokens = tokenize(plain);
+  if (!links.length || !plainTokens.length) return;
+  const matches = alignTokens(htmlTokens, plainTokens);
+  if (!matches.length) return;
+  const plainWords = plainTokens.filter((token) => token.word).length;
+  const htmlWords = htmlTokens.filter((token) => token.word).length;
+  const matchedWords = matches.filter(([hi]) => htmlTokens[hi]?.word).length;
+  if (plainWords > 0 && htmlWords > 0) {
+    if (matchedWords * 2 < plainWords || matchedWords * 2 < htmlWords) return;
+  } else if (
+    matches.length * 2 < plainTokens.length ||
+    matches.length * 2 < htmlTokens.length
+  ) {
+    return;
   }
-  return serializeNode(body, "markdown");
+  const linkMatches = Array.from(
+    { length: links.length },
+    () => [] as number[],
+  );
+  const matchedPlainLinkTokens = new Set<number>();
+  let matchedNonLinkWords = 0;
+  for (const [hi, pi] of matches) {
+    const token = htmlTokens[hi];
+    if (!token) continue;
+    if (token.linkIndex >= 0) {
+      linkMatches[token.linkIndex]?.push(pi);
+      matchedPlainLinkTokens.add(pi);
+    } else if (token.word) {
+      matchedNonLinkWords++;
+    }
+  }
+  const htmlNonLinkWords = htmlTokens.filter(
+    (token) => token.word && token.linkIndex < 0,
+  ).length;
+  const plainNonLinkWords = plainTokens.filter(
+    (token, index) => token.word && !matchedPlainLinkTokens.has(index),
+  ).length;
+  if (
+    plainNonLinkWords > 0 &&
+    htmlNonLinkWords > 0 &&
+    matchedNonLinkWords === 0
+  )
+    return;
+  const { blocked, inlineCodes } = markdownRanges(plain);
+  const replacements: Array<{ start: number; end: number; text: string }> = [];
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    const indices = linkMatches[i];
+    if (!link || !indices || indices.length !== link.tokenCount) continue;
+    let contiguous = true;
+    for (let k = 1; k < indices.length; k++) {
+      const current = indices[k];
+      const prior = indices[k - 1];
+      if (
+        current === undefined ||
+        prior === undefined ||
+        current !== prior + 1
+      ) {
+        contiguous = false;
+        break;
+      }
+    }
+    if (!contiguous) continue;
+    const firstIndex = indices[0];
+    const lastIndex = indices[indices.length - 1];
+    const firstToken =
+      firstIndex !== undefined ? plainTokens[firstIndex] : undefined;
+    const lastToken =
+      lastIndex !== undefined ? plainTokens[lastIndex] : undefined;
+    if (!firstToken || !lastToken) continue;
+    let start = firstToken.start;
+    let end = lastToken.end;
+    if (overlaps(blocked, start, end)) continue;
+    let rawCode = false;
+    const codeSpan = inlineCodes.find(
+      (range) => start < range.end && end > range.start,
+    );
+    if (codeSpan) {
+      if (
+        isEntireInlineCodeContent(
+          plain,
+          codeSpan.start,
+          codeSpan.end,
+          start,
+          end,
+        )
+      ) {
+        start = codeSpan.start;
+        end = codeSpan.end;
+        rawCode = true;
+      } else {
+        continue;
+      }
+    }
+    const previous = replacements[replacements.length - 1];
+    if (previous && start < previous.end) continue;
+    if (start > 0 && plain[start - 1] === "!" && plain[start - 2] !== "\\")
+      continue;
+    const label = plain.slice(start, end).replace(/\s+/g, " ").trim();
+    if (!label || isBareLinkLabel(label, link.href, link.rawHref)) continue;
+    replacements.push({
+      start,
+      end,
+      text: formatExternalMarkdownLink(label, link.href, rawCode),
+    });
+  }
+  if (!replacements.length) return;
+  let result = "";
+  let cursor = 0;
+  for (const replacement of replacements) {
+    result += plain.slice(cursor, replacement.start) + replacement.text;
+    cursor = replacement.end;
+  }
+  return result + plain.slice(cursor);
 }

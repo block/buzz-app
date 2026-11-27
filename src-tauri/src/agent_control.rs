@@ -138,16 +138,15 @@ fn open(
     if !seen.admit(&event.id, event.created_at, now) {
         return Err("Control frame already handled".into());
     }
-    let mut request = json!({
-        "eventId": event.id,
-        "agent": agent.pubkey,
+    let mut payload = json!({
+        "type": "cancel_turn",
         "channelId": channel,
         "requestId": request,
     });
     if let Some(root) = root {
-        request["threadRootId"] = root.into();
+        payload["threadRootId"] = root.into();
     }
-    Ok(request)
+    Ok(json!({ "eventId": event.id, "agent": agent.pubkey, "request": payload }))
 }
 
 /// Checks and decrypts an owner's control frame for `agent` in the community
@@ -174,6 +173,7 @@ pub(crate) async fn app_agent_control_decode(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct ControlAnswer {
+    agent: String,
     channel_id: String,
     request_id: String,
     status: String,
@@ -187,7 +187,8 @@ fn answer_event(
     answer: &ControlAnswer,
     now: u64,
 ) -> Result<Value, String> {
-    if !channel_id(&answer.channel_id)
+    if answer.agent != agent.pubkey
+        || !channel_id(&answer.channel_id)
         || !channel_id(&answer.request_id)
         || !matches!(answer.status.as_str(), "sent" | "no_active_turn")
     {
@@ -308,17 +309,18 @@ mod tests {
         assert_eq!(
             f.receive(&event, &mut seen).unwrap(),
             json!({
-                "eventId": event.id, "agent": f.agent.pubkey, "channelId": "c-1",
-                "requestId": "r-1", "threadRootId": root,
+                "eventId": event.id, "agent": f.agent.pubkey,
+                "request": {
+                    "type": "cancel_turn", "channelId": "c-1", "requestId": "r-1",
+                    "threadRootId": root,
+                },
             })
         );
         // The same frame again, as a relay or an attacker might replay it.
         assert!(f.receive(&event, &mut seen).is_err());
         // Without a thread, it names the whole conversation.
         let flat = f.frame(&cancel(None), "control", f.now);
-        assert!(f
-            .receive(&flat, &mut seen)
-            .unwrap()
+        assert!(f.receive(&flat, &mut seen).unwrap()["request"]
             .get("threadRootId")
             .is_none());
     }
@@ -415,6 +417,7 @@ mod tests {
     fn the_answer_is_telemetry_encrypted_to_the_owner() {
         let f = fixture();
         let answer = ControlAnswer {
+            agent: f.agent.pubkey.clone(),
             channel_id: "c-1".into(),
             request_id: "r-1".into(),
             status: "no_active_turn".into(),
@@ -447,5 +450,12 @@ mod tests {
             ..answer
         };
         assert!(answer_event(&f.agent, &f.key, &refused, f.now).is_err());
+        // Only as the agent it answers for.
+        let other = ControlAnswer {
+            agent: f.owner.pubkey().into(),
+            status: "sent".into(),
+            ..refused
+        };
+        assert!(answer_event(&f.agent, &f.key, &other, f.now).is_err());
     }
 }

@@ -9943,7 +9943,7 @@ export class AgentsService extends Service implements Agents {
             remoteStop(event, binding.scope, {
               decode: (frame) => decode(member, frame),
               interrupt,
-              answer: (_agent, result) => answer(member, result),
+              answer: (result) => answer(member, result),
             }).catch((error: unknown) =>
               console.warn("Stop from another device was not answered", error),
             );

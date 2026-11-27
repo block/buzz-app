@@ -1,7 +1,12 @@
 import { expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
 import { createLocalAgentActivity } from "./local-activity";
-import { type ControlRequest, remoteStop } from "./remote-stop";
+import type { CancelTurn } from "./agent-control";
+import {
+  type ControlAnswer,
+  type ControlRequest,
+  remoteStop,
+} from "./remote-stop";
 
 const scope = "wss://relay.test:owner",
   agent = "a".repeat(64),
@@ -38,18 +43,23 @@ function interruptOf(activity: ReturnType<typeof createLocalAgentActivity>) {
 }
 const host = (
   activity: ReturnType<typeof createLocalAgentActivity>,
-  request: Partial<ControlRequest> = {},
+  request: Partial<CancelTurn> = {},
 ) => ({
   interrupt: interruptOf(activity),
-  decode: vi.fn(async () => ({
-    eventId: frame.id,
-    agent,
-    channelId: "channel",
-    threadRootId: root,
-    requestId: "r-1",
-    ...request,
-  })),
-  answer: vi.fn(async () => {}),
+  decode: vi.fn(
+    async (): Promise<ControlRequest> => ({
+      eventId: frame.id,
+      agent,
+      request: {
+        type: "cancel_turn",
+        channelId: "channel",
+        threadRootId: root,
+        requestId: "r-1",
+        ...request,
+      },
+    }),
+  ),
+  answer: vi.fn(async (_answer: ControlAnswer) => {}),
 });
 
 it("stops every turn the agent has in the thread and answers sent", async () => {
@@ -64,7 +74,8 @@ it("stops every turn the agent has in the thread and answers sent", async () => 
   expect(second).toHaveBeenCalledTimes(1);
   expect(elsewhere).not.toHaveBeenCalled();
   expect(otherAgent).not.toHaveBeenCalled();
-  expect(native.answer).toHaveBeenCalledWith(agent, {
+  expect(native.answer).toHaveBeenCalledWith({
+    agent,
     channelId: "channel",
     requestId: "r-1",
     status: "sent",
@@ -84,7 +95,8 @@ it("answers no_active_turn when nothing there can be stopped", async () => {
   begin("3".repeat(64), other);
   const native = host(activity);
   await remoteStop(frame, scope, native);
-  expect(native.answer).toHaveBeenCalledWith(agent, {
+  expect(native.answer).toHaveBeenCalledWith({
+    agent,
     channelId: "channel",
     requestId: "r-1",
     status: "no_active_turn",
@@ -93,7 +105,7 @@ it("answers no_active_turn when nothing there can be stopped", async () => {
   const stopped = host(activity, { threadRootId: other });
   await remoteStop(frame, scope, stopped);
   await remoteStop(frame, scope, stopped);
-  expect(stopped.answer.mock.calls.map(([, { status }]) => status)).toEqual([
+  expect(stopped.answer.mock.calls.map(([{ status }]) => status)).toEqual([
     "sent",
     "no_active_turn",
   ]);

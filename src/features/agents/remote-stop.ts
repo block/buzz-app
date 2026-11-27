@@ -2,22 +2,20 @@
 // hears the owner's `cancel_turn` control frames to it, stops its turns in that
 // conversation as Stop does here, and answers with a `control_result`.
 import type { RelayEvent } from "../relay/events";
+import type { CancelTurn, ControlResult } from "./agent-control";
 import type { LocalAgentSource } from "./local-activity";
 
-/** A `cancel_turn` request native code checked and decrypted. */
+/** A control frame native code checked and decrypted: its agent's owner
+ * asks the agent to stop its turn in a conversation. */
 export type ControlRequest = Readonly<{
   eventId: string;
   agent: string;
-  channelId: string;
-  /** Absent for the whole channel's conversation. */
-  threadRootId?: string;
-  requestId: string;
+  request: CancelTurn;
 }>;
-export type ControlAnswer = Readonly<{
-  channelId: string;
-  requestId: string;
-  status: "sent" | "no_active_turn";
-}>;
+/** What this copy answers: it never needs `ambiguous_target`, as it stops a
+ * whole channel's conversation when no thread is named. */
+export type ControlAnswer = ControlResult &
+  Readonly<{ status: "sent" | "no_active_turn" }>;
 
 /** Acts on one control frame for the agents in `scope`: answers `sent` once
  * one of the agent's turns there has stopped, or `no_active_turn` when none
@@ -29,13 +27,13 @@ export async function remoteStop(
   host: Readonly<{
     decode(event: RelayEvent): Promise<ControlRequest>;
     interrupt: NonNullable<LocalAgentSource["interruptConversation"]>;
-    answer(agent: string, answer: ControlAnswer): Promise<void>;
+    answer(answer: ControlAnswer): Promise<void>;
   }>,
 ): Promise<void> {
-  const request = await host.decode(event);
+  const { agent, request } = await host.decode(event);
   const stops = host.interrupt({
     scope,
-    agent: request.agent,
+    agent,
     channelId: request.channelId,
     threadRootId: request.threadRootId,
   });
@@ -44,7 +42,8 @@ export async function remoteStop(
     await Promise.any(stops);
     status = "sent";
   }
-  await host.answer(request.agent, {
+  await host.answer({
+    agent,
     channelId: request.channelId,
     requestId: request.requestId,
     status,

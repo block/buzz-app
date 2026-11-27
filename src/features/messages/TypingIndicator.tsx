@@ -347,6 +347,7 @@ export function TypingIndicator({
         threadRootId,
         session.agentActivity,
         hostedAgents,
+        entries,
       ),
     ]),
   );

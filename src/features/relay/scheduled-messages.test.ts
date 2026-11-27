@@ -7,7 +7,7 @@ import {
 
 const channel = "11111111-1111-4111-8111-111111111111";
 const id = "22222222-2222-4222-8222-222222222222";
-function fixture(mentioned = true) {
+function fixture() {
   const key = keypair(),
     lifetime = new AbortController();
   const input: ScheduledInput = {
@@ -21,7 +21,7 @@ function fixture(mentioned = true) {
     created_at: Math.floor(input.sendAt / 1000),
     tags: [
       ["h", channel],
-      ...(mentioned ? [["p", "a".repeat(64)]] : []),
+      ["p", "a".repeat(64)],
       ["e", "b".repeat(64), "", "reply"],
       ["imeta", "url https://example.invalid/file.png"],
     ],
@@ -106,78 +106,32 @@ describe("relay-backed scheduled messages", () => {
     expect(h.sign).not.toHaveBeenCalled();
     expect(h.request).not.toHaveBeenCalled();
   });
-  it("verifies queued signatures and preserves thread and attachment bindings on edit", async () => {
-    const h = fixture(false);
+  it("reschedules the verified event with the same content and tags", async () => {
+    const h = fixture();
     const rows = await h.list();
     expect(rows[0]?.destination.threadRootId).toBe("b".repeat(64));
-    await h.service.update(id, "1", { ...h.input, content: "Updated" });
-    expect(h.sign.mock.calls[0]?.[0]).toMatchObject({
-      content: "Updated",
-      tags: h.event.tags,
+    const sendAt = h.input.sendAt + 60000;
+    await expect(h.service.reschedule(id, "2", sendAt)).rejects.toThrow(
+      "Refresh",
+    );
+    expect(h.sign).not.toHaveBeenCalled();
+    await h.service.reschedule(id, "1", sendAt);
+    expect(h.sign).toHaveBeenCalledWith(
+      {
+        kind: h.event.kind,
+        content: h.event.content,
+        tags: h.event.tags,
+        created_at: Math.floor(sendAt / 1000),
+      },
+      expect.any(AbortSignal),
+    );
+    expect(h.request.mock.calls[1]?.[0]).toMatchObject({
+      action: "update",
+      id,
+      revision: 1,
+      event: { created_at: Math.floor(sendAt / 1000) },
     });
     await expect(h.service.cancel(id, "2")).rejects.toThrow("Refresh");
-  });
-  it("refuses prose edits with retained recipients but allows rescheduling", async () => {
-    const h = fixture();
-    await h.list();
-    await expect(
-      h.service.update(id, "1", { ...h.input, content: "No mention now" }),
-    ).rejects.toThrow("save it to drafts");
-    expect(h.sign).not.toHaveBeenCalled();
-    expect(h.request).toHaveBeenCalledTimes(1);
-    await h.service.update(id, "1", {
-      ...h.input,
-      sendAt: h.input.sendAt + 60000,
-    });
-    expect(h.sign.mock.calls[0]?.[0]).toMatchObject({
-      content: h.event.content,
-      tags: h.event.tags,
-    });
-  });
-  it("reuses an uncertain send-now operation after the client clock changes", async () => {
-    vi.useFakeTimers();
-    try {
-      const h = fixture();
-      await h.list();
-      h.request.mockRejectedValueOnce(new Error("Response lost"));
-      await expect(h.service.sendNow(id, "1")).rejects.toThrow("Response lost");
-      vi.advanceTimersByTime(301000);
-      await h.service.sendNow(id, "1");
-      expect(h.sign).toHaveBeenCalledTimes(1);
-      expect(h.request.mock.calls[1]?.[0]).toEqual(
-        h.request.mock.calls[2]?.[0],
-      );
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-  it("renews an uncommitted expired send-now only after a definite relay rejection", async () => {
-    vi.useFakeTimers();
-    try {
-      const h = fixture();
-      await h.list();
-      h.request.mockRejectedValueOnce(new Error("Offline before commit"));
-      await expect(h.service.sendNow(id, "1")).rejects.toThrow(
-        "Offline before commit",
-      );
-      vi.advanceTimersByTime(301000);
-      h.request.mockResolvedValueOnce(new Response(null, { status: 400 }));
-      await expect(h.service.sendNow(id, "1")).rejects.toThrow("fresh request");
-      expect(h.request.mock.calls[1]?.[0]).toEqual(
-        h.request.mock.calls[2]?.[0],
-      );
-      expect(h.sign).toHaveBeenCalledTimes(1);
-      await h.service.sendNow(id, "1");
-      expect(h.sign).toHaveBeenCalledTimes(2);
-      expect(h.sign.mock.calls[1]?.[0].created_at).toBe(
-        Math.floor(Date.now() / 1000),
-      );
-      expect(h.request.mock.calls[3]?.[0]).not.toEqual(
-        h.request.mock.calls[2]?.[0],
-      );
-    } finally {
-      vi.useRealTimers();
-    }
   });
   it("rejects tampered queued content before allowing any mutation", async () => {
     const h = fixture();
@@ -197,25 +151,10 @@ describe("relay-backed scheduled messages", () => {
     await expect(
       h.service.list(new AbortController().signal),
     ).rejects.toThrow();
-    await expect(h.service.sendNow(id, "1")).rejects.toThrow("Refresh");
-  });
-  it("signs send-now with a current timestamp and the exact reviewed message", async () => {
-    const h = fixture();
-    await h.list();
-    await h.service.sendNow(id, "1");
-    expect(h.sign.mock.calls[0]?.[0]).toMatchObject({
-      kind: 9,
-      content: h.event.content,
-      tags: h.event.tags,
-    });
-    expect(h.sign.mock.calls[0]?.[0].created_at).toBeLessThanOrEqual(
-      Math.floor(Date.now() / 1000),
-    );
-    expect(h.request.mock.calls[1]?.[0]).toMatchObject({
-      action: "send_now",
-      id,
-      revision: 1,
-    });
+    await expect(
+      h.service.reschedule(id, "1", h.input.sendAt + 60000),
+    ).rejects.toThrow("Refresh");
+    expect(h.sign).not.toHaveBeenCalled();
   });
   it("revokes signing and relay operations when the account/session closes", async () => {
     const h = fixture();

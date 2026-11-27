@@ -46,15 +46,6 @@ const schedulingErrors: Readonly<Partial<Record<number, string>>> = {
   429: "The relay is limiting scheduling requests. Try again shortly.",
 };
 
-class ScheduledRequestError extends Error {
-  constructor(readonly status: number) {
-    super(
-      schedulingErrors[status] ??
-        "Could not reach scheduled delivery. Refresh to check whether the change was saved.",
-    );
-  }
-}
-
 /** A session owns authorization/lifetime; the relay owns persistence and clocks. */
 export function createScheduledMessages(
   host: ScheduledHost,
@@ -84,7 +75,11 @@ export function createScheduledMessages(
     const live = signal(extra);
     const response = await host.request(body, live);
     live.throwIfAborted();
-    if (!response.ok) throw new ScheduledRequestError(response.status);
+    if (!response.ok)
+      throw new Error(
+        schedulingErrors[response.status] ??
+          "Could not reach scheduled delivery. Refresh to check whether the change was saved.",
+      );
     const reader = response.body?.getReader();
     if (!reader) throw new Error("Scheduled delivery returned no response.");
     const decoder = new TextDecoder();
@@ -106,23 +101,15 @@ export function createScheduledMessages(
     live.throwIfAborted();
     return JSON.parse(text + decoder.decode()) as unknown;
   }
-  async function signed(
-    input: ScheduledInput,
-    template = options.prepare(input),
-  ) {
+  async function signed(sendAt: number, draft: Template) {
     const now = Date.now();
     if (
-      !Number.isFinite(input.sendAt) ||
-      input.sendAt <= now ||
-      input.sendAt > now + 120 * 86_400_000
+      !Number.isFinite(sendAt) ||
+      sendAt <= now ||
+      sendAt > now + 120 * 86_400_000
     )
       throw new Error("Choose a future time within 120 days.");
-    return signApproved({
-      ...template,
-      created_at: Math.floor(input.sendAt / 1000),
-    });
-  }
-  async function signApproved(template: EventTemplate) {
+    const template = { ...draft, created_at: Math.floor(sendAt / 1000) };
     const live = signal();
     const event = await host.sign(template, live);
     live.throwIfAborted();
@@ -149,9 +136,6 @@ export function createScheduledMessages(
       return () => {
         listeners.delete(listener);
       };
-    },
-    event(id: string, revision: string) {
-      return structuredClone(current(id, revision));
     },
     async list(extra: AbortSignal): Promise<readonly ScheduledMessage[]> {
       const raw = (await request({ action: "list" }, extra)) as {
@@ -217,7 +201,7 @@ export function createScheduledMessages(
       if (!operation) {
         operation = {
           id: crypto.randomUUID(),
-          event: await signed(input, template),
+          event: await signed(input.sendAt, template),
         };
         pending.set(key, operation);
       }
@@ -225,20 +209,11 @@ export function createScheduledMessages(
       pending.delete(key);
       changed();
     },
-    async update(id: string, revision: string, input: ScheduledInput) {
+    async reschedule(id: string, revision: string, sendAt: number) {
       const previous = current(id, revision);
-      if (
-        input.content !== previous.content &&
-        previous.tags.some(([name]) => name === "p")
-      )
-        throw new Error(
-          "To edit a message with mention recipients, save it to drafts and use the composer. You can still reschedule or send it now.",
-        );
-      // Preserve attachment and thread bindings. Mentioned messages may only
-      // change time here; the full composer owns recipient editing.
-      const event = await signed(input, {
-        kind: 9,
-        content: input.content,
+      const event = await signed(sendAt, {
+        kind: previous.kind,
+        content: previous.content,
         tags: previous.tags.map((t) => [...t]),
       });
       await request({
@@ -252,41 +227,6 @@ export function createScheduledMessages(
     async cancel(id: string, revision: string) {
       current(id, revision);
       await request({ action: "cancel", id, revision: Number(revision) });
-      changed();
-    },
-    async sendNow(id: string, revision: string) {
-      const previous = current(id, revision);
-      const key = JSON.stringify(["send_now", id, revision]);
-      let operation = pending.get(key);
-      if (!operation) {
-        operation = {
-          id,
-          event: await signApproved({
-            kind: 9,
-            content: previous.content,
-            tags: previous.tags.map((t) => [...t]),
-            created_at: Math.floor(Date.now() / 1000),
-          }),
-        };
-        pending.set(key, operation);
-      }
-      try {
-        await request({
-          action: "send_now",
-          id,
-          revision: Number(revision),
-          event: operation.event,
-        });
-      } catch (cause) {
-        if (cause instanceof ScheduledRequestError && cause.status === 400) {
-          pending.delete(key);
-          throw new Error(
-            "The relay rejected this attempt. Try Send now again to create a fresh request.",
-          );
-        }
-        throw cause;
-      }
-      pending.delete(key);
       changed();
     },
   });

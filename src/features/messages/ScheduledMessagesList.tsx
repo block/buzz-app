@@ -49,12 +49,7 @@ export function ScheduledMessagesList({
     try {
       const { item } = action;
       if (time === undefined) await service.cancel(item.id, item.revision);
-      else
-        await service.update(item.id, item.revision, {
-          destination: item.destination,
-          content: item.content,
-          sendAt: time,
-        });
+      else await service.reschedule(item.id, item.revision, time);
       setAction(undefined);
       return true;
     } catch (cause) {

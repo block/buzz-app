@@ -133,49 +133,37 @@ it.skipIf(!relay)(
     expect(rows.some((row) => row.id === cancel.id)).toBe(false);
     await next.create({
       ...input,
-      content: "Edit this",
+      content: "Reschedule this",
       sendAt: Date.now() + 86400000,
     });
     rows = await next.list(nextLifetime.signal);
-    const edit = rows.find((row) => row.content === "Edit this");
-    if (!edit) throw new Error("Expected message to edit");
-    await next.update(edit.id, edit.revision, {
-      ...input,
-      content: "Edited and sent now",
-      sendAt: Date.now() + 86400000,
-    });
+    const scheduled = rows.find((row) => row.content === "Reschedule this");
+    if (!scheduled) throw new Error("Expected message to reschedule");
+    const sendAt = Math.floor(Date.now() / 1000 + 6) * 1000;
+    await next.reschedule(scheduled.id, scheduled.revision, sendAt);
     rows = await next.list(nextLifetime.signal);
-    const revised = rows.find((row) => row.id === edit.id);
-    if (!revised) throw new Error("Expected updated message");
-    expect(Number(revised.revision)).toBeGreaterThan(Number(edit.revision));
-    await expect(next.cancel(edit.id, edit.revision)).rejects.toThrow(
+    const revised = rows.find((row) => row.id === scheduled.id);
+    if (!revised) throw new Error("Expected rescheduled message");
+    expect(revised).toMatchObject({ content: scheduled.content, sendAt });
+    expect(Number(revised.revision)).toBeGreaterThan(
+      Number(scheduled.revision),
+    );
+    await expect(next.cancel(scheduled.id, scheduled.revision)).rejects.toThrow(
       "Refresh",
     );
-    await next.sendNow(revised.id, revised.revision);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       rows = await next.list(nextLifetime.signal);
-      if (rows.find((row) => row.id === edit.id)?.status === "sent") break;
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      if (rows.find((row) => row.id === scheduled.id)?.status === "sent") break;
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
-    expect(rows.find((row) => row.id === edit.id)?.status).toBe("sent");
-    const sendReplay = await post(
-      "/scheduled-messages",
-      operations.find(
-        (body) => (body as { action?: string }).action === "send_now",
-      ),
-    );
-    expect(sendReplay.status).toBe(200);
-    rows = await next.list(nextLifetime.signal);
-    expect(rows.find((row) => row.id === edit.id)?.revision).toBe(
-      String(Number(revised.revision) + 1),
-    );
+    expect(rows.find((row) => row.id === scheduled.id)?.status).toBe("sent");
     const query = await post("/query", [
       { kinds: [9], "#h": [channel], limit: 100 },
     ]);
     const events = await query.json();
     expect(
       events.map((event: { content: string }) => event.content).sort(),
-    ).toEqual(["Edited and sent now", "Survives a closed session"]);
+    ).toEqual(["Reschedule this", "Survives a closed session"]);
     expect(new Set(events.map((event: { id: string }) => event.id)).size).toBe(
       2,
     );

@@ -3553,8 +3553,12 @@ export function createRelaySession(
     },
     /** An owned retained event view, not a replacement query snapshot. Limits bound
      * requests, not retained results. Ranked search/feed filters require read().
-     * Subscribe, refresh and dispose with the plugin's scope. */
-    observe(input: readonly ReadFilter[]) {
+     * Subscribe, refresh and dispose with the plugin's scope. A `passive` view
+     * only holds what the session receives anyway: connecting doesn't read it. */
+    observe(
+      input: readonly ReadFilter[],
+      options?: Readonly<{ passive?: boolean }>,
+    ) {
       if (
         input.some(
           (filter) =>
@@ -3659,7 +3663,7 @@ export function createRelaySession(
         },
         dispose,
       };
-      refreshers.add(view.refresh);
+      if (!options?.passive) refreshers.add(view.refresh);
       return view;
     },
   });

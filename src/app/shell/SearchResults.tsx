@@ -1887,17 +1887,30 @@ export function SearchResults({
             : 0;
     return band * 10 + dmRank(channel);
   };
-  const personResults = [
+  // People match by username and verified full name too, so the group grades
+  // by the best match among its shown rows, not the label of its first row: a
+  // person's own match, or a DM's match on its name. A name that starts with
+  // the text, a later word, or else part of a name.
+  const personTier = (rank: number) =>
+    rank <= MatchRank.prefix
+      ? rank
+      : rank <= 3
+        ? MatchRank.wordStart
+        : MatchRank.substring;
+  const shownPeople = [
     ...rankedPeople
       .filter(({ person }) => !person.agent)
       .map((row) => ({
         order: row.order,
         recent: recency(liveDms.get(row.person.pubkey)),
+        tier: personTier(row.rank),
         row: () => personDestination(row),
       })),
     ...dmResults.map((channel) => ({
       order: dmOrder(channel),
       recent: recency(channel),
+      tier:
+        rankName(names.get(channel.id) ?? channel.name) ?? MatchRank.substring,
       row: () => ({
         ...conversationDestination(channel),
         score: dmRank(channel),
@@ -1905,8 +1918,11 @@ export function SearchResults({
     })),
   ]
     .sort((a, b) => a.order - b.order || b.recent - a.recent)
-    .slice(0, PERSON_ROWS)
-    .map(({ row }) => row());
+    .slice(0, PERSON_ROWS);
+  const personResults = shownPeople.map(({ row }) => row());
+  const peopleTier = shownPeople.length
+    ? Math.min(...shownPeople.map(({ tier }) => tier))
+    : undefined;
   const suggestions = channels
     .filter(
       (channel) =>
@@ -2409,14 +2425,7 @@ export function SearchResults({
       destinations: personResults,
       headingStatus: slowPeople ? "Searching…" : undefined,
       best: Math.min(...personResults.map(({ score }) => score)),
-      // A closer person can lead with a weaker match; the heading and the
-      // group's strength describe the best match.
-      bestLabel: personResults.reduce<
-        (typeof personResults)[number] | undefined
-      >(
-        (best, row) => (!best || row.score < best.score ? row : best),
-        undefined,
-      )?.label,
+      nameTier: peopleTier,
     },
     {
       label: "Pages",
@@ -2451,10 +2460,9 @@ export function SearchResults({
         Number(b.lead) - Number(a.lead) ||
         (a.lead ? 0 : a.best - b.best),
     )
-    .map(({ best, lead, named, bestLabel, ...group }) => {
+    .map(({ best, lead, named, nameTier, ...group }) => {
       const top = group.destinations[0];
-      const label = bestLabel ?? top?.label;
-      const tier = label !== undefined ? rankName(label) : undefined;
+      const tier = nameTier ?? (top ? rankName(top.label) : undefined);
       const remembered =
         !!top && (top.key === picked || top.key === pickedPerson);
       const why = named

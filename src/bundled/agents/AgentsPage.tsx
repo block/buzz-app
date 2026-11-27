@@ -1771,9 +1771,9 @@ function PeekIdentity({
 const host = (relay: string) => relay.replace(/^wss:\/\//, "");
 const sentence = (text: string) => text.replace(/\.?$/, ".");
 const LEGACY = "Buzz (Legacy)";
-const lastRun = (saved?: string) => {
+const lastRun = (saved: string | undefined, now: number) => {
   const at = Date.parse(saved ?? "");
-  return !Number.isNaN(at) && `Ran ${relativeTimestamp(at / 1000)}`;
+  return !Number.isNaN(at) && `Ran ${relativeTimestamp(at / 1000, now)}`;
 };
 
 /** The owner's teams with members `joinable` can add here: adding them gives
@@ -1905,8 +1905,9 @@ function ImportAgents({
     setChosenTypes((last) => new Map(last).set(id, key));
   const labels = publicKeyLabels(found?.agents.map((a) => a.pubkey) ?? []);
   // One label per agent, so counting and showing them can't disagree.
+  const now = Date.now() / 1000;
   const runs = new Map(
-    found?.agents.map((a) => [a.pubkey, lastRun(a.lastStarted)]),
+    found?.agents.map((a) => [a.pubkey, lastRun(a.lastStarted, now)]),
   );
   const named = new Map<string, number>();
   for (const agent of found?.agents ?? [])

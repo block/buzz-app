@@ -22,6 +22,7 @@ import { PublishNotSent, PublishRejected } from "../../features/relay/outbox";
 import type { Role } from "../../features/communities/roster";
 import type { CommunityMembership } from "../moderation/membership";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
+import { summaryAccess } from "../../features/relay/channel-details-protocol";
 
 afterEach(() => {
   cleanup();
@@ -208,12 +209,7 @@ it.each(["direct", "delegated"])(
       visibility: "public" as const,
       canEdit: true,
     }));
-    if (authority === "delegated")
-      details.summaryAccess = () => ({
-        visibility: "public",
-        joinRole: "member",
-        canEdit: false,
-      });
+    details.summaryAccess = summaryAccess;
     render(
       <ChannelSettingsPanel
         scope="community:viewer"
@@ -222,6 +218,7 @@ it.each(["direct", "delegated"])(
           name: "Alpha",
           channelType: "stream",
           visibility: "public",
+          viewerRole: authority === "direct" ? "owner" : "member",
         }}
         details={details}
         openMembers={openMembers}

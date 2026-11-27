@@ -2,7 +2,8 @@ import { regionLabels } from "../solo/region-labels";
 import { getEventHash, verifyEvent } from "nostr-tools";
 import type { RelayReader } from "./reader";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
-import { retryRead } from "./read-retry";
+import { readErrorKind } from "./errors";
+import { isRetryableRead, retryRead } from "./read-retry";
 import type { RelayWriter } from "./transport";
 import type { RelayEvent } from "./events";
 import { PublishRejected } from "./outbox";
@@ -12,7 +13,7 @@ import {
   lifecycleChannelId,
   lifecycleRecord,
 } from "./channel-lifecycle-protocol";
-import { channelOwnerKeys, ownsChannelOwnerAgent } from "./channel-owner-agent";
+import { ownsChannelOwnerAgent } from "./channel-owner-agent";
 import {
   detailsSettings,
   detailsTemplate,
@@ -140,7 +141,7 @@ export function createChannelDetails({
   async function read(
     id: string,
     signal: AbortSignal,
-    checkOwnerAgent = false,
+    intent?: "edit" | "authorize",
   ) {
     if (!reader)
       throw new Error("Channel editing is unavailable on this connection.");
@@ -162,7 +163,7 @@ export function createChannelDetails({
     const result = detailsSettings(events, id, viewer, relayAuthor);
     const type = channelTypeTag(result.metadata);
     if (
-      !checkOwnerAgent ||
+      !intent ||
       result.details.canEdit ||
       (type !== "stream" && type !== "forum") ||
       soloLabels(result.details.labels) ||
@@ -171,27 +172,38 @@ export function createChannelDetails({
       return result;
     // The roster has been validated by detailsSettings. Only owner-role
     // agents can confer the edit authority that the relay also checks.
-    const owners = channelOwnerKeys(
+    const ownsAgent = await ownsChannelOwnerAgent(
+      reader,
       lifecycleRecord(events, 39001, id, relayAuthor),
+      viewer,
+      signal,
+      () => assertAccess(id),
     );
-    if (!owners.length) return result;
-    const profileSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
-    try {
-      if (
-        await ownsChannelOwnerAgent(reader, owners, viewer, profileSignal, () =>
-          assertAccess(id),
-        )
-      )
-        return {
-          ...result,
-          details: Object.freeze({ ...result.details, canEdit: true }),
-        };
-    } catch {
-      // Failure to read delegation evidence leaves the signed details usable.
-      signal.throwIfAborted();
-      assertAccess(id);
-    }
+    if (ownsAgent)
+      return {
+        ...result,
+        details: Object.freeze({ ...result.details, canEdit: true }),
+      };
+    if (ownsAgent === undefined && intent === "authorize")
+      throw new Error(
+        "Could not verify ownership of the channel's owner agent.",
+      );
     return result;
+  }
+  function readForEdit(
+    id: string,
+    signal: AbortSignal,
+    intent: "edit" | "authorize",
+  ) {
+    // A retired profile read also retires the signed roster it was read for.
+    // Repeat only the read, and only while the edit still owns its lifetime.
+    return retryRead(
+      (attempt) => read(id, attempt, intent),
+      signal,
+      (error) =>
+        readErrorKind(error) === "cancelled" ||
+        (intent === "edit" && isRetryableRead(error)),
+    );
   }
   async function confirm(
     id: string,
@@ -234,10 +246,7 @@ export function createChannelDetails({
       return owned(
         id,
         async (signal) => {
-          const { details, metadata } = await retryRead(
-            () => read(id, signal, true),
-            signal,
-          );
+          const { details, metadata } = await readForEdit(id, signal, "edit");
           acceptDiscovery([metadata]);
           signal.throwIfAborted();
           return details;
@@ -313,7 +322,7 @@ export function createChannelDetails({
           id,
           async (signal) => {
             const authorize = async () => {
-              const { details } = await read(id, signal, true);
+              const { details } = await readForEdit(id, signal, "authorize");
               if (!details.canEdit)
                 throw new Error(
                   "You no longer have permission to edit this channel.",

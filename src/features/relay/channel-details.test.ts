@@ -1,6 +1,4 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
-import { schnorr } from "@noble/curves/secp256k1.js";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "./channel-details";
 import {
@@ -12,6 +10,8 @@ import {
   validateDetailsTemplate,
 } from "./channel-details-protocol";
 import { PublishRejected } from "./outbox";
+import { ReadError } from "./errors";
+import { keypair, ownedProfile, signed } from "./testing";
 import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
@@ -288,35 +288,27 @@ it.each(["owner", "admin", "member"])(
     }
   },
 );
-it("lets a member rename a channel owned by their attested agent and rechecks before publishing", async () => {
+it("rechecks the member's owner-agent authority before publishing and retries retired evidence reads", async () => {
   const h = harness("member");
-  const agentKey = new Uint8Array(32).fill(4);
-  const agent = getPublicKey(agentKey);
-  const digest = createHash("sha256")
-    .update(`nostr:agent-auth:${agent}:`)
-    .digest();
-  const proof = Buffer.from(schnorr.sign(digest, key)).toString("hex");
-  const profile = (owned: boolean) =>
-    finalizeEvent(
-      {
-        kind: 0,
-        created_at: owned ? 1 : 2,
-        tags: owned ? [["auth", viewer, "", proof]] : [],
-        content: "{}",
-      },
-      agentKey,
-    );
+  const agent = keypair();
+  const attested = await ownedProfile(agent, { pubkey: viewer, secret: key });
+  const unattested = signed(agent, { kind: 0, tags: [], content: "{}" });
   h.set([
     h.entry(0),
-    h.record(39001, [["p", agent, "owner"]]),
+    h.record(39001, [["p", agent.pubkey, "owner"]]),
     h.record(39002, [
       ["p", viewer, "", "member"],
-      ["p", agent, "", "owner"],
+      ["p", agent.pubkey, "", "owner"],
     ]),
   ]);
-  let verifiedProfile: RelayEvent | undefined = profile(false);
+  let verifiedProfile: RelayEvent | undefined = unattested;
+  let profileReadRetired = false;
   h.read.mockImplementation(async (filters) => {
     if (!filters.some((filter) => filter.kinds?.includes(0))) return h.events();
+    if (profileReadRetired) {
+      profileReadRetired = false;
+      throw new ReadError("cancelled", "Profile read retired");
+    }
     if (!verifiedProfile) throw new Error("Profiles are unavailable");
     return [verifiedProfile];
   });
@@ -324,13 +316,13 @@ it("lets a member rename a channel owned by their attested agent and rechecks be
   expect(unowned.canEdit).toBe(false);
   verifiedProfile = undefined;
   await expect(h.owner.capability.load(id)).resolves.toMatchObject(unowned);
-  verifiedProfile = profile(true);
+  verifiedProfile = attested;
   const base = await h.owner.capability.load(id);
   expect(base.canEdit).toBe(true);
   const renamed = { ...base, name: draft.name };
 
   h.sign.mockImplementationOnce(async (event) => {
-    verifiedProfile = profile(false);
+    verifiedProfile = unattested;
     return finalizeEvent(event, key);
   });
   await expect(h.owner.capability.save(base, renamed)).rejects.toThrow(
@@ -338,7 +330,21 @@ it("lets a member rename a channel owned by their attested agent and rechecks be
   );
   expect(h.publish).not.toHaveBeenCalled();
 
-  verifiedProfile = profile(true);
+  verifiedProfile = attested;
+  const caller = new AbortController();
+  h.sign.mockImplementationOnce(async (event) => {
+    caller.abort();
+    return finalizeEvent(event, key);
+  });
+  await expect(
+    h.owner.capability.save(base, renamed, caller.signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(h.publish).not.toHaveBeenCalled();
+
+  h.sign.mockImplementationOnce(async (event) => {
+    profileReadRetired = true;
+    return finalizeEvent(event, key);
+  });
   h.publish.mockImplementationOnce(async () => {
     h.set([h.metadata(renamed.name), ...h.events().slice(1)]);
     verifiedProfile = undefined;

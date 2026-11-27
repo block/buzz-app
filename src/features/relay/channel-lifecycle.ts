@@ -1,5 +1,5 @@
 import { getEventHash } from "nostr-tools";
-import { channelOwnerKeys, ownsChannelOwnerAgent } from "./channel-owner-agent";
+import { ownsChannelOwnerAgent } from "./channel-owner-agent";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 import { PublishRejected } from "./outbox";
@@ -221,37 +221,18 @@ export function createChannelLifecycle({
     )
       return settings;
     // lifecycleSettings validated every owner against the signed member roster.
-    const owners = channelOwnerKeys(
+    const ownsAgent = await ownsChannelOwnerAgent(
+      reader,
       lifecycleRecord(events, 39001, id, relayAuthor),
+      viewer,
+      signal,
+      () => assertAccess(id),
     );
-    if (!owners.length) return settings;
-    // Bound the whole optional lookup, not each batch: it must not consume the
-    // lifecycle deadline and erase independently established Archive/Leave.
-    const profileSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
-    try {
-      return (await ownsChannelOwnerAgent(
-        reader,
-        owners,
-        viewer,
-        profileSignal,
-        () => assertAccess(id),
-      ))
-        ? ownerAgentGrant(settings, archived)
-        : settings;
-    } catch (error) {
-      // Optional read failures affect only owner-agent actions. Cancellation and
-      // access loss still invalidate the whole result, including late replies
-      // from an old session. An archived channel has no Delete to retry.
-      signal.throwIfAborted();
-      assertAccess(id);
-      // A read the session retired, unlike the profile deadline, says nothing
-      // about ownership; surface it so the caller reads again.
-      if (!profileSignal.aborted && readErrorKind(error) === "cancelled")
-        throw error;
-      return archived
-        ? settings
-        : Object.freeze({ ...settings, deleteUnavailable: true });
-    }
+    if (ownsAgent) return ownerAgentGrant(settings, archived);
+    // An archived channel has no Delete to retry.
+    if (ownsAgent === undefined && !archived)
+      return Object.freeze({ ...settings, deleteUnavailable: true });
+    return settings;
   }
   async function readVisibility(signal: AbortSignal, strong = false) {
     const events = await read(

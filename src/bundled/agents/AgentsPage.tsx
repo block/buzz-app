@@ -1904,16 +1904,17 @@ function ImportAgents({
   const chooseType = (id: string, key: string) =>
     setChosenTypes((last) => new Map(last).set(id, key));
   const labels = publicKeyLabels(found?.agents.map((a) => a.pubkey) ?? []);
+  // One label per agent, so counting and showing them can't disagree.
+  const runs = new Map(
+    found?.agents.map((a) => [a.pubkey, lastRun(a.lastStarted)]),
+  );
   const named = new Map<string, number>();
   for (const agent of found?.agents ?? [])
-    for (const key of [
-      agent.name,
-      `${agent.name}\n${lastRun(agent.lastStarted)}`,
-    ])
+    for (const key of [agent.name, `${agent.name}\n${runs.get(agent.pubkey)}`])
       named.set(key, (named.get(key) ?? 0) + 1);
   // Its last run tells it apart unless another of its name ran then too.
   const apart = (agent: PortableAgent) => {
-    const run = lastRun(agent.lastStarted);
+    const run = runs.get(agent.pubkey);
     return (
       (named.get(`${agent.name}\n${run}`) === 1 && run) ||
       labels.get(agent.pubkey)

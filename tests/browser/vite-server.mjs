@@ -151,9 +151,10 @@ export const preview = (config) =>
 // A dev server transforms a page's modules on first request, so a worker's
 // first navigation to a large fixture can outlast the navigation timeout on a
 // busy runner. This builds the repository-relative pages once and serves the
-// bundle. Development React, as a dev server serves, keeps StrictMode's checks.
+// bundle. Development React, as a dev server serves, keeps StrictMode's checks;
+// `production` builds as the app ships, for measurements.
 // close() stops the server and removes the build.
-export async function previewFixtures(pages) {
+export async function previewFixtures(pages, { production = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "buzz-fixture-preview-"));
   try {
     const config = {
@@ -164,10 +165,14 @@ export async function previewFixtures(pages) {
       plugins: [react()],
       // As in the app build, so diff fixtures load the grammars that ship.
       resolve: { alias: diffHighlighterAliases },
-      define: {
-        "import.meta.env.DEV": "true",
-        "process.env.NODE_ENV": '"development"',
-      },
+      ...(production
+        ? { mode: "production" }
+        : {
+            define: {
+              "import.meta.env.DEV": "true",
+              "process.env.NODE_ENV": '"development"',
+            },
+          }),
       build: {
         rollupOptions: { input: pages.map((page) => join(root, page)) },
         outDir: join(directory, "dist"),

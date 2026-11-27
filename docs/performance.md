@@ -16,11 +16,12 @@ bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 
 - `--scenario`: a case name, or a group that runs every case starting with it
   (`channel-open`, `scroll-paging`, `thread`, `thread-scroll`,
-  `background-traffic`). Default `all`.
+  `background-traffic`, `pull-changes`). Default `all`.
 - `--repeat`: samples per case, default 5. Each sample starts from fresh
   storage and server state.
 - `--cpu`: Chromium's CPU slowdown factor (1 is unthrottled). It doesn't
-  throttle the network.
+  throttle the network, or web workers: work moved to a worker runs at full
+  speed, so compare worker timing at `--cpu 1`.
 - `--browser webkit`: only for the `thread-scroll` cases. Everything else is
   Chromium only.
 
@@ -47,6 +48,8 @@ errors before trusting a number.
 | `thread-scroll-open`, `-fling`, `-reverse` | The [long-thread workload](#thread-scrolling) |
 | `background-traffic` | Reading one channel while 30 others get a message every 200ms for 30 seconds |
 | `background-traffic-large-sidebar` | The same, with 128 DMs and 1,001 participants |
+| `pull-changes-open` | A pull request panel's Changes tab, opened the first time: a 24-file, 1,424-line diff that `gh` answers after 500ms |
+| `pull-changes-reopen` | Closing that panel and opening it again, back on Changes |
 
 A case that can't finish its work (paging stalls, or the expected messages
 never arrive) fails instead of reporting a fast time.
@@ -56,7 +59,7 @@ never arrive) fails instead of reporting a fast time.
 | Metric | Meaning |
 | --- | --- |
 | `firstRowsMs` | Click to the target's rows on screen |
-| `durationMs` | Wall time until the timeline's layout stops changing for 200ms |
+| `durationMs` | Wall time until the timeline's layout stops changing for 200ms; for Changes, until the panel's last change before 500ms without one |
 | `scriptMs`, `layoutMs`, `styleMs`, `taskMs` | Chromium's JavaScript, layout, style and main-thread task time |
 | `loafBlockingMs` | Long-animation-frame blocking time, from every frame that overlaps the action |
 | `rafP95GapMs`, `rafMaxGapMs`, `rafGapsOver33`, `rafGapsOver50` | Animation-frame spacing during a scroll gesture |
@@ -64,6 +67,8 @@ never arrive) fails instead of reporting a fast time.
 | `domGapFrames` | Thread scroll frames with no loaded reply in view |
 | `idleTaskMsPerSec`, `trafficTaskMsPerSec`, `taskMsPerMessage` (and script, style and layout per message) | Background traffic cost |
 | `heapGrowthKBPerMessage`, `nodesDelta`, `listenersDelta` | Background traffic growth, measured after a forced GC |
+| `firstContentMs`, `highlightedMs`, `allHighlightedMs` | Changes: until a file's diff is on screen, until every file on screen that can be highlighted is, and until every such file is (absent when some never are) |
+| `jsHeapMB`, `domNodes`, `rendererRssMB` | Changes: main-thread JS heap after a forced GC, DOM nodes, and the page's renderer process memory, which includes its workers |
 
 The task categories overlap, so don't add them up or read them as CPU
 percentages. Frame gaps show main-thread stalls, not compositor frame rate.

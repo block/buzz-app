@@ -28,6 +28,8 @@ const cases = [
   "background-traffic-large-sidebar",
   "thread-unread-open-60",
   "thread-unread-open-200",
+  "pull-changes-open",
+  "pull-changes-reopen",
 ];
 // A case name selects only that case; a group selects every case it prefixes.
 const groups = [
@@ -37,6 +39,7 @@ const groups = [
   "thread",
   "thread-scroll",
   "background-traffic",
+  "pull-changes",
 ];
 const scenarios = [...groups, ...cases];
 try {

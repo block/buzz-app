@@ -1,5 +1,6 @@
 # Unified patch context lines intentionally contain one space.
 runtime/*.patch -whitespace
+tests/fixtures/*.diff -whitespace
 
 # Tests compare prompt text byte for byte, and the composer joins sections
 # with LF. Check this text out with LF on every platform.

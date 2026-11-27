@@ -1,0 +1,2168 @@
+diff --git a/browser-host/channel-commands.mjs b/browser-host/channel-commands.mjs
+index 1748cce9ca..cea0762a9b 100644
+--- a/browser-host/channel-commands.mjs
++++ b/browser-host/channel-commands.mjs
+@@ -1,4 +1,5 @@
+ import { validChannelLabel } from "../src/features/relay/channel-labels.ts";
++import { isMigrationSource } from "../src/features/relay/migration.ts";
+ // Host signing allowlist. No arbitrary kinds, roles or metadata edits.
+ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+ export function validChannelCommand(event) {
+@@ -17,9 +18,15 @@ export function validChannelCommand(event) {
+   )
+     return false;
+   let tags = event.tags;
+-  if ([9000, 9007].includes(event.kind) && tags.at(-1)?.[0] === "client-id") {
+-    const clientId = tags.at(-1);
+-    if (clientId.length !== 2 || !uuid.test(clientId[1])) return false;
++  const client = tags.at(-1)?.[0] === "client-id" ? tags.at(-1) : undefined;
++  if (client) {
++    if (client.length !== 2 || !uuid.test(client[1])) return false;
++    tags = tags.slice(0, -1);
++  }
++  const migration = tags.at(-1)?.[0] === "migration" ? tags.at(-1) : undefined;
++  if (migration) {
++    if (migration.length !== 2 || !isMigrationSource(migration[1]))
++      return false;
+     tags = tags.slice(0, -1);
+   }
+   const [h] = tags;
+@@ -106,7 +113,8 @@ export function validChannelCommand(event) {
+         (role.length === 2 &&
+           (role[1] === "member" ||
+             role[1] === "guest" ||
+-            (role[1] === "bot" && people.length > 1))))
++            (role[1] === "bot" &&
++              (people.length > 1 || (!!migration && !!client))))))
+     );
+   }
+   return false;
+diff --git a/browser-host/relay-broker-api.test.mjs b/browser-host/relay-broker-api.test.mjs
+index d94abe1c6f..af91dc32c3 100644
+--- a/browser-host/relay-broker-api.test.mjs
++++ b/browser-host/relay-broker-api.test.mjs
+@@ -1875,6 +1875,7 @@ test("real outbox creates, invites and sends", async () => {
+         ["visibility", "open"],
+         ["channel_type", "stream"],
+         ["ttl", "604800"],
++        ["migration", "slack"],
+       ],
+     });
+     await vi.waitFor(() =>
+@@ -1890,6 +1891,8 @@ test("real outbox creates, invites and sends", async () => {
+       tags: [
+         ["h", id],
+         ["p", "a".repeat(64)],
++        ["p", "b".repeat(64)],
++        ["migration", "slack"],
+       ],
+     });
+     await vi.waitFor(() =>
+@@ -1915,6 +1918,13 @@ test("real outbox creates, invites and sends", async () => {
+     expect(h.publications.map((event) => event.kind)).toEqual([
+       9007, 9007, 9000, 9,
+     ]);
++    expect(
++      h.publications.map(({ tags }) =>
++        tags.filter(([name]) => name === "migration"),
++      ),
++    ).toEqual([[], [["migration", "slack"]], [["migration", "slack"]], []]);
++    for (const event of h.publications)
++      expect(verifyEvent(structuredClone(event))).toBe(true);
+   } finally {
+     owner?.dispose();
+     traffic?.dispose();
+diff --git a/docs/plugin-authoring-guide.md b/docs/plugin-authoring-guide.md
+index 82bf6f8088..387dfad12f 100644
+--- a/docs/plugin-authoring-guide.md
++++ b/docs/plugin-authoring-guide.md
+@@ -79,6 +79,25 @@ Each line is the main call. Read the types for every field.
+ 
+ Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short.
+ 
++## Migration writes
++
++Check `ctx.relay.snapshot().session.supportsMigrationWrites === true` before
++starting an import that needs migration labels. Older hosts omit this property.
++The property confirms that the host signs the label. Relay support for throttling
++depends on the connected community.
++
++Pass `migration: "example-import"` in `session.channelCreation.create(input)`
++and in `session.memberAdditions.add(channelId, pubkey, options)`. The host signs
++`["migration", source]` on channel creation (kind 9007) and membership additions
++(kind 9000). The source must be a nonempty string. The tag classifies workload.
++The normal access checks still apply.
++
++The host batches membership additions by source. A migration batch that fails
++delivery stops and reports the error. If a successful batch only adds some of
++its members, the host keeps the source on individual additions for the rest.
++Both calls report relay migration throttling with an error that starts with
++`rate-limited:`. Pause the import before issuing another write when you see it.
++
+ ## Host access (`manifest.host`)
+ 
+ Declare in `manifest.json` the commands, processes, network origins and files your plugin uses, then add `"host"` to `inject`. The host's own APIs only do what's declared, so this is how they get wired up. It isn't a security boundary: plugin code runs in the app and can reach past it.
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 79417464c0..e86aac0e38 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -39,7 +39,7 @@ while the app runs.
+ 
+ **Treat every specific as unstable.** The API is a preview tied to the host
+ version, nothing is promised across versions, and the author types are versioned
+-`0.0.0-preview.1`. The code is the reference: the author types in
++`0.0.0-preview.2`. The code is the reference: the author types in
+ [`src/plugins/author.ts`](../src/plugins/author.ts) and the bundled plugins in
+ `src/bundled/`.
+ 
+diff --git a/scripts/build-author.mjs b/scripts/build-author.mjs
+index 2083d5428b..46adb3fb48 100644
+--- a/scripts/build-author.mjs
++++ b/scripts/build-author.mjs
+@@ -1,7 +1,7 @@
+ import { resolve } from "node:path";
+ import { fileURLToPath, pathToFileURL } from "node:url";
+ import { spawnSync } from "node:child_process";
+-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
++import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+ const root = new URL("../", import.meta.url);
+ // Tests can generate independent artifacts concurrently without racing dist-author.
+ const out = process.argv[2]
+@@ -23,12 +23,18 @@ const result = spawnSync(
+ if (result.status !== 0) process.exit(result.status ?? 1);
+ const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
+ await mkdir(out, { recursive: true });
++await Promise.all(
++  ["LICENSE", "NOTICE.md"].map((file) =>
++    copyFile(new URL(file, root), new URL(file, out)),
++  ),
++);
+ await writeFile(
+   new URL("package.json", out),
+   `${JSON.stringify(
+     {
+       name: "@buzz/author",
+-      version: "0.0.0-preview.1",
++      version: "0.0.0-preview.2",
++      license: "Apache-2.0",
+       private: true,
+       type: "module",
+       types: "types/plugins/author.d.ts",
+diff --git a/src-tauri/src/relay/channel_writes.rs b/src-tauri/src/relay/channel_writes.rs
+index 56460f791c..b8496279ec 100644
+--- a/src-tauri/src/relay/channel_writes.rs
++++ b/src-tauri/src/relay/channel_writes.rs
+@@ -454,7 +454,7 @@ pub(super) fn direct_message_tags(
+ }
+ 
+ pub(super) fn creation(event: &EventTemplate) -> bool {
+-    if event.kind != 9007 || !event.content.is_empty() || !(4..=47).contains(&event.tags.len()) {
++    if event.kind != 9007 || !event.content.is_empty() || !(4..=48).contains(&event.tags.len()) {
+         return false;
+     }
+     let (Some(id), Some(name), Some(visibility), Some(channel_type)) = (
+@@ -541,6 +541,16 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
+         }
+         index += 1;
+     }
++    if event
++        .tags
++        .get(index)
++        .is_some_and(|t| t.first().is_some_and(|s| s == "migration"))
++    {
++        if !tag(event, index, "migration").is_some_and(|source| !source.is_empty()) {
++            return false;
++        }
++        index += 1;
++    }
+     if event
+         .tags
+         .get(index)
+@@ -921,6 +931,41 @@ mod boundary_tests {
+         }
+     }
+ 
++    #[test]
++    fn channel_creation_signs_one_migration_source_before_the_client_id() {
++        let mut event = EventTemplate {
++            kind: 9007,
++            created_at: 1700000010,
++            content: String::new(),
++            tags: vec![
++                vec!["h".into(), uuid::Uuid::nil().to_string()],
++                vec!["name".into(), "Imported channel".into()],
++                vec!["visibility".into(), "private".into()],
++                vec!["channel_type".into(), "stream".into()],
++                vec!["t".into(), "example-import".into()],
++                vec!["migration".into(), "slack".into()],
++                vec!["client-id".into(), uuid::Uuid::new_v4().to_string()],
++            ],
++        };
++        validate_event("https://example.org", &event).unwrap();
++        let signed = tauri::async_runtime::block_on(
++            IdentityHost::fixture().sign(template(&serde_json::to_value(&event).unwrap()).unwrap()),
++        )
++        .unwrap();
++        super::super::verify_signature(&signed).unwrap();
++        assert_eq!(signed["tags"][5], serde_json::json!(["migration", "slack"]));
++        assert!(creation(&template(&signed).unwrap()));
++
++        event.tags.insert(6, event.tags[5].clone());
++        assert!(!creation(&event));
++        event.tags.remove(6);
++        event.tags[5].push("extra".into());
++        assert!(!creation(&event));
++        event.tags[5].pop();
++        event.tags[5][1].clear();
++        assert!(!creation(&event));
++    }
++
+     #[test]
+     fn creation_and_details_admit_only_valid_label_tails() {
+         let t = |label: &str| vec!["t".to_string(), label.to_string()];
+diff --git a/src/bundled/channels/OutboxStatus.test.tsx b/src/bundled/channels/OutboxStatus.test.tsx
+index a150dc8ccd..2eca4f4545 100644
+--- a/src/bundled/channels/OutboxStatus.test.tsx
++++ b/src/bundled/channels/OutboxStatus.test.tsx
+@@ -218,7 +218,7 @@ it("retries a guest addition as a guest", async () => {
+   );
+ });
+ 
+-it("retries a guest batch per person as guests, each as a new addition", async () => {
++it("passes the saved receipt, role, and source when retrying a migration batch", async () => {
+   const { add } = show({
+     ...invitation,
+     event: {
+@@ -228,6 +228,7 @@ it("retries a guest batch per person as guests, each as a new addition", async (
+         ["p", "one"],
+         ["p", "two"],
+         ["role", "guest"],
++        ["migration", "slack"],
+       ],
+     },
+     recovery: { key: "member-add:batch:operation", value: "1" },
+@@ -235,8 +236,24 @@ it("retries a guest batch per person as guests, each as a new addition", async (
+   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+   await waitFor(() =>
+     expect(add.mock.calls).toEqual([
+-      ["channel", "one", { role: "guest" }],
+-      ["channel", "two", { role: "guest" }],
++      [
++        "channel",
++        "one",
++        {
++          role: "guest",
++          migration: "slack",
++          batchReceipt: invitation.event.id,
++        },
++      ],
++      [
++        "channel",
++        "two",
++        {
++          role: "guest",
++          migration: "slack",
++          batchReceipt: invitation.event.id,
++        },
++      ],
+     ]),
+   );
+ });
+diff --git a/src/bundled/channels/OutboxStatus.tsx b/src/bundled/channels/OutboxStatus.tsx
+index 7a74fe1ea5..eb9f206b12 100644
+--- a/src/bundled/channels/OutboxStatus.tsx
++++ b/src/bundled/channels/OutboxStatus.tsx
+@@ -13,6 +13,7 @@ import {
+ import type { RelaySession } from "../../features/relay/session";
+ import { isBatchAddition } from "../../features/channel-members/members";
+ import { soloAdminSetup } from "../../features/relay/solo-admins";
++import { migrationSource } from "../../features/relay/migration";
+ 
+ /** A batch names everyone its Retry re-adds. */
+ function additionLabel(tags: readonly (readonly string[])[]) {
+@@ -121,17 +122,22 @@ export function OutboxStatus({
+                         // admission, so each person is checked again. A guest
+                         // addition is retried as one, so it never sends a
+                         // writing role. A single addition finishes only its own
+-                        // receipt. A batch is never resumed, so each person it
+-                        // names is added again; it clears once all are settled.
++                        // receipt. Retry a batch through Add for each person
++                        // so the session rechecks the roster before writing.
+                         const guest = item.event.tags.some(
+                           ([tag, value]) => tag === "role" && value === "guest",
+                         );
+                         const batch = isBatchAddition(item);
++                        const migration = migrationSource(item.event.tags);
+                         const results = await Promise.allSettled(
+                           pubkeys.map((pubkey) =>
+                             memberAdditions.add(channelId, pubkey, {
+                               ...(guest ? { role: "guest" as const } : {}),
+                               ...(batch ? {} : { retry: true as const }),
++                              ...(migration === undefined ? {} : { migration }),
++                              ...(batch && migration !== undefined
++                                ? { batchReceipt: item.event.id }
++                                : {}),
+                             }),
+                           ),
+                         );
+diff --git a/src/features/channel-members/members.test.ts b/src/features/channel-members/members.test.ts
+index 56d9574f16..6c5cb42d6b 100644
+--- a/src/features/channel-members/members.test.ts
++++ b/src/features/channel-members/members.test.ts
+@@ -1,9 +1,15 @@
+ import { afterEach, expect, it, vi } from "vitest";
++import { verifyEvent } from "nostr-tools";
+ import { createRelaySession, type RelaySession } from "../relay/session";
+-import { PublishRejected, type OutgoingEvent } from "../relay/outbox";
++import {
++  PublishRejected,
++  type OutboxStorage,
++  type OutgoingEvent,
++} from "../relay/outbox";
+ import { matchesEvent } from "../relay/projection";
+ import { keypair, roster, signed } from "../relay/testing";
+ import type { RelayEvent } from "../relay/events";
++import { acceptPublish } from "../relay/transport";
+ import {
+   addChannelMember,
+   addChannelMembersAtOnce,
+@@ -1335,12 +1341,15 @@ function batchSetup(applyAll = true) {
+   let clock = 1700000000;
+   let records: readonly OutgoingEvent[] = [];
+   const published: RelayEvent[] = [];
+-  let onPublish = () => {};
++  let onPublish: (event: RelayEvent) => unknown = () => {};
++  let onSign: () => void | Promise<void> = () => {};
++  let onLockWait = () => {};
++  let onJournalRead: () => void | Promise<void> = () => {};
+   let rosterReads = 0;
+   let failRosterRead = 0;
+   let rosterDown = false;
+   const publish = vi.fn(async (event: RelayEvent) => {
+-    onPublish();
++    await onPublish(event);
+     const named = event.tags.flatMap(([tag, value]) =>
+       tag === "p" && value ? [value] : [],
+     );
+@@ -1348,65 +1357,98 @@ function batchSetup(applyAll = true) {
+     clock++;
+     published.push(event);
+   });
+-  const owner = createRelaySession(
+-    {
+-      viewer: viewer.pubkey,
+-      relayAuthor: relay.pubkey,
+-      media: () => undefined,
+-      readAgentLibrary: async () => ({
+-        definitions: [],
+-        identities: [{ pubkey: agent.pubkey, name: "Agent" }],
+-      }),
+-      writer: {
+-        kinds: [9, 9000, 9007],
+-        sign: async (template) => signed(viewer, template),
+-        publish: async (event) => {
+-          await publish(event);
+-        },
++  const transport: Parameters<typeof createRelaySession>[0] = {
++    viewer: viewer.pubkey,
++    relayAuthor: relay.pubkey,
++    media: () => undefined,
++    readAgentLibrary: async () => ({
++      definitions: [],
++      identities: [{ pubkey: agent.pubkey, name: "Agent" }],
++    }),
++    writer: {
++      kinds: [9, 9000, 9007],
++      sign: async (template) => {
++        await onSign();
++        return signed(viewer, template);
+       },
+-      query: async (filters) => {
+-        if (filters.some((filter) => filter.kinds?.includes(39002)))
+-          if (++rosterReads === failRosterRead || rosterDown)
+-            throw new Error("Roster unavailable");
+-        return [
+-          signed(relay, {
+-            kind: 39000,
+-            content: "",
+-            tags: [
+-              ["d", id],
+-              ["t", "stream"],
+-              ["private"],
+-              ["join_role", "guest"],
+-              ["name", "Design"],
+-            ],
+-          }),
+-          roster(relay, id, members, clock),
+-        ].filter((event) =>
+-          filters.some((filter) => matchesEvent(event, filter)),
+-        );
++      publish: async (event) => {
++        await publish(event);
+       },
+     },
+-    {
+-      outboxStorage: {
+-        load: () => records,
+-        save: (next) => {
+-          records = structuredClone(next);
+-        },
+-      },
++    query: async (filters) => {
++      if (filters.some((filter) => filter.kinds?.includes(39002)))
++        if (++rosterReads === failRosterRead || rosterDown)
++          throw new Error("Roster unavailable");
++      return [
++        signed(relay, {
++          kind: 39000,
++          content: "",
++          tags: [
++            ["d", id],
++            ["t", "stream"],
++            ["private"],
++            ["join_role", "guest"],
++            ["name", "Design"],
++          ],
++        }),
++        roster(relay, id, members, clock),
++      ].filter((event) =>
++        filters.some((filter) => matchesEvent(event, filter)),
++      );
+     },
+-  );
+-  cleanups.push(() => owner.dispose());
++  };
++  const locks = new Map<string, Promise<unknown>>();
++  const storage: OutboxStorage = {
++    lock(id, run) {
++      const before = locks.get(id);
++      if (before) onLockWait();
++      const work = (before ?? Promise.resolve()).then(run, run);
++      locks.set(id, work);
++      const clear = () => {
++        if (locks.get(id) === work) locks.delete(id);
++      };
++      void work.then(clear, clear);
++      return work;
++    },
++    async load(options) {
++      if (options?.readOnly) await onJournalRead();
++      return records;
++    },
++    save: (next) => {
++      records = structuredClone(next);
++    },
++  };
++  const openWindow = () => {
++    const owner = createRelaySession(transport, { outboxStorage: storage });
++    cleanups.push(owner.dispose);
++    return owner.session;
++  };
++  const session = openWindow();
+   return {
+-    session: owner.session,
++    session,
++    openWindow,
+     id,
+     agent,
+     published,
++    publish,
+     records: () => records,
++    dismissInAnotherWindow(id: string) {
++      records = records.filter((item) => item.event.id !== id);
++    },
+     members: () => members,
+     /** Runs as the relay receives each write, e.g. another owner's admission. */
+-    onPublish(run: () => void) {
++    onPublish(run: typeof onPublish) {
+       onPublish = run;
+     },
++    onSign(run: typeof onSign) {
++      onSign = run;
++    },
++    onLockWait(run: typeof onLockWait) {
++      onLockWait = run;
++    },
++    onJournalRead(run: typeof onJournalRead) {
++      onJournalRead = run;
++    },
+     /** Fails the relay's nth roster read from now. */
+     failRosterRead(nth: number) {
+       failRosterRead = rosterReads + nth;
+@@ -1419,22 +1461,26 @@ function batchSetup(applyAll = true) {
+       members = [...members, key];
+       clock++;
+     },
+-    async ready() {
+-      owner.session.channels.ensureList();
+-      await vi.waitFor(() =>
+-        expect(owner.session.channels.list().status).toBe("ready"),
+-      );
+-      await owner.session.agentChoices.refresh();
++    async ready(view = session) {
++      view.channels.ensureList();
++      await vi.waitFor(() => expect(view.channels.list().status).toBe("ready"));
++      await view.agentChoices.refresh();
+     },
+     addAll: (keys: readonly string[]) =>
+-      Promise.all(
+-        keys.map((key) => owner.session.memberAdditions.add(id, key)),
+-      ),
++      Promise.all(keys.map((key) => session.memberAdditions.add(id, key))),
+   };
+ }
+ const people = (count: number) =>
+   Array.from({ length: count }, () => keypair().pubkey);
+ 
++function gate<T = void>() {
++  let resolve!: (value: T) => void;
++  const promise = new Promise<T>((finish) => {
++    resolve = finish;
++  });
++  return { promise, resolve };
++}
++
+ it("adds people requested together in one write per role and 100 people", async () => {
+   const t = batchSetup();
+   await t.ready();
+@@ -1457,18 +1503,398 @@ it("adds people requested together in one write per role and 100 people", async
+   expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
+ });
+ 
+-it("adds anyone a relay without batch support missed one at a time", async () => {
+-  const t = batchSetup(false);
++it.each([undefined, "slack"])(
++  "adds missed people individually on a legacy relay (migration=%s)",
++  async (migration) => {
++    const t = batchSetup(false);
++    await t.ready();
++    const [first = "", second = "", third = ""] = people(3);
++    await Promise.all(
++      [first, second, third].map((key) =>
++        t.session.memberAdditions.add(t.id, key, { migration }),
++      ),
++    );
++    expect(
++      t.published.map((event) =>
++        event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
++      ),
++    ).toEqual([[first, second, third], [second], [third]]);
++    for (const event of t.published) {
++      expect(verifyEvent(structuredClone(event))).toBe(true);
++      expect(event.tags.filter(([tag]) => tag === "migration")).toEqual(
++        migration === undefined ? [] : [["migration", "slack"]],
++      );
++    }
++    expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
++    expect(t.session.memberAdditions.snapshot()).toEqual([]);
++  },
++);
++
++it("sends separate signed membership batches for each source", async () => {
++  const t = batchSetup();
+   await t.ready();
+-  const [first = "", second = "", third = ""] = people(3);
+-  await t.addAll([first, second, third]);
++  const [a = "", b = "", c = "", d = "", e = "", f = ""] = people(6);
++  await Promise.all([
++    t.session.memberAdditions.add(t.id, a, { migration: "slack" }),
++    t.session.memberAdditions.add(t.id, b),
++    t.session.memberAdditions.add(t.id, c, { migration: "example-import" }),
++    t.session.memberAdditions.add(t.id, d, { migration: "slack" }),
++    t.session.memberAdditions.add(t.id, e),
++    t.session.memberAdditions.add(t.id, f, { migration: "example-import" }),
++  ]);
++  expect(t.published).toHaveLength(3);
+   expect(
+-    t.published.map((event) =>
+-      event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
++    t.published.map(({ tags }) =>
++      tags.filter(([tag]) => tag === "p" || tag === "migration"),
+     ),
+-  ).toEqual([[first, second, third], [second], [third]]);
+-  expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
+-  expect(t.session.memberAdditions.snapshot()).toEqual([]);
++  ).toEqual(
++    expect.arrayContaining([
++      [
++        ["p", a],
++        ["p", d],
++        ["migration", "slack"],
++      ],
++      [
++        ["p", b],
++        ["p", e],
++      ],
++      [
++        ["p", c],
++        ["p", f],
++        ["migration", "example-import"],
++      ],
++    ]),
++  );
++});
++
++it.each([
++  [
++    429,
++    { error: "rate-limited: quota exceeded; retry in 5s" },
++    "rate-limited: quota exceeded; retry in 5s",
++  ],
++  [502, {}, "Relay delivery could not be confirmed (502)"],
++] as const)(
++  "stops a migration batch after HTTP delivery fails (%s)",
++  async (status, refusal, message) => {
++    const t = batchSetup();
++    await t.ready();
++    t.onPublish((event) =>
++      acceptPublish(Response.json(refusal, { status }), event.id),
++    );
++    const members = [...people(2), t.agent.pubkey];
++    const add = () =>
++      Promise.allSettled(
++        members.map((key) =>
++          t.session.memberAdditions.add(t.id, key, { migration: "slack" }),
++        ),
++      );
++    const results = await add();
++    expect(results).toEqual(
++      Array.from({ length: 3 }, () => ({
++        status: "rejected",
++        reason: new Error(message),
++      })),
++    );
++    expect(t.publish).toHaveBeenCalledOnce();
++    const [event] = t.publish.mock.lastCall ?? [];
++    expect(event?.tags.filter(([tag]) => tag === "p")).toHaveLength(2);
++    expect(event?.tags).toContainEqual(["migration", "slack"]);
++    const [saved] = t.records().filter((item) => !item.acknowledged);
++    expect(saved?.signed).toEqual(structuredClone(event));
++    await add();
++    expect(
++      t.publish.mock.calls.map(([attempt]) => structuredClone(attempt)),
++    ).toEqual([saved?.signed, saved?.signed]);
++    expect(t.records().filter((item) => !item.acknowledged)).toHaveLength(1);
++  },
++);
++
++it.each([
++  { missing: 1, dismissed: true },
++  { missing: 2, dismissed: true },
++  { missing: 1, dismissed: false },
++  { missing: 2, dismissed: false },
++])(
++  "Retry checks batch ownership with $missing missing and dismissed=$dismissed",
++  async ({ missing, dismissed }) => {
++    const t = batchSetup();
++    await t.ready();
++    const members = people(3);
++    const add = (batchReceipt?: string) =>
++      Promise.allSettled(
++        members.map((key) =>
++          t.session.memberAdditions.add(t.id, key, {
++            migration: "slack",
++            batchReceipt,
++          }),
++        ),
++      );
++    t.onPublish(() => {
++      throw new PublishRejected("Not sent");
++    });
++    const initial = await add();
++    expect(initial.every((result) => result.status === "rejected")).toBe(true);
++    const [original] = t.records();
++    if (!original) throw new Error("Expected the saved batch");
++    for (const key of members.slice(missing)) t.admit(key);
++    if (dismissed) t.dismissInAnotherWindow(original.event.id);
++    t.onPublish(() => {});
++    await add(original.event.id);
++    if (dismissed) expect(t.publish).toHaveBeenCalledOnce();
++    else {
++      expect(t.publish).toHaveBeenCalledTimes(2);
++      expect(t.published[0]?.tags).toContainEqual(["migration", "slack"]);
++      expect(t.published[0]?.tags.filter(([kind]) => kind === "p")).toEqual(
++        members.slice(0, missing).map((key) => ["p", key]),
++      );
++    }
++    expect(t.session.outbox?.snapshot()).toEqual([]);
++  },
++);
++
++it("reuses the signed narrowed batch across windows and successive roster changes", async () => {
++  const t = batchSetup();
++  await t.ready();
++  const members = people(4);
++  const add = (
++    batchReceipt?: string,
++    session = t.session,
++    requested = members,
++  ) =>
++    Promise.allSettled(
++      requested.map((key) =>
++        session.memberAdditions.add(t.id, key, {
++          migration: "slack",
++          batchReceipt,
++        }),
++      ),
++    );
++  t.onPublish(() => {
++    throw new PublishRejected("Not sent");
++  });
++  await add();
++  const [original] = t.records();
++  if (!original) throw new Error("Expected the saved batch");
++  const stale = t.openWindow();
++  await t.ready(stale);
++  t.admit(members[0] ?? "");
++  await add(original.event.id);
++  await add(original.event.id, stale);
++  const smaller = t.publish.mock.calls[1]?.[0];
++  if (!smaller) throw new Error("Expected a narrowed batch");
++  t.admit(members[1] ?? "");
++  await add(smaller.id, stale, members.slice(1));
++  await add(original.event.id);
++  const narrowest = t.publish.mock.calls[3]?.[0];
++  expect(narrowest?.tags.filter(([tag]) => tag === "p")).toEqual(
++    members.slice(2).map((key) => ["p", key]),
++  );
++  expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
++    original.event.id,
++    smaller.id,
++    smaller.id,
++    narrowest?.id,
++    narrowest?.id,
++  ]);
++  expect(t.records()).toHaveLength(3);
++  t.dismissInAnotherWindow(original.event.id);
++  await add(original.event.id);
++  expect(t.publish).toHaveBeenCalledTimes(5);
++});
++
++it("waits for the original batch when a different window loaded it before signing", async () => {
++  const t = batchSetup();
++  await t.ready();
++  const members = people(3);
++  const signing = gate();
++  const signed = gate();
++  const delivery = gate();
++  const receipt = gate();
++  const retryProgress = gate<string>();
++  t.onSign(() => {
++    signing.resolve();
++    return signed.promise;
++  });
++  const add = (session: RelaySession, batchReceipt?: string) =>
++    Promise.allSettled(
++      members.map((key) =>
++        session.memberAdditions.add(t.id, key, {
++          migration: "slack",
++          batchReceipt,
++        }),
++      ),
++    );
++  const initial = add(t.session);
++  let retry: ReturnType<typeof add> | undefined;
++  try {
++    await signing.promise;
++    const original = t.records()[0];
++    if (!original) throw new Error("Expected the original batch intent");
++    expect(original.signed).toBeUndefined();
++    const stale = t.openWindow();
++    await t.ready(stale);
++    t.admit(members[0] ?? "");
++    t.onPublish((event) => {
++      if (event.id !== original.event.id) {
++        retryProgress.resolve("sent a replacement");
++        return;
++      }
++      delivery.resolve();
++      return receipt.promise;
++    });
++    signed.resolve();
++    await delivery.promise;
++    t.onLockWait(() => retryProgress.resolve("waited for delivery"));
++    retry = add(stale, original.event.id);
++    expect(await retryProgress.promise).toBe("waited for delivery");
++  } finally {
++    signed.resolve();
++    receipt.resolve();
++    await initial;
++    if (retry)
++      expect(await retry).toEqual(
++        members.map(() => ({ status: "fulfilled", value: undefined })),
++      );
++  }
++  expect(t.publish).toHaveBeenCalledOnce();
++});
++
++it("retries the exact labeled single after restart and refuses a different source", async () => {
++  const t = setup();
++  await t.ready();
++  const add = (options?: Parameters<typeof t.session.memberAdditions.add>[2]) =>
++    t.session.memberAdditions.add(t.id, t.person.pubkey, options);
++  t.setFail("Connection lost after dispatch", true);
++  await expect(add({ migration: "slack" })).rejects.toThrow(/Connection lost/);
++  const original = structuredClone(t.publish.mock.lastCall?.[0]);
++  expect(original?.tags).toContainEqual(["migration", "slack"]);
++  await vi.waitFor(() => expect(t.records()[0]?.signed).toEqual(original));
++  t.restart();
++  await t.ready();
++  await expect(add()).rejects.toThrow(/different migration source/);
++  expect(t.publish).toHaveBeenCalledOnce();
++  t.setFail("rate-limited: quota exceeded; retry in 2s");
++  await expect(add({ migration: "slack", retry: true })).rejects.toThrow(
++    /^rate-limited:/,
++  );
++  t.setFail("");
++  await add({ migration: "slack", retry: true });
++  await add();
++  expect(t.publish.mock.calls.map(([event]) => structuredClone(event))).toEqual(
++    [original, original, original],
++  );
++});
++
++it("stops a migration single retry when the member joins while recovery waits", async () => {
++  const t = batchSetup();
++  await t.ready();
++  const person = keypair().pubkey;
++  const add = (retry?: true) =>
++    t.session.memberAdditions.add(t.id, person, {
++      migration: "slack",
++      ...(retry && { retry }),
++    });
++  t.onPublish(() => {
++    throw new PublishRejected("Not sent");
++  });
++  await expect(add()).rejects.toThrow("Not sent");
++  const [receipt] = t.records();
++  const outbox = t.session.outbox;
++  if (!receipt?.recovery || !outbox?.withRecovery)
++    throw new Error("Expected a recoverable addition");
++
++  const entered = gate();
++  const releaseAdoption = gate();
++  const releaseReplay = gate();
++  const adoptionQueued = gate();
++  const otherQueued = gate();
++  const replayQueued = gate();
++  const { recovery } = receipt;
++  const holdAdoption = outbox.withRecovery(receipt.event.id, recovery, () => {
++    entered.resolve();
++    return releaseAdoption.promise;
++  });
++  const work = [holdAdoption];
++  try {
++    await entered.promise;
++    t.onLockWait(adoptionQueued.resolve);
++    t.onPublish(() => {});
++    const retry = add(true);
++    const outcome = expect(retry).rejects.toThrow(
++      "Membership changed during retry. Try again.",
++    );
++    work.push(retry);
++    void outcome.catch(() => {});
++    await adoptionQueued.promise;
++    // Queue a second window's lock between receipt adoption and publication.
++    const other = t.openWindow().outbox;
++    if (!other?.withRecovery)
++      throw new Error("Expected recovery in both windows");
++    t.onLockWait(otherQueued.resolve);
++    work.push(
++      other.withRecovery(
++        receipt.event.id,
++        recovery,
++        () => releaseReplay.promise,
++      ),
++    );
++    await otherQueued.promise;
++    t.onLockWait(replayQueued.resolve);
++    releaseAdoption.resolve();
++    await replayQueued.promise;
++    t.admit(person);
++    await t.session.channelWrites.refreshMembership(t.id);
++    releaseReplay.resolve();
++    await outcome;
++  } finally {
++    releaseAdoption.resolve();
++    releaseReplay.resolve();
++    await Promise.allSettled(work);
++  }
++  expect(t.publish).toHaveBeenCalledOnce();
++});
++
++it("checks fresh migration recipients after reading the journal before publishing", async () => {
++  const t = batchSetup();
++  await t.ready();
++  const first = keypair().pubkey;
++  const second = keypair().pubkey;
++  const entered = gate();
++  const release = gate();
++  t.onJournalRead(() => {
++    // Pause the batch's receipt lookup after the initial pending singles read.
++    t.onJournalRead(() => {
++      entered.resolve();
++      return release.promise;
++    });
++  });
++  const add = () =>
++    Promise.allSettled(
++      [first, second].map((key) =>
++        t.session.memberAdditions.add(t.id, key, { migration: "slack" }),
++      ),
++    );
++  const initial = add();
++  try {
++    await entered.promise;
++    t.admit(first);
++    await t.session.channelWrites.refreshMembership(t.id);
++  } finally {
++    release.resolve();
++    await initial;
++  }
++  expect(await initial).toEqual(
++    [first, second].map(() => ({
++      status: "rejected",
++      reason: new Error("Membership changed before the addition. Try again."),
++    })),
++  );
++  expect(t.publish).not.toHaveBeenCalled();
++  await add();
++  expect(
++    t.published.map((event) => event.tags.filter(([tag]) => tag === "p")),
++  ).toEqual([[["p", second]]]);
+ });
+ 
+ it("leaves a pending single addition to resume, never batching its person again", async () => {
+diff --git a/src/features/channel-members/members.ts b/src/features/channel-members/members.ts
+index 4af6295c9a..47e6d2df37 100644
+--- a/src/features/channel-members/members.ts
++++ b/src/features/channel-members/members.ts
+@@ -1,8 +1,14 @@
+ import { agentUnavailable } from "../agents/choices";
+ import type { RelaySession } from "../relay/session";
+ import type { ChannelSummary } from "../relay/contracts";
+-import type { LocalEvents, OutgoingEvent } from "../relay/outbox";
++import type {
++  LocalEvents,
++  Outbox,
++  OutgoingEvent,
++  RecoveryJournal,
++} from "../relay/outbox";
+ import type { RelayEvent } from "../relay/events";
++import { migrationSource } from "../relay/migration";
+ 
+ const keyPattern = /^[0-9a-f]{64}$/;
+ 
+@@ -139,9 +145,12 @@ function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
+ }
+ 
+ const batchPrefix = "member-add:batch:";
+-/** A batch addition is settled by the roster read after it, never resumed. */
++const additionLifetimeSeconds = 15 * 60;
++/** A batch clears once each person it names is confirmed or has a single receipt. */
+ export const isBatchAddition = (item: OutgoingEvent) =>
+   !!item.recovery?.key.startsWith(batchPrefix);
++const batchOrigin = (item: OutgoingEvent) =>
++  item.recovery?.value === "1" ? item.event.id : item.recovery?.value;
+ 
+ export type MemberAdditionIntent = {
+   id?: string;
+@@ -151,16 +160,90 @@ export type MemberAdditionIntent = {
+   role?: "guest";
+   /** Outbox recovery is not an explicit request to re-invite a removed member. */
+   retry?: true;
++  migration?: string | undefined;
++  batchReceipt?: string | undefined;
+ };
+ 
++/** Require the original batch's ownership before admitting a retry. */
++async function withMigrationBatch(
++  outbox: Outbox,
++  journal: RecoveryJournal | undefined,
++  id: string,
++  migration: string | undefined,
++  channelId: string,
++  recipients: readonly string[],
++  start: () => string | Promise<string>,
++): Promise<string> {
++  const batch =
++    (await journal?.read())?.find((item) => item.event.id === id) ??
++    outbox.snapshot().find((item) => item.event.id === id);
++  if (
++    !journal ||
++    !batch?.recovery ||
++    !isBatchAddition(batch) ||
++    batch.acknowledged ||
++    batch.event.kind !== 9000 ||
++    migration === undefined ||
++    migrationSource(batch.event.tags) !== migration ||
++    !batch.event.tags.some(
++      ([tag, value]) => tag === "h" && value === channelId,
++    ) ||
++    !recipients.every((key) =>
++      batch.event.tags.some(([tag, value]) => tag === "p" && value === key),
++    ) ||
++    !outbox.withRecovery
++  )
++    throw new Error(
++      "The original migration batch is unavailable. Refresh the Outbox before retrying.",
++    );
++  let operation = "";
++  await outbox.withRecovery(id, batch.recovery, async () => {
++    operation = await start();
++    await journal.flush();
++  });
++  return operation;
++}
++
++function withMemberMigration<T>(
++  outbox: Outbox | undefined,
++  channelId: string,
++  migration: string | undefined,
++  run: (journal?: RecoveryJournal) => Promise<T>,
++) {
++  if (migration === undefined) return run();
++  const lock = outbox?.withRecoveryJournal;
++  if (!lock) throw new Error("Migration recovery is unavailable on this host.");
++  return lock(`member-add:${channelId}`, run);
++}
++
+ /** Explicit single-person intent. Membership truth and pending writes stay
+  * session-owned. Whatever the outcome, settles the batches it may complete. */
+ export async function addChannelMember(
+-  ...args: Parameters<typeof addOneMember>
++  session: RelaySession,
++  channelId: string,
++  pubkey: string,
++  signal: AbortSignal,
++  intent: MemberAdditionIntent = {},
++  receipts?: LocalEvents,
++  soloParticipant = false,
+ ) {
+-  const [session, channelId] = args;
+   try {
+-    await addOneMember(...args);
++    await withMemberMigration(
++      session.outbox,
++      channelId,
++      intent.migration,
++      (journal) =>
++        addOneMember(
++          session,
++          channelId,
++          pubkey,
++          signal,
++          intent,
++          receipts,
++          soloParticipant,
++          journal,
++        ),
++    );
+   } finally {
+     await settleBatchAdditions(session, channelId);
+   }
+@@ -174,6 +257,7 @@ async function addOneMember(
+   intent: MemberAdditionIntent = {},
+   receipts: LocalEvents | undefined = session.outbox,
+   soloParticipant = false,
++  sharedJournal?: RecoveryJournal,
+ ): Promise<void> {
+   if (!keyPattern.test(pubkey))
+     throw new Error("Choose a valid person or agent.");
+@@ -212,6 +296,16 @@ async function addOneMember(
+     event.tags.some(([tag, value]) => tag === "p" && value === pubkey);
+   const noRole = (event: Pick<RelayEvent, "tags">) =>
+     !event.tags.some(([tag]) => tag === "role");
++  if (sharedJournal && !fresh) {
++    const shared = (await sharedJournal.read()).find(
++      (item) =>
++        !item.acknowledged &&
++        !isBatchAddition(item) &&
++        matchesTarget(item.event),
++    );
++    if (shared && (!intent.id || shared.event.id === intent.id))
++      sharedJournal.adopt(shared);
++  }
+   const saved = journal.snapshot();
+   const pending = fresh
+     ? undefined
+@@ -258,6 +352,14 @@ async function addOneMember(
+   check();
+   // A completed or missing receipt is not permission for Retry to create a grant.
+   if (intent.retry && !pending) return;
++  if (
++    pending &&
++    migrationSource(pending.event.tags) !== intent.migration &&
++    !channel()?.members?.includes(pubkey)
++  )
++    throw new Error(
++      "This member has an addition with a different migration source in Outbox. Retry it there or remove it once it shows Not sent.",
++    );
+   const confirmAddition = async (id: string) => {
+     intent.id = id;
+     intent.dismissed = false;
+@@ -374,15 +476,49 @@ async function addOneMember(
+     );
+   if (
+     pending?.delivery === "failed" &&
+-    Date.now() / 1000 - pending.event.created_at >= 15 * 60
++    Date.now() / 1000 - pending.event.created_at >= additionLifetimeSeconds
+   )
+     throw new Error(
+       "This addition expired. Remove its Not sent item in Outbox, then try again.",
+     );
+ 
+-  const id = pending?.event.id ?? outbox.send(invitation(), recovery);
+-  if (pending?.delivery === "failed" || pending?.delivery === "unknown")
+-    outbox.retry(id);
++  const send = () => {
++    check();
++    const id = pending?.event.id ?? outbox.send(invitation(), recovery);
++    if (pending?.delivery === "failed" || pending?.delivery === "unknown")
++      outbox.retry(id);
++    return id;
++  };
++  const resume = async () => {
++    if (!sharedJournal || !pending || pending.acknowledged) return send();
++    const withRecovery = outbox.withRecovery;
++    if (!withRecovery)
++      throw new Error("Migration recovery is unavailable on this host.");
++    const id = pending.event.id;
++    await withRecovery(id, recovery, () => {
++      if (channel()?.members?.includes(pubkey))
++        throw new Error("Membership changed during retry. Try again.");
++      send();
++      return waitForAddition(journal, id, signal);
++    });
++    return id;
++  };
++  const id =
++    intent.batchReceipt === undefined
++      ? await resume()
++      : await withMigrationBatch(
++          outbox,
++          sharedJournal,
++          intent.batchReceipt,
++          intent.migration,
++          channelId,
++          [pubkey],
++          () => {
++            if (channel()?.members?.includes(pubkey))
++              throw new Error("Membership changed during retry. Try again.");
++            return resume();
++          },
++        );
+   return confirmAddition(id);
+ 
+   function invitation() {
+@@ -400,6 +536,7 @@ async function addOneMember(
+         ["h", channelId],
+         ["p", pubkey],
+         ...(role ? [["role", role]] : []),
++        ...(intent.migration ? [["migration", intent.migration]] : []),
+       ],
+     };
+   }
+@@ -425,18 +562,24 @@ export async function settleBatchAdditions(
+         ),
+     );
+   const named = (item: OutgoingEvent) =>
+-    item.event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : []));
+-  const covered = new Set([
+-    ...(channelOf(session, channelId)?.members ?? []),
+-    ...items.filter((item) => !isBatchAddition(item)).flatMap(named),
+-  ]);
+-  for (const item of items)
+-    if (
+-      isBatchAddition(item) &&
+-      item.delivery !== "sending" &&
+-      named(item).every((key) => covered.has(key))
+-    )
++    item.event.tags.flatMap(([tag, value]) =>
++      tag === "p" && value ? [value] : [],
++    );
++  const members = new Set(channelOf(session, channelId)?.members);
++  const singles = new Map<string | undefined, Set<string>>();
++  for (const item of items) {
++    if (isBatchAddition(item)) continue;
++    const source = migrationSource(item.event.tags);
++    const covered = singles.get(source) ?? new Set<string>();
++    for (const key of named(item)) covered.add(key);
++    singles.set(source, covered);
++  }
++  for (const item of items) {
++    if (!isBatchAddition(item) || item.delivery === "sending") continue;
++    const covered = singles.get(migrationSource(item.event.tags));
++    if (named(item).every((key) => members.has(key) || covered?.has(key)))
+       await outbox.acknowledge(item.event.id).catch(() => {});
++  }
+ }
+ 
+ /** Most people one kind:9000 may name; see the relay's put-user handler. */
+@@ -446,11 +589,13 @@ const batchLimit = 100;
+  * Adds people missing from a channel with one kind:9000 per role and at most
+  * 100 people, then reads the roster once. Returns everyone it shows, including
+  * people already there. A relay without batch support adds only the first
+- * person each event names. Best effort: only an abort throws.
++ * person each event names. Ordinary additions are best effort. For a
++ * migration, a failed send or roster read stops the batch without fallback.
+  * Everyone not returned is left to `addChannelMember`, which also says
+  * why they failed, as is anyone with an earlier single addition pending, so a
+- * stale role is never resent. A batch is never resumed and never blocks one;
+- * it stays in Outbox until everyone it names is settled.
++ * stale role is never resent. A labeled batch can reuse an unresolved receipt
++ * for the same role and recipients after a fresh roster check. A batch stays
++ * in Outbox until everyone it names is settled.
+  */
+ export async function addChannelMembersAtOnce(
+   session: RelaySession,
+@@ -461,10 +606,36 @@ export async function addChannelMembersAtOnce(
+   soloParticipant = false,
+   /** Receipts the single addition reads, including resolved ones. */
+   receipts?: LocalEvents,
++): Promise<ReadonlySet<string>> {
++  const { migration } = intents.values().next().value ?? {};
++  return withMemberMigration(session.outbox, channelId, migration, (journal) =>
++    addMemberBatch(
++      session,
++      channelId,
++      people,
++      intents,
++      signal,
++      soloParticipant,
++      receipts,
++      journal,
++    ),
++  );
++}
++
++async function addMemberBatch(
++  session: RelaySession,
++  channelId: string,
++  people: readonly string[],
++  intents: ReadonlyMap<string, MemberAdditionIntent>,
++  signal: AbortSignal,
++  soloParticipant: boolean,
++  receipts: LocalEvents | undefined,
++  sharedJournal?: RecoveryJournal,
+ ): Promise<ReadonlySet<string>> {
+   const confirmed = new Set<string>();
+   const outbox = session.outbox;
+   if (people.length < 2 || !outbox) return confirmed;
++  const { migration, batchReceipt } = intents.values().next().value ?? {};
+   const allowed = () =>
+     soloParticipant
+       ? canShareSoloChat(session, channelOf(session, channelId))
+@@ -472,8 +643,9 @@ export async function addChannelMembersAtOnce(
+   const attempt = async <T>(work: () => T | Promise<T>) => {
+     try {
+       return await work();
+-    } catch {
++    } catch (error) {
+       signal.throwIfAborted();
++      if (migration !== undefined) throw error;
+       return undefined;
+     }
+   };
+@@ -483,16 +655,16 @@ export async function addChannelMembersAtOnce(
+     return true;
+   });
+   if (!loaded) return confirmed;
+-  const singles = (receipts ?? outbox)
+-    .snapshot()
+-    .filter(
+-      (item) =>
+-        !isBatchAddition(item) &&
+-        item.event.kind === 9000 &&
+-        item.event.tags.some(
+-          ([tag, value]) => tag === "h" && value === channelId,
+-        ),
+-    );
++  const singles = (
++    sharedJournal ? await sharedJournal.read() : (receipts ?? outbox).snapshot()
++  ).filter(
++    (item) =>
++      !isBatchAddition(item) &&
++      item.event.kind === 9000 &&
++      item.event.tags.some(
++        ([tag, value]) => tag === "h" && value === channelId,
++      ),
++  );
+   const named = (items: readonly OutgoingEvent[]) =>
+     new Set(
+       items.flatMap(({ event }) =>
+@@ -567,23 +739,134 @@ export async function addChannelMembersAtOnce(
+           );
+           if (!recipients.length) continue;
+           dispatched = true;
+-          const id = await attempt(() =>
+-            outbox.send(
+-              {
+-                kind: 9000,
+-                content: "",
+-                tags: [
+-                  ["h", channelId],
+-                  ...recipients.map((key) => ["p", key]),
+-                  ...(role ? [["role", role]] : []),
+-                ],
+-              },
+-              { key: `${batchPrefix}${crypto.randomUUID()}`, value: "1" },
+-            ),
+-          );
++          const checkRecipients = () => {
++            signal.throwIfAborted();
++            const members = channelOf(session, channelId)?.members;
++            if (
++              !allowed() ||
++              recipients.some(
++                (key) =>
++                  agentUnavailable(session, key) || members?.includes(key),
++              )
++            )
++              throw new Error(
++                "Membership changed before the addition. Try again.",
++              );
++          };
++          const id = await attempt(async () => {
++            let origin: string | undefined;
++            if (sharedJournal) {
++              const records = await sharedJournal.read();
++              const original =
++                batchReceipt === undefined
++                  ? undefined
++                  : (records.find((item) => item.event.id === batchReceipt) ??
++                    outbox
++                      .snapshot()
++                      .find((item) => item.event.id === batchReceipt));
++              if (
++                batchReceipt !== undefined &&
++                (!original ||
++                  !isBatchAddition(original) ||
++                  original.acknowledged)
++              )
++                throw new Error(
++                  "The original migration batch is unavailable. Refresh the Outbox before retrying.",
++                );
++              origin = original && batchOrigin(original);
++              const saved = records.find((item) => {
++                if (
++                  item.event.kind !== 9000 ||
++                  (origin !== undefined && batchOrigin(item) !== origin) ||
++                  !isBatchAddition(item) ||
++                  item.acknowledged ||
++                  !item.signed ||
++                  !["failed", "unknown", "sending"].includes(item.delivery) ||
++                  Date.now() / 1000 - item.event.created_at >=
++                    additionLifetimeSeconds
++                )
++                  return false;
++                const { tags } = item.event;
++                const people = new Set(
++                  tags.flatMap(([tag, key]) =>
++                    tag === "p" && key ? [key] : [],
++                  ),
++                );
++                return (
++                  migrationSource(tags) === migration &&
++                  tags.some(
++                    ([tag, value]) => tag === "h" && value === channelId,
++                  ) &&
++                  tags.find(([tag]) => tag === "role")?.[1] === role &&
++                  people.size === recipients.length &&
++                  recipients.every((key) => people.has(key))
++                );
++              });
++              if (saved?.recovery) {
++                const id = saved.event.id;
++                const { withRecovery } = outbox;
++                const { recovery } = saved;
++                if (!withRecovery)
++                  throw new Error(
++                    "The original migration batch cannot be retried on this host.",
++                  );
++                // The older receipt authorizes the selection. The smaller
++                // batch owns its own signed delivery and has a separate lock.
++                const target =
++                  batchReceipt !== undefined && id !== batchReceipt
++                    ? await withMigrationBatch(
++                        outbox,
++                        sharedJournal,
++                        batchReceipt,
++                        migration,
++                        channelId,
++                        recipients,
++                        () => id,
++                      )
++                    : id;
++                await withRecovery(target, recovery, () => {
++                  checkRecipients();
++                  sharedJournal.adopt(saved);
++                  outbox.retry(target);
++                  return waitForAddition(outbox, target, signal);
++                });
++                return target;
++              }
++            }
++            const send = () => {
++              if (sharedJournal) checkRecipients();
++              return outbox.send(
++                {
++                  kind: 9000,
++                  content: "",
++                  tags: [
++                    ["h", channelId],
++                    ...recipients.map((key) => ["p", key]),
++                    ...(role ? [["role", role]] : []),
++                    ...(migration ? [["migration", migration]] : []),
++                  ],
++                },
++                {
++                  key: `${batchPrefix}${crypto.randomUUID()}`,
++                  value: origin ?? "1",
++                },
++              );
++            };
++            return batchReceipt === undefined
++              ? send()
++              : withMigrationBatch(
++                  outbox,
++                  sharedJournal,
++                  batchReceipt,
++                  migration,
++                  channelId,
++                  recipients,
++                  send,
++                );
++          });
+           if (!id) continue;
+           sent = true;
+-          // A refusal or unknown result still leaves the roster to decide.
++          // For ordinary additions, a refusal or unknown result leaves the roster to decide.
+           await attempt(() => waitForAddition(outbox, id, signal));
+         }
+     const after = sent
+diff --git a/src/features/channel-members/operations.ts b/src/features/channel-members/operations.ts
+index bf4a09a513..cd080b3b8d 100644
+--- a/src/features/channel-members/operations.ts
++++ b/src/features/channel-members/operations.ts
+@@ -1,5 +1,6 @@
+ import type { MemberAdditionIntent } from "./members";
+ import type { Delivery, LocalEvents } from "../relay/outbox";
++import { isMigrationSource } from "../relay/migration";
+ 
+ type Addition = Readonly<{
+   channelId: string;
+@@ -32,7 +33,7 @@ export function createMemberAdditions(
+   const listeners = new Set<() => void>();
+   const pending = new Map<string, Promise<void>>();
+   const intents = new Map<string, MemberAdditionIntent>();
+-  /** Additions to a channel requested in the same turn share one batch. */
++  /** Only same-turn additions for the same channel and source share a batch. */
+   const batches = new Map<
+     string,
+     {
+@@ -45,17 +46,22 @@ export function createMemberAdditions(
+     pubkey: string,
+     intent: MemberAdditionIntent,
+   ) {
+-    let current = batches.get(channelId);
++    const key = JSON.stringify([
++      channelId,
++      intent.migration,
++      intent.batchReceipt,
++    ]);
++    let current = batches.get(key);
+     if (!current) {
+       const people = new Map<string, MemberAdditionIntent>();
+       const shown = Promise.resolve().then(() => {
+-        batches.delete(channelId);
++        batches.delete(key);
+         return people.size > 1 && addAtOnce
+           ? addAtOnce(channelId, [...people.keys()], people)
+           : new Set<string>();
+       });
+       current = { people, shown };
+-      batches.set(channelId, current);
++      batches.set(key, current);
+     }
+     current.people.set(pubkey, intent);
+     return current.shown;
+@@ -88,10 +94,20 @@ export function createMemberAdditions(
+     add(
+       channelId: string,
+       pubkey: string,
+-      options: { role?: "guest"; retry?: true } = {},
++      options: {
++        role?: "guest";
++        retry?: true;
++        /** Source label for an imported membership write. */
++        migration?: string | undefined;
++        /** Outbox receipt that owns a migration batch retry. */
++        batchReceipt?: string | undefined;
++      } = {},
+     ): Promise<void> {
+       if (signal.aborted)
+         return Promise.reject(new Error("The community connection closed."));
++      const { migration, batchReceipt } = options;
++      if (migration !== undefined && !isMigrationSource(migration))
++        return Promise.reject(new Error("Use a nonempty migration source."));
+       const key = JSON.stringify([channelId, pubkey]);
+       const existing = pending.get(key);
+       // An addition under way keeps the role it asked for; another role
+@@ -99,7 +115,11 @@ export function createMemberAdditions(
+       if (existing) {
+         if (intents.get(key)?.role !== options.role)
+           return Promise.reject(new Error(differentRole));
+-        if (intents.get(key)?.retry !== options.retry)
++        if (
++          intents.get(key)?.retry !== options.retry ||
++          intents.get(key)?.migration !== migration ||
++          intents.get(key)?.batchReceipt !== batchReceipt
++        )
+           return Promise.reject(
+             new Error(
+               "A member operation is already running. Wait for it to finish, then try again.",
+@@ -116,6 +136,8 @@ export function createMemberAdditions(
+       else delete intent.role;
+       if (options.retry) intent.retry = true;
+       else delete intent.retry;
++      intent.migration = migration;
++      intent.batchReceipt = batchReceipt;
+       let confirmed = previous?.confirmed ?? false;
+       // Retry only finishes an existing receipt, so it never joins a batch.
+       const shown =
+@@ -133,8 +155,10 @@ export function createMemberAdditions(
+         .then(async () => {
+           signal.throwIfAborted();
+           if (!confirmed) {
+-            if ((await shown?.catch(() => undefined))?.has(pubkey))
+-              intent.confirmed = true;
++            const roster = await (migration === undefined
++              ? shown?.catch(() => undefined)
++              : shown);
++            if (roster?.has(pubkey)) intent.confirmed = true;
+             else await add(channelId, pubkey, intent);
+             confirmed = true;
+           }
+diff --git a/src/features/channel-templates/setup.test.ts b/src/features/channel-templates/setup.test.ts
+index 9e86e8ac56..0e4090e8cf 100644
+--- a/src/features/channel-templates/setup.test.ts
++++ b/src/features/channel-templates/setup.test.ts
+@@ -606,8 +606,12 @@ it.each([true, false])(
+       const id = await owner.session.channelCreation.create({
+         name: "Daily",
+         visibility: "open",
++        migration: "example-import",
+         setup: { canvas: "# Plan", agents: [], groupId: "", templateId: "" },
+       });
++      expect(
++        published.find((event) => event.kind === 9007)?.tags,
++      ).toContainEqual(["migration", "example-import"]);
+       const receipt = `buzz-channel-setup.v2:https://setup.example.test:${viewer.pubkey}:${id}`;
+       if (visible) {
+         await vi.waitFor(() =>
+diff --git a/src/features/channel-templates/setup.ts b/src/features/channel-templates/setup.ts
+index f533239338..fc43230b9e 100644
+--- a/src/features/channel-templates/setup.ts
++++ b/src/features/channel-templates/setup.ts
+@@ -16,6 +16,8 @@ export type ChannelCreationInput = Readonly<{
+   labels?: readonly string[] | undefined;
+   /** Create a NIP-CL system channel: left out of channel lists. */
+   system?: true | undefined;
++  /** Source label for an imported channel creation. */
++  migration?: string | undefined;
+   setup?: ChannelSetup | undefined;
+ }>;
+ /** Whether a request asks for anything beyond the channel itself. A template
+diff --git a/src/features/relay/channel-writes.test.ts b/src/features/relay/channel-writes.test.ts
+index 0dd839dfd3..74dd957265 100644
+--- a/src/features/relay/channel-writes.test.ts
++++ b/src/features/relay/channel-writes.test.ts
+@@ -1,4 +1,5 @@
+ import { assert, describe, expect, it, vi } from "vitest";
++import { verifyEvent } from "nostr-tools";
+ import { SOLO_LABEL } from "../solo/labels";
+ import { createChannelWrites } from "./channel-writes";
+ import type { Outbox, OutgoingEvent } from "./outbox";
+@@ -14,6 +15,7 @@ import {
+ } from "./testing";
+ import { createRelaySession } from "./session";
+ import { PublishRejected } from "./outbox";
++import { acceptPublish } from "./transport";
+ import { canAddMembers } from "../channel-members/members";
+ import type { ReadFilter, RelayEvent } from "./events";
+ const event = message(keypair(), "chat", "Work", 1);
+@@ -101,22 +103,33 @@ it("retries an identical create with its signed event, replaces a changed one an
+     writer: { kinds: [9007], sign, publish },
+   };
+   const input = { name: "Release notes", visibility: "open" as const };
++  const migration = { ...input, migration: "slack" };
+   const owner = createRelaySession(transport, { outboxStorage: storage });
+   try {
+-    await expect(owner.session.channelCreation.create(input)).rejects.toThrow(
+-      /connection lost/,
+-    );
+-    await expect(owner.session.channelCreation.create(input)).rejects.toThrow(
+-      /connection lost/,
+-    );
++    await expect(
++      owner.session.channelCreation.create(migration),
++    ).rejects.toThrow(/connection lost/);
++    await expect(
++      owner.session.channelCreation.create(migration),
++    ).rejects.toThrow(/connection lost/);
+     expect(sign).toHaveBeenCalledOnce();
+     const [first, again] = publish.mock.calls.map(([event]) => event);
+     expect(again).toEqual(first);
++    assert.exists(first);
++    expect(verifyEvent(structuredClone(first))).toBe(true);
++    expect(first.tags).toContainEqual(["migration", "slack"]);
++
++    await expect(owner.session.channelCreation.create(input)).rejects.toThrow(
++      /connection lost/,
++    );
++    const [ordinary] = publish.mock.lastCall ?? [];
++    expect(ordinary?.tags[0]).not.toEqual(first.tags[0]);
++    expect(ordinary?.tags.some(([tag]) => tag === "migration")).toBe(false);
+ 
+     await expect(
+       owner.session.channelCreation.create({ ...input, name: "Changelog" }),
+     ).rejects.toThrow(/connection lost/);
+-    expect(sign).toHaveBeenCalledTimes(2);
++    expect(sign).toHaveBeenCalledTimes(3);
+     await vi.waitFor(() =>
+       expect(records.map(({ event }) => event.tags[1])).toEqual([
+         ["name", "Changelog"],
+@@ -133,7 +146,7 @@ it("retries an identical create with its signed event, replaces a changed one an
+     await expect(
+       restored.session.channelCreation.create({ ...input, name: "Changelog" }),
+     ).rejects.toThrow(/connection lost/);
+-    expect(sign).toHaveBeenCalledTimes(3);
++    expect(sign).toHaveBeenCalledTimes(4);
+     const [saved, fresh] = publish.mock.calls.slice(-2).map(([event]) => event);
+     expect(fresh?.tags[0]).not.toEqual(saved?.tags[0]);
+   } finally {
+@@ -141,6 +154,47 @@ it("retries an identical create with its signed event, replaces a changed one an
+   }
+ });
+ 
++it("surfaces an HTTP migration quota refusal without retrying channel creation", async () => {
++  const viewer = keypair();
++  const reason = "rate-limited: quota exceeded; retry in 5s";
++  const publish = vi.fn(async (event: RelayEvent) => {
++    await acceptPublish(
++      Response.json({ error: reason }, { status: 429 }),
++      event.id,
++    );
++  });
++  const owner = createRelaySession(
++    {
++      viewer: viewer.pubkey,
++      relayAuthor: keypair().pubkey,
++      media: () => undefined,
++      query: async () => [],
++      writer: {
++        kinds: [9007],
++        sign: async (event) => signed(viewer, event),
++        publish,
++      },
++    },
++    { outboxStorage: { load: () => [], save: () => {} } },
++  );
++  try {
++    await expect(
++      owner.session.channelCreation.create({
++        name: "Imported channel",
++        visibility: "open",
++        migration: "slack",
++      }),
++    ).rejects.toThrow(/^rate-limited:/);
++    expect(publish).toHaveBeenCalledOnce();
++    expect(publish.mock.lastCall?.[0].tags).toContainEqual([
++      "migration",
++      "slack",
++    ]);
++  } finally {
++    owner.dispose();
++  }
++});
++
+ it("forgets an unconfirmed create when its form closes", async () => {
+   const viewer = keypair(),
+     relay = keypair();
+diff --git a/src/features/relay/channel-writes.ts b/src/features/relay/channel-writes.ts
+index dcfe01bfe8..d620fddce0 100644
+--- a/src/features/relay/channel-writes.ts
++++ b/src/features/relay/channel-writes.ts
+@@ -11,6 +11,7 @@ import {
+   soloAgentOwnership,
+ } from "./solo-admins";
+ import { isBatchAddition } from "../channel-members/members";
++import { isMigrationSource } from "./migration";
+ import { withdraw } from "./withdraw";
+ import type { ChannelQueries, ChannelSummary } from "./contracts";
+ import type { RelayReader } from "./reader";
+@@ -701,10 +702,14 @@ export function createChannelWrites(
+         labels?: readonly string[] | undefined;
+         /** NIP-CL system channel: left out of reads that do not name it. */
+         system?: boolean | undefined;
++        migration?: string | undefined;
+       }> = {},
+     ) {
+       writer();
+       identifier(id);
++      const { migration } = options;
++      if (migration !== undefined && !isMigrationSource(migration))
++        throw new Error("Use a nonempty migration source.");
+       const labelTags = channelLabelTags(options.labels ?? []);
+       const name = canonicalDetailsName(title);
+       const about = description?.trim();
+@@ -733,6 +738,7 @@ export function createChannelWrites(
+             ...(about ? [["about", about]] : []),
+             ...(ttlSeconds ? [["ttl", String(ttlSeconds)]] : []),
+             ...labelTags,
++            ...(migration ? [["migration", migration]] : []),
+           ],
+         },
+         undefined,
+diff --git a/src/features/relay/http-admission.ts b/src/features/relay/http-admission.ts
+index ca0c4d5edd..a122d2cf7f 100644
+--- a/src/features/relay/http-admission.ts
++++ b/src/features/relay/http-admission.ts
+@@ -405,13 +405,20 @@ export async function admittedApiRequest(
+     body: unknown,
+     status: number,
+   ) => string | Pick<ApiFailure, "error" | "code"> | undefined,
++  migrationWrite = false,
+ ): Promise<Response> {
+   return lane.run(
+     async () => {
+       const response = await request();
+       if (response.ok) return response;
+       const failure = await readApiFailure(response, reason);
+-      if (failure.quota === "api" && failure.retryAfterMs !== undefined)
++      // The relay adds Retry-After to the migration budget's refusals. The
++      // shared API quota response has no such header, even for a tagged write.
++      if (
++        failure.quota === "api" &&
++        failure.retryAfterMs !== undefined &&
++        !(migrationWrite && response.headers.has("retry-after"))
++      )
+         lane.pause(failure.retryAfterMs);
+       const headers = new Headers(response.headers);
+       headers.delete("content-length");
+diff --git a/src/features/relay/migration.ts b/src/features/relay/migration.ts
+new file mode 100644
+index 0000000000..138e87dfa3
+--- /dev/null
++++ b/src/features/relay/migration.ts
+@@ -0,0 +1,9 @@
++export const isMigrationSource = (source: unknown): source is string =>
++  typeof source === "string" && source.length > 0;
++
++export function migrationSource(tags: readonly (readonly string[])[]) {
++  return tags.find(
++    (tag) =>
++      tag.length === 2 && tag[0] === "migration" && isMigrationSource(tag[1]),
++  )?.[1];
++}
+diff --git a/src/features/relay/outbox.ts b/src/features/relay/outbox.ts
+index 5a9784980d..aa54ed87b8 100644
+--- a/src/features/relay/outbox.ts
++++ b/src/features/relay/outbox.ts
+@@ -7,6 +7,7 @@ import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
+ import { createRelayProfiler, type RelayProfiler } from "./profiling";
+ import { channelRowKind } from "./membership";
+ import { MessageClock } from "./message-order";
++import { migrationSource } from "./migration";
+ import {
+   bytes,
+   isCatalogKind,
+@@ -59,6 +60,11 @@ type Replacement = {
+   input(): OutboxInput | undefined;
+   queued(id: string): void;
+ };
++export type RecoveryJournal = {
++  read(): Promise<readonly OutgoingEvent[]>;
++  adopt(item: OutgoingEvent): void;
++  flush(): Promise<void>;
++};
+ export interface Outbox {
+   /** Outstanding operations only. Confirmed events live in the session's retained data. */
+   snapshot(): readonly OutgoingEvent[];
+@@ -70,6 +76,11 @@ export interface Outbox {
+   ready(): Promise<void>;
+   /** Fresh shared-journal ownership without importing another window's operations. */
+   recovery(key: string): Promise<OutgoingEvent | undefined>;
++  /** Coordinate related recovery operations in the shared journal. */
++  withRecoveryJournal?<T>(
++    key: string,
++    run: (journal: RecoveryJournal) => Promise<T>,
++  ): Promise<T>;
+   /** Verify the exact durable receipt and retain its dismissal lock through
+    * dependent publication. Signing must happen before acquiring this lock.
+    * Older Outboxes may omit this; dependent publication must fail closed. */
+@@ -348,15 +359,19 @@ export function createOutbox(
+   let storageError: string | undefined;
+   let hydrated = false;
+   let durable = Promise.resolve();
+-  let ownership = Promise.resolve();
++  const ownership = new Map<string, Promise<void>>();
+   function locked<T>(id: string, run: () => Promise<T>): Promise<T> {
+     if (storage.lock) return storage.lock(id, run);
+     // Memory/single-window stores still serialize publication with dismissal.
+-    const work = ownership.then(run, run);
+-    ownership = work.then(
++    const work = (ownership.get(id) ?? Promise.resolve()).then(run);
++    const tail = work.then(
+       () => {},
+       () => {},
+     );
++    ownership.set(id, tail);
++    void tail.then(() => {
++      if (ownership.get(id) === tail) ownership.delete(id);
++    });
+     return work;
+   }
+   const notify = () => {
+@@ -719,6 +734,7 @@ export function createOutbox(
+             : publishing && !(error instanceof PublishRejected)
+               ? "unknown"
+               : failedDelivery(attempt));
++      const message = error instanceof Error ? error.message : String(error);
+       if (latest && delivery)
+         saveStatus({
+           ...latest,
+@@ -735,13 +751,19 @@ export function createOutbox(
+                 ? "Workflow delivery could not be confirmed; inspect recent activity before submitting another command."
+                 : "Workflow command rejected; retain the draft and refresh the saved configuration."
+               : `${
+-                  attempt.previousDelivery === "unknown" ||
+-                  attempt.previousDelivery === "accepted"
++                  (
++                    attempt.previousDelivery === "unknown" ||
++                      attempt.previousDelivery === "accepted"
++                  ) &&
++                  !(
++                    message.startsWith("rate-limited:") &&
++                    migrationSource(latest.event.tags)
++                  )
+                     ? error instanceof PublishRejected
+                       ? "Retry blocked: "
+                       : "Retry failed: "
+                     : ""
+-                }${error instanceof Error ? error.message : String(error)}`,
++                }${message}`,
+           ),
+         });
+       if (publishing && latest?.signed && !(error instanceof PublishRejected))
+@@ -1000,6 +1022,53 @@ export function createOutbox(
+       }
+       return shared;
+     },
++    async withRecoveryJournal<T>(
++      key: string,
++      run: (journal: RecoveryJournal) => Promise<T>,
++    ) {
++      await outbox.ready();
++      return locked(`recovery:${key}`, async () => {
++        const previous = durable;
++        await previous.catch(() => {});
++        const flush = async () => {
++          if (durable !== previous) await durable;
++        };
++        try {
++          return await run({
++            async read() {
++              const records = await storage.load({ readOnly: true });
++              validateSaved(records);
++              return records;
++            },
++            adopt(item) {
++              const id = item.event.id;
++              const existing = find(id);
++              if (
++                existing &&
++                (attempts.has(id) || existing.delivery === "seen")
++              )
++                return;
++              const decoded = decode(item);
++              const restored =
++                item.delivery === "accepted" && decoded.signed
++                  ? Object.freeze({ ...decoded, delivery: "accepted" as const })
++                  : decoded;
++              const next = [
++                ...snapshot.filter((row) => row.event.id !== id),
++                restored,
++              ];
++              admit(next, item.event.kind);
++              restoredReceipts.add(id);
++              snapshot = Object.freeze(next);
++              notify();
++            },
++            flush,
++          });
++        } finally {
++          await flush();
++        }
++      });
++    },
+     withRecovery,
+     async finishRecovery(id: string, recovery: OutboxRecovery) {
+       await withRecovery(id, recovery, () => persist(id, "dismiss"));
+diff --git a/src/features/relay/session.ts b/src/features/relay/session.ts
+index a4d6a94b89..cf5af7edea 100644
+--- a/src/features/relay/session.ts
++++ b/src/features/relay/session.ts
+@@ -2422,7 +2422,11 @@ export function createRelaySession(
+               input.description,
+               input.ttlSeconds,
+               active,
+-              { labels: input.labels, system: input.system },
++              {
++                labels: input.labels,
++                system: input.system,
++                migration: input.migration,
++              },
+             ),
+           delivered: (id, active) =>
+             channelWrites.delivered(
+@@ -2632,6 +2636,7 @@ export function createRelaySession(
+           ? { labels: Object.freeze([...new Set(input.labels)]) }
+           : {}),
+         ...(input.system ? { system: true as const } : {}),
++        migration: input.migration,
+       };
+       const signature = JSON.stringify(normalized);
+       if (unconfirmed?.signature !== signature) {
+@@ -2649,7 +2654,11 @@ export function createRelaySession(
+             normalized.description,
+             normalized.ttlSeconds,
+             undefined,
+-            { labels: normalized.labels, system: normalized.system },
++            {
++              labels: normalized.labels,
++              system: normalized.system,
++              migration: normalized.migration,
++            },
+           ),
+         };
+       }
+@@ -2788,6 +2797,7 @@ export function createRelaySession(
+   }
+   const session = Object.freeze({
+     artifactIncremental: transport?.artifactIncremental,
++    supportsMigrationWrites: true as const,
+     memberAdditions,
+     presence,
+     viewer: transport?.viewer,
+diff --git a/src/features/relay/transport.test.ts b/src/features/relay/transport.test.ts
+index 26f725235c..bdb4252130 100644
+--- a/src/features/relay/transport.test.ts
++++ b/src/features/relay/transport.test.ts
+@@ -10,7 +10,7 @@ import {
+   ReadStateTimestampRejected,
+   READ_STATE_TIMESTAMP_REFUSAL,
+ } from "./read-state-host";
+-import { PublishRejected } from "./outbox";
++import { PublishNotSent, PublishRejected } from "./outbox";
+ import { hostSigner, keypair, signed } from "./testing";
+ const key = keypair();
+ afterEach(() => vi.unstubAllGlobals());
+@@ -143,6 +143,57 @@ it("sends a message while task artifacts wait for native HTTP capacity", async (
+   }
+ });
+ 
++it.each([
++  [429, { error: "rate-limited: quota exceeded; retry in 5s" }, true],
++  [
++    503,
++    { error: "rate-limited: shared admission unavailable", sent: false },
++    true,
++  ],
++  [429, { error: "rate-limited: quota exceeded; retry in 5s" }, false],
++] as const)(
++  "keeps the HTTP refusal (%s) and scopes its cooldown (migration=%s)",
++  async (status, refusal, scoped) => {
++    const regular = signed(key, {
++      kind: 9,
++      content: "hello",
++      tags: [["h", "c"]],
++    });
++    const migration = signed(key, {
++      kind: 9000,
++      content: "",
++      tags: [
++        ["h", "c"],
++        ["p", "c".repeat(64)],
++        ["migration", "slack"],
++      ],
++    });
++    const request = vi.fn(async (_url: string, body: string) =>
++      JSON.parse(body).id === migration.id
++        ? Response.json(refusal, {
++            status,
++            ...(scoped ? { headers: { "Retry-After": "5" } } : {}),
++          })
++        : Response.json({ accepted: true, event_id: regular.id }),
++    );
++    const transport = await connectSignedTransport(
++      hostSigner(key, request),
++      `https://${scoped ? "migration" : "shared"}.example.org`,
++      "relay",
++    );
++    assert.exists(transport.writer);
++    const signal = new AbortController().signal;
++    const failure = await transport.writer
++      .publish(migration, signal)
++      .catch((error: unknown) => error);
++    expect(failure).toBeInstanceOf(PublishNotSent);
++    expect(failure).toHaveProperty("message", refusal.error);
++    const ordinary = transport.writer.publish(regular, signal);
++    if (scoped) await expect(ordinary).resolves.toBe("");
++    else await expect(ordinary).rejects.toThrow(/^Relay requests paused/);
++    expect(request).toHaveBeenCalledTimes(scoped ? 2 : 1);
++  },
++);
+ it("distinguishes explicit rejection from invalid or missing delivery receipts", async () => {
+   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
+   const transport = await connectSignedTransport(
+diff --git a/src/features/relay/transport.ts b/src/features/relay/transport.ts
+index c36ee325bd..e4ce8d12c0 100644
+--- a/src/features/relay/transport.ts
++++ b/src/features/relay/transport.ts
+@@ -8,6 +8,7 @@ import {
+   type MemoryListing,
+ } from "../agents/memory";
+ import { publicationRefusal } from "../developer/traffic";
++import { migrationSource } from "./migration";
+ import { avatarSource } from "../../shared/avatar-source";
+ import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
+ import type { ChannelKitHost } from "../channel-templates/host";
+@@ -1631,6 +1632,8 @@ export async function connectSignedTransport(
+             event.kind === ARTIFACT_KIND ? "artifact" : "foreground",
+             false,
+             refusalText,
++            (event.kind === 9000 || event.kind === 9007) &&
++              migrationSource(event.tags) !== undefined,
+           ).catch((error) => {
+             if (error instanceof ApiPaused || error instanceof ApiNotSent)
+               throw new PublishNotSent(error.message);
+@@ -1699,11 +1702,19 @@ async function signedPost(
+   priority: Parameters<typeof admittedApiRequest>[3] = "foreground",
+   optionalPresence = false,
+   reason?: (body: unknown, status: number) => string | undefined,
++  migrationWrite = false,
+ ) {
+   const dispatch = (request: () => Promise<Response>) =>
+     optionalPresence
+       ? admission.prepare(request)
+-      : admittedApiRequest(admission, request, signal, priority, reason);
++      : admittedApiRequest(
++          admission,
++          request,
++          signal,
++          priority,
++          reason,
++          migrationWrite,
++        );
+   signal?.throwIfAborted();
+   return admission.prepare(async () => {
+     const body = JSON.stringify(value);
+@@ -1750,10 +1761,16 @@ const KEPT_PREFIXES = new Set(["rate-limited", "conflict", "auth-required"]);
+  * can answer the same statuses with JSON `{error}`, so only relay-shaped
+  * text (a NIP-01 prefix) is kept. The prefix is a shape, not proof of origin. */
+ const refusalText = (body: unknown, status: number) => {
+-  const error = (body as { error?: unknown } | null)?.error;
+-  return REFUSAL_STATUSES.includes(status) &&
+-    typeof error === "string" &&
+-    NIP01_PREFIX.test(error)
++  const { error, sent } =
++    (body as { error?: unknown; sent?: unknown } | null) ?? {};
++  if (typeof error !== "string") return;
++  if (
++    (status === 429 || status === 503) &&
++    sent === false &&
++    error.startsWith("rate-limited:")
++  )
++    return publicationRefusal(error);
++  return REFUSAL_STATUSES.includes(status) && NIP01_PREFIX.test(error)
+     ? error
+     : undefined;
+ };
+diff --git a/src/plugins/author.test.mjs b/src/plugins/author.test.mjs
+index a37cd2204f..65ced30701 100644
+--- a/src/plugins/author.test.mjs
++++ b/src/plugins/author.test.mjs
+@@ -55,6 +55,11 @@ export function apply(ctx: Context) {
+   const seen: Seen | undefined = ctx.reflect.get("seen");
+   const key = "example.plugin/welcome";
+   if (seen?.has(key) === false) seen.mark(key);
++  const relaySession = ctx.relay.snapshot().session;
++  if (relaySession.supportsMigrationWrites === true) {
++    void relaySession.channelCreation.create({ name: "Imported", visibility: "private", migration: "example-import" });
++    void relaySession.memberAdditions.add("channel", "person", { migration: "example-import" });
++  }
+   const sharingPolicy: GeneralAccessPolicy = { subject: "record", allowPublic: false, visibilityDescription: () => "Record access changes." };
+   const general: ChannelGeneralAccessProps = { capability: ctx.relay.snapshot().session.channelDetails, channelId: "record", policy: sharingPolicy };
+   const picker: ChannelMembersDialogProps = { session: ctx.relay.snapshot().session, channelId: "record", trigger: { current: null }, close() {},
+diff --git a/tests/browser/conversation.spec.mjs b/tests/browser/conversation.spec.mjs
+index eea93da8d3..4552cca05e 100644
+--- a/tests/browser/conversation.spec.mjs
++++ b/tests/browser/conversation.spec.mjs
+@@ -21,17 +21,14 @@ test("independent packed author consumer and native-installed contribution survi
+   let server;
+   try {
+     const author = join(temp, "author");
++    const archive = join(temp, "buzz-author.tgz");
+     run("pnpm", ["author:build", author]);
+-    run("pnpm", ["pack", "--pack-destination", temp], author);
++    run("pnpm", ["pack", "--out", archive], author);
+     const source = join(temp, "consumer");
+     await cp(join(root, "tests/fixtures/conversation-consumer"), source, {
+       recursive: true,
+     });
+-    run(
+-      "pnpm",
+-      ["add", "-D", join(temp, "buzz-author-0.0.0-preview.1.tgz")],
+-      source,
+-    );
++    run("pnpm", ["add", "-D", archive], source);
+     run("pnpm", ["build"], source);
+     // The global producer is a separate test-only artifact, never part of the consumer.
+     const toolSource = join(temp, "timestamp-tool");
+diff --git a/tests/integration/plugin-cli.test.mjs b/tests/integration/plugin-cli.test.mjs
+index bb75e5365a..4a99492f29 100644
+--- a/tests/integration/plugin-cli.test.mjs
++++ b/tests/integration/plugin-cli.test.mjs
+@@ -55,11 +55,11 @@ async function project(run) {
+       encoding: "utf8",
+     });
+     assert.equal(generated.status, 0, generated.stdout + generated.stderr);
+-    const packed = spawnSync(
+-      "pnpm",
+-      ["pack", "--pack-destination", directory],
+-      { cwd: author, encoding: "utf8" },
+-    );
++    const archive = path.join(directory, "buzz-author.tgz");
++    const packed = spawnSync("pnpm", ["pack", "--out", archive], {
++      cwd: author,
++      encoding: "utf8",
++    });
+     assert.equal(packed.status, 0, packed.stdout + packed.stderr);
+     await rm(author, { recursive: true });
+     const scaffold = await readFile(path.join(source, "src/index.tsx"), "utf8");
+@@ -67,12 +67,7 @@ async function project(run) {
+     assert.doesNotMatch(scaffold, /declare module|interface Context/);
+     const installed = spawnSync(
+       "pnpm",
+-      [
+-        "add",
+-        "-D",
+-        "--ignore-scripts",
+-        path.join(directory, "buzz-author-0.0.0-preview.1.tgz"),
+-      ],
++      ["add", "-D", "--ignore-scripts", archive],
+       {
+         cwd: source,
+         encoding: "utf8",

@@ -44,26 +44,41 @@ function setup() {
     },
   });
   let frames = 0;
-  const answer = (from: string, status: string, requestId: string) =>
+  const frame = (from: string, value: unknown) =>
     activity.receive(
       {
         id: (frames++).toString(16).padStart(64, "0"),
         agent: from,
         createdAt: Math.floor(Date.now() / 1000),
-        plaintext: JSON.stringify({
-          kind: "control_result",
-          channelId: "channel",
-          payload: { type: "cancel_turn", status, requestId },
-        }),
+        plaintext: JSON.stringify(value),
       },
       generation ?? -1,
     );
+  const result = (status: string, requestId: string) => ({
+    kind: "control_result",
+    channelId: "channel",
+    payload: { type: "cancel_turn", status, requestId },
+  });
+  const answer = (from: string, status: string, requestId: string) =>
+    frame(from, result(status, requestId));
+  // An agent's publisher packs one tick's events for a channel into a batch.
+  const batched = (from: string, status: string, requestId: string) =>
+    frame(from, {
+      kind: "batch",
+      channelId: "channel",
+      payload: {
+        events: [
+          { kind: "agent_message_chunk", channelId: "channel", payload: {} },
+          result(status, requestId),
+        ],
+      },
+    });
   const listen = () =>
     activity.state({
       status: "connected",
       routes: [{ id: "observer", status: "live" }],
     } as never);
-  return { activity, control, sent, publish, answer, listen, observe };
+  return { activity, control, sent, publish, answer, batched, listen, observe };
 }
 
 it("sends once the observer listens, and resolves on the agent's own sent answer", async () => {
@@ -94,7 +109,11 @@ it("sends once the observer listens, and resolves on the agent's own sent answer
   void stop.then(() => (settled = true));
   await vi.advanceTimersByTimeAsync(0);
   expect(settled).toBe(false);
-  f.answer(agent, "sent", id);
+  f.batched(agent, "sent", crypto.randomUUID());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(settled).toBe(false);
+  // The answer usually ships batched with the agent's other telemetry.
+  f.batched(agent, "sent", id);
   await expect(stop).resolves.toBe("sent");
   // The observer is let go once the stop settles.
   expect(f.observe).toHaveBeenLastCalledWith(null);

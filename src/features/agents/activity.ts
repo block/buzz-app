@@ -576,8 +576,11 @@ export function createAgentActivity(
     }
     liveAgents.add(frame.agent);
     for (const item of items) fold(frame.agent, item);
-    const answer = controlResult(frame.agent, raw);
-    if (answer) for (const listener of controlListeners) listener(answer);
+    // An agent may ship its answer inside a batch with other telemetry.
+    for (const item of items) {
+      const answer = controlResult(frame.agent, item);
+      if (answer) for (const listener of controlListeners) listener(answer);
+    }
     const record = Object.freeze({
       id: frame.id,
       agent: frame.agent,

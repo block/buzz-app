@@ -1252,6 +1252,8 @@ function Composer({
         let moved = false;
         const onFocusMove = () => {
           moved = true;
+          // Ends the handoff at once, so an effect re-run can't revive it.
+          focusOnMount.current = undefined;
         };
         const stopListening = () =>
           document.removeEventListener("focusin", onFocusMove, true);

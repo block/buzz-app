@@ -1183,6 +1183,25 @@ it("selects the newest message instead while a plugin prefers messages on open",
     expect(document.activeElement).toBe(document.body);
     unregisterWaiting();
 
+    // Also when the composer is disabled and enabled again before the frame.
+    list.replaceChildren();
+    const reloaded = mount({ autoFocus: true, disabled: true });
+    const unregisterReloaded = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => reloaded.input(),
+    } as unknown as MessageList);
+    reloaded.retarget({ disabled: false });
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    elsewhere.remove();
+    reloaded.retarget({ disabled: true });
+    list.innerHTML = rows;
+    reloaded.retarget({ disabled: false });
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.activeElement).toBe(document.body);
+    unregisterReloaded();
+
     // A composer that mounts enabled waits through StrictMode's effect replay.
     list.replaceChildren();
     const enabled = mount({ autoFocus: true });

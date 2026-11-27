@@ -27,6 +27,10 @@ import type { Outbox, OutboxRecovery } from "./outbox";
 import { signedMessageTokenTags } from "../messages/message-tokens";
 import type { AgentInvocationIntent } from "../agents/session-admission";
 import { PIN_KIND, UNPIN_KIND } from "./pins";
+import {
+  createScheduledMessages,
+  type ScheduledHost,
+} from "./scheduled-messages";
 import type { RelaySession } from "./session";
 
 /** The agent service binds its active matcher to each live relay session. */
@@ -86,6 +90,11 @@ export function createMessages(
     channelId: string,
     rootId: string,
   ) => ((agentPubkey: string) => boolean) | undefined,
+  scheduling?: {
+    host: ScheduledHost;
+    signal: AbortSignal;
+    name(channelId: string): string;
+  },
 ) {
   const writer = (
     kind: number,
@@ -470,14 +479,13 @@ export function createMessages(
     content: string,
     mentions: readonly string[] = [],
     attachments: readonly UploadedAttachment[] = [],
-    _recovery?: OutboxRecovery,
     references: readonly string[] = [],
     picks: MentionPicks = {},
   ) {
     if (!channelId) throw new Error("A channel is required");
     const message = attachmentMessage(content, attachments, relayOrigin);
-    writer(9, channelId);
-    return {
+    const out = writer(9, channelId);
+    const template = {
       kind: 9,
       content: text(message.content),
       tags: [
@@ -490,6 +498,7 @@ export function createMessages(
         ...signedMessageTokenTags(),
       ],
     };
+    return { out, template };
   }
   function prepareReply(
     channelId: string,
@@ -513,12 +522,12 @@ export function createMessages(
     if (mediaTargetUrl && !mediaTarget)
       throw new Error("A valid media target is required");
     const message = attachmentMessage(content, attachments, relayOrigin);
-    writer(9, channelId);
+    const out = writer(9, channelId);
     const recipients = mentionTags(
       channelId,
       withDmAgents(channelId, mentions),
     );
-    return {
+    const template = {
       kind: 9,
       content: text(message.content),
       tags: [
@@ -535,8 +544,38 @@ export function createMessages(
         ...signedMessageTokenTags(),
       ],
     };
+    return { out, template };
   }
   return Object.freeze({
+    scheduled:
+      scheduling && viewer
+        ? createScheduledMessages(scheduling.host, {
+            viewer,
+            signal: scheduling.signal,
+            name: scheduling.name,
+            prepare: (message) =>
+              message.threadRootId
+                ? prepareReply(
+                    message.channelId,
+                    message.threadRootId,
+                    message.text,
+                    message.recipients,
+                    message.attachments,
+                    message.parentId,
+                    message.references,
+                    message.picks,
+                    message.mediaTarget,
+                  ).template
+                : prepareSend(
+                    message.channelId,
+                    message.text,
+                    message.recipients,
+                    message.attachments,
+                    message.references,
+                    message.picks,
+                  ).template,
+          })
+        : undefined,
     forwardProblem(
       channelId: string,
       row: ChannelMessage,
@@ -552,13 +591,24 @@ export function createMessages(
           : "This message cannot be forwarded.";
       }
     },
-    prepareSend,
-    prepareReply,
-    send(...args: Parameters<typeof prepareSend>) {
-      return writer(9, args[0]).send(
-        prepareSend(...args),
-        ...(args[4] ? [args[4]] : []),
+    send(
+      channelId: string,
+      content: string,
+      mentions?: readonly string[],
+      attachments?: readonly UploadedAttachment[],
+      recovery?: OutboxRecovery,
+      references?: readonly string[],
+      picks?: MentionPicks,
+    ) {
+      const { out, template } = prepareSend(
+        channelId,
+        content,
+        mentions,
+        attachments,
+        references,
+        picks,
       );
+      return out.send(template, ...(recovery ? [recovery] : []));
     },
     /** Forward only the reconciled row supplied by an authorized source reader. */
     forward(
@@ -715,7 +765,8 @@ export function createMessages(
       });
     },
     reply(...args: Parameters<typeof prepareReply>) {
-      return writer(9, args[0]).send(prepareReply(...args));
+      const { out, template } = prepareReply(...args);
+      return out.send(template);
     },
     /** Supply the current folded attachmentSourceId, or the row ID for original media. */
     edit: (messageId: string, content: string, attachmentSourceId: string) =>

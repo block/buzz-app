@@ -123,10 +123,6 @@ if that desktop app is up and running.
   Markdown formats as you type; **Settings → Appearance → Disable formatting
   while typing** leaves it as plain characters until you send, and hides the
   formatting toolbar.
-- **Scheduled messages.** In communities with scheduled delivery, use the arrow
-  beside **Send** to choose a time. If the relay refuses the schedule, your draft
-  stays in the composer. To reschedule or cancel, enable **Drafts & sent** in
-  **Settings → Plugins**, then open its **Scheduled** tab.
 - **Drafts.** Every message box open on a conversation shares its draft. A box
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my

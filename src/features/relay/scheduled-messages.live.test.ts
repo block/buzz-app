@@ -77,19 +77,23 @@ it.skipIf(!relay)(
           signal,
           prepare: (input) => ({
             kind: 9,
-            content: input.content,
+            content: input.text,
             tags: [["h", channel]],
           }),
           name: () => "Scheduled fixture",
         },
       );
     const first = service(lifetime.signal);
-    const input = {
-      destination: { channelId: channel, name: "Scheduled fixture" },
-      content: "Survives a closed session",
-      sendAt: Date.now() + 6000,
+    const message = {
+      channelId: channel,
+      text: "Survives a closed session",
+      recipients: [],
+      references: [],
+      attachments: [],
+      picks: {},
     };
-    await first.create(input);
+    const initialSendAt = Date.now() + 6000;
+    await first.create(message, initialSendAt);
     const [queued] = await first.list(lifetime.signal);
     expect(queued?.status).toBe("scheduled");
     if (!queued) throw new Error("Expected queued message");
@@ -100,7 +104,7 @@ it.skipIf(!relay)(
     );
     expect((await foreign.json()).messages).toEqual([]);
     lifetime.abort();
-    await expect(first.create(input)).rejects.toThrow();
+    await expect(first.create(message, initialSendAt)).rejects.toThrow();
     const nextLifetime = new AbortController(),
       next = service(nextLifetime.signal);
     let delivered = false;
@@ -120,22 +124,20 @@ it.skipIf(!relay)(
       ),
     );
     expect(createReplay.status).toBe(200);
-    await next.create({
-      ...input,
-      content: "Cancel this",
-      sendAt: Date.now() + 86400000,
-    });
+    await next.create(
+      { ...message, text: "Cancel this" },
+      Date.now() + 86400000,
+    );
     let rows = await next.list(nextLifetime.signal);
     const cancel = rows.find((row) => row.content === "Cancel this");
     if (!cancel) throw new Error("Expected message to cancel");
     await next.cancel(cancel.id, cancel.revision);
     rows = await next.list(nextLifetime.signal);
     expect(rows.some((row) => row.id === cancel.id)).toBe(false);
-    await next.create({
-      ...input,
-      content: "Reschedule this",
-      sendAt: Date.now() + 86400000,
-    });
+    await next.create(
+      { ...message, text: "Reschedule this" },
+      Date.now() + 86400000,
+    );
     rows = await next.list(nextLifetime.signal);
     const scheduled = rows.find((row) => row.content === "Reschedule this");
     if (!scheduled) throw new Error("Expected message to reschedule");

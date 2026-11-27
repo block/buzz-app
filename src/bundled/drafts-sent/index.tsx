@@ -1,4 +1,3 @@
-import { isDraftsSentRoute } from "../../features/drafts-sent/route";
 import type { PluginModule } from "../../plugins/api";
 import { DraftsSentBadge } from "../../features/drafts-sent/DraftsSentBadge";
 import { DraftsSentPage } from "../../features/drafts-sent/DraftsSentPage";
@@ -21,7 +20,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     primary: true,
     companion: true,
     handlesNavigation: true,
-    route: { version: 1, validate: isDraftsSentRoute },
     badge: () => <DraftsSentBadge relay={relay} />,
     component: ({ companion, navigation }) => (
       <DraftsSentPage

@@ -1,6 +1,3 @@
-import { ScheduledMessagesList } from "../messages/ScheduledMessagesList";
-import { useScheduledMessages } from "../messages/useScheduledMessages";
-import { draftsSentRoute, type DraftsSentTab } from "./route";
 import { DraftPreview } from "./DraftPreview";
 import type { ConversationHostServices } from "../conversation/ConversationHost";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -156,8 +153,6 @@ export function DraftsSentPage({
             navigator={navigator}
             host={{ relay, navigation: navigator, panels }}
             extensions={extensions}
-            requestedTab={draftsSentRoute(navigation?.target)}
-            requestKey={navigation?.entryId}
           />
         ) : (
           <div data-buzz-ui="" className={styles.page}>
@@ -197,8 +192,6 @@ function ScopedPage({
   navigator,
   host,
   extensions,
-  requestedTab,
-  requestKey,
 }: {
   session: RelaySession;
   viewer: string;
@@ -206,8 +199,6 @@ function ScopedPage({
   navigator: Navigation;
   host: ConversationHostServices;
   extensions?: ConversationExtensions | undefined;
-  requestedTab?: DraftsSentTab | undefined;
-  requestKey?: string | undefined;
 }) {
   type Visit = {
     entry: Entry;
@@ -248,35 +239,11 @@ function ScopedPage({
   const resolveName = useIdentityNames(session.names);
   const now = useNow();
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<DraftsSentTab>(() => {
-    const saved =
-      requestedTab ??
-      readView<unknown>(session.scope, "drafts-sent-tab", "drafts");
-    return saved === "sent"
+  const [view, setView] = useState<"drafts" | "sent">(() =>
+    readView<unknown>(session.scope, "drafts-sent-tab", "drafts") === "sent"
       ? "sent"
-      : saved === "scheduled" && session.scheduledMessages
-        ? "scheduled"
-        : "drafts";
-  });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: A new navigation visit reapplies the requested tab even when its value is unchanged.
-  useEffect(() => {
-    if (requestedTab)
-      setView(
-        requestedTab === "scheduled" && !session.scheduledMessages
-          ? "drafts"
-          : requestedTab,
-      );
-  }, [requestKey, requestedTab, session]);
-  const scheduled = useScheduledMessages(
-    session.scheduledMessages,
-    view === "scheduled",
+      : "drafts",
   );
-  const revalidateScheduled = scheduled.revalidate;
-  // A new navigation visit can bring the user back to an already open queue.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Revalidate on a new visit even if the selected tab is unchanged.
-  useEffect(() => {
-    if (view === "scheduled") revalidateScheduled();
-  }, [requestKey, revalidateScheduled, view]);
   const [notice, setNotice] = useState<string>();
   const searchInput = useRef<HTMLInputElement>(null);
   const { sent, refresh: refreshSent } = useSent(session, viewer);
@@ -719,10 +686,6 @@ function ScopedPage({
     else groups.push({ label, rows: [item] });
   }
   const refresh = () => {
-    if (view === "scheduled") {
-      scheduled.refresh();
-      return;
-    }
     session.channels.refreshList?.();
     refreshSent.current();
     context.refresh.current();
@@ -772,11 +735,7 @@ function ScopedPage({
             icon={<ArrowsClockwiseIcon size={16} />}
             aria-label="Refresh"
             title="Refresh"
-            disabled={
-              view === "scheduled"
-                ? scheduled.loading
-                : sent.status === "loading"
-            }
+            disabled={sent.status === "loading"}
             onClick={refresh}
           />
         }
@@ -799,15 +758,6 @@ function ScopedPage({
                   </span>
                 ) : undefined,
               },
-              ...(session.scheduledMessages
-                ? [
-                    {
-                      value: "scheduled" as const,
-                      label: "Scheduled",
-                      panelId: "scheduled-view",
-                    },
-                  ]
-                : []),
               { value: "sent", label: "Sent", panelId: "sent-view" },
             ]}
             onValueChange={(next) => {
@@ -828,25 +778,6 @@ function ScopedPage({
         {announcement}
       </p>
       <div className={styles.sections}>
-        {session.scheduledMessages && (
-          <section
-            role="tabpanel"
-            id="scheduled-view"
-            aria-labelledby="scheduled-view-tab"
-            hidden={view !== "scheduled"}
-            className={styles.scheduledSection}
-          >
-            {view === "scheduled" && (
-              <ScheduledMessagesList
-                service={session.scheduledMessages}
-                items={scheduled.items}
-                loading={scheduled.loading}
-                error={scheduled.error}
-                refresh={scheduled.refresh}
-              />
-            )}
-          </section>
-        )}
         <section
           role="tabpanel"
           id="drafts-view"

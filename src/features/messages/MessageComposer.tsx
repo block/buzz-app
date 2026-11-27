@@ -3,10 +3,6 @@ import { ForwardDisclosure } from "./ForwardDisclosure";
 import { pastedForward } from "./forward-clipboard";
 import { ComposerForward, useComposerForward } from "./ComposerForward";
 import { draftEditorId, traceDraft } from "../../shared/draft-diagnostics";
-import { ScheduleMessageDialog } from "./ScheduleMessageDialog";
-import { ScheduleMessageMenu } from "./ScheduleMessageMenu";
-import { scheduledLabel } from "./schedule-time";
-import scheduledStyles from "./ScheduledMessages.module.css";
 import {
   soloModelPicksKey,
   parseSoloModelPicks,
@@ -100,7 +96,6 @@ import {
 } from "../solo/people";
 import {
   ArrowUpIcon,
-  ClockIcon,
   ChatCircleIcon,
   LockIcon,
   PaperclipIcon,
@@ -1767,8 +1762,6 @@ function Composer({
       );
   }, []);
   const notify = useToastNotification();
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [scheduledNotice, setScheduledNotice] = useState<number>();
   const handOffFocus = useEffectEvent(() => {
     if (!form.current?.contains(document.activeElement)) return;
     const text = input.current?.value ?? "";
@@ -3148,22 +3141,7 @@ function Composer({
     }
     return { recipients, references };
   }
-  async function send(human = false, scheduledAt?: number) {
-    if (
-      scheduledAt !== undefined &&
-      (editing.target || submission || valueRef.current.forward)
-    ) {
-      setError("Finish the current action before scheduling a message.");
-      return false;
-    }
-    if (
-      scheduledAt !== undefined &&
-      (!session.scheduledMessages ||
-        !Number.isFinite(scheduledAt) ||
-        scheduledAt <= Date.now())
-    )
-      return false;
-
+  async function send(human = false) {
     if (!permitted.current || voice.isCapturing() || forwarded.blocked) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
@@ -3393,14 +3371,6 @@ function Composer({
     try {
       const tokens = draftTokens(captured);
       messageTokenTags(tokens);
-      if (scheduledAt !== undefined && tokens.length)
-        throw new Error(
-          "Messages with chips cannot be scheduled yet. Send now or remove the chips.",
-        );
-      if (scheduledAt !== undefined && command)
-        throw new Error(
-          "Commands cannot be scheduled. Write a message or send the command now.",
-        );
       if (command && onCommand) {
         const handled = onCommand(command, attempt.signal);
         if (handled !== false) {
@@ -3742,29 +3712,6 @@ function Composer({
       ) => {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        if (scheduledAt !== undefined) {
-          if (!session.scheduledMessages)
-            throw new Error("Scheduled delivery is unavailable");
-          return session.scheduledMessages
-            .create({
-              destination: {
-                channelId,
-                name: channelName,
-                ...(threadRootId
-                  ? { threadRootId: sourceRootId ?? threadRootId }
-                  : {}),
-              },
-              content,
-              sendAt: scheduledAt,
-              mentions: recipients,
-              attachments: uploaded,
-              ...(replyParentId ? { parentId: replyParentId } : {}),
-              references,
-              picks: sentPicks,
-              ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
-            })
-            .then(() => "");
-        }
         // A send is an agent follow-up unless it addresses a confirmed person
         // (a loaded, non-agent profile). Those, and untagged conversation in
         // a shared chat, go out now; recipients still being classified keep
@@ -3851,10 +3798,7 @@ function Composer({
         );
       };
       let id: string | undefined;
-      if (
-        capturedAttachments.length &&
-        (scheduledAt !== undefined || !fullSession(session))
-      ) {
+      if (capturedAttachments.length && !fullSession(session)) {
         setSending(true);
         const uploaded = await attachments.store.prepareForSend(attempt.signal);
         attempt.signal.throwIfAborted();
@@ -3865,15 +3809,6 @@ function Composer({
           reportConflict();
           return;
         }
-        if (
-          scheduledAt !== undefined &&
-          (valueRef.current !== captured ||
-            !sameAttachmentSelection(
-              attachments.store.snapshot(),
-              capturedAttachments,
-            ))
-        )
-          return false;
         id = await publish(uploaded);
       } else if (capturedAttachments.length) {
         // The revision acceptance saves; remembered agents are not a draft.
@@ -3990,21 +3925,6 @@ function Composer({
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
       }
-      if (scheduledAt !== undefined && live.current)
-        setScheduledNotice(scheduledAt);
-      if (
-        scheduledAt !== undefined &&
-        (valueRef.current !== captured ||
-          viewRevision(scope, draftKey) !== savedRevision ||
-          !sameAttachmentSelection(
-            attachmentDraft(session, recoveryKey, channelId).snapshot(),
-            capturedAttachments,
-          ))
-      ) {
-        if (live.current)
-          notify("Message scheduled. Your newer draft was kept.", "success");
-        return true;
-      }
       // Nothing is saved for the remembered agents: this composer shows them
       // in memory, and any composer here, on any device, seeds them from the
       // sent message once it lands (see seedMentions).
@@ -4070,12 +3990,9 @@ function Composer({
       if (latest) seedApplied.current = seedKey(latest);
       if (id) onSend?.(id);
       finishDraft(pending);
-      if (scheduledAt !== undefined) notify("Message scheduled", "success");
-      return true;
     } catch (reason) {
       if (live.current && !attempt.signal.aborted)
         setError(reason instanceof Error ? reason.message : String(reason));
-      return false;
     } finally {
       admission.current = false;
       if (sendAttempt.current === attempt) {
@@ -4103,67 +4020,6 @@ function Composer({
     !valueRef.current.forward &&
     !valueRef.current.gifs?.length &&
     !attachments.items.length;
-  const sendButton = (
-    <IconButton
-      variant={
-        draft.trim() ||
-        value.forward ||
-        chatCards?.length ||
-        gifs?.length ||
-        attachments.items.length
-          ? "primary"
-          : "ghost"
-      }
-      size="toolbar"
-      type="submit"
-      onClick={(event) => {
-        if (!event.nativeEvent.isTrusted) return;
-        event.preventDefault();
-        void send(true);
-      }}
-      style={editing.target ? undefined : accentButtonStyle}
-      aria-label={editing.target ? "Save changes" : "Send message"}
-      aria-describedby={
-        !editing.target && forwarded.disclosure
-          ? forwardDisclosureId
-          : undefined
-      }
-      title={
-        editing.target
-          ? "Save changes"
-          : compacting
-            ? "Wait for compaction to finish, or interrupt it."
-            : untagged
-              ? recipientHint
-              : "Send message"
-      }
-      focusableWhenDisabled={
-        untagged || (!editing.target && compacting) || undefined
-      }
-      disabled={
-        disabled ||
-        (!editing.target &&
-          stickyPicks &&
-          (pickReadPending || pickReadFailed)) ||
-        untagged ||
-        (!editing.target && compacting) ||
-        (!editing.target && (!!accepted || conflict || sendPending)) ||
-        (!!editing.target && (editing.locked || editDisabled)) ||
-        admitting ||
-        sending ||
-        submission?.disabled ||
-        (!editing.target && forwarded.blocked) ||
-        (!editing.target && attachments.blocked) ||
-        (!draft.trim() &&
-          !value.forward &&
-          !chatCards?.length &&
-          ((!!submission && !submission.allowAttachmentOnly) ||
-            (!attachments.items.length && !gifs?.length)) &&
-          !(editing.target && requestDeletion && session.outbox?.supports(5)))
-      }
-      icon={<ArrowUpIcon size={16} />}
-    />
-  );
   // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
   // An edit unmounts the section at once, so no exit completes during one.
@@ -4313,30 +4169,6 @@ function Composer({
   return (
     <SelectedMentionContext.Provider value={selectedRecipients}>
       {context}
-      {scheduledNotice !== undefined && (
-        <div className={scheduledStyles.confirmation} role="status">
-          <ClockIcon size={16} aria-hidden="true" />
-          <span>
-            Your message will be sent {scheduledLabel(scheduledNotice)}.
-          </span>
-          <button
-            type="button"
-            className={scheduledStyles.link}
-            onClick={() => {
-              if (
-                !onOpenLink?.(
-                  "buzz://plugin?id=buzz.drafts-and-sent&page=drafts-sent&route.tab=scheduled",
-                )
-              )
-                setError(
-                  "Enable Drafts & sent in Settings → Plugins to see scheduled messages.",
-                );
-            }}
-          >
-            See all scheduled messages
-          </button>
-        </div>
-      )}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
       {active && oldAgents.dialog}
@@ -4871,42 +4703,70 @@ function Composer({
                     place={sessionPlace}
                   />
                 )}
-              {session.scheduledMessages &&
-              !editing.target &&
-              !submission &&
-              !value.forward ? (
-                <ScheduleMessageMenu
-                  disabled={
-                    disabled ||
-                    sending ||
-                    admitting ||
-                    sendPending ||
-                    !!accepted ||
-                    conflict ||
-                    attachments.blocked ||
-                    untagged ||
-                    compacting ||
-                    (stickyPicks && (pickReadPending || pickReadFailed)) ||
-                    (!draft.trim() &&
-                      !attachments.items.length &&
-                      !gifs?.length &&
-                      !chatCards?.length)
-                  }
-                  custom={() => setScheduleOpen(true)}
-                  schedule={(time) => send(false, time)}
-                >
-                  {sendButton}
-                </ScheduleMessageMenu>
-              ) : (
-                sendButton
-              )}
-              {scheduleOpen && (
-                <ScheduleMessageDialog
-                  close={() => setScheduleOpen(false)}
-                  schedule={(time) => send(false, time)}
-                  error={error}
-                />
-              )}
+              <IconButton
+                variant={
+                  draft.trim() ||
+                  value.forward ||
+                  chatCards?.length ||
+                  gifs?.length ||
+                  attachments.items.length
+                    ? "primary"
+                    : "ghost"
+                }
+                size="toolbar"
+                type="submit"
+                onClick={(event) => {
+                  if (!event.nativeEvent.isTrusted) return;
+                  event.preventDefault();
+                  void send(true);
+                }}
+                style={editing.target ? undefined : accentButtonStyle}
+                aria-label={editing.target ? "Save changes" : "Send message"}
+                aria-describedby={
+                  !editing.target && forwarded.disclosure
+                    ? forwardDisclosureId
+                    : undefined
+                }
+                title={
+                  editing.target
+                    ? "Save changes"
+                    : compacting
+                      ? "Wait for compaction to finish, or interrupt it."
+                      : untagged
+                        ? recipientHint
+                        : "Send message"
+                }
+                focusableWhenDisabled={
+                  untagged || (!editing.target && compacting) || undefined
+                }
+                disabled={
+                  disabled ||
+                  (!editing.target &&
+                    stickyPicks &&
+                    (pickReadPending || pickReadFailed)) ||
+                  untagged ||
+                  (!editing.target && compacting) ||
+                  (!editing.target &&
+                    (!!accepted || conflict || sendPending)) ||
+                  (!!editing.target && (editing.locked || editDisabled)) ||
+                  admitting ||
+                  sending ||
+                  submission?.disabled ||
+                  (!editing.target && forwarded.blocked) ||
+                  (!editing.target && attachments.blocked) ||
+                  (!draft.trim() &&
+                    !value.forward &&
+                    !chatCards?.length &&
+                    ((!!submission && !submission.allowAttachmentOnly) ||
+                      (!attachments.items.length && !gifs?.length)) &&
+                    !(
+                      editing.target &&
+                      requestDeletion &&
+                      session.outbox?.supports(5)
+                    ))
+                }
+                icon={<ArrowUpIcon size={16} />}
+              />
             </div>
           </div>
           {!editing.target && compacting && (

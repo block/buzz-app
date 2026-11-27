@@ -1,40 +1,36 @@
-# Scheduled messages
+# Scheduling messages from a plugin
 
-When the relay advertises `buzz-scheduled-messages-v1`, the composer shows an
-arrow beside Send. Choose tomorrow at 9 AM, Monday at 9 AM or a custom local time
-within 120 days. Confirm the timezone and full date before scheduling. The draft
-clears only after relay acceptance; a concurrently edited draft stays intact.
-Attachments finish uploading before the queue accepts the message.
+Use `ctx.relay.snapshot().session.messages.scheduled` on a ready relay session.
+The service is present when the relay advertises `buzz-scheduled-messages-v1`.
+Obtain it from the current snapshot for each account or community. An older
+relay leaves the capability undefined.
 
-Enable the bundled **Drafts & sent** plugin to manage messages in one place.
-Its **Drafts** tab lists unfinished messages saved automatically by the composer;
-**Scheduled** lists queued messages and **Sent** shows recent sent messages.
-In **Scheduled**, you can change a message’s delivery time or cancel it.
-The queue loads when you open the tab. The composer preserves formatting,
-mentions, attachments and thread destinations. Messages with composer chips
-cannot be scheduled yet. A refused schedule leaves the draft in the composer.
+- `create(message, sendAt)` accepts an `OutgoingMessage` and a Unix timestamp
+  in milliseconds, up to 120 days ahead. It uses the ordinary message builder
+  for channel and thread messages, mentions and uploaded attachments. It
+  rejects composer chips. Wait for this promise before clearing a draft.
+- `list(signal?)` returns the owner's scheduled, failed and recent sent
+  messages. It loads the revisions needed to change queued messages.
+- `reschedule(id, revision, sendAt)` keeps the message content and destination
+  and changes its time. `cancel(id, revision)` removes a queued message.
+  Refresh the list for the next revision.
 
-The session's `scheduledMessages` service prepares ordinary kind:9 messages
-through the existing message builder. A native or browser-host signer signs the
-exact approved event with its future `created_at`; the plugin receives no keys.
-The native URL allowlist and broker use the fixed `/scheduled-messages` POST
-route, authenticated with ordinary NIP-98 admission. Signing and requests are
-revoked when the session closes. Scheduling continues on the relay after that.
+The native or browser host signs the message and authenticates the relay
+request. The relay stores the exact signed event and owns delivery, including
+after Buzz quits. A retired session refuses new operations. If a create's
+response is lost, retry the same message and time on that session to reuse
+the signed event and operation ID. After reconnecting, check the queue before
+retrying a create with an uncertain outcome.
 
-The relay owns revisions, timestamps and delivery state. Lost create responses
-retry the same UUID/event; stale revisions fail visibly. Refresh the queue after
-uncertain responses before making a different change. A failed delivery stays
-visible for review. Queue support is absent on older relays, so the composer
-keeps its ordinary sending behavior there.
+The composer send gate is synchronous. A gate must make its decision without
+awaiting a request. Use an explicit scheduling action that can wait for relay
+acceptance.
 
-The relay implementation and mandatory two-phase enablement procedure are in
-[block/buzz's scheduled-message protocol](https://github.com/block/buzz/blob/main/docs/scheduled-messages.md).
-Do not enable during a mixed-version relay rollout. Pending messages retain their
-selected event timestamps if an outage delays delivery.
+The [relay implementation](https://github.com/block/buzz/pull/9335) documents
+the queue protocol and deployment order. To exercise delivery with an isolated
+loopback relay that has scheduling enabled, run:
 
-For isolated end-to-end verification, start a local relay with scheduling enabled
-and run `BUZZ_SCHEDULED_TEST_RELAY=http://127.0.0.1:3000 pnpm exec vitest run
-src/features/relay/scheduled-messages.live.test.ts`. This test refuses remote
-hosts and uses fictional random identities. Browser fixtures additionally cover
-the date dialog, invalid time, refusal, retry and draft preservation in Chromium
-and WebKit. Native runtime behavior still requires human testing before release.
+```sh
+BUZZ_SCHEDULED_TEST_RELAY=http://127.0.0.1:3000 \
+  bin/pnpm exec vitest run src/features/relay/scheduled-messages.live.test.ts
+```

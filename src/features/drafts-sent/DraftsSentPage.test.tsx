@@ -69,9 +69,7 @@ type FakeView = {
   dispose: ReturnType<typeof vi.fn>;
 };
 
-function harness(
-  scheduledMessages?: import("../relay/scheduled-messages").ScheduledMessages,
-) {
+function harness() {
   let list: {
     status: string;
     channels: import("../relay/contracts").ChannelSummary[];
@@ -152,7 +150,6 @@ function harness(
     return made;
   };
   const session = {
-    scheduledMessages,
     scope,
     relayAuthor: relay,
     channels: {
@@ -1053,63 +1050,4 @@ it("focuses search only after an excluded preview closes", async () => {
   });
   act(() => h.hideSelected());
   await waitFor(() => expect(focus).toHaveBeenCalled());
-});
-
-it("loads scheduled messages only on the Scheduled tab and refreshes on return", async () => {
-  const queued = {
-    id: "queued",
-    revision: "1",
-    destination: { channelId: "team", name: "launch-room" },
-    content: "Later",
-    sendAt: Date.now() + 60000,
-    status: "scheduled" as const,
-  };
-  const list = vi.fn(
-    async (): Promise<
-      readonly import("../relay/scheduled-messages").ScheduledMessage[]
-    > => [],
-  );
-  const service = {
-    list,
-    subscribe: () => () => {},
-  } as unknown as import("../relay/scheduled-messages").ScheduledMessages;
-  saved("draft:team", "Work in progress");
-  const h = harness(service);
-  const Badge = h.page.badge;
-  const Page = h.page.component;
-  render(
-    <>
-      <Badge />
-      <Page />
-    </>,
-  );
-
-  expect(screen.getByLabelText("1 draft")).toBeInTheDocument();
-  expect(
-    screen.getByRole("searchbox", {
-      name: "Search drafts and sent messages",
-    }),
-  ).toBeVisible();
-  expect(list).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("tab", { name: "Scheduled" }));
-  expect(await screen.findByText("No scheduled messages")).toBeVisible();
-  expect(list).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
-  list.mockResolvedValue([
-    queued,
-    { ...queued, id: "sent", content: "Already sent", status: "sent" },
-    {
-      ...queued,
-      id: "failed",
-      content: "Could not send",
-      status: "failed",
-      error: "Channel access changed",
-    },
-  ]);
-  fireEvent.click(screen.getByRole("tab", { name: "Scheduled" }));
-  expect(await screen.findByText("Later")).toBeVisible();
-  expect(screen.getByText("Channel access changed")).toBeVisible();
-  expect(screen.queryByText("Already sent")).toBeNull();
-  expect(screen.getByLabelText("1 draft")).toBeInTheDocument();
-  expect(list).toHaveBeenCalledTimes(2);
 });

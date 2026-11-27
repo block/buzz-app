@@ -24,7 +24,6 @@ export type ComposerSession = Pick<
   RelaySession,
   "viewer" | "media" | "scope"
 > & {
-  scheduledMessages?: RelaySession["scheduledMessages"];
   names?: import("../identity-names/service").IdentityNameView | undefined;
   recovery?: RelaySession["recovery"];
   repositories: Pick<

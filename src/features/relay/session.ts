@@ -1,4 +1,3 @@
-import { createScheduledMessages } from "./scheduled-messages";
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { mergeLegacyWorkspaces } from "./workspace-migration";
@@ -2825,105 +2824,8 @@ export function createRelaySession(
   function ownsMessages(messages: object): boolean {
     return messages === session.messages;
   }
-  const messageCommands = createMessages(
-    writes?.outbox,
-    transport?.viewer,
-    (id) => {
-      const outgoing = local().find((item) => item.event.id === id);
-      // The optimistic projection is unsigned even after publication. Use
-      // its admitted signed record when an operation needs source evidence.
-      return (
-        outgoing?.signed ??
-        recent.peek(id)?.event ??
-        retainedEvent(id) ??
-        outgoing?.event
-      );
-    },
-    emoji.tags,
-    validateMentions,
-    (id, owner) =>
-      !closed &&
-      (channels.canWrite(id) ||
-        // editOwnedAgent and messages.remove supply owner evidence;
-        // validateChannelWrite rechecks it before signing and publication.
-        (!!owner && channels.canParticipate(id))),
-    transport?.scope,
-    writer && (!writer.kinds || writer.kinds.includes(1984))
-      ? async (template) => {
-          if (closed) throw new Error("Relay session closed");
-          const signal = AbortSignal.any([
-            lifetime.signal,
-            AbortSignal.timeout(10_000),
-          ]);
-          // Race each step so the deadline holds even if the writer ignores `signal`.
-          const aborted = new Promise<never>((_, reject) => {
-            const fail = () => reject(signal.reason);
-            if (signal.aborted) fail();
-            else signal.addEventListener("abort", fail, { once: true });
-          });
-          const signed = await Promise.race([
-            writer.sign(template, signal),
-            aborted,
-          ]);
-          signal.throwIfAborted();
-          await Promise.race([writer.publish(signed, signal), aborted]);
-        }
-      : undefined,
-    transport?.archiveAuthority,
-    profiles.queries,
-    dmPartners,
-    (id) => [
-      ...new Map(
-        [
-          ...local().map((item) => item.event),
-          ...recent.entries().map(([, item]) => item.event),
-          ...retainedThreadEvents(),
-          ...retainedChannelEvents(),
-        ]
-          .filter((event) =>
-            event.tags.some(
-              ([name, value]) => name === "buzz:copy-of" && value === id,
-            ),
-          )
-          .map((event) => [event.id, event]),
-      ).values(),
-    ],
-    invocationScope,
-  );
-  const scheduledMessages = transport?.scheduledMessages
-    ? createScheduledMessages(transport.scheduledMessages, {
-        viewer: transport.viewer,
-        signal: lifetime.signal,
-        name: (id) =>
-          channels.queries.list().channels.find((channel) => channel.id === id)
-            ?.name ?? "Conversation",
-        prepare: (input) =>
-          input.destination.threadRootId
-            ? messageCommands.prepareReply(
-                input.destination.channelId,
-                input.destination.threadRootId,
-                input.content,
-                input.mentions,
-                input.attachments,
-                input.parentId,
-                input.references,
-                input.picks,
-                input.mediaTargetUrl,
-              )
-            : messageCommands.prepareSend(
-                input.destination.channelId,
-                input.content,
-                input.mentions,
-                input.attachments,
-                undefined,
-                input.references,
-                input.picks,
-              ),
-      })
-    : undefined;
   const session = Object.freeze({
     lifetimeSignal: lifetime.signal,
-    scheduledMessages,
     artifactIncremental: transport?.artifactIncremental,
     supportsMigrationWrites: true as const,
     memberAdditions,
@@ -3223,7 +3125,82 @@ export function createRelaySession(
           })
         : undefined,
     messages: Object.freeze({
-      ...messageCommands,
+      ...createMessages(
+        writes?.outbox,
+        transport?.viewer,
+        (id) => {
+          const outgoing = local().find((item) => item.event.id === id);
+          // The optimistic projection is unsigned even after publication. Use
+          // its admitted signed record when an operation needs source evidence.
+          return (
+            outgoing?.signed ??
+            recent.peek(id)?.event ??
+            retainedEvent(id) ??
+            outgoing?.event
+          );
+        },
+        emoji.tags,
+        validateMentions,
+        (id, owner) =>
+          !closed &&
+          (channels.canWrite(id) ||
+            // editOwnedAgent and messages.remove supply owner evidence;
+            // validateChannelWrite rechecks it before signing and publication.
+            (!!owner && channels.canParticipate(id))),
+        transport?.scope,
+        writer && (!writer.kinds || writer.kinds.includes(1984))
+          ? async (template) => {
+              if (closed) throw new Error("Relay session closed");
+              const signal = AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(10_000),
+              ]);
+              // Race each step so the deadline holds even if the writer ignores `signal`.
+              const aborted = new Promise<never>((_, reject) => {
+                const fail = () => reject(signal.reason);
+                if (signal.aborted) fail();
+                else signal.addEventListener("abort", fail, { once: true });
+              });
+              const signed = await Promise.race([
+                writer.sign(template, signal),
+                aborted,
+              ]);
+              signal.throwIfAborted();
+              await Promise.race([writer.publish(signed, signal), aborted]);
+            }
+          : undefined,
+        transport?.archiveAuthority,
+        profiles.queries,
+        dmPartners,
+        (id) => [
+          ...new Map(
+            [
+              ...local().map((item) => item.event),
+              ...recent.entries().map(([, item]) => item.event),
+              ...retainedThreadEvents(),
+              ...retainedChannelEvents(),
+            ]
+              .filter((event) =>
+                event.tags.some(
+                  ([name, value]) => name === "buzz:copy-of" && value === id,
+                ),
+              )
+              .map((event) => [event.id, event]),
+          ).values(),
+        ],
+        invocationScope,
+        transport?.scheduledMessages
+          ? {
+              host: transport.scheduledMessages,
+              signal: lifetime.signal,
+              name: (id) =>
+                channels.queries
+                  .list()
+                  .channels.find((channel) => channel.id === id)?.name ??
+                "Conversation",
+            }
+          : undefined,
+      ),
       /** UI eligibility only; signing/publication recheck the same role proof. */
       canRetry(event: Pick<EventData, "kind" | "tags">) {
         const id = event.tags.find(([key]) => key === "h")?.[1];

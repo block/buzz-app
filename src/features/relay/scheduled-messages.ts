@@ -1,28 +1,16 @@
 import type { EventTemplate } from "nostr-tools";
+import type { OutgoingMessage } from "../messages/outgoing-message";
 import { createEventVerifier, type RelayEvent } from "./events";
 import { parseEvents } from "./transport";
-import type { UploadedAttachment } from "./attachments";
-import type { MentionPicks } from "./messages";
 
-export type ScheduledInput = Readonly<{
+export type ScheduledMessage = Readonly<{
+  id: string;
+  revision: string;
   destination: Readonly<{
     channelId: string;
     name: string;
     threadRootId?: string;
   }>;
-  content: string;
-  sendAt: number;
-  mentions?: readonly string[];
-  attachments?: readonly UploadedAttachment[];
-  parentId?: string;
-  references?: readonly string[];
-  picks?: MentionPicks;
-  mediaTargetUrl?: string;
-}>;
-export type ScheduledMessage = Readonly<{
-  id: string;
-  revision: string;
-  destination: ScheduledInput["destination"];
   content: string;
   sendAt: number;
   status: "scheduled" | "sent" | "failed";
@@ -52,16 +40,12 @@ export function createScheduledMessages(
   options: {
     viewer: string;
     signal: AbortSignal;
-    prepare(input: ScheduledInput): Template;
+    prepare(message: OutgoingMessage): Template;
     name(channelId: string): string;
   },
 ) {
   const events = new Map<string, { event: RelayEvent; revision: string }>();
-  const pending = new Map<string, { id: string; event: RelayEvent }>();
-  const listeners = new Set<() => void>();
-  const changed = () => {
-    for (const listener of listeners) listener();
-  };
+  const pending = new Map<string, Promise<{ id: string; event: RelayEvent }>>();
   function signal(extra?: AbortSignal) {
     const owned = AbortSignal.any([
       options.signal,
@@ -101,6 +85,16 @@ export function createScheduledMessages(
     live.throwIfAborted();
     return JSON.parse(text + decoder.decode()) as unknown;
   }
+  async function mutate(body: unknown) {
+    const reply = await request(body);
+    if (
+      typeof reply !== "object" ||
+      reply === null ||
+      !("accepted" in reply) ||
+      reply.accepted !== true
+    )
+      throw new Error("The relay did not confirm the schedule change.");
+  }
   async function signed(sendAt: number, draft: Template) {
     const now = Date.now();
     if (
@@ -131,13 +125,7 @@ export function createScheduledMessages(
     return row.event;
   }
   return Object.freeze({
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    async list(extra: AbortSignal): Promise<readonly ScheduledMessage[]> {
+    async list(extra?: AbortSignal): Promise<readonly ScheduledMessage[]> {
       const raw = (await request({ action: "list" }, extra)) as {
         messages?: unknown;
       };
@@ -194,20 +182,24 @@ export function createScheduledMessages(
       for (const [id, row] of next) events.set(id, row);
       return rows;
     },
-    async create(input: ScheduledInput) {
-      const template = options.prepare(input);
-      const key = JSON.stringify([template, Math.floor(input.sendAt / 1000)]);
+    async create(message: OutgoingMessage, sendAt: number) {
+      if (message.tokens?.length)
+        throw new Error("Messages with composer chips cannot be scheduled.");
+      const template = options.prepare(message);
+      const key = JSON.stringify([template, Math.floor(sendAt / 1000)]);
       let operation = pending.get(key);
       if (!operation) {
-        operation = {
-          id: crypto.randomUUID(),
-          event: await signed(input.sendAt, template),
-        };
+        operation = signed(sendAt, template).then(
+          (event) => ({ id: crypto.randomUUID(), event }),
+          (error) => {
+            pending.delete(key);
+            throw error;
+          },
+        );
         pending.set(key, operation);
       }
-      await request({ action: "create", ...operation });
-      pending.delete(key);
-      changed();
+      await mutate({ action: "create", ...(await operation) });
+      if (pending.get(key) === operation) pending.delete(key);
     },
     async reschedule(id: string, revision: string, sendAt: number) {
       const previous = current(id, revision);
@@ -216,18 +208,16 @@ export function createScheduledMessages(
         content: previous.content,
         tags: previous.tags.map((t) => [...t]),
       });
-      await request({
+      await mutate({
         action: "update",
         id,
         revision: Number(revision),
         event,
       });
-      changed();
     },
     async cancel(id: string, revision: string) {
       current(id, revision);
-      await request({ action: "cancel", id, revision: Number(revision) });
-      changed();
+      await mutate({ action: "cancel", id, revision: Number(revision) });
     },
   });
 }

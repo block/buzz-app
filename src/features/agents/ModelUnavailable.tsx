@@ -2,7 +2,12 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ComposerAccessoryProps } from "../conversation/contracts";
 import { ModelPicker, type ModelChoice } from "./ModelPicker";
 import { pubkeyOf } from "./membership";
-import { offRecommended } from "./recommended";
+import { routeOf } from "./model-routes";
+import {
+  offRecommended,
+  onRecommended,
+  type RecommendedCandidate,
+} from "./recommended";
 import type { Agents, Models } from "./service";
 
 /** Under one of the viewer's own agents' replies saying a turn failed because
@@ -47,12 +52,16 @@ function Picker({
       ? found
       : undefined;
   const type = agent && agents.types().find((item) => item.key === agent.type);
-  const [listed, setListed] = useState<Models>();
+  const [listed, setListed] = useState<{
+    models: Models;
+    recommended: RecommendedCandidate | null | undefined;
+  }>();
   const [picked, setPicked] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const key = agent?.key;
   const config = agent?.config;
+  const remote = Boolean(agent?.executionBinding);
   // Listed again once a pick is saved, so the menu shows what it runs on. The
   // previous list stays meanwhile.
   useEffect(() => {
@@ -60,23 +69,28 @@ function Picker({
     // Only the config this render shows; a newer one lists on its own render.
     if (!current || current.config !== config || !type?.models) return;
     let live = true;
-    void Promise.resolve(type.models(current)).then(
-      (models) => {
-        if (live) setListed(models);
-      },
-      (reason: unknown) =>
-        console.warn(
-          `Agent type ${type.key} could not list its models`,
-          reason,
-        ),
+    const listModels = type.models;
+    void (async () => {
+      const resolve =
+        onRecommended(current.config) && !remote
+          ? type.settingsProposal?.resolveRecommended
+          : undefined;
+      const recommended = resolve
+        ? await resolve().catch(() => null)
+        : undefined;
+      if (!live) return;
+      const models = await listModels(current);
+      if (live) setListed({ models, recommended });
+    })().catch((reason: unknown) =>
+      console.warn(`Agent type ${type.key} could not list its models`, reason),
     );
     return () => {
       live = false;
     };
-  }, [agents, key, config, type]);
+  }, [agents, key, config, remote, type]);
   if (!agent || !type || !listed) return null;
-  if (picked === undefined && listed.current !== failed) return null;
-  const choices: ModelChoice[] = listed.models
+  if (picked === undefined && listed.models.current !== failed) return null;
+  const choices: ModelChoice[] = listed.models.models
     .filter((model) => model.id !== failed)
     .map(({ id, label }) => ({ id, label }));
   if (!choices.length) return null;
@@ -85,8 +99,24 @@ function Picker({
     setSaving(true);
     setError("");
     try {
+      const base = offRecommended(agent.config as Record<string, unknown>);
+      const effort = typeof base.effort === "string" ? base.effort : "";
+      const chosen = listed.models.models.find((item) => item.id === model);
+      const clearEffort =
+        effort !== "" &&
+        (Boolean(routeOf(model)) ||
+          !chosen?.efforts.some((level) => level.id === effort));
+      const provider =
+        onRecommended(agent.config) && listed.recommended?.provider
+          ? listed.recommended.provider
+          : undefined;
       await agents.save(agent.key, {
-        config: { ...offRecommended(agent.config as object), model },
+        config: {
+          ...base,
+          ...(provider ? { provider } : {}),
+          model,
+          ...(clearEffort ? { effort: "" } : {}),
+        },
         ...(agent.configBase && { base: agent.configBase }),
       });
       setPicked(model);

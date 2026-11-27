@@ -10466,7 +10466,9 @@ async function classifiedAgent(jev: FakeJev) {
 it("delivers a message its watch's classifier turned down, or one it still classifies, as a plugin's mention, and runs it once", async () => {
   const jev = fakeJev();
   const app = await classifiedAgent(jev);
-  await vi.waitFor(() => expect(app.service.classifier()).toBe("available"));
+  await vi.waitFor(() =>
+    expect(app.service.classifier(agentRelay)).toBe("available"),
+  );
   let deliver!: NonNullable<Agents["deliverMention"]>;
   await app.ctx
     .extend({ pluginOwner: { id: "router", revision: "one" } })

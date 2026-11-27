@@ -232,11 +232,13 @@ it("reads a community's key again after it is left and joined again", async () =
   expect(decisions.status(ONE)).toBe("checking");
   await flush();
   expect(decisions.status(ONE)).toBe("needs-setup");
-  // Another community's key is not read again.
+  // Another community's key is not read again. The rejoined one is read
+  // twice: the decisions service hears the join first and reads it, then
+  // TypeSafe forgets it, which drops that read and starts another.
   expect(decisions.status(TWO)).toBe("ready");
   expect(
     native.status.mock.calls.slice(reads).map(([community]) => community),
-  ).toEqual(["https://one.example"]);
+  ).toEqual(["https://one.example", "https://one.example"]);
 });
 
 it("reads a left community's key again once leaving has removed it", async () => {

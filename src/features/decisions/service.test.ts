@@ -669,8 +669,25 @@ it("removes a provider when the plugin asks, before its scope ends", async () =>
   expect(service.providers()).toEqual([]);
 });
 
-it("says decisions can be answered while the provider they go to isn't waiting for setup", async () => {
-  const { root, plugin } = setup();
+it("says decisions can be answered while a joined community's provider isn't waiting for setup", async () => {
+  const { root, plugin, service } = setup();
+  const listeners = new Set<() => void>();
+  let communities = {
+    status: "loading",
+    memberships: [] as { id: string }[],
+  };
+  root.provide("communityReader", {
+    snapshot: () => communities,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    retained: () => undefined,
+  } as never);
+  const join = (...ids: string[]) => {
+    communities = { status: "ready", memberships: ids.map((id) => ({ id })) };
+    for (const listener of [...listeners]) listener();
+  };
   const seen: string[] = [];
   // A consumer, as a plugin that needs decisions registers its contributions.
   await root
@@ -681,20 +698,20 @@ it("says decisions can be answered while the provider they go to isn't waiting f
       });
     })
     .await();
-  await flush();
-  expect(seen).toEqual([]);
   // A default install: TypeSafe registered without a key.
-  const keyless = await plugin("buzz.typesafe", {
+  await plugin("buzz.typesafe", {
     id: "typesafe",
     status: () => "needs-setup",
   });
-  await flush();
-  expect(seen).toEqual([]);
   const status = settable("checking");
   const builderlab = await plugin("block.builderlab", {
     id: "builderlab",
     ...status,
   });
+  await flush();
+  // No community is joined until the list loads.
+  expect(seen).toEqual([]);
+  join("wss://one.example", "wss://two.example");
   await flush();
   expect(seen).toEqual(["on 1"]);
   // Checking and unconfirmed don't flap it; needs-setup withdraws it.
@@ -705,13 +722,35 @@ it("says decisions can be answered while the provider they go to isn't waiting f
   status.set("needs-setup");
   await flush();
   expect(seen).toEqual(["on 1", "off"]);
-  await keyless.dispose();
-  await plugin("buzz.typesafe", { id: "typesafe" });
+  // One community whose provider can answer is enough.
+  status.set("ready");
+  service.setBackend(DECISIONS_OFF, "wss://one.example");
   await flush();
   expect(seen).toEqual(["on 1", "off", "on 1"]);
+  service.setBackend(DECISIONS_OFF, "wss://two.example");
+  await flush();
+  expect(seen).toEqual(["on 1", "off", "on 1", "off"]);
+  service.setBackend("block.builderlab/builderlab", "wss://two.example");
+  await flush();
+  expect(seen).toEqual(["on 1", "off", "on 1", "off", "on 1"]);
+  // Leaving that community, or its provider going away, withdraws it.
+  join("wss://one.example");
+  await flush();
+  expect(seen).toEqual(["on 1", "off", "on 1", "off", "on 1", "off"]);
+  join("wss://one.example", "wss://two.example");
+  await flush();
   await builderlab.dispose();
   await flush();
-  expect(seen).toEqual(["on 1", "off", "on 1"]);
+  expect(seen).toEqual([
+    "on 1",
+    "off",
+    "on 1",
+    "off",
+    "on 1",
+    "off",
+    "on 1",
+    "off",
+  ]);
 });
 
 it("restores a saved choice once its provider registers, and survives unreadable storage", async () => {

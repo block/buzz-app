@@ -6,7 +6,7 @@
 // provider is held to the same rules and returns the same checked answers.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
-import { relayOrigin } from "../communities/destination";
+import { communityDestination, relayOrigin } from "../communities/destination";
 import {
   createContributions,
   type Contribution,
@@ -181,9 +181,9 @@ export interface Decisions {
   retireProvider(id: string): void;
 }
 /** Provided while decisions can be answered on this device, and withdrawn
- * while they can't: while the provider decisions go to (`backend`) is
- * registered and not `needs-setup`. One still `checking` a sign-in or key, or
- * `unconfirmed`, counts, so a flaky sign-in doesn't flap it. Read it as
+ * while they can't: while at least one joined community has a provider (its
+ * `backend`) that is registered and not `needs-setup`. One still `checking` a
+ * sign-in or key, or `unconfirmed`, counts, so a flaky sign-in doesn't flap it. Read it as
  * "worth asking", not as "a provider is registered": a decision can still
  * fail while it is present. */
 export type DecisionsAnswerable = Readonly<{ version: 1 }>;
@@ -339,11 +339,49 @@ export class DecisionsService extends Service implements Decisions {
     let stops: (() => void)[] = [];
     let withdraw: (() => void) | undefined;
     let live = false;
-    // Follows every change `notify` reports: providers, their status and
-    // the user's choice.
+    // The joined communities, once the app provides them: each has its own
+    // provider, so decisions can be answered while any one of them can.
+    let joined: readonly string[] = [];
+    ctx.inject(["communityReader"], (scope) => {
+      const reader = scope.communityReader;
+      const read = () => {
+        const { status, memberships } = reader.snapshot();
+        const next =
+          status === "loading"
+            ? []
+            : memberships.flatMap(({ id }) => {
+                try {
+                  return [communityDestination(id).url];
+                } catch {
+                  return [];
+                }
+              });
+        // The reader also reports selection and sync changes.
+        if (
+          next.length === joined.length &&
+          next.every((url, index) => url === joined[index])
+        )
+          return;
+        joined = next;
+        this.notify();
+      };
+      const stop = reader.subscribe(read);
+      read();
+      scope.effect(() => () => {
+        stop();
+        joined = [];
+        this.notify();
+      });
+    });
+    // Follows every change `notify` reports: providers, their status, the
+    // user's choices and the joined communities.
     const answerable = () => {
-      const route = live ? this.route() : undefined;
-      const can = !!route && route.status !== "needs-setup";
+      const can =
+        live &&
+        joined.some((community) => {
+          const route = this.route(community);
+          return !!route && route.status !== "needs-setup";
+        });
       if (can && !withdraw)
         withdraw = ctx.provide("decisionsAnswerable", ANSWERABLE);
       else if (!can && withdraw) {

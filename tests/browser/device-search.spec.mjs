@@ -13,8 +13,19 @@ test("searching this device shows its rows on the key and the relay's below them
   await page.goto(app.origin);
   await expect(page.locator("[data-message-id]").first()).toBeVisible();
   app.append("primary", "alpha", "deploy rollback quartz");
-  // Only the relay holds this one.
-  app.append("primary", "alpha", "relay only quartz", false, false);
+  // Only the relay holds this one. Older than the channel's newest, so a
+  // refresh of the open channel doesn't bring it to the device either.
+  app.append(
+    "primary",
+    "alpha",
+    "relay only quartz",
+    false,
+    false,
+    undefined,
+    undefined,
+    [],
+    1600000000,
+  );
   await expect(page.getByText("deploy rollback quartz")).toBeVisible();
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
   const input = page.getByRole("combobox", { name: "Search Buzz" });

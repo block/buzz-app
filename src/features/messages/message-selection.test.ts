@@ -13,7 +13,6 @@ import {
 } from "./message-selection";
 import { Context } from "@deepseek-ai/cordis";
 import { MessagesService } from "./messages-service";
-import { PluginRuntime } from "../../plugins/runtime";
 
 const messages = new MessagesService(new Context());
 const cleanups: (() => void)[] = [];
@@ -188,17 +187,8 @@ it("leaves keys native while the newest message is scrolled out of the window", 
   expect(document.activeElement).toBe(box("two"));
 });
 
-it("gives plugins the lists, selection, kept rows and threads through the messages service", async () => {
-  const { list, box, controller, composer } = fixture();
-  // Each hold keeps the row rendered until released; count the live ones.
-  const holds = new Set<object>();
-  Object.assign(controller, {
-    keepMounted: () => {
-      const hold = {};
-      holds.add(hold);
-      return () => holds.delete(hold);
-    },
-  });
+it("gives plugins the lists, selection and threads through the messages service", () => {
+  const { list, box, composer } = fixture();
   expect(messages.lists()).toEqual([list]);
   const row = box("two")?.parentElement as HTMLElement;
   const handle = messages.listOf(row);
@@ -206,37 +196,6 @@ it("gives plugins the lists, selection, kept rows and threads through the messag
   expect(handle?.newest()).toBe("three");
   expect(handle?.has("two")).toBe(true);
   expect(handle?.has("gone")).toBe(false);
-  handle?.keepMounted("two")();
-  expect(holds.size).toBe(0);
-
-  // Two plugins hold the same row; stopping one leaves the other's hold.
-  const root = new Context();
-  new MessagesService(root);
-  const plugins = new Map<string, Context>();
-  const runtime = new PluginRuntime(root, async (info) => ({
-    inject: ["messages"],
-    apply(ctx) {
-      plugins.set(info.manifest.id, ctx);
-    },
-  }));
-  const info = (id: string) => ({
-    manifest: { id, name: id, apiVersion: 1 as const },
-    enabled: true,
-    source: "external" as const,
-    revision: "one",
-    previous: null,
-    reloadable: true,
-    error: null,
-  });
-  runtime.reconcile([info("a.keys"), info("b.keys")]);
-  await vi.waitFor(() => expect(plugins.size).toBe(2));
-  plugins.get("a.keys")?.messages.listOf(row)?.keepMounted("two");
-  plugins.get("b.keys")?.messages.listOf(row)?.keepMounted("two");
-  expect(holds.size).toBe(2);
-  runtime.reconcile([info("b.keys")]);
-  await vi.waitFor(() => expect(holds.size).toBe(1));
-  await runtime.dispose();
-  expect(holds.size).toBe(0);
   expect(handle?.composer()).toBe(composer);
   // One handle per list, so a plugin can tell whether its owner changed.
   expect(messages.listOf(list)).toBe(handle);

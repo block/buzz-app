@@ -1183,6 +1183,40 @@ it("selects the newest message instead while a plugin prefers messages on open",
     expect(document.activeElement).toBe(document.body);
     unregisterWaiting();
 
+    // A composer that mounts enabled waits through StrictMode's effect replay.
+    list.replaceChildren();
+    const enabled = mount({ autoFocus: true });
+    const unregisterEnabled = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => enabled.input(),
+    } as unknown as MessageList);
+    list.innerHTML = rows;
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.activeElement).toBe(
+      list.querySelector('[data-message-id="new"] > [data-layout]'),
+    );
+    unregisterEnabled();
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    // Focus the plugin's own choice moves elsewhere wins as well.
+    const releaseMoving = focus.preferMessagesOnOpen(() => {
+      elsewhere.focus();
+      return undefined;
+    });
+    document.body.append(elsewhere);
+    const moving = mount({ autoFocus: true, disabled: true });
+    const unregisterMoving = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => moving.input(),
+    } as unknown as MessageList);
+    moving.retarget({ disabled: false });
+    expect(document.activeElement).toBe(elsewhere);
+    unregisterMoving();
+    releaseMoving();
+    elsewhere.remove();
+
     // Letting go of the choice while it waits gives the message box focus.
     release();
     list.replaceChildren();
@@ -1275,6 +1309,9 @@ it("gives plugins a message box handle, and undoes what a plugin set when it sto
   expect(screen.getByText("OTHER")).toBeVisible();
   act(() => box.setStatus("NORMAL"));
   expect(screen.getByText("NORMAL")).toBeVisible();
+  // Stopping the plugin whose label is newest shows the older one again.
+  act(() => otherBox?.setStatus("OTHER"));
+  expect(screen.getByText("OTHER")).toBeVisible();
   act(() => runtime.reconcile([info("example.keys")]));
   await vi.waitFor(() => expect(screen.getByText("NORMAL")).toBeVisible());
   expect(screen.queryByText("OTHER")).toBeNull();

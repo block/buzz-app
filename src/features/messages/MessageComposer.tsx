@@ -1253,13 +1253,17 @@ function Composer({
         const onFocusMove = () => {
           moved = true;
         };
-        document.addEventListener("focusin", onFocusMove, true);
-        const finish = () => {
+        const stopListening = () =>
           document.removeEventListener("focusin", onFocusMove, true);
+        document.addEventListener("focusin", onFocusMove, true);
+        // An effect re-run only stops listening; the handoff stays pending,
+        // so the replay starts it again.
+        stopWaiting = stopListening;
+        const finish = () => {
+          stopListening();
           stopWaiting = undefined;
           focusOnMount.current = undefined;
         };
-        stopWaiting = finish;
         const focusEditor = () => {
           finish();
           editor.focus();
@@ -1272,9 +1276,11 @@ function Composer({
           if (!pick) return focusEditor();
           const list = composerMessageList(editor);
           if (list) {
-            // Selecting moves focus; that move is the handoff, not a cancel.
-            document.removeEventListener("focusin", onFocusMove, true);
+            // The plugin's own choice may move focus; that wins too.
             const row = pick(list);
+            if (moved) return finish();
+            // Selecting moves focus; that move is the handoff, not a cancel.
+            stopListening();
             if (row?.isConnected) {
               selectMessage(row);
               return finish();

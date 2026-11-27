@@ -4940,6 +4940,22 @@ it("preserves links in ordered and indented lists without altering fenced code b
   );
 });
 
+it("preserves CJK and intra-word external links pasted into the composer", () => {
+  const h = mount("", { links: true });
+  paste(
+    h.input,
+    "请阅读文档了解详情，并查看foobarbaz",
+    '<p>请阅读<a href="https://example.com/doc">文档</a>了解详情，并查看foo<a href="https://example.com/bar">bar</a>baz</p>',
+  );
+  expect(h.markdown()).toBe(
+    "请阅读[文档](https://example.com/doc)了解详情，并查看foo[bar](https://example.com/bar)baz",
+  );
+  expect(scanMarkdown(h.markdown()).links.map((link) => link.url)).toEqual([
+    "https://example.com/doc",
+    "https://example.com/bar",
+  ]);
+});
+
 it.each([
   "https://e.com/?q=\\",
   "https://e.com/?q=a\\*b",

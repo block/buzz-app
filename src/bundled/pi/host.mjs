@@ -808,6 +808,7 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
           );
         }),
       ]).finally(() => clearTimeout(timer));
+      const adapted = [];
       for (const extension of extensions) {
         if (typeof extension?.name !== "string")
           throw new Error("An extension it returns has no name");
@@ -816,8 +817,15 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
           registry.snapshot().extension(extension.name)
         )
           throw new Error(`Another extension is named ${extension.name}`);
-        registry.install(extension);
-        installed.push(extension);
+        for (const wrap of extension.wraps ?? [])
+          if (wrap?.kind !== "tool" && wrap?.kind !== "section")
+            throw new Error(
+              `Extension ${extension.name} has a wrap without kind ("tool" or "section"); update it for Pi 1.6 (use wrapTool() or wrapSection())`,
+            );
+        const checked = compatExtension(extension);
+        registry.install(checked);
+        installed.push(checked);
+        adapted.push(checked);
       }
       if (!providers.every(isProvider))
         throw new Error(
@@ -830,7 +838,7 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
         throw new Error(
           `Provider ${empty.id} lists no models, and Buzz doesn't fetch a provider's models`,
         );
-      loaded.extensions.push(...extensions);
+      loaded.extensions.push(...adapted);
       loaded.providers.push(...providers);
     } catch (error) {
       for (const extension of installed) registry.uninstall(extension);
@@ -841,6 +849,65 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
     }
   }
   return loaded;
+}
+
+/** Adapts legacy Pi 1.5 untagged `beforeCompact` and `onYield` hook results to
+ * Pi 1.6's tagged shapes with a warning, so an outdated extension's veto or
+ * continuation is not silently ignored. */
+function compatExtension(extension) {
+  if (!extension.hooks?.length) return extension;
+  let changed = false;
+  const hooks = extension.hooks.map((registration) => {
+    const handlers = registration?.handlers;
+    if (!handlers || typeof handlers !== "object") return registration;
+    const { beforeCompact, onYield } = handlers;
+    if (typeof beforeCompact !== "function" && typeof onYield !== "function")
+      return registration;
+    changed = true;
+    const wrapped = Object.create(
+      Object.getPrototypeOf(handlers),
+      Object.getOwnPropertyDescriptors(handlers),
+    );
+    if (typeof beforeCompact === "function") {
+      let warned = false;
+      wrapped.beforeCompact = async function (...args) {
+        const result = await beforeCompact.apply(this, args);
+        if (!result || typeof result !== "object" || "kind" in result)
+          return result;
+        if (!warned) {
+          warned = true;
+          console.error(
+            `Pi extension ${extension.name} returned an untagged beforeCompact result; update it for Pi 1.6 ({ kind: "decline" } or { kind: "summary", summary })`,
+          );
+        }
+        if (result.decline === true) return { kind: "decline" };
+        if (typeof result.summary === "string")
+          return { kind: "summary", summary: result.summary };
+        return result;
+      };
+    }
+    if (typeof onYield === "function") {
+      let warned = false;
+      wrapped.onYield = async function (...args) {
+        const result = await onYield.apply(this, args);
+        if (!result || typeof result !== "object" || "kind" in result)
+          return result;
+        if (!warned) {
+          warned = true;
+          console.error(
+            `Pi extension ${extension.name} returned an untagged onYield result; update it for Pi 1.6 ({ kind: "continue", continue } or { kind: "tasks", tasks })`,
+          );
+        }
+        if ("continue" in result)
+          return { kind: "continue", continue: result.continue };
+        if (Array.isArray(result.tasks))
+          return { kind: "tasks", tasks: result.tasks };
+        return result;
+      };
+    }
+    return { ...registration, handlers: wrapped };
+  });
+  return changed ? { ...extension, hooks } : extension;
 }
 
 /** Whether a provider has what listing Pi's providers reads, which one made

@@ -679,7 +679,7 @@ out.extensions = packages.extensions.map((extension) => extension.name);
 out.providers = packages.providers.map((provider) => provider.id);
 const models = createModels();
 for (const provider of packages.providers) models.setProvider(provider);
-const { faux } = await import(pathToFileURL(dir + "/../good/durable.ts").href);
+const { faux, declined } = await import(pathToFileURL(dir + "/../good/durable.ts").href);
 const input = new PassThrough(), output = new PassThrough(), pending = new Map();
 let id = 0;
 createInterface({ input: output }).on("line", (line) => {
@@ -713,6 +713,14 @@ faux.setResponses([
 ]);
 const turn = await rpc("deliver", { agent, key: "chan/root", at: 1, context: { channel: "chan", root: "root" }, text: "go", request: "P", provider: "pkg", model: "faux-1", instructions: "Test.", cwd: data });
 out.turn = await rpc("wait", { agent, submission: turn.submission });
+faux.setResponses([fauxAssistantMessage("ok1"), fauxAssistantMessage("ok2")]);
+for (const request of ["C1", "C2"]) {
+  const long = await rpc("deliver", { agent, key: "chan/compact", at: 2, context: { channel: "chan", root: "compact" }, text: "word ".repeat(25_000), request, provider: "pkg", model: "faux-1", instructions: "Test.", cwd: data });
+  await rpc("wait", { agent, submission: long.submission });
+}
+const beforeCompact = faux.state.callCount;
+await rpc("session", { agent, key: "chan/compact", action: "compact" });
+out.legacyCompact = { declined: declined(), calls: faux.state.callCount - beforeCompact };
 out.unknown = await rpc("test", { provider: "nope", model: "m" }).catch((error) => error.message);
 await stop();
 console.log(JSON.stringify(out));
@@ -766,6 +774,12 @@ export default () => ({
 });
 `,
   },
+  "legacy-wrap": {
+    "package.json":
+      '{ "type": "module", "pi": { "durable": ["./durable.js"] } }',
+    "durable.js":
+      'export default () => ({ extensions: [{ name: "legacy-wrap", wraps: [{ tool: "bash", wrap: (tool) => tool }] }] });',
+  },
   "not-a-list": {
     "package.json": '{ "type": "module", "pi": { "durable": "./durable.js" } }',
   },
@@ -779,10 +793,12 @@ export default () => ({
     // TypeScript, which Node strips itself outside node_modules.
     "durable.ts": `
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
-import { defineExtension, defineTool, hook, section, ToolTask } from "@earendil-works/pi-durable";
+import { CompactionTask, defineExtension, defineTool, hook, section, ToolTask } from "@earendil-works/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
 import { shout } from "shout";
 export const faux = fauxProvider({ provider: "pkg" });
+let compactDeclines = 0;
+export const declined = () => compactDeclines;
 const tool = defineTool({
   name: "shout",
   description: "Shout a text",
@@ -794,7 +810,11 @@ export default async () => ({
     name: "good",
     sections: [section("house-rules", () => "House rule: no recursive deletes.")],
     tools: [tool],
-    hooks: [hook(ToolTask, { beforeTool: (call) => /rm -rf/.test(String(call.arguments?.command)) ? { block: "No recursive deletes" } : undefined })],
+    hooks: [
+      hook(ToolTask, { beforeTool: (call) => /rm -rf/.test(String(call.arguments?.command)) ? { block: "No recursive deletes" } : undefined }),
+      // Legacy Pi 1.5 untagged beforeCompact return shape.
+      hook(CompactionTask, { beforeCompact: (() => { compactDeclines++; return { decline: true }; }) as never }),
+    ],
   })],
   providers: [faux.provider],
 });
@@ -1146,6 +1166,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
           "../invalid",
           "../half-provider",
           "../fetches",
+          "../legacy-wrap",
           "../not-a-list",
           "../pi-only",
           { source: "~/good" },
@@ -1158,7 +1179,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       join(slow, "settings.json"),
       JSON.stringify({ packages: ["../hangs"] }),
     );
-    const { stdout } = await run(
+    const { stdout, stderr } = await run(
       process.execPath,
       [
         "--disable-warning=ExperimentalWarning",
@@ -1200,6 +1221,11 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
           "Provider fetched lists no models, and Buzz doesn't fetch a provider's models",
       },
       {
+        source: "../legacy-wrap",
+        error:
+          'Extension legacy-wrap has a wrap without kind ("tool" or "section"); update it for Pi 1.6 (use wrapTool() or wrapSection())',
+      },
+      {
         source: "../not-a-list",
         error: '"pi.durable" in its package.json must list files',
       },
@@ -1208,6 +1234,8 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.extensions).toEqual(["good"]);
     expect(out.providers).toEqual(["pkg"]);
     expect(out.turn).toMatchObject({ status: "done", text: "Done" });
+    expect(out.legacyCompact).toEqual({ declined: 1, calls: 0 });
+    expect(stderr).toContain("returned an untagged beforeCompact result");
     expect(out.sections["house-rules"]).toContain(
       "House rule: no recursive deletes.",
     );

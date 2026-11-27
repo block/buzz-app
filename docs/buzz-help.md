@@ -206,8 +206,10 @@ if that desktop app is up and running.
   plugins, and settings. **Builder** can read from any available source, edit
   files, run commands, make changes in connected apps, and contribute in Buzz
   through conversations, notes, and canvases. **Reviewer** can read files, the
-  web and Buzz, and participate in Buzz conversations; connected apps can't be
-  limited to reads, so Reviewer can't use them, and on Goose it can list
+  web and Buzz, read connected apps through Buzz's own connections (such as
+  GitHub pull request status), and participate in Buzz conversations; apps the
+  harness connects to directly can't be limited to reads, so Reviewer can't use
+  those, and on Goose it can list
   folders and view images but can't open text files. An agent saved with Orchestrator or an
   individual tool selection by an earlier version keeps it, shown as **Earlier
   selection**, until you choose a role. Where the harness has a native Skill tool,

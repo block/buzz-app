@@ -109,10 +109,12 @@ export function AgentToolAccess({
       </Field>
       <p className="m-0 text-body-sm text-subtle">
         The owner's own restrictions and each harness's tools still apply.
-        Connected apps can't be limited to reads, so Reviewer can't use them,
-        and on Goose it can list folders and view images but can't open text
-        files. Subagents inherit this access. It is not a sandbox: with commands
-        on, they can use any credentials the agent's process has.
+        Reviewer reads connected apps through Buzz's own connections, such as
+        GitHub pull request status; apps the harness connects to directly can't
+        be limited to reads, so Reviewer can't use those, and on Goose it can
+        list folders and view images but can't open text files. Subagents
+        inherit this access. It is not a sandbox: with commands on, they can use
+        any credentials the agent's process has.
       </p>
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">

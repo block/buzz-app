@@ -6,7 +6,7 @@ import {
   type FinderCorpus,
   type FinderDoc,
   type FinderResults,
-} from "./corpus.ts";
+} from "../../features/search/fuzzy/corpus.ts";
 import {
   type ChannelSearchStatus,
   type FinderSync,

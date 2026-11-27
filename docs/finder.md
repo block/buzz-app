@@ -221,8 +221,8 @@ never waits) and splitting the search across several workers.
 
 | File | What it does |
 | --- | --- |
-| `src/bundled/finder/match.ts` | fzf's matching and scoring, ported to TypeScript |
-| `src/bundled/finder/corpus.ts` | The in-memory index and search. No UI, so other tools can use it |
+| `src/features/search/fuzzy/match.ts` | fzf's matching and scoring, ported to TypeScript |
+| `src/features/search/fuzzy/corpus.ts` | The in-memory index and search. No UI, so other tools can use it |
 | `src/bundled/finder/FinderDialog.tsx` | The dialog, built from the same parts as ⌘K search |
 | `src/bundled/finder/search.ts` | What the dialog shows: device matches, older pages of one channel, and relay hits merged below |
 | `src/bundled/finder/sync.ts` | Fills the index and keeps it current, including the read-ahead |

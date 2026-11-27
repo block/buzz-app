@@ -18,7 +18,7 @@ import { imetaAttachmentUrls } from "../../features/relay/fold";
 import { projectMarkdownAttachments } from "../../features/relay/message-content";
 import type { PreviewMentions } from "../../features/messages/PreviewText";
 import type { RelaySession } from "../../features/relay/session";
-import type { ReadFilter } from "../../features/relay/events";
+import type { EventData, ReadFilter } from "../../features/relay/events";
 import { ReadError } from "../../features/relay/errors";
 import type { Profile } from "../../features/relay/contracts";
 import { foldProfiles } from "../../features/relay/profiles";
@@ -136,6 +136,50 @@ type Result = {
   moreError?: string;
 };
 
+/** A message event as a search row: one of `SEARCH_KINDS` in exactly one
+ * known, non-huddle channel. Relay hits and the device index share it. */
+export function searchMessage(
+  session: RelaySession,
+  event: EventData,
+): SearchMessage | undefined {
+  const destinations = event.tags.filter(([name]) => name === "h");
+  const channelId = destinations[0]?.[1];
+  const channel = channelId && session.channels.get?.(channelId);
+  if (
+    !SEARCH_KINDS.includes(event.kind) ||
+    destinations.length !== 1 ||
+    !channelId ||
+    !channel ||
+    channel.huddle
+  )
+    return undefined;
+  // Search returns original indexed events, not an auxiliary edit fold.
+  // Exact navigation owns current content/deletion checks when opened.
+  const text = searchText(event);
+  const root = threadReference(event)?.rootId;
+  const owner = workflowOwner(event, session.workflowAuthority);
+  const tagged = (name: string) =>
+    event.tags.some(([key, value]) => key === name && value === session.viewer);
+  return {
+    id: event.id,
+    channelId,
+    authorId: event.pubkey,
+    workflowOwnerId: owner,
+    // As unread counts mentions: the relay also tags a workflow's owner,
+    // whose own workflow mentions them only through its explicit targets.
+    ...(tagged("p") &&
+    (owner !== session.viewer || tagged("buzz:workflow-mention"))
+      ? { mentionsViewer: true as const }
+      : {}),
+    ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
+    createdAt: event.created_at,
+    preview: text.replace(/\s+/g, " ").trim().slice(0, 240) || "Attachment",
+    text,
+    mentioned: eventMentions(event),
+    ...(root ? { threadRootId: root } : {}),
+  };
+}
+
 /** One relay page of hits, mapped to messages, and whether another may follow. */
 async function readPage(
   session: RelaySession,
@@ -158,48 +202,11 @@ async function readPage(
     { signal, priority: "foreground", fresh: true },
   );
   signal.throwIfAborted();
-  const messages = events.flatMap((event): SearchMessage[] => {
-    const destinations = event.tags.filter(([name]) => name === "h");
-    const hitChannelId = destinations[0]?.[1];
-    const hitChannel = hitChannelId && session.channels.get?.(hitChannelId);
-    if (
-      !SEARCH_KINDS.includes(event.kind) ||
-      destinations.length !== 1 ||
-      !hitChannelId ||
-      (channelId && hitChannelId !== channelId) ||
-      !hitChannel ||
-      hitChannel.huddle
-    )
-      return [];
-    // Search returns original indexed events, not an auxiliary edit fold.
-    // Exact navigation owns current content/deletion checks when opened.
-    const text = searchText(event);
-    const root = threadReference(event)?.rootId;
-    const owner = workflowOwner(event, session.workflowAuthority);
-    const tagged = (name: string) =>
-      event.tags.some(
-        ([key, value]) => key === name && value === session.viewer,
-      );
-    return [
-      {
-        id: event.id,
-        channelId: hitChannelId,
-        authorId: event.pubkey,
-        workflowOwnerId: owner,
-        // As unread counts mentions: the relay also tags a workflow's owner,
-        // whose own workflow mentions them only through its explicit targets.
-        ...(tagged("p") &&
-        (owner !== session.viewer || tagged("buzz:workflow-mention"))
-          ? { mentionsViewer: true as const }
-          : {}),
-        ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
-        createdAt: event.created_at,
-        preview: text.replace(/\s+/g, " ").trim().slice(0, 240) || "Attachment",
-        text,
-        mentioned: eventMentions(event),
-        ...(root ? { threadRootId: root } : {}),
-      },
-    ];
+  const messages = events.flatMap((event) => {
+    const message = searchMessage(session, event);
+    return message && (!channelId || message.channelId === channelId)
+      ? [message]
+      : [];
   });
   // The relay pages by offset, so only a full page can have a successor.
   return { messages, more: relayCount >= (filter.limit ?? PAGE_SIZE) };

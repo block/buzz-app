@@ -958,6 +958,67 @@ it("cancels a Buzz tool still running when its turn settles, failed or not, and 
   expect(signals[1]?.aborted).toBe(true);
 });
 
+it("gives each Buzz tool call its session's context size, from its last model call", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const sizes: unknown[] = [];
+  const tools = vi.fn(
+    async (
+      _conversation: unknown,
+      message: unknown,
+      _signal: AbortSignal,
+      _check?: () => void,
+      tokens?: number,
+    ) => {
+      sizes.push(tokens);
+      return { jsonrpc: "2.0", id: (message as { id: number }).id, result: {} };
+    },
+  );
+  await ClaudeProcess.start(spawn, { ...launch, sessionId: "s1", tools });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  let id = 0;
+  const call = async () => {
+    const before = sizes.length;
+    fake.emit({
+      type: "control_request",
+      request_id: `r${++id}`,
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: { jsonrpc: "2.0", id, method: "tools/call" },
+      },
+    });
+    await vi.waitFor(() => expect(sizes).toHaveLength(before + 1));
+  };
+  const assistant = (
+    usage: Record<string, number>,
+    more: Record<string, unknown> = {},
+  ) =>
+    fake.emit({
+      type: "assistant",
+      session_id: "s1",
+      parent_tool_use_id: null,
+      message: { role: "assistant", content: [], usage },
+      ...more,
+    });
+  // No model call yet.
+  await call();
+  assistant({
+    input_tokens: 3,
+    cache_creation_input_tokens: 120,
+    cache_read_input_tokens: 435_000,
+    output_tokens: 200,
+  });
+  // A subagent's call has its own context, and a synthetic one no usage.
+  assistant({ input_tokens: 9_000 }, { parent_tool_use_id: "toolu_1" });
+  assistant({ input_tokens: 0, output_tokens: 0 });
+  await call();
+  // Another session says nothing of this one's size.
+  fake.emit({ type: "system", subtype: "status", session_id: "s2" });
+  await call();
+  expect(sizes).toEqual([undefined, 435_323, undefined]);
+});
+
 it.each([
   [
     "reports its state",
@@ -1110,6 +1171,8 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send or subth
     call,
     expect.any(AbortSignal),
     expect.any(Function),
+    // It has made no model call yet.
+    undefined,
   );
   const responses = fake.received
     .filter((message) => message.type === "control_response")

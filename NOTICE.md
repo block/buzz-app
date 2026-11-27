@@ -262,7 +262,7 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
-The fuzzy matching and scoring in `src/bundled/finder/match.ts` are ported from
+The fuzzy matching and scoring in `src/features/search/fuzzy/match.ts` are ported from
 [fzf](https://github.com/junegunn/fzf)'s `src/algo/algo.go` (`FuzzyMatchV1` and
 `calculateScore`, including its scoring constants and character classes).
 fzf is used under the MIT License:

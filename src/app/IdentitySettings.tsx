@@ -253,25 +253,19 @@ export function IdentitySettings({
     "small",
     selectedProfileSession?.media,
   );
-  const [copyStatus, setCopyStatus] = useState<{
-    message: string;
-    failed: boolean;
-  } | null>(null);
+  // The badge's Copy button shows a copy that works. A refusal raises a
+  // notice that stays, and prints the full ID to select.
+  const [copyFailed, setCopyFailed] = useState(false);
   const copyAttempt = useRef(0);
   const npub = viewer ? npubEncode(viewer) : "";
-  async function copyIdentity(value: string, label: string) {
+  async function copyBuzzId() {
     const attempt = ++copyAttempt.current;
-    setCopyStatus(null);
+    setCopyFailed(false);
     try {
-      await writeClipboardText(value);
-      if (attempt === copyAttempt.current)
-        setCopyStatus({ message: `${label} copied.`, failed: false });
-    } catch {
-      if (attempt === copyAttempt.current)
-        setCopyStatus({
-          message: `Couldn’t copy ${label.toLowerCase()}. Select it and copy manually.`,
-          failed: true,
-        });
+      await writeClipboardText(npub);
+    } catch (error) {
+      if (attempt === copyAttempt.current) setCopyFailed(true);
+      throw error;
     }
   }
   return (
@@ -318,7 +312,7 @@ export function IdentitySettings({
                             : "pending"
               }
               backupAccount={backupAccount}
-              onCopy={() => void copyIdentity(npub, "Buzz ID")}
+              onCopy={copyBuzzId}
             >
               {(active, badgeAction) => (
                 <>
@@ -427,7 +421,7 @@ export function IdentitySettings({
               </section>
             )}
           </div>
-          {copyStatus?.failed && (
+          {copyFailed && (
             <p className="text-body-sm">
               Full Buzz ID:{" "}
               <code className={`text-mono ${styles.identityValue}`}>
@@ -457,19 +451,13 @@ export function IdentitySettings({
               )}
             </>
           )}
-          {copyStatus && (
+          {copyFailed && (
             <ToastNotice
-              title={
-                copyStatus.failed
-                  ? "Identity wasn’t copied"
-                  : copyStatus.message
-              }
-              {...(copyStatus.failed
-                ? { description: copyStatus.message }
-                : {})}
-              tone={copyStatus.failed ? "error" : "success"}
-              timeout={copyStatus.failed ? 0 : 5000}
-              onDismiss={() => setCopyStatus(null)}
+              title="Identity wasn’t copied"
+              description="Couldn’t copy buzz id. Select it and copy manually."
+              tone="error"
+              timeout={0}
+              onDismiss={() => setCopyFailed(false)}
             />
           )}
         </>

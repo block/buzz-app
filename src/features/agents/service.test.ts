@@ -1740,7 +1740,12 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     await settle();
     expect(activity.reader.work()[0]?.state).toBe("working");
-    expect(activity.reader.work()[0]?.messageId).toBe(mention.id);
+    expect(activity.reader.work()[0]).toMatchObject({
+      messageId: mention.id,
+      // In the thread its turn and typing are in, before any reply.
+      thread: true,
+      threadRootId: mention.id,
+    });
     expect(activity.reader.work()[0]).not.toHaveProperty("syntheticMessage");
     expect(activity.reader.work()[0]).not.toHaveProperty("requestText");
     expect(native.publish).toHaveBeenCalledWith(member(bot), {
@@ -11627,8 +11632,18 @@ describe("a turn closing or reloading the app stopped", () => {
       history: [asked],
     });
     await settle();
+    // Its activity is where it was placed from the start, even while queued.
+    const shown: unknown[] = [];
+    second.activity.reader.subscribeWork(() => {
+      const row = second.activity.reader
+        .work()
+        .find((work) => work.messageId === asked.id);
+      if (row && !shown.length) shown.push(row);
+    });
     second.service.resumeInterrupted();
     await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+    expect(shown[0]).toMatchObject({ threadRootId: asked.id });
+    expect(shown[0]).not.toHaveProperty("thread");
     const delivery = second.run.mock.calls[0]?.[0];
     expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
     expect(delivery?.place).toEqual({ channel, topLevel: true });
@@ -11660,6 +11675,12 @@ describe("a turn closing or reloading the app stopped", () => {
     expect(delivery.placement).toEqual({ topLevel: true });
     // The host decides where the turn lives; harnesses only read it.
     expect(delivery.place).toEqual({ channel, topLevel: true });
+    // The owner's own activity moves there too, off the thread it began in.
+    const work = app.activity.reader
+      .work()
+      .find((row) => row.messageId === asked.id);
+    expect(work).toMatchObject({ threadRootId: asked.id });
+    expect(work).not.toHaveProperty("thread");
     // A top-level turn takes the channel's notes.
     expect(delivery.agent.notes?.(channel)).toEqual([
       "It asks for #release-notes.",
@@ -11784,6 +11805,9 @@ describe("a turn closing or reloading the app stopped", () => {
       expect.any(AbortSignal),
     );
     expect(delivery.place).toEqual({ channel, root: earlier.id });
+    expect(
+      app.activity.reader.work().find((row) => row.messageId === asked.id),
+    ).toMatchObject({ thread: true, threadRootId: earlier.id });
     // The note is the turn's own, whatever conversation its harness keys,
     // and never another request's.
     expect(delivery.agent.notes?.(channel, asked.id)).toEqual([
@@ -16641,6 +16665,8 @@ it.each([
     });
     try {
       await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+      // A Solo chat or DM answers a top-level mention at its top level.
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("thread");
       expect(f.activity.reader.work()[0]).toMatchObject({
         channelId: channel,
         ...(eligible

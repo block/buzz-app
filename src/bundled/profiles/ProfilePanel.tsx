@@ -26,7 +26,10 @@ import { StatusDisplay } from "../../features/user-status/StatusDisplay";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
-import { ProfilePublicMetadata } from "./ProfilePublicMetadata";
+import {
+  ProfileCopyField,
+  ProfilePublicMetadata,
+} from "./ProfilePublicMetadata";
 import { ProfileLocalTime } from "../../features/profiles/ProfileLocalTime";
 import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
@@ -46,7 +49,6 @@ import {
 import { openFromPanel, PanelPane } from "../../features/panels/opening-pane";
 import {
   CheckCircleIcon,
-  CopyIcon,
   RobotIcon,
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -96,7 +98,6 @@ import { conversationOpener } from "../agents/routes";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import type { NavigationScope } from "../../features/navigation/targets";
 import { avatarMedia } from "../../shared/avatar-source";
-import { writeClipboardText } from "../../shared/clipboard";
 
 const noSubscribe = () => () => {};
 const emptyAgentTypes = Object.freeze([]);
@@ -450,7 +451,6 @@ function ProfileDetails({
   const [retrying, setRetrying] = useState(false);
   const retryButton = useRef<HTMLButtonElement>(null);
   const [retryFocused, setRetryFocused] = useState(false);
-  const [copyStatus, setCopyStatus] = useState("");
   const [tab, setTab] = useState<
     "info" | "activity" | "channels" | `agent:${string}`
   >(initialTab);
@@ -827,41 +827,13 @@ function ProfileDetails({
                         />
                       </div>
                     )}
-                    <div className={styles.publicKey}>
-                      <SettingsGroup>
-                        <PreferenceRow
-                          title="Public key"
-                          subtitle={
-                            <code className={styles.keyValue}>{npub}</code>
-                          }
-                          trailing={
-                            <Button
-                              size="compact"
-                              variant="ghost"
-                              aria-label="Copy npub"
-                              onClick={() => {
-                                setCopyStatus("");
-                                void Promise.resolve()
-                                  .then(() => writeClipboardText(npub))
-                                  .then(
-                                    () => setCopyStatus("Public key copied."),
-                                    () =>
-                                      setCopyStatus(
-                                        "Could not copy. Select the public key above to copy it.",
-                                      ),
-                                  );
-                              }}
-                            >
-                              <CopyIcon size={16} aria-hidden="true" />
-                              Copy
-                            </Button>
-                          }
-                        />
-                      </SettingsGroup>
-                      <span role="status" className={styles.feedback}>
-                        {copyStatus}
-                      </span>
-                    </div>
+                    <ProfileCopyField
+                      label="Public key"
+                      value={npub}
+                      copyLabel="Copy npub"
+                    >
+                      <code className={styles.keyValue}>{npub}</code>
+                    </ProfileCopyField>
                     {knownAgent && verifiedOwner && (
                       <ProfileAgentIdentity
                         session={session}

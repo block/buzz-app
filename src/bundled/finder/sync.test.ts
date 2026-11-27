@@ -12,7 +12,7 @@ import {
   roster,
   signed,
 } from "../../features/relay/testing";
-import { createCorpus } from "./corpus";
+import { createCorpus } from "../../features/search/fuzzy/corpus";
 import {
   type ChannelSearchStatus,
   createFinderState,

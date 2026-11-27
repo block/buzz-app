@@ -567,6 +567,133 @@ it("refuses an everyone message over 128 words, or a brief over 50, on send but 
   expect(published).toHaveLength(3);
 });
 
+it("stamps each message with its session's context size, when known", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  let tokens: number | undefined = 435_123;
+  const stamped = { ...client, contextTokens: () => tokens };
+  await callTool(stamped, context, "send", { text: "a", audience: "agents" });
+  await callTool(stamped, context, "reply_in_subthread", {
+    parent: nested,
+    text: "b",
+    audience: "agents",
+  });
+  tokens = undefined;
+  await callTool(stamped, context, "send", { text: "c", audience: "agents" });
+  expect(published.map((event) => event.content)).toEqual(["a", "b", "c"]);
+  expect(
+    published.map((event) =>
+      event.tags.filter(([name]) => name === "buzz:context"),
+    ),
+  ).toEqual([[["buzz:context", "435123"]], [["buzz:context", "435123"]], []]);
+});
+
+it("stamps the context size only on the session's own conversation", async () => {
+  const elsewhere = "3".repeat(64);
+  const sideThread = "4".repeat(64);
+  const { client, published } = fake([
+    ...community,
+    event({ id: elsewhere, tags: [["h", "other"]] }),
+    event({ id: sideThread }),
+  ]);
+  const stamped = { ...client, contextTokens: () => 435_123 };
+  const stampedOf = async (
+    context: Parameters<typeof callTool>[1],
+    name: string,
+    args: Record<string, unknown>,
+    withClient: typeof stamped = stamped,
+  ) => {
+    const before = published.length;
+    await callTool(withClient, context, name, {
+      text: "x",
+      audience: "agents",
+      ...args,
+    });
+    const event = published[before];
+    expect(event).toBeDefined();
+    return !!event?.tags.some(([tag]) => tag === "buzz:context");
+  };
+  // A thread's session: its own thread only.
+  const inThread = { channel: "chan", root };
+  expect(await stampedOf(inThread, "send", {})).toBe(true);
+  expect(await stampedOf(inThread, "send", { reply: nested })).toBe(true);
+  expect(
+    await stampedOf(inThread, "reply_in_subthread", { parent: nested }),
+  ).toBe(true);
+  expect(await stampedOf(inThread, "send", { channel: "chan" })).toBe(false);
+  expect(await stampedOf(inThread, "send", { reply: sideThread })).toBe(false);
+  expect(
+    await stampedOf(inThread, "reply_in_subthread", { parent: sideThread }),
+  ).toBe(false);
+  expect(await stampedOf(inThread, "send", { channel: "other" })).toBe(false);
+  expect(await stampedOf(inThread, "send", { reply: elsewhere })).toBe(false);
+  // A channel's session: anywhere in its channel, and nowhere else.
+  const inChannel = { channel: "chan" };
+  expect(await stampedOf(inChannel, "send", {})).toBe(true);
+  expect(await stampedOf(inChannel, "send", { reply: sideThread })).toBe(true);
+  expect(await stampedOf(inChannel, "send", { channel: "other" })).toBe(false);
+  expect(
+    await stampedOf(inChannel, "reply_in_subthread", { parent: elsewhere }),
+  ).toBe(false);
+  // Unless the channel's threads have, or may have, sessions of their own.
+  let apart: boolean | undefined = true;
+  const split = { ...stamped, threadsApart: () => apart };
+  expect(await stampedOf(inChannel, "send", {}, split)).toBe(true);
+  expect(await stampedOf(inChannel, "send", { reply: sideThread }, split)).toBe(
+    false,
+  );
+  apart = undefined;
+  expect(await stampedOf(inChannel, "send", { reply: sideThread }, split)).toBe(
+    false,
+  );
+  apart = false;
+  expect(await stampedOf(inChannel, "send", { reply: sideThread }, split)).toBe(
+    true,
+  );
+  expect(
+    await stampedOf({ channel: "chan", wholeChannel: true, root }, "send", {
+      reply: sideThread,
+    }),
+  ).toBe(true);
+});
+
+it("stamps a subthread reply anywhere in the session's task subthread", async () => {
+  const inTask = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const sibling = event({
+    id: "5".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const { client, published } = fake([...community, inTask, sibling]);
+  const stamped = { ...client, contextTokens: () => 435_123 };
+  const context = { channel: "chan", root: nested, sourceRoot: root };
+  for (const parent of [nested, inTask.id, sibling.id])
+    await callTool(stamped, context, "reply_in_subthread", {
+      parent,
+      text: "x",
+      audience: "agents",
+    });
+  expect(
+    published.map((event) =>
+      event.tags.some(([name]) => name === "buzz:context"),
+    ),
+  ).toEqual([true, true, false]);
+  expect(published[1]?.tags.slice(0, 3)).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", inTask.id, "", "reply"],
+  ]);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
@@ -1055,6 +1182,7 @@ it("shows a message's meaningful tags in a read, but not its bookkeeping", async
     ["t", "release"],
     ["imeta", "url https://relay.test/media/a.png", "m image/png"],
     ["buzz:request", nested],
+    ["buzz:context", "435123"],
   ];
   const auth = ["auth", bob, "kind=9", "8".repeat(128)];
   const hidden = [

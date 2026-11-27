@@ -516,7 +516,7 @@ export function AppearanceSettings({
             />
             <SwitchPreferenceRow
               label="Search this device as you type"
-              description="Search shows matching messages this device already received while you type, above the community’s results."
+              description="Search shows matching messages this device already received as you type, before the community’s results arrive."
               checked={deviceSearch.enabled}
               onCheckedChange={setDeviceSearchPreference}
             />
@@ -629,6 +629,20 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && deviceSearch.unsaved && (
+          <ToastNotice
+            title="Device search preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setDeviceSearchPreference(deviceSearch.enabled)}
+            >
+              Retry saving device search
             </Button>
           </ToastNotice>
         )}

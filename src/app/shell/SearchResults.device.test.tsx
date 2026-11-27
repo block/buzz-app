@@ -47,14 +47,16 @@ afterEach(() => {
 
 /** #crew with one message this device already received, searched with the
  * device index on. Relay searches wait on the scripted wire. */
-async function deviceSearch(options: { searchSort?: boolean } = {}) {
+async function deviceSearch(
+  options: { searchSort?: boolean; channelName?: string } = {},
+) {
   vi.useFakeTimers();
   const relay = keypair();
   const viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const known = message(viewer, "crew", "deploy rollback notes", 1700000050);
   const discovery = [
-    metadata(relay, "crew", "crew"),
+    metadata(relay, "crew", options.channelName ?? "crew"),
     roster(relay, "crew", [viewer.pubkey]),
     known,
   ];
@@ -140,6 +142,37 @@ it("shows this device's matches while typing, then the relay's other hits below 
       expect.stringContaining("deploy rollback notes"),
       expect.stringContaining("rollback runbook"),
     ]);
+  } finally {
+    dispose();
+  }
+});
+
+it("keeps a matching channel first when the relay's hits join below device rows", async () => {
+  const { viewer, wire, known, props, dispose } = await deviceSearch({
+    channelName: "ops-rollback",
+  });
+  const sections = () =>
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"))
+      .filter((label) => label === "Channels" || label === "Messages");
+  try {
+    render(<SearchResults {...props} query="rollback" />);
+    expect(sections()).toEqual(["Channels", "Messages"]);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    // Enough hits that, arriving alone, they would lead.
+    await act(async () =>
+      wire
+        .next()
+        .respond([
+          ...Array.from({ length: 8 }, (_, n) =>
+            message(viewer, "crew", `rollback step ${n}`, 1700000100 + n),
+          ),
+          known,
+        ]),
+    );
+    expect(rows()).toContainEqual(expect.stringContaining("rollback step"));
+    expect(sections()).toEqual(["Channels", "Messages"]);
   } finally {
     dispose();
   }

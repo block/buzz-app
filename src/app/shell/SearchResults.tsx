@@ -806,6 +806,11 @@ export function SearchResults({
   if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
   // The search whose relay hits stopped waiting for a rerank.
   const [releasedFor, setReleasedFor] = useState<string>();
+  // Where device rows first placed Messages among the sections, by search.
+  const [messageStrengthFor, setMessageStrengthFor] = useState<{
+    key: string;
+    strength: number;
+  }>();
   // This device's matches show on every key, and the relay's join below them
   // (device-merge.ts). An author or date filter, an `in:` that names no
   // single conversation, or quotes and `-` exclusions, which the fuzzy match
@@ -2353,11 +2358,20 @@ export function SearchResults({
   // Messages stay below a name that starts with the text (85): a page of 20
   // tops out near 84, and later pages don't count. A topic of three or more
   // words takes that top score.
-  const messageStrength = !hits
+  const liveMessageStrength = !hits
     ? -1
     : words >= 3
       ? 84
       : 40 + 10 * Math.log2(1 + Math.min(hits, 20)) - (search.hasMore ? 0 : 5);
+  // Once device rows show, Messages keeps the place they gave it for this
+  // search: the relay's hits joining don't move it above a name someone is
+  // about to press Enter on.
+  if (deviceShown.length > 0 && messageStrengthFor?.key !== searchKey)
+    setMessageStrengthFor({ key: searchKey, strength: liveMessageStrength });
+  const messageStrength =
+    messageStrengthFor?.key === searchKey
+      ? messageStrengthFor.strength
+      : liveMessageStrength;
   const messageCount = search.hasMore ? `${hits}+` : undefined;
   const messageLead = namedGroups.findIndex(
     (group) => group.destinations.length && group.strength < messageStrength,

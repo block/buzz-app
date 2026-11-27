@@ -153,9 +153,9 @@ if that desktop app is up and running.
   sends the query to your default agent as a new chat. With **Settings →
   Appearance → Search this device as you type** on, search also finds
   messages this device already received from any letters you remember
-  (`dplyrlbk` finds "deploy rollback"), shown above the community's results.
-  Sorting a conversation's results by **Most recent** shows only the
-  community's results, newest first.
+  (`dplyrlbk` finds "deploy rollback"), as you type, before the community's
+  results arrive. Sorting a conversation's results by **Most recent** shows
+  only the community's results, newest first.
 - **Finder.** With the Finder plugin on (it's off by default), ⌘P (Ctrl+P)
   finds a message in the channel you're in from any piece you remember, and
   ⌘⇧P (Ctrl+Shift+P) searches all of Buzz; a switch under the field changes

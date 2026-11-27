@@ -6,7 +6,7 @@ const changedEvent = "buzz-search-device-changed";
 let unsavedPreference: boolean | undefined;
 
 /** Device-local choice to search messages this device already received
- * as you type, above the relay's results. Off until it has been tried. */
+ * as you type, before the relay's results arrive. Off until it has been tried. */
 export function deviceSearchPreference(): boolean {
   if (unsavedPreference !== undefined) return unsavedPreference;
   try {
@@ -52,7 +52,7 @@ export function setDeviceSearchPreference(enabled: boolean): void {
 export const deviceSearchSetting: DeviceSetting = {
   key: "search.device_messages",
   description:
-    "Search shows matching messages this device already received as you type, above the community's results.",
+    "Search shows matching messages this device already received as you type, before the community's results arrive.",
   schema: { type: "boolean" },
   read: () => ({
     value: deviceSearchPreference(),

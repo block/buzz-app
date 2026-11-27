@@ -320,6 +320,8 @@ export function createHuddleComposerOwner(
               references,
               picks,
             );
+        // A send the outbox refused to save keeps its draft.
+        await session.outbox?.saved?.(id);
         // Admission owns the persisted draft too: closing the child before its
         // acknowledgement must not restore a message already in the main
         // outbox. The stub is what the composer saves for every send; it

@@ -3832,8 +3832,10 @@ function Composer({
             // Report a synchronous publication before the new row can render.
             const result = publish(uploaded);
             const sent = typeof result === "string" ? result : await result;
-            if (sent) answered();
             if (sent && live.current) onSend?.(sent);
+            // A send the outbox refused to save restores the draft.
+            if (sent) await session.outbox?.saved?.(sent);
+            if (sent) answered();
           },
           (files, preparationError) => {
             // Only the original saved draft or the untouched follow-up can be
@@ -3924,6 +3926,13 @@ function Composer({
         const result = publish([], true);
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
+        // A refused save leaves nothing to reload, so the draft stays until
+        // the send is saved.
+        const saving = id ? session.outbox?.saved?.(id) : undefined;
+        if (saving) {
+          setSending(true);
+          await saving;
+        }
       }
       // Nothing is saved for the remembered agents: this composer shows them
       // in memory, and any composer here, on any device, seeds them from the

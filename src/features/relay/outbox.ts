@@ -8,6 +8,7 @@ import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { channelRowKind } from "./membership";
 import { MessageClock } from "./message-order";
 import { migrationSource } from "./migration";
+import { OutboxFull } from "./outbox-storage";
 import {
   bytes,
   isCatalogKind,
@@ -97,6 +98,9 @@ export interface Outbox {
     recovery?: OutboxRecovery,
     active?: () => boolean,
   ): string;
+  /** Resolves once a sent entry's journal write is durable, or rejects with
+   * why it was not saved. */
+  saved?(id: string): Promise<void>;
   /** `send`, but each delivery attempt in this window calls `hold` with the
    * event's id after signing and publishes only once it resolves. Only this
    * event waits, and it uses no delivery slot meanwhile. The wait counts toward
@@ -154,10 +158,20 @@ export interface OutboxStorage {
     readOnly?: boolean;
   }): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
   /** Deletes `retired` rows, or rejects without writing if one is gone, has
-   * recovery attached, or is being published in another window. */
+   * recovery attached, or is being published in another window. Rejects with
+   * `OutboxFull` without writing if a row it `grows` leaves the stored journal
+   * failing `fits`. Rows in `keep` that `operations` omits stay as stored. */
   save(
     operations: readonly OutgoingEvent[],
-    options?: { force?: string; retired?: readonly string[] },
+    options?: {
+      force?: string;
+      retired?: readonly string[];
+      keep?: Iterable<string>;
+      budget?: {
+        fits(stored: readonly OutgoingEvent[]): boolean;
+        grows(stored: OutgoingEvent | undefined, next: OutgoingEvent): boolean;
+      };
+    },
   ): void | Promise<void>;
 }
 export class PublishRejected extends Error {
@@ -198,6 +212,15 @@ const SAVED_EXISTING_REACTION_ERRORS = new Set([
   "Reaction already exists",
 ]);
 const RETRY_BLOCKED_PREFIX = "Retry blocked: ";
+/** Still owes delivery or recovery, so it counts toward `MAX_PENDING`. */
+function isPending(item: OutgoingEvent) {
+  return (
+    ((!(item.event.kind === 9000 && item.acknowledged) &&
+      item.delivery !== "seen") ||
+      !!item.recovery) &&
+    !storedAsExistingReaction(item)
+  );
+}
 function storedAsExistingReaction(item: OutgoingEvent) {
   if (item.event.kind !== 7 || item.recovery) return false;
   const error = item.error ?? "";
@@ -219,6 +242,7 @@ export const HELD_RETRY_REFUSED = "Retry this from the plugin that sent it.";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
 const MAX_CONFIRMED = 2048;
+const TOO_MANY = "Too many outstanding operations; resolve a pending operation";
 /** Unresolved Canvas saves have their own allowance, so a few large canvases
  * never use up the room that ordinary messages need. */
 const PENDING_MESSAGE_BYTES = 2 * 1024 * 1024;
@@ -303,21 +327,25 @@ export function createOutbox(
   let finalVisible: readonly OutgoingEvent[] | undefined;
   const completed = new ByteLru<OutgoingEvent>(MAX_CONFIRMED, CONFIRMED_BYTES);
   const sizes = new WeakMap<OutgoingEvent, number>();
-  /** Pending charges, split by allowance. A record is charged its largest
-   * size over its delivery lifecycle, so it never outgrows its admission. */
+  /** A record is charged its largest size over its delivery lifecycle, so it
+   * never outgrows its admission. */
+  const charge = (item: OutgoingEvent) => {
+    let size = sizes.get(item);
+    if (size === undefined) {
+      size =
+        2 * byteSize(unsigned(item.event)) +
+        (item.recovery ? byteSize(item.recovery) + 16 : 0) +
+        LIFECYCLE_BYTES;
+      sizes.set(item, size);
+    }
+    return size;
+  };
+  /** Pending charges, split by allowance. */
   const pendingSize = (items: readonly OutgoingEvent[]) => {
     const total = { messages: 2, canvases: 2 };
-    for (const item of items) {
-      let size = sizes.get(item);
-      if (size === undefined) {
-        size =
-          2 * byteSize(unsigned(item.event)) +
-          (item.recovery ? byteSize(item.recovery) + 16 : 0) +
-          LIFECYCLE_BYTES;
-        sizes.set(item, size);
-      }
-      total[item.event.kind === 40100 ? "canvases" : "messages"] += size + 1;
-    }
+    for (const item of items)
+      total[item.event.kind === 40100 ? "canvases" : "messages"] +=
+        charge(item) + 1;
     return total;
   };
   /** Refuse what an allowance cannot hold, before it joins the outbox. */
@@ -437,9 +465,16 @@ export function createOutbox(
     for (const listener of localListeners) notifyListener(listener);
     for (const listener of listeners) notifyListener(listener);
   };
+  /** Rows whose growth the journal refused as full. They stay visible, but
+   * other saves leave them as stored until a save of their own fits. */
+  const refused = new Set<string>();
+  /** Journal writes of sends that are pending or failed. */
+  const unsaved = new Map<string, Promise<void>>();
   /** Remove an entry whose removal is durable. */
   const drop = (id: string) => {
     const dismissed = snapshot.find((item) => item.event.id === id);
+    refused.delete(id);
+    unsaved.delete(id);
     deliveryWork.delete(id);
     completed.delete(id);
     snapshot = Object.freeze(snapshot.filter((item) => item.event.id !== id));
@@ -447,6 +482,25 @@ export function createOutbox(
     if (dismissed)
       for (const listener of dismissListeners)
         notifyListener(() => listener(dismissed));
+  };
+  /** A row may grow the shared journal only while it stays within this
+   * window's limits; saves that grow nothing can always drain it. */
+  const budget = {
+    fits(stored: readonly OutgoingEvent[]) {
+      const pending = stored.filter(isPending);
+      const charged = pendingSize(pending);
+      return (
+        pending.length <= MAX_PENDING &&
+        charged.messages <= PENDING_MESSAGE_BYTES &&
+        charged.canvases <= PENDING_CANVAS_BYTES
+      );
+    },
+    grows: (stored: OutgoingEvent | undefined, next: OutgoingEvent) =>
+      isPending(next) &&
+      (!stored || !isPending(stored) || charge(next) > charge(stored)),
+  };
+  const markRefused = ({ grown }: OutboxFull) => {
+    for (const id of grown) if (find(id)) refused.add(id);
   };
   /** Drop entries another window already removed, so a retry stops naming them. */
   const forgetRemoved = async (ids: ReadonlySet<string>) => {
@@ -480,33 +534,55 @@ export function createOutbox(
           if (attempts.has(old)) throw new Error(EARLIER_SAVE_SENDING);
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
-        const records = [
-          ...(action === "dismiss"
-            ? visible.filter((item) => item.event.id !== id)
-            : action === "acknowledge"
-              ? visible.map((item) =>
-                  item.event.id === id
-                    ? {
-                        ...item,
-                        recovery: undefined,
-                        acknowledged: true as const,
-                      }
-                    : item,
-                )
-              : visible),
-          ...(addition ? [addition] : []),
-        ].filter(({ event }) => !retired?.has(event.id));
+        const collect = () =>
+          [
+            ...(action === "dismiss"
+              ? visible.filter((item) => item.event.id !== id)
+              : action === "acknowledge"
+                ? visible.map((item) =>
+                    item.event.id === id
+                      ? {
+                          ...item,
+                          recovery: undefined,
+                          acknowledged: true as const,
+                        }
+                      : item,
+                  )
+                : visible),
+            ...(addition ? [addition] : []),
+          ].filter(({ event }) => !retired?.has(event.id));
+        const target = addition?.event.id ?? id;
+        const save = () => {
+          // A refused row stays out of other saves until its own save fits.
+          const keep = new Set([...refused].filter((held) => held !== target));
+          const rows = collect().filter(({ event }) => !keep.has(event.id));
+          const options = { keep, budget };
+          if (action === "recover")
+            return storage.save(rows, { ...options, force: id });
+          if (retired?.size)
+            return storage.save(rows, { ...options, retired: [...retired] });
+          return storage.save(rows, options);
+        };
         return profiling.measureAsync("outbox.persist", id, async () => {
           try {
-            if (action === "recover")
-              await storage.save(records, { force: id });
-            else if (retired?.size)
-              await storage.save(records, { retired: [...retired] });
-            else await storage.save(records);
+            // A refusal of only other rows leaves them out of one more save.
+            for (let attempt = 0; ; attempt++) {
+              try {
+                await save();
+                break;
+              } catch (error) {
+                if (!(error instanceof OutboxFull)) throw error;
+                markRefused(error);
+                if (attempt || error.grown.includes(target))
+                  throw new Error(TOO_MANY);
+              }
+            }
           } catch (error) {
             if (retired?.size) await forgetRemoved(retired).catch(() => {});
             throw error;
           }
+          refused.delete(target);
+          unsaved.delete(target);
           // The replacement joins visible intent only with durable retirement.
           // Other queued saves must never observe two unresolved recovery keys.
           if (addition) snapshot = Object.freeze([...snapshot, addition]);
@@ -561,11 +637,7 @@ export function createOutbox(
     });
   }
   function validateSaved(loaded: readonly OutgoingEvent[]) {
-    if (
-      !Array.isArray(loaded) ||
-      loaded.length > MAX_PENDING + MAX_CONFIRMED ||
-      byteSize(loaded) > SAVED_BYTES
-    )
+    if (!Array.isArray(loaded) || byteSize(loaded) > SAVED_BYTES)
       throw new Error("Saved outbox exceeds its budget");
   }
   function decode(item: OutgoingEvent): OutgoingEvent {
@@ -609,18 +681,10 @@ export function createOutbox(
     void persist(id).catch(() => {});
   }
   function restore(restored: readonly OutgoingEvent[]) {
-    const pending = restored.filter(
-      (item) =>
-        ((!(item.event.kind === 9000 && item.acknowledged) &&
-          item.delivery !== "seen") ||
-          !!item.recovery) &&
-        !storedAsExistingReaction(item),
-    );
+    const pending = restored.filter(isPending);
     // Queued behind hydration; the save drops the retired records from disk.
     if (restored.some(storedAsExistingReaction))
       void persist("existing-reactions").catch(() => {});
-    if (pending.length > MAX_PENDING)
-      throw new Error("Saved pending outbox exceeds its budget");
     for (const item of restored)
       if (
         ((item.event.kind === 9000 && item.acknowledged) ||
@@ -989,10 +1053,7 @@ export function createOutbox(
           : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
     )
       throw new Error("Message is empty or too large");
-    if (kept.length >= MAX_PENDING)
-      throw new Error(
-        "Too many outstanding operations; resolve a pending operation",
-      );
+    if (kept.length >= MAX_PENDING) throw new Error(TOO_MANY);
     // Rendered messages carry send order within their second; the optimistic
     // row and the signed event share this exact ms and created_at.
     const channelId = channelRowKind(input.kind)
@@ -1102,6 +1163,12 @@ export function createOutbox(
         () => {},
       );
     else schedule(event.id, intent);
+    // A failed write stays readable until its entry is dropped.
+    unsaved.set(event.id, intent);
+    void intent.then(
+      () => unsaved.delete(event.id),
+      () => {},
+    );
     return { id: event.id, persisted: intent };
   }
   async function withRecovery(
@@ -1274,9 +1341,7 @@ export function createOutbox(
         )
           throw new Error("Recover the earlier message before sending another");
         if (!find(id) && snapshot.length >= MAX_PENDING)
-          throw new Error(
-            "Too many outstanding operations; resolve a pending operation",
-          );
+          throw new Error(TOO_MANY);
         // Protect immediately against dismissal/echo eviction. On save failure keep
         // that protection; a later recovery attempt must persist it again before use.
         if (!item.recovery) restoredReceipts.delete(id);
@@ -1375,6 +1440,7 @@ export function createOutbox(
       recovery?: OutboxRecovery,
       active?: () => boolean,
     ) => enqueue(input, recovery, active).id,
+    saved: (id: string) => unsaved.get(id) ?? Promise.resolve(),
     sendHeld: (
       input: OutboxInput,
       hold: (id: string) => Promise<void>,

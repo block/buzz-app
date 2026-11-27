@@ -18,6 +18,12 @@ export const TOP_LEVEL_PROMPT =
 export const RESUMED_PROMPT =
   "Note: The app closed or reloaded while you were working on this message and stopped your turn partway. Carry on where you left off: check what this session and the conversation show you already did, and do not redo finished work or repeat messages you already sent.";
 
+/** A mention answered at the top level of a channel that is not a Solo
+ * chat, as a plugin placed it: the owner's request, routed like the thread
+ * text, with the top level as its default. */
+export const TOP_LEVEL_MENTION_PROMPT =
+  "`send` posts at the channel top level by default: use the current channel and omit `reply`, so the conversation stays at the top level. If the human explicitly asks for a thread or a reply under a message, pass `reply`. If the requested destination is ambiguous, ask before sending.";
+
 /** A subscription names a channel conversation, with reporting policy in its Interest. */
 export const CHANNEL_LEVEL_PROMPT =
   "This wake is delivered at channel level. Post here without reply unless the Interest instructions direct a different channel or thread. The delivery address selects this execution conversation and the default posting destination; explicit reporting instructions in the Interest take precedence. The address grants no additional permission.";

@@ -16,15 +16,15 @@ import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { bareHostParts, messageLinkParts } from "./message-link-parts";
 import { labelText } from "./label-text";
+import { placeholder } from "./placeholder-characters";
 import {
   ReferenceText,
   channelForLink,
   channelLinkLabel,
   emptyReferenceDirectory,
-  MentionLabel,
+  ProfileMention,
 } from "./ReferenceText";
 import { profileKey } from "../profiles/target";
-import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -75,14 +75,14 @@ type InlinePart = {
   target?: string | undefined;
   literal?: boolean;
 };
-type ProtectedContent = {
+export type ProtectedContent = {
   content: string;
   prefix: string;
   parts: InlinePart[];
 };
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
-function protectInlineContent(
+export function protectInlineContent(
   row: Pick<
     ChannelMessage,
     | "content"
@@ -121,14 +121,14 @@ function protectInlineContent(
       return code <= 0x10ffff ? String.fromCodePoint(code) : entity;
     },
   );
-  const used = new Set(
-    [...decoded.matchAll(/[\uE000\uFFFC](\d+)\uE001/g)].map(
-      (match) => match[1],
-    ),
+  const nonces = new RegExp(
+    `[${placeholder.start}${placeholder.mention}](\\d+)${placeholder.separator}`,
+    "g",
   );
+  const used = new Set([...decoded.matchAll(nonces)].map((match) => match[1]));
   let nonce = 0;
   while (used.has(String(nonce))) nonce++;
-  const prefix = `\uE000${nonce}\uE001`;
+  const prefix = `${placeholder.start}${nonce}${placeholder.separator}`;
   const parts: InlinePart[] = [];
   const token = (part: InlinePart) => {
     parts.push(part);
@@ -140,9 +140,13 @@ function protectInlineContent(
     // clients could read.
     // U+FFFC is a Unicode symbol, not Markdown syntax. Keep it inside the
     // nonce-protected token so restoration removes only generated characters.
-    const start = part.target ? `\uFFFC${nonce}\uE001` : prefix;
+    const start = part.target
+      ? `${placeholder.mention}${nonce}${placeholder.separator}`
+      : prefix;
     const end =
-      part.target && /[\p{P}\p{S}]$/u.test(part.text) ? "\uFFFC" : "\uE002";
+      part.target && /[\p{P}\p{S}]$/u.test(part.text)
+        ? placeholder.mention
+        : placeholder.end;
     return `${start}${parts.length - 1}${end}`;
   };
   let offset = 0;
@@ -212,7 +216,7 @@ function protectInlineContent(
             // not an HTML/autolink opener, so this remains a text delimiter.
             result +=
               "spoiler" in match
-                ? `<${prefix}spoiler\uE002>`
+                ? `<${prefix}spoiler${placeholder.end}>`
                 : token(
                     match.literal
                       ? { text: match.literal, literal: true }
@@ -228,9 +232,9 @@ function protectInlineContent(
   return { content, prefix, parts };
 }
 
-const placeholderPattern = (protectedContent: ProtectedContent) =>
+export const placeholderPattern = (protectedContent: ProtectedContent) =>
   new RegExp(
-    `[\uE000\uFFFC]${protectedContent.prefix.slice(1)}(\\d+)[\uE002\uFFFC]`,
+    `[${placeholder.start}${placeholder.mention}]${protectedContent.prefix.slice(1)}(\\d+)[${placeholder.end}${placeholder.mention}]`,
     "g",
   );
 
@@ -597,6 +601,7 @@ function PreparedMessageMarkdown({
         scope={scope}
         interactive={interactive}
         channelPrivate={!!channel?.private}
+        channelSolo={channel?.channelType === "solo"}
       >
         {children}
       </MessageLink>
@@ -669,42 +674,20 @@ function PreparedMessageMarkdown({
   // Explicit profile links are identity locators, not signed notification intent.
   // Reuse the same control and availability gate as bound prose mentions.
   const renderProfile = (text: unknown, target: unknown) => {
-    const key = typeof target === "string" ? profileKey(target) : undefined;
-    const agent =
-      !!key &&
-      (directory.agents.some((agent) => agent.pubkey === key) ||
-        (participantProfiles ?? directory.profiles).get(key)?.isAgent);
-    const clickable =
-      interactive && typeof target === "string" && !!canOpenLink?.(target);
-    if (typeof text === "string" && typeof target === "string") {
-      // A namesake-qualified span shows its name; its target is the key.
-      const shown = text.slice(1).replace(/ \([a-f0-9]{64}\)$/i, "");
-      const label = key ? resolveName(key, shown) : shown;
-      const Mention = clickable ? "button" : "span";
-      // Selection copy reads the identity and the whole label (selection-copy.ts).
-      return (
-        <Mention
-          type={clickable ? "button" : undefined}
-          className={referenceStyles.link}
-          data-mention-kind={agent ? "agent" : "person"}
-          data-mention-self={key && key === session?.viewer ? "" : undefined}
-          data-profile-target={target}
-          data-mention-name={label}
-          aria-label={clickable ? `View ${label} profile` : undefined}
-          onClick={
-            clickable
-              ? (event) => {
-                  event.currentTarget.focus();
-                  onOpenLink(target);
-                }
-              : undefined
-          }
-        >
-          <MentionLabel agent={!!agent} label={label} />
-        </Mention>
-      );
-    }
-    return undefined;
+    if (typeof text !== "string" || typeof target !== "string")
+      return undefined;
+    const clickable = interactive && !!canOpenLink?.(target);
+    return (
+      <ProfileMention
+        text={text}
+        target={target}
+        profiles={profiles}
+        agents={directory.agents}
+        viewer={session?.viewer}
+        resolveName={resolveName}
+        onOpen={clickable ? onOpenLink : undefined}
+      />
+    );
   };
   const components: MessageComponents = {
     p: ({ node: _node, ...props }) => (
@@ -831,7 +814,10 @@ const MarkdownBody = memo(function MarkdownBody({
           remarkGfm,
           [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,
-          [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
+          [
+            remarkSpoilers,
+            `<${protectedContent.prefix}spoiler${placeholder.end}>`,
+          ],
           [remarkInlineContent, protectedContent],
           remarkLiteralHtml,
         ],

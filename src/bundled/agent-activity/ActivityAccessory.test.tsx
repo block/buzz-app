@@ -1483,6 +1483,62 @@ it("retries a failed local request from its row, before Dismiss, which begins it
   }
 });
 
+it("shows a mention's live work only where its turn is, and its failure on the mention until it has a reply", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const earlier = "e".repeat(64);
+  const shown = (replyCount: number) => (
+    <>
+      <div data-testid="channel">
+        <ActivityAccessory
+          {...f.props}
+          threadRootId={undefined}
+          message={{ ...f.props.message, replyCount }}
+          messageLayout="timeline"
+        />
+      </div>
+      <div data-testid="thread">
+        <ActivityAccessory {...f.props} messageLayout="thread" />
+      </div>
+    </>
+  );
+  const view = render(shown(0));
+  try {
+    let work!: ReturnType<typeof local.begin>;
+    act(() => {
+      work = local.begin(
+        {
+          scope: "test",
+          agent: A,
+          channelId: "c",
+          messageId: root,
+          threadRootId: root,
+          thread: true,
+        },
+        () => {},
+      );
+    });
+    // Live work is in the mention's thread; the channel shows its summary.
+    expect(screen.getByTestId("channel")).toBeEmptyDOMElement();
+    expect(screen.getByTestId("thread")).not.toBeEmptyDOMElement();
+    // Placed in an earlier thread, it leaves the mention's thread too.
+    act(() => work.placed(earlier));
+    expect(screen.getByTestId("thread")).toBeEmptyDOMElement();
+    // Its failure stays on the mention, where Retry is keyed.
+    act(() => work.finish({ ok: false, error: "Provider unavailable" }));
+    for (const id of ["channel", "thread"])
+      expect(
+        within(screen.getByTestId(id)).getByText("Couldn’t finish"),
+      ).toBeInTheDocument();
+    // Once the mention has a thread to open, the failure is only there.
+    view.rerender(shown(1));
+    expect(screen.getByTestId("channel")).toBeEmptyDOMElement();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it("says why a failed request could not be retried, keeping it to try again or dismiss", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);
@@ -2813,3 +2869,70 @@ it.each([
     }
   },
 );
+/** Whether any hook state of a mounted fiber, current or alternate, holds `target`. */
+function fibersHold(container: HTMLElement, target: object) {
+  const key = Object.keys(container).find((name) =>
+    name.startsWith("__reactContainer$"),
+  );
+  type Hook = {
+    memoizedState: unknown;
+    baseState: unknown;
+    queue: unknown;
+    next: Hook | null;
+  };
+  type Fiber = {
+    child: Fiber | null;
+    sibling: Fiber | null;
+    alternate: Fiber | null;
+    memoizedState: unknown;
+  };
+  const holds = (value: unknown): boolean =>
+    value === target ||
+    (Array.isArray(value) && value.some((item) => holds(item))) ||
+    (!!value &&
+      typeof value === "object" &&
+      ("value" in value || "lastRenderedState" in value) &&
+      (holds((value as { value?: unknown }).value) ||
+        holds((value as { lastRenderedState?: unknown }).lastRenderedState)));
+  const seen = new Set<Fiber>();
+  const visit = (fiber: Fiber | null): boolean => {
+    for (let node = fiber; node; node = node.sibling) {
+      for (const each of [node, node.alternate]) {
+        if (!each || seen.has(each)) continue;
+        seen.add(each);
+        for (
+          let hook = each.memoizedState as Hook | null;
+          hook && typeof hook === "object" && "next" in hook;
+          hook = hook.next
+        )
+          if (
+            holds(hook.memoizedState) ||
+            holds(hook.baseState) ||
+            holds(hook.queue)
+          )
+            return true;
+      }
+      if (visit(node.child) || (node.alternate && visit(node.alternate.child)))
+        return true;
+    }
+    return false;
+  };
+  const root = (container as unknown as Record<string, Fiber>)[key ?? ""];
+  return visit(root ?? null);
+}
+it("releases the activity snapshot once hidden work on a row ends", () => {
+  const f = fixture();
+  const view = render(<ActivityAccessory {...f.props} canOpen={() => false} />);
+  try {
+    f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
+    const working = f.activity.queries.snapshot("c");
+    expect(fibersHold(view.container, working)).toBe(true);
+    f.send(A, "a", 2, "turn_completed");
+    f.send(B, "b", 1, "turn_started", { triggeringEventIds: [next] });
+    expect(f.activity.queries.snapshot("c")).not.toBe(working);
+    expect(fibersHold(view.container, working)).toBe(false);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});

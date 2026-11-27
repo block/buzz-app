@@ -12,6 +12,7 @@ import { Avatar } from "../shared/design-system/ui/Avatar";
 import { Button } from "../shared/design-system/ui/Button";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
+import { useCopyFeedback } from "../shared/CopyFeedback";
 import { Panel } from "../shared/design-system/ui/Panel";
 import {
   CaretLeftIcon,
@@ -45,12 +46,15 @@ export function IdentityBadge({
   backup?: "pending" | "confirmed" | "attention" | "running" | undefined;
   /** Where the backup is, e.g. "your Builderlab account". */
   backupAccount?: string | undefined;
-  onCopy(): void;
+  /** Copies the Buzz ID. The Copy button shows a copy that works; a refusal
+   * is its owner's to report. */
+  onCopy(): Promise<void>;
   children(
     active: boolean,
     action: RefObject<HTMLButtonElement | null>,
   ): ReactNode;
 }) {
+  const { copied, copy, status } = useCopyFeedback();
   const [back, setBack] = useState(false);
   const [loaded, setLoaded] = useState<string>();
   const faceId = useId();
@@ -141,7 +145,7 @@ export function IdentityBadge({
                     <Tooltip
                       content={
                         photoContext
-                          ? `Photo from ${photoContext}`
+                          ? `Your avatar in ${photoContext}`
                           : "Your ID is shared across communities."
                       }
                     >
@@ -150,8 +154,8 @@ export function IdentityBadge({
                         className={styles.photoHint}
                         aria-label={
                           photoContext
-                            ? `Photo from ${photoContext}`
-                            : "Buzz identity photo"
+                            ? `Your avatar in ${photoContext}`
+                            : "Your avatar"
                         }
                       >
                         <Avatar
@@ -215,7 +219,7 @@ export function IdentityBadge({
                   <span
                     className={`${styles.keyLabel} text-caption text-subtle`}
                   >
-                    PUBLIC KEY
+                    Buzz ID
                   </span>
                   {/* Code 128-B: fixed public word BUZZBUZZ, checksum 51; no key data. */}
                   <div className={`dark ${styles.barcodeSticker}`}>
@@ -241,17 +245,21 @@ export function IdentityBadge({
                       {abbreviatedPublicKey(viewer)}
                     </code>
                     <span className={styles.copyAction}>
-                      <Tooltip
-                        content="Copy your full public Buzz ID"
-                        hint="familiar"
-                      >
+                      <Tooltip content="Copy full Buzz ID" hint="familiar">
                         <IconButton
                           aria-label="Copy Buzz ID"
                           size="xs"
-                          icon={<CopyIcon aria-hidden="true" />}
-                          onClick={onCopy}
+                          icon={
+                            copied ? (
+                              <CheckIcon aria-hidden="true" />
+                            ) : (
+                              <CopyIcon aria-hidden="true" />
+                            )
+                          }
+                          onClick={() => void copy(onCopy)}
                         />
                       </Tooltip>
+                      {status}
                     </span>
                   </div>
                 </div>

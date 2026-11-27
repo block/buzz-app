@@ -156,6 +156,28 @@ it("observes saved sessions with the live status of running ones", () => {
   ]);
 });
 
+it("declares its harness to the gateway for attribution only, so the route never holds or fails a turn", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  let type: AgentType | undefined;
+  apply({
+    settingsCards: { register: vi.fn() },
+    agentProtection: { registerModels: vi.fn() },
+    pluginOwner: { id: "buzz.claude-code", revision: "r1" },
+    host: { request: vi.fn() },
+    agents: {
+      register: (registered: AgentType) => {
+        type = registered;
+      },
+      relay: () => undefined,
+    },
+    effect: vi.fn(),
+  } as never);
+  expect(type?.gateway).toEqual({
+    harness: "claude-code",
+    mode: "attribution",
+  });
+});
+
 it("shares a Claude agent's model as the claude runtime and imports it back", () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   let type: AgentType | undefined;
@@ -172,6 +194,7 @@ it("shares a Claude agent's model as the claude runtime and imports it back", ()
     },
     effect: vi.fn(),
   } as never);
+  expect(type?.skillFolders).toEqual(["~/.claude/skills"]);
   const shared = type?.exportShared?.({ model: "opus", workspace: "/private" });
   expect(shared).toEqual({ runtime: "claude", model: "opus" });
   expect(type?.importShared?.(shared ?? { model: "" })).toMatchObject({
@@ -183,8 +206,12 @@ it("shares a Claude agent's model as the claude runtime and imports it back", ()
   ).toBeUndefined();
 });
 
-it("registers review models from the discovered catalog", async () => {
+it.each([
+  ["a saved key", true],
+  ["no saved key", false],
+])("lists review models only with a saved key (%s)", async (_, saved) => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.spyOn(ClaudeAuth.prototype, "has").mockResolvedValue(saved);
   vi.spyOn(ClaudeSetup.prototype, "catalog").mockResolvedValue([
     { value: "opus", displayName: "Opus" },
     { value: "haiku" },
@@ -198,10 +225,14 @@ it("registers review models from the discovered catalog", async () => {
     agents: { register: vi.fn(), relay: () => undefined },
     effect: vi.fn(),
   } as never);
-  await expect(registerModels.mock.calls[0]?.[0].models()).resolves.toEqual([
-    { id: "opus", label: "Opus" },
-    { id: "haiku", label: "haiku" },
-  ]);
+  await expect(registerModels.mock.calls[0]?.[0].models()).resolves.toEqual(
+    saved
+      ? [
+          { id: "opus", label: "Opus" },
+          { id: "haiku", label: "haiku" },
+        ]
+      : [],
+  );
 });
 
 it.each([true, false])(

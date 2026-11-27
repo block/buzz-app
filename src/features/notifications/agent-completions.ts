@@ -6,10 +6,14 @@ import type {
 import type { OpenTarget } from "../navigation/targets";
 import { localWorkRoot } from "../agents/local-activity";
 
-const running = (state: LocalWorkState | undefined) =>
-  state === "waiting" || state === "working";
 const completed = (state: LocalWorkState) =>
   state === "done" || state === "error";
+const eligible = (work: LocalWork) =>
+  completed(work.state) &&
+  !!work.soloChat &&
+  (work.state === "error" ||
+    !work.syntheticMessage ||
+    !!work.hasUserVisibleReply);
 const keyOf = (work: LocalWork) =>
   JSON.stringify([work.scope, work.agent, work.messageId]);
 
@@ -105,22 +109,17 @@ export function bindAgentCompletionNotifications(
   let previous = new Map(
     activity
       .work()
-      .map(
-        (work) =>
-          [keyOf(work), { state: work.state, solo: !!work.soloChat }] as const,
-      ),
+      .filter(eligible)
+      .map((work) => [keyOf(work), work.startedAt] as const),
   );
   let disposed = false;
   const stop = activity.subscribeWork(() => {
-    const next = new Map<string, { state: LocalWorkState; solo: boolean }>();
+    const next = new Map<string, number>();
     for (const work of activity.work()) {
+      if (!eligible(work)) continue;
       const key = keyOf(work);
-      const before = previous.get(key);
-      next.set(key, { state: work.state, solo: !!work.soloChat });
-      const completedNow =
-        (running(before?.state) && completed(work.state)) ||
-        (!before?.solo && !!work.soloChat && completed(work.state));
-      if (!completedNow || !work.soloChat) continue;
+      next.set(key, work.startedAt);
+      if (previous.get(key) === work.startedAt) continue;
       const target = options.target(work);
       if (!target) continue;
       const present = (focused: boolean) => {
@@ -130,7 +129,7 @@ export function bindAgentCompletionNotifications(
           .find(
             (item) => keyOf(item) === key && item.startedAt === work.startedAt,
           );
-        if (!current || current.state !== work.state || !current.soloChat)
+        if (!current || current.state !== work.state || !eligible(current))
           return;
         if (!focused) options.desktop(current, target);
         else if (!isViewingCompletedWork(options.active(), target))

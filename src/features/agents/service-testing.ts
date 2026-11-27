@@ -55,13 +55,18 @@ export function fakeRelay(origin = "https://relay.example.test") {
   const rows: {
     id: string;
     name?: string;
-    channelType?: "dm";
+    channelType?: "dm" | "stream";
     visibility?: "public";
     members: string[];
     cached?: true;
   }[] = [
     { id: lobby, name: "lobby", visibility: "public", members: [viewer] },
-    { id: channel, name: "general", members: [viewer, bot] },
+    {
+      id: channel,
+      name: "general",
+      channelType: "stream",
+      members: [viewer, bot],
+    },
     { id: "private", name: "private", members: [viewer] },
     { id: dm, channelType: "dm", members: [viewer, bot] },
     { id: groupDm, channelType: "dm", members: [viewer, other, bot] },
@@ -278,6 +283,21 @@ export function fakeRelay(origin = "https://relay.example.test") {
     /** Fails the connection, as a first connect that timed out does. */
     fail() {
       snapshot = { status: "error", generation: 4, session, error: "down" };
+      for (const listener of changes) listener();
+    },
+    /** Reloads in place, as Cmd+R does: connecting, then failing if asked
+     * (for good unless `retrying`), still reloading until `connect`. */
+    reload(failure?: { denied?: true; retrying?: true }) {
+      snapshot = failure
+        ? {
+            status: "error",
+            generation: 5,
+            session,
+            error: "down",
+            reloading: true,
+            ...failure,
+          }
+        : { status: "connecting", generation: 5, session, reloading: true };
       for (const listener of changes) listener();
     },
     /** Replaces the session, as after the transport was lost. */

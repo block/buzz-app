@@ -619,6 +619,10 @@ const TASK_POLL_MS = 1_000;
 const DENY_MS = 5_000;
 /** Entries a transcript reads at a time. */
 const PAGE = 200;
+/** How far back, in pages of entries, a Buzz tool call looks for the
+ * answer that asked for it, whose usage is the conversation's context size. */
+const SIZE_PAGE = 32;
+const SIZE_PAGES = 4;
 /** Buzz tools are `buzz_<name>`, apart from Pi's own `read` and `edit`. */
 const PREFIX = "buzz_";
 /** The prompt section of the agent's `core` memory. */
@@ -1443,6 +1447,31 @@ export function serve({
     return opened;
   }
 
+  /** A conversation's context size: the tokens of its latest model call, as
+   * its newest answer in the transcript records them. Read by the host, not
+   * by a hook, so a protected agent, which takes no extension hooks, has it
+   * too. Undefined when none of its recent entries has one. */
+  async function sizeOf(opened, conversation, context) {
+    const found = await opened.harness.conversation(conversation, context);
+    let cursor;
+    // The answer that asked for the call is the newest one, behind only the
+    // results of its other calls.
+    for (let page = 0; found && page < SIZE_PAGES; page++) {
+      const entries = await found.entries({}, SIZE_PAGE, cursor, context);
+      for (const entry of entries.items)
+        for (const message of (entry.model ?? []).toReversed())
+          if (message.role === "assistant") {
+            const tokens = message.usage?.totalTokens;
+            return Number.isSafeInteger(tokens) && tokens > 0
+              ? tokens
+              : undefined;
+          }
+      cursor = entries.next;
+      if (!cursor) break;
+    }
+    return undefined;
+  }
+
   /** The agent's Buzz tools, served by the plugin. Those it lists to load on
    * search are deferred: the model finds them with `tool_search`, which
    * `hint` says what it can find with. */
@@ -1522,6 +1551,11 @@ export function serve({
                   agent: opened.agent,
                   conversation: api.conversationId,
                   context: opened.contexts.get(api.conversationId) ?? {},
+                  contextTokens: await sizeOf(
+                    opened,
+                    api.conversationId,
+                    signalled,
+                  ).catch(() => undefined),
                   name: tool.name,
                   arguments: args,
                 },
@@ -1616,6 +1650,9 @@ export function serve({
         send({
           type: "step",
           tool: name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name,
+          // Only the prefix says a tool is Buzz's: Pi's own tools and its
+          // extensions' are reported bare.
+          ...(name.startsWith(PREFIX) ? { origin: "buzz" } : {}),
           target: targetOf(
             // A nested call shows the arguments it runs with. A call the
             // model made runs with what the hooks left of its arguments.
@@ -2041,8 +2078,15 @@ export function serve({
     if (Object.keys(change).length)
       await conversation.configure(change, context);
     if (refresh) {
-      const prompt = await refresh();
+      const prompt = await refresh(!!steers);
       if (!prompt) return;
+      // Built past any wait: a new run takes the instructions current now,
+      // which its prompt's Canvas reads too. A steer keeps its run's.
+      if (!steers && prompt.instructions !== undefined)
+        await conversation.configure(
+          { instructions: prompt.instructions },
+          context,
+        );
       turn = { ...turn, ...prompt };
     }
     if (withdrawn?.()) return;
@@ -2406,13 +2450,31 @@ export function serve({
           return submitted;
         };
         const prompt = refresh
-          ? () => call("prompt", { agent, request: turn.request })
+          ? (steers) => call("prompt", { agent, request: turn.request, steers })
           : undefined;
         let bound;
         try {
           // A `new` session a host stopped partway through is done first.
           if (opened.recorded.resets.has(key))
             await resetPending(opened, conversation, key);
+          // A request Pi has already is answered by its own submission, in
+          // the mode it ran in: asked again, it binds and configures nothing,
+          // and its prompt is not built again, so notes it would take stay
+          // for the next turn. Its run, continuing, reads the memory and
+          // messages it was given.
+          const held = await opened.storage.submissionByRequest(
+            conversation.id,
+            turn.request,
+            context,
+          );
+          if (held) {
+            opened.cores.set(conversation.id, turn.core?.text);
+            opened.contexts.set(conversation.id, tools);
+            return placed({
+              submission: held.id,
+              conversation: conversation.id,
+            });
+          }
           // An ordinary turn, in a conversation with no gateway work, runs
           // as on main.
           if (
@@ -2445,22 +2507,6 @@ export function serve({
             if (!submitted) return false;
             if (session !== undefined) Object.assign(submitted, { session });
             return placed(submitted);
-          }
-          // A request Pi has already is answered by its own submission, in
-          // the mode it ran in: asked again, it binds and configures nothing.
-          // Its run, continuing, reads the memory and messages it was given.
-          const held = await opened.storage.submissionByRequest(
-            conversation.id,
-            turn.request,
-            context,
-          );
-          if (held) {
-            opened.cores.set(conversation.id, turn.core?.text);
-            opened.contexts.set(conversation.id, tools);
-            return placed({
-              submission: held.id,
-              conversation: conversation.id,
-            });
           }
           bound = await bind(opened, turn, {
             key,

@@ -3,13 +3,17 @@ import {
   DOMParser as EditorDOMParser,
   Fragment,
   type Node as EditorNode,
+  type TagParseRule,
 } from "prosemirror-model";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { profileKey } from "../profiles/target";
 import { safeLinkUrl } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
-import { composerMarkdown } from "./composer-markdown";
+import {
+  composerMarkdown,
+  type ComposerMarkdownMode,
+} from "./composer-markdown";
 import { bareHostParts } from "./message-link-parts";
 
 /** `text` reads well outside the app; `markdown` keeps identity locators and
@@ -121,6 +125,16 @@ function serialize(
       : text(copyText, format);
   }
   if (!selectable) return "";
+  // Chrome the DOM marks rather than styles, such as a file card's second
+  // line: left out of a selection that runs into it, kept for one that starts
+  // inside it, as a triple-click on the line does. Only the live DOM is
+  // marked: pasted HTML, walked without a range, keeps all of its text.
+  if (
+    range &&
+    node.hasAttribute("data-copy-skip") &&
+    !node.contains(range.startContainer)
+  )
+    return "";
   // This module's own delimiter markup; the spoiler branch writes it afresh.
   if (node.hasAttribute("data-spoiler-delimiter")) return "";
   // SVG tag names keep their case.
@@ -237,7 +251,15 @@ function serialize(
           // The first item the copy keeps, not one it only touches.
           (range && kept[0] ? [...node.children].indexOf(kept[0]) : 0)
         : 1;
-    return `<${tag.toLowerCase()}${tag === "OL" && Number.isFinite(start) && start !== 1 ? ` start="${start}"` : ""}>${inner}</${tag.toLowerCase()}>`;
+    // Only this app's document payload carries list-spacing metadata.
+    const spacing = node.getAttribute("data-buzz-spread");
+    const spread =
+      /^(UL|OL|LI)$/.test(tag) &&
+      node.closest('[data-buzz-copy="document"]') &&
+      (spacing === "true" || spacing === "false")
+        ? ` data-buzz-spread="${spacing}"`
+        : "";
+    return `<${tag.toLowerCase()}${spread}${tag === "OL" && Number.isFinite(start) && start !== 1 ? ` start="${start}"` : ""}>${inner}</${tag.toLowerCase()}>`;
   }
   if (format !== "html" || !blockTag.test(tag) || node.querySelector(blocks))
     return inner;
@@ -331,7 +353,11 @@ function markdown(node: Node, range?: Range): string {
  * inserts and the source `markdown` serializes. Only the semantic HTML emitted
  * above reaches the editor parser. Anchors become source tokens, not
  * recipients; the paste host still owns mention acceptance. */
-export function copyDocument(node: Node, range?: Range): EditorNode {
+export function copyDocument(
+  node: Node,
+  range?: Range,
+  mode: ComposerMarkdownMode = "chat",
+): EditorNode {
   const container = (node.ownerDocument ?? document).createElement("div");
   container.innerHTML = serializeNode(node, "html", range);
   const html = container.ownerDocument;
@@ -340,9 +366,10 @@ export function copyDocument(node: Node, range?: Range): EditorNode {
     "[data-spoiler-delimiter]",
   ))
     delimiter.remove();
-  // Headings, rules and task checkboxes have no composer node. They become the
-  // Markdown source that renders them again once sent: paragraph and item text.
-  for (const heading of container.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+  // Chat keeps headings as authored Markdown; documents retain heading nodes.
+  for (const heading of mode === "document"
+    ? []
+    : container.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
     const paragraph = html.createElement("p");
     if (heading.textContent)
       paragraph.append(`${"#".repeat(Number(heading.tagName.slice(1)))} `);
@@ -363,14 +390,42 @@ export function copyDocument(node: Node, range?: Range): EditorNode {
   // Rendered paragraphs are separated by blank lines; editor paragraphs are
   // individual source lines. Preserve that distinction only for timeline HTML.
   const origin = node instanceof Element ? node : node.parentElement;
-  if (origin?.closest('[data-buzz-copy="timeline"]')) {
+  if (mode === "chat" && origin?.closest('[data-buzz-copy="timeline"]')) {
     for (const paragraph of container.querySelectorAll("p + p"))
       paragraph.before(html.createElement("p"));
   }
   // Tables remain tab-separated source in the composer, whose schema has no table.
   for (const row of container.querySelectorAll("tr"))
     for (const cell of [...row.children].slice(1)) cell.prepend("\t");
+  const listRules: TagParseRule[] =
+    mode === "document"
+      ? [
+          {
+            tag: "ul",
+            node: "bullet_list",
+            getAttrs: (element) => ({
+              spread: element.getAttribute("data-buzz-spread") === "true",
+            }),
+          },
+          {
+            tag: "ol",
+            node: "ordered_list",
+            getAttrs: (element) => ({
+              order: Number(element.getAttribute("start") ?? 1),
+              spread: element.getAttribute("data-buzz-spread") === "true",
+            }),
+          },
+          {
+            tag: "li",
+            node: "list_item",
+            getAttrs: (element) => ({
+              spread: element.getAttribute("data-buzz-spread") === "true",
+            }),
+          },
+        ]
+      : [];
   const parser = new EditorDOMParser(composerSchema, [
+    ...listRules,
     {
       tag: "a",
       node: "token",

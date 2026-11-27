@@ -385,7 +385,11 @@ it.each(["bottom", "side"] as const)(
     expect(open).toHaveBeenLastCalledWith("todo:launcher");
     await user.click(screen.getByRole("button", { name: "Todos" }));
     await user.click(screen.getByRole("button", { name: "Open todo" }));
-    expect(open).toHaveBeenLastCalledWith("todo:one");
+    // A panel in the side column says so; its links open from the side pane.
+    expect(open).toHaveBeenLastCalledWith(
+      "todo:one",
+      ...(placement === "side" ? ["side"] : []),
+    );
     // Closing the drawer retires that opening's commands.
     await user.click(screen.getByRole("button", { name: "Todos" }));
     expect(

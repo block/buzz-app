@@ -1,6 +1,7 @@
 /** Owner-only display projection of observer telemetry into turns and items.
  * Raw session retention is unchanged; this reads allowlisted ACP fields only. */
 import { isMessageTool } from "../../buzz-mcp/message-tools";
+import { namedToolTitle } from "../../buzz-mcp/tool-titles";
 import { readEventBody } from "../agent-harness/turn-records";
 import { terminalOutcome } from "./observer";
 import { freshTurnTriggers, turnTriggerIds } from "./turn-triggers";
@@ -21,7 +22,8 @@ type Base = { id: string; at: number };
 export type ToolDiff = { path: string; oldText?: string; newText: string };
 /** Tool names and inputs are adapter-specific, so they are shown as sent;
  * only ACP's standard `kind`, `status`, `locations` and content are read.
- * The exception is a Buzz message tool, recognized by a title of
+ * One exception is a Buzz tool, which is labeled with its title
+ * (`buzzToolTitle`). The other is a Buzz message tool, recognized by a title of
  * `buzz__<tool>` or `mcp__buzz__<tool>`: when it completes with a
  * `rawInput.text` and no `rawOutput.isError`, it is shown as the agent's
  * posted message instead of as a tool. Renaming those titles or fields in an
@@ -101,6 +103,13 @@ const postsMessage = (title: string) => {
   const name = /^(?:mcp__)?buzz__(\w+)$/.exec(title.trim())?.[1];
   return !!name && isMessageTool(name);
 };
+/** The title of the Buzz tool a call's title names, for a call whose `kind`
+ * is not one of ACP's own. Only an exact Buzz tool name has one: any other
+ * tool keeps the title its adapter sent, and is never given a readable one. */
+export const buzzToolTitle = (tool: Pick<ToolItem, "title" | "kind">) => {
+  if (tool.kind && tool.kind !== "other") return undefined;
+  return namedToolTitle(tool.title);
+};
 const number = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const eventId = (value: unknown) =>
@@ -140,6 +149,9 @@ export const sectionTitle = (tag: string) => TITLES.get(tag) ?? tag;
 export const STEER = "new-message-arrived-while-you-were-working";
 const EVENT_TAGS = new Set(["buzz-event", STEER]);
 
+/** Wrappers inside a base section's text: part of that text, not framing. */
+const INLINE = new Set(["owner-section", "plugin-section"]);
+
 /** Split top-level `<tag attrs>` … `</tag>` prompt framing; other text is kept. */
 export function promptSections(text: string): PromptSection[] {
   const sections: PromptSection[] = [];
@@ -154,7 +166,8 @@ export function promptSections(text: string): PromptSection[] {
       continue;
     }
     const start = /^<([a-z][a-z0-9-]*)(?:\s[^<>]*)?>$/.exec(line);
-    if (start?.[1]) open = { tag: start[1], lines: [] };
+    if (start?.[1] && !INLINE.has(start[1]))
+      open = { tag: start[1], lines: [] };
     else loose.push(line);
   }
   // An unterminated section is ordinary text, not a silently dropped body.
@@ -258,6 +271,20 @@ function promptThread(sections: PromptSection[]) {
   const root = eventId(/^Thread root: (\S+)$/m.exec(context)?.[1]);
   if (root) return root;
   return /^Scope: (?:channel|dm)$/m.test(context) ? null : undefined;
+}
+
+/** The channel a prompt's `<context>` names: a `Channel: name (#id)` line, or
+ * the `channel_id` of Codex's JSON record. */
+export function promptChannel(sections: readonly PromptSection[]) {
+  const context = sections.find((section) => section.tag === "context")?.body;
+  if (!context) return undefined;
+  const line = /^Channel: (?:.* \(#([^)\s]+)\)|(\S+))$/m.exec(context);
+  if (line) return line[1] ?? line[2];
+  try {
+    return str(object(JSON.parse(context))?.channel_id) || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Older harnesses supplied thread scope only in the captured ACP prompt. */
@@ -762,4 +789,35 @@ function buildTranscript(
       return turn;
     }),
   };
+}
+
+/** `turns` with each notice right after the prompt it was kept for, by the
+ * prompt's id. A notice whose message the harness never took matches no
+ * prompt, so it shows nowhere rather than on another turn. */
+export function withNotices(
+  turns: readonly TranscriptTurn[],
+  notices: ReadonlyMap<string, string>,
+): TranscriptTurn[] {
+  return turns.map((turn) =>
+    turn.items.some((item) => item.type === "prompt" && notices.has(item.id))
+      ? {
+          ...turn,
+          items: turn.items.flatMap((item): TranscriptItem[] => {
+            const text =
+              item.type === "prompt" ? notices.get(item.id) : undefined;
+            return text
+              ? [
+                  item,
+                  {
+                    id: `${item.id}:notice`,
+                    at: item.at,
+                    type: "status",
+                    text,
+                  },
+                ]
+              : [item];
+          }),
+        }
+      : turn,
+  );
 }

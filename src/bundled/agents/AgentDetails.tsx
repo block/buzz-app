@@ -40,6 +40,7 @@ import {
   inSeveral,
 } from "../../features/agents/AgentManage";
 import {
+  CheckIcon,
   CopyIcon,
   DotsThreeIcon,
   XIcon,
@@ -80,11 +81,21 @@ import { AgentTabs } from "./AgentTabs";
 import type { HistoryPresentation } from "../../features/agents/history-presentation";
 import { AgentConfigHistoryRow } from "../../features/agents/AgentConfigHistoryRow";
 import { useAgentSettingsHost } from "./AgentSettingsHost";
+import { AgentEnvironment } from "./AgentEnvironment";
+
+/** The bundled harnesses that start an agent with its own variables. */
+const OWN_ENV_TYPES = new Set([
+  "buzz.claude-code",
+  "buzz.codex",
+  "buzz.goose",
+  "buzz.pi",
+]);
 import styles from "./AgentsPage.module.css";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import hero from "../../features/profiles/ProfileHero.module.css";
 import { writeClipboardText } from "../../shared/clipboard";
+import { useCopyFeedback } from "../../shared/CopyFeedback";
 import { SettingsSectionLink } from "../../features/navigation/SettingsSectionLink";
 
 export function AgentDetails({
@@ -221,7 +232,7 @@ export function AgentDetails({
         ?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
         ?.focus();
   }, [footerVisible]);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy, status } = useCopyFeedback();
   const [editingIdentity, setEditingIdentity] = useState(false);
   const identityMenu = useRef<HTMLButtonElement>(null);
   const [editingName, setEditingName] = useState(false);
@@ -289,11 +300,6 @@ export function AgentDetails({
   const [copyError, setCopyError] = useState("");
   const npub = canonicalPublicKey(agent.pubkey);
   const settings = useAgentSettingsHost({ agents, agent, type, types });
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(timer);
-  }, [copied]);
   return (
     <AgentSaveFooter
       value={{
@@ -539,24 +545,33 @@ export function AgentDetails({
                         </code>
                       }
                       trailing={
-                        <IconButton
-                          aria-label={copied ? "Copied" : "Copy public key"}
-                          size="sm"
-                          icon={<CopyIcon size={16} aria-hidden="true" />}
-                          disabled={!npub}
-                          onClick={() => {
-                            if (!npub) return;
-                            setCopyError("");
-                            void Promise.resolve()
-                              .then(() => writeClipboardText(npub))
-                              .then(() => setCopied(true))
-                              .catch(() =>
-                                setCopyError(
-                                  "Could not copy the public key. Try again.",
-                                ),
+                        <>
+                          <IconButton
+                            aria-label="Copy public key"
+                            size="sm"
+                            icon={
+                              copied ? (
+                                <CheckIcon size={16} aria-hidden="true" />
+                              ) : (
+                                <CopyIcon size={16} aria-hidden="true" />
+                              )
+                            }
+                            disabled={!npub}
+                            onClick={() => {
+                              if (!npub) return;
+                              setCopyError("");
+                              void copy(() => writeClipboardText(npub)).then(
+                                (result) => {
+                                  if (result === "failed")
+                                    setCopyError(
+                                      "Could not copy the public key. Try again.",
+                                    );
+                                },
                               );
-                          }}
-                        />
+                            }}
+                          />
+                          {status}
+                        </>
                       }
                     />
                     {agent.place === "here" && (
@@ -638,6 +653,16 @@ export function AgentDetails({
                       {copyError}
                     </p>
                   )}
+                  {agent.place === "here" &&
+                    !agent.protection &&
+                    type &&
+                    OWN_ENV_TYPES.has(type.pluginId) && (
+                      <AgentEnvironment
+                        agent={agent.pubkey}
+                        restartAgent={() => agents.restartAgent(agent.pubkey)}
+                        openSettings={openSettings}
+                      />
+                    )}
                 </div>
               }
             />

@@ -151,11 +151,11 @@ it("does not restore a removed opening agent when replaying a stale creation rec
   expect(h.roles.has(h.agents[0])).toBe(false);
 });
 
-it("refuses an unrecorded opening grant after ownership changes without replacing the saved intent", async () => {
+it("skips an unrecorded opening grant after ownership changes without replacing the saved intent", async () => {
   const h = setup();
   const saved = structuredClone(h.creation);
   h.owned.mockResolvedValue(() => false);
-  await expect(h.run()).rejects.toThrow("not verified as owned");
+  await h.run();
   expect(h.writer.sign).not.toHaveBeenCalled();
   expect(h.publish).not.toHaveBeenCalled();
   expect(structuredClone(h.creation)).toEqual(saved);
@@ -171,13 +171,15 @@ it("confirms recorded opening grants after an ownership change without issuing n
 });
 
 it.each(["owner", "guest", "absent"])(
-  "preserves an opening agent changed to %s before its grant",
+  "preserves an opening agent changed to %s before its grant and still grants the others",
   async (role) => {
     const h = setup();
     if (role === "absent") h.roles.delete(h.agents[0]);
     else h.roles.set(h.agents[0], role);
-    await expect(h.run()).rejects.toThrow("access changed");
-    expect(h.publish).not.toHaveBeenCalled();
+    await h.run();
+    expect(h.roles.get(h.agents[0])).toBe(role === "absent" ? undefined : role);
+    expect(h.roles.get(h.agents[1])).toBe("admin");
+    expect(h.publish).toHaveBeenCalledOnce();
   },
 );
 
@@ -196,16 +198,55 @@ it("does not turn a failed role read into a permission grant", async () => {
   expect(h.publish).not.toHaveBeenCalled();
 });
 
-it("never re-dates an expired grant, but can still confirm recorded grants after expiry", async () => {
+it("keeps setup for a retry when the chat's roster is unavailable", async () => {
+  const h = setup();
+  const read = h.read.getMockImplementation();
+  assert.exists(read);
+  h.read.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.kinds?.includes(39002))
+      ? []
+      : read(filters),
+  );
+  await expect(h.run()).rejects.toThrow("member list is unavailable");
+  expect(h.writer.sign).not.toHaveBeenCalled();
+  h.read.mockImplementation(read);
+  await h.run();
+  expect(h.roles.get(h.agents[0])).toBe("admin");
+  expect(h.roles.get(h.agents[1])).toBe("admin");
+});
+
+it("never re-dates or looks up an expired grant", async () => {
   const h = setup();
   await h.run();
+  expect(h.publish).toHaveBeenCalledTimes(2);
+  h.records.clear();
+  h.read.mockClear();
   const now = Date.now();
   const clock = vi.spyOn(Date, "now").mockReturnValue(now + 16 * 60 * 1000);
   try {
     await h.run();
-    h.records.clear();
-    await expect(h.run()).rejects.toThrow("expired");
+    expect(h.read).not.toHaveBeenCalled();
     expect(h.publish).toHaveBeenCalledTimes(2);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+it("skips a grant the relay refuses after it crosses expiry during signing", async () => {
+  const h = setup();
+  const sign = h.writer.sign.getMockImplementation();
+  assert.exists(sign);
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now");
+  h.writer.sign.mockImplementationOnce(async (template) => {
+    clock.mockReturnValue(now + 16 * 60 * 1000);
+    return sign(template);
+  });
+  h.publish.mockRejectedValueOnce(new Error("event too old"));
+  try {
+    await h.run();
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.writer.sign).toHaveBeenCalledOnce();
   } finally {
     clock.mockRestore();
   }
@@ -254,7 +295,7 @@ it("recognizes a valid opening-admin receipt before delivery or expiry", () => {
     expect(soloAdminSetup(item)).toBeUndefined();
 });
 
-it("invalidates a verified ownership guard when its head is replaced or evicted", async () => {
+it("invalidates a verified ownership guard when its head is replaced, but only pauses it while evicted", async () => {
   const viewer = keypair(),
     agent = keypair();
   const initial = eventDto(await ownedProfile(agent, viewer));
@@ -265,9 +306,11 @@ it("invalidates a verified ownership guard when its head is replaced or evicted"
     agent.pubkey,
   );
   expect(owns()).toBe(true);
-  head = eventDto(await ownedProfile(agent, keypair()));
-  expect(owns()).toBe(false);
   head = undefined;
+  expect(owns).toThrow("profile is unavailable");
+  head = eventDto(initial);
+  expect(owns()).toBe(true);
+  head = eventDto(await ownedProfile(agent, keypair()));
   expect(owns()).toBe(false);
 });
 
@@ -279,14 +322,14 @@ it("rechecks the next opening target after publishing the previous grant", async
     await publish(event, new AbortController().signal, () => {});
     h.owned.mockResolvedValue(() => false);
   });
-  await expect(h.run()).rejects.toThrow("not verified as owned");
+  await h.run();
   expect(h.publish).toHaveBeenCalledOnce();
   expect(h.writer.sign).toHaveBeenCalledOnce();
   expect(h.roles.get(h.agents[1])).toBe("member");
 });
 
 it.each(["roster read", "signing", "publication lock"])(
-  "refuses an unrecorded grant if ownership changes during %s",
+  "skips an unrecorded grant if ownership changes during %s",
   async (boundary) => {
     const h = setup();
     let current = true;
@@ -317,7 +360,7 @@ it.each(["roster read", "signing", "publication lock"])(
         checkOwnership();
       });
     }
-    await expect(h.run()).rejects.toThrow("not verified as owned");
+    await h.run();
     expect(h.records.size).toBe(0);
     expect(h.roles.get(h.agents[0])).toBe("member");
     expect(h.writer.sign).toHaveBeenCalledTimes(

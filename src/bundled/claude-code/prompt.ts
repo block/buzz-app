@@ -1,6 +1,10 @@
 // Prompts in the shared record format, so a Claude agent here reads the same
 // sections and follows the same base prompt as a harness agent.
-import { TOP_LEVEL_PROMPT, CHANNEL_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  TOP_LEVEL_MENTION_PROMPT,
+  TOP_LEVEL_PROMPT,
+  CHANNEL_LEVEL_PROMPT,
+} from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
 import { messageAuthor } from "../../features/relay/fold";
 import { mentionSection } from "../../features/agent-harness/base-prompt";
@@ -9,9 +13,13 @@ import {
   type ConversationWake,
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
+import type { SectionChoices } from "../../features/agent-harness/sections/choices";
 import { composeBase } from "../../features/agent-harness/sections/compose";
+import type { Facts } from "../../features/agent-harness/sections";
 import {
   type AuthorNames,
+  CONTENT_LIMIT,
+  contentFields,
   eventBody,
   quoted,
   withNames,
@@ -23,8 +31,6 @@ export type Scope =
   import("../../features/agent-harness/session-scope").SessionScope;
 /** Messages of thread context shown with a turn, newest kept. */
 export const CONTEXT_LIMIT = 12;
-/** Characters of each context message shown. */
-const CONTENT_LIMIT = 4000;
 
 const section = (tag: string, body: string, attributes = "") =>
   `<${tag}${attributes}>\n${body.trim()}\n</${tag}>`;
@@ -47,12 +53,16 @@ export function systemPrompt(
     memory?: string | null;
     /** Its recent notes, as `recentNotesSection` gives them. */
     notes?: string;
+    /** The choices for the base prompt's sections, from the agent's handle. */
+    sections?: SectionChoices | undefined;
+    /** What the session is, which its Session Model states. */
+    place?: Facts["place"];
   }>,
 ) {
-  const base = composeBase({
-    scope: input.scope,
-    ownFolder: input.workspace,
-  });
+  const base = composeBase(
+    { scope: input.scope, ownFolder: input.workspace, place: input.place },
+    input.sections,
+  );
   return [
     input.agent
       ? section(
@@ -92,6 +102,7 @@ export type TurnInput = Readonly<{
   channelLevel?: boolean;
   /** The thread the event belongs to, absent for a top-level message. */
   thread?: Readonly<{ rootId: string; parentId: string }>;
+  sourceRoot?: string;
   /** Messages of the conversation the session has not been shown: earlier
    * ones, and for a resumed turn also those after it. */
   context: readonly EventData[];
@@ -125,7 +136,7 @@ export function turnPrompt(input: TurnInput) {
     input.scope === "community"
       ? `IMPORTANT: Pass each reply's channel as \`channel\` to \`send\`. ${input.wake ? "Leave out the request field for this wake." : "Pass the triggering message ID as `request`."} For this request use channel "${channel.id}". ${input.topLevel ? "Leave out the reply field to post at the top level." : `Use "${root}" as the reply field to post in its thread.`} You can answer one request and continue working on another.`
       : input.topLevel
-        ? `IMPORTANT: ${input.channelLevel ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT}`
+        ? `IMPORTANT: ${input.channelLevel ? (input.wake ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_MENTION_PROMPT) : TOP_LEVEL_PROMPT} Pass the channel explicitly to \`send\` when handling multiple requests.`
         : shared
           ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${root}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass \`channel\` explicitly and leave out \`reply\`.`
           : thread
@@ -160,6 +171,7 @@ export function turnPrompt(input: TurnInput) {
           `Session scope: ${input.scope}`,
           `Channel: ${channelLabel}`,
           `Thread root: ${thread?.rootId ?? event.id}`,
+          ...(input.sourceRoot ? [`Source thread: ${input.sourceRoot}`] : []),
           ...(thread && thread.parentId !== thread.rootId
             ? [`Parent: ${thread.parentId}`]
             : []),
@@ -188,7 +200,7 @@ export function turnPrompt(input: TurnInput) {
                 id: message.id,
                 pubkey,
                 created_at: message.created_at,
-                content: message.content.slice(0, CONTENT_LIMIT),
+                ...contentFields(message.content, message.tags),
               },
               input.names?.(pubkey),
             );
@@ -223,6 +235,9 @@ export function turnPrompt(input: TurnInput) {
 
 const EVENT = "buzz-event";
 const STEER = "new-message-arrived-while-you-were-working";
+/** What a steer ends with, after its turn. */
+export const STEER_NOTE =
+  "\n\nNote: A new message arrived while you were working. Continue your in-progress work and incorporate the new message if it's relevant; if it's unrelated, you may briefly acknowledge it and carry on.";
 /** A turn for a session that is still working on an earlier one. Its event's
  * section becomes the steer's, so the event stays a record of its own; a
  * turn without exactly one, such as a wake's, is wrapped whole. */
@@ -235,5 +250,5 @@ export function steerPrompt(turn: string) {
     once(open) && once(close)
       ? turn.replace(open, `\n<${STEER}>\n`).replace(close, `\n</${STEER}>`)
       : section(STEER, turn);
-  return `${steered}\n\nNote: A new message arrived while you were working. Continue your in-progress work and incorporate the new message if it's relevant; if it's unrelated, you may briefly acknowledge it and carry on.`;
+  return `${steered}${STEER_NOTE}`;
 }

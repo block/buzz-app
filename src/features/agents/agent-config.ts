@@ -5,6 +5,7 @@
 // from storage.
 import { notesOf, type PluginNotes } from "./plugin-notes";
 import { PRESET } from "./recommended";
+import { routedSettings } from "./synced-route";
 import { verifyEvent } from "nostr-tools";
 import type { RelayEvent } from "../relay/events";
 import { localStore, type AgentStore } from "./store";
@@ -334,20 +335,27 @@ export function syncedSettings(
       recommended?: true;
       pluginNotes?: PluginNotes;
     }>
-  | Readonly<{ problem: string }> {
+  | Readonly<{ problem: string; typeMismatch?: true }> {
   const body = JSON.parse(content) as {
     agentType?: unknown;
     settings?: unknown;
     preset?: unknown;
+    modelRoute?: unknown;
   };
   if (body.agentType !== undefined && body.agentType !== agentType)
-    return { problem: "These settings are for another agent type" };
+    return {
+      problem: "These settings are for another agent type",
+      typeMismatch: true,
+    };
   const problem = settingsProblem(schema, body.settings);
   const pluginNotes = notesOf(body);
   return problem
     ? { problem }
     : {
-        settings: body.settings as Record<string, string>,
+        settings:
+          "model" in schema
+            ? routedSettings(body, body.settings as Record<string, string>)
+            : (body.settings as Record<string, string>),
         // Beside `settings`, where versions without it keep and ignore it
         // (NIP-AP "Editing"), so their strict settings check never sees it.
         ...(body.preset === PRESET ? { recommended: true as const } : {}),

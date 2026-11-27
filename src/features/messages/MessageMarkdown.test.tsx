@@ -100,6 +100,7 @@ function render(content: string, options: RenderOptions = {}) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 it("admits registered panel links from cached Markdown and rechecks activation", () => {
@@ -600,7 +601,7 @@ describe("Markdown profile mentions", () => {
     const html = render("**@Mic Smith**, _@Mic_! @Other @Missing @Microscopic");
     expect(html).toContain("<strong><button");
     expect(html).toContain('aria-label="View Mic Smith profile"');
-    expect(html).toContain("</svg>M</span>ic Smith</button></strong>");
+    expect(html).toContain("</svg></span>M</span>ic Smith</button></strong>");
     // The raw helper conservatively treats trailing underscore as a name suffix.
     expect(html.match(/<button/g)).toHaveLength(1);
     expect(html).toContain("<em>@Mic</em>");
@@ -617,7 +618,9 @@ describe("Markdown profile mentions", () => {
       extensions,
     });
     expect(html).toContain(`aria-label="View ${name} profile"`);
-    expect(html).toContain(`</svg>M</span>${name.slice(1)}</button></strong>`);
+    expect(html).toContain(
+      `</svg></span>M</span>${name.slice(1)}</button></strong>`,
+    );
     expect(html).not.toContain("<em>");
     expect(html).not.toContain("<img");
   });
@@ -1092,6 +1095,7 @@ it("renders tagged agent library names and profile names with the same agent ico
     const html = render(`@${name} can you also join`, options);
     expect(html).toContain('data-mention-kind="agent"');
     expect(html).toContain(`aria-label="View ${name} profile"`);
+    expect(html).toContain('role="img" aria-label="agent @"');
     expect(html).toContain(
       renderToStaticMarkup(<RobotIcon className={referenceStyles.icon} />),
     );
@@ -1285,10 +1289,39 @@ describe("code block copy", () => {
     const copy = screen.getByRole("button", { name: "Copy code block" });
     await user.click(copy);
     await screen.findByText("Failed to copy code");
+    // A refusal is the toast's to report: the button and its status say nothing.
+    expect(copy.querySelector(".tabler-icon-copy")).not.toBeNull();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
     await user.click(copy);
-    await screen.findByText("Copied code to clipboard");
+    await waitFor(() =>
+      expect(copy.querySelector(".tabler-icon-check")).not.toBeNull(),
+    );
+    expect(copy).toHaveAccessibleName("Copy code block");
+    expect(screen.getByRole("status")).toHaveTextContent(/^Copied$/);
     expect(write).toHaveBeenCalledTimes(2);
     expect(write).toHaveBeenLastCalledWith("const x = 1\n\nreturn x");
+  });
+
+  it("shows a copy as a check in its button for 1.5 seconds, with no toast", async () => {
+    vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    renderDom(<MessageMarkdown {...props(fenced)} />, {
+      wrapper: ToastProvider,
+    });
+    const copy = screen.getByRole("button", { name: "Copy code block" });
+    vi.useFakeTimers();
+    await act(async () => fireEvent.click(copy));
+    expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
+    expect(copy).toHaveAccessibleName("Copy code block");
+    expect(screen.getByRole("status")).toHaveTextContent(/^Copied$/);
+
+    act(() => vi.advanceTimersByTime(1499));
+    expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
+    // The clock a toast mounts on has run: the status is all that says so.
+    expect(screen.getAllByText(/copied/i)).toHaveLength(1);
+    expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(copy.querySelector(".tabler-icon-copy")).not.toBeNull();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
   it("blocks repeat copies until the first settles", async () => {
@@ -1313,7 +1346,9 @@ describe("code block copy", () => {
     } finally {
       finish();
     }
-    await screen.findByText("Copied code to clipboard");
+    await waitFor(() =>
+      expect(copy.querySelector(".tabler-icon-check")).not.toBeNull(),
+    );
     expect(copy).not.toHaveAttribute("aria-disabled", "true");
   });
 

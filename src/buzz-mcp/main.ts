@@ -24,7 +24,7 @@ const env = (name: string) => {
 const auth = process.env.BUZZ_AUTH_TAG?.trim();
 const channel = process.env.BUZZ_CHANNEL?.trim();
 const relay = env("BUZZ_RELAY_URL");
-const relayAuthor = relayAuthorityLookup(relay);
+const relayAuthorLookup = relayAuthorityLookup(relay);
 const client = nodeClient({
   relay,
   key: env("BUZZ_PRIVATE_KEY"),
@@ -46,6 +46,7 @@ serveStdio(() => {
     server.registerTool(
       tool.name,
       {
+        title: tool.title,
         description: tool.description,
         inputSchema: fromJsonSchema<Record<string, unknown>>(tool.inputSchema),
         ...("annotations" in tool ? { annotations: tool.annotations } : {}),
@@ -56,11 +57,21 @@ serveStdio(() => {
             content: content(
               await (isSoloWorkerTool(tool.name)
                 ? callSoloWorkerTool(
-                    { ...client, relayAuthor: await relayAuthor() },
+                    {
+                      ...client,
+                      relayAuthor: await relayAuthorLookup().catch(
+                        () => undefined,
+                      ),
+                    },
                     tool.name,
                     args,
                   )
-                : callTool(client, context, tool.name, args)),
+                : callTool(
+                    { ...client, relayAuthorLookup },
+                    context,
+                    tool.name,
+                    args,
+                  )),
             ),
           };
         } catch (error) {

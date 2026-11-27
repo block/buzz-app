@@ -1484,6 +1484,37 @@ it("shows and changes the device default from the compact control without stripp
   expect(configure).toHaveBeenCalledOnce();
 });
 
+it("keeps a device default the build's model filter hides as a normal choice", async () => {
+  vi.stubEnv("VITE_BUZZ_DATABRICKS_MODEL_FILTER", "system.ai.*");
+  const model = "acme_models.prod.gpt-6-1-sol";
+  const fake = fakeSpawn({
+    providers: PROVIDERS.map((provider) =>
+      provider.providerId === "databricks"
+        ? { ...provider, providerId: "databricks_v2" }
+        : provider,
+    ),
+    defaults: { providerId: "databricks_v2", modelId: model },
+    supported: [model, "system.ai.claude-opus-5-5"],
+  });
+  const { DefaultControl } = createTabs({
+    setup: new GooseSetup(fake),
+    ...unused,
+  });
+  render(<DefaultControl onConfigure={() => {}} />);
+  const user = userEvent.setup();
+  const trigger = await screen.findByRole("button", {
+    name: /^Goose default model:/,
+  });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  await user.click(trigger);
+  (await screen.findByRole("menuitem", { name: "OpenAI" })).focus();
+  await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("menuitemradio", { name: /GPT-6\.1 Sol/ }),
+  ).not.toHaveAccessibleName(/Unavailable model/);
+  vi.unstubAllEnvs();
+});
+
 it("saves provider fields with defaults and retains them when saving fails", async () => {
   const fake = fakeSpawn({
     providers: PROVIDERS,
@@ -2224,6 +2255,55 @@ it("keeps an old community transcript out of ordinary Activity selection", async
   expect(
     await screen.findByText("Hi from goose", { selector: "summary span" }),
   ).toBeInTheDocument();
+});
+
+it("saves a proposal for a served model the build's model filter hides", async () => {
+  vi.stubEnv("VITE_BUZZ_DATABRICKS_MODEL_FILTER", "system.ai.*");
+  const model = "acme_models.prod.gpt-6-1-sol";
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(
+      fakeSpawn({
+        providers: PROVIDERS.map((provider) =>
+          provider.providerId === "databricks"
+            ? { ...provider, providerId: "databricks_v2" }
+            : provider,
+        ),
+        defaults: { providerId: "databricks_v2", modelId: model },
+        supported: [model, "system.ai.claude-opus-5-5"],
+        thinking: { [model]: { current: "low", levels: ["low", "high"] } },
+      }),
+    ),
+    ...unused,
+  });
+  const save = vi.fn(async () => {});
+  render(
+    <SettingsTab
+      agent={
+        {
+          key: "c".repeat(64),
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: {
+            ...DEFAULT_CONFIG,
+            provider: "databricks_v2",
+            model,
+            effort: "high",
+          },
+        } as Agent<Config>
+      }
+      save={save}
+      settingsHost={{ proposedModelOrEffort: true, pendingSave: save }}
+    />,
+  );
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ model, effort: "high" }),
+    ),
+  );
+  vi.unstubAllEnvs();
 });
 
 it("blocks an unsupported proposal effort and lets the owner clear it", async () => {

@@ -713,6 +713,44 @@ describe("GooseSetup", () => {
         { id: "system.ai.gpt-6-1-sol", label: "GPT-6.1 Sol" },
       ],
     });
+    // A turn can still run on a served model the filter hides: picked before
+    // the build default hid it, or a route's fallback. Pickers never list it.
+    const picks = await goose.picks({
+      provider: "databricks_v2",
+      model: "system.ai.gpt-6-1-sol",
+      effort: "high",
+    });
+    await expect(
+      picks.unlisted?.("acme_models.prod.gpt-6-1-sol"),
+    ).resolves.toEqual({
+      id: "acme_models.prod.gpt-6-1-sol",
+      label: "acme_models.prod.gpt-6-1-sol",
+      efforts: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+      ],
+      effort: "high",
+    });
+    await expect(
+      picks.unlisted?.("acme_models.prod.does-not-exist"),
+    ).resolves.toBeUndefined();
+    // A device default the filter hides stays listed where it is shown.
+    expect(
+      (
+        await goose.models("databricks_v2", {
+          include: "databricks-gpt-5-5",
+        })
+      ).map(({ id }) => id),
+    ).toEqual([
+      "databricks-gpt-5-5",
+      "system.ai.claude-opus-5-5",
+      "system.ai.gpt-6-1-sol",
+    ]);
+    expect(
+      (await goose.models("databricks_v2", { include: "gone-model" })).map(
+        ({ id }) => id,
+      ),
+    ).toEqual(["system.ai.claude-opus-5-5", "system.ai.gpt-6-1-sol"]);
     // offers() checks what the provider actually serves, so recommended models
     // hidden from the picker still resolve as offered while absent ones do not.
     await expect(

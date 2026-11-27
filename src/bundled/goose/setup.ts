@@ -308,21 +308,14 @@ export class GooseSetup {
       offered.some((model) => model.id === current)
         ? offered
         : [{ id: current, label: current }, ...offered];
-    const formatted = formatModelChoices(
-      named,
-      id?.startsWith("databricks") ? DATABRICKS_LABEL_PREFIXES : undefined,
-    );
-    // Without levels a model offers no slider, so a failed read costs only it.
-    const levels = ready
-      ? await Promise.all(
-          this.levels(
-            provider,
-            formatted.map((model) => model.id),
-          ).map((read) => read.catch(() => undefined)),
-        )
-      : [];
-    const models = formatted.map(({ id: modelId, label }, index) => {
-      const offers = levels[index] ?? { current: "", levels: [] };
+    const prefixes = id?.startsWith("databricks")
+      ? DATABRICKS_LABEL_PREFIXES
+      : undefined;
+    const formatted = formatModelChoices(named, prefixes);
+    const pick = (
+      { id: modelId, label }: ModelChoice,
+      offers: Efforts = { current: "", levels: [] },
+    ) => {
       const resting = [choice.effort ?? "", offers.current].find(
         (level) => level && offers.levels.includes(level),
       );
@@ -335,8 +328,33 @@ export class GooseSetup {
         })),
         ...(resting ? { effort: resting } : {}),
       };
-    });
-    return { current, models };
+    };
+    // Without levels a model offers no slider, so a failed read costs only it.
+    const read = (models: readonly string[]) =>
+      Promise.all(
+        this.levels(provider, models).map((levels) =>
+          levels.catch(() => undefined),
+        ),
+      );
+    const levels = ready ? await read(formatted.map((model) => model.id)) : [];
+    const models = formatted.map((item, index) => pick(item, levels[index]));
+    // A turn can still run on a model the picker filter hides, such as one
+    // picked before a build's default filter hid it, or a route's fallback.
+    const served = ready ? await this.models(id ?? "", { filter: false }) : [];
+    if (served.length <= offered.length) return { current, models };
+    return {
+      current,
+      models,
+      unlisted: async (wanted: string) => {
+        if (named.some((item) => item.id === wanted)) return undefined;
+        const found = served.find((item) => item.id === wanted);
+        if (!found) return undefined;
+        // Labelled beside the listed models, so it reads apart from them.
+        const label = formatModelChoices([...named, found], prefixes).at(-1);
+        const [offers] = await read([found.id]);
+        return pick(label ?? found, offers);
+      },
+    };
   }
 
   /** A forwarded turn needs the current default, including external edits:
@@ -471,7 +489,15 @@ export class GooseSetup {
    * A provider not set up offers none: its catalog's would not run. */
   async models(
     id: string,
-    { filter = true }: Readonly<{ filter?: boolean }> = {},
+    {
+      filter = true,
+      include,
+    }: Readonly<{
+      filter?: boolean;
+      /** A model to keep listed when the provider serves it, even though the
+       * filter hides it: a device's or agent's current model, say. */
+      include?: string;
+    }> = {},
   ): Promise<readonly ModelChoice[]> {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
@@ -481,13 +507,20 @@ export class GooseSetup {
     const models =
       listed?.configured &&
       (prefixes || id === "databricks_v2" || !listed.models.length)
-        ? (await this.supported(id))[filter ? "listed" : "all"]
-        : (listed?.models ?? []);
-    return prefixes
-      ? models.filter((model) =>
-          prefixes.some((prefix) => model.id.startsWith(prefix)),
-        )
-      : models;
+        ? await this.supported(id)
+        : { all: listed?.models ?? [], listed: listed?.models ?? [] };
+    const kept = (list: readonly ModelChoice[]) =>
+      prefixes
+        ? list.filter((model) =>
+            prefixes.some((prefix) => model.id.startsWith(prefix)),
+          )
+        : list;
+    const shown = kept(filter ? models.listed : models.all);
+    const extra =
+      include && !shown.some((model) => model.id === include)
+        ? kept(models.all).find((model) => model.id === include)
+        : undefined;
+    return extra ? [extra, ...shown] : shown;
   }
 
   private supported(id: string): Promise<SupportedModels> {

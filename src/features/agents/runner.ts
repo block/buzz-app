@@ -267,7 +267,9 @@ async function pickFor(
   if (!model && !effort) return {};
   try {
     const offered = await type.models?.(agent);
-    const picked = offered?.models.find((item) => item.id === model);
+    const picked =
+      offered?.models.find((item) => item.id === model) ??
+      (model ? await offered?.unlisted?.(model) : undefined);
     const runs =
       picked ?? offered?.models.find((item) => item.id === offered.current);
     return {

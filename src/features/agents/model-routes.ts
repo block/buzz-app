@@ -324,8 +324,11 @@ export function withRoutes(harness: string, models: Models): Models {
       !routeOf(model.id) && (!exclusive || model.id === models.current),
   );
   if (!routes.length && own.length === models.models.length) return models;
+  // An exclusive menu's turns run on routes, not on other own models.
+  const { unlisted, ...rest } = models;
   return {
-    ...models,
+    ...rest,
+    ...(!exclusive && unlisted && { unlisted }),
     models: [
       ...routes.map((route) => ({
         id: routeModel(route.id),
@@ -354,13 +357,8 @@ export type RoutedPick = TurnPick &
     ended?: () => void;
   }>;
 
-/** A pick of one of `models`, with an effort that model lists. */
-function listed(
-  models: readonly Model[],
-  choice: TurnPick | undefined,
-): TurnPick | undefined {
-  const model = models.find((item) => item.id === choice?.model);
-  if (!model) return undefined;
+/** A pick of `model`, with an effort it lists. */
+function pickOf(model: Model, choice: TurnPick | undefined): TurnPick {
   return {
     model: model.id,
     ...(choice?.effort &&
@@ -372,8 +370,7 @@ function listed(
 
 /** A pick's display name, from the harness's labels for its model and
  * effort; no model is the harness's default. */
-function pickLabel(models: readonly Model[], pick: TurnPick | undefined) {
-  const model = models.find((item) => item.id === pick?.model);
+function pickLabel(model: Model | undefined, pick: TurnPick | undefined) {
   if (!model) return "the default model";
   const effort = model.efforts.find((level) => level.id === pick?.effort);
   return effort ? `${model.label} · ${effort.label}` : model.label;
@@ -409,6 +406,8 @@ export async function routeTurn(
     current: string;
     automatic: boolean;
     models: readonly Model[];
+    /** A model the harness serves outside `models` (`Models.unlisted`). */
+    unlisted?: Models["unlisted"];
     request: Omit<
       ModelRouteRequest,
       "route" | "models" | "harness" | "signal" | "history" | "context"
@@ -468,23 +467,40 @@ export async function routeTurn(
     if (!late.signal.aborted) late.abort(new Error("The model route chose"));
   }
   input.signal.throwIfAborted();
-  const chosen = listed(own, choice);
-  if (chosen)
+  // One of the harness's own models, listed or served unlisted.
+  const find = async (pick: TurnPick | undefined) => {
+    const wanted = pick?.model;
+    if (!wanted || routeOf(wanted)) return undefined;
+    return (
+      own.find((item) => item.id === wanted) ??
+      (await input.unlisted?.(wanted).catch((error: unknown) => {
+        console.warn(`Model route ${id} could not check ${wanted}`, error);
+        return undefined;
+      }))
+    );
+  };
+  const picked = await find(choice);
+  input.signal.throwIfAborted();
+  if (picked) {
+    const chosen = pickOf(picked, choice);
     return {
       ...chosen,
       routed: {
         route,
-        label: pickLabel(own, chosen),
+        label: pickLabel(picked, chosen),
         ...(choice?.rationale && { rationale: choice.rationale }),
       },
     };
+  }
   if (choice)
     console.warn(`Model route ${id} chose a model this harness doesn't list`);
   // Automatic's recommended model runs without a pick.
-  const fallback = input.automatic ? undefined : listed(own, route.fallback);
+  const runs = input.automatic ? undefined : await find(route.fallback);
+  input.signal.throwIfAborted();
+  const fallback = runs && pickOf(runs, route.fallback);
   return {
     ...fallback,
-    routed: { route, label: pickLabel(own, fallback), fallback: true },
+    routed: { route, label: pickLabel(runs, fallback), fallback: true },
   };
 }
 

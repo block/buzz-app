@@ -158,21 +158,26 @@ it("re-reads routes when a router says they changed", () => {
 
 it("puts routes first in a model list and hides others only when exclusive", () => {
   setModelRouters([router()]);
-  const models = { current: "opus", models: MODELS };
+  const unlisted = async () => undefined;
+  const models = { current: "opus", models: MODELS, unlisted };
   expect(withRoutes("claude-code", models).models.map(({ id }) => id)).toEqual([
     "route:auto-balanced",
     "route:auto-premium",
     "opus",
     "sonnet",
   ]);
+  expect(withRoutes("claude-code", models).unlisted).toBe(unlisted);
   expect(withRoutes("codex", models)).toBe(models);
   resetModelRoutesForTests();
   setModelRouters([router(undefined, { exclusive: true })]);
-  expect(withRoutes("claude-code", models).models.map(({ id }) => id)).toEqual([
+  const exclusive = withRoutes("claude-code", models);
+  expect(exclusive.models.map(({ id }) => id)).toEqual([
     "route:auto-balanced",
     "route:auto-premium",
     "opus",
   ]);
+  // Its other own models can't be picked, listed or not.
+  expect(exclusive.unlisted).toBeUndefined();
 });
 
 it("asks the saved route's router for an idle turn's model and effort", async () => {
@@ -359,6 +364,41 @@ it("falls back when the router fails, answers late or picks an unlisted model", 
   const late = routeTurn(turn());
   await vi.advanceTimersByTimeAsync(30_000);
   await expect(late).resolves.toEqual(fallback);
+});
+
+it("runs a choice or fallback the harness serves but its pickers leave out", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const hidden: Model = {
+    id: "haiku",
+    label: "Haiku",
+    efforts: [{ id: "high", label: "High" }],
+  };
+  const unlisted = async (model: string) =>
+    model === hidden.id ? hidden : undefined;
+  setModelRouters([router(async () => ({ model: "haiku", effort: "high" }))]);
+  await expect(routeTurn(turn({ unlisted }))).resolves.toEqual({
+    model: "haiku",
+    effort: "high",
+    routed: {
+      route: expect.objectContaining({ id: "auto-balanced" }),
+      label: "Haiku · High",
+    },
+  });
+  resetModelRoutesForTests();
+  setModelRouters([router(async () => undefined)]);
+  await expect(
+    routeTurn(
+      turn({ models: MODELS.slice(1), unlisted: async () => MODELS[0] }),
+    ),
+  ).resolves.toEqual({
+    model: "opus",
+    effort: "high",
+    routed: {
+      route: expect.objectContaining({ id: "auto-balanced" }),
+      label: "Opus · High",
+      fallback: true,
+    },
+  });
 });
 
 it("falls back to Automatic's recommendation without a pick", async () => {

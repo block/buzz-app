@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   SEARCH_KINDS,
   type SearchMessage,
-  searchMessage,
+  searchMessageFromEvent,
 } from "../../app/shell/useSearchMessages";
 import type { EventData } from "../relay/events";
 import { deletionApplies } from "../relay/fold";
@@ -15,6 +15,14 @@ export const DEVICE_ROWS = 20;
 
 /** Most messages the device index holds; past it, the oldest leave. */
 export const DEVICE_MESSAGES_CAP = 50_000;
+
+/** Most ⌘K rows kept built between keys; consecutive keys mostly find the
+ * same messages. */
+const RECENT_ROWS_CAP = 200;
+
+/** A message the device index holds: the session's own event, so its text
+ * isn't copied, and the channel it was indexed in. */
+type IndexedMessage = Readonly<{ event: EventData; channelId: string }>;
 
 /** Whether `channelId`'s messages belong in the device index: a channel you
  * belong to, not a huddle room or a preview of one you haven't joined. */
@@ -83,22 +91,26 @@ function docOf(session: RelaySession, message: SearchMessage): FinderDoc {
  * or another account or community.
  */
 export function startDeviceIndex(relay: RelayData, cap = DEVICE_MESSAGES_CAP) {
-  const corpus = createCorpus();
-  const messages = new Map<string, SearchMessage>();
-  /** The indexed events without their text, to judge later deletions. */
-  const signed = new Map<string, EventData>();
+  // ⌘K shows rows built from the event, so the corpus needn't keep the text.
+  const corpus = createCorpus({ keepDocText: false });
+  const indexed = new Map<string, IndexedMessage>();
+  /** ⌘K rows built for recent hits, least recently found first. Emptied on
+   * every change, so a row is never older than the index. */
+  const recentRows = new Map<string, SearchMessage>();
+  /** The session the index is attached to, which builds its rows. */
+  let attachedSession: RelaySession | undefined;
   /** Deletions seen, by the ID they name. */
   const tombstones = new Map<string, EventData[]>();
   const listeners = new Set<() => void>();
   let revision = 0;
   const changed = () => {
     revision++;
+    recentRows.clear();
     for (const listener of listeners) listener();
   };
   const clear = () => {
     corpus.clear();
-    messages.clear();
-    signed.clear();
+    indexed.clear();
     tombstones.clear();
     changed();
   };
@@ -130,29 +142,18 @@ export function startDeviceIndex(relay: RelayData, cap = DEVICE_MESSAGES_CAP) {
           const known = tombstones.get(id) ?? [];
           if (known.some((deletion) => deletion.id === event.id)) continue;
           tombstones.set(id, [...known, event]);
-          const target = signed.get(id);
+          const target = indexed.get(id)?.event;
           if (target && deleted(target)) gone.add(id);
         }
       }
-      for (const id of gone) {
-        messages.delete(id);
-        signed.delete(id);
-      }
+      for (const id of gone) indexed.delete(id);
       if (gone.size) corpus.remove((doc) => gone.has(doc.id));
       const added: FinderDoc[] = [];
       for (const event of events) {
-        if (messages.has(event.id) || deleted(event)) continue;
-        const message = searchMessage(session, event);
+        if (indexed.has(event.id) || deleted(event)) continue;
+        const message = searchMessageFromEvent(session, event);
         if (!message || !deviceSearchable(session, message.channelId)) continue;
-        messages.set(message.id, message);
-        signed.set(message.id, {
-          id: event.id,
-          kind: event.kind,
-          pubkey: event.pubkey,
-          created_at: event.created_at,
-          content: "",
-          tags: event.tags,
-        });
+        indexed.set(message.id, { event, channelId: message.channelId });
         authors.set(message.authorId, authorOf(session, message.authorId));
         places.set(message.channelId, placeOf(session, message.channelId));
         added.push(docOf(session, message));
@@ -160,17 +161,14 @@ export function startDeviceIndex(relay: RelayData, cap = DEVICE_MESSAGES_CAP) {
       if (added.length) corpus.add(added);
       // Past the cap, the oldest leave, down to 90% so a sort runs once per
       // tenth of the cap rather than on every message.
-      if (messages.size > cap) {
+      if (indexed.size > cap) {
         const oldest = new Set(
-          [...messages.values()]
-            .sort((a, b) => a.createdAt - b.createdAt)
-            .slice(0, messages.size - Math.floor(cap * 0.9))
-            .map((m) => m.id),
+          [...indexed.values()]
+            .sort((a, b) => a.event.created_at - b.event.created_at)
+            .slice(0, indexed.size - Math.floor(cap * 0.9))
+            .map(({ event }) => event.id),
         );
-        for (const id of oldest) {
-          messages.delete(id);
-          signed.delete(id);
-        }
+        for (const id of oldest) indexed.delete(id);
         corpus.remove((doc) => oldest.has(doc.id));
       }
       if (gone.size || added.length) changed();
@@ -179,18 +177,17 @@ export function startDeviceIndex(relay: RelayData, cap = DEVICE_MESSAGES_CAP) {
     // can be shown or opened.
     const evict = () => {
       if (session.channels.list().status !== "ready") return;
-      const channels = new Set([...messages.values()].map((m) => m.channelId));
+      const channels = new Set(
+        [...indexed.values()].map(({ channelId }) => channelId),
+      );
       const gone = new Set(
         [...channels].filter(
           (id) => !deviceSearchable(session, id) && lost(session, id),
         ),
       );
       if (!gone.size) return;
-      for (const [id, message] of messages)
-        if (gone.has(message.channelId)) {
-          messages.delete(id);
-          signed.delete(id);
-        }
+      for (const [id, { channelId }] of indexed)
+        if (gone.has(channelId)) indexed.delete(id);
       corpus.remove((doc) => gone.has(doc.channelId));
       changed();
     };
@@ -215,11 +212,12 @@ export function startDeviceIndex(relay: RelayData, cap = DEVICE_MESSAGES_CAP) {
         const channelIds = renamed(places, placeOf);
         if (!authorIds.size && !channelIds.size) return;
         corpus.add(
-          [...messages.values()]
-            .filter(
-              (m) => authorIds.has(m.authorId) || channelIds.has(m.channelId),
-            )
-            .map((m) => docOf(session, m)),
+          [...indexed.values()].flatMap(({ event, channelId }) => {
+            if (!authorIds.has(event.pubkey) && !channelIds.has(channelId))
+              return [];
+            const message = searchMessageFromEvent(session, event);
+            return message ? [docOf(session, message)] : [];
+          }),
         );
         changed();
       }, 1000);
@@ -237,15 +235,16 @@ export function startDeviceIndex(relay: RelayData, cap = DEVICE_MESSAGES_CAP) {
       const now = session.live.snapshot().status === "connected";
       if (connected && !now) {
         corpus.clear();
-        messages.clear();
-        signed.clear();
+        indexed.clear();
         observed();
         changed();
       }
       connected = now;
     });
+    attachedSession = session;
     observed();
     return () => {
+      attachedSession = undefined;
       clearTimeout(pending);
       stopLive();
       stopView();
@@ -281,12 +280,24 @@ export function startDeviceIndex(relay: RelayData, cap = DEVICE_MESSAGES_CAP) {
     revision: () => revision,
     /** The best device matches for `query`, in `channelId` when given. */
     search(query: string, limit: number, channelId?: string) {
-      return corpus
-        .search(query, limit, channelId)
-        .hits.flatMap(({ doc }) => messages.get(doc.id) ?? []);
+      return corpus.search(query, limit, channelId).hits.flatMap(({ doc }) => {
+        const message = indexed.get(doc.id);
+        const row =
+          recentRows.get(doc.id) ??
+          (message &&
+            attachedSession &&
+            searchMessageFromEvent(attachedSession, message.event));
+        if (!row) return [];
+        // Found again: it moves to the end, last to leave.
+        recentRows.delete(row.id);
+        recentRows.set(row.id, row);
+        if (recentRows.size > RECENT_ROWS_CAP)
+          recentRows.delete(recentRows.keys().next().value as string);
+        return [row];
+      });
     },
     /** Still indexed: not deleted, and its channel not lost. */
-    has: (id: string) => messages.has(id),
+    has: (id: string) => indexed.has(id),
     dispose() {
       stop();
       attached?.dispose();

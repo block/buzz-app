@@ -61,8 +61,10 @@ type Entry = {
 };
 
 /** The messages the finder searches, held in memory, and the search over
- * them. Typing more of the same query only rescans what could still match. */
-export function createCorpus() {
+ * them. Typing more of the same query only rescans what could still match.
+ * With `keepDocText: false` each doc's text is searched but not kept, and
+ * hits return docs with empty `text`, for a caller that shows its own copy. */
+export function createCorpus({ keepDocText = true } = {}) {
   const entries: Entry[] = [];
   const byId = new Map<string, number>();
   let version = 0;
@@ -85,7 +87,7 @@ export function createCorpus() {
     // text is compared as typed.
     const lower = lowered.length === haystack.length ? lowered : haystack;
     return {
-      doc,
+      doc: keepDocText ? doc : { ...doc, text: "" },
       haystack,
       lower,
       textAt: prefix.length,
@@ -236,7 +238,7 @@ export function createCorpus() {
             doc: entry.doc,
             score,
             positions: codePoints(
-              entry.doc.text,
+              entry.haystack.slice(entry.textAt),
               [
                 ...new Set(
                   positions

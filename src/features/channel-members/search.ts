@@ -2,7 +2,7 @@ import type { Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { foldProfiles } from "../relay/profiles";
 import { searchedProfiles } from "../relay/profile-search";
-import { matchPerson } from "../search/person-match";
+import { matchPerson, peopleSearch } from "../search/person-match";
 import { typedPublicKey } from "../../shared/identity/public-key";
 
 export const MEMBER_SEARCH_PAGE_SIZE = 30;
@@ -45,7 +45,8 @@ export async function searchMembers(
     more = events.length >= MEMBER_SEARCH_PAGE_SIZE;
   }
   // Rank the relay's page by the shared name rule.
-  const score = (name: string) => matchPerson(name, text)?.tier ?? 4;
+  const score = (name: string) =>
+    matchPerson(name, text, peopleSearch)?.tier ?? 5;
   return {
     people: [...profiles]
       .map(([pubkey, profile]) => ({ pubkey, ...profile }))

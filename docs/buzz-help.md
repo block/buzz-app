@@ -159,6 +159,8 @@ if that desktop app is up and running.
   (`dplyrlbk` finds "deploy rollback"), as you type, before the community's
   results arrive. Sorting a conversation's results by **Most recent** shows
   only the community's results, newest first.
+  People search ignores word order: `okafor in` finds "Ines Okafor". `@`
+  mentions still match from the start of a name.
 - **Finder.** With the Finder plugin on (it's off by default), ⌘P (Ctrl+P)
   finds a message in the channel you're in from any piece you remember, and
   ⌘⇧P (Ctrl+Shift+P) searches all of Buzz; a switch under the field changes

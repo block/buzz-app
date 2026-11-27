@@ -126,6 +126,16 @@ it("ranks a hidden agent name after shown names, as mentions do", () => {
   expect(order(people, "robin")).toEqual(["Robin Wu", "Helper Bot"]);
 });
 
+it("finds a name's words in any order, after shown names and before nothing", () => {
+  const people = [
+    person("agent", "Helper Bot", { agent: true, agentName: "Okafor Ines" }),
+    person("human", "Ines Okafor"),
+    person("other", "Ines Quinn"),
+  ];
+  // A shown name matches at tier 4; the same match on a hidden name ranks after it.
+  expect(order(people, "okafor in")).toEqual(["Ines Okafor", "Helper Bot"]);
+});
+
 it("keeps the given order for ties, as New message keeps the directory's", () => {
   const people = [
     person("z", "Zed Agent", { agent: true }),

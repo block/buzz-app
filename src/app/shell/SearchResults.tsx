@@ -128,7 +128,11 @@ import {
   searchDebounce,
   searchable,
 } from "../../shared/search-debounce";
-import { matchPerson, normalizeName } from "../../features/search/person-match";
+import {
+  matchPerson,
+  normalizeName,
+  peopleSearch,
+} from "../../features/search/person-match";
 import {
   personKey,
   rankPeople,
@@ -1082,7 +1086,7 @@ export function SearchResults({
       ].map((alias) =>
         alias === undefined
           ? Infinity
-          : (matchPerson(alias, authorNeedle)?.tier ?? Infinity),
+          : (matchPerson(alias, authorNeedle, peopleSearch)?.tier ?? Infinity),
       ),
     );
     return { pubkey, profile, label, verified, tier };
@@ -1090,7 +1094,7 @@ export function SearchResults({
   const authorChoices =
     authorToken && showAuthorPicker && authorAnswer
       ? rankedAuthors
-          .filter(({ tier }) => tier < 4)
+          .filter(({ tier }) => tier < 5)
           .filter(
             ({ pubkey }) =>
               !archiveHides(session.archives, pubkey, session.viewer) &&
@@ -1788,7 +1792,11 @@ export function SearchResults({
   }: (typeof rankedPeople)[number]): SearchDestination & {
     score: number;
   } => {
-    const matches = matchPerson(person.label, peopleNeedle)?.positions;
+    const matches = matchPerson(
+      person.label,
+      peopleNeedle,
+      peopleSearch,
+    )?.positions;
     const key = personKey(person.pubkey);
     const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
     const dm = liveDms.get(person.pubkey);

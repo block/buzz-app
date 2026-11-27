@@ -176,6 +176,20 @@ is not a letter, mark, or digit. A query that contains whitespace matches only
 at tiers 0 and 1. Nothing else matches. Text inside a word does not match:
 `oney` does not find `Honey`. This check is the `matching` fixture section.
 
+**People search** (not mentions) MAY also match a query of several words in
+any order, as tier 4 after tier 3: split the query on whitespace; every word
+but the last equals a different word of the name, and the last starts another
+one. So `okafor ines` and `okafor in` find `Ines Okafor`, but `in ok` does not
+(only the last word may be a prefix), and `ines ines`
+does not (each query word needs its own name word). This is the relay's
+NIP-50 word rule, so people the relay returns and people a client already
+knows match alike. It uses the same normalization and words as above, and
+applies only to a query that has whitespace; for those, tiers 0 and 1 still
+win. Mention choosers MUST NOT use tier 4: a mention keeps a multi-word query
+open only while it starts a known name (section 2), and `@mary j` still
+lists `Mary Jane` and not `Jay Mary Jane`. The `peopleSearch` fixtures pin
+tier 4; the `matching` fixtures stay the mention rule.
+
 A choice's **match** is the tier of its label. If the label does not match, the
 match is 4 plus the best tier among its aliases. A choice with no aliases never
 matches a non-empty name query. An exact public key (Terms) is not a name

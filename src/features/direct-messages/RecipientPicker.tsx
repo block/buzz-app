@@ -5,7 +5,7 @@ import { useAgentChoices } from "../agents/use-choices";
 import { agentUnavailable, canMessageAgent } from "../agents/choices";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
-import { exactName, matchPerson } from "../search/person-match";
+import { exactName, matchPerson, peopleSearch } from "../search/person-match";
 import {
   pickerText,
   readSearchUsage,
@@ -184,7 +184,8 @@ export function RecipientPicker({
         if (
           identity &&
           [identity.displayName, identity.username, identity.fullName].some(
-            (name) => !!name && matchPerson(name, query) !== undefined,
+            (name) =>
+              !!name && matchPerson(name, query, peopleSearch) !== undefined,
           )
         ) {
           pageNames.set(pubkey, identity);
@@ -211,7 +212,7 @@ export function RecipientPicker({
             !agent.name ||
             inDirectory.has(agent.pubkey) ||
             (agent.pubkey !== typedKey &&
-              matchPerson(agent.name, query) === undefined)
+              matchPerson(agent.name, query, peopleSearch) === undefined)
           )
             return [];
           // Show the profile already seen for this key, as browsing did.
@@ -254,7 +255,7 @@ export function RecipientPicker({
         key,
         rank: Math.min(
           ...namesOf(person).map(
-            (name) => matchPerson(name, needle)?.tier ?? 3,
+            (name) => matchPerson(name, needle, peopleSearch)?.tier ?? 5,
           ),
         ),
         band: relationships.rank(person.pubkey),
@@ -917,7 +918,9 @@ const RecipientOption = memo(function RecipientOption({
             <MatchedLabel
               label={person.name}
               positions={
-                query ? matchPerson(person.name, query)?.positions : undefined
+                query
+                  ? matchPerson(person.name, query, peopleSearch)?.positions
+                  : undefined
               }
             />
           </span>

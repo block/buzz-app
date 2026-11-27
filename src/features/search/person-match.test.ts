@@ -6,6 +6,7 @@ import {
   matchPerson,
   matchTier,
   normalizeName,
+  peopleSearch,
 } from "./person-match";
 
 describe("matchPerson", () => {
@@ -14,6 +15,12 @@ describe("matchPerson", () => {
     ["Honey Bee", "honey  b", undefined],
   ])("%s for %s is tier %s", (name, query, tier) => {
     expect(matchPerson(name, query)?.tier).toBe(tier);
+  });
+
+  it("underlines each word that matched in any order", () => {
+    expect(
+      matchPerson("Ines Okafor", "okafor in", peopleSearch)?.positions,
+    ).toEqual([0, 1, 5, 6, 7, 8, 9, 10]);
   });
 
   it("matches everything for an empty query", () => {

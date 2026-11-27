@@ -21,6 +21,13 @@ export type MentionConformance = {
     query: string;
     expected: 0 | 1 | 2 | 3 | null;
   }[];
+  /** People search only: matching with `peopleSearch` (tier 4 allowed). */
+  peopleSearch: {
+    name: string;
+    label: string;
+    query: string;
+    expected: 0 | 1 | 2 | 3 | 4 | null;
+  }[];
   ranking: {
     name: string;
     query: string;

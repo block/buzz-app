@@ -52,6 +52,7 @@ import {
 import {
   matchPerson,
   matchTier,
+  peopleSearch,
   normalizeName,
 } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
@@ -944,7 +945,7 @@ export function ChannelMembersDialog({
   // Fold the query once per render, not once per member name.
   const folded = [...normalizeName(query)];
   const nameMatches = (name: string | undefined) =>
-    !!name && matchTier(name, folded) !== undefined;
+    !!name && matchTier(name, folded, peopleSearch) !== undefined;
   // Npubs of this roster: every keystroke rescans each member, and a bounded
   // shared cache would miss on every lookup once the roster outgrows it.
   const npubs = useMemo(() => new Map<string, string>(), []);
@@ -1685,7 +1686,7 @@ export function ChannelMembersDialog({
     const missing = team.members.filter(
       (key) => teamNames.has(key) && !members.has(key),
     );
-    return text && missing.length && matchPerson(team.name, query)
+    return text && missing.length && matchPerson(team.name, query, peopleSearch)
       ? [{ team, missing }]
       : [];
   });

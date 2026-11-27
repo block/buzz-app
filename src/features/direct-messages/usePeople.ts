@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import type { Profile } from "../relay/contracts";
 import { peopleOrder } from "../profiles/people-order";
-import { matchPerson } from "../search/person-match";
+import { matchPerson, peopleSearch } from "../search/person-match";
 import { typedPublicKey } from "../../shared/identity/public-key";
 import {
   searchDebounce,
@@ -51,7 +51,8 @@ function matching(people: Recipient[], query: string) {
   const key = typedPublicKey(query);
   return people.filter(
     (person) =>
-      matchPerson(person.name, query) !== undefined || person.pubkey === key,
+      matchPerson(person.name, query, peopleSearch) !== undefined ||
+      person.pubkey === key,
   );
 }
 export function usePeople(session: RelaySession, query: string) {

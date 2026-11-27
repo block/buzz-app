@@ -381,6 +381,10 @@ function fixture(
   });
   const emit = (value: Wire) =>
     options?.onStdout?.(`${JSON.stringify(value)}\n`);
+  const emitBatch = (values: Wire[]) =>
+    options?.onStdout?.(
+      values.map((value) => `${JSON.stringify(value)}\n`).join(""),
+    );
   const publish = vi.fn(async (event: unknown) => ({
     ...(event as object),
     id: "d".repeat(64),
@@ -767,6 +771,7 @@ function fixture(
     delayedInterruptCompletions,
     held,
     emit,
+    emitBatch,
     publish,
     read,
     storage,
@@ -14268,12 +14273,74 @@ it("reports identified items from the exact native turn without replay freshness
     item("two");
     expect(row("second")?.lastAction).toBeUndefined();
     item("three");
-    expect(row("second")?.lastAction).toEqual({
-      turnId: expect.any(String),
+    expect(row("second")?.lastAction).toBeUndefined();
+    expect(row("first")?.lastAction).toBe(action);
+    await f.complete(0, "");
+    await send("third");
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    item("next-turn", "turn-2");
+    expect(row("third")?.lastAction).toMatchObject({
       sequence: 1,
       occurredAt: 4_661_000,
     });
-    expect(row("first")?.lastAction).toBe(action);
+    await f.complete(1, "");
+  } finally {
+    now.mockRestore();
+    await f.runtime.dispose();
+  }
+});
+
+it("keeps the first observation of an item batched with the native start reply", async () => {
+  const f = fixture();
+  const local = createLocalAgentActivity();
+  const work = local.begin({
+    scope: "s",
+    agent: pubkey,
+    channelId: "channel",
+    messageId: "first",
+  });
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const write = f.process.write;
+  f.process.write = async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "turn/start") return write(data);
+    f.sent.push(wire);
+    // Real stdout reads dispatch every JSONL frame before promise continuations.
+    const { threadId } = wire.params as { threadId: string };
+    const item = (turnId: string): Wire => ({
+      method: "item/started",
+      params: {
+        threadId,
+        turnId,
+        item: {
+          id: "first-item",
+          type: "commandExecution",
+          command: "sleep 60",
+        },
+      },
+    });
+    f.emitBatch([
+      { id: wire.id, result: { turn: { id: "turn-1" } } },
+      item("foreign-turn"),
+      item("turn-1"),
+      item("turn-1"),
+    ]);
+    now.mockReturnValue(1_001_000);
+  };
+  try {
+    await f.runtime.run({
+      ...f.delivery("first"),
+      step: work.step,
+      action: work.action,
+      acknowledged: work.started,
+    });
+    await vi.waitFor(() =>
+      expect(local.reader.work()[0]?.lastAction).toEqual({
+        turnId: expect.any(String),
+        sequence: 1,
+        occurredAt: 1_000_000,
+      }),
+    );
     await f.complete(0, "");
   } finally {
     now.mockRestore();

@@ -200,7 +200,9 @@ it("carries a verified mention through host handover into all three scopes witho
     const occurredAt = Date.now();
     const now = vi.spyOn(Date, "now").mockReturnValue(occurredAt);
     try {
-      second.action("native-call");
+      // The producer buffered it while its native start was being confirmed.
+      now.mockReturnValue(occurredAt + 1_000);
+      second.action("native-call", occurredAt);
       const action = snapshot().local?.find(
         (row) => row.messageId === followup.id,
       )?.lastAction;

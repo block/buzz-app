@@ -67,6 +67,8 @@ not just its agent. The field is optional and is retained after completion.
 This is local evidence, not a heartbeat or a promise of ongoing progress. Replays,
 typing, human input and snapshot reads do not refresh it. Unidentified stream
 chunks and activity ambiguous between several thread scopes have no action time.
+After uncorrelated steering, action evidence is omitted until the next native turn;
+acknowledging queued input does not establish which request produced an action.
 Use the work row's separate state for queued, running and terminal outcomes.
 
 ## Services

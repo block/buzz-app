@@ -327,8 +327,7 @@ export class AcpSession {
         : undefined;
     if (actionId && !this.actions.has(actionId)) {
       this.actions.add(actionId);
-      // A shared session cannot attribute one action to several threads.
-      if (this.active.size === 1 && this.prompting && !this.stopped)
+      if (this.prompting && !this.stopped)
         this.actionReceipt?.action?.(actionId);
     }
     const step = stepLabel(update);
@@ -387,6 +386,9 @@ export class AcpSession {
       if (runId && steering) {
         try {
           activity.accepted?.();
+          // A steer reply acknowledges queueing, not model consumption. Until
+          // the next native prompt, either request may own a fresh action.
+          this.actionReceipt = undefined;
           await steering.steer(this.acp, this.id, runId, said);
           if (live()) {
             activity.delivered?.();
@@ -596,7 +598,6 @@ export class AcpSession {
   ) {
     if (this.waiters.includes(waiter)) this.owner = waiter;
     // Watches and timers have no message activity: they must not hide a mention.
-    if (!queued) this.actionReceipt = activity;
     if (!activity.step) return;
     const scope = activity.activityScope ?? "conversation";
     const prior = this.active.get(scope);

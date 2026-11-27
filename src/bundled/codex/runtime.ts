@@ -223,7 +223,7 @@ type Request = {
   /** A failed final delivery stays pending until this request gets a reply. */
   finalDelivery?: Error | true;
   step?: (tool: string, target?: string, origin?: "buzz") => void;
-  action?: (eventId: string) => void;
+  action?: Delivery["action"];
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -293,6 +293,8 @@ type Active = {
   requests: Request[];
   /** Latest acknowledged mention per Buzz thread; independent of session scope. */
   activity: Map<string, Request>;
+  /** Steered input may not have been consumed by the running inference yet. */
+  actionAmbiguous?: boolean;
   /** The first delivery's gateway route revision, channel and thread: a
    * request steers in only with the same ones, and then runs under the
    * turn's frozen headers. */
@@ -2817,6 +2819,9 @@ export class CodexRuntime {
                     request.solo ? request.canvas : NO_PROJECT,
                   ).section
                 : undefined;
+              // Queue acknowledgement cannot identify which input produced
+              // subsequent items. Resume action evidence at the next turn.
+              active.actionAmbiguous = true;
               const steered = active.rpc.request("turn/steer", {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
@@ -4365,6 +4370,18 @@ export class CodexRuntime {
     // A community wake can report its deadline before Codex has stopped.
     const waitForNative = request.unaddressed !== undefined;
     const actions = new Set<string>();
+    const earlyActions: { id: string; turnId: string; observedAt: number }[] =
+      [];
+    let actionReady = false;
+    const reportAction = (event: (typeof earlyActions)[number]) => {
+      if (
+        event.turnId === active.turnId &&
+        !active.actionAmbiguous &&
+        !active.stopped &&
+        !signal.aborted
+      )
+        request.action?.(event.id, event.observedAt);
+    };
     const followed = follow(
       server.rpc,
       waitForNative ? undefined : signal,
@@ -4376,11 +4393,14 @@ export class CodexRuntime {
           step &&
           turnId &&
           typeof item.id === "string" &&
-          !actions.has(item.id)
+          !actions.has(JSON.stringify([turnId, item.id]))
         ) {
-          actions.add(item.id);
-          if (active.activity.size === 1)
-            active.activity.values().next().value?.action?.(item.id);
+          actions.add(JSON.stringify([turnId, item.id]));
+          const event = { id: item.id, turnId, observedAt: Date.now() };
+          // A stdout chunk can include items before the start reply's promise
+          // continuation installs the receipt. Confirm its turn before crediting it.
+          if (!actionReady) earlyActions.push(event);
+          else reportAction(event);
         }
         if (step)
           for (const taken of active.activity.values())
@@ -4647,6 +4667,9 @@ export class CodexRuntime {
             },
           ]);
         this.acknowledgeActivity(active, request);
+        actionReady = true;
+        for (const event of earlyActions) reportAction(event);
+        earlyActions.length = 0;
         // A conversation new to this agent: name its Solo chat meanwhile.
         if (request.named && !saved && !server.protection)
           void this.offerTitle(

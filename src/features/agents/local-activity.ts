@@ -484,7 +484,7 @@ export function createLocalAgentActivity() {
           publish();
         },
         started: () => update("working"),
-        action: (eventId: string) => {
+        action: (eventId: string, observedAt = Date.now()) => {
           const current = entries.get(id);
           if (current?.state !== "working" || !eventId || actions.has(eventId))
             return;
@@ -497,7 +497,7 @@ export function createLocalAgentActivity() {
                 turnId: lifecycleId,
                 sequence: (current.lastAction?.sequence ?? 0) + 1,
                 occurredAt: Math.max(
-                  Date.now(),
+                  observedAt,
                   current.lastAction?.occurredAt ?? 0,
                 ),
               }),

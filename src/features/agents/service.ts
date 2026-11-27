@@ -1033,8 +1033,9 @@ export type Delivery<Config = unknown> = Readonly<{
   /** `origin` is "buzz" only for a call the harness knows is a Buzz tool. */
   step?(tool: string, target?: string, origin?: StepOrigin): void;
   /** An identified real harness action on this request, not a replay or heartbeat.
-   * Keep the same opaque ID on replay; do not include arguments or results. */
-  action?(eventId: string): void;
+   * Keep the same opaque ID on replay; do not include arguments or results.
+   * A buffered action may retain its host-observed time, never a provider time. */
+  action?(eventId: string, observedAt?: number): void;
   /** The plugin declined this request; no work or successful outcome is implied.
    * A `refusal` shows its owner, on this device, why the agent didn't act. */
   ignored?(refusal?: MentionRefusal): void;

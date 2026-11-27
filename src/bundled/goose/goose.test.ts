@@ -2019,7 +2019,7 @@ it("exposes identified ACP actions without refreshing queued work, replays or si
     { scope: "s", source: local.reader },
   );
   const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
-  const request = (messageId: string) => {
+  const request = (messageId: string, activityScope = messageId) => {
     const work = local.begin({
       scope: "s",
       agent: "a",
@@ -2031,6 +2031,7 @@ it("exposes identified ACP actions without refreshing queued work, replays or si
     const done = session.send(
       messageId,
       {
+        activityScope,
         step: work.step,
         action: work.action,
         acknowledged: work.started,
@@ -2127,6 +2128,23 @@ it("exposes identified ACP actions without refreshing queued work, replays or si
     await flush();
     expect(row("second")?.state).toBe("done");
     expect(row("second")?.lastAction).toBe(settled);
+
+    const third = request("third");
+    await flush();
+    call("call-4");
+    await flush();
+    const beforeSteer = row("third")?.lastAction;
+    expect(beforeSteer?.sequence).toBe(1);
+    const fourth = request("fourth", "third");
+    await flush();
+    expect(process.turns[2]?.steered).toEqual(["fourth"]);
+    // Queue acknowledgement is not proof the in-flight response consumed it.
+    call("before-consumption");
+    await flush();
+    expect(row("third")?.lastAction).toBe(beforeSteer);
+    expect(row("fourth")?.lastAction).toBeUndefined();
+    process.turns[2]?.finish();
+    await Promise.all([third.done, fourth.done]);
   } finally {
     now.mockRestore();
     activity.dispose();

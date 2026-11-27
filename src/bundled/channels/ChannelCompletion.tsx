@@ -54,9 +54,9 @@ function open(channel: ChannelSummary) {
 }
 
 /** The channel name rule the other channel pickers use (`matchName`), without
- * its last, scattered-letter rank: Enter and Tab pick the first row while the
- * viewer is writing prose, so letters merely in order must not capture a
- * `#word`. Letter runs that each begin a word (`team-pl`, `tlp`) still
+ * its last rank (typed words in any order): Enter and Tab pick the first row
+ * while the viewer is writing prose, so loosely related words must not
+ * capture a `#word`. Letter runs that each begin a word (`team-pl`, `tlp`) still
  * match, as in Command-K. A query with a space matches only from the start
  * of a name, as person names do, so ordinary prose after `#name` closes the
  * popup. */

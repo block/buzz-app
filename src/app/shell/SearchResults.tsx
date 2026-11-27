@@ -1356,7 +1356,19 @@ export function SearchResults({
       agent ? agent.score + 0.5 : -Infinity,
     );
   };
-  const rankedPeople = rankPeople(people, peopleNeedle, usage, picked);
+  // A DM chosen before for this text is now reached through its person's
+  // row, which keeps the choice. An agent's DM keeps its own row and choice.
+  const pickedDm = channels.find(
+    (channel) =>
+      `channel:${channel.id}` === picked &&
+      channel.channelType === "dm" &&
+      channel.participants?.length === 1 &&
+      !dmAgent(channel),
+  );
+  const pickedPerson = pickedDm?.participants?.[0]
+    ? personKey(pickedDm.participants[0])
+    : picked;
+  const rankedPeople = rankPeople(people, peopleNeedle, usage, pickedPerson);
   // Each person's live one-to-one DM, the one their row opens.
   const liveDms = new Map<string, ChannelSummary>();
   for (const channel of list.channels) {
@@ -1688,7 +1700,11 @@ export function SearchResults({
       },
       score,
       ...(!newSession && unreadBadge(dm)),
-      peek: { kind: "person", pubkey: person.pubkey },
+      // A row that opens your DM previews that conversation.
+      peek:
+        dm && !newSession
+          ? { kind: "channel", channelId: dm.id, about: dm.description }
+          : { kind: "person", pubkey: person.pubkey },
       run: choose(key, () =>
         newSession
           ? openAgentSession(person.pubkey)
@@ -2308,7 +2324,8 @@ export function SearchResults({
       const top = group.destinations[0];
       const label = bestLabel ?? top?.label;
       const tier = label !== undefined ? rankName(label) : undefined;
-      const remembered = !!top && top.key === picked;
+      const remembered =
+        !!top && (top.key === picked || top.key === pickedPerson);
       const why = named
         ? "Exact name"
         : lead

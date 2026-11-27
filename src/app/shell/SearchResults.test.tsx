@@ -8830,10 +8830,11 @@ it("lists people and your DMs with them as one People list, closest and most rec
     robin = keypair(),
     jordan = keypair(),
     busam = keypair();
-  // The group DM is named after its members' profiles.
+  // A DM is named after its members' profiles.
   const profiles = [
     profile(busam, { name: "Busam Kay" }),
     profile(robin, { name: "Robin Jordan" }),
+    profile(older, { name: "Sam Older" }),
   ];
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
@@ -8891,7 +8892,11 @@ it("lists people and your DMs with them as one People list, closest and most rec
       .getAllByRole("option")
       .map((row) => row.textContent);
   try {
-    await owner.session.profiles.ensure([busam.pubkey, robin.pubkey]);
+    await owner.session.profiles.ensure([
+      busam.pubkey,
+      robin.pubkey,
+      older.pubkey,
+    ]);
     const mounted = render(<SearchResults {...props} query="sam" />);
     // People you DM come first; equal matches put the newer conversation
     // first, whatever the directory's order. A DM found only inside a word
@@ -8899,7 +8904,7 @@ it("lists people and your DMs with them as one People list, closest and most rec
     await waitFor(() =>
       expect(rows()).toEqual([
         expect.stringMatching(/Sam Newer.*Last message 2 hours ago$/),
-        expect.stringMatching(/Sam Older.*@samo · Last message 3 days ago$/),
+        expect.stringMatching(/Sam Older.*Last message 3 days ago$/),
         expect.stringMatching(/Sam Other.*Start a direct message$/),
         expect.stringMatching(/Busam Kay, Robin Jordan/),
       ]),
@@ -8921,7 +8926,23 @@ it("lists people and your DMs with them as one People list, closest and most rec
         /Name starts with it/,
       ),
     ).toBeInTheDocument();
+    // A DM chosen before for the text still leads, through its person's row.
+    mounted.unmount();
+    localStorage.clear();
+    recordChoice(
+      "people-picks",
+      "sam",
+      `channel:dm-${older.pubkey.slice(0, 8)}`,
+    );
+    render(<SearchResults {...props} usageScope="people-picks" query="sam" />);
+    await waitFor(() => expect(rows()[0]).toMatch(/Sam Older/));
+    expect(
+      within(screen.getByRole("group", { name: "People" })).getByText(
+        /You picked this before/,
+      ),
+    ).toBeInTheDocument();
   } finally {
+    localStorage.clear();
     cleanup();
     owner.dispose();
   }

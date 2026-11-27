@@ -436,3 +436,63 @@ it("keeps mismatch, hidden and unsafe-scheme guards for CJK and intra-word links
     ),
   ).toBe("foobad[good](https://safe.example/)baz");
 });
+
+it("keeps full bare URLs and bare host paths intact when HTML links only the host", () => {
+  expect(
+    externalLinkMarkdown(
+      '<a href="https://example.com/docs">example.com</a>',
+      "https://example.com/docs",
+    ),
+  ).toBeUndefined();
+  expect(
+    externalLinkMarkdown(
+      'Check <a href="https://example.com/docs">example.com</a> and <a href="https://example.com/guide">guide</a>',
+      "Check https://example.com/docs and guide",
+    ),
+  ).toBe(
+    "Check https://example.com/docs and [guide](https://example.com/guide)",
+  );
+  expect(
+    externalLinkMarkdown(
+      'Check <a href="https://example.com/docs">example.com</a> and <a href="https://example.com/guide">guide</a>',
+      "Check example.com/docs and guide",
+    ),
+  ).toBe("Check example.com/docs and [guide](https://example.com/guide)");
+  expect(
+    externalLinkMarkdown(
+      'Check <a href="https://example.com/docs">example.com</a>',
+      "Check example.com",
+    ),
+  ).toBe("Check [example.com](https://example.com/docs)");
+});
+
+it("skips external links whose labels align ambiguously across extra UI text", () => {
+  // Extra linked UI chrome before matching prose with the same label.
+  expect(
+    externalLinkMarkdown(
+      '<p>Run tests:</p><div><a href="https://ui.example/edit">Edit</a> <span>View</span></div><p>Edit the file and save</p>',
+      "Run tests:\nEdit the file and save",
+    ),
+  ).toBeUndefined();
+  // Extra linked UI text whose adjacent token also matches a prefix of the prose.
+  expect(
+    externalLinkMarkdown(
+      '<div><a href="https://ui.example/guide">guide</a> and</div><p>guide and notes</p>',
+      "guide and notes",
+    ),
+  ).toBeUndefined();
+  // Ambiguous middle gap leaves the repeated label unlinked while keeping unambiguous links.
+  expect(
+    externalLinkMarkdown(
+      'Read: <span>UI</span> <a href="https://ui.example/guide">guide</a> <span>bar</span> guide and <a href="https://example.com/notes">notes</a> details',
+      "Read: guide and notes details",
+    ),
+  ).toBe("Read: guide and [notes](https://example.com/notes) details");
+  // Ambiguous duplicate on the plain side leaves both occurrences unlinked.
+  expect(
+    externalLinkMarkdown(
+      'Read: <a href="https://example.com/guide">guide</a> and save',
+      "Read: extra guide foo guide bar and save",
+    ),
+  ).toBeUndefined();
+});

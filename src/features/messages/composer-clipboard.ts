@@ -489,9 +489,11 @@ function alignTokens(
 function markdownRanges(plain: string): {
   blocked: TextRange[];
   inlineCodes: TextRange[];
+  bareHosts: TextRange[];
 } {
   const blocked: TextRange[] = [];
   const inlineCodes: TextRange[] = [];
+  const bareHosts: TextRange[] = [];
   const { tree } = scanMarkdown(plain);
   const pending = [tree];
   while (pending.length) {
@@ -518,7 +520,22 @@ function markdownRanges(plain: string): {
     }
     for (const child of node.children ?? []) pending.push(child);
   }
-  return { blocked, inlineCodes };
+  messageLinkParts(plain, undefined, (start, end) => {
+    if (!overlaps(blocked, start, end) && !overlaps(inlineCodes, start, end))
+      blocked.push({ start, end });
+  });
+  let offset = 0;
+  for (const part of bareHostParts(plain)) {
+    const end = offset + part.text.length;
+    if (
+      part.url &&
+      !overlaps(blocked, offset, end) &&
+      !overlaps(inlineCodes, offset, end)
+    )
+      bareHosts.push({ start: offset, end });
+    offset = end;
+  }
+  return { blocked, inlineCodes, bareHosts };
 }
 
 function overlaps(
@@ -527,6 +544,57 @@ function overlaps(
   end: number,
 ): boolean {
   return ranges.some((range) => start < range.end && end > range.start);
+}
+
+function containsTokenValues(
+  haystack: readonly TextToken[],
+  start: number,
+  end: number,
+  needle: readonly TextToken[],
+  needleStart: number,
+  needleEnd: number,
+): boolean {
+  const len = needleEnd - needleStart;
+  if (len <= 0 || end - start < len) return false;
+  const first = needle[needleStart]?.value;
+  for (let i = start; i <= end - len; i++) {
+    if (haystack[i]?.value !== first) continue;
+    let match = true;
+    for (let k = 1; k < len; k++) {
+      if (haystack[i + k]?.value !== needle[needleStart + k]?.value) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return true;
+  }
+  return false;
+}
+
+function hasUnmatchedTokenSequence(
+  tokens: readonly TextToken[],
+  matchedMap: Int32Array,
+  needle: readonly TextToken[],
+  needleStart: number,
+  needleEnd: number,
+): boolean {
+  const len = needleEnd - needleStart;
+  if (len <= 0 || tokens.length < len) return false;
+  const first = needle[needleStart]?.value;
+  for (let i = 0; i <= tokens.length - len; i++) {
+    if (tokens[i]?.value !== first) continue;
+    let match = true;
+    let hasUnmatched = false;
+    for (let k = 0; k < len; k++) {
+      if (tokens[i + k]?.value !== needle[needleStart + k]?.value) {
+        match = false;
+        break;
+      }
+      if ((matchedMap[i + k] ?? -1) < 0) hasUnmatched = true;
+    }
+    if (match && hasUnmatched) return true;
+  }
+  return false;
 }
 
 function isEntireInlineCodeContent(
@@ -767,10 +835,12 @@ export function externalLinkMarkdown(
     return;
   }
   const htmlToPlain = new Int32Array(htmlTokens.length).fill(-1);
+  const plainToHtml = new Int32Array(plainTokens.length).fill(-1);
   const matchedPlainFullyLinked = new Set<number>();
   let matchedNonLinkWords = 0;
   for (const [hi, pi] of matches) {
     htmlToPlain[hi] = pi;
+    plainToHtml[pi] = hi;
     const token = htmlTokens[hi];
     if (!token) continue;
     if (token.fullyLinked) {
@@ -791,7 +861,7 @@ export function externalLinkMarkdown(
     matchedNonLinkWords === 0
   )
     return;
-  const { blocked, inlineCodes } = markdownRanges(plain);
+  const { blocked, inlineCodes, bareHosts } = markdownRanges(plain);
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   let tokenCursor = 0;
   for (const link of links) {
@@ -818,10 +888,125 @@ export function externalLinkMarkdown(
       }
     }
     if (!contiguous) continue;
+    const lastPlainIndex = firstPlainIndex + (lastHi - firstHi);
+    let runStartH = firstHi;
+    while (
+      runStartH > 0 &&
+      htmlToPlain[runStartH - 1] ===
+        firstPlainIndex - (firstHi - (runStartH - 1))
+    )
+      runStartH--;
+    let runEndH = lastHi;
+    while (
+      runEndH + 1 < htmlTokens.length &&
+      htmlToPlain[runEndH + 1] === lastPlainIndex + (runEndH + 1 - lastHi)
+    )
+      runEndH++;
+    const runStartP = firstPlainIndex - (firstHi - runStartH);
+    const runEndP = lastPlainIndex + (runEndH - lastHi);
+    let prevMatchedH = runStartH - 1;
+    while (prevMatchedH >= 0 && (htmlToPlain[prevMatchedH] ?? -1) < 0)
+      prevMatchedH--;
+    const prevMatchedP =
+      prevMatchedH >= 0 ? (htmlToPlain[prevMatchedH] ?? -1) : -1;
+    let nextMatchedH = runEndH + 1;
+    while (
+      nextMatchedH < htmlTokens.length &&
+      (htmlToPlain[nextMatchedH] ?? -1) < 0
+    )
+      nextMatchedH++;
+    const nextMatchedP =
+      nextMatchedH < htmlTokens.length
+        ? (htmlToPlain[nextMatchedH] ?? plainTokens.length)
+        : plainTokens.length;
+    const ambiguous =
+      (firstHi === runStartH &&
+        (containsTokenValues(
+          htmlTokens,
+          prevMatchedH + 1,
+          runStartH,
+          htmlTokens,
+          firstHi,
+          lastHi + 1,
+        ) ||
+          containsTokenValues(
+            plainTokens,
+            prevMatchedP + 1,
+            runStartP,
+            htmlTokens,
+            firstHi,
+            lastHi + 1,
+          ))) ||
+      (lastHi === runEndH &&
+        (containsTokenValues(
+          htmlTokens,
+          runEndH + 1,
+          nextMatchedH,
+          htmlTokens,
+          firstHi,
+          lastHi + 1,
+        ) ||
+          containsTokenValues(
+            plainTokens,
+            runEndP + 1,
+            nextMatchedP,
+            htmlTokens,
+            firstHi,
+            lastHi + 1,
+          ))) ||
+      containsTokenValues(
+        htmlTokens,
+        prevMatchedH + 1,
+        runStartH,
+        htmlTokens,
+        runStartH,
+        runEndH + 1,
+      ) ||
+      containsTokenValues(
+        htmlTokens,
+        runEndH + 1,
+        nextMatchedH,
+        htmlTokens,
+        runStartH,
+        runEndH + 1,
+      ) ||
+      containsTokenValues(
+        plainTokens,
+        prevMatchedP + 1,
+        runStartP,
+        htmlTokens,
+        runStartH,
+        runEndH + 1,
+      ) ||
+      containsTokenValues(
+        plainTokens,
+        runEndP + 1,
+        nextMatchedP,
+        htmlTokens,
+        runStartH,
+        runEndH + 1,
+      ) ||
+      (firstHi === runStartH &&
+        lastHi === runEndH &&
+        (hasUnmatchedTokenSequence(
+          htmlTokens,
+          htmlToPlain,
+          htmlTokens,
+          firstHi,
+          lastHi + 1,
+        ) ||
+          hasUnmatchedTokenSequence(
+            plainTokens,
+            plainToHtml,
+            htmlTokens,
+            firstHi,
+            lastHi + 1,
+          )));
+    if (ambiguous) continue;
     const firstHtml = htmlTokens[firstHi];
     const lastHtml = htmlTokens[lastHi];
     const firstPlain = plainTokens[firstPlainIndex];
-    const lastPlain = plainTokens[firstPlainIndex + (lastHi - firstHi)];
+    const lastPlain = plainTokens[lastPlainIndex];
     if (!firstHtml || !lastHtml || !firstPlain || !lastPlain) continue;
     const startOffset = Math.max(0, link.start - firstHtml.start);
     const endOffset = Math.min(
@@ -832,6 +1017,15 @@ export function externalLinkMarkdown(
     let end = lastPlain.start + endOffset;
     if (start >= end) continue;
     if (overlaps(blocked, start, end)) continue;
+    if (
+      bareHosts.some(
+        (range) =>
+          start < range.end &&
+          end > range.start &&
+          !(start === range.start && end === range.end),
+      )
+    )
+      continue;
     let rawCode = false;
     const codeSpan = inlineCodes.find(
       (range) => start < range.end && end > range.start,

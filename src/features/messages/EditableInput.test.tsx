@@ -4673,8 +4673,10 @@ it("keeps external linked text literal in code blocks and enforces the paste lim
   paste(h.input, "guide", html);
   expect(h.markdown()).toBe("```\nguide\n```");
   const limited = mount("", { maxLength: 10 });
-  paste(limited.input, "guide", html);
+  paste(limited.input, "", html);
   expect(limited.markdown()).toBe("");
+  paste(limited.input, "guide", html);
+  expect(limited.markdown()).toBe("guide");
 });
 
 it.each(["ul", "ol", "blockquote", "pre", "h1"])(
@@ -4956,6 +4958,17 @@ it("preserves CJK and intra-word external links pasted into the composer", () =>
   ]);
 });
 
+it("keeps a full bare URL intact when pasting over selected text with a host-labeled anchor", () => {
+  const h = mount("Read docs here", { links: true });
+  act(() => h.input.setSelectionRange(5, 9));
+  paste(
+    h.input,
+    "https://example.com/docs",
+    '<a href="https://example.com/docs">example.com</a>',
+  );
+  expect(h.markdown()).toBe("Read [docs](https://example.com/docs) here");
+});
+
 it.each([
   "https://e.com/?q=\\",
   "https://e.com/?q=a\\*b",
@@ -5131,19 +5144,36 @@ describe("oversized paste feedback", () => {
     expect(h.markdown()).toBe("keep");
   });
 
-  it("uses serialized length for copied blocks and external links", () => {
+  it("uses serialized length for copied blocks and falls back to plain when only recovered links exceed maxLength", () => {
     const onPasteTooLong = vi.fn();
-    const h = mount("", { maxLength: 10, onPasteTooLong });
+    const h = mount("", { maxLength: 20, onPasteTooLong });
     paste(
       h.input,
       "abcdefg",
-      copyHtml("<blockquote><p>abcdefghi</p></blockquote>"),
+      copyHtml("<blockquote><p>abcdefghijklmnopqrs</p></blockquote>"),
     );
     expect(h.markdown()).toBe("");
     expect(onPasteTooLong).toHaveBeenCalledOnce();
-    paste(h.input, "Docs", '<a href="https://example.com/docs">Docs</a>');
+    // HTML-only external link with no plain fallback still reports over-limit.
+    paste(h.input, "", '<a href="https://example.com/docs">Docs</a>');
     expect(h.markdown()).toBe("");
     expect(onPasteTooLong).toHaveBeenCalledTimes(2);
+    // Plain text that exceeds maxLength on its own still rejects and reports.
+    paste(
+      h.input,
+      "123456789012345678901",
+      '<a href="https://example.com/docs">123456789012345678901</a>',
+    );
+    expect(h.markdown()).toBe("");
+    expect(onPasteTooLong).toHaveBeenCalledTimes(3);
+    // When only recovered external links push past maxLength, fall back to plain.
+    paste(
+      h.input,
+      "[2:43 PM] See Docs",
+      '<a href="https://example.slack.com/p1">2:43 PM</a> See <a href="https://example.com/docs">Docs</a>',
+    );
+    expect(h.markdown()).toBe("[2:43 PM] See Docs");
+    expect(onPasteTooLong).toHaveBeenCalledTimes(3);
   });
 });
 

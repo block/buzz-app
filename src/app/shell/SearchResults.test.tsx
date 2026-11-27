@@ -692,7 +692,7 @@ it("leads with DMs, then mentions of you, then threads, then the rest, showing a
     within(screen.getByRole("group", { name: group })).getAllByRole("option");
   try {
     await owner.session.sidebarPreferences.refresh();
-    render(
+    const mounted = render(
       <SearchResults
         session={owner.session}
         query=""
@@ -739,6 +739,23 @@ it("leads with DMs, then mentions of you, then threads, then the rest, showing a
     // Muted without a mention stays quiet.
     expect(rows.some((row) => row.startsWith("quiet "))).toBe(false);
     expect(rows.filter((row) => row.startsWith("quiet"))).toHaveLength(1);
+    // Searched for, the person's row shows the same unread message.
+    mounted.rerender(
+      <SearchResults
+        session={owner.session}
+        query="larry"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openNewMessage={() => {}}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(rowsOf("People").map((row) => row.textContent)).toEqual([
+        expect.stringMatching(/Larry.*hey there.*Unread$/),
+      ]),
+    );
   } finally {
     cleanup();
     owner.dispose();
@@ -8804,6 +8821,112 @@ it("opens an existing DM from a person row, and a draft to someone without one",
   }
 });
 
+it("lists people and your DMs with them as one People list, closest and most recent first", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    older = keypair(),
+    newer = keypair(),
+    other = keypair(),
+    robin = keypair(),
+    jordan = keypair(),
+    busam = keypair();
+  // The group DM is named after its members' profiles.
+  const profiles = [
+    profile(busam, { name: "Busam Kay" }),
+    profile(robin, { name: "Robin Jordan" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return profiles.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const t = peopleSession(owner.session, [
+    { pubkey: other.pubkey, name: "Sam Other" },
+    { pubkey: older.pubkey, name: "Sam Older", username: "samo" },
+    { pubkey: newer.pubkey, name: "Sam Newer" },
+    { pubkey: jordan.pubkey, name: "Jordan Other" },
+    { pubkey: robin.pubkey, name: "Robin Jordan" },
+    { pubkey: busam.pubkey, name: "Busam Kay" },
+  ]);
+  const now = Math.floor(Date.now() / 1000);
+  const dm = (pubkey: string, lastActivityAt: number) => ({
+    id: `dm-${pubkey.slice(0, 8)}`,
+    name: "",
+    channelType: "dm" as const,
+    participants: [pubkey],
+    lastActivityAt,
+  });
+  const base = t.session.channels.list();
+  const list = {
+    ...base,
+    channels: [
+      ...base.channels,
+      dm(older.pubkey, now - 3 * 86400),
+      dm(newer.pubkey, now - 2 * 3600),
+      dm(robin.pubkey, now - 600),
+      {
+        ...dm(busam.pubkey, now),
+        id: "group",
+        participants: [busam.pubkey, robin.pubkey],
+      },
+    ],
+  };
+  const session = {
+    ...t.session,
+    channels: { ...t.session.channels, list: () => list },
+  } as typeof t.session;
+  const props = {
+    session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openNewMessage: () => {},
+    openConversation: () => {},
+  };
+  const rows = () =>
+    within(screen.getByRole("group", { name: "People" }))
+      .getAllByRole("option")
+      .map((row) => row.textContent);
+  try {
+    await owner.session.profiles.ensure([busam.pubkey, robin.pubkey]);
+    const mounted = render(<SearchResults {...props} query="sam" />);
+    // People you DM come first; equal matches put the newer conversation
+    // first, whatever the directory's order. A DM found only inside a word
+    // follows every person, however recent.
+    await waitFor(() =>
+      expect(rows()).toEqual([
+        expect.stringMatching(/Sam Newer.*Last message 2 hours ago$/),
+        expect.stringMatching(/Sam Older.*@samo · Last message 3 days ago$/),
+        expect.stringMatching(/Sam Other.*Start a direct message$/),
+        expect.stringMatching(/Busam Kay, Robin Jordan/),
+      ]),
+    );
+    expect(screen.queryByRole("group", { name: "Direct messages" })).toBeNull();
+    // Someone you DM, found by a later word, goes before a person whose name
+    // starts with the text, and a group DM with them goes between; the
+    // heading names the best match.
+    mounted.rerender(<SearchResults {...props} query="jordan" />);
+    await waitFor(() =>
+      expect(rows()).toEqual([
+        expect.stringMatching(/Robin Jordan.*Last message 10 minutes ago$/),
+        expect.stringMatching(/Busam Kay, Robin Jordan/),
+        expect.stringMatching(/Jordan Other.*Start a direct message$/),
+      ]),
+    );
+    expect(
+      within(screen.getByRole("group", { name: "People" })).getByText(
+        /Name starts with it/,
+      ),
+    ).toBeInTheDocument();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("opens a DM from a person row through the confirmed open until the relay's hidden DMs load", async () => {
   // Before the first visibility snapshot, a DM the relay hides looks
   // visible. The confirmed open asks the relay to unhide it, so the sidebar
@@ -9305,23 +9428,25 @@ it.each([true, false])(
         />,
       );
       const direct = within(
-        await screen.findByRole("group", { name: "Direct messages" }),
+        await screen.findByRole("group", { name: "People" }),
       );
       expect(
         await direct.findByRole("option", { name: /Scooter/ }),
       ).toBeVisible();
       if (!solo) {
-        expect(
-          await direct.findByRole("option", { name: /Scout/ }),
-        ).toBeVisible();
-        // An agent without a DM still offers one, as before.
+        // Without Solo, Scout's own row opens its DM, as a person's does, so
+        // the DM has no second row.
         const agents = within(
           await screen.findByRole("group", { name: "Agents" }),
         );
         expect(
+          await agents.findByRole("option", { name: /Scout/ }),
+        ).toHaveTextContent("Direct message");
+        expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
+        // An agent without a DM still offers one, as before.
+        expect(
           agents.getByRole("option", { name: /Scotia/ }),
         ).toHaveTextContent("Start a direct message");
-        expect(agents.queryByRole("option", { name: /Scout/ })).toBeNull();
         return;
       }
       const agents = within(
@@ -9378,7 +9503,7 @@ it.each([true, false])(
       );
       expect(
         await within(
-          await screen.findByRole("group", { name: "Direct messages" }),
+          await screen.findByRole("group", { name: "People" }),
         ).findByRole("option", { name: /Scout/ }),
       ).toBeVisible();
       expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
@@ -9613,9 +9738,7 @@ it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", a
     // The DM follows its new chat at once, before any chat.
     expect(options.indexOf(bestieDm)).toBe(1);
     // Other agents keep their chats-then-DM order, and the Bestie DM shows once.
-    const direct = within(
-      await screen.findByRole("group", { name: "Direct messages" }),
-    );
+    const direct = within(await screen.findByRole("group", { name: "People" }));
     expect(direct.getByRole("option", { name: /Scotia/ })).toBeVisible();
     expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
     fireEvent.click(bestieDm);
@@ -9710,9 +9833,7 @@ it("promotes no Bestie DM that the sidebar hides", async () => {
   const { dispose } = renderBestieSearch({ query: "sco", hideBestieDm: true });
   try {
     const agents = within(await screen.findByRole("group", { name: "Agents" }));
-    const direct = within(
-      await screen.findByRole("group", { name: "Direct messages" }),
-    );
+    const direct = within(await screen.findByRole("group", { name: "People" }));
     await waitFor(() =>
       expect(direct.getByRole("option", { name: /Scotia/ })).toBeVisible(),
     );
@@ -9748,9 +9869,9 @@ it.each([
     name: "puts exact names ahead of an agent's new chat",
     picked: undefined,
     exactName: "Sco",
-    // Chats leads with its exact name; Channels and Direct messages have
-    // exact names too, so they come before the partly matching agent.
-    groups: ["Chats", "Channels", "Direct messages", "Agents"],
+    // Chats leads with its exact name; Channels and People have exact names
+    // too, so they come before the partly matching agent.
+    groups: ["Chats", "Channels", "People", "Agents"],
     chats: ["sco", "Plan the week"],
     first: /^sco/,
   },
@@ -9831,9 +9952,7 @@ it.each([
         openAgentSession={vi.fn()}
       />,
     );
-    const direct = within(
-      await screen.findByRole("group", { name: "Direct messages" }),
-    );
+    const direct = within(await screen.findByRole("group", { name: "People" }));
     await direct.findByRole("option", {
       name: new RegExp(`^${exactName}(?!ut)`),
     });
@@ -10462,14 +10581,21 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
         sidebarScope={scope}
       />,
     );
-    const direct = within(
-      await screen.findByRole("group", { name: "Direct messages" }),
+    const direct = within(await screen.findByRole("group", { name: "People" }));
+    // Each person shows once, hidden DM or not; a hidden DM has no row of its
+    // own.
+    await waitFor(() =>
+      expect(
+        direct.getAllByRole("option").map((row) => row.textContent),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/Scott(?!y)/),
+          expect.stringMatching(/Scotty/),
+          expect.stringMatching(/Scooby/),
+        ]),
+      ),
     );
-    expect(
-      await direct.findByRole("option", { name: /^Scott(?!y)/ }),
-    ).toBeVisible();
-    expect(direct.queryByRole("option", { name: /Scotty/ })).toBeNull();
-    expect(direct.queryByRole("option", { name: /Scooby/ })).toBeNull();
+    expect(direct.getAllByRole("option")).toHaveLength(3);
     expect(
       await screen.findByRole("option", { name: /sco from local/ }),
     ).toBeVisible();

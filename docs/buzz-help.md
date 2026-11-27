@@ -66,7 +66,10 @@ if that desktop app is up and running.
   which organize groups of channels/chats/dms. It includes "new" buttons for creating
   more of the same.
 - **Search**: the top bar (⌘K or ⌘T; Ctrl elsewhere). ⌘F searches the current
-  conversation. ⌘/ lists shortcuts.
+  conversation. ⌘/ lists shortcuts. In results, **People** lists each person
+  once: choosing them opens your DM, or a new message to them. People you
+  already message come first, showing when the last message was, or an unread
+  one.
 - **History shortcuts.** On macOS, ⌘← and ⌘→ go back and forward when the
   message composer is empty. A mention Buzz filled in for you still counts as
   empty. Once you’ve typed, they move to the start or end of the line. ⌘[ and ⌘]

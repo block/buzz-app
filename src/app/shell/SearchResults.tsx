@@ -104,11 +104,26 @@ import {
   channelIconLabel,
 } from "../../features/channels/channel-icon";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
+import {
+  type DeviceIndex,
+  useDeviceMessages,
+} from "../../features/search/device-index";
+import {
+  type DeviceMerge,
+  mergedMessages,
+  nextDeviceMerge,
+} from "../../features/search/device-merge";
 import type { Decisions } from "../../features/decisions/service";
-import { RERANK_PAGES, useCanRerank, useMessageRerank } from "./message-rerank";
+import {
+  RERANK_PAGES,
+  RERANK_WAIT,
+  useCanRerank,
+  useMessageRerank,
+} from "./message-rerank";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
   SEARCH_MIN_CHARS,
+  messageSearchable,
   searchDebounce,
   searchable,
 } from "../../shared/search-debounce";
@@ -130,6 +145,7 @@ import {
   normalizeInChannel,
   operatorMatches,
   parseSearchOperators,
+  searchTextSyntax,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
@@ -259,8 +275,12 @@ export function SearchResults({
   openAsk,
   decisions,
   community,
+  deviceIndex,
 }: {
   session: RelaySession;
+  /** Messages this device already received, matched on every key above
+   * the relay's hits. */
+  deviceIndex?: DeviceIndex | undefined;
   /** Reranks message hits by how well each answers the query. */
   decisions?: Decisions | undefined;
   /** The community (its relay URL) a decision call bills. */
@@ -779,6 +799,71 @@ export function SearchResults({
     session.searchSort &&
     !!parsed.text;
   const order = search.newestFirst ? "Most recent" : "Most relevant";
+  // The search whose results the person has started moving through: a
+  // rerank that lands after that is dropped. Moving through one
+  // conversation's hits doesn't hold the next search's.
+  const [movedFor, setMovedFor] = useState<string>();
+  if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
+  // The search whose relay hits stopped waiting for a rerank.
+  const [releasedFor, setReleasedFor] = useState<string>();
+  // Where device rows first placed Messages among the sections, by search.
+  const [messageStrengthFor, setMessageStrengthFor] = useState<{
+    key: string;
+    strength: number;
+  }>();
+  // This device's matches show on every key, and the relay's join below them
+  // (device-merge.ts). An author or date filter, an `in:` that names no
+  // single conversation, or quotes and `-` exclusions, which the fuzzy match
+  // doesn't read, leave messages to the relay. Most recent is the relay's
+  // order alone: fuzzy-ranked device rows would sit above newer hits.
+  const deviceFirst = !!deviceIndex && !search.newestFirst;
+  const deviceText =
+    deviceFirst &&
+    !offline &&
+    !asking &&
+    parsed.from === null &&
+    parsed.since === null &&
+    parsed.until === null &&
+    (parsed.in === null || !!effectiveChannelId) &&
+    messageSearchable(parsed.text) &&
+    !searchTextSyntax(parsed.text).fullText
+      ? parsed.text
+      : "";
+  const deviceMessages = useDeviceMessages(
+    deviceIndex,
+    deviceText,
+    effectiveChannelId,
+  );
+  // The relay is asked after the same pause in typing as useSearchMessages.
+  const [askedFor, setAskedFor] = useState<string>();
+  useEffect(
+    () =>
+      deviceIndex ? searchDebounce(() => setAskedFor(searchKey)) : undefined,
+    [deviceIndex, searchKey],
+  );
+  const [merge, setMerge] = useState<DeviceMerge>();
+  // With the setting off there is no merge, and the relay's hits show as on main.
+  const nextMerge =
+    deviceFirst &&
+    nextDeviceMerge(merge, {
+      key: searchKey,
+      device: deviceMessages,
+      asked: askedFor === searchKey || !search.loading,
+      moved: movedFor === searchKey,
+    });
+  if (nextMerge && nextMerge !== merge) setMerge(nextMerge);
+  const messageHits = nextMerge
+    ? mergedMessages(nextMerge, search.messages, (message) => {
+        if (offline) return false;
+        const channel = session.channels.get?.(message.channelId);
+        return (
+          !!deviceIndex?.has(message.id) &&
+          !!channel &&
+          !channel.huddle &&
+          !channel.metadataPending
+        );
+      })
+    : search.messages;
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -1098,7 +1183,7 @@ export function SearchResults({
       ...channels.flatMap((channel) =>
         channel.channelType === "dm" ? (channel.participants ?? []) : [],
       ),
-      ...search.messages.flatMap((message) => [
+      ...messageHits.flatMap((message) => [
         message.authorId,
         ...(message.workflowOwnerId ? [message.workflowOwnerId] : []),
       ]),
@@ -1106,7 +1191,7 @@ export function SearchResults({
         person.ownerPubkey ? [person.ownerPubkey] : [],
       ),
     ],
-    search.messages.map((message) => message.mentioned),
+    messageHits.map((message) => message.mentioned),
   )
     .sort()
     .slice(0, 1024)
@@ -1861,16 +1946,11 @@ export function SearchResults({
       : name;
   };
   const terms = useMemo(() => searchTerms(parsed.text), [parsed.text]);
-  // The search whose results the person has started moving through: a
-  // rerank that lands after that is dropped. Moving through one
-  // conversation's hits doesn't hold the next search's.
-  const [movedFor, setMovedFor] = useState<string>();
-  if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
   const rerank = useMessageRerank({
     decisions,
     community,
     query: parsed.text,
-    messages: search.messages,
+    messages: messageHits,
     enabled:
       rerankable && !!parsed.text && !search.newestFirst && !search.loading,
     facts: (message) => {
@@ -1896,9 +1976,29 @@ export function SearchResults({
         member: !!channel && joined(channel),
       };
     },
-    held: movedFor === searchKey,
+    held: movedFor === searchKey || releasedFor === searchKey,
   });
-  const messages: SearchDestination[] = rerank.messages.map((message) => {
+  // Under device rows, the relay's join once, already reranked. A rerank
+  // that runs past RERANK_WAIT lets them in as they came and is dropped.
+  // Once they join, the search is released: a later rerank, for hits that
+  // changed, can't take them away again.
+  const deviceIds = new Set(
+    nextMerge ? nextMerge.device.map(({ id }) => id) : [],
+  );
+  const deviceShown = rerank.messages.filter(({ id }) => deviceIds.has(id));
+  const joining =
+    releasedFor !== searchKey &&
+    deviceShown.length > 0 &&
+    deviceShown.length < rerank.messages.length;
+  const waiting = joining && rerank.pending;
+  if (joining && !waiting) setReleasedFor(searchKey);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => setReleasedFor(searchKey), RERANK_WAIT);
+    return () => clearTimeout(timer);
+  }, [waiting, searchKey]);
+  const shownHits = waiting ? deviceShown : rerank.messages;
+  const messages: SearchDestination[] = shownHits.map((message) => {
     // Every listed hit's channel is readable here, with settled metadata.
     const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;
@@ -2258,11 +2358,20 @@ export function SearchResults({
   // Messages stay below a name that starts with the text (85): a page of 20
   // tops out near 84, and later pages don't count. A topic of three or more
   // words takes that top score.
-  const messageStrength = !hits
+  const liveMessageStrength = !hits
     ? -1
     : words >= 3
       ? 84
       : 40 + 10 * Math.log2(1 + Math.min(hits, 20)) - (search.hasMore ? 0 : 5);
+  // Once device rows show, Messages keeps the place they gave it for this
+  // search: the relay's hits joining don't move it above a name someone is
+  // about to press Enter on.
+  if (deviceShown.length > 0 && messageStrengthFor?.key !== searchKey)
+    setMessageStrengthFor({ key: searchKey, strength: liveMessageStrength });
+  const messageStrength =
+    messageStrengthFor?.key === searchKey
+      ? messageStrengthFor.strength
+      : liveMessageStrength;
   const messageCount = search.hasMore ? `${hits}+` : undefined;
   const messageLead = namedGroups.findIndex(
     (group) => group.destinations.length && group.strength < messageStrength,

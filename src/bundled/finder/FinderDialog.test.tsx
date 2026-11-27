@@ -21,7 +21,7 @@ import {
   roster,
 } from "../../features/relay/testing";
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
-import { createCorpus } from "./corpus";
+import { createCorpus } from "../../features/search/fuzzy/corpus";
 import { FinderDialog, type FinderScope } from "./FinderDialog";
 import { startFinderSync } from "./sync";
 

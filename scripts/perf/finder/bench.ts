@@ -2,7 +2,7 @@
 //   bin/node scripts/perf/finder/bench.ts [messages=200000]
 // Prints the median and slowest time per keystroke for each query, typed one
 // key at a time (the real case) and searched cold (the worst case).
-import { createCorpus } from "../../../src/bundled/finder/corpus.ts";
+import { createCorpus } from "../../../src/features/search/fuzzy/corpus.ts";
 import { syntheticDocs } from "../../../tests/fixtures/finder-synthetic.ts";
 
 const size = Number(process.argv[2] ?? 200_000);

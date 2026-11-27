@@ -24,7 +24,11 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import type { FinderCorpus, FinderDoc, FinderResults } from "./corpus.ts";
+import type {
+  FinderCorpus,
+  FinderDoc,
+  FinderResults,
+} from "../../features/search/fuzzy/corpus.ts";
 import { useFinderAll, useFinderChannel, useFinderHeld } from "./search.ts";
 import { type FinderSync, lost } from "./sync";
 

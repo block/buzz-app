@@ -1216,6 +1216,8 @@ function Composer({
     }
     if (!focusOnMount.current) return;
     let frame = 0;
+    /** Ends a handoff still waiting for a plugin's message to render. */
+    let stopWaiting: (() => void) | undefined;
     const focus = () => {
       const handoff = focusFromControl.current;
       if (handoff && !handoff.current) return;
@@ -1241,34 +1243,47 @@ function Composer({
         'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
       );
       if (owner && !owner.contains(editor)) return;
-      const pick = messagesOnOpen();
-      if (pick) {
+      if (messagesOnOpen()) {
         // A plugin asked for a message instead. Give its row a few frames to
-        // render, then fall back to the message box. The handoff then ends,
-        // so a later reload doesn't take focus again.
+        // render, then fall back to the message box. Focus moving meanwhile,
+        // even to something that then disappears, ends the handoff, as does
+        // the plugin letting go of its choice.
         let frames = 30;
+        let moved = false;
+        const onFocusMove = () => {
+          moved = true;
+        };
+        document.addEventListener("focusin", onFocusMove, true);
+        const finish = () => {
+          document.removeEventListener("focusin", onFocusMove, true);
+          stopWaiting = undefined;
+          focusOnMount.current = undefined;
+        };
+        stopWaiting = finish;
+        const focusEditor = () => {
+          finish();
+          editor.focus();
+          if (document.activeElement === editor) focusOnMount.current = editor;
+        };
         const selectInstead = () => {
-          // Focus moving while it waits wins, as it does for the message box.
-          const unmoved =
-            document.activeElement === previous ||
-            document.activeElement === document.body;
-          const list = unmoved ? composerMessageList(editor) : undefined;
-          const row = list && pick(list);
-          if (row?.isConnected) selectMessage(row);
-          if (
-            !unmoved ||
-            !editor.isConnected ||
-            row?.isConnected ||
-            (list && selectNewestMessage(list))
-          ) {
-            focusOnMount.current = undefined;
-            return;
+          if (moved || !editor.isConnected) return finish();
+          // The choice held now: a plugin may let go while this waits.
+          const pick = messagesOnOpen();
+          if (!pick) return focusEditor();
+          const list = composerMessageList(editor);
+          if (list) {
+            // Selecting moves focus; that move is the handoff, not a cancel.
+            document.removeEventListener("focusin", onFocusMove, true);
+            const row = pick(list);
+            if (row?.isConnected) {
+              selectMessage(row);
+              return finish();
+            }
+            if (selectNewestMessage(list)) return finish();
+            document.addEventListener("focusin", onFocusMove, true);
           }
           if (--frames > 0) frame = requestAnimationFrame(selectInstead);
-          else {
-            editor.focus();
-            focusOnMount.current = editor;
-          }
+          else focusEditor();
         };
         selectInstead();
         return;
@@ -1300,10 +1315,14 @@ function Composer({
         observer.disconnect();
         stopWatching();
         cancelAnimationFrame(frame);
+        stopWaiting?.();
       };
     }
     focus();
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      stopWaiting?.();
+    };
   }, [disabled]);
   const linkSharing = useChatLinkSharing(
     fullSession(session),

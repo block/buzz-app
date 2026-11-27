@@ -50,7 +50,7 @@ const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
 };
 const ExamplePreview = ({ close }: PagePreviewProps) =>
   createElement("button", { type: "button", onClick: close }, "Open");
-export const inject = ["agents", "decisions", "host", "identityNames", "pages", "relay"];
+export const inject = ["agents", "decisions", "focus", "host", "identityNames", "messages", "pages", "relay", "shortcuts"];
 export function apply(ctx: Context) {
   const seen: Seen | undefined = ctx.reflect.get("seen");
   const key = "example.plugin/welcome";
@@ -70,7 +70,7 @@ export function apply(ctx: Context) {
   const gate: SendGate = { id: "later", hold: (message: OutgoingMessage) => message.text === "Later" };
   ctx.conversation.registerSendGate(gate);
   const ranHost: boolean = ctx.shortcuts.runHost("new-dm");
-  const releaseFocus: () => void = ctx.focus.preferMessagesOnOpen((list) => ctx.messages.listOf(list)?.element);
+  const releaseFocus: () => void = ctx.focus.preferMessagesOnOpen((list) => ctx.messages.listOf(list) && ctx.messages.selected()?.row);
   ctx.messages.composerOf(document.activeElement)?.setStatus(ranHost ? "Ready" : undefined);
   releaseFocus();
   const held: OutgoingMessage = { channelId: "record", text: "Later", recipients: [], references: [], attachments: [], picks: {} };

@@ -9,7 +9,7 @@ import {
   selectNewestMessage,
 } from "./message-selection";
 import type { ComposerInputElement } from "./composer-dom";
-import { setComposerStatus } from "./composer-status";
+import { addComposerStatus } from "./composer-status";
 
 const ROW = "[data-message-id]";
 
@@ -56,8 +56,8 @@ export type MessageBox = Readonly<{
 
 /**
  * Messages and the keyboard selection, for plugins. A selected message is a
- * focused row: its message box (`focusTarget`) has focus. Rows are
- * `[data-message-id]` elements; everything inside a row is plain page content.
+ * focused row: its message box (`focusTarget`) has focus. Get rows from these
+ * calls; their attributes and classes are internal.
  */
 export type Messages = Readonly<{
   /** Every message list on screen. */
@@ -112,8 +112,8 @@ type Owned = {
 };
 
 function messageBox(ctx: Context, editor: ComposerInputElement): MessageBox {
-  /** Removes the plugin's cleanup for its label, while one is shown. */
-  let clearOnStop: (() => void) | undefined;
+  /** Removes this plugin's label, while it has one. */
+  let clear: (() => void) | undefined;
   return Object.freeze({
     element: editor,
     get value() {
@@ -140,18 +140,16 @@ function messageBox(ctx: Context, editor: ComposerInputElement): MessageBox {
       editor.insertText(text, undefined, range) !== false,
     undo: (redo) => editor.undo(redo),
     setStatus(status) {
-      setComposerStatus(editor, status);
-      if (status && !clearOnStop) {
-        const remove = ctx.effect(
-          () => () => setComposerStatus(editor, undefined),
-          "messages.setStatus",
-        );
-        clearOnStop = () => void remove();
-      } else if (!status && clearOnStop) {
-        const remove = clearOnStop;
-        clearOnStop = undefined;
-        remove();
-      }
+      clear?.();
+      clear = undefined;
+      if (!status) return;
+      // Added inside the plugin's effect, so a stopped plugin can't add one,
+      // and stopping removes only this plugin's label.
+      const remove = ctx.effect(
+        () => addComposerStatus(editor, status),
+        "messages.setStatus",
+      );
+      clear = () => void remove();
     },
   });
 }

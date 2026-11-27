@@ -1173,14 +1173,32 @@ it("selects the newest message instead while a plugin prefers messages on open",
       composer: () => waiting.input(),
     } as unknown as MessageList);
     waiting.retarget({ disabled: false });
+    // Even when what took focus disappears before the next frame.
     const elsewhere = document.createElement("button");
     document.body.append(elsewhere);
     elsewhere.focus();
+    elsewhere.remove();
     list.innerHTML = rows;
     await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-    expect(document.activeElement).toBe(elsewhere);
-    elsewhere.remove();
+    expect(document.activeElement).toBe(document.body);
     unregisterWaiting();
+
+    // Letting go of the choice while it waits gives the message box focus.
+    release();
+    list.replaceChildren();
+    const releaseWaiting = focus.preferMessagesOnOpen();
+    const released = mount({ autoFocus: true, disabled: true });
+    const unregisterReleased = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => released.input(),
+    } as unknown as MessageList);
+    released.retarget({ disabled: false });
+    releaseWaiting();
+    list.innerHTML = rows;
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(released.input()).toHaveFocus();
+    unregisterReleased();
   } finally {
     release();
     release();
@@ -1195,30 +1213,32 @@ it("gives plugins a message box handle, and undoes what a plugin set when it sto
   const root = new Context();
   new MessagesService(root);
   new FocusService(root);
-  let plugin: Context | undefined;
-  const runtime = new PluginRuntime(root, async () => ({
+  const plugins = new Map<string, Context>();
+  const runtime = new PluginRuntime(root, async (info) => ({
     inject: ["messages", "focus"],
     apply(ctx) {
-      plugin = ctx;
+      plugins.set(info.manifest.id, ctx);
     },
   }));
   onTestFinished(async () => {
     await runtime.dispose();
     await root.fiber.dispose();
   });
-  const info = {
-    manifest: { id: "example.keys", name: "Keys", apiVersion: 1 as const },
+  const info = (id: string) => ({
+    manifest: { id, name: id, apiVersion: 1 as const },
     enabled: true,
     source: "external" as const,
     revision: "one",
     previous: null,
     reloadable: true,
     error: null,
-  };
-  runtime.reconcile([info]);
-  await vi.waitFor(() => expect(plugin).toBeDefined());
+  });
+  runtime.reconcile([info("example.keys"), info("example.other")]);
+  await vi.waitFor(() => expect(plugins.size).toBe(2));
+  const plugin = plugins.get("example.keys");
   const messages = plugin?.messages;
-  if (!messages) throw new Error("Missing messages service");
+  const other = plugins.get("example.other")?.messages;
+  if (!messages || !other) throw new Error("Missing messages service");
 
   const h = mount();
   expect(messages.composerOf(document.body)).toBeUndefined();
@@ -1246,8 +1266,23 @@ it("gives plugins a message box handle, and undoes what a plugin set when it sto
   act(() => box.setStatus(undefined));
   expect(screen.queryByText("NORMAL")).toBeNull();
 
-  // Turning the plugin off clears its label and its opening-focus choice.
+  // Each plugin's label is its own; the newest shows.
+  const otherBox = other.composerOf(h.input());
   act(() => box.setStatus("NORMAL"));
+  act(() => otherBox?.setStatus("OTHER"));
+  expect(screen.getByText("OTHER")).toBeVisible();
+  act(() => box.setStatus(undefined));
+  expect(screen.getByText("OTHER")).toBeVisible();
+  act(() => box.setStatus("NORMAL"));
+  expect(screen.getByText("NORMAL")).toBeVisible();
+  act(() => runtime.reconcile([info("example.keys")]));
+  await vi.waitFor(() => expect(screen.getByText("NORMAL")).toBeVisible());
+  expect(screen.queryByText("OTHER")).toBeNull();
+  // A handle kept after its plugin stops can't show a label.
+  expect(() => act(() => otherBox?.setStatus("LATE"))).toThrow();
+  expect(screen.queryByText("LATE")).toBeNull();
+
+  // Turning the plugin off clears its label and its opening-focus choice.
   plugin?.focus.preferMessagesOnOpen();
   act(() => runtime.reconcile([]));
   await vi.waitFor(() => expect(screen.queryByText("NORMAL")).toBeNull());

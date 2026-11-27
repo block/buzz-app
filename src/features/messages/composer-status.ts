@@ -5,15 +5,29 @@
  */
 import { type RefObject, useSyncExternalStore } from "react";
 
-const statuses = new WeakMap<Element, string>();
+/** Each owner's label per editor, newest last; the newest one shows. */
+const statuses = new WeakMap<Element, { status: string }[]>();
 const listeners = new Set<() => void>();
-
-/** Show `status` in the composer whose editor is `input`; undefined clears it. */
-export function setComposerStatus(input: Element, status: string | undefined) {
-  if (statuses.get(input) === status) return;
-  if (status) statuses.set(input, status);
-  else statuses.delete(input);
+const publish = () => {
   for (const listener of listeners) listener();
+};
+
+/** Show `status` in the composer whose editor is `input`, until the returned
+ * function removes it. Another owner's newer label shows over it meanwhile. */
+export function addComposerStatus(input: Element, status: string) {
+  const entry = { status };
+  const entries = statuses.get(input) ?? [];
+  statuses.set(input, [...entries, entry]);
+  publish();
+  return () => {
+    const current = statuses.get(input) ?? [];
+    if (!current.includes(entry)) return;
+    statuses.set(
+      input,
+      current.filter((item) => item !== entry),
+    );
+    publish();
+  };
 }
 
 const subscribe = (listener: () => void) => {
@@ -26,6 +40,6 @@ const subscribe = (listener: () => void) => {
 /** The status set for the composer's editor, if any. */
 export function useComposerStatus(input: RefObject<Element | null>) {
   return useSyncExternalStore(subscribe, () =>
-    input.current ? statuses.get(input.current) : undefined,
+    input.current ? statuses.get(input.current)?.at(-1)?.status : undefined,
   );
 }

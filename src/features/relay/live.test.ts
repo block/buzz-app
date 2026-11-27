@@ -4127,6 +4127,51 @@ it("observer route is optional, live-only at dispatch/retry, separately fenced a
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("control route listens live for its agents and is not asked again after a restricted close", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1800000000000);
+  const h = setup([]);
+  const control = vi.fn();
+  Object.assign(h.callbacks, { control });
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(500);
+  const agents = Array.from({ length: 65 }, (_, index) =>
+    index.toString(16).padStart(64, "0"),
+  );
+  h.owner.controlAgents?.([...agents].reverse());
+  await vi.advanceTimersByTimeAsync(250);
+  const first = h.first.requests().at(-1);
+  assert.exists(first);
+  // The relay takes at most 64 agents in one filter.
+  expect(first.slice(2)).toEqual([
+    {
+      kinds: [24200],
+      "#p": agents.slice(0, 64),
+      since: Math.floor(Date.now() / 1000),
+    },
+    { kinds: [24200], "#p": agents.slice(64), since: first[2].since },
+  ]);
+  const event = signed(h.key, {
+    kind: 24200,
+    content: "opaque",
+    tags: [["p", agents[0] as string]],
+    created_at: Math.floor(Date.now() / 1000) - 60,
+  });
+  await h.first.receive(["EVENT", first[1], event]);
+  expect(control).toHaveBeenCalledWith(event);
+  expect(h.callbacks.receive).not.toHaveBeenCalled();
+  // A relay that won't let the owner listen keeps refusing until reconnect.
+  const count = h.first.requests().length;
+  await h.first.receive(["CLOSED", first[1], "restricted: not owner"]);
+  await vi.advanceTimersByTimeAsync(3000);
+  h.owner.retry();
+  h.owner.controlAgents?.(agents.slice(0, 2));
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(h.first.requests()).toHaveLength(count);
+  expect(h.sockets).toHaveLength(1);
+  h.owner.dispose();
+});
+
 it("presence holds its receipt without delaying ordinary setup and shares correlated cooldown", async () => {
   vi.useFakeTimers();
   const h = setup([]);

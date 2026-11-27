@@ -56,6 +56,7 @@ import {
   type ProtectionBinding,
 } from "../agent-protection/service";
 import { createLocalAgentActivity, type StepOrigin } from "./local-activity";
+import { remoteStop } from "./remote-stop";
 import { bindKeepAwake } from "./keep-awake";
 import {
   AgentConfigStore,
@@ -2519,6 +2520,8 @@ type Binding = {
   connection: Connection;
   /** The channels its agents' watches name that it keeps live, and its stop. */
   attending?: Readonly<{ key: string; stop: () => void }>;
+  /** The agents it hears the owner's control frames for, and its stop. */
+  controlling?: Readonly<{ key: string; stop: () => void }>;
   /** Its config support while no config channels are up: being checked, the
    * check failed (and when), or the relay has none. */
   support?: "checking" | "unsupported" | Readonly<{ failed: number }>;
@@ -3071,6 +3074,7 @@ export class AgentsService extends Service implements Agents {
       // Only the copy that runs an agent keeps its watched channels live.
       ownershipChanged: () => {
         this.attend(this.state.running);
+        this.control(this.state.running);
         this.notify();
         // An agent this copy has just claimed may follow its recommendation.
         for (const identity of this.identities)
@@ -9571,6 +9575,7 @@ export class AgentsService extends Service implements Agents {
     entry?.stop();
     entry?.binding?.stopLive();
     entry?.binding?.attending?.stop();
+    entry?.binding?.controlling?.stop();
     entry?.binding?.controller.abort();
     this.communityConfigs.get(origin)?.dispose();
     this.communityConfigs.delete(origin);
@@ -9601,6 +9606,7 @@ export class AgentsService extends Service implements Agents {
       this.forgetReload(entry.binding?.session);
       entry.binding?.stopLive();
       entry.binding?.attending?.stop();
+      entry.binding?.controlling?.stop();
       entry.binding?.controller.abort();
       this.listings.delete(origin);
       this.edits.delete(origin);
@@ -9855,6 +9861,7 @@ export class AgentsService extends Service implements Agents {
     this.announce();
     this.runners.catchUp(false);
     this.attend(running);
+    this.control(running);
     for (const [origin, config] of this.communityConfigs)
       void config.attach(
         running
@@ -9901,6 +9908,48 @@ export class AgentsService extends Service implements Agents {
       if (ids.size)
         binding.attending = { key, stop: binding.session.attend([...ids]) };
       else delete binding.attending;
+      previous?.stop();
+    }
+  }
+
+  /** Hears, in each community, the owner's control frames to the agents this
+   * copy runs there, so Stop on the owner's other devices reaches their turns.
+   * A copy that does not hold an agent leaves it out, and stays silent. */
+  private control(running: readonly Agent[]) {
+    const native = this.native;
+    const wanted = new Map<Binding, Map<string, Agent>>();
+    for (const { binding } of this.bound.values())
+      if (binding) wanted.set(binding, new Map());
+    for (const agent of running) {
+      const binding = this.bindingOf(agent);
+      const agents = binding && wanted.get(binding);
+      if (agents && this.runners.runs(agent.key))
+        agents.set(agent.pubkey, agent);
+    }
+    for (const [binding, agents] of wanted) {
+      const key = JSON.stringify([...agents.keys()].sort());
+      if (binding.controlling?.key === key) continue;
+      const previous = binding.controlling;
+      const listen = binding.session.controlAgents;
+      const { decodeControl: decode, answerControl: answer } = native ?? {};
+      const { interruptConversation: interrupt } = this.localActivity.reader;
+      if (agents.size && listen && decode && answer && interrupt)
+        binding.controlling = {
+          key,
+          stop: listen([...agents.keys()], (event) => {
+            const to = event.tags.find(([name]) => name === "p")?.[1];
+            const member = to === undefined ? undefined : agents.get(to);
+            if (!member) return;
+            remoteStop(event, binding.scope, {
+              decode: (frame) => decode(member, frame),
+              interrupt,
+              answer: (_agent, result) => answer(member, result),
+            }).catch((error: unknown) =>
+              console.warn("Stop from another device was not answered", error),
+            );
+          }),
+        };
+      else delete binding.controlling;
       previous?.stop();
     }
   }

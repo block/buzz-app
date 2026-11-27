@@ -6,6 +6,7 @@ import type {
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { SessionScope } from "../agent-harness/session-scope";
 import { createEventVerifier, type RelayEvent } from "../relay/events";
+import type { ControlAnswer, ControlRequest } from "./remote-stop";
 import { effectiveEditDto, effectiveEditFilter } from "../relay/effective-edit";
 import { verifyNativeSignatures } from "../relay/native";
 import { parseEvents } from "../relay/transport";
@@ -197,6 +198,15 @@ export type AgentsNative = {
     event: AgentEventTemplate,
     options?: PublishOptions,
   ): Promise<RelayEvent>;
+  /** Checks and decrypts the owner's control frame to the agent, in the copy
+   * of the app that runs it; refused anywhere else, and for anything but a
+   * fresh, unseen `cancel_turn` from the agent's owner. */
+  decodeControl?(
+    member: Membership,
+    event: RelayEvent,
+  ): Promise<ControlRequest>;
+  /** Answers that request as the agent, encrypted to its owner. */
+  answerControl?(member: Membership, answer: ControlAnswer): Promise<void>;
   /** Reads the membership's community as the agent: one to eight filters. */
   query(member: Membership, filters: readonly object[]): Promise<RelayEvent[]>;
   effectiveEdit(
@@ -326,6 +336,10 @@ export const nativeAgents = (): AgentsNative | undefined =>
               tags: event.tags ?? [],
             },
           }),
+        decodeControl: ({ relay }, event) =>
+          invoke("app_agent_control_decode", { relay, event }),
+        answerControl: ({ pubkey, relay }, answer) =>
+          invoke("app_agent_control_answer", { pubkey, relay, answer }),
         query: async ({ pubkey, relay }, filters) =>
           parseEvents(
             await invoke("app_agent_query", { pubkey, relay, filters }),

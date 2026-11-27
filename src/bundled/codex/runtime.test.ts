@@ -14298,12 +14298,14 @@ it("keeps the first observation of an item batched with the native start reply",
     agent: pubkey,
     channelId: "channel",
     messageId: "first",
+    threadRootId: "first",
   });
   const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
   const write = f.process.write;
   f.process.write = async (data) => {
     const wire: Wire = JSON.parse(data);
-    if (wire.method !== "turn/start") return write(data);
+    if (wire.method !== "turn/start" || wire.id === undefined)
+      return write(data);
     f.sent.push(wire);
     // Real stdout reads dispatch every JSONL frame before promise continuations.
     const { threadId } = wire.params as { threadId: string };

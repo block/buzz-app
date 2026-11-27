@@ -38,6 +38,7 @@ export type BuzzCapability =
   | "buzz:read"
   | "buzz:message"
   | "buzz:coordinate"
+  | "buzz:content"
   | "buzz:builtin-deliverable"
   | "plugins:deliverable";
 /** Saved by earlier drafts for both Buzz's and plugins' deliverable tools. */
@@ -201,6 +202,14 @@ const BUZZ_EFFECT = new Map(
     names.map((name) => [name, effect as ToolEffect]),
   ),
 );
+/** Notes and canvases: shared work a builder contributes to, unlike
+ * channel, member, plugin or settings administration. */
+const CONTENT = new Set([
+  "notes_set",
+  "notes_rm",
+  "canvas_set",
+  "canvas_restore",
+]);
 /** Exported so a test can keep every built-in Buzz tool classified. */
 export const classifiedBuzzTool = (name: string) => BUZZ_EFFECT.has(name);
 
@@ -216,6 +225,8 @@ const ROLES: Readonly<
     "native:meta",
     "buzz:read",
     "buzz:message",
+    "buzz:content",
+    "connected",
   ],
   "super-agent": [
     "native:read",
@@ -257,32 +268,27 @@ export function hookedToolName(input: unknown): string | undefined {
   return typeof name === "string" ? name : undefined;
 }
 
-type RoleInfo = Described<ToolPreset> &
-  Readonly<{ can: string; cannot?: string }>;
-/** The roles an owner chooses from. Saved ids stay as earlier drafts wrote
- * them; only the labels changed. */
+type RoleInfo = Described<ToolPreset>;
+/** The roles an owner chooses from, in the owner's own words. Saved ids stay
+ * as earlier drafts wrote them; only the labels changed. */
 export const PRESET_INFO: readonly RoleInfo[] = [
   {
     id: "coder",
     label: "All",
-    description: "Uses every tool available to the agent. The default.",
-    can: "Everything Read / Write can, plus connected MCP tools, plugin tools, and Buzz actions that manage memory, attention, channels, canvases, notes, members, plugins and settings.",
+    description:
+      "All (default) can use every available tool, including administrative tools for Buzz channels, members, agents, plugins, and settings.",
   },
   {
     id: "builder",
-    label: "Read / Write",
-    description: "Edits files and runs builds and tests.",
-    can: "Read, edit and create files (Read, Edit, Write), run commands such as builds, tests and git (Bash), use the web, delegate to subagents (Task), read Buzz and chat (read, send), and use plugin tools that read or send messages.",
-    cannot:
-      "Use connected MCP tools or plugin tools that change things, or manage memory, attention, channels, canvases, notes, members, plugins or settings.",
+    label: "Builder",
+    description:
+      "Builder can read from any available source, edit files, run commands, make changes in connected apps, and contribute in Buzz through conversations, notes, and canvases.",
   },
   {
     id: "reviewer",
-    label: "Read Only",
-    description: "Inspects files and answers in chat.",
-    can: "Read and search files (Read, Grep, Glob), use the web (WebFetch, WebSearch), load skills (Skill), read Buzz and send messages (read, send).",
-    cannot:
-      "Edit files, run commands, delegate, or create channels, canvases or notes. On Goose it can list folders and view images but can't open text files.",
+    label: "Reviewer",
+    description:
+      "Reviewer can read from any available source, including connected apps, and participate in Buzz conversations.",
   },
 ];
 /** Shown only for an agent saved with Orchestrator by an earlier draft. */
@@ -290,44 +296,14 @@ export const SAVED_ORCHESTRATOR: RoleInfo = {
   id: "super-agent",
   label: "Earlier selection",
   description:
-    "This agent keeps the Orchestrator role it was saved with until you choose another.",
-  can: "Read files and the web, delegate to subagents, and use built-in Buzz tools. Choosing a role replaces it, and it can't be chosen again.",
-  cannot: "Edit files or run commands.",
+    "This agent keeps the Orchestrator role it was saved with, which can't edit files or run commands, until you choose another.",
 };
-/** Claude Code's names for one tool in each native group, to show a role's
- * native access in words an owner recognizes. */
-const SAMPLE_NATIVE = [
-  "Read",
-  "Grep",
-  "Glob",
-  "WebFetch",
-  "WebSearch",
-  "TodoWrite",
-  "ToolSearch",
-  "Skill",
-  "Task",
-  "Edit",
-  "Write",
-  "Bash",
-] as const;
-/** The built-in Buzz and native tools a role allows, from the same gates
- * that decide each call. */
-export function roleTools(preset: ToolPreset) {
-  const policy = { preset, allow: [] };
-  return {
-    native: SAMPLE_NATIVE.filter((name) => nativeToolAllowed(name, policy)),
-    buzz: [...BUZZ_EFFECT.keys()].filter((name) =>
-      buzzToolAllowed(name, policy),
-    ),
-  };
-}
 /** Shown only for an agent an earlier draft saved with its own selection. */
 export const SAVED_SELECTION: RoleInfo = {
   id: "custom",
   label: "Earlier selection",
   description:
     "This agent keeps the individual tools chosen in an earlier version until you choose a role.",
-  can: "Only the tools selected then. Choosing a role replaces it, and it can't be chosen again.",
 };
 
 const list = (value: string | undefined): readonly string[] => [
@@ -565,7 +541,11 @@ export function buzzToolAllowed(
       : plugin
         ? "plugins:deliverable"
         : "buzz:builtin-deliverable";
-  return allows(policy, [plugin ? `plugin:${name}` : `buzz:${name}`, group]);
+  return allows(policy, [
+    plugin ? `plugin:${name}` : `buzz:${name}`,
+    group,
+    ...(!plugin && CONTENT.has(name) ? ["buzz:content"] : []),
+  ]);
 }
 
 const nativeDenial = (

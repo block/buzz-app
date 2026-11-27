@@ -35,8 +35,16 @@ it("defaults to All and saves a chosen role without a selection", async () => {
   render(<AgentToolAccess agents={agentsWith(save)} agent={agent} />);
 
   expect(screen.getByRole("radio", { name: "All" })).toBeChecked();
-  expect(screen.getAllByRole("radio")).toHaveLength(3);
-  await user.click(screen.getByRole("radio", { name: "Read Only" }));
+  expect(
+    screen
+      .getAllByRole("radio")
+      .map(
+        (radio) =>
+          document.getElementById(radio.getAttribute("aria-labelledby") ?? "")
+            ?.textContent,
+      ),
+  ).toEqual(["All", "Builder", "Reviewer"]);
+  await user.click(screen.getByRole("radio", { name: "Reviewer" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledExactlyOnceWith(agent.key, {
     config: { model: "sonnet", toolPreset: "reviewer", toolAllow: "" },
@@ -58,7 +66,7 @@ it("keeps an earlier saved selection until the owner chooses a role", async () =
   expect(earlier).toBeChecked();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 
-  await user.click(screen.getByRole("radio", { name: "Read / Write" }));
+  await user.click(screen.getByRole("radio", { name: "Builder" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledExactlyOnceWith(agentWith(config).key, {
     config: { toolPreset: "builder", toolAllow: "" },

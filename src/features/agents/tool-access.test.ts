@@ -10,7 +10,6 @@ import {
   nativeToolAllowed,
   nativeToolDenial,
   pickToolConfig,
-  roleTools,
   toolPolicy,
   toolPolicyKey,
 } from "./tool-access";
@@ -172,41 +171,56 @@ it("keeps a saved legacy deliverable grant's access", () => {
   expect(buzzToolAllowed("apps_deploy", legacy, UNDECLARED)).toBe(true);
 });
 
-it("lists the built-in tools each role's gates allow", () => {
-  const orchestrator = roleTools("super-agent");
-  expect(orchestrator.buzz).toContain("canvas_set");
-  expect(orchestrator.native).toContain("Task");
-  expect(orchestrator.native).not.toContain("Bash");
-  const reviewer = roleTools("reviewer");
-  expect(reviewer.native).toEqual(expect.arrayContaining(["Read", "Skill"]));
-  expect(reviewer.native).not.toContain("Task");
-  expect(reviewer.buzz).not.toContain("mem_set");
-  expect(roleTools("coder").native).toContain("Bash");
-});
-
-it("lets Read / Write edit, run commands and chat, but not use connected, plugin or admin Buzz tools", () => {
+it("lets Builder edit, run commands, use connected apps and write notes and canvases, but not administer Buzz", () => {
   const builder = { toolPreset: "builder" };
-  for (const name of ["Read", "Edit", "Bash", "apply_patch", "Task", "Skill"])
+  for (const name of [
+    "Read",
+    "Edit",
+    "Bash",
+    "apply_patch",
+    "Task",
+    "Skill",
+    "mcp__github__create_issue",
+  ])
     expect(nativeToolAllowed(name, builder)).toBe(true);
-  expect(nativeToolAllowed("mcp__github__create_issue", builder)).toBe(false);
-  expect(buzzToolAllowed("send", builder)).toBe(true);
-  const reading = [
+  const plugins = [
     { name: "docs_read", effect: "read" as const },
     { name: "chat_post", effect: "message" as const },
+    ...TASKS,
+    ...UNDECLARED,
   ];
-  expect(buzzToolAllowed("docs_read", builder, reading)).toBe(true);
-  expect(buzzToolAllowed("chat_post", builder, reading)).toBe(true);
   for (const name of [
+    "send",
+    "notes_set",
     "canvas_set",
-    "settings_set",
-    "plugin_disable",
-    "mem_set",
+    "docs_read",
+    "chat_post",
   ])
-    expect(buzzToolAllowed(name, builder)).toBe(false);
-  expect(buzzToolAllowed("tasks_update", builder, TASKS)).toBe(false);
-  expect(buzzToolAllowed("apps_deploy", builder, UNDECLARED)).toBe(false);
+    expect(buzzToolAllowed(name, builder, plugins)).toBe(true);
+  for (const name of [
+    "channel_create",
+    "member_add",
+    "agent_create",
+    "plugin_disable",
+    "settings_set",
+    "repo",
+    "mem_set",
+    "tasks_update",
+    "apps_deploy",
+  ])
+    expect(buzzToolAllowed(name, builder, plugins)).toBe(false);
 });
 
+it("lets Reviewer read and converse but not use connected apps or change Buzz content", () => {
+  for (const name of ["Read", "WebFetch", "Skill"])
+    expect(nativeToolAllowed(name, REVIEWER)).toBe(true);
+  for (const name of ["Edit", "Bash", "Task", "mcp__github__get_issue"])
+    expect(nativeToolAllowed(name, REVIEWER)).toBe(false);
+  for (const name of ["read", "send", "react"])
+    expect(buzzToolAllowed(name, REVIEWER)).toBe(true);
+  for (const name of ["notes_set", "canvas_set", "channel_create"])
+    expect(buzzToolAllowed(name, REVIEWER)).toBe(false);
+});
 it("classifies every built-in Buzz tool explicitly", () => {
   expect(
     sessionTools()

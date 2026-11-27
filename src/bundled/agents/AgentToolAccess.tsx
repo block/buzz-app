@@ -3,7 +3,6 @@ import type { Agent, Agents } from "../../features/agents/service";
 import {
   joinToolSelection,
   PRESET_INFO,
-  roleTools,
   SAVED_ORCHESTRATOR,
   SAVED_SELECTION,
   toolPolicy,
@@ -11,7 +10,6 @@ import {
   type ToolPreset,
 } from "../../features/agents/tool-access";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
@@ -104,58 +102,17 @@ export function AgentToolAccess({
               value={preset.id}
               variant="card"
               label={preset.label}
-              description={
-                <span className="grid gap-1">
-                  <span>{preset.description}</span>
-                  <span>
-                    <strong className="text-primary">Can:</strong> {preset.can}
-                  </span>
-                  {preset.cannot && (
-                    <span>
-                      <strong className="text-primary">Can't:</strong>{" "}
-                      {preset.cannot}
-                    </span>
-                  )}
-                </span>
-              }
+              description={preset.description}
             />
           ))}
         </RadioGroup>
       </Field>
-      <Accordion
-        variant="settings"
-        items={choices
-          .filter((preset) => preset.id !== "custom")
-          .map((preset) => {
-            const tools = roleTools(preset.id);
-            return {
-              value: preset.id,
-              title: `${preset.label}: built-in tools this role permits`,
-              content: (
-                <dl className="m-0 grid gap-2 text-body-sm">
-                  <ToolList title="Native tool examples, using Claude Code names">
-                    {preset.id === "coder"
-                      ? "Every tool the harness has"
-                      : tools.native.join(", ")}
-                  </ToolList>
-                  <ToolList title="Buzz tools">
-                    {tools.buzz.join(", ")}
-                  </ToolList>
-                </dl>
-              ),
-            };
-          })}
-      />
       <p className="m-0 text-body-sm text-subtle">
-        Installed harness tools and the owner's own restrictions still decide
-        what an agent can actually call. Permission doesn't mean every tool acts
-        without approval: plugin_request waits for the owner, while
-        plugin_disable and settings_set apply immediately. Tool names are Claude
-        Code's; Codex, Goose and Pi use their own names for the same tools.
-        Where the harness has a native Skill tool, such as Claude Code, every
-        role can load skills; each action a skill takes still follows the role.
-        Subagents inherit this access. It is not a sandbox: with Shell on,
-        commands can use any credentials the agent's process has.
+        The owner's own restrictions and each harness's tools still apply.
+        Connected apps can't be limited to reads, so Reviewer can't use them,
+        and on Goose it can list folders and view images but can't open text
+        files. Subagents inherit this access. It is not a sandbox: with commands
+        on, they can use any credentials the agent's process has.
       </p>
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">
@@ -169,14 +126,5 @@ export function AgentToolAccess({
         disabled={!dirty || saving}
       />
     </form>
-  );
-}
-
-function ToolList({ title, children }: { title: string; children: string }) {
-  return (
-    <div>
-      <dt className="text-primary">{title}</dt>
-      <dd className="m-0 text-subtle">{children}</dd>
-    </div>
   );
 }

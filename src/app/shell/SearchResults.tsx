@@ -114,7 +114,12 @@ import {
   nextDeviceMerge,
 } from "../../features/search/device-merge";
 import type { Decisions } from "../../features/decisions/service";
-import { RERANK_PAGES, useCanRerank, useMessageRerank } from "./message-rerank";
+import {
+  RERANK_PAGES,
+  RERANK_WAIT,
+  useCanRerank,
+  useMessageRerank,
+} from "./message-rerank";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
   SEARCH_MIN_CHARS,
@@ -799,11 +804,16 @@ export function SearchResults({
   // conversation's hits doesn't hold the next search's.
   const [movedFor, setMovedFor] = useState<string>();
   if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
+  // The search whose relay hits stopped waiting for a rerank.
+  const [releasedFor, setReleasedFor] = useState<string>();
   // This device's matches show on every key, and the relay's join below them
   // (device-merge.ts). An author or date filter, an `in:` that names no
   // single conversation, or quotes and `-` exclusions, which the fuzzy match
-  // doesn't read, leave messages to the relay.
+  // doesn't read, leave messages to the relay. Most recent is the relay's
+  // order alone: fuzzy-ranked device rows would sit above newer hits.
+  const deviceFirst = !!deviceIndex && !search.newestFirst;
   const deviceText =
+    deviceFirst &&
     !offline &&
     !asking &&
     parsed.from === null &&
@@ -829,7 +839,7 @@ export function SearchResults({
   const [merge, setMerge] = useState<DeviceMerge>();
   // With the setting off there is no merge, and the relay's hits show as on main.
   const nextMerge =
-    deviceIndex &&
+    deviceFirst &&
     nextDeviceMerge(merge, {
       key: searchKey,
       device: deviceMessages,
@@ -842,7 +852,7 @@ export function SearchResults({
         if (offline) return false;
         const channel = session.channels.get?.(message.channelId);
         return (
-          deviceIndex.has(message.id) &&
+          !!deviceIndex?.has(message.id) &&
           !!channel &&
           !channel.huddle &&
           !channel.metadataPending
@@ -1961,9 +1971,29 @@ export function SearchResults({
         member: !!channel && joined(channel),
       };
     },
-    held: movedFor === searchKey,
+    held: movedFor === searchKey || releasedFor === searchKey,
   });
-  const messages: SearchDestination[] = rerank.messages.map((message) => {
+  // Under device rows, the relay's join once, already reranked. A rerank
+  // that runs past RERANK_WAIT lets them in as they came and is dropped.
+  // Once they join, the search is released: a later rerank, for hits that
+  // changed, can't take them away again.
+  const deviceIds = new Set(
+    nextMerge ? nextMerge.device.map(({ id }) => id) : [],
+  );
+  const deviceShown = rerank.messages.filter(({ id }) => deviceIds.has(id));
+  const joining =
+    releasedFor !== searchKey &&
+    deviceShown.length > 0 &&
+    deviceShown.length < rerank.messages.length;
+  const waiting = joining && rerank.pending;
+  if (joining && !waiting) setReleasedFor(searchKey);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => setReleasedFor(searchKey), RERANK_WAIT);
+    return () => clearTimeout(timer);
+  }, [waiting, searchKey]);
+  const shownHits = waiting ? deviceShown : rerank.messages;
+  const messages: SearchDestination[] = shownHits.map((message) => {
     // Every listed hit's channel is readable here, with settled metadata.
     const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;

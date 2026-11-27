@@ -1,4 +1,5 @@
 import { validChannelLabel } from "../src/features/relay/channel-labels.ts";
+import { isMigrationSource } from "../src/features/relay/migration.ts";
 // Host signing allowlist. No arbitrary kinds, roles or metadata edits.
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function validChannelCommand(event) {
@@ -17,12 +18,18 @@ export function validChannelCommand(event) {
   )
     return false;
   let tags = event.tags;
-  if ([9000, 9007].includes(event.kind) && tags.at(-1)?.[0] === "client-id") {
-    const clientId = tags.at(-1);
-    if (clientId.length !== 2 || !uuid.test(clientId[1])) return false;
+  const client = tags.at(-1)?.[0] === "client-id" ? tags.at(-1) : undefined;
+  if (client) {
+    if (client.length !== 2 || !uuid.test(client[1])) return false;
     tags = tags.slice(0, -1);
   }
-  const [h, p] = tags;
+  const migration = tags.at(-1)?.[0] === "migration" ? tags.at(-1) : undefined;
+  if (migration) {
+    if (migration.length !== 2 || !isMigrationSource(migration[1]))
+      return false;
+    tags = tags.slice(0, -1);
+  }
+  const [h] = tags;
   if (h?.length !== 2 || h[0] !== "h" || !uuid.test(h[1])) return false;
   if (event.kind === 9007) {
     const expected = ["h", "name", "visibility", "channel_type"];
@@ -85,13 +92,30 @@ export function validChannelCommand(event) {
           String(Number(ttlValue)) === ttlValue))
     );
   }
-  if (event.kind === 9000)
+  if (event.kind === 9000) {
+    // block/buzz#8575: up to 100 distinct `p` tags. An invitation may name
+    // the participant role, or the read-only guest role Bestie joins private
+    // channels with. Several people may share the Bot role a single agent
+    // enrollment already signs; one agent keeps that exact enrollment shape.
+    // Never an elevation.
+    const role = tags.at(-1)?.[0] === "role" ? tags.at(-1) : undefined;
+    const people = tags.slice(1, role ? -1 : undefined);
     return (
       event.content === "" &&
-      tags.length === 2 &&
-      p?.length === 2 &&
-      p[0] === "p" &&
-      /^[0-9a-f]{64}$/.test(p[1])
+      people.length >= 1 &&
+      people.length <= 100 &&
+      people.every(
+        (tag) =>
+          tag.length === 2 && tag[0] === "p" && /^[0-9a-f]{64}$/.test(tag[1]),
+      ) &&
+      new Set(people.map(([, key]) => key)).size === people.length &&
+      (!role ||
+        (role.length === 2 &&
+          (role[1] === "member" ||
+            role[1] === "guest" ||
+            (role[1] === "bot" &&
+              (people.length > 1 || (!!migration && !!client))))))
     );
+  }
   return false;
 }

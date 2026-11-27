@@ -77,6 +77,7 @@ export function communityFixture(
     viewer,
     selected,
     memberships: [],
+    sync: { known: [], outbox: [] },
     profile: { name: "", picture: "", about: "" },
   };
   const listeners = new Set<() => void>();
@@ -87,6 +88,7 @@ export function communityFixture(
       return () => listeners.delete(listener);
     },
     retry() {},
+    tryAgain() {},
     disconnect() {},
     async clearCache() {},
   };

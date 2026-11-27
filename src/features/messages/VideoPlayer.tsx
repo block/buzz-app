@@ -1,3 +1,4 @@
+import { useMediaReadRecovery } from "./use-media-read-recovery";
 import { useVideoGestures } from "./use-video-gestures";
 import { useMediaControls } from "./use-media-controls";
 import { useMediaCorners } from "./use-media-corners";
@@ -5,7 +6,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -35,6 +35,8 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./VideoPlayer.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
+import { MediaDownloadAction } from "./MediaDownloadAction";
+import { MediaContextMenu } from "./MediaContextMenu";
 
 export type VideoMarker = {
   id: string;
@@ -74,6 +76,7 @@ export function VideoControls({
   const corners = useMediaCorners();
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
+  const progress = useRef<HTMLInputElement>(null);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -86,7 +89,30 @@ export function VideoControls({
     const video = videoRef.current;
     if (!video) return;
     let frame = 0;
-    const syncTime = () => setTime(video.currentTime);
+    let displayedSecond = -1;
+    const syncTime = () => {
+      const seconds = Number.isFinite(video.currentTime)
+        ? video.currentTime
+        : 0;
+      const length = Number.isFinite(video.duration) ? video.duration : 0;
+      const input = progress.current;
+      // The native range owns frame-by-frame progress. Re-rendering every menu
+      // and button at display refresh rate competes with the viewer entrance.
+      if (input) {
+        const max = String(length || 1);
+        if (input.max !== max) input.max = max;
+        input.value = String(Math.min(seconds, length));
+        input.style.setProperty(
+          "--progress",
+          `${length ? (seconds / length) * 100 : 0}%`,
+        );
+      }
+      const wholeSecond = Math.floor(seconds);
+      if (wholeSecond !== displayedSecond) {
+        displayedSecond = wholeSecond;
+        setTime(wholeSecond);
+      }
+    };
     const tick = () => {
       syncTime();
       frame = requestAnimationFrame(tick);
@@ -104,6 +130,7 @@ export function VideoControls({
     };
     const metadata = () => {
       setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+      syncTime();
     };
     const sound = () => {
       setVolume(video.volume);
@@ -163,7 +190,6 @@ export function VideoControls({
     if (!videoRef.current || !duration) return;
     const next = Math.max(0, Math.min(seconds, duration));
     videoRef.current.currentTime = next;
-    setTime(next);
     // Keep authoring time and inline handoff synchronized even while paused.
     videoRef.current.dispatchEvent(new Event("timeupdate"));
   };
@@ -197,9 +223,7 @@ export function VideoControls({
         {!inline && playButton}
         <PopoverRoot>
           <PopoverTrigger
-            openOnHover
-            delay={100}
-            closeDelay={100}
+            openOnHover="control"
             render={
               <IconButton
                 size="sm"
@@ -302,18 +326,14 @@ export function VideoControls({
           <input
             type="range"
             tabIndex={0}
+            ref={progress}
             aria-label={inline ? "Video progress" : "Video timeline"}
             aria-valuetext={`${videoTime(time)} / ${videoTime(duration)}`}
             min={0}
             max={duration || 1}
             step={0.1}
-            value={Math.min(time, duration)}
+            defaultValue={0}
             disabled={!duration}
-            style={
-              {
-                "--progress": `${duration ? (time / duration) * 100 : 0}%`,
-              } as CSSProperties
-            }
             onChange={(event) => seek(Number(event.currentTarget.value))}
           />
           {hover !== undefined && duration > 0 && (
@@ -364,9 +384,7 @@ export function VideoControls({
         <div className={styles.speed}>
           <MenuRoot modal={false}>
             <MenuTrigger
-              openOnHover
-              delay={100}
-              closeDelay={100}
+              openOnHover="control"
               render={
                 <Button variant="ghost" size="sm">
                   {rate}x
@@ -420,6 +438,8 @@ export function VideoControls({
 
 export function VideoPlayer({
   source,
+  attachmentUrl,
+  downloadName,
   poster,
   videoRef,
   initialTime = 0,
@@ -430,6 +450,9 @@ export function VideoPlayer({
   children,
 }: {
   source: string;
+  attachmentUrl?: string | undefined;
+  /** Supplied only by received-attachment owners, never unsent previews. */
+  downloadName?: string | undefined;
   poster?: string | undefined;
   videoRef: RefObject<HTMLVideoElement | null>;
   initialTime?: number;
@@ -440,82 +463,105 @@ export function VideoPlayer({
   children?: ReactNode;
 }) {
   const stage = useRef<HTMLDivElement>(null);
-  const idle = useMediaControls(stage, source);
+  const [downloadFeedback, setDownloadFeedback] = useState(false);
+  const idle = useMediaControls(stage, source, downloadFeedback);
   const { handlers: gestures, feedback } = useVideoGestures(videoRef, source);
   // Callers render their unavailable state instead of a player when
   // `useMediaElementSource(source).unavailable`.
   const { src: elementSource } = useMediaElementSource(source);
+  const { recover: recoverMedia } = useMediaReadRecovery(
+    elementSource,
+    onError,
+  );
   return (
-    <div
-      ref={stage}
-      className={`${styles.player} dark`}
-      data-color-mode="dark"
-      data-controls-idle={idle || undefined}
+    <MediaContextMenu
+      kind="video"
+      url={attachmentUrl}
+      source={source}
+      name={downloadName}
     >
-      <video
-        ref={videoRef}
-        {...gestures}
-        data-review-media=""
-        src={elementSource}
-        poster={poster}
-        playsInline
-        autoPlay
-        preload="auto"
-        onPlay={(event) => {
-          // A pending play request can settle after dismissal has begun.
-          if (event.currentTarget.closest("[data-review-closing]"))
-            event.currentTarget.pause();
-        }}
-        onLoadedMetadata={(event) => {
-          const element = event.currentTarget;
-          element.currentTime = Math.max(
-            0,
-            Math.min(
-              initialTime,
-              Number.isFinite(element.duration)
-                ? element.duration
-                : initialTime,
-            ),
-          );
-          onTime(element.currentTime);
-        }}
-        onTimeUpdate={(event) => onTime(event.currentTarget.currentTime)}
-        onError={onError}
-      />
-      {feedback && (
-        <div
-          key={feedback.id}
-          className={`${styles.center} ${styles.gestureFeedback}`}
-          data-video-feedback={feedback.kind}
-          data-review-chrome=""
-          aria-hidden="true"
-        >
-          {feedback.kind === "play" ? (
-            <PlayFilledIcon size={24} />
-          ) : feedback.kind === "pause" ? (
-            <PauseFilledIcon size={24} />
-          ) : feedback.kind === "speed" ? (
-            <span>2×</span>
-          ) : (
-            <>
-              {feedback.kind === "forward" ? (
-                <ArrowClockwiseIcon size={36} />
-              ) : (
-                <ArrowCounterClockwiseIcon size={36} />
-              )}
-              <span className={styles.seekAmount}>10</span>
-            </>
-          )}
-        </div>
-      )}
-      <div className={styles.reviewControls} data-review-chrome="">
-        <VideoControls
-          videoRef={videoRef}
-          {...(markers ? { markers } : {})}
-          {...(onMarker ? { onMarker } : {})}
+      <div
+        ref={stage}
+        className={`${styles.player} dark`}
+        data-color-mode="dark"
+        data-controls-idle={idle || undefined}
+        data-controls-revealed={downloadFeedback || undefined}
+      >
+        <video
+          ref={videoRef}
+          {...gestures}
+          data-review-media=""
+          src={elementSource}
+          poster={poster}
+          playsInline
+          autoPlay
+          preload="auto"
+          onPlay={(event) => {
+            // A pending play request can settle after dismissal has begun.
+            if (event.currentTarget.closest("[data-review-closing]"))
+              event.currentTarget.pause();
+          }}
+          onLoadedMetadata={(event) => {
+            const element = event.currentTarget;
+            element.currentTime = Math.max(
+              0,
+              Math.min(
+                initialTime,
+                Number.isFinite(element.duration)
+                  ? element.duration
+                  : initialTime,
+              ),
+            );
+            onTime(element.currentTime);
+          }}
+          onTimeUpdate={(event) => onTime(event.currentTarget.currentTime)}
+          onError={(event) => {
+            if (!recoverMedia(event.currentTarget)) onError();
+          }}
         />
-        {children}
+        {feedback && (
+          <div
+            key={feedback.id}
+            className={`${styles.center} ${styles.gestureFeedback}`}
+            data-video-feedback={feedback.kind}
+            data-review-chrome=""
+            aria-hidden="true"
+          >
+            {feedback.kind === "play" ? (
+              <PlayFilledIcon size={24} />
+            ) : feedback.kind === "pause" ? (
+              <PauseFilledIcon size={24} />
+            ) : feedback.kind === "speed" ? (
+              <span>2×</span>
+            ) : (
+              <>
+                {feedback.kind === "forward" ? (
+                  <ArrowClockwiseIcon size={36} />
+                ) : (
+                  <ArrowCounterClockwiseIcon size={36} />
+                )}
+                <span className={styles.seekAmount}>10</span>
+              </>
+            )}
+          </div>
+        )}
+        <div className={styles.reviewControls} data-review-chrome="">
+          <VideoControls
+            videoRef={videoRef}
+            {...(markers ? { markers } : {})}
+            {...(onMarker ? { onMarker } : {})}
+          />
+          {downloadName !== undefined && (
+            <MediaDownloadAction
+              source={source}
+              name={downloadName}
+              kind="video"
+              onFeedbackVisible={setDownloadFeedback}
+            />
+          )}
+          {children}
+        </div>
       </div>
-    </div>
+    </MediaContextMenu>
   );
 }

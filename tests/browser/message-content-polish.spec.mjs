@@ -1,6 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 import { ACCENTS } from "../../src/shared/theme/accent.ts";
 import { apcaContrast, wcagRatio } from "../../scripts/design-system/apca.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 const specimen = (page, id) => page.locator(`[aria-labelledby="label-${id}"]`);
 // macOS WebKit follows the host preference: Option-Tab includes every control.
@@ -39,6 +40,52 @@ async function expectReadable(locator) {
     `${ink} on ${background}`,
   ).toBeGreaterThanOrEqual(4.5);
 }
+
+// An own table-only message drops its bubble fill but keeps its reactions in
+// the bubble, so the grouped count must take the panel's ink, not the bubble's.
+test("reactions under an unboxed own table stay contained and readable", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&table-reactions");
+  const row = page
+    .locator("[data-message-id]")
+    .filter({ has: page.getByRole("table") });
+  const count = row.getByRole("button", { name: "👍: 9 people" });
+  await expect(count).toContainText("9");
+  // Browser layout: an unboxed table has no padding for a reaction outdent.
+  await expect
+    .poll(async () => {
+      const table = await row.getByRole("table").boundingBox();
+      const strip = await row
+        .getByRole("group", { name: "Reactions", exact: true })
+        .boundingBox();
+      return (
+        !!table &&
+        !!strip &&
+        strip.x >= table.x &&
+        strip.x + strip.width <= table.x + table.width
+      );
+    })
+    .toBe(true);
+
+  for (const theme of ["light", "dark"])
+    for (const level of ["touch", "high"])
+      for (const color of ACCENTS) {
+        await page.locator("html").evaluate(
+          (element, { theme, level, color }) => {
+            Object.assign(element.dataset, {
+              colorMode: theme,
+              colorLevel: level,
+              accent: color,
+            });
+          },
+          { theme, level, color },
+        );
+        // Theme changes fade the chip's colors; measure the settled pair.
+        await animationsSettled(page.locator("html"), { subtree: true });
+        await expectReadable(count);
+      }
+});
 
 for (const theme of ["light", "dark"]) {
   test(`message references and inset surfaces remain legible in ${theme}`, async ({
@@ -117,9 +164,9 @@ for (const theme of ["light", "dark"]) {
     await page.keyboard.press(tabKey(browserName));
     await expect(receivedLink).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(received.getByRole("status")).toContainText(
-      "Sample link selected",
-    );
+    await expect(
+      received.getByRole("status").filter({ hasText: "Sample link selected" }),
+    ).toBeVisible();
     await page
       .getByRole("button", { name: "Narrow preview", exact: true })
       .click();
@@ -167,7 +214,9 @@ test("long links wrap inside their bubble in a narrow pane", async ({
   await long.screenshot({ path: info.outputPath("long-links.png") });
   // A wrapped link still opens its destination.
   await links.first().click();
-  await expect(long.getByRole("status")).toContainText("Sample link selected");
+  await expect(
+    long.getByRole("status").filter({ hasText: "Sample link selected" }),
+  ).toBeVisible();
 });
 
 test("file anchors and native download buttons stay readable and keyboard reachable", async ({

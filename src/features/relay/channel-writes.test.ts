@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
+import { verifyEvent } from "nostr-tools";
 import { SOLO_LABEL } from "../solo/labels";
 import { createChannelWrites } from "./channel-writes";
 import type { Outbox, OutgoingEvent } from "./outbox";
@@ -14,6 +15,7 @@ import {
 } from "./testing";
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
+import { acceptPublish } from "./transport";
 import { canAddMembers } from "../channel-members/members";
 import type { ReadFilter, RelayEvent } from "./events";
 const event = message(keypair(), "chat", "Work", 1);
@@ -101,22 +103,33 @@ it("retries an identical create with its signed event, replaces a changed one an
     writer: { kinds: [9007], sign, publish },
   };
   const input = { name: "Release notes", visibility: "open" as const };
+  const migration = { ...input, migration: "slack" };
   const owner = createRelaySession(transport, { outboxStorage: storage });
   try {
-    await expect(owner.session.channelCreation.create(input)).rejects.toThrow(
-      /connection lost/,
-    );
-    await expect(owner.session.channelCreation.create(input)).rejects.toThrow(
-      /connection lost/,
-    );
+    await expect(
+      owner.session.channelCreation.create(migration),
+    ).rejects.toThrow(/connection lost/);
+    await expect(
+      owner.session.channelCreation.create(migration),
+    ).rejects.toThrow(/connection lost/);
     expect(sign).toHaveBeenCalledOnce();
     const [first, again] = publish.mock.calls.map(([event]) => event);
     expect(again).toEqual(first);
+    assert.exists(first);
+    expect(verifyEvent(structuredClone(first))).toBe(true);
+    expect(first.tags).toContainEqual(["migration", "slack"]);
+
+    await expect(owner.session.channelCreation.create(input)).rejects.toThrow(
+      /connection lost/,
+    );
+    const [ordinary] = publish.mock.lastCall ?? [];
+    expect(ordinary?.tags[0]).not.toEqual(first.tags[0]);
+    expect(ordinary?.tags.some(([tag]) => tag === "migration")).toBe(false);
 
     await expect(
       owner.session.channelCreation.create({ ...input, name: "Changelog" }),
     ).rejects.toThrow(/connection lost/);
-    expect(sign).toHaveBeenCalledTimes(2);
+    expect(sign).toHaveBeenCalledTimes(3);
     await vi.waitFor(() =>
       expect(records.map(({ event }) => event.tags[1])).toEqual([
         ["name", "Changelog"],
@@ -133,11 +146,52 @@ it("retries an identical create with its signed event, replaces a changed one an
     await expect(
       restored.session.channelCreation.create({ ...input, name: "Changelog" }),
     ).rejects.toThrow(/connection lost/);
-    expect(sign).toHaveBeenCalledTimes(3);
+    expect(sign).toHaveBeenCalledTimes(4);
     const [saved, fresh] = publish.mock.calls.slice(-2).map(([event]) => event);
     expect(fresh?.tags[0]).not.toEqual(saved?.tags[0]);
   } finally {
     restored.dispose();
+  }
+});
+
+it("surfaces an HTTP migration quota refusal without retrying channel creation", async () => {
+  const viewer = keypair();
+  const reason = "rate-limited: quota exceeded; retry in 5s";
+  const publish = vi.fn(async (event: RelayEvent) => {
+    await acceptPublish(
+      Response.json({ error: reason }, { status: 429 }),
+      event.id,
+    );
+  });
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: keypair().pubkey,
+      media: () => undefined,
+      query: async () => [],
+      writer: {
+        kinds: [9007],
+        sign: async (event) => signed(viewer, event),
+        publish,
+      },
+    },
+    { outboxStorage: { load: () => [], save: () => {} } },
+  );
+  try {
+    await expect(
+      owner.session.channelCreation.create({
+        name: "Imported channel",
+        visibility: "open",
+        migration: "slack",
+      }),
+    ).rejects.toThrow(/^rate-limited:/);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.lastCall?.[0].tags).toContainEqual([
+      "migration",
+      "slack",
+    ]);
+  } finally {
+    owner.dispose();
   }
 });
 
@@ -716,6 +770,7 @@ function setup(
     observeDismiss: () => () => {},
     observeSend: () => () => {},
     ready: async () => {},
+    recovery: async () => undefined,
     recover: async () => {},
     acknowledge: async () => {},
     snapshot: () => [],
@@ -1325,6 +1380,7 @@ it.each([true, false])(
         observeDismiss: () => () => {},
         observeSend: () => () => {},
         ready: async () => {},
+        recovery: async () => undefined,
         recover: async () => {},
         acknowledge: async () => {},
         supports: () => true,
@@ -1488,13 +1544,19 @@ it("creates a Solo chat in its single durable outbox command, with validated lif
     ],
   });
   h.service.create(id, "Work");
-  expect(h.outbox.send).toHaveBeenLastCalledWith(command([["t", SOLO_LABEL]]));
+  expect(h.outbox.send).toHaveBeenLastCalledWith(
+    command([["t", SOLO_LABEL]]),
+    undefined,
+    undefined,
+  );
   h.service.create(id, "Work", 600);
   expect(h.outbox.send).toHaveBeenLastCalledWith(
     command([
       ["ttl", "600"],
       ["t", SOLO_LABEL],
     ]),
+    undefined,
+    undefined,
   );
   h.service.create(id, "Work", 600, true);
   expect(h.outbox.send).toHaveBeenLastCalledWith(
@@ -1503,6 +1565,8 @@ it("creates a Solo chat in its single durable outbox command, with validated lif
       ["t", SOLO_LABEL],
       ["t", "buzz.session.named"],
     ]),
+    undefined,
+    undefined,
   );
   for (const ttl of [0, -1, 1.5, 2147483648, NaN])
     expect(() => h.service.create(id, "Work", ttl)).toThrow("duration");
@@ -1554,18 +1618,22 @@ describe("starting a Solo chat", () => {
     });
     const { create, ready } = test.service.start(id, "Work", [agent]);
     expect(create).toBe(event.id);
-    expect(test.outbox.send).toHaveBeenCalledExactlyOnceWith({
-      kind: 9007,
-      content: "",
-      tags: [
-        ["h", id],
-        ["name", "Work"],
-        ["visibility", "private"],
-        ["channel_type", "stream"],
-        ["t", SOLO_LABEL],
-        ["p", agent],
-      ],
-    });
+    expect(test.outbox.send).toHaveBeenCalledExactlyOnceWith(
+      {
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", id],
+          ["name", "Work"],
+          ["visibility", "private"],
+          ["channel_type", "stream"],
+          ["t", SOLO_LABEL],
+          ["p", agent],
+        ],
+      },
+      undefined,
+      undefined,
+    );
     expect(test.channels.start).toHaveBeenCalledExactlyOnceWith({
       id,
       name: "Work",
@@ -1672,4 +1740,78 @@ describe("starting a Solo chat", () => {
       vi.useRealTimers();
     }
   });
+});
+
+// The real signing boundary proves the Solo wrapper preserves the Outbox gate.
+it("cancels a guarded Solo create after signing starts and requires a fresh gate after restore", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  let active = true;
+  let release!: (event: RelayEvent) => void;
+  let template: Parameters<typeof signed>[1] | undefined;
+  let records: readonly OutgoingEvent[] = [];
+  const publish = vi.fn(async () => {});
+  const transport = {
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    channelIdentity: true as const,
+    media: () => undefined,
+    query: async () => [],
+    writer: {
+      kinds: [9007],
+      publish,
+      sign: (input: Parameters<typeof signed>[1]) => {
+        template = input;
+        return new Promise<RelayEvent>((resolve) => {
+          release = resolve;
+        });
+      },
+    },
+  };
+  const storage = {
+    load: () => structuredClone(records),
+    save: (next: readonly OutgoingEvent[]) => {
+      records = structuredClone(next);
+    },
+  };
+  const owner = createRelaySession(transport, { outboxStorage: storage });
+  try {
+    const outbox = owner.session.outbox;
+    assert.exists(outbox);
+    await outbox.ready();
+    const id = owner.session.channelWrites.create(
+      "11111111-1111-4111-8111-111111111111",
+      "Work",
+      undefined,
+      true,
+      [viewer.pubkey],
+      () => active,
+    );
+    await vi.waitFor(() => expect(template).toBeDefined());
+    expect(
+      outbox.snapshot().find((item) => item.event.id === id)?.guarded,
+    ).toBe(true);
+    active = false;
+    assert.exists(template);
+    release(signed(viewer, template));
+    await vi.waitFor(() =>
+      expect(
+        outbox.snapshot().find((item) => item.event.id === id)?.delivery,
+      ).toBe("failed"),
+    );
+    expect(publish).not.toHaveBeenCalled();
+    owner.dispose();
+    const restored = createRelaySession(transport, { outboxStorage: storage });
+    try {
+      const restoredOutbox = restored.session.outbox;
+      assert.exists(restoredOutbox);
+      await restoredOutbox.ready();
+      expect(() => restoredOutbox.retry(id)).toThrow(/cancelled/);
+      expect(publish).not.toHaveBeenCalled();
+    } finally {
+      restored.dispose();
+    }
+  } finally {
+    owner.dispose();
+  }
 });

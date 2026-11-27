@@ -19,23 +19,14 @@ import {
 } from "../../features/relay/channel-lifecycle";
 import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
 import { ChannelLifecycleDialog } from "./ChannelLifecycleDialog";
-import type { ChannelLifecycleSettings } from "../../features/relay/channel-lifecycle-protocol";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { ProfileQueries } from "../../features/relay/profile-directory";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-const settings: ChannelLifecycleSettings = {
-  channelId: "id",
-  channelType: "stream",
-  canUnarchive: false,
-  canArchive: true,
-  canDelete: true,
-  canLeave: false,
-  canHide: false,
-  leaveReason: "Transfer ownership before leaving the channel.",
-};
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -46,7 +37,7 @@ function deferred<T>() {
 function capability() {
   return {
     available: true,
-    load: vi.fn(async () => settings),
+    load: vi.fn<ChannelLifecycleCapability["load"]>(),
     run: vi.fn<ChannelLifecycleCapability["run"]>(async () => {}),
     snapshot: () => ({ status: "ready", hidden: [] }),
     subscribe: () => () => {},
@@ -54,187 +45,228 @@ function capability() {
     refreshVisibility: async () => {},
   } satisfies ChannelLifecycleCapability;
 }
-it("waits silently for fresh permissions and preserves the last-owner boundary", async () => {
-  const user = userEvent.setup();
-  const lifecycle = capability();
+const viewer = "a".repeat(64),
+  other = "b".repeat(64),
+  agent = "c".repeat(64);
+function summary(overrides: Partial<ChannelSummary> = {}): ChannelSummary {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "Fixture",
+    channelType: "stream",
+    viewerRole: "owner",
+    members: [viewer, other],
+    owners: [viewer],
+    ...overrides,
+  };
+}
+/** The session's profile cache: verified owners of the profiles it holds. */
+function session(
+  lifecycle: ChannelLifecycleCapability = capability(),
+  held: Record<string, string> = {},
+) {
+  const listeners = new Set<() => void>();
+  const owners = new Map(Object.entries(held));
+  let evictions = 0;
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  return {
+    viewer,
+    channelLifecycle: lifecycle,
+    profiles: {
+      snapshot: () => new Map(),
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      ensure: vi.fn(async (_ids: readonly string[], _priority?: string) => {}),
+      event: (key: string) =>
+        owners.has(key)
+          ? ({} as ReturnType<NonNullable<ProfileQueries["event"]>>)
+          : undefined,
+      owner: (key: string) => owners.get(key),
+      evictions: () => evictions,
+    },
+    hold(key: string, owner: string) {
+      owners.set(key, owner);
+      notify();
+    },
+    evict(key: string) {
+      owners.delete(key);
+      evictions++;
+      notify();
+    },
+    /** A cache shrink cancelling a background read: nothing held changes. */
+    cancel() {
+      evictions++;
+      notify();
+    },
+  };
+}
+function menu(
+  channel: ChannelSummary,
+  host = session(),
+  props: Partial<Parameters<typeof ChannelLifecycleMenu>[0]> = {},
+) {
   const choose = vi.fn();
-  const gate = deferred<ChannelLifecycleSettings>();
-  lifecycle.load.mockReturnValueOnce(gate.promise);
   render(
     <ContextMenuRoot open>
       <MenuPopup>
         <ChannelLifecycleMenu
-          channelId="id"
-          lifecycle={lifecycle}
+          channel={channel}
+          session={host}
           choose={choose}
           disabled={false}
           separator
+          {...props}
         />
       </MenuPopup>
     </ContextMenuRoot>,
   );
-  await waitFor(() => expect(lifecycle.load).toHaveBeenCalledOnce());
-  expect(screen.queryByText("Checking channel permissions…")).toBeNull();
-  expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
-  expect(screen.queryByRole("separator")).toBeNull();
-  expect(choose).not.toHaveBeenCalled();
-  gate.resolve(settings);
-  const remove = await screen.findByRole("menuitem", {
-    name: "Delete channel",
-  });
-  expect(screen.getAllByRole("separator")).toHaveLength(1);
-  expect(screen.queryByRole("menuitem", { name: /^Leave channel/ })).toBeNull();
-  expect(
-    screen.queryByText("Transfer ownership before leaving the channel."),
-  ).toBeNull();
+  return { choose, host };
+}
+it("offers permitted actions on first render, without a relay read, and keeps the last-owner boundary", async () => {
+  const user = userEvent.setup();
+  const lifecycle = capability();
+  const { choose } = menu(summary(), session(lifecycle));
   expect(
     screen.getAllByRole("menuitem").map((item) => item.textContent),
   ).toEqual(["Archive channel", "Delete channel"]);
-  for (const name of ["Archive channel", "Delete channel"]) {
-    const item = screen.getByRole("menuitem", { name });
+  expect(screen.getAllByRole("separator")).toHaveLength(1);
+  expect(
+    screen.queryByText("Transfer ownership before leaving the channel."),
+  ).toBeNull();
+  for (const item of screen.getAllByRole("menuitem"))
     expect(
       item.querySelector('.buzz-menu-icon[aria-hidden="true"] svg'),
     ).not.toBeNull();
-  }
-  await user.click(remove);
+  expect(lifecycle.load).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("menuitem", { name: "Delete channel" }));
   expect(choose).toHaveBeenCalledWith("delete");
+  expect(lifecycle.run).not.toHaveBeenCalled();
 });
 it.each([
-  { action: "leave", label: "Leave channel", channelType: "stream" },
-  { action: "hide", label: "Hide conversation", channelType: "dm" },
-  { action: "unarchive", label: "Unarchive channel", channelType: "stream" },
+  {
+    action: "leave",
+    label: "Leave channel",
+    channel: { viewerRole: "member", owners: [other] },
+    items: ["Leave channel"],
+  },
+  {
+    action: "hide",
+    label: "Hide conversation",
+    channel: { channelType: "dm", viewerRole: "member", owners: [] },
+    items: ["Hide conversation"],
+  },
+  {
+    action: "unarchive",
+    label: "Unarchive channel",
+    channel: { viewerRole: "admin", owners: [other], archived: true },
+    items: ["Leave channel", "Unarchive channel"],
+  },
 ] as const)(
   "offers $label without an ellipsis when permitted",
-  async ({ action, label, channelType }) => {
+  async ({ action, label, channel, items }) => {
     const user = userEvent.setup();
-    const lifecycle = capability();
-    lifecycle.load.mockResolvedValue({
-      channelId: "id",
-      channelType,
-      canUnarchive: action === "unarchive",
-      canArchive: false,
-      canDelete: false,
-      canLeave: action === "leave",
-      canHide: action === "hide",
-    });
-    const choose = vi.fn();
-    render(
-      <ContextMenuRoot open>
-        <MenuPopup>
-          <ChannelLifecycleMenu
-            channelId="id"
-            lifecycle={lifecycle}
-            choose={choose}
-            disabled={false}
-            separator
-          />
-        </MenuPopup>
-      </ContextMenuRoot>,
-    );
-    const item = await screen.findByRole("menuitem", {
-      name: label,
-    });
-    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+    const { choose } = menu(summary(channel as Partial<ChannelSummary>));
     expect(
-      item.querySelector('.buzz-menu-icon[aria-hidden="true"] svg'),
-    ).not.toBeNull();
-    await user.click(item);
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual(items);
+    await user.click(screen.getByRole("menuitem", { name: label }));
     expect(choose).toHaveBeenCalledWith(action);
   },
 );
-it("failed permission reads offer retry rather than stale destructive actions", async () => {
-  const user = userEvent.setup();
-  const lifecycle = capability();
-  lifecycle.load.mockRejectedValueOnce(
-    new Error("Malformed channel membership state"),
-  );
-  render(
-    <ContextMenuRoot open>
-      <MenuPopup>
-        <ChannelLifecycleMenu
-          channelId="id"
-          lifecycle={lifecycle}
-          choose={() => {}}
-          disabled={false}
-          separator
-        />
-      </MenuPopup>
-    </ContextMenuRoot>,
-  );
-  expect((await screen.findByRole("alert")).textContent).toBe(
-    "Channel actions unavailable",
-  );
-  expect(
-    screen.queryByRole("menuitem", { name: "Archive channel" }),
-  ).toBeNull();
-  expect(screen.getAllByRole("separator")).toHaveLength(1);
-  const retry = deferred<ChannelLifecycleSettings>();
-  lifecycle.load.mockReturnValueOnce(retry.promise);
-  await user.click(
-    screen.getByRole("menuitem", { name: "Retry channel permissions" }),
-  );
-  await waitFor(() => expect(lifecycle.load).toHaveBeenCalledTimes(2));
-  expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
-  expect(screen.queryByRole("separator")).toBeNull();
-  expect(screen.queryByRole("alert")).toBeNull();
-  retry.resolve(settings);
-  expect(
-    await screen.findByRole("menuitem", {
-      name: "Archive channel",
-    }),
-  ).toBeDefined();
-  expect(screen.getAllByRole("separator")).toHaveLength(1);
-});
 it.each([
-  { separator: false, allowed: true },
-  { separator: true, allowed: false },
-])("omits an orphan separator: %j", async ({ separator, allowed }) => {
-  const lifecycle = capability();
-  const gate = deferred<ChannelLifecycleSettings>();
-  lifecycle.load.mockReturnValueOnce(gate.promise);
-  render(
-    <ContextMenuRoot open>
-      <MenuPopup>
-        <ChannelLifecycleMenu
-          channelId="id"
-          lifecycle={lifecycle}
-          choose={() => {}}
-          disabled={false}
-          separator={separator}
-        />
-      </MenuPopup>
-    </ContextMenuRoot>,
-  );
-  await waitFor(() => expect(lifecycle.load).toHaveBeenCalledOnce());
-  await act(async () => {
-    gate.resolve({ ...settings, canArchive: allowed, canDelete: allowed });
-    await gate.promise;
-  });
-  expect(screen.queryAllByRole("menuitem")).toHaveLength(allowed ? 2 : 0);
+  { separator: false, known: true },
+  { separator: true, known: false },
+])("omits an orphan separator: %j", ({ separator, known }) => {
+  const { owners: _, ...unknown } = summary();
+  menu(known ? summary() : unknown, session(), { separator });
+  expect(screen.queryAllByRole("menuitem")).toHaveLength(known ? 2 : 0);
   expect(screen.queryByRole("separator")).toBeNull();
 });
-it("keeps the unavailable section separated without loading permissions", async () => {
+it("keeps the unavailable section separated without loading permissions", () => {
   const lifecycle = { ...capability(), available: false };
-  render(
-    <ContextMenuRoot open>
-      <MenuPopup>
-        <ChannelLifecycleMenu
-          channelId="id"
-          lifecycle={lifecycle}
-          choose={() => {}}
-          disabled={false}
-          separator
-        />
-      </MenuPopup>
-    </ContextMenuRoot>,
-  );
+  menu(summary(), session(lifecycle));
   expect(
-    await screen.findByRole("menuitem", {
+    screen.getByRole("menuitem", {
       name: "Channel actions unavailable on this connection",
     }),
   ).toBeDefined();
   expect(screen.getAllByRole("separator")).toHaveLength(1);
   expect(lifecycle.load).not.toHaveBeenCalled();
+});
+it("offers an owner-agent's human Archive and Delete from the profile cache", () => {
+  const host = session(capability(), { [agent]: viewer });
+  menu(summary({ viewerRole: "member", owners: [agent] }), host);
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Leave channel", "Archive channel", "Delete channel"]);
+  expect(host.profiles.ensure).not.toHaveBeenCalled();
+});
+it("fetches a missing owner profile in the background without holding back Leave", () => {
+  const { host } = menu(summary({ viewerRole: "member", owners: [agent] }));
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Leave channel"]);
+  expect(host.profiles.ensure).toHaveBeenCalledExactlyOnceWith(
+    [agent],
+    "background",
+  );
+  act(() => host.hold(agent, other));
+  expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+  act(() => host.hold(agent, viewer));
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Leave channel", "Archive channel", "Delete channel"]);
+});
+it("fetches an evicted owner profile again instead of dropping owner-agent actions", () => {
+  const host = session(capability(), { [agent]: viewer });
+  menu(summary({ viewerRole: "member", owners: [agent] }), host);
+  expect(host.profiles.ensure).not.toHaveBeenCalled();
+  act(() => host.evict(agent));
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Leave channel"]);
+  expect(host.profiles.ensure).toHaveBeenCalledExactlyOnceWith(
+    [agent],
+    "background",
+  );
+  act(() => host.hold(agent, viewer));
+  expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+});
+it("fetches an owner profile again after a cache shrink cancels its read", () => {
+  const { host } = menu(summary({ viewerRole: "member", owners: [agent] }));
+  expect(host.profiles.ensure).toHaveBeenCalledOnce();
+  act(() => host.cancel());
+  expect(host.profiles.ensure).toHaveBeenCalledTimes(2);
+  act(() => host.hold(agent, viewer));
+  expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+});
+it("asks again for an owner profile after a failed read, at the directory's next change", async () => {
+  const host = session();
+  let fail!: () => void;
+  host.profiles.ensure.mockImplementationOnce(
+    () =>
+      new Promise<void>(
+        (_, reject) => (fail = () => reject(new Error("offline"))),
+      ),
+  );
+  menu(summary({ viewerRole: "member", owners: [agent] }), host);
+  expect(host.profiles.ensure).toHaveBeenCalledOnce();
+  await act(async () => fail());
+  expect(host.profiles.ensure).toHaveBeenCalledOnce();
+  act(() => host.hold(other, viewer));
+  expect(host.profiles.ensure).toHaveBeenCalledTimes(2);
+  act(() => host.hold(agent, viewer));
+  expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+});
+it("offers nothing and reads no profile for restored cached membership", () => {
+  const { host } = menu(
+    summary({ viewerRole: "member", owners: [agent], cached: true }),
+  );
+  expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+  expect(host.profiles.ensure).not.toHaveBeenCalled();
 });
 it("dismisses confirmation into pending feedback, then reports a failed write without resubmitting", async () => {
   const user = userEvent.setup();
@@ -467,61 +499,6 @@ it("uncertain delivery reports refresh guidance in a toast without offering blin
   expect(lifecycle.run).toHaveBeenCalledOnce();
 });
 
-it.each([true, false])(
-  "Delete outage preserves sidebar Archive=%s and Leave, then retries",
-  async (canArchive) => {
-    const lifecycle = capability(),
-      choose = vi.fn();
-    lifecycle.load.mockResolvedValueOnce({
-      ...settings,
-      canArchive,
-      canLeave: true,
-      canDelete: false,
-      deleteUnavailable: true,
-    });
-    render(
-      <ContextMenuRoot open>
-        <MenuPopup>
-          <ChannelLifecycleMenu
-            channelId="id"
-            lifecycle={lifecycle}
-            choose={choose}
-            disabled={false}
-            separator
-          />
-        </MenuPopup>
-      </ContextMenuRoot>,
-    );
-    expect(
-      await screen.findByRole("menuitem", {
-        name: "Delete check unavailable",
-      }),
-    ).toHaveAttribute("aria-disabled", "true");
-    expect(
-      screen.getByRole("menuitem", { name: "Leave channel" }),
-    ).not.toHaveAttribute("aria-disabled", "true");
-    expect(!!screen.queryByRole("menuitem", { name: "Archive channel" })).toBe(
-      canArchive,
-    );
-    expect(
-      screen.queryByRole("menuitem", { name: "Delete channel" }),
-    ).toBeNull();
-    lifecycle.load.mockResolvedValue({
-      ...settings,
-      canArchive,
-      canLeave: true,
-    });
-    await userEvent
-      .setup()
-      .click(screen.getByRole("menuitem", { name: "Retry Delete check" }));
-    expect(
-      await screen.findByRole("menuitem", { name: "Delete channel" }),
-    ).not.toHaveAttribute("aria-disabled", "true");
-    expect(screen.queryByText("Delete check unavailable")).toBeNull();
-    expect(choose).not.toHaveBeenCalled();
-  },
-);
-
 it.each(
   ([{ action: "delete", label: "Delete channel" }] as const).flatMap(
     ({ action, label }) =>
@@ -574,7 +551,7 @@ it.each(
 );
 
 it.each([
-  ["archive", "Archive channel", "prominent", "subtle", true],
+  ["archive", "Archive channel", "prominent", "subtle", false],
   ["unarchive", "Unarchive channel", "prominent", "subtle", true],
   ["hide", "Hide conversation", "prominent", "subtle", true],
   ["leave", "Leave channel", "subtle", "subtle", false],
@@ -617,16 +594,15 @@ it.each([
   },
 );
 
-it("names Solo chats as chats in the menu, dialog and result", async () => {
-  const user = userEvent.setup();
+it("names Solo chats as chats in the menu and result", async () => {
   const lifecycle = capability();
   const choose = vi.fn();
   render(
     <ContextMenuRoot open>
       <MenuPopup>
         <ChannelLifecycleMenu
-          channelId="id"
-          lifecycle={lifecycle}
+          channel={summary({ channelType: "solo" })}
+          session={session(lifecycle)}
           choose={choose}
           disabled={false}
           separator={false}
@@ -640,6 +616,7 @@ it("names Solo chats as chats in the menu, dialog and result", async () => {
   ).toBeDefined();
   expect(screen.getByRole("menuitem", { name: "Delete chat" })).toBeDefined();
   cleanup();
+  const undo = vi.fn();
   render(
     <ToastProvider>
       <ChannelLifecycleDialog
@@ -650,14 +627,117 @@ it("names Solo chats as chats in the menu, dialog and result", async () => {
         lifecycle={lifecycle}
         completed={() => {}}
         close={() => {}}
+        undo={undo}
       />
     </ToastProvider>,
   );
-  expect(
-    screen.getByRole("dialog", { name: "Archive chat: Planning" }),
-  ).toHaveTextContent(
-    "Archive this chat for everyone in it and remove it from the sidebar.",
-  );
-  await user.click(screen.getByRole("button", { name: "Archive chat" }));
+  // Archiving a chat skips confirmation; its result toast offers Undo.
+  expect(screen.queryByRole("dialog", { name: /^Archive chat/ })).toBeNull();
   expect(await screen.findByText("Chat archived: Planning")).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(undo).toHaveBeenCalledOnce();
+  cleanup();
+  render(
+    <ToastProvider>
+      <ChannelLifecycleDialog
+        channelId="id"
+        channelName="Planning"
+        noun="chat"
+        action="unarchive"
+        confirmed
+        lifecycle={lifecycle}
+        completed={() => {}}
+        close={() => {}}
+      />
+    </ToastProvider>,
+  );
+  // Undo was already chosen: it runs without asking and reports its result.
+  expect(screen.queryByRole("dialog", { name: /^Unarchive chat/ })).toBeNull();
+  expect(await screen.findByText("Chat unarchived: Planning")).toBeDefined();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+
+it("chat archive runs without confirmation, then Undo unarchives from its result toast", async () => {
+  const lifecycle = capability();
+  const gate = deferred<void>();
+  lifecycle.run.mockImplementationOnce(() => gate.promise);
+  const completed = vi.fn();
+  const failed = vi.fn();
+  function Host() {
+    // Stands in for the session-owned handoff: Undo reopens its owner.
+    const [action, setAction] = useState<"archive" | "unarchive">();
+    const [open, setOpen] = useState(true);
+    return (
+      <ToastProvider>
+        {open && (
+          <ChannelLifecycleDialog
+            key={action ?? "archive"}
+            channelId="id"
+            channelName="Fixture"
+            noun="chat"
+            action={action ?? "archive"}
+            confirmed={!!action}
+            lifecycle={lifecycle}
+            close={() => setOpen(false)}
+            completed={() => {
+              completed();
+              setOpen(false);
+            }}
+            failed={(title, message) => {
+              failed(title, message);
+              setOpen(false);
+            }}
+            undo={() => {
+              setAction("unarchive");
+              setOpen(true);
+            }}
+          />
+        )}
+      </ToastProvider>
+    );
+  }
+  render(<Host />);
+  expect(screen.queryByRole("button", { name: "Archive chat" })).toBeNull();
+  try {
+    await waitFor(() =>
+      expect(lifecycle.run).toHaveBeenCalledWith(
+        "archive",
+        "id",
+        expect.any(AbortSignal),
+      ),
+    );
+    // A fast archive shows no progress; only a slow one is announced.
+    expect(
+      screen.queryByRole("dialog", { name: "Archiving chat…" }),
+    ).toBeNull();
+    expect(
+      await screen.findByRole(
+        "dialog",
+        { name: "Archiving chat…" },
+        { timeout: 2000 },
+      ),
+    ).toBeDefined();
+  } finally {
+    await act(async () => gate.resolve());
+  }
+  await screen.findByRole("dialog", { name: "Chat archived: Fixture" });
+  expect(completed).toHaveBeenCalledOnce();
+  lifecycle.run.mockRejectedValueOnce(new Error("Relay rejected the request."));
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() =>
+    expect(lifecycle.run).toHaveBeenLastCalledWith(
+      "unarchive",
+      "id",
+      expect.any(AbortSignal),
+    ),
+  );
+  await waitFor(() =>
+    expect(failed).toHaveBeenCalledExactlyOnceWith(
+      "Unarchive chat failed",
+      "Relay rejected the request.",
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull(),
+  );
 });

@@ -1,3 +1,9 @@
+import { toolTitle } from "../../buzz-mcp/tool-titles";
+import type { AgentSessionAssociation } from "./session-admission";
+import type { MentionRefusal } from "./owner-attestation";
+
+export const REPLY_CORRELATION_MS = 120_000;
+
 export type LocalWorkState =
   | "waiting"
   | "working"
@@ -5,17 +11,80 @@ export type LocalWorkState =
   | "error"
   | "superseded"
   | "stopped";
-export type WorkOutcome = Readonly<{ ok: boolean; error?: string }>;
-/** A harness step: its own tool name and, when known, what it acts on. */
-export type WorkStep = Readonly<{ tool: string; target?: string }>;
+/** `stopped`: the owner's Stop ended the turn, as its harness reports it. */
+export type WorkOutcome = Readonly<{
+  ok: boolean;
+  error?: string;
+  stopped?: true;
+}>;
+/** Where a step's tool comes from, when its harness can tell: the Buzz
+ * server. Any other tool has none. */
+export type StepOrigin = "buzz";
+/** A harness step: its own tool name and, when known, what it acts on and
+ * where the tool comes from. */
+export type WorkStep = Readonly<{
+  tool: string;
+  target?: string;
+  origin?: StepOrigin;
+}>;
+export type LocalVisibleMessage = Readonly<{
+  id: string;
+  author: string;
+  role: "user" | "assistant";
+  text: string;
+  order: number;
+  observedAt: number;
+  /** Synthetic inputs are host wakes, not signed user messages. */
+  synthetic?: true;
+  /** Outgoing text is an attempt until publication succeeds. */
+  delivery?: "pending" | "published" | "failed";
+}>;
+export type LocalConversationEvidence = Readonly<{
+  lifecycle: Readonly<{
+    id: string;
+    revision: number;
+    phase: "wake" | "steer" | "handoff";
+    observedAt: number;
+  }>;
+  messages: readonly LocalVisibleMessage[];
+  omitted: Readonly<{ messages: number; characters: number }>;
+  /** Only inputs accepted and output attempted on this device; never an archive. */
+  history: "local";
+}>;
 export type LocalWork = Readonly<{
+  session?: AgentSessionAssociation;
   scope: string;
   agent: string;
   channelId: string;
   messageId: string;
+  /** The request ID has no published message to open. */
+  syntheticMessage?: true;
+  /** The host scheduler's timer ID, present only on a scheduled timer wake. */
+  attentionTimerId?: string;
+  /** The synthetic request text supplied to the harness, without truncation. */
+  requestText?: string;
   threadRootId: string;
+  /** Canonical evidence source: a thread root, or null for a flat conversation. */
+  sourceRootId?: string | null;
+  /** The work is in this thread; absent means channel-level work. */
+  thread?: true;
+  /** The request is in a relay-verified Solo chat, not a DM or channel. */
+  soloChat?: true;
+  /** The Solo chat's existing display name when this work started. */
+  conversationName?: string;
   state: LocalWorkState;
   startedAt: number;
+  /** Null until acceptance; absent on hosts without lifecycle evidence support. */
+  evidence?: LocalConversationEvidence | null;
+  /** This run's messages still awaiting publication acknowledgement. */
+  publishing?: number;
+  /** Recent messages this run published here; their relay echoes are not separate alerts. */
+  replyMessages?: readonly Readonly<{ id: string; acknowledgedAt: number }>[];
+  /** Recent publication IDs retained with this work entry for transcript navigation,
+   * independently of notification echo expiry. Capped at 512 per entry. */
+  publishedMessageIds?: readonly string[];
+  /** This attempt published a confirmed reply for people, not agent-only coordination. */
+  hasUserVisibleReply?: true;
   error?: string;
   /** Latest live step, as the harness named it; display only. */
   step?: WorkStep;
@@ -23,14 +92,31 @@ export type LocalWork = Readonly<{
   dismissed?: true;
   /** Its harness can stop the turn it is in. */
   stoppable?: true;
+  /** It can be asked again once it fails. */
+  retryable?: true;
+  /** Host-owned note about how this turn ran, kept after it settles. */
+  notice?: string;
+}>;
+/** A mention this agent didn't act on, and why: shown only to its owner here. */
+export type LocalDecline = Readonly<{
+  scope: string;
+  agent: string;
+  channelId: string;
+  messageId: string;
+  refusal: MentionRefusal;
 }>;
 const settled = (state: LocalWorkState) =>
   state === "done" ||
   state === "error" ||
   state === "superseded" ||
   state === "stopped";
+export const localWorkRoot = (
+  work: Pick<LocalWork, "syntheticMessage" | "thread" | "threadRootId">,
+) => (work.syntheticMessage && !work.thread ? undefined : work.threadRootId);
 export type LocalAgentSource = {
   work(): readonly LocalWork[];
+  /** Mentions declined for who sent them; notified with `subscribeWork`. */
+  declined?(): readonly LocalDecline[];
   subscribeWork(listener: () => void): () => void;
   /** Hides one already-seen error on this device; never changes its outcome. */
   dismissError?(work: Pick<LocalWork, "scope" | "agent" | "messageId">): void;
@@ -38,17 +124,37 @@ export type LocalAgentSource = {
   interrupt?(
     work: Pick<LocalWork, "scope" | "agent" | "messageId">,
   ): Promise<void>;
+  /** Asks again for this failed request, which begins it again; throws when
+   * it can't be. */
+  retry?(work: Pick<LocalWork, "scope" | "agent" | "messageId">): void;
 };
 
 /** App-owned local facts. No relay publication, inference, polling or process control. */
 export function createLocalAgentActivity() {
   let work: readonly LocalWork[] = [];
+  let declined: readonly LocalDecline[] = [];
   const workListeners = new Set<() => void>();
   const entries = new Map<symbol, LocalWork>();
+  const visible = new Map<symbol, readonly LocalVisibleMessage[]>();
+  const omissions = new Map<symbol, { messages: number; characters: number }>();
+  let revision = 0;
+  let order = 0;
+  const declines = new Map<string, LocalDecline>();
+  const declineKey = (row: Pick<LocalWork, "scope" | "agent" | "messageId">) =>
+    `${row.scope}\n${row.agent}\n${row.messageId}`;
   /** How to stop each stoppable request's turn, until it settles. */
   const stops = new Map<symbol, () => Promise<void>>();
+  /** How to ask each retryable request again, while its row is kept. */
+  const retries = new Map<symbol, () => void>();
+  const replyTimers = new Map<symbol, ReturnType<typeof setTimeout>>();
   const publish = () => {
+    for (const id of visible.keys())
+      if (!entries.has(id)) {
+        visible.delete(id);
+        omissions.delete(id);
+      }
     work = Object.freeze([...entries.values()]);
+    declined = Object.freeze([...declines.values()]);
     for (const listener of workListeners) listener();
   };
   const subscribe = (listeners: Set<() => void>, listener: () => void) => {
@@ -59,6 +165,7 @@ export function createLocalAgentActivity() {
   };
   const reader: LocalAgentSource = {
     work: () => work,
+    declined: () => declined,
     subscribeWork: (listener) => subscribe(workListeners, listener),
     dismissError({ scope, agent, messageId }) {
       for (const [id, row] of entries)
@@ -94,25 +201,60 @@ export function createLocalAgentActivity() {
         return;
       }
     },
+    retry({ scope, agent, messageId }) {
+      for (const [id, row] of entries) {
+        const retry = retries.get(id);
+        if (
+          retry &&
+          row.state === "error" &&
+          row.scope === scope &&
+          row.agent === agent &&
+          row.messageId === messageId
+        )
+          return retry();
+      }
+      throw new Error("This request can't be retried");
+    },
   };
   return {
     reader,
     begin(
       input: Omit<
         LocalWork,
-        "state" | "startedAt" | "error" | "dismissed" | "stoppable"
+        | "state"
+        | "startedAt"
+        | "publishing"
+        | "replyMessages"
+        | "publishedMessageIds"
+        | "hasUserVisibleReply"
+        | "error"
+        | "dismissed"
+        | "stoppable"
+        | "retryable"
+        | "notice"
+        | "evidence"
       >,
+      retry?: () => void,
+      request?: Readonly<{ author: string; text: string }>,
     ) {
       // Keep the newest accepted handling of one exact message; late completions
-      // retain their own token and cannot overwrite its replacement.
+      // retain their own token and cannot overwrite its replacement. A retry
+      // still owns the prior attempt's fresh reply IDs, because those relay
+      // echoes may arrive after the activity row is replaced.
+      let replaced: LocalWork | undefined;
+      declines.delete(declineKey(input));
       for (const [id, row] of entries)
         if (
           row.scope === input.scope &&
           row.agent === input.agent &&
           row.messageId === input.messageId
         ) {
+          replaced = row;
           entries.delete(id);
           stops.delete(id);
+          retries.delete(id);
+          clearTimeout(replyTimers.get(id));
+          replyTimers.delete(id);
         }
       // Display budget only, independent of execution. Old settled evidence goes first.
       if (entries.size >= 512) {
@@ -122,13 +264,159 @@ export function createLocalAgentActivity() {
         if (victim) {
           entries.delete(victim[0]);
           stops.delete(victim[0]);
+          retries.delete(victim[0]);
+          clearTimeout(replyTimers.get(victim[0]));
+          replyTimers.delete(victim[0]);
         }
       }
       const id = Symbol();
+      const lifecycleId = crypto.randomUUID();
+      const sourceRootId =
+        input.sourceRootId === undefined
+          ? (localWorkRoot(input) ?? null)
+          : input.sourceRootId;
+      let accepted = false;
+      const retain = (item: LocalVisibleMessage) => {
+        const omitted = omissions.get(id) ?? { messages: 0, characters: 0 };
+        omitted.characters += Math.max(0, item.text.length - 65_536);
+        const messages = [
+          ...(visible.get(id) ?? []),
+          Object.freeze({ ...item, text: item.text.slice(-65_536) }),
+        ];
+        // Each work entry and each emitted conversation have the same bounds.
+        let characters = messages.reduce(
+          (n, message) => n + message.text.length,
+          0,
+        );
+        while (messages.length > 64 || characters > 65_536) {
+          const first = messages.shift();
+          if (first) {
+            characters -= first.text.length;
+            omitted.messages++;
+            omitted.characters += first.text.length;
+          }
+        }
+        visible.set(id, Object.freeze(messages));
+        omissions.set(id, omitted);
+      };
+      const capture = (
+        phase: LocalConversationEvidence["lifecycle"]["phase"],
+      ) => {
+        const current = entries.get(id);
+        if (!current || settled(current.state)) return;
+        const matching = [...entries].filter(
+          ([, row]) =>
+            row.scope === current.scope &&
+            row.agent === current.agent &&
+            row.channelId === current.channelId &&
+            row.sourceRootId === current.sourceRootId &&
+            row.session?.sessionKey === current.session?.sessionKey,
+        );
+        const all = matching
+          .flatMap(([key]) => visible.get(key) ?? [])
+          .sort((a, b) => a.order - b.order);
+        let characters = all.reduce((n, message) => n + message.text.length, 0);
+        let omittedMessages = matching.reduce(
+          (n, [key]) => n + (omissions.get(key)?.messages ?? 0),
+          0,
+        );
+        let omittedCharacters = matching.reduce(
+          (n, [key]) => n + (omissions.get(key)?.characters ?? 0),
+          0,
+        );
+        while (all.length > 64 || characters > 65_536) {
+          const first = all.shift();
+          if (first) {
+            omittedMessages++;
+            omittedCharacters += first.text.length;
+            characters -= first.text.length;
+          }
+        }
+        entries.set(
+          id,
+          Object.freeze({
+            ...current,
+            evidence: Object.freeze({
+              lifecycle: Object.freeze({
+                id: lifecycleId,
+                revision: ++revision,
+                phase,
+                observedAt: Date.now(),
+              }),
+              messages: Object.freeze(all),
+              omitted: Object.freeze({
+                messages: omittedMessages,
+                characters: omittedCharacters,
+              }),
+              history: "local",
+            }),
+          }),
+        );
+      };
+      if (retry) retries.set(id, retry);
+      const expireReplies = () => {
+        replyTimers.delete(id);
+        const current = entries.get(id);
+        if (!current?.replyMessages?.length) return;
+        const now = Date.now();
+        const replyMessages = current.replyMessages.filter(
+          (item) => now - item.acknowledgedAt <= REPLY_CORRELATION_MS,
+        );
+        if (replyMessages.length !== current.replyMessages.length) {
+          const { replyMessages: _replyMessages, ...rest } = current;
+          entries.set(
+            id,
+            Object.freeze({
+              ...rest,
+              ...(replyMessages.length ? { replyMessages } : {}),
+            }),
+          );
+          publish();
+        }
+        const oldest = replyMessages[0];
+        if (oldest)
+          replyTimers.set(
+            id,
+            setTimeout(
+              expireReplies,
+              Math.max(
+                0,
+                oldest.acknowledgedAt + REPLY_CORRELATION_MS - Date.now() + 1,
+              ),
+            ),
+          );
+      };
+      const startedAt = Math.max(Date.now(), (replaced?.startedAt ?? -1) + 1);
+      const replyMessages = replaced?.replyMessages?.filter(
+        (item) => startedAt - item.acknowledgedAt <= REPLY_CORRELATION_MS,
+      );
       entries.set(
         id,
-        Object.freeze({ ...input, state: "waiting", startedAt: Date.now() }),
+        Object.freeze({
+          ...input,
+          sourceRootId,
+          evidence: null,
+          state: "waiting",
+          startedAt,
+          ...(replyMessages?.length ? { replyMessages } : {}),
+          ...(replaced?.publishedMessageIds
+            ? { publishedMessageIds: replaced.publishedMessageIds }
+            : {}),
+          ...(retry ? { retryable: true } : {}),
+        }),
       );
+      const oldest = replyMessages?.[0];
+      if (oldest)
+        replyTimers.set(
+          id,
+          setTimeout(
+            expireReplies,
+            Math.max(
+              0,
+              oldest.acknowledgedAt + REPLY_CORRELATION_MS - Date.now() + 1,
+            ),
+          ),
+        );
       publish();
       const update = (
         state: LocalWorkState,
@@ -143,7 +431,8 @@ export function createLocalAgentActivity() {
           current.state === state &&
           current.error === error &&
           current.step?.tool === next?.tool &&
-          current.step?.target === next?.target
+          current.step?.target === next?.target &&
+          current.step?.origin === next?.origin
         )
           return;
         const { step: _step, stoppable, ...rest } = current;
@@ -160,27 +449,227 @@ export function createLocalAgentActivity() {
         publish();
       };
       return {
+        channelId: input.channelId,
+        threadRootId: input.threadRootId,
+        requestText: (requestText: string) => {
+          const current = entries.get(id);
+          if (
+            !current?.syntheticMessage ||
+            settled(current.state) ||
+            current.requestText === requestText
+          )
+            return;
+          entries.set(id, Object.freeze({ ...current, requestText }));
+          publish();
+        },
+        associate: (session: AgentSessionAssociation) => {
+          const current = entries.get(id);
+          if (!current) return;
+          entries.set(
+            id,
+            Object.freeze({
+              ...current,
+              session: structuredClone(session),
+            }),
+          );
+          publish();
+        },
         started: () => update("working"),
+        acknowledged: (input?: Readonly<{ steering?: true }>) => {
+          const current = entries.get(id);
+          if (!current || settled(current.state) || accepted) return;
+          accepted = true;
+          const text = current.syntheticMessage
+            ? current.requestText
+            : request?.text;
+          if (text !== undefined)
+            retain({
+              id: current.messageId,
+              author: request?.author ?? "host",
+              role: "user",
+              text,
+              order: ++order,
+              observedAt: Date.now(),
+              ...(current.syntheticMessage ? { synthetic: true } : {}),
+            });
+          capture(input?.steering ? "steer" : "wake");
+          publish();
+        },
+        confirmSolo: (conversationName?: string) => {
+          const current = entries.get(id);
+          if (!current || current.soloChat) return;
+          entries.set(
+            id,
+            Object.freeze({
+              ...current,
+              soloChat: true,
+              ...(conversationName?.trim()
+                ? { conversationName: conversationName.trim() }
+                : {}),
+            }),
+          );
+          publish();
+        },
+        sending: (text?: string) => {
+          const current = entries.get(id);
+          if (!current) return () => {};
+          const messageId = crypto.randomUUID();
+          if (text !== undefined)
+            retain({
+              id: messageId,
+              author: current.agent,
+              role: "assistant",
+              text,
+              order: ++order,
+              observedAt: Date.now(),
+              delivery: "pending",
+            });
+          entries.set(
+            id,
+            Object.freeze({
+              ...current,
+              publishing: (current.publishing ?? 0) + 1,
+            }),
+          );
+          publish();
+          let active = true;
+          return (published?: boolean) => {
+            if (!active) return;
+            active = false;
+            const messages = visible.get(id);
+            if (messages)
+              visible.set(
+                id,
+                Object.freeze(
+                  messages.map((message) =>
+                    message.id === messageId
+                      ? Object.freeze({
+                          ...message,
+                          delivery:
+                            published === undefined
+                              ? ("pending" as const)
+                              : published
+                                ? ("published" as const)
+                                : ("failed" as const),
+                        })
+                      : message,
+                  ),
+                ),
+              );
+            const latest = entries.get(id);
+            if (!latest?.publishing) return;
+            const publishing = latest.publishing - 1;
+            const { publishing: _publishing, ...rest } = latest;
+            entries.set(
+              id,
+              Object.freeze({ ...rest, ...(publishing ? { publishing } : {}) }),
+            );
+            publish();
+          };
+        },
+        reply: (messageId: string, userVisible = false) => {
+          const current = entries.get(id);
+          if (!current) return;
+          if (current.replyMessages?.some((item) => item.id === messageId)) {
+            if (userVisible && !current.hasUserVisibleReply) {
+              entries.set(
+                id,
+                Object.freeze({ ...current, hasUserVisibleReply: true }),
+              );
+              publish();
+            }
+            return;
+          }
+          const now = Date.now();
+          const replyMessages = [
+            ...(current.replyMessages ?? []).filter(
+              (item) => now - item.acknowledgedAt <= REPLY_CORRELATION_MS,
+            ),
+            Object.freeze({ id: messageId, acknowledgedAt: now }),
+          ];
+          const publishedMessageIds = Object.freeze(
+            [
+              ...new Set([...(current.publishedMessageIds ?? []), messageId]),
+            ].slice(-512),
+          );
+          entries.set(
+            id,
+            Object.freeze({
+              ...current,
+              replyMessages,
+              publishedMessageIds,
+              ...(userVisible ? { hasUserVisibleReply: true as const } : {}),
+            }),
+          );
+          clearTimeout(replyTimers.get(id));
+          const oldest = replyMessages[0];
+          if (oldest)
+            replyTimers.set(
+              id,
+              setTimeout(
+                expireReplies,
+                Math.max(
+                  0,
+                  oldest.acknowledgedAt + REPLY_CORRELATION_MS - Date.now() + 1,
+                ),
+              ),
+            );
+          publish();
+        },
         // Keep the exact request outcome after the harness acknowledges a
         // newer message, without presenting the earlier work as successful.
         supersede: () => update("superseded"),
         /** Latest live step reported by the plugin; display only. */
-        step: (tool: string, target?: string) => {
+        step: (tool: string, target?: string, origin?: StepOrigin) => {
           const name = tool.trim().slice(0, 80);
           const on = target?.trim().replace(/\s+/g, " ").slice(0, 160);
           if (name)
             update("working", undefined, {
               tool: name,
               ...(on ? { target: on } : {}),
+              ...(origin === "buzz" ? { origin } : {}),
             });
         },
-        finish: (result: WorkOutcome) =>
+        finish: (result: WorkOutcome) => {
+          if (accepted) capture("handoff");
           update(
-            result.ok ? "done" : "error",
+            result.stopped ? "stopped" : result.ok ? "done" : "error",
             result.ok
               ? undefined
               : result.error || "Could not finish this request",
-          ),
+          );
+        },
+        /** Moves the work to where its turn was placed: the thread on `root`,
+         * or the channel's top level. Work in a flat conversation stays. */
+        placed: (root?: string) => {
+          const current = entries.get(id);
+          if (
+            !current ||
+            current.sourceRootId === null ||
+            settled(current.state) ||
+            (root
+              ? current.thread && current.threadRootId === root
+              : !current.thread)
+          )
+            return;
+          const { thread: _thread, ...rest } = current;
+          entries.set(
+            id,
+            Object.freeze({
+              ...rest,
+              ...(root ? { thread: true as const, threadRootId: root } : {}),
+            }),
+          );
+          publish();
+        },
+        /** Notes how this turn ran, such as without its gateway. */
+        notice: (text: string) => {
+          const current = entries.get(id);
+          const notice = text.trim().slice(0, 500);
+          if (!current || !notice || current.notice === notice) return;
+          entries.set(id, Object.freeze({ ...current, notice }));
+          publish();
+        },
         /** The harness's way to stop this request's turn, offered as Stop. */
         interruptible: (stop: () => Promise<void>) => {
           const current = entries.get(id);
@@ -190,9 +679,25 @@ export function createLocalAgentActivity() {
           entries.set(id, Object.freeze({ ...current, stoppable: true }));
           publish();
         },
-        remove: () => {
+        /** With a `refusal`, keeps a note of why the agent didn't act. */
+        remove: (refusal?: MentionRefusal) => {
           stops.delete(id);
-          if (entries.delete(id)) publish();
+          retries.delete(id);
+          clearTimeout(replyTimers.get(id));
+          replyTimers.delete(id);
+          const row = entries.get(id);
+          if (!entries.delete(id)) return;
+          if (refusal && row) {
+            // Display budget only: the oldest note goes first.
+            const oldest = declines.size >= 512 && declines.keys().next().value;
+            if (oldest) declines.delete(oldest);
+            const { scope, agent, channelId, messageId } = row;
+            declines.set(
+              declineKey(row),
+              Object.freeze({ scope, agent, channelId, messageId, refusal }),
+            );
+          }
+          publish();
         },
       };
     },
@@ -205,6 +710,17 @@ export function createLocalAgentActivity() {
         ) {
           entries.delete(id);
           stops.delete(id);
+          retries.delete(id);
+          clearTimeout(replyTimers.get(id));
+          replyTimers.delete(id);
+          changed = true;
+        }
+      for (const [key, row] of declines)
+        if (
+          (!scope || row.scope === scope) &&
+          (!agent || row.agent === agent)
+        ) {
+          declines.delete(key);
           changed = true;
         }
       if (changed) publish();
@@ -246,7 +762,7 @@ export function localActivity(
   return agents;
 }
 export function localWorkLabel(
-  row: Pick<LocalWork, "state" | "error" | "step">,
+  row: Pick<LocalWork, "state" | "error" | "step" | "notice">,
 ) {
   if (row.state === "superseded") return "Continued on a later message";
   if (row.state === "stopped") return "Stopped";
@@ -257,7 +773,10 @@ export function localWorkLabel(
         ? stepText(row.step)
         : "Starting"
       : row.state === "error"
-        ? row.error || "Could not finish this request"
+        ? // A failure keeps how its turn ran, such as without its gateway.
+          [row.error || "Could not finish this request", row.notice]
+            .filter(Boolean)
+            .join(" · ")
         : "Finished";
 }
 
@@ -313,5 +832,10 @@ export function stepText(step: WorkStep) {
   if (phrase && step.target) return phrase(step.target);
   const known = untargeted[step.tool] ?? verbs[step.tool];
   if (known) return known;
-  return step.target ? `${step.tool} · ${step.target}` : step.tool;
+  // A Buzz tool's bare name is the same string as another server's `search`
+  // or a harness's own file `edit`, so only a step its harness identified as
+  // Buzz is titled. Any other shows the name as reported.
+  const name =
+    (step.origin === "buzz" ? toolTitle(step.tool) : undefined) ?? step.tool;
+  return step.target ? `${name} · ${step.target}` : name;
 }

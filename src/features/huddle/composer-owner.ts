@@ -1,13 +1,19 @@
+import { resolveForward } from "../messages/resolve-forward";
+import { viewerMember } from "../relay/membership";
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
+import { onAutomatic } from "../agents/recommended";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
-import { rememberedMentions } from "../messages/remembered-mentions";
 import { mentionDraft } from "../messages/mention-draft";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  draftRetirementCursor,
+  retireViewDraft,
+} from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
 import { prepareAttachment } from "../messages/prepare-attachment";
 import {
   UPLOAD_MAX_BYTES,
+  UploadError,
   type UploadedAttachment,
 } from "../relay/attachments";
 import type {
@@ -46,7 +52,9 @@ export function createHuddleComposerOwner(
           .agents.find((item) => item.pubkey === pubkey);
         const type =
           agent && agents?.types().find((item) => item.key === agent.type);
-        if (!agent || !type?.models) return [];
+        // An agent on Automatic gets no picker, as in the main composer.
+        if (!agent || !type?.models || onAutomatic(agent.config, type.id))
+          return [];
         const models = await type.models(agent);
         if (
           agents?.snapshot().agents.find((item) => item.pubkey === pubkey) !==
@@ -68,6 +76,7 @@ export function createHuddleComposerOwner(
   let client = "";
   let highest = 0;
   let uploadBytes = 0;
+  const gifUrls = new Set<string>();
   const active = new Map<number, AbortController>();
   const results = new Map<number, ComposerResponse>();
   const uploaded = new Map<
@@ -98,7 +107,7 @@ export function createHuddleComposerOwner(
         c.readOnly ||
         c.cached ||
         !session.viewer ||
-        !c.members?.includes(session.viewer))
+        !viewerMember(c, session.viewer))
     )
       throw new Error("This Huddle conversation is read-only.");
   }
@@ -117,6 +126,7 @@ export function createHuddleComposerOwner(
     for (const profile of profiles.values()) remember(profile.picture);
     for (const emoji of session.emoji.snapshot().entries) remember(emoji.url);
     for (const { file } of uploaded.values()) remember(file.url);
+    for (const url of gifUrls) remember(url);
     let writable = true;
     try {
       check(true);
@@ -140,6 +150,7 @@ export function createHuddleComposerOwner(
         ],
       },
       profiles,
+      profileGeneration: session.profiles.generation?.() ?? 0,
       emoji: session.emoji.snapshot(),
       agents: session.agentChoices.snapshot(),
       library: session.agentLibrary.snapshot(),
@@ -161,6 +172,13 @@ export function createHuddleComposerOwner(
     check();
     signal.throwIfAborted();
     switch (request.op) {
+      case "forwardSource": {
+        check(true);
+        const source = await resolveForward(session, request.args, signal);
+        check(true);
+        signal.throwIfAborted();
+        return source;
+      }
       case "gifSupport":
       case "gifSearch": {
         const community = communityFromScope(session.scope);
@@ -175,16 +193,40 @@ export function createHuddleComposerOwner(
           return relayGifRequests.supports(community, signal);
         if (typeof request.args !== "string" || request.args.length > 256)
           throw new Error("Invalid GIF search.");
-        return relayGifRequests.search(community, request.args, signal);
+        const gifs = await relayGifRequests.search(
+          community,
+          request.args,
+          signal,
+        );
+        signal.throwIfAborted();
+        check();
+        for (const gif of gifs) {
+          // Match the URL escaping used by gifMarkdown when the picker inserts it.
+          gifUrls.add(
+            gif.original.url.replace(/\(/g, "%28").replace(/\)/g, "%29"),
+          );
+        }
+        publish();
+        return gifs;
       }
       case "models":
         return modelChoices(request.args);
       case "send": {
         check(true);
-        const { text, draft, mentions, references, attachments } = request.args;
+        const {
+          text,
+          draft,
+          mentions,
+          references,
+          attachments,
+          retirementCursor,
+        } = request.args;
         if (
           typeof draft !== "string" ||
           draft.length > 262144 ||
+          (retirementCursor !== undefined &&
+            (!Number.isSafeInteger(retirementCursor) ||
+              retirementCursor < 0)) ||
           typeof text !== "string" ||
           text.length > 16000 ||
           !Array.isArray(mentions) ||
@@ -193,9 +235,12 @@ export function createHuddleComposerOwner(
           mentions.length + references.length > 128 ||
           !Array.isArray(attachments) ||
           attachments.length > 10 ||
-          (!text.trim() && !attachments.length)
+          (!text.trim() && !attachments.length && !request.args.forward)
         )
           throw new Error("Invalid Huddle message.");
+        const scope = session.scope;
+        const key = `draft:${room}`;
+        const cursor = retirementCursor ?? draftRetirementCursor(scope, key);
         const files = attachments.map((file) => {
           const known = uploaded.get(JSON.stringify([file.url, file.sha256]));
           if (!known) throw new Error("Reattach this file before sending.");
@@ -252,31 +297,42 @@ export function createHuddleComposerOwner(
         }
         check(true);
         signal.throwIfAborted();
-        const id = session.messages.send(
-          room,
-          text,
-          mentions,
-          files,
-          undefined,
-          references,
-          picks,
-        );
-        // Admission owns the persisted draft too: closing the child before its
-        // acknowledgement must not restore a message already in the main outbox.
-        const scope = session.scope;
-        const key = `draft:${room}`;
-        if (JSON.stringify(readView(scope, key, null)) === draft)
-          writeView(
-            scope,
-            key,
-            rememberedMentions(
-              session,
-              mentionDraft(readView(scope, key, "")),
+        const forward = request.args.forward
+          ? await resolveForward(session, request.args.forward, signal)
+          : undefined;
+        check(true);
+        signal.throwIfAborted();
+        const id = forward
+          ? session.messages.forward(
+              room,
+              forward.row,
+              forward.name,
+              text,
+              undefined,
+              { mentions, attachments: files, references, picks },
+            )
+          : session.messages.send(
+              room,
+              text,
               mentions,
-            ),
-          );
+              files,
+              undefined,
+              references,
+              picks,
+            );
+        // Admission owns the persisted draft too: closing the child before its
+        // acknowledgement must not restore a message already in the main
+        // outbox. The stub is what the composer saves for every send; it
+        // keeps the remembered agents in memory (see seedMentions).
+        const retirement = retireViewDraft(
+          scope,
+          key,
+          draft === "null" ? null : draft,
+          JSON.stringify(mentionDraft("")),
+          cursor,
+        );
         for (const file of files) release(file);
-        return id;
+        return { id, retirement };
       }
       case "release":
         release(request.args);
@@ -372,6 +428,7 @@ export function createHuddleComposerOwner(
     active.clear();
     results.clear();
     uploaded.clear();
+    gifUrls.clear();
     highest = 0;
   }
   channel.onmessage = ({ data }: MessageEvent<ComposerCommand>) => {
@@ -438,6 +495,7 @@ export function createHuddleComposerOwner(
             ? cause.message
             : "Could not complete this request."
           ).slice(0, 2048),
+          ...(cause instanceof UploadError ? { code: cause.code } : {}),
         };
       }
       if (

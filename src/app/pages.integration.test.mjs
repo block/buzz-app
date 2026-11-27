@@ -15,7 +15,21 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     globalThis,
     "localStorage",
   );
-  const values = new Map();
+  const values = new Map([
+    [
+      "buzzodz.plugins.v1",
+      JSON.stringify({
+        version: 3,
+        enabled: {
+          "buzz.emoji": false,
+          "buzz.mentions": false,
+          "buzz.reminders": false,
+          "buzz.workflows": false,
+          "buzz.relay-notes": true,
+        },
+      }),
+    ],
+  ]);
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
     value: {
@@ -46,13 +60,61 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     );
     assert.notEqual(services.accountActions.snapshot()[0], firstFeedback);
     await settle();
-    assert.equal(services.pages.snapshot().length, 6);
+    const docsId = "com.squareup.docs";
+    const docsPage = () =>
+      services.pages.snapshot().find((page) => page.pluginId === docsId);
+    const docsPanel = () =>
+      services.panels.snapshot().find((panel) => panel.pluginId === docsId);
+    const docsTools = () =>
+      services.agents.tools().filter(({ name }) => name.startsWith("doc_"));
+    assert.equal(docsPage(), undefined);
+    assert.equal(docsPanel(), undefined);
+    assert.deepEqual(docsTools(), []);
+    await services.plugins.change("enable", docsId);
+    await vi.waitFor(() => assert.ok(docsPage()));
+    const documents = docsPage();
+    assert.equal(documents.title, "Docs");
+    assert.equal(documents.placement, "dock");
+    assert.match(
+      renderToStaticMarkup(createElement(documents.component)),
+      /Connect to your community to open docs/,
+    );
+    assert.equal(docsPanel()?.key, "com.squareup.docs/doc");
+    assert.equal(docsPanel()?.addressable, true);
+    assert.ok(docsTools().some(({ name }) => name === "doc_get"));
+    await services.plugins.change("disable", docsId);
+    assert.equal(docsPage(), undefined);
+    assert.equal(docsPanel(), undefined);
+    assert.deepEqual(docsTools(), []);
     const { bundledPlugins } = await vite.ssrLoadModule(
       "/src/bundled/index.ts",
     );
     const { pluginCategoryDefinitions } = await vite.ssrLoadModule(
       "/src/app/plugin-categories.ts",
     );
+    // A previously enabled reader is retired; its built-in agent tools survive.
+    assert.equal(
+      services.plugins
+        .snapshot()
+        .configuration.catalog.plugins.some(
+          (plugin) => plugin.manifest.id === "buzz.relay-notes",
+        ),
+      false,
+    );
+    assert.equal(
+      services.pages
+        .snapshot()
+        .some((page) => page.pluginId === "buzz.relay-notes"),
+      false,
+    );
+    const { sessionTools } = await vite.ssrLoadModule(
+      "/src/buzz-mcp/session-tools.ts",
+    );
+    const toolNames = sessionTools(services.agents.tools()).map(
+      (tool) => tool.name,
+    );
+    for (const name of ["notes_get", "notes_set", "notes_rm"])
+      assert.ok(toolNames.includes(name), name);
     const categories = new Set(pluginCategoryDefinitions.map(({ id }) => id));
     for (const plugin of bundledPlugins) {
       assert.ok(
@@ -71,15 +133,86 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.equal(
         plugin.enabledByDefault,
         ![
-          "buzz.bestie",
+          "com.squareup.docs",
           "buzz.pi",
-          "buzz.todos",
           "buzz.usage",
-          "buzz.relay-notes",
+          "buzz.reminders",
+          "buzz.workflows",
+          "buzz.mesh-compute",
+          "buzz.focus",
+          "buzz.finder",
+          "buzz.charts",
+          "buzz.drafts-and-sent",
+          "buzz.changesets",
+          "buzz.performance-diagnostics",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );
     }
+    for (const id of [
+      "buzz.reminders",
+      "buzz.workflows",
+      "buzz.drafts-and-sent",
+    ]) {
+      assert.equal(
+        services.pages.snapshot().some((page) => page.pluginId === id),
+        false,
+      );
+    }
+    const { respondExternal } = await vite.ssrLoadModule(
+      "/src/buzz-mcp/external.ts",
+    );
+    const performancePlugin = "buzz.performance-diagnostics";
+    const snapshot = "performance_snapshot";
+    const hasSnapshot = () =>
+      services.agents.tools().some(({ name }) => name === snapshot);
+    const callSnapshot = (scopes) =>
+      respondExternal(
+        {},
+        {
+          id: 1,
+          method: "tools/call",
+          params: { name: snapshot, arguments: { duration_ms: 999 } },
+        },
+        () => {},
+        scopes,
+        services.agents.tools,
+      );
+
+    assert.equal(hasSnapshot(), false);
+    assert.match(
+      (await callSnapshot(["agent"])).result.content[0].text,
+      /no tool performance_snapshot/i,
+    );
+    await services.plugins.change("enable", performancePlugin);
+    await vi.waitFor(() => assert.equal(hasSnapshot(), true));
+    const denied = await callSnapshot(["read"]);
+    assert.equal(
+      denied.result._meta["buzz/error"].code,
+      "authorization_required",
+    );
+    assert.match(
+      (await callSnapshot(["agent"])).result.content[0].text,
+      /duration_ms must be an integer from 1000 to 10000/,
+    );
+    await services.plugins.change("disable", performancePlugin);
+    assert.equal(hasSnapshot(), false);
+
+    await services.plugins.change("enable", "buzz.reminders");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.pages
+          .snapshot()
+          .some((page) => page.pluginId === "buzz.reminders"),
+      ),
+    );
+    await services.plugins.change("disable", "buzz.reminders");
+    assert.equal(
+      services.pages
+        .snapshot()
+        .some((page) => page.pluginId === "buzz.reminders"),
+      false,
+    );
     assert.equal(
       services.pages.snapshot().some((p) => p.pluginId === "buzz.bestie"),
       false,
@@ -92,16 +225,20 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .snapshot()
       .find((page) => page.key === "buzz.channels/channels");
     assert.equal(messages.primary, true);
-    assert.equal(messages.placement, "topbar");
+    assert.equal(messages.placement, "dock");
+    assert.equal(
+      services.pages.snapshot().some((p) => p.key === "buzz.agents/attention"),
+      false,
+    );
     const inbox = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.inbox");
-    assert.equal(inbox.title, "Inbox");
+    assert.equal(inbox.title, "Activity");
     assert.equal(inbox.layout, "workspace");
     assert.equal(inbox.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(inbox.component)),
-      /Choose a community to see your inbox/,
+      /Choose a community to see your activity/,
     );
     const unread = services.relay.snapshot().session.unread;
     await services.plugins.change("disable", "buzz.inbox");
@@ -123,13 +260,8 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .snapshot()
         .map((card) => card.pluginId)
         .sort(),
-      [
-        "block.builderlab",
-        "block.hosted-communities",
-        "buzz.channels",
-        "buzz.emoji",
-        "buzz.pairing",
-      ],
+      // A build without NIP-FI or the development broker has no Builderlab.
+      ["buzz.channels", "buzz.emoji", "buzz.github", "buzz.pairing"],
     );
     // The device-local template library remains reachable without a selected community.
     assert.equal(
@@ -138,6 +270,33 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .find((card) => card.key === "buzz.channels/templates")?.group,
       "App",
     );
+    // The GitHub plugin keeps rendering and tools while its panel declines URLs.
+    const { setOpenGitHubLinksInBuzz } = await vite.ssrLoadModule(
+      "/src/bundled/github/link-preference.ts",
+    );
+    const githubTargets = [
+      "https://github.com/block/buzz-app",
+      "https://github.com/block/buzz-app/pull/7",
+      "https://github.com/block/buzz-app/issues/7",
+      "https://github.com/block/buzz-app/commit/abcdef1",
+    ];
+    assert.equal(services.settingsCards.has("buzz.github/links"), false);
+    const githubSettings = services.settingsCards
+      .snapshot()
+      .filter((card) => card.pluginId === "buzz.github");
+    assert.equal(githubSettings.length, 1);
+    assert.equal(githubSettings[0].key, "buzz.github/authors");
+    assert.equal(githubSettings[0].title, "GitHub");
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target)?.pluginId, "buzz.github");
+    const githubLinks = services.conversation.links.snapshot();
+    setOpenGitHubLinksInBuzz(false);
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target), undefined);
+    assert.deepEqual(services.conversation.links.snapshot(), githubLinks);
+    setOpenGitHubLinksInBuzz(true);
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target)?.pluginId, "buzz.github");
     // Conversation presentation is host-owned in Appearance, not a second plugin page.
     assert.equal(services.settingsCards.has("buzz.channels/messages"), false);
     const pairingCard = services.settingsCards
@@ -158,91 +317,66 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .find((card) => card.key === "buzz.pairing/mobile"),
       pairingCard,
     );
-    assert.equal(
-      services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
-      false,
-    );
-    const canvas = services.relay.snapshot().session.canvas;
-    await services.plugins.change("enable", "buzz.todos");
-    await vi.waitFor(() =>
-      assert.ok(
-        services.panels.snapshot().find((p) => p.pluginId === "buzz.todos")
-          ?.channelLauncher,
-      ),
-    );
-    const firstTodos = services.panels
-      .snapshot()
-      .find((p) => p.pluginId === "buzz.todos");
-    await services.plugins.change("disable", "buzz.todos");
-    assert.equal(
-      services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
-      false,
-    );
-    assert.equal(services.relay.snapshot().session.canvas, canvas);
-    await services.plugins.change("enable", "buzz.todos");
-    await vi.waitFor(() =>
-      assert.ok(
-        services.panels.snapshot().find((p) => p.pluginId === "buzz.todos"),
-      ),
-    );
-    assert.notEqual(
-      services.panels.snapshot().find((p) => p.pluginId === "buzz.todos"),
-      firstTodos,
-    );
-    await services.plugins.change("disable", "buzz.todos");
     assert.deepEqual(
       services.settingsCards
         .snapshot()
         .map((card) => card.pluginId)
         .sort(),
-      [
-        "block.builderlab",
-        "block.hosted-communities",
-        "buzz.channels",
-        "buzz.emoji",
-        "buzz.pairing",
-      ],
+      // A build without NIP-FI or the development broker has no Builderlab.
+      ["buzz.channels", "buzz.emoji", "buzz.github", "buzz.pairing"],
     );
 
     await vi.waitFor(() =>
       assert.equal(services.conversation.tools.snapshot().length, 4),
     );
-    assert.equal(services.conversation.attachments.snapshot().length, 1);
-    await services.plugins.change("disable", "buzz.voice-notes");
-    assert.equal(services.conversation.attachments.snapshot().length, 0);
-    assert.equal(services.conversation.inline.snapshot().length, 1);
-    await vi.waitFor(() =>
-      assert.equal(services.conversation.links.snapshot().length, 1),
+    assert.deepEqual(
+      services.conversation.attachments
+        .snapshot()
+        .map((item) => item.pluginId)
+        .sort(),
+      ["buzz.agents", "buzz.voice-notes"],
     );
-    assert.equal(
-      services.conversation.links.snapshot()[0].pluginId,
-      "buzz.links",
+    await services.plugins.change("disable", "buzz.voice-notes");
+    assert.deepEqual(
+      services.conversation.attachments.snapshot().map((item) => item.pluginId),
+      ["buzz.agents"],
+    );
+    assert.equal(services.conversation.inline.snapshot().length, 1);
+    const linkPlugins = () =>
+      services.conversation.links
+        .snapshot()
+        .map((link) => link.pluginId)
+        .sort();
+    await vi.waitFor(() =>
+      assert.deepEqual(linkPlugins(), [
+        "buzz.agents",
+        "buzz.github",
+        "buzz.links",
+      ]),
     );
     await services.plugins.change("disable", "buzz.links");
-    assert.equal(services.conversation.links.snapshot().length, 0);
+    assert.deepEqual(linkPlugins(), ["buzz.agents", "buzz.github"]);
     await services.plugins.change("enable", "buzz.links");
     await vi.waitFor(() =>
-      assert.equal(services.conversation.links.snapshot().length, 1),
+      assert.deepEqual(linkPlugins(), [
+        "buzz.agents",
+        "buzz.github",
+        "buzz.links",
+      ]),
     );
-    await services.plugins.change("disable", "buzz.emoji");
-    assert.deepEqual(
-      services.conversation.tools.snapshot().map((tool) => tool.pluginId),
-      ["buzz.mentions", "buzz.repos"],
-    );
-    assert.equal(services.conversation.inline.snapshot().length, 0);
-    await services.plugins.change("disable", "buzz.mentions");
-    assert.deepEqual(
-      services.conversation.tools.snapshot().map((tool) => tool.pluginId),
-      ["buzz.repos"],
-    );
-    await services.plugins.change("enable", "buzz.mentions");
-    await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 2),
-    );
-    await services.plugins.change("enable", "buzz.emoji");
-    await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 3),
-    );
+    const tools = services.conversation.tools.snapshot();
+    const inline = services.conversation.inline.snapshot();
+    assert.deepEqual(tools.map((tool) => tool.pluginId).sort(), [
+      "buzz.emoji",
+      "buzz.mentions",
+      "buzz.repos",
+    ]);
+    for (const id of ["buzz.emoji", "buzz.mentions"]) {
+      assert.equal(await services.plugins.change("disable", id), false);
+      assert.equal(services.conversation.tools.snapshot(), tools);
+      assert.equal(services.conversation.inline.snapshot(), inline);
+      assert.equal(services.settingsCards.has("buzz.emoji/custom-emoji"), true);
+    }
 
     const { npubEncode } = await import("nostr-tools/nip19");
     const profileTarget = `nostr:${npubEncode("ab".repeat(32))}`;
@@ -271,7 +405,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .snapshot()
         .map(({ id, placement }) => [id, placement]),
       [
-        ["activity", "message"],
+        ["activity", "response"],
         ["typing-presentation", undefined],
       ],
     );
@@ -306,7 +440,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(bestiePage.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(bestiePage.component)),
-      /isn’t connected yet/,
+      /Choose a community to continue with your Bestie\./,
     );
     await services.plugins.change("disable", "buzz.bestie");
     assert.equal(
@@ -319,7 +453,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       services.pages.snapshot().some((page) => page.pluginId === "buzz.bestie"),
       false,
     );
-    assert.equal(services.pages.snapshot().length, 6);
+    assert.equal(services.pages.snapshot().length, 4);
     await services.plugins.change("enable", "buzz.bestie");
     // Management completion is not activation completion; Cordis still owns import/disposal barriers.
     await vi.waitFor(() =>
@@ -364,6 +498,14 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await services.plugins.change("enable", "buzz.identity-naming");
     await vi.waitFor(() => assert.equal(named(), qualified));
     assert.ok(session.agentLibrary);
+    await services.plugins.change("enable", "buzz.workflows");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.pages
+          .snapshot()
+          .some((page) => page.pluginId === "buzz.workflows"),
+      ),
+    );
     const workflows = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.workflows");
@@ -398,7 +540,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const projects = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.repos");
-    assert.equal(services.pages.snapshot().length, 6);
+    assert.equal(services.pages.snapshot().length, 5);
     assert.equal(projects.pluginId, "buzz.repos");
     assert.equal(projects.id, "repos");
     assert.equal(projects.title, "Repository");
@@ -431,13 +573,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     // Bestie was re-enabled above, so it registered after Inbox.
     assert.deepEqual(
       services.pages.snapshot().map((page) => page.pluginId),
-      [
-        "buzz.channels",
-        "buzz.reminders",
-        "buzz.agents",
-        "buzz.inbox",
-        "buzz.bestie",
-      ],
+      ["buzz.channels", "buzz.agents", "buzz.inbox", "buzz.bestie"],
     );
     await services.plugins.change("enable", "buzz.repos");
     await vi.waitFor(() => {

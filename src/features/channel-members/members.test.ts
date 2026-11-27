@@ -1,21 +1,67 @@
-import { afterEach, expect, it, vi } from "vitest";
-import { createRelaySession } from "../relay/session";
-import { PublishRejected, type OutgoingEvent } from "../relay/outbox";
+import { afterEach, assert, expect, it, vi } from "vitest";
+import { verifyEvent } from "nostr-tools";
+import { createRelaySession, type RelaySession } from "../relay/session";
+import {
+  PublishRejected,
+  type OutboxStorage,
+  type OutgoingEvent,
+} from "../relay/outbox";
 import { matchesEvent } from "../relay/projection";
 import { keypair, roster, signed } from "../relay/testing";
 import type { RelayEvent } from "../relay/events";
-import { addChannelMember, canAddMembers } from "./members";
+import { acceptPublish } from "../relay/transport";
+import {
+  addChannelMember,
+  addChannelMembersAtOnce,
+  canAddMembers,
+  canAddToDirectMessage,
+  canShareSoloChat,
+} from "./members";
 
 const cleanups: (() => void)[] = [];
+it.each([
+  ["guest", "member", false],
+  ["guest", "guest", false],
+  ["member", "guest", true],
+  ["owner", "guest", true],
+  [undefined, "guest", false],
+  [undefined, "member", true],
+] as const)(
+  "keeps invitation eligibility separate from the %s viewer's %s admission default",
+  (viewerRole, joinRole, allowed) => {
+    expect(
+      canAddMembers(
+        { viewer: "viewer", outbox: { supports: () => true } },
+        {
+          id: "channel",
+          name: "Updates",
+          channelType: "stream",
+          joinRole,
+          viewerRole,
+          members: viewerRole ? ["viewer"] : [],
+          ...(viewerRole === "guest" || !viewerRole
+            ? { readOnly: true as const }
+            : {}),
+        },
+      ),
+    ).toBe(allowed);
+  },
+);
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
+  vi.useRealTimers();
 });
-function setup(type = "stream") {
+function setup(
+  type = "stream",
+  visibility: "private" | "public" = "private",
+  joinRole: "member" | "guest" = "member",
+) {
   const viewer = keypair(),
     relay = keypair(),
     person = keypair();
   const id = "11111111-1111-4111-8111-111111111111";
   let members = [viewer.pubkey];
+  let personRole: string | undefined;
   let clock = 1700000000;
   let fail = "";
   let unknown = false;
@@ -25,12 +71,21 @@ function setup(type = "stream") {
   let agent = false;
   let echo = false;
   let failRoster = false;
+  let rolesAvailable = true;
+  let failInvitationRead = false;
+  let recordedInvitation: RelayEvent | undefined;
+  let onInvitationRead: (() => void) | undefined;
+  const invitationReads: import("../relay/events").ReadFilter[][] = [];
   let failSave = false;
   let failAcknowledgement = false;
+  let roleGate: { entered(): void; held: Promise<void> } | undefined;
   const published: RelayEvent[] = [];
   const publish = vi.fn(async (event: RelayEvent) => {
     if (fail) throw unknown ? new Error(fail) : new PublishRejected(fail);
-    if (apply) members = [...new Set([...members, person.pubkey])];
+    if (apply) {
+      members = [...new Set([...members, person.pubkey])];
+      personRole = event.tags.find(([tag]) => tag === "role")?.[1] ?? joinRole;
+    }
     clock++;
     published.push(event);
     if (loseReceipt) throw new Error("Receipt lost after membership applied");
@@ -47,6 +102,12 @@ function setup(type = "stream") {
           definitions: [],
           identities: agent ? [{ pubkey: person.pubkey, name: "Agent" }] : [],
         }),
+        memberAdministration: {
+          sign: async (template) => signed(viewer, template),
+          publish: async (event) => {
+            await publish(event);
+          },
+        },
         writer: {
           kinds: [9, 9000, 9007],
           sign: async (template) => signed(viewer, template),
@@ -55,9 +116,25 @@ function setup(type = "stream") {
           },
         },
         query: async (filters) => {
+          if (filters.some((filter) => filter.kinds?.includes(9000))) {
+            invitationReads.push([...filters]);
+            onInvitationRead?.();
+            if (failInvitationRead)
+              throw new Error("Invitation read unavailable");
+            return recordedInvitation ? [recordedInvitation] : [];
+          }
+          if (
+            roleGate &&
+            filters.some((filter) => filter.kinds?.includes(39001))
+          ) {
+            const gate = roleGate;
+            roleGate = undefined;
+            gate.entered();
+            await gate.held;
+          }
           if (
             failRoster &&
-            published.length &&
+            (published.length || recordedInvitation) &&
             filters.some((filter) => filter.kinds?.includes(39002))
           )
             throw new Error("Roster unavailable");
@@ -66,9 +143,46 @@ function setup(type = "stream") {
             signed(relay, {
               kind: 39000,
               content: "",
-              tags: [["d", id], ["t", type], ["private"], ["name", "Design"]],
+              tags: [
+                ["d", id],
+                ["t", type === "solo" ? "stream" : type],
+                ...(type === "solo" ? [["t", "buzz.solo"]] : []),
+                [visibility],
+                ["join_role", joinRole],
+                ["name", "Design"],
+              ],
             }),
-            roster(foreign ? person : relay, id, members, clock),
+            ...(rolesAvailable
+              ? [
+                  signed(relay, {
+                    kind: 39001,
+                    content: "",
+                    created_at: clock,
+                    tags: [
+                      ["d", id],
+                      ...(personRole === "admin" &&
+                      members.includes(person.pubkey)
+                        ? [["p", person.pubkey, "admin"]]
+                        : []),
+                    ],
+                  }),
+                ]
+              : []),
+            personRole
+              ? signed(relay, {
+                  kind: 39002,
+                  content: "",
+                  created_at: clock,
+                  tags: [
+                    ["d", id],
+                    ...members.map((key) =>
+                      key === person.pubkey && personRole
+                        ? ["p", key, "", personRole]
+                        : ["p", key],
+                    ),
+                  ],
+                })
+              : roster(foreign ? person : relay, id, members, clock),
           ].filter((event) =>
             filters.some((filter) => matchesEvent(event, filter)),
           );
@@ -126,6 +240,31 @@ function setup(type = "stream") {
     setEcho: () => {
       echo = true;
     },
+    invitationReads,
+    setInvitationReadFailure: (value: boolean) => {
+      failInvitationRead = value;
+    },
+    recordOriginal: () => {
+      recordedInvitation = records[0]?.signed;
+    },
+    onInvitationRead: (run: () => void) => {
+      onInvitationRead = run;
+    },
+    holdRoleRead: () => {
+      let release!: () => void;
+      let entered!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      roleGate = { entered, held };
+      return { release, started };
+    },
+    setRolesAvailable: (value: boolean) => {
+      rolesAvailable = value;
+    },
     setRosterFailure: (value: boolean) => {
       failRoster = value;
     },
@@ -133,8 +272,9 @@ function setup(type = "stream") {
       members = [viewer.pubkey];
       clock++;
     },
-    confirmPerson: () => {
+    confirmPerson: (role?: string) => {
       members = [viewer.pubkey, person.pubkey];
+      personRole = role;
       clock++;
     },
     managedAdd: () => owner.session.memberAdditions.add(id, person.pubkey),
@@ -162,11 +302,11 @@ function setup(type = "stream") {
         expect(owner.session.channels.list().status).toBe("ready"),
       );
     },
-    add: (signal = new AbortController().signal) =>
-      addChannelMember(owner.session, id, person.pubkey, signal),
+    add: (signal = new AbortController().signal, intent = {}) =>
+      addChannelMember(owner.session, id, person.pubkey, signal, intent),
   };
 }
-it("adds a person without changing roles and confirms the live roster using membership capability alone", async () => {
+it("adds a private-channel participant explicitly and confirms the live roster using membership capability alone", async () => {
   const t = setup();
   await t.ready();
   await t.add();
@@ -177,9 +317,7 @@ it("adds a person without changing roles and confirms the live roster using memb
       ["p", t.person.pubkey],
     ]),
   );
-  expect(
-    t.publish.mock.calls[0]?.[0].tags.some(([tag]) => tag === "role"),
-  ).toBe(false);
+  expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "member"]);
   expect(t.session.channels.list().channels[0]?.members).toContain(
     t.person.pubkey,
   );
@@ -193,6 +331,154 @@ it("uses the bot role for an existing library agent", async () => {
   await t.add();
   expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "bot"]);
 });
+it("uses the guest role for an agent when the addition asks for it", async () => {
+  const t = setup();
+  await t.ready();
+  await t.setAgent();
+  await t.add(undefined, { role: "guest" });
+  const tags = t.publish.mock.calls[0]?.[0].tags;
+  expect(tags).toContainEqual(["role", "guest"]);
+  expect(tags).not.toContainEqual(["role", "bot"]);
+});
+it("never retries a failed Bot addition for a guest add, in the session or after restart", async () => {
+  const t = setup();
+  await t.ready();
+  await t.setAgent();
+  const guest = () =>
+    t.session.memberAdditions.add(t.id, t.person.pubkey, { role: "guest" });
+  t.setFail("Not committed");
+  await expect(t.managedAdd()).rejects.toThrow(/Not committed/);
+  t.setFail("");
+  const saved = t.records()[0];
+  expect(saved?.event.tags).toContainEqual(["role", "bot"]);
+  await expect(guest()).rejects.toThrow(/another role/);
+  t.restart();
+  await t.ready();
+  await t.setAgent();
+  await expect(guest()).rejects.toThrow(/another role/);
+  // Only the first Bot attempt was ever sent, and its receipt is kept.
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.records()).toHaveLength(1);
+  expect(t.records()[0]).toMatchObject({ event: { id: saved?.event.id } });
+  expect(t.records()[0]?.acknowledged).toBeFalsy();
+  expect(t.session.channels.list().channels[0]?.members).not.toContain(
+    t.person.pubkey,
+  );
+  // Removing the Not sent item in Outbox clears the way for the guest add.
+  const id = saved?.event.id;
+  if (!id) throw new Error("Expected the Bot receipt");
+  await t.session.outbox?.dismiss(id);
+  await guest();
+  expect(t.publish).toHaveBeenCalledTimes(2);
+  const sent = t.publish.mock.calls[1]?.[0];
+  expect(sent?.id).not.toBe(id);
+  expect(sent?.tags).toContainEqual(["role", "guest"]);
+  expect(sent?.tags).not.toContainEqual(["role", "bot"]);
+});
+it("doesn't join or race an addition still under way with another role", async () => {
+  const t = setup();
+  await t.ready();
+  await t.setAgent();
+  const first = t.managedAdd();
+  await expect(
+    t.session.memberAdditions.add(t.id, t.person.pubkey, { role: "guest" }),
+  ).rejects.toThrow(/another role/);
+  await first;
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "bot"]);
+  expect(t.publish.mock.calls[0]?.[0].tags).not.toContainEqual([
+    "role",
+    "guest",
+  ]);
+});
+it("adds a participant despite a private channel's saved Guest default", async () => {
+  const t = setup("stream", "private", "guest");
+  await t.ready();
+  await t.managedAdd();
+  expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "member"]);
+});
+it.each(["private", "public"] as const)(
+  "keeps Solo invitations participatory with a %s chat's Guest visitor default",
+  async (visibility) => {
+    const t = setup("solo", visibility, "guest");
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual([
+      "role",
+      "member",
+    ]);
+    expect(t.session.channels.list().channels[0]?.members).toContain(
+      t.person.pubkey,
+    );
+  },
+);
+it("keeps a saved Solo Guest invitation separate from participation across restart", async () => {
+  const t = setup("solo", "public", "guest");
+  await t.ready();
+  const guest = () =>
+    t.session.memberAdditions.add(t.id, t.person.pubkey, { role: "guest" });
+  t.setFail("Not committed");
+  await expect(guest()).rejects.toThrow(/Not committed/);
+  const original = t.records()[0]?.event.id;
+  expect(t.records()[0]?.event.tags).toContainEqual(["role", "guest"]);
+  t.setFail("");
+  await expect(t.managedAdd()).rejects.toThrow(/another role/);
+  t.restart();
+  await t.ready();
+  await expect(t.managedAdd()).rejects.toThrow(/another role/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.records()).toHaveLength(1);
+  expect(t.records()[0]).toMatchObject({ event: { id: original } });
+  expect(t.records()[0]?.acknowledged).toBeFalsy();
+  await guest();
+  expect(t.publish).toHaveBeenCalledTimes(2);
+  const retried = t.publish.mock.calls[1]?.[0];
+  expect(retried?.id).toBe(original);
+  expect(retried?.tags).toContainEqual(["role", "guest"]);
+  expect(retried?.tags).not.toContainEqual(["role", "member"]);
+});
+it.each(["member", "guest"] as const)(
+  "leaves the public %s admission default to the relay",
+  async (joinRole) => {
+    const t = setup("stream", "public", joinRole);
+    await t.ready();
+    await t.add();
+    expect(
+      t.publish.mock.calls[0]?.[0].tags.some(([tag]) => tag === "role"),
+    ).toBe(false);
+  },
+);
+it("does not resend an addition for someone already in the private channel", async () => {
+  const t = setup("stream", "private", "guest");
+  await t.ready();
+  t.confirmPerson();
+  await t.managedAdd();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+it.each(["guest", "admin"])(
+  "does not replay a failed private addition over a newer %s admission after restart",
+  async (role) => {
+    const t = setup();
+    await t.ready();
+    t.setFail("Not committed");
+    await expect(t.managedAdd()).rejects.toThrow(/Not committed/);
+    const original = t.records()[0]?.event.id;
+    t.confirmPerson(role);
+    t.setFail("");
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()[0]).toMatchObject({
+      event: { id: original },
+      acknowledged: true,
+    });
+    expect(t.session.channels.list().channels[0]?.members).toContain(
+      t.person.pubkey,
+    );
+  },
+);
 it("preserves a rejected operation and retries its exact identity", async () => {
   const t = setup();
   await t.ready();
@@ -319,27 +605,43 @@ it.each(["rejected", "unknown", "unconfirmed"])(
   },
 );
 
-it("allows a new explicit addition after an expired failed request is dismissed", async () => {
+it.each([undefined, "example-import"])(
+  "replaces an expired failed request on a new explicit addition (migration=%s)",
+  async (migration) => {
+    const t = setup();
+    await t.ready();
+    const add = () =>
+      t.session.memberAdditions.add(t.id, t.person.pubkey, { migration });
+    t.setFail("Rejected addition");
+    await expect(add()).rejects.toThrow(/Rejected addition/);
+    const first = t.publish.mock.calls[0]?.[0].id;
+    if (!first) throw new Error("Expected invitation");
+    t.setFail("");
+    afterInvitationWindow(t);
+    await add();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+    const replacement = t.publish.mock.calls[1]?.[0];
+    expect(replacement?.id).not.toBe(first);
+    expect(replacement?.tags.filter(([tag]) => tag === "migration")).toEqual(
+      migration === undefined ? [] : [["migration", migration]],
+    );
+    expect(t.records().find((item) => item.event.id === first)).toBeUndefined();
+  },
+);
+
+it("doesn't replace an expired failed request on Retry", async () => {
   const t = setup();
   await t.ready();
   t.setFail("Rejected addition");
   await expect(t.managedAdd()).rejects.toThrow(/Rejected addition/);
   const first = t.publish.mock.calls[0]?.[0].id;
-  if (!first) throw new Error("Expected invitation");
-  const now = vi
-    .spyOn(Date, "now")
-    .mockReturnValue(Date.now() + 16 * 60 * 1000);
-  try {
-    await expect(t.managedAdd()).rejects.toThrow(/addition expired/);
-  } finally {
-    now.mockRestore();
-  }
-  await t.session.outbox?.dismiss(first);
-  expect(t.session.outbox?.snapshot()).toEqual([]);
   t.setFail("");
-  await t.managedAdd();
-  expect(t.publish).toHaveBeenCalledTimes(2);
-  expect(t.publish.mock.calls[1]?.[0].id).not.toBe(first);
+  afterInvitationWindow(t);
+  await expect(
+    t.session.memberAdditions.add(t.id, t.person.pubkey, { retry: true }),
+  ).rejects.toThrow(/addition expired/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.records()).toMatchObject([{ event: { id: first } }]);
 });
 
 it("keeps the exact failed request when durable dismissal fails", async () => {
@@ -649,5 +951,1243 @@ it.each([false, true])(
       first,
       first,
     ]);
+  },
+);
+
+async function savedNoRoleInvitation(
+  t: ReturnType<typeof setup>,
+  uncertain = true,
+) {
+  t.setFail("Old invitation result", uncertain);
+  const outbox = t.session.outbox;
+  if (!outbox) throw new Error("Expected membership outbox");
+  const original = outbox.send({
+    kind: 9000,
+    content: "",
+    tags: [
+      ["h", t.id],
+      ["p", t.person.pubkey],
+    ],
+  });
+  await vi.waitFor(() =>
+    expect(t.records()[0]?.delivery).toBe(uncertain ? "unknown" : "failed"),
+  );
+  t.legacy();
+  t.restart();
+  await t.ready();
+  t.setFail("");
+  return original;
+}
+it("does not replay a legacy Solo invitation that could now admit a Guest", async () => {
+  const t = setup("solo", "public", "guest");
+  await t.ready();
+  const original = await savedNoRoleInvitation(t);
+  await expect(t.managedAdd()).rejects.toThrow(/15-minute delivery window/i);
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.records()[0]).toMatchObject({
+    event: { id: original },
+    delivery: "unknown",
+  });
+  expect(t.records()[0]?.acknowledged).toBeUndefined();
+  await expect(t.session.outbox?.dismiss(original)).rejects.toThrow(/Confirm/);
+  t.restart();
+  await t.ready();
+  await expect(t.managedAdd()).rejects.toThrow(/15-minute delivery window/i);
+  expect(t.publish).toHaveBeenCalledOnce();
+});
+it.each(["member", "admin"])(
+  "confirms a recovered no-role invitation only after signed %s participation",
+  async (role) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    const original = await savedNoRoleInvitation(t);
+    t.confirmPerson(role);
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()[0]).toMatchObject({
+      event: { id: original },
+      acknowledged: true,
+    });
+  },
+);
+it("leaves a recovered legacy Solo Guest to the single addition, outside any batch", async () => {
+  const t = setup("solo", "public", "guest");
+  await t.ready();
+  await savedNoRoleInvitation(t);
+  t.confirmPerson("guest");
+  await expect(t.managedAdd()).rejects.toThrow(/remove them in People/i);
+  t.restart();
+  await t.ready();
+  // This relay models only the person, so the others' batch leaves them be.
+  t.setApply(false);
+  // Requested in one turn, so the others share a batch.
+  const [guest] = await Promise.allSettled(
+    [t.person.pubkey, keypair().pubkey, keypair().pubkey].map((key) =>
+      t.session.memberAdditions.add(t.id, key),
+    ),
+  );
+  // Counting the Guest as added would hide that they can only read.
+  expect(guest).toMatchObject({ status: "rejected" });
+  expect(String((guest as PromiseRejectedResult).reason)).toMatch(
+    /remove them in People/i,
+  );
+});
+it("reports a recovered Guest and permits a fresh Member invite only after explicit removal", async () => {
+  const t = setup("solo", "public", "guest");
+  await t.ready();
+  const original = await savedNoRoleInvitation(t);
+  t.confirmPerson("guest");
+  await expect(t.managedAdd()).rejects.toThrow(
+    /remove them in People.*invite them again/i,
+  );
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.records()[0]).toMatchObject({
+    event: { id: original },
+    acknowledged: true,
+  });
+  t.restart();
+  await t.ready();
+  await expect(t.managedAdd()).rejects.toThrow(/remove them in People/i);
+  expect(t.publish).toHaveBeenCalledOnce();
+  t.removePerson();
+  await t.managedAdd();
+  expect(t.publish).toHaveBeenCalledTimes(2);
+  expect(t.publish.mock.calls[1]?.[0].id).not.toBe(original);
+  expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual(["role", "member"]);
+});
+
+it("preserves a legacy invitation while signed roles are unavailable", async () => {
+  const t = setup("solo", "public", "guest");
+  await t.ready();
+  await savedNoRoleInvitation(t);
+  t.confirmPerson("guest");
+  t.setRolesAvailable(false);
+  await expect(t.managedAdd()).rejects.toThrow(
+    /access could not be confirmed/i,
+  );
+  expect(t.records()[0]?.acknowledged).toBeUndefined();
+  expect(t.publish).toHaveBeenCalledOnce();
+  t.setRolesAvailable(true);
+  await expect(t.managedAdd()).rejects.toThrow(/remove them in People/i);
+  expect(t.records()[0]?.acknowledged).toBe(true);
+});
+it("replaces a definitively failed no-role invitation only after explicit Outbox dismissal", async () => {
+  const t = setup("solo", "public", "guest");
+  await t.ready();
+  const original = await savedNoRoleInvitation(t, false);
+  await expect(t.managedAdd()).rejects.toThrow(/15-minute delivery window/i);
+  expect(t.publish).toHaveBeenCalledOnce();
+  await t.session.outbox?.dismiss(original);
+  await t.managedAdd();
+  expect(t.publish).toHaveBeenCalledTimes(2);
+  expect(t.publish.mock.calls[1]?.[0].id).not.toBe(original);
+  expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual(["role", "member"]);
+});
+
+it("does not confirm a legacy invitation from stale roles during another member operation", async () => {
+  const t = setup("solo", "public", "guest");
+  await t.ready();
+  await savedNoRoleInvitation(t);
+  t.confirmPerson("member");
+  await t.session.memberAdministration.refresh(t.id);
+  const gate = t.holdRoleRead();
+  const other = t.session.memberAdministration
+    .run(t.id, {
+      pubkey: t.person.pubkey,
+      expectedRole: "member",
+      role: "guest",
+    })
+    .catch(() => {});
+  try {
+    await gate.started;
+    expect(t.session.memberAdministration.snapshot(t.id)).toMatchObject({
+      status: "ready",
+      operation: { status: "pending" },
+    });
+    await expect(t.managedAdd()).rejects.toThrow(
+      /access could not be confirmed/i,
+    );
+    expect(t.records()[0]?.acknowledged).toBeUndefined();
+    expect(t.publish).toHaveBeenCalledOnce();
+  } finally {
+    gate.release();
+    await other;
+  }
+  await t.managedAdd();
+  expect(t.records()[0]?.acknowledged).toBe(true);
+  expect(t.publish).toHaveBeenCalledOnce();
+});
+
+it.each([false, true])(
+  "retires an expired unapplied legacy invitation before a fresh Member grant (Retry=%s)",
+  async (retry) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    const original = await savedNoRoleInvitation(t);
+    const created = t.records()[0]?.event.created_at;
+    if (created === undefined) throw new Error("Expected saved invitation");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime((created + 901) * 1000);
+    await t.session.memberAdditions.add(
+      t.id,
+      t.person.pubkey,
+      retry ? { retry: true } : {},
+    );
+    expect(t.publish).toHaveBeenCalledTimes(2);
+    expect(t.publish.mock.calls[1]?.[0].id).not.toBe(original);
+    expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "role",
+      "member",
+    ]);
+    expect(
+      t.records().find((item) => item.event.id === original),
+    ).toMatchObject({
+      acknowledged: true,
+    });
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+  },
+);
+
+function afterInvitationWindow(t: ReturnType<typeof setup>, seconds = 901) {
+  const created = t.records()[0]?.event.created_at;
+  if (created === undefined) throw new Error("Expected saved invitation");
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime((created + seconds) * 1000);
+}
+it.each([false, true])(
+  "Outbox Retry retires a recorded removal without granting, then Add invites once (restart=%s)",
+  async (restart) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    const original = await savedNoRoleInvitation(t);
+    t.recordOriginal();
+    afterInvitationWindow(t);
+    if (restart) {
+      await t.session.read([{ kinds: [9000], ids: [original], limit: 1 }], {
+        fresh: true,
+      });
+      t.restart();
+      await t.ready();
+    }
+    await t.session.memberAdditions.add(t.id, t.person.pubkey, { retry: true });
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()).toHaveLength(1);
+    expect(t.records()[0]).toMatchObject({
+      event: { id: original },
+      acknowledged: true,
+    });
+    expect(t.session.channels.list().channels[0]?.members).not.toContain(
+      t.person.pubkey,
+    );
+    if (restart) {
+      t.restart();
+      await t.ready();
+    }
+    await t.session.memberAdditions.add(t.id, t.person.pubkey, { retry: true });
+    expect(t.publish).toHaveBeenCalledOnce();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+    expect(t.publish.mock.calls[1]?.[0].id).not.toBe(original);
+    expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "role",
+      "member",
+    ]);
+  },
+);
+it.each(["read", "roster", "storage"])(
+  "Outbox Retry preserves recorded recovery on %s failure",
+  async (failure) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    await savedNoRoleInvitation(t);
+    t.recordOriginal();
+    afterInvitationWindow(t);
+    if (failure === "read") t.setInvitationReadFailure(true);
+    else if (failure === "roster")
+      t.onInvitationRead(() => t.setRosterFailure(true));
+    else t.setAcknowledgementFailure(true);
+    const retry = () =>
+      t.session.memberAdditions.add(t.id, t.person.pubkey, { retry: true });
+    await expect(retry()).rejects.toThrow();
+    expect(t.records()[0]?.acknowledged).toBeUndefined();
+    expect(t.publish).toHaveBeenCalledOnce();
+    t.onInvitationRead(() => {});
+    t.setRosterFailure(false);
+    t.setInvitationReadFailure(false);
+    t.setAcknowledgementFailure(false);
+    t.restart();
+    await t.ready();
+    await retry();
+    expect(t.records()[0]?.acknowledged).toBe(true);
+    expect(t.publish).toHaveBeenCalledOnce();
+  },
+);
+it.each([false, true])(
+  "reconciles a recorded then removed invitation after restart=%s",
+  async (restart) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    const original = await savedNoRoleInvitation(t);
+    t.confirmPerson("guest");
+    t.removePerson();
+    t.recordOriginal();
+    afterInvitationWindow(t);
+    if (restart) {
+      await t.session.read([{ kinds: [9000], ids: [original], limit: 1 }], {
+        fresh: true,
+      });
+      t.restart();
+      await t.ready();
+    }
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+    expect(t.publish.mock.calls[1]?.[0].id).not.toBe(original);
+    expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "role",
+      "member",
+    ]);
+    expect(
+      t.records().find((item) => item.event.id === original),
+    ).toMatchObject({ acknowledged: true, delivery: "seen" });
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+  },
+);
+it.each(["read", "roster", "storage"])(
+  "retains recorded recovery after %s failure and recovers on a later Add",
+  async (failure) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    const original = await savedNoRoleInvitation(t);
+    t.recordOriginal();
+    afterInvitationWindow(t);
+    await t.session.read([{ kinds: [9000], ids: [original], limit: 1 }], {
+      fresh: true,
+    });
+    if (failure === "read") t.setInvitationReadFailure(true);
+    else if (failure === "roster")
+      t.onInvitationRead(() => t.setRosterFailure(true));
+    else t.setAcknowledgementFailure(true);
+    await expect(t.managedAdd()).rejects.toThrow();
+    expect(t.records()[0]?.acknowledged).toBeUndefined();
+    expect(t.publish).toHaveBeenCalledOnce();
+    t.onInvitationRead(() => {});
+    t.setRosterFailure(false);
+    t.setInvitationReadFailure(false);
+    t.setAcknowledgementFailure(false);
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(
+      t.records().find((item) => item.event.id === original)?.acknowledged,
+    ).toBe(true);
+    expect(t.publish).toHaveBeenCalledTimes(2);
+  },
+);
+it.each(["read failure", "storage failure"])(
+  "preserves expired legacy recovery after %s",
+  async (failure) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    const original = await savedNoRoleInvitation(t);
+    afterInvitationWindow(t);
+    if (failure === "read failure") t.setInvitationReadFailure(true);
+    if (failure === "storage failure") t.setAcknowledgementFailure(true);
+    await expect(t.managedAdd()).rejects.toThrow();
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()[0]).toMatchObject({
+      event: { id: original },
+      delivery: "unknown",
+    });
+    expect(t.records()[0]?.acknowledged).toBeUndefined();
+    t.restart();
+    await t.ready();
+    await expect(t.managedAdd()).rejects.toThrow();
+    expect(t.publish).toHaveBeenCalledOnce();
+  },
+);
+it("does not replace at the inclusive expiry boundary and confirms strong ID absence afterward", async () => {
+  const t = setup("solo", "public", "guest");
+  await t.ready();
+  const original = await savedNoRoleInvitation(t);
+  afterInvitationWindow(t, 900);
+  await expect(t.managedAdd()).rejects.toThrow(/15-minute/);
+  expect(t.invitationReads).toHaveLength(0);
+  afterInvitationWindow(t);
+  await t.managedAdd();
+  expect(t.invitationReads).toEqual([
+    [
+      {
+        kinds: [9000],
+        ids: [original],
+        authors: [t.viewer.pubkey],
+        limit: 1,
+        consistency: "strong",
+      },
+    ],
+  ]);
+  expect(t.publish).toHaveBeenCalledTimes(2);
+});
+it.each([false, true])(
+  "rechecks membership instead of overwriting a joined Guest when recorded=%s",
+  async (recorded) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    await savedNoRoleInvitation(t);
+    afterInvitationWindow(t);
+    if (recorded) t.recordOriginal();
+    t.onInvitationRead(() => t.confirmPerson("guest"));
+    await expect(t.managedAdd()).rejects.toThrow(/remove them in People/);
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()[0]?.acknowledged).toBe(true);
+  },
+);
+
+/** A private channel whose relay applies every `p` a kind:9000 names, or only
+ * the first, as a relay without batch support does. */
+function batchSetup(applyAll = true) {
+  const viewer = keypair(),
+    relay = keypair(),
+    agent = keypair();
+  const id = "33333333-3333-4333-8333-333333333333";
+  let members = [viewer.pubkey];
+  let clock = 1700000000;
+  let records: readonly OutgoingEvent[] = [];
+  const published: RelayEvent[] = [];
+  let onPublish: (event: RelayEvent) => unknown = () => {};
+  let onSign: () => void | Promise<void> = () => {};
+  let onLockWait = () => {};
+  let onJournalRead: () => void | Promise<void> = () => {};
+  let rosterReads = 0;
+  let failRosterRead = 0;
+  let rosterDown = false;
+  const publish = vi.fn(async (event: RelayEvent) => {
+    await onPublish(event);
+    const named = event.tags.flatMap(([tag, value]) =>
+      tag === "p" && value ? [value] : [],
+    );
+    members = [...new Set([...members, ...named.slice(0, applyAll ? 100 : 1)])];
+    clock++;
+    published.push(event);
+  });
+  const transport: Parameters<typeof createRelaySession>[0] = {
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    readAgentLibrary: async () => ({
+      definitions: [],
+      identities: [{ pubkey: agent.pubkey, name: "Agent" }],
+    }),
+    writer: {
+      kinds: [9, 9000, 9007],
+      sign: async (template) => {
+        await onSign();
+        return signed(viewer, template);
+      },
+      publish: async (event) => {
+        await publish(event);
+      },
+    },
+    query: async (filters) => {
+      if (filters.some((filter) => filter.kinds?.includes(39002)))
+        if (++rosterReads === failRosterRead || rosterDown)
+          throw new Error("Roster unavailable");
+      return [
+        signed(relay, {
+          kind: 39000,
+          content: "",
+          tags: [
+            ["d", id],
+            ["t", "stream"],
+            ["private"],
+            ["join_role", "guest"],
+            ["name", "Design"],
+          ],
+        }),
+        roster(relay, id, members, clock),
+      ].filter((event) =>
+        filters.some((filter) => matchesEvent(event, filter)),
+      );
+    },
+  };
+  const locks = new Map<string, Promise<unknown>>();
+  const storage: OutboxStorage = {
+    lock(id, run) {
+      const before = locks.get(id);
+      if (before) onLockWait();
+      const work = (before ?? Promise.resolve()).then(run, run);
+      locks.set(id, work);
+      const clear = () => {
+        if (locks.get(id) === work) locks.delete(id);
+      };
+      void work.then(clear, clear);
+      return work;
+    },
+    async load(options) {
+      if (options?.readOnly) await onJournalRead();
+      return records;
+    },
+    save: (next) => {
+      records = structuredClone(next);
+    },
+  };
+  const openWindow = () => {
+    const owner = createRelaySession(transport, { outboxStorage: storage });
+    cleanups.push(owner.dispose);
+    return owner.session;
+  };
+  const session = openWindow();
+  return {
+    session,
+    openWindow,
+    id,
+    agent,
+    published,
+    publish,
+    records: () => records,
+    dismissInAnotherWindow(id: string) {
+      records = records.filter((item) => item.event.id !== id);
+    },
+    members: () => members,
+    /** Runs as the relay receives each write, e.g. another owner's admission. */
+    onPublish(run: typeof onPublish) {
+      onPublish = run;
+    },
+    onSign(run: typeof onSign) {
+      onSign = run;
+    },
+    onLockWait(run: typeof onLockWait) {
+      onLockWait = run;
+    },
+    onJournalRead(run: typeof onJournalRead) {
+      onJournalRead = run;
+    },
+    /** Fails the relay's nth roster read from now. */
+    failRosterRead(nth: number) {
+      failRosterRead = rosterReads + nth;
+    },
+    /** Fails every roster read until restored. */
+    rosterDown(down: boolean) {
+      rosterDown = down;
+    },
+    admit(key: string) {
+      members = [...members, key];
+      clock++;
+    },
+    async ready(view = session) {
+      view.channels.ensureList();
+      await vi.waitFor(() => expect(view.channels.list().status).toBe("ready"));
+      await view.agentChoices.refresh();
+    },
+    addAll: (keys: readonly string[]) =>
+      Promise.all(keys.map((key) => session.memberAdditions.add(id, key))),
+  };
+}
+const people = (count: number) =>
+  Array.from({ length: count }, () => keypair().pubkey);
+
+function gate<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((finish) => {
+    resolve = finish;
+  });
+  return { promise, resolve };
+}
+
+it("adds people requested together in one write per role and 100 people", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const humans = people(101);
+  await t.addAll([...humans, t.agent.pubkey]);
+  expect(
+    t.published.map((event) => [
+      event.tags.filter(([tag]) => tag === "p").length,
+      event.tags.find(([tag]) => tag === "role")?.[1],
+    ]),
+  ).toEqual([
+    [100, "member"],
+    [1, "member"],
+    [1, "bot"],
+  ]);
+  expect(t.members()).toEqual(
+    expect.arrayContaining([...humans, t.agent.pubkey]),
+  );
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+  expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
+});
+
+it.each([undefined, "slack"])(
+  "adds missed people individually on a legacy relay (migration=%s)",
+  async (migration) => {
+    const t = batchSetup(false);
+    await t.ready();
+    const [first = "", second = "", third = ""] = people(3);
+    await Promise.all(
+      [first, second, third].map((key) =>
+        t.session.memberAdditions.add(t.id, key, { migration }),
+      ),
+    );
+    expect(
+      t.published.map((event) =>
+        event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
+      ),
+    ).toEqual([[first, second, third], [second], [third]]);
+    for (const event of t.published) {
+      expect(verifyEvent(structuredClone(event))).toBe(true);
+      expect(event.tags.filter(([tag]) => tag === "migration")).toEqual(
+        migration === undefined ? [] : [["migration", "slack"]],
+      );
+    }
+    expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
+    expect(t.session.memberAdditions.snapshot()).toEqual([]);
+  },
+);
+
+it("sends separate signed membership batches for each source", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [a = "", b = "", c = "", d = "", e = "", f = ""] = people(6);
+  await Promise.all([
+    t.session.memberAdditions.add(t.id, a, { migration: "slack" }),
+    t.session.memberAdditions.add(t.id, b),
+    t.session.memberAdditions.add(t.id, c, { migration: "example-import" }),
+    t.session.memberAdditions.add(t.id, d, { migration: "slack" }),
+    t.session.memberAdditions.add(t.id, e),
+    t.session.memberAdditions.add(t.id, f, { migration: "example-import" }),
+  ]);
+  expect(t.published).toHaveLength(3);
+  expect(
+    t.published.map(({ tags }) =>
+      tags.filter(([tag]) => tag === "p" || tag === "migration"),
+    ),
+  ).toEqual(
+    expect.arrayContaining([
+      [
+        ["p", a],
+        ["p", d],
+        ["migration", "slack"],
+      ],
+      [
+        ["p", b],
+        ["p", e],
+      ],
+      [
+        ["p", c],
+        ["p", f],
+        ["migration", "example-import"],
+      ],
+    ]),
+  );
+});
+
+it.each([
+  [
+    429,
+    { error: "rate-limited: quota exceeded; retry in 5s" },
+    "rate-limited: quota exceeded; retry in 5s",
+  ],
+  [502, {}, "Relay delivery could not be confirmed (502)"],
+] as const)(
+  "stops a migration batch after HTTP delivery fails (%s)",
+  async (status, refusal, message) => {
+    const t = batchSetup();
+    await t.ready();
+    t.onPublish((event) =>
+      acceptPublish(Response.json(refusal, { status }), event.id),
+    );
+    const members = [...people(2), t.agent.pubkey];
+    const add = () =>
+      Promise.allSettled(
+        members.map((key) =>
+          t.session.memberAdditions.add(t.id, key, { migration: "slack" }),
+        ),
+      );
+    const results = await add();
+    expect(results).toEqual(
+      Array.from({ length: 3 }, () => ({
+        status: "rejected",
+        reason: new Error(message),
+      })),
+    );
+    expect(t.publish).toHaveBeenCalledOnce();
+    const [event] = t.publish.mock.lastCall ?? [];
+    expect(event?.tags.filter(([tag]) => tag === "p")).toHaveLength(2);
+    expect(event?.tags).toContainEqual(["migration", "slack"]);
+    const [saved] = t.records().filter((item) => !item.acknowledged);
+    expect(saved?.signed).toEqual(structuredClone(event));
+    await add();
+    expect(
+      t.publish.mock.calls.map(([attempt]) => structuredClone(attempt)),
+    ).toEqual([saved?.signed, saved?.signed]);
+    expect(t.records().filter((item) => !item.acknowledged)).toHaveLength(1);
+  },
+);
+
+it.each([
+  { missing: 1, dismissed: true },
+  { missing: 2, dismissed: true },
+  { missing: 1, dismissed: false },
+  { missing: 2, dismissed: false },
+])(
+  "Retry checks batch ownership with $missing missing and dismissed=$dismissed",
+  async ({ missing, dismissed }) => {
+    const t = batchSetup();
+    await t.ready();
+    const members = people(3);
+    const add = (batchReceipt?: string) =>
+      Promise.allSettled(
+        members.map((key) =>
+          t.session.memberAdditions.add(t.id, key, {
+            migration: "slack",
+            batchReceipt,
+          }),
+        ),
+      );
+    t.onPublish(() => {
+      throw new PublishRejected("Not sent");
+    });
+    const initial = await add();
+    expect(initial.every((result) => result.status === "rejected")).toBe(true);
+    const [original] = t.records();
+    if (!original) throw new Error("Expected the saved batch");
+    for (const key of members.slice(missing)) t.admit(key);
+    if (dismissed) t.dismissInAnotherWindow(original.event.id);
+    t.onPublish(() => {});
+    await add(original.event.id);
+    if (dismissed) expect(t.publish).toHaveBeenCalledOnce();
+    else {
+      expect(t.publish).toHaveBeenCalledTimes(2);
+      expect(t.published[0]?.tags).toContainEqual(["migration", "slack"]);
+      expect(t.published[0]?.tags.filter(([kind]) => kind === "p")).toEqual(
+        members.slice(0, missing).map((key) => ["p", key]),
+      );
+    }
+    expect(t.session.outbox?.snapshot()).toEqual([]);
+  },
+);
+
+it("reuses the signed narrowed batch across windows and successive roster changes", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const members = people(4);
+  const add = (
+    batchReceipt?: string,
+    session = t.session,
+    requested = members,
+  ) =>
+    Promise.allSettled(
+      requested.map((key) =>
+        session.memberAdditions.add(t.id, key, {
+          migration: "slack",
+          batchReceipt,
+        }),
+      ),
+    );
+  t.onPublish(() => {
+    throw new PublishRejected("Not sent");
+  });
+  await add();
+  const [original] = t.records();
+  if (!original) throw new Error("Expected the saved batch");
+  const stale = t.openWindow();
+  await t.ready(stale);
+  t.admit(members[0] ?? "");
+  await add(original.event.id);
+  await add(original.event.id, stale);
+  const smaller = t.publish.mock.calls[1]?.[0];
+  if (!smaller) throw new Error("Expected a narrowed batch");
+  t.admit(members[1] ?? "");
+  await add(smaller.id, stale, members.slice(1));
+  await add(original.event.id);
+  const narrowest = t.publish.mock.calls[3]?.[0];
+  expect(narrowest?.tags.filter(([tag]) => tag === "p")).toEqual(
+    members.slice(2).map((key) => ["p", key]),
+  );
+  expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
+    original.event.id,
+    smaller.id,
+    smaller.id,
+    narrowest?.id,
+    narrowest?.id,
+  ]);
+  expect(t.records()).toHaveLength(3);
+  t.dismissInAnotherWindow(original.event.id);
+  await add(original.event.id);
+  expect(t.publish).toHaveBeenCalledTimes(5);
+});
+
+it("waits for the original batch when a different window loaded it before signing", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const members = people(3);
+  const signing = gate();
+  const signed = gate();
+  const delivery = gate();
+  const receipt = gate();
+  const retryProgress = gate<string>();
+  t.onSign(() => {
+    signing.resolve();
+    return signed.promise;
+  });
+  const add = (session: RelaySession, batchReceipt?: string) =>
+    Promise.allSettled(
+      members.map((key) =>
+        session.memberAdditions.add(t.id, key, {
+          migration: "slack",
+          batchReceipt,
+        }),
+      ),
+    );
+  const initial = add(t.session);
+  let retry: ReturnType<typeof add> | undefined;
+  try {
+    await signing.promise;
+    const original = t.records()[0];
+    if (!original) throw new Error("Expected the original batch intent");
+    expect(original.signed).toBeUndefined();
+    const stale = t.openWindow();
+    await t.ready(stale);
+    t.admit(members[0] ?? "");
+    t.onPublish((event) => {
+      if (event.id !== original.event.id) {
+        retryProgress.resolve("sent a replacement");
+        return;
+      }
+      delivery.resolve();
+      return receipt.promise;
+    });
+    signed.resolve();
+    await delivery.promise;
+    t.onLockWait(() => retryProgress.resolve("waited for delivery"));
+    retry = add(stale, original.event.id);
+    expect(await retryProgress.promise).toBe("waited for delivery");
+  } finally {
+    signed.resolve();
+    receipt.resolve();
+    await initial;
+    if (retry)
+      expect(await retry).toEqual(
+        members.map(() => ({ status: "fulfilled", value: undefined })),
+      );
+  }
+  expect(t.publish).toHaveBeenCalledOnce();
+});
+
+it("retries the exact labeled single after restart and refuses a different source", async () => {
+  const t = setup();
+  await t.ready();
+  const add = (options?: Parameters<typeof t.session.memberAdditions.add>[2]) =>
+    t.session.memberAdditions.add(t.id, t.person.pubkey, options);
+  t.setFail("Connection lost after dispatch", true);
+  await expect(add({ migration: "slack" })).rejects.toThrow(/Connection lost/);
+  const original = structuredClone(t.publish.mock.lastCall?.[0]);
+  expect(original?.tags).toContainEqual(["migration", "slack"]);
+  await vi.waitFor(() => expect(t.records()[0]?.signed).toEqual(original));
+  t.restart();
+  await t.ready();
+  await expect(add()).rejects.toThrow(/different migration source/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  t.setFail("rate-limited: quota exceeded; retry in 2s");
+  await expect(add({ migration: "slack", retry: true })).rejects.toThrow(
+    /^rate-limited:/,
+  );
+  t.setFail("");
+  await add({ migration: "slack", retry: true });
+  await add();
+  expect(t.publish.mock.calls.map(([event]) => structuredClone(event))).toEqual(
+    [original, original, original],
+  );
+});
+
+it("stops a migration single retry when the member joins while recovery waits", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const person = keypair().pubkey;
+  const add = (retry?: true) =>
+    t.session.memberAdditions.add(t.id, person, {
+      migration: "slack",
+      ...(retry && { retry }),
+    });
+  t.onPublish(() => {
+    throw new PublishRejected("Not sent");
+  });
+  await expect(add()).rejects.toThrow("Not sent");
+  const [receipt] = t.records();
+  const outbox = t.session.outbox;
+  if (!receipt?.recovery || !outbox?.withRecovery)
+    throw new Error("Expected a recoverable addition");
+
+  const entered = gate();
+  const releaseAdoption = gate();
+  const releaseReplay = gate();
+  const adoptionQueued = gate();
+  const otherQueued = gate();
+  const replayQueued = gate();
+  const { recovery } = receipt;
+  const holdAdoption = outbox.withRecovery(receipt.event.id, recovery, () => {
+    entered.resolve();
+    return releaseAdoption.promise;
+  });
+  const work = [holdAdoption];
+  try {
+    await entered.promise;
+    t.onLockWait(adoptionQueued.resolve);
+    t.onPublish(() => {});
+    const retry = add(true);
+    const outcome = expect(retry).rejects.toThrow(
+      "Membership changed during retry. Try again.",
+    );
+    work.push(retry);
+    void outcome.catch(() => {});
+    await adoptionQueued.promise;
+    // Queue a second window's lock between receipt adoption and publication.
+    const other = t.openWindow().outbox;
+    if (!other?.withRecovery)
+      throw new Error("Expected recovery in both windows");
+    t.onLockWait(otherQueued.resolve);
+    work.push(
+      other.withRecovery(
+        receipt.event.id,
+        recovery,
+        () => releaseReplay.promise,
+      ),
+    );
+    await otherQueued.promise;
+    t.onLockWait(replayQueued.resolve);
+    releaseAdoption.resolve();
+    await replayQueued.promise;
+    t.admit(person);
+    await t.session.channelWrites.refreshMembership(t.id);
+    releaseReplay.resolve();
+    await outcome;
+  } finally {
+    releaseAdoption.resolve();
+    releaseReplay.resolve();
+    await Promise.allSettled(work);
+  }
+  expect(t.publish).toHaveBeenCalledOnce();
+});
+
+it("checks fresh migration recipients after reading the journal before publishing", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const first = keypair().pubkey;
+  const second = keypair().pubkey;
+  const entered = gate();
+  const release = gate();
+  t.onJournalRead(() => {
+    // Pause the batch's receipt lookup after the initial pending singles read.
+    t.onJournalRead(() => {
+      entered.resolve();
+      return release.promise;
+    });
+  });
+  const add = () =>
+    Promise.allSettled(
+      [first, second].map((key) =>
+        t.session.memberAdditions.add(t.id, key, { migration: "slack" }),
+      ),
+    );
+  const initial = add();
+  try {
+    await entered.promise;
+    t.admit(first);
+    await t.session.channelWrites.refreshMembership(t.id);
+  } finally {
+    release.resolve();
+    await initial;
+  }
+  expect(await initial).toEqual(
+    [first, second].map(() => ({
+      status: "rejected",
+      reason: new Error("Membership changed before the addition. Try again."),
+    })),
+  );
+  expect(t.publish).not.toHaveBeenCalled();
+  await add();
+  expect(
+    t.published.map((event) => event.tags.filter(([tag]) => tag === "p")),
+  ).toEqual([[["p", second]]]);
+});
+
+it("leaves a pending single addition to resume, never batching its person again", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [earlier = "", fresh = "", other = ""] = people(3);
+  const id = t.session.outbox?.send(
+    {
+      kind: 9000,
+      content: "",
+      tags: [
+        ["h", t.id],
+        ["p", earlier],
+        ["role", "member"],
+      ],
+    },
+    { key: `member-add:${t.id}:${earlier}`, value: "1" },
+  );
+  await vi.waitFor(() => expect(t.published).toHaveLength(1));
+  await t.addAll([earlier, fresh, other]);
+  // The earlier write landed, so it is confirmed rather than sent again.
+  expect(t.published.map((event) => event.id)).toEqual([
+    id,
+    expect.any(String),
+  ]);
+  expect(t.published[1]?.tags.filter(([tag]) => tag === "p")).toEqual([
+    ["p", fresh],
+    ["p", other],
+  ]);
+  expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
+});
+
+it("reads the roster again before a later write, so it never names someone admitted meanwhile", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  // Another owner admits the agent, at any role, while the people's write is held.
+  t.onPublish(() => {
+    t.onPublish(() => {});
+    t.admit(t.agent.pubkey);
+  });
+  await t.addAll([first, second, t.agent.pubkey]);
+  expect(t.published).toHaveLength(1);
+  expect(
+    t.published[0]?.tags.some(([, value]) => value === t.agent.pubkey),
+  ).toBe(false);
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+});
+
+it("adds the rest one at a time when the roster can't be read again between writes", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  // The first read precedes the people's write; the second, before the agent's, fails.
+  t.failRosterRead(2);
+  await t.addAll([first, second, t.agent.pubkey]);
+  expect(
+    t.published.map((event) =>
+      event.tags.filter(([tag]) => tag === "p" || tag === "role"),
+    ),
+  ).toEqual([
+    [
+      ["p", first],
+      ["p", second],
+      ["role", "member"],
+    ],
+    [
+      ["p", t.agent.pubkey],
+      ["role", "bot"],
+    ],
+  ]);
+  expect(t.members()).toContain(t.agent.pubkey);
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+});
+
+it("keeps a batch until everyone it names is in the roster or has their own addition", async () => {
+  const t = batchSetup(false);
+  await t.ready();
+  const [first = "", second = "", third = ""] = people(3);
+  // The relay adds only the first person; then no roster read succeeds, so
+  // nobody else gets a receipt of their own.
+  t.onPublish(() => {
+    t.onPublish(() => {});
+    t.rosterDown(true);
+  });
+  const failed = await Promise.allSettled([
+    t.session.memberAdditions.add(t.id, first),
+    t.session.memberAdditions.add(t.id, second),
+    t.session.memberAdditions.add(t.id, third),
+  ]);
+  expect(failed.every((result) => result.status === "rejected")).toBe(true);
+  expect(t.published).toHaveLength(1);
+  // The saved batch, which a restart restores, is everyone's only record.
+  const [batch] = t.records().filter((item) => !item.acknowledged);
+  expect(batch?.recovery?.key).toMatch(/^member-add:batch:/);
+  expect(batch?.event.id).toBe(t.published[0]?.id);
+  t.rosterDown(false);
+  await t.addAll([first, second, third]);
+  expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
+  expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
+});
+
+it("reads the roster again after a write that couldn't be sent", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  const outbox = t.session.outbox;
+  if (!outbox) throw new Error("Outbox unavailable");
+  // Another owner admits the agent while the people's write fails to send.
+  const send = vi.fn<typeof outbox.send>(() => {
+    t.admit(t.agent.pubkey);
+    throw new Error("Outbox storage is full");
+  });
+  const session = Object.create(t.session, {
+    outbox: { value: Object.create(outbox, { send: { value: send } }) },
+  }) as RelaySession;
+  const added = await addChannelMembersAtOnce(
+    session,
+    t.id,
+    [first, second, t.agent.pubkey],
+    new Map(),
+    new AbortController().signal,
+  );
+  // The roster read before the agent's write omits it, so nothing else is sent.
+  expect(send).toHaveBeenCalledOnce();
+  expect(added.size).toBe(0);
+});
+
+it("leaves out an agent whose Delete started", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = "", deleting = ""] = people(3);
+  const choices = t.session.agentChoices;
+  const session = Object.create(t.session, {
+    agentChoices: {
+      value: {
+        ...choices,
+        snapshot: () => ({
+          ...choices.snapshot(),
+          identities: [{ pubkey: deleting, name: "Gone", deleting: true }],
+        }),
+      },
+    },
+  }) as RelaySession;
+  await addChannelMembersAtOnce(
+    session,
+    t.id,
+    [first, second, deleting],
+    new Map(),
+    new AbortController().signal,
+  );
+  expect(
+    t.published.map((event) =>
+      event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
+    ),
+  ).toEqual([[first, second]]);
+});
+
+it("leaves out someone archived while the roster is read", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = "", archived = ""] = people(3);
+  let hidden: readonly string[] = [];
+  const channelWrites = t.session.channelWrites;
+  const session = Object.create(t.session, {
+    archives: {
+      value: { ...t.session.archives, snapshot: () => ({ archived: hidden }) },
+    },
+    channelWrites: {
+      value: Object.create(channelWrites, {
+        refreshMembership: {
+          value: async (id: string) => {
+            const roster = await channelWrites.refreshMembership(id);
+            hidden = [archived];
+            return roster;
+          },
+        },
+      }),
+    },
+  }) as RelaySession;
+  await addChannelMembersAtOnce(
+    session,
+    t.id,
+    [first, second, archived],
+    new Map(),
+    new AbortController().signal,
+  );
+  expect(
+    t.published.map((event) =>
+      event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
+    ),
+  ).toEqual([[first, second]]);
+});
+
+it("keeps invitation and Solo sharing viewer gates independent of unloaded peers", () => {
+  const session = { viewer: "viewer", outbox: { supports: () => true } };
+  const channel = {
+    id: "channel",
+    name: "Updates",
+    channelType: "stream" as const,
+    viewerMembership: { pubkey: "viewer", joined: true },
+  };
+  expect(canAddMembers(session, channel)).toBe(true);
+  expect(canAddMembers(session, { ...channel, viewerRole: "guest" })).toBe(
+    false,
+  );
+  expect(canAddMembers(session, { ...channel, archived: true })).toBe(false);
+  expect(
+    canAddMembers(session, {
+      ...channel,
+      members: ["viewer"],
+      viewerMembership: { pubkey: "viewer", joined: false },
+    }),
+  ).toBe(false);
+  const soloSession = setup("solo").session;
+  assert(soloSession.viewer);
+  const solo = {
+    ...channel,
+    channelType: "solo" as const,
+    viewerMembership: { pubkey: soloSession.viewer, joined: true },
+  };
+  expect(canShareSoloChat(soloSession, solo)).toBe(true);
+  expect(canShareSoloChat(soloSession, { ...solo, cached: true })).toBe(false);
+  expect(
+    canShareSoloChat(soloSession, {
+      ...solo,
+      viewerRole: "guest",
+      readOnly: true,
+    }),
+  ).toBe(false);
+});
+
+it.each([
+  ["legacy roster", { members: ["viewer", "peer"] }, true],
+  [
+    "joined without a roster cannot exclude the moderation DM",
+    { viewerMembership: { pubkey: "viewer", joined: true } },
+    false,
+  ],
+  [
+    "joined with peer evidence but no viewer roster entry",
+    { members: ["peer"], viewerMembership: { pubkey: "viewer", joined: true } },
+    true,
+  ],
+  [
+    "moderation DM",
+    {
+      members: ["viewer", "relay"],
+      viewerMembership: { pubkey: "viewer", joined: true },
+    },
+    false,
+  ],
+  [
+    "denied with retained peers",
+    {
+      members: ["viewer", "peer"],
+      viewerMembership: { pubkey: "viewer", joined: false },
+    },
+    false,
+  ],
+])(
+  "uses viewer authority for DM additions: %s",
+  (_membership, evidence, expected) => {
+    const session = {
+      viewer: "viewer",
+      relayAuthor: "relay",
+      directMessages: { available: true },
+    };
+    expect(
+      canAddToDirectMessage(session, {
+        id: "dm",
+        name: "Direct message",
+        channelType: "dm",
+        ...evidence,
+      }),
+    ).toBe(expected);
   },
 );

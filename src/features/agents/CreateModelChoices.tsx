@@ -3,6 +3,11 @@ import { ModelPicker, type ModelChoice } from "./ModelPicker";
 
 /** Compact model field; catalogs and config changes stay with the type. */
 export function CreateModelChoices({
+  harness,
+  showEffort = true,
+  effort,
+  effortLabel,
+  onEffortChange,
   modelAppearance,
   models,
   value,
@@ -16,7 +21,13 @@ export function CreateModelChoices({
   error,
   retry,
 }: {
-  modelAppearance?: "subtle";
+  /** The agent type's id: its plugins' model routes join the menu. */
+  harness?: string | undefined;
+  showEffort?: boolean;
+  effort?: string | undefined;
+  effortLabel?: string | undefined;
+  onEffortChange?: ((model: string, effort: string) => void) | undefined;
+  modelAppearance?: "glass-ghost" | "inverted";
   models: readonly ModelChoice[];
   value: string;
   defaultLabel: string;
@@ -33,6 +44,10 @@ export function CreateModelChoices({
     <>
       <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
         <ModelPicker
+          {...(showEffort && onEffortChange
+            ? { effort, effortLabel, onEffortChange }
+            : {})}
+          harness={harness}
           includeDefault={includeDefault}
           defaultModel={defaultModel}
           appearance={modelAppearance ?? "outlined"}

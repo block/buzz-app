@@ -27,7 +27,7 @@
 .item {
   display: flex;
   align-items: center;
-  gap: calc(var(--space-5) / 2);
+  gap: calc(var(--space-5) / 2 + var(--space-1));
   padding: var(--space-2) calc(var(--space-5) / 2);
   margin-block: 0;
   box-sizing: border-box;
@@ -41,8 +41,7 @@
   position: relative;
   max-width: 100%;
 }
-.preview,
-.fileIcon {
+.preview {
   width: var(--size-control);
   height: var(--size-control);
   flex-shrink: 0;
@@ -59,6 +58,10 @@
 .preview {
   position: relative;
   cursor: pointer;
+}
+/* A staged GIF has no viewer; its thumbnail is not a control. */
+span.preview {
+  cursor: default;
 }
 .preview::after {
   content: "";
@@ -105,6 +108,7 @@ html[data-keyboard-navigation] .preview:focus-visible {
 .error {
   margin: 0;
   font-size: var(--text-caption);
+  font-weight: var(--text-caption--font-weight);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   color: var(--text-subtle);
@@ -115,7 +119,7 @@ html[data-keyboard-navigation] .preview:focus-visible {
   text-overflow: ellipsis;
 }
 .error {
-  color: var(--text-error);
+  color: var(--text-danger);
   overflow-wrap: anywhere;
 }
 .actions {
@@ -161,6 +165,28 @@ html[data-keyboard-navigation] .preview:focus-visible {
   top: var(--space-1);
   right: var(--space-1);
   gap: var(--space-1);
+}
+
+.item[data-upload-error] {
+  /* Fit the strip when possible, but never squeeze the recovery controls. */
+  min-width: min-content;
+  flex-wrap: wrap;
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
+  padding-inline-end: calc(var(--space-5) / 2);
+}
+.item[data-upload-error] .error {
+  flex-basis: 100%;
+}
+.item[data-upload-error] .details {
+  /* Ellipsized filenames must not determine the card's minimum width. */
+  contain: inline-size;
+}
+.item[data-upload-error] .actions {
+  position: static;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  min-width: min-content;
 }
 
 .list[data-compact-media] .item[data-media] {

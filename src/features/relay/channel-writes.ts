@@ -1,10 +1,23 @@
 import { canonicalDetailsName } from "./channel-details-protocol";
+import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
-import type { Outbox } from "./outbox";
+import type { Outbox, OutboxRecovery } from "./outbox";
+import type { RelayWriter } from "./transport";
+import {
+  promoteSoloAdmins,
+  soloAdminKey,
+  soloAdminRecovery,
+  soloAdminSetupExpired,
+  soloAgentOwnership,
+} from "./solo-admins";
+import { isBatchAddition } from "../channel-members/members";
+import { isMigrationSource } from "./migration";
 import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
+import type { EventData } from "./events";
+import type { ProfileQueries } from "./profile-directory";
 
 export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -38,11 +51,14 @@ export function createChannelWrites(
   agents?: {
     selectable: () => readonly string[];
     archived: (pubkey: string) => boolean;
+    profiles?: Pick<ProfileQueries, "event">;
+    viewer?: string;
   },
   relayAuthor?: string,
   /** Signed roster discovery, including channels this viewer cannot open. */
   discovery: RelayReader = reader,
   channelIdentity = false,
+  adminWriter?: RelayWriter,
 ) {
   const available = !!outbox?.supports(9007);
   function writer(addition = false) {
@@ -341,9 +357,15 @@ export function createChannelWrites(
       );
     return channel;
   }
-  /** Channel IDs whose relay-signed roster lists `pubkey`, as far as this viewer
-   * may read. Throws rather than return a possibly truncated set. */
-  async function memberChannels(pubkey: string, caller: AbortSignal) {
+  /** Unarchived channel IDs among `candidates` and those whose relay-signed
+   * roster lists `pubkey`, as far as this viewer may read. The relay refuses
+   * membership changes in an archived channel, where a membership is inert.
+   * Throws rather than return a possibly truncated set. */
+  async function memberChannels(
+    pubkey: string,
+    caller: AbortSignal,
+    candidates: Iterable<string>,
+  ) {
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const limit = 500;
     const events = await discovery.read(
@@ -364,7 +386,7 @@ export function createChannelWrites(
     );
     if (events.length >= limit)
       throw new Error("Too many channels to confirm. Retry later.");
-    const ids = new Set<string>();
+    const ids = new Set(candidates);
     for (const event of events) {
       const id = event.tags.find(([name]) => name === "d")?.[1];
       if (
@@ -374,6 +396,33 @@ export function createChannelWrites(
         event.tags.some(([name, value]) => name === "p" && value === pubkey)
       )
         ids.add(id);
+    }
+    if (!ids.size) return [];
+    const metadata = await discovery.read(
+      [
+        {
+          kinds: [39000],
+          authors: [relayAuthor],
+          "#d": [...ids],
+          limit: ids.size,
+          consistency: "strong",
+        },
+      ],
+      {
+        signal: AbortSignal.any([signal, caller]),
+        fresh: true,
+        priority: "foreground",
+      },
+    );
+    for (const event of metadata) {
+      const id = event.tags.find(([name]) => name === "d")?.[1];
+      if (
+        id &&
+        event.kind === 39000 &&
+        event.pubkey === relayAuthor &&
+        exactLifecycleTag(event, "archived") === "true"
+      )
+        ids.delete(id);
     }
     return [...ids];
   }
@@ -452,35 +501,77 @@ export function createChannelWrites(
       if (!current?.members || current.archived)
         throw new Error("Channel membership is unavailable.");
       if (current.members.includes(key)) continue;
-      const previous = (receipts ?? outbox)
-        ?.snapshot()
-        .find(
-          (item) =>
-            item.event.kind === 9000 &&
-            !item.acknowledged &&
-            !["accepted", "seen"].includes(item.delivery) &&
-            item.event.tags.some(
-              ([name, value]) => name === "h" && value === id,
-            ) &&
-            item.event.tags.some(
-              ([name, value]) => name === "p" && value === key,
-            ) &&
-            !item.event.tags.some(([name]) => name === "role"),
+      const previous = (receipts ?? outbox)?.snapshot().find((item) => {
+        const roles = item.event.tags.filter(([name]) => name === "role");
+        return (
+          item.event.kind === 9000 &&
+          !item.acknowledged &&
+          !isBatchAddition(item) &&
+          !["accepted", "seen"].includes(item.delivery) &&
+          item.event.tags.some(
+            ([name, value]) => name === "h" && value === id,
+          ) &&
+          item.event.tags.some(
+            ([name, value]) => name === "p" && value === key,
+          ) &&
+          roles.length === (original.channelType === "solo" ? 1 : 0) &&
+          // Recovery finishes the saved grant even if the viewer's role changed.
+          roles.every(
+            (tag) =>
+              tag.length === 2 && (tag[1] === "bot" || tag[1] === "admin"),
+          )
         );
-      if (previous && Date.now() / 1000 - previous.event.created_at >= 15 * 60)
-        throw new Error(
-          `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
-        );
+      });
+      if (
+        previous &&
+        Date.now() / 1000 - previous.event.created_at >= 15 * 60
+      ) {
+        if (previous.delivery === "sending")
+          throw new Error(
+            "This agent-add request is still sending. Try again when it finishes.",
+          );
+        // The relay refuses an expired event, so a new Add replaces it and
+        // repeats every admission check from a fresh roster. Only the roster
+        // shows whether an unconfirmed one applied.
+        if (previous.delivery === "unknown") await refreshMembership(id);
+        await writer(true).dismiss(previous.event.id);
+        if (
+          (receipts ?? outbox)
+            ?.snapshot()
+            .some((item) => item.event.id === previous.event.id)
+        )
+          throw new Error(
+            "This agent-add request is still in progress. Try again when it finishes.",
+          );
+        if (active?.() === false)
+          throw new DOMException("Channel addition cancelled", "AbortError");
+        if (added.length) await refresh(id, { members: added }, false);
+        return addAgents(id, keys, active);
+      }
+      let owned: (() => boolean) | undefined;
+      if (
+        original.channelType === "solo" &&
+        !previous &&
+        original.viewerRole === "owner"
+      ) {
+        owned = await freshOwnership(key);
+      }
+      const roleTags =
+        original.channelType === "solo"
+          ? [
+              [
+                "role",
+                original.viewerRole === "owner" && owned?.() ? "admin" : "bot",
+              ],
+            ]
+          : [];
       const operation =
         previous?.event.id ??
         writer(!!active).send(
           {
             kind: 9000,
             content: "",
-            tags: [
-              ["h", id],
-              ["p", key],
-            ],
+            tags: [["h", id], ["p", key], ...roleTags],
           },
           undefined,
           active,
@@ -494,17 +585,109 @@ export function createChannelWrites(
     if (original?.channelType === "solo")
       await refresh(id, { members: unique });
   }
+  /** Cached discovery is not evidence for a new automatic Admin grant. A
+   * `required` profile that cannot be read is unknown, not unowned. */
+  async function freshOwnership(key: string, required = false) {
+    const events = await discovery.read(
+      [{ kinds: [0], authors: [key], limit: 1, consistency: "strong" }],
+      { signal, fresh: true, priority: "foreground" },
+    );
+    if (
+      required &&
+      !events.some((event) => event.kind === 0 && event.pubkey === key)
+    )
+      throw new Error(
+        "An opening agent's profile is unavailable. Retry the opening message.",
+      );
+    const owned = await soloAgentOwnership(
+      agents?.profiles,
+      agents?.viewer,
+      key,
+    );
+    return () =>
+      owned() &&
+      events.some(
+        (event) =>
+          event.kind === 0 &&
+          event.pubkey === key &&
+          event.id === agents?.profiles?.event?.(key)?.id,
+      );
+  }
   /** Solo chats this device is starting, until they can take events. */
   const starts = new Map<string, Promise<void>>();
+  const adminSetups = new Map<string, Promise<void>>();
+  /** Publication retries also call this after reload. The create's local
+   * receipt retains the original recipients until every grant is recorded. */
+  function prepareOpening(id: string): Promise<void> | undefined {
+    const pending = (receipts ?? outbox)
+      ?.snapshot()
+      .find((item) => item.recovery?.key === soloAdminKey(id));
+    if (!pending?.recovery) return;
+    const active = adminSetups.get(id);
+    if (active) return active;
+    const opening = pending.recovery;
+    const work = (async () => {
+      // An expired create can no longer land, so a relay roster listing its
+      // creator shows the chat exists without the create lookup.
+      await created(
+        pending.event.id,
+        async () =>
+          soloAdminSetupExpired(pending.event) &&
+          (await listsMember(id, pending.event.pubkey, signal).catch(
+            () => false,
+          )),
+      );
+      // Checked first, so no other failure can block the chat past expiry.
+      if (soloAdminSetupExpired(pending.event))
+        return outbox?.dismiss(pending.event.id, opening);
+      const source = writer();
+      const withRecovery = source.withRecovery;
+      const finishRecovery = source.finishRecovery;
+      if (!adminWriter || !relayAuthor || !withRecovery || !finishRecovery)
+        throw new Error("This connection cannot set up chat admins.");
+      const saved = await source.recovery(soloAdminKey(id));
+      // Another window finished it.
+      if (!saved?.recovery) return;
+      const recovery = saved.recovery;
+      try {
+        await promoteSoloAdmins(
+          saved,
+          {
+            ...adminWriter,
+            publish: (event, signal, checkOwnership) =>
+              withRecovery(saved.event.id, recovery, () => {
+                checkOwnership();
+                return adminWriter.publish(event, signal);
+              }),
+          },
+          discovery,
+          relayAuthor,
+          signal,
+          (key) => freshOwnership(key, true),
+        );
+        signal.throwIfAborted();
+        await finishRecovery(saved.event.id, recovery);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        // Drops this window's copy if another window finished it meanwhile.
+        await withRecovery(saved.event.id, recovery, async () => {}, true);
+        if ((await source.recovery(soloAdminKey(id)))?.recovery) throw error;
+      }
+    })();
+    adminSetups.set(id, work);
+    void work.catch(() => {}).finally(() => adminSetups.delete(id));
+    return work;
+  }
   /** The Canvas of each chat this device is starting ("" for none), until
    * its save lands; see `startingCanvas`. */
   const canvases = new Map<string, string>();
   /** Settles once the relay has the create, or rejects with ChatNotStarted
    * once it is known to have none. A lost acknowledgment resends the same
    * create, which the relay confirms; when the attempts run out, the relay is
-   * asked for the create until it answers. */
-  async function created(create: string) {
+   * asked for the create until it answers or `exists` shows the chat. */
+  async function created(create: string, exists?: () => Promise<boolean>) {
     for (let tries = 1; tries <= 3; tries++) {
+      if (await exists?.()) return;
       try {
         return await delivered(create);
       } catch (error) {
@@ -526,6 +709,7 @@ export function createChannelWrites(
     }
     for (let wait = 1_000; ; wait = Math.min(wait * 2, 30_000)) {
       if (signal.aborted) throw new Error("The community connection changed.");
+      if (await exists?.()) return;
       try {
         const events = await reader.read(
           [{ ids: [create], limit: 1, consistency: "strong" }],
@@ -557,6 +741,7 @@ export function createChannelWrites(
     refreshMembership,
     memberChannels,
     listsMember,
+    prepareOpening,
     createChannel(
       id: string,
       title: string,
@@ -568,10 +753,14 @@ export function createChannelWrites(
         labels?: readonly string[] | undefined;
         /** NIP-CL system channel: left out of reads that do not name it. */
         system?: boolean | undefined;
+        migration?: string | undefined;
       }> = {},
     ) {
       writer();
       identifier(id);
+      const { migration } = options;
+      if (migration !== undefined && !isMigrationSource(migration))
+        throw new Error("Use a nonempty migration source.");
       const labelTags = channelLabelTags(options.labels ?? []);
       const name = canonicalDetailsName(title);
       const about = description?.trim();
@@ -600,6 +789,7 @@ export function createChannelWrites(
             ...(about ? [["about", about]] : []),
             ...(ttlSeconds ? [["ttl", String(ttlSeconds)]] : []),
             ...labelTags,
+            ...(migration ? [["migration", migration]] : []),
           ],
         },
         undefined,
@@ -612,6 +802,9 @@ export function createChannelWrites(
       ttlSeconds?: number,
       named = false,
       members: readonly string[] = [],
+      active?: () => boolean,
+      labels: readonly string[] = [],
+      recovery?: OutboxRecovery,
     ) {
       writer();
       identifier(id);
@@ -626,21 +819,27 @@ export function createChannelWrites(
           ttlSeconds > 2_147_483_647)
       )
         throw new Error("Choose a valid chat duration.");
-      return writer().send({
-        kind: 9007,
-        content: "",
-        tags: [
-          ["h", id],
-          ["name", title],
-          ["visibility", "private"],
-          ["channel_type", "stream"],
-          ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
-          ...channelLabelTags(
-            named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
-          ),
-          ...[...new Set(members)].map((key) => ["p", key]),
-        ],
-      });
+      return writer().send(
+        {
+          kind: 9007,
+          content: "",
+          tags: [
+            ["h", id],
+            ["name", title],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+            ...channelLabelTags([
+              SOLO_LABEL,
+              ...(named ? [SOLO_NAMED_LABEL] : []),
+              ...labels,
+            ]),
+            ...[...new Set(members)].map((key) => ["p", key]),
+          ],
+        },
+        recovery,
+        active,
+      );
     },
     /** Starts a Solo chat whose create names its `members`. It lists at once
      * as pending; `ready` settles once the relay OKs the create, which adds the
@@ -656,13 +855,34 @@ export function createChannelWrites(
       /** The chat's Canvas, and the work that saves it once the chat
        * exists; nothing waits for it, and a failure leaves a working chat. */
       setup?: { canvas: string; apply(): Promise<unknown> },
+      options?: {
+        labels?: readonly string[];
+        active?: () => boolean;
+        admins?: readonly string[];
+      },
     ) {
-      const create = api.create(id, title, ttlSeconds, named, members);
+      const recovery = soloAdminRecovery(id, members, options?.admins);
+      if (recovery && (!adminWriter || !relayAuthor))
+        throw new Error("This connection cannot set up chat admins.");
+      const create = api.create(
+        id,
+        title,
+        ttlSeconds,
+        named,
+        members,
+        options?.active,
+        options?.labels,
+        recovery,
+      );
       channels.start?.({
         id,
         name: title,
         members,
-        labels: named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
+        labels: [
+          SOLO_LABEL,
+          ...(named ? [SOLO_NAMED_LABEL] : []),
+          ...(options?.labels ?? []),
+        ],
         ttlSeconds,
       });
       // The relay adds the members in the create, so the chat takes events
@@ -716,6 +936,25 @@ export function createChannelWrites(
           .some((item) => item.event.id === id && item.delivery === "failed") ??
         false
       );
+    },
+    /** Outbox fences local delivery and expiry; this read bypasses cached absence. */
+    async additionRecorded(event: EventData, caller: AbortSignal) {
+      const active = AbortSignal.any([signal, caller]);
+      active.throwIfAborted();
+      const events = await reader.read(
+        [
+          {
+            kinds: [9000],
+            ids: [event.id],
+            authors: [event.pubkey],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
+        { signal: active, fresh: true, priority: "foreground" },
+      );
+      active.throwIfAborted();
+      return events.some((recorded) => recorded.id === event.id);
     },
     async discardFailed(id: string) {
       const source = writer();

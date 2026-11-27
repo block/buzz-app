@@ -1,5 +1,6 @@
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "./events.ts";
+import type { ChannelSummary } from "./contracts.ts";
 import {
   exactLifecycleTag,
   lifecycleChannelId,
@@ -16,6 +17,8 @@ export type ChannelDetailsDraft = Readonly<{
   name: string;
   description: string;
   visibility: "public" | "private";
+  /** Admission default only; omission preserves existing relay behavior. */
+  joinRole?: "member" | "guest" | undefined;
   /** Absent means ongoing; retain existing custom temporary intervals. */
   ttlSeconds?: number | undefined;
   /** NIP-CL labels. Absent leaves the relay's set unchanged; empty clears it. */
@@ -27,6 +30,39 @@ export type ChannelDetails = ChannelDetailsDraft &
     version: string;
     canEdit: boolean;
   }>;
+/** What General access shows and whether it offers changes. */
+export type ChannelAccess = Pick<
+  ChannelDetails,
+  "visibility" | "joinRole" | "labels" | "canEdit"
+>;
+
+const editable = (
+  type: string | undefined,
+  archived: boolean,
+  role: string | undefined,
+) =>
+  !!type &&
+  type !== "dm" &&
+  !archived &&
+  (role === "owner" || role === "admin");
+
+/** Access from the live channel summary, which folds the same signed metadata
+ * and roster role. Display only: changes still read fresh details. */
+export function summaryAccess(
+  channel: ChannelSummary,
+): ChannelAccess | undefined {
+  if (!channel.visibility) return;
+  return {
+    visibility: channel.visibility,
+    joinRole: channel.joinRole,
+    labels: channel.labels,
+    canEdit: editable(
+      channel.channelType,
+      !!channel.archived,
+      channel.viewerRole,
+    ),
+  };
+}
 
 /** Missing or contradictory flags are unknown, never implicitly public. */
 export function channelVisibility(
@@ -79,6 +115,12 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
         ? "Channel visibility could not be verified."
         : undefined,
     labels: labelsError(draft?.labels),
+    joinRole:
+      draft?.joinRole !== undefined &&
+      draft.joinRole !== "member" &&
+      draft.joinRole !== "guest"
+        ? "New participant role could not be verified."
+        : undefined,
   };
 }
 
@@ -109,7 +151,8 @@ export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
     errors.description ??
     errors.visibility ??
     errors.lifetime ??
-    errors.labels;
+    errors.labels ??
+    errors.joinRole;
   if (error) throw new Error(error);
 }
 
@@ -129,6 +172,7 @@ export function detailsSettings(
     ([key, value]) => key === "p" && value === viewer,
   )?.[2];
   const visibility = channelVisibility(metadata);
+  const joinRole = channelJoinRole(metadata);
   const name = exactLifecycleTag(metadata, "name");
   const description = exactLifecycleTag(metadata, "about") ?? "";
   const ttl = exactLifecycleTag(metadata, "ttl");
@@ -141,12 +185,14 @@ export function detailsSettings(
     name,
     description,
     visibility,
+    ...(joinRole ? { joinRole } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
     labels: channelIdentity(metadata).labels,
-    canEdit:
-      authority.channelType !== "dm" &&
-      exactLifecycleTag(metadata, "archived") !== "true" &&
-      (role === "owner" || role === "admin"),
+    canEdit: editable(
+      authority.channelType,
+      exactLifecycleTag(metadata, "archived") === "true",
+      role,
+    ),
   });
   return { details, metadata };
 }
@@ -177,6 +223,9 @@ export function detailsTemplate(
               draft.ttlSeconds === undefined ? "" : String(draft.ttlSeconds),
             ],
           ]
+        : []),
+      ...(draft.joinRole !== undefined && draft.joinRole !== base.joinRole
+        ? [["join_role", draft.joinRole]]
         : []),
       // NIP-CL: `t` tags replace the set; one empty `t` clears it; none keeps it.
       ...(draft.labels !== undefined &&
@@ -212,6 +261,15 @@ export function channelTtl(event: RelayEvent): number | undefined {
   }
 }
 
+/** Legacy absence means Member; malformed explicit defaults fail closed to Guest. */
+export function channelJoinRole(event: RelayEvent): "member" | "guest" {
+  const tags = event.tags.filter(([key]) => key === "join_role");
+  if (tags.length === 0) return "member";
+  return tags.length === 1 && tags[0]?.length === 2 && tags[0]?.[1] === "member"
+    ? "member"
+    : "guest";
+}
+
 /** A relay metadata TTL must be an unambiguous positive i32; only absence is ongoing. */
 function parseDetailsTtl(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
@@ -242,7 +300,16 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     !["h", "name", "about"].every(
       (key, index) => event.tags[index]?.[0] === key,
     ) ||
-    ![[], ["visibility"], ["ttl"], ["visibility", "ttl"]].some(
+    ![
+      [],
+      ["visibility"],
+      ["ttl"],
+      ["visibility", "ttl"],
+      ["join_role"],
+      ["visibility", "join_role"],
+      ["ttl", "join_role"],
+      ["visibility", "ttl", "join_role"],
+    ].some(
       (keys) =>
         keys.every((key, index) => event.tags[index + 3]?.[0] === key) &&
         event.tags.slice(keys.length + 3).every(([key]) => key === "t"),
@@ -254,12 +321,16 @@ export function validateDetailsTemplate(event: EventTemplate): void {
   if (visibility && !["private", "open"].includes(visibility[1] ?? ""))
     throw new Error("Invalid channel details command.");
   const ttl = event.tags.find(([key]) => key === "ttl")?.[1];
+  const joinRole = event.tags.find(([key]) => key === "join_role")?.[1];
+  if (joinRole !== undefined && joinRole !== "member" && joinRole !== "guest")
+    throw new Error("Invalid channel details command.");
   lifecycleChannelId(event.tags[0]?.[1] ?? "");
   validateDetailsDraft({
     name: event.tags[1]?.[1] ?? "",
     description: event.tags[2]?.[1] ?? "",
     visibility: visibility?.[1] === "private" ? "private" : "public",
     ttlSeconds: ttl === "" ? undefined : parseDetailsTtl(ttl),
+    ...(joinRole ? { joinRole } : {}),
     ...(event.tags.some(([key]) => key === "t") ? { labels } : {}),
   });
 }

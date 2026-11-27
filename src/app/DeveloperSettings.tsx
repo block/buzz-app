@@ -2,7 +2,6 @@ import styles from "./DeveloperSettings.module.css";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
-import { Button } from "../shared/design-system/ui/Button";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Select } from "../shared/design-system/ui/Select";
 import {
@@ -12,9 +11,23 @@ import {
   LOG_LEVELS,
   subscribeLogLevel,
 } from "../features/developer/logging";
-import type { RelayData } from "../features/relay/service";
 import { clientMetrics } from "../features/developer/client-metrics";
 import { ClientMetricsPanel } from "./ClientMetricsPanel";
+import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
+import {
+  importScenario,
+  setImportScenario,
+  subscribeImportScenario,
+  type ImportScenario,
+} from "../features/developer/agent-import-scenario";
+
+const IMPORT_SCENARIOS: readonly { value: ImportScenario; label: string }[] = [
+  { value: "off", label: "Real data" },
+  { value: "none", label: "Nothing to import" },
+  { value: "both", label: "Other communities and old Buzz" },
+  { value: "communities", label: "Other communities only" },
+  { value: "old", label: "Buzz (Legacy) only" },
+];
 
 type BrokerStats = {
   queries: number;
@@ -37,8 +50,12 @@ async function fetchStats(): Promise<BrokerStats | undefined> {
   }
 }
 
-export function DeveloperSettings({ relay }: { relay: RelayData }) {
+export function DeveloperSettings() {
   const level = useSyncExternalStore(subscribeLogLevel, logLevel);
+  const scenario = useSyncExternalStore(
+    subscribeImportScenario,
+    importScenario,
+  );
   const [settingsReady, setSettingsReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [settingsError, setSettingsError] = useState<string>();
@@ -72,8 +89,6 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
   }
   const brokerAvailable = import.meta.env.VITE_BUZZ_LIVE === "1";
   const [stats, setStats] = useState<BrokerStats>();
-  const [clearing, setClearing] = useState(false);
-  const [status, setStatus] = useState<string>();
 
   useEffect(() => {
     if (!brokerAvailable) return;
@@ -89,18 +104,6 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
       clearInterval(timer);
     };
   }, []);
-
-  async function clearCache() {
-    setClearing(true);
-    try {
-      await relay.clearCache();
-      setStatus("Cache cleared. Buzz will load channels and media as needed.");
-    } catch (error) {
-      setStatus(`Buzz couldn’t clear the cache. ${String(error)}`);
-    } finally {
-      setClearing(false);
-    }
-  }
 
   return (
     <section aria-labelledby="developer-settings-title">
@@ -183,28 +186,37 @@ export function DeveloperSettings({ relay }: { relay: RelayData }) {
             )}
           </SettingsGroup>
         </div>
-        <SettingsGroup layout="form">
-          <PreferenceRow
-            title="Caches"
-            subtitle="Clear cached channels, messages, media, and this account’s saved activity in the current community. Turn metrics and your account, relay, and sidebar settings are kept."
-            trailing={
-              <div className={styles.actions}>
-                <Button
-                  type="button"
-                  disabled={clearing}
-                  onClick={() => void clearCache()}
-                >
-                  {clearing ? "Clearing…" : "Clear cache"}
-                </Button>
-              </div>
-            }
+        <div className="space-y-2">
+          <InlineHeader
+            title="Agent import"
+            subtitle="Simulated findings leave agents unchanged. Real data uses actual imports, even when shown as a new community."
           />
-          {status && (
-            <p role="status" className="m-0 text-body-sm text-muted">
-              {status}
-            </p>
-          )}
-        </SettingsGroup>
+          <SettingsGroup layout="form">
+            <PreferenceRow
+              title="What Import finds"
+              trailing={
+                <Select
+                  label="What Import finds"
+                  variant="compact"
+                  value={scenario.scenario}
+                  onValueChange={(value) => {
+                    const next = IMPORT_SCENARIOS.find(
+                      (item) => item.value === value,
+                    );
+                    if (next) setImportScenario({ scenario: next.value });
+                  }}
+                  groups={[{ label: "", options: [...IMPORT_SCENARIOS] }]}
+                />
+              }
+            />
+            <SwitchPreferenceRow
+              label="Show as a new community"
+              description="The Agents page shows no agents or teams here, as a first visit would."
+              checked={scenario.empty}
+              onCheckedChange={(empty) => setImportScenario({ empty })}
+            />
+          </SettingsGroup>
+        </div>
       </div>
     </section>
   );

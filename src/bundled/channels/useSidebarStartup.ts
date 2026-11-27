@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelList } from "../../features/relay/contracts";
+import { sidebarSortNeedsActivity } from "../../features/relay/sidebar-sort";
 
 // Presentation latch only, never roster/access data. Warm sidebar remounts reveal
 // immediately, but new relay/viewer sessions start independently.
@@ -19,6 +20,7 @@ export function useSidebarStartup(
   session: SidebarStartupSession,
   list: ChannelList,
   preferences: ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>,
+  sortModesReady = true,
 ) {
   // The primary sidebar is keyed by scope and connection generation; the hook is
   // remounted for a replacement session, while same-session remounts reuse latches.
@@ -33,10 +35,12 @@ export function useSidebarStartup(
   const [revealed, setRevealed] = useState(retained.revealed);
   const [unreadDone, setUnreadDone] = useState(retained.unreadDone);
   const [expired, setExpired] = useState(false);
-  const live = useSyncExternalStore(
+  // Only the roster state: live heads change on every message and prefetch.
+  const readRosterState = () => session.live.snapshot().roster.state;
+  const rosterState = useSyncExternalStore(
     session.live.subscribe,
-    session.live.snapshot,
-    session.live.snapshot,
+    readRosterState,
+    readRosterState,
   );
   const rosterAvailable = list.status === "ready" || list.status === "error";
   useEffect(() => {
@@ -64,18 +68,22 @@ export function useSidebarStartup(
     !!preferences.data ||
     preferences.status === "error" ||
     preferences.status === "unsupported";
-  const namesReady =
-    live.roster.state !== "pending" && live.roster.state !== "idle";
-  const recent = Object.values(preferences.data?.sort ?? {}).includes("recent");
+  const namesReady = rosterState !== "pending" && rosterState !== "idle";
+  const needsActivity = Object.values(preferences.data?.sort ?? {}).some(
+    sidebarSortNeedsActivity,
+  );
   const activityReady =
-    !recent ||
+    !needsActivity ||
     list.activityStatus === "ready" ||
     list.activityStatus === "error" ||
     list.activityStatus === "unavailable";
   const settled = preferencesReady && namesReady && activityReady && unreadDone;
   const restored = list.channels.some((channel) => channel.cached);
+  // Plugin registration gates initial reveal, not later data refreshes.
   const ready =
-    revealed || restored || (rosterAvailable && (expired || settled));
+    revealed ||
+    restored ||
+    (rosterAvailable && (expired || (settled && sortModesReady)));
   useEffect(() => {
     if (!ready || revealed) return;
     retained.revealed = true;

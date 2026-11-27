@@ -1,18 +1,34 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import { usePanelTabHost } from "../panels/PanelWorkspace";
 import {
   ArrowsClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  CloudOffIcon,
   DotsThreeIcon,
+  LockIcon,
+  UserIcon,
 } from "../../shared/design-system/icons/index";
+import { Button } from "../../shared/design-system/ui/Button";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { BrowserViewProps } from "./api";
-import type {
-  BrowserAction,
-  BrowserBounds,
-  BrowserPlatform,
-  BrowserStatus,
+import {
+  addressInputUrl,
+  BrowserAttachError,
+  type BrowserAction,
+  type BrowserBounds,
+  type BrowserPlatform,
+  type BrowserStatus,
+  type BrowserViewerPage,
 } from "./platform";
 import type { BrowserSessions } from "./sessions";
 import styles from "./BrowserHostView.module.css";
@@ -42,16 +58,51 @@ function boundsFor(element: HTMLElement): BrowserBounds {
   };
 }
 
-function hostOverlayOpen(): boolean {
+/** Retained tabs stay laid out while hidden, and sliding panes move by CSS
+ * transform. The native guest follows neither, so it shows only on a settled
+ * pane the user can see. */
+function covered(element: HTMLElement): boolean {
   return Boolean(
-    document.querySelector(
-      'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]',
-    ),
+    element.closest(
+      '[inert], [hidden], [aria-hidden="true"], [data-covered], [data-entering], [data-leaving]',
+    ) || getComputedStyle(element).visibility !== "visible",
   );
+}
+
+/** The website yields to modal and interactive popups. Passive hover hints
+ * must not blank a neighboring page just because they reach over its edge. */
+function hostOverlayOpen(viewport: BrowserBounds): boolean {
+  if (document.querySelector('dialog[open], [aria-modal="true"]')) return true;
+  for (const popup of document.querySelectorAll<HTMLElement>(
+    '[data-open][data-side], [role="menu"], [role="listbox"]',
+  )) {
+    if (
+      popup.matches('[role="tooltip"]') ||
+      (popup.matches('[role="presentation"]') &&
+        popup.querySelector(':scope > [role="tooltip"]'))
+    )
+      continue;
+    const box = popup.getBoundingClientRect();
+    if (
+      box.width > 0 &&
+      box.height > 0 &&
+      box.left < viewport.x + viewport.width &&
+      box.right > viewport.x &&
+      box.top < viewport.y + viewport.height &&
+      box.bottom > viewport.y
+    )
+      return true;
+  }
+  return false;
 }
 
 export function BrowserHostView({
   url,
+  storage: requestedStorage,
+  builderlab,
+  canResumeUrl,
+  label,
+  openSignIn,
   platform,
   sessions,
   pollInterval = 300,
@@ -60,32 +111,79 @@ export function BrowserHostView({
   sessions: BrowserSessions;
   pollInterval?: number;
 }) {
+  const storage = builderlab?.storage ?? requestedStorage;
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef<string | undefined>(undefined);
+  const retryAttach = useRef<(() => void) | undefined>(undefined);
+  // Where the guest last was, so a view whose guest was closed to make room
+  // reopens there instead of at its starting URL.
+  const resumeUrl = useRef(url);
   const editing = useRef(false);
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [draft, setDraft] = useState(url);
   const [localError, setLocalError] = useState<string | null>(null);
+  // Shown in the viewport instead of the error bar when attach fails this way.
+  const [page, setPage] = useState<BrowserViewerPage | null>(null);
+  const [openFailed, setOpenFailed] = useState(false);
+  // A retry from that page keeps it, and its focused button, until it settles.
+  const [retrying, setRetrying] = useState(false);
+  // A retry that ends in the error bar instead hands its focus to the message.
+  const errorBar = useRef<HTMLDivElement>(null);
+  const focusError = useRef(false);
 
   useEffect(() => {
     if (!editing.current && status.url) setDraft(status.url);
   }, [status.url]);
+
+  // macOS mouse back/forward, sent here while this page has focus.
+  const historyAction = useEffectEvent((event: Event, value: BrowserAction) => {
+    event.preventDefault();
+    action(value);
+  });
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const back = (event: Event) => historyAction(event, "back");
+    const forward = (event: Event) => historyAction(event, "forward");
+    element.addEventListener("buzz:history-back", back);
+    element.addEventListener("buzz:history-forward", forward);
+    return () => {
+      element.removeEventListener("buzz:history-back", back);
+      element.removeEventListener("buzz:history-forward", forward);
+    };
+  }, []);
+
+  // In a tab, the page's title names it, so several websites tell apart.
+  const tabHost = usePanelTabHost();
+  const nameTab = tabHost?.title;
+  const tabOwner = tabHost?.owner;
+  // The last title the page had names it until it reports another.
+  const titleKey = `${storage ?? ""}\n${url}`;
+  const tabLabel = status.title || sessions.title(titleKey) || label;
+  useLayoutEffect(() => {
+    if (!nameTab || !tabOwner || !tabLabel) return;
+    nameTab(tabOwner, { label: tabLabel });
+    return () => nameTab(tabOwner, undefined);
+  }, [nameTab, tabOwner, tabLabel]);
 
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
     let disposed = false;
     let attachStarted = false;
+    let attachFailed = false;
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
     let lastRequested: { bounds: BrowserBounds; visible: boolean } | undefined;
     let desiredPresentation:
       | { bounds: BrowserBounds; visible: boolean }
       | undefined;
     let writingBounds = false;
+    const park = storage === undefined ? undefined : `${storage}\n${url}`;
 
     const visible = (bounds: BrowserBounds) =>
       document.visibilityState === "visible" &&
-      !hostOverlayOpen() &&
+      !hostOverlayOpen(bounds) &&
+      !covered(element) &&
       bounds.width > 0 &&
       bounds.height > 0;
 
@@ -94,10 +192,25 @@ export function BrowserHostView({
       if (!sessionId || disposed) return;
       const measuredBounds = boundsFor(element);
       const nextVisible = visible(measuredBounds);
+      if (!sessions.owns(sessionId)) {
+        // Its guest was closed to make room for others. Open it again when
+        // shown.
+        if (!nextVisible) return;
+        setLocalError(null);
+        setPage(null);
+        session.current = undefined;
+        delete element.dataset.browserSession;
+        attachStarted = false;
+        lastRequested = undefined;
+        if (pollTimer) clearTimeout(pollTimer);
+        begin();
+        return;
+      }
       const bounds =
         measuredBounds.width > 0 && measuredBounds.height > 0
           ? measuredBounds
           : lastRequested?.bounds;
+      sessions.present(sessionId, nextVisible);
       if (!bounds) return;
       if (
         !force &&
@@ -123,7 +236,11 @@ export function BrowserHostView({
           try {
             await platform.setBounds(sessionId, next.bounds, next.visible);
           } catch (error) {
-            if (!disposed && session.current === sessionId)
+            if (
+              !disposed &&
+              session.current === sessionId &&
+              sessions.owns(sessionId)
+            )
               setLocalError(message(error));
           }
         }
@@ -133,12 +250,28 @@ export function BrowserHostView({
 
     const poll = async () => {
       const sessionId = session.current;
-      if (!sessionId || disposed) return;
+      if (!sessionId || disposed || !sessions.owns(sessionId)) return;
       try {
         const next = await platform.status(sessionId);
-        if (!disposed && session.current === sessionId) setStatus(next);
+        if (!disposed && session.current === sessionId) {
+          // Restore app destinations, not temporary auth/consent pages or their one-use tickets.
+          if (
+            next.url &&
+            (canResumeUrl
+              ? canResumeUrl(next.url)
+              : !builderlab || new URL(next.url).origin === new URL(url).origin)
+          )
+            resumeUrl.current = next.url;
+          sessions.rememberTitle(titleKey, next.title);
+          setStatus(next);
+        }
       } catch (error) {
-        if (!disposed && session.current === sessionId)
+        // A replacement may have taken the guest while this status was asked.
+        if (
+          !disposed &&
+          session.current === sessionId &&
+          sessions.owns(sessionId)
+        )
           setLocalError(message(error));
       } finally {
         if (!disposed && session.current === sessionId)
@@ -147,24 +280,52 @@ export function BrowserHostView({
     };
 
     const begin = () => {
-      if (attachStarted || disposed) return;
+      if (attachStarted || disposed || builderlab?.signal.aborted) return;
       const initialBounds = boundsFor(element);
-      if (initialBounds.width <= 0 || initialBounds.height <= 0) return;
+      if (!visible(initialBounds)) return;
       attachStarted = true;
+      setStatus((previous) => ({ ...previous, loading: true }));
       sessions
-        .attach(url, initialBounds, () => !disposed)
+        .attach(
+          resumeUrl.current,
+          initialBounds,
+          () => !disposed,
+          storage,
+          park,
+          builderlab,
+        )
         .then((sessionId) => {
           if (!sessionId || disposed) return;
           session.current = sessionId;
+          element.dataset.browserSession = sessionId;
+          setPage(null);
+          setRetrying(false);
           syncBounds(true);
           void poll();
         })
         .catch((error) => {
           if (!disposed) {
-            setStatus({ ...EMPTY_STATUS, url });
+            attachFailed = true;
+            setStatus({ ...EMPTY_STATUS, url: resumeUrl.current });
+            const nextPage =
+              error instanceof BrowserAttachError ? (error.page ?? null) : null;
+            focusError.current =
+              !nextPage && element.contains(document.activeElement);
             setLocalError(message(error));
+            setPage(nextPage);
+            setRetrying(false);
           }
         });
+    };
+
+    retryAttach.current = () => {
+      if (!attachFailed) return;
+      attachFailed = false;
+      attachStarted = false;
+      setLocalError(null);
+      setOpenFailed(false);
+      setRetrying(true);
+      begin();
     };
 
     const updatePresentation = () => {
@@ -174,12 +335,34 @@ export function BrowserHostView({
 
     const resizeObserver = new ResizeObserver(updatePresentation);
     resizeObserver.observe(element);
-    const mutationObserver = new MutationObserver(updatePresentation);
+    // A popup is placed a frame or two after it mounts.
+    let placing: number | undefined;
+    const mutationObserver = new MutationObserver(() => {
+      updatePresentation();
+      if (placing !== undefined) cancelAnimationFrame(placing);
+      placing = requestAnimationFrame(() => {
+        placing = requestAnimationFrame(() => {
+          placing = undefined;
+          updatePresentation();
+        });
+      });
+    });
     mutationObserver.observe(document.body, {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["open", "aria-modal", "data-popup-open", "role"],
+      attributeFilter: [
+        "open",
+        "aria-modal",
+        "data-open",
+        "role",
+        "inert",
+        "hidden",
+        "aria-hidden",
+        "data-covered",
+        "data-entering",
+        "data-leaving",
+      ],
     });
     const forceBounds = () => syncBounds(true);
     window.addEventListener("resize", forceBounds);
@@ -187,27 +370,50 @@ export function BrowserHostView({
     document.addEventListener("visibilitychange", updatePresentation);
     window.visualViewport?.addEventListener("resize", forceBounds);
     window.visualViewport?.addEventListener("scroll", updatePresentation);
+    // A pane that slid or faded into place has moved without resizing.
+    document.addEventListener("animationend", updatePresentation, true);
+    document.addEventListener("transitionend", updatePresentation, true);
 
+    resumeUrl.current = url;
     setDraft(url);
     setStatus({ ...EMPTY_STATUS, url, loading: true });
     setLocalError(null);
+    setPage(null);
+    setRetrying(false);
     begin();
 
     return () => {
       disposed = true;
+      retryAttach.current = undefined;
       if (pollTimer) clearTimeout(pollTimer);
       resizeObserver.disconnect();
       mutationObserver.disconnect();
+      if (placing !== undefined) cancelAnimationFrame(placing);
       window.removeEventListener("resize", forceBounds);
       window.removeEventListener("scroll", updatePresentation, true);
       document.removeEventListener("visibilitychange", updatePresentation);
       window.visualViewport?.removeEventListener("resize", forceBounds);
       window.visualViewport?.removeEventListener("scroll", updatePresentation);
+      document.removeEventListener("animationend", updatePresentation, true);
+      document.removeEventListener("transitionend", updatePresentation, true);
       const sessionId = session.current;
       session.current = undefined;
-      if (sessionId) void sessions.detach(sessionId);
+      delete element.dataset.browserSession;
+      // A guest with kept storage waits a while for this page to come back,
+      // say from another channel, so work in progress there survives.
+      // A guest that failed to hide or go quiet is closed; no view is left to report it.
+      if (sessionId) sessions.detach(sessionId, park).catch(() => {});
     };
-  }, [platform, pollInterval, sessions, url]);
+  }, [
+    builderlab,
+    canResumeUrl,
+    platform,
+    pollInterval,
+    sessions,
+    storage,
+    titleKey,
+    url,
+  ]);
 
   async function run(operation: (sessionId: string) => Promise<void>) {
     const sessionId = session.current;
@@ -223,14 +429,26 @@ export function BrowserHostView({
   function navigate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     editing.current = false;
-    void run((sessionId) => platform.navigate(sessionId, draft));
+    const target = addressInputUrl(draft);
+    void run((sessionId) =>
+      platform.navigate(sessionId, target.url, target.fallbackToHttp),
+    );
   }
 
   function action(value: BrowserAction) {
+    if (value === "reload" && !session.current) {
+      retryAttach.current?.();
+      return;
+    }
     void run((sessionId) => platform.action(sessionId, value));
   }
 
   const error = localError ?? status.error;
+  useEffect(() => {
+    if (!focusError.current || !error || page) return;
+    focusError.current = false;
+    errorBar.current?.focus();
+  }, [error, page]);
   return (
     <section className={styles.browser} aria-label="Browser">
       <div
@@ -285,12 +503,111 @@ export function BrowserHostView({
           </span>
         ) : null}
       </div>
-      {error ? (
-        <div className={styles.error} role="alert">
+      {error && !page ? (
+        <div ref={errorBar} className={styles.error} role="alert" tabIndex={-1}>
           {error}
         </div>
+      ) : status.notice ? (
+        <div className={styles.notice} role="status">
+          {status.notice}
+          {status.held ? (
+            <Button type="button" size="sm" onClick={() => action("open")}>
+              Open in browser
+            </Button>
+          ) : null}
+        </div>
       ) : null}
-      <div className={styles.viewport} ref={viewport} />
+      <div className={styles.viewport} ref={viewport}>
+        {/* The pages share one Try again, keyed so a retry that lands on
+            another page keeps the focused button, wherever it sits in the row. */}
+        {page === "denied" ? (
+          <div role="alert" className="page-status">
+            <EmptyState
+              icon={<LockIcon />}
+              title="You can’t open this app"
+              description="The link may be wrong, or the app may have been removed. Ask whoever shared it."
+              action={
+                <Button
+                  key="retry"
+                  type="button"
+                  variant="primary"
+                  loading={retrying}
+                  onClick={() => retryAttach.current?.()}
+                >
+                  Try again
+                </Button>
+              }
+            />
+          </div>
+        ) : page === "unavailable" ? (
+          <div role="alert" className="page-status">
+            <EmptyState
+              icon={<CloudOffIcon />}
+              title="Buzz couldn’t load this app"
+              description={
+                openFailed
+                  ? "Couldn’t open it in your browser. Try again in a moment."
+                  : "Something went wrong reaching Builderlab. Try again, or open the app in your browser."
+              }
+              action={
+                <>
+                  <Button
+                    key="retry"
+                    type="button"
+                    variant="primary"
+                    loading={retrying}
+                    onClick={() => retryAttach.current?.()}
+                  >
+                    Try again
+                  </Button>
+                  <Button
+                    key="open"
+                    type="button"
+                    onClick={() => {
+                      setOpenFailed(false);
+                      platform
+                        .openExternal(resumeUrl.current)
+                        .catch(() => setOpenFailed(true));
+                    }}
+                  >
+                    Open in browser
+                  </Button>
+                </>
+              }
+            />
+          </div>
+        ) : page === "sign-in" ? (
+          <div role="alert" className="page-status">
+            <EmptyState
+              icon={<UserIcon />}
+              title="Sign in again to open this app"
+              description="Builderlab didn’t accept your sign-in. Try again. If that doesn’t work, sign out and back in, then try again."
+              action={
+                <>
+                  {openSignIn && (
+                    <Button
+                      key="settings"
+                      type="button"
+                      onClick={() => openSignIn()}
+                    >
+                      Open settings
+                    </Button>
+                  )}
+                  <Button
+                    key="retry"
+                    type="button"
+                    variant="primary"
+                    loading={retrying}
+                    onClick={() => retryAttach.current?.()}
+                  >
+                    Try again
+                  </Button>
+                </>
+              }
+            />
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }

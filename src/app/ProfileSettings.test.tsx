@@ -18,6 +18,7 @@ import type {
   Communities,
 } from "../features/communities/service";
 import * as communityApi from "../features/communities/api";
+import { trackBackgroundProfileWrite } from "../features/communities/profile-saves";
 import * as avatarUpload from "../features/profiles/avatar-upload";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { ProfileSettings } from "./ProfileSettings";
@@ -26,6 +27,8 @@ import { stubAvatarBrowserApis } from "../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 
 const viewer = "ab".repeat(32);
+// Any save into a profile without a `tz` key shares this device's zone.
+const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -114,7 +117,7 @@ it("loads and publishes the selected community profile before updating the local
         picture: "",
         about: "Community bio",
       },
-      { website: "https://example.test", name: "legacy" },
+      { website: "https://example.test", name: "legacy", tz: device },
     ),
   );
   expect(service.saveProfile).toHaveBeenCalledWith({
@@ -124,6 +127,140 @@ it("loads and publishes the selected community profile before updating the local
   });
   expect(await screen.findByText("Profile updated")).toBeVisible();
   expect(inspect).toHaveBeenCalledWith("community-id");
+});
+
+function verifiedProfileSettings(
+  signedName: string,
+  status: "checked" | "cached" | null,
+) {
+  const service = communities();
+  service.snapshot().selected = "community-id";
+  const profiles = new Map<string, unknown>();
+  const listeners = new Set<() => void>();
+  const verify = (next: "checked" | "cached") => {
+    profiles.set(viewer, {
+      name: "Verified Name",
+      verified: {
+        displayName: "verified",
+        username: "verified",
+        fullName: "Verified Name",
+        issuerLabel: "Block",
+        verifiedAt: 1,
+        status: next,
+        multipleIssuers: false,
+      },
+    });
+    for (const listener of listeners) listener();
+  };
+  if (status) verify(status);
+  const ensure = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(service.relay, "snapshot").mockReturnValue({
+    status: "ready",
+    viewer,
+    scope: "community-id",
+    generation: 1,
+    session: {
+      viewer,
+      profiles: {
+        snapshot: () => profiles,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        ensure,
+      },
+    },
+  } as unknown as ReturnType<Communities["relay"]["snapshot"]>);
+  vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: {},
+    profile: { name: signedName, picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockRejectedValue(new Error("stop"));
+  render(
+    <ProfileSettings
+      communities={service}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  return {
+    ensure,
+    publish,
+    verify: (next: "checked" | "cached") => act(() => verify(next)),
+  };
+}
+
+it("shows the verified name read-only and keeps the signed name when saving", async () => {
+  const { ensure, publish } = verifiedProfileSettings("Signed name", "checked");
+  const user = userEvent.setup();
+
+  const name = await screen.findByLabelText("Display name");
+  await waitFor(() => expect(name).toHaveValue("Verified Name"));
+  expect(name).toHaveAttribute("readonly");
+  expect(screen.getByText("Name verified by Block · @verified")).toBeVisible();
+  expect(ensure).toHaveBeenCalledWith([viewer]);
+  await user.type(
+    screen.getByLabelText("Profile description (optional)"),
+    "Bio",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Signed name", picture: "", about: "Bio" },
+      { tz: device },
+    ),
+  );
+});
+
+it("keeps the signed name when verification arrives after a name edit", async () => {
+  const { publish, verify } = verifiedProfileSettings("Signed name", null);
+  const user = userEvent.setup();
+
+  const name = await screen.findByLabelText("Display name");
+  await waitFor(() => expect(name).toHaveValue("Signed name"));
+  await user.clear(name);
+  await user.type(
+    screen.getByLabelText("Profile description (optional)"),
+    "Bio",
+  );
+  verify("cached");
+
+  expect(name).toHaveValue("Verified Name");
+  expect(name).toHaveAttribute("readonly");
+  expect(
+    screen.getByText("Cached verification from Block · @verified"),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Signed name", picture: "", about: "Bio" },
+      { tz: device },
+    ),
+  );
+});
+
+it("keeps an empty signed name editable for repair when verified", async () => {
+  const { publish } = verifiedProfileSettings("", "checked");
+  const user = userEvent.setup();
+
+  const name = await screen.findByLabelText("Display name");
+  await waitFor(() => expect(name).toBeEnabled());
+  expect(name).not.toHaveAttribute("readonly");
+  expect(name).toHaveValue("");
+  await user.type(name, "Repaired");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Repaired", picture: "", about: "" },
+      { tz: device },
+    ),
+  );
 });
 
 it("keeps a newer profile seed when an older community publication finishes last", async () => {
@@ -433,11 +570,12 @@ it("rejects profile image URLs with embedded credentials", async () => {
     await screen.findByLabelText("Picture URL (optional)"),
     "https://user:secret@example.test/profile.png",
   );
+  // Done reveals the error instead of applying the URL.
+  await user.click(screen.getByRole("button", { name: "Done" }));
 
   expect(
     screen.getByLabelText("Picture URL (optional)"),
   ).toHaveAccessibleDescription(/Use an HTTPS image URL without credentials/);
-  expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
@@ -877,4 +1015,278 @@ it("mounts the already-cached community thumbnail immediately while the profile 
     );
     owner.dispose();
   }
+});
+
+it("shows a profile without a time zone as sharing this device's, and records unchecking it as an opt-out", async () => {
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { website: "https://example.test" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const share = await screen.findByRole("checkbox", {
+    name: "Show my local time on my profile",
+  });
+  // No `tz` key yet: sharing by default will publish this device's zone.
+  await waitFor(() => expect(share).toBeChecked());
+  const zone = screen.getByRole("combobox", { name: "Time zone" });
+  expect(zone).toHaveTextContent(device.replaceAll("_", " "));
+  const pending =
+    "This device’s time zone is shared by default. Uncheck and save to stop sharing it.";
+  expect(screen.getByText(pending)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+
+  // Any save shares the zone the box shows, so the note holds even where
+  // sharing by default would skip the profile.
+  const about = screen.getByLabelText("Profile description (optional)");
+  await user.type(about, "Hello");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+  expect(publish.mock.lastCall?.[2]).toEqual({
+    website: "https://example.test",
+    tz: device,
+  });
+  await screen.findByText("Profile updated");
+  expect(share).toBeChecked();
+  expect(screen.queryByText(pending)).toBeNull();
+
+  // Unchecking is a change of its own, saved as the opt-out.
+  await user.click(share);
+  expect(share).not.toBeChecked();
+  expect(screen.queryByText(pending)).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+  expect(publish.mock.lastCall?.[2]).toEqual({
+    website: "https://example.test",
+    tz: "",
+  });
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(),
+  );
+  expect(share).not.toBeChecked();
+
+  // Checking it again after opting out shares the zone on save.
+  await user.click(share);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(3));
+  expect(publish.mock.lastCall?.[2]).toEqual({
+    website: "https://example.test",
+    tz: device,
+  });
+});
+
+it("keeps a shared time zone through an unrelated save", async () => {
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { tz: "Asia/Kolkata" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const about = await screen.findByLabelText("Profile description (optional)");
+  await user.type(about, "Hello");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Community name", picture: "", about: "Hello" },
+      { tz: "Asia/Kolkata" },
+    ),
+  );
+});
+
+it("records clearing a shared time zone as an opt-out", async () => {
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { website: "https://example.test", tz: "Asia/Kolkata" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const share = await screen.findByRole("checkbox", {
+    name: "Show my local time on my profile",
+  });
+  await waitFor(() => expect(share).toBeChecked());
+  expect(screen.getByRole("combobox", { name: "Time zone" })).toHaveTextContent(
+    "Asia/Kolkata",
+  );
+  await user.click(share);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Community name", picture: "", about: "" },
+      // An empty zone keeps sharing by default from bringing it back.
+      { website: "https://example.test", tz: "" },
+    ),
+  );
+  expect(await screen.findByText("Profile updated")).toBeVisible();
+  expect(share).not.toBeChecked();
+});
+
+it("saves after a background write already handed to the writer, from what it published", async () => {
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { website: "https://example.test" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const app = communities();
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={app}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const share = await screen.findByRole("checkbox", {
+    name: "Show my local time on my profile",
+  });
+  await waitFor(() => expect(share).toBeChecked());
+  // Sharing by default has dispatched its write; the writer has not signed it.
+  const background = deferred();
+  trackBackgroundProfileWrite(
+    app,
+    background.promise.then(() =>
+      inspect.mockResolvedValue({
+        exists: true,
+        existing: { website: "https://example.test", tz: device },
+        profile: { name: "Community name", picture: "", about: "" },
+      }),
+    ),
+  );
+  await user.click(share);
+  await user.type(
+    screen.getByLabelText("Profile description (optional)"),
+    "New bio",
+  );
+  const reads = inspect.mock.calls.length;
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await act(async () => {});
+  expect(inspect).toHaveBeenCalledTimes(reads);
+  expect(publish).not.toHaveBeenCalled();
+  await act(async () => background.resolve());
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Community name", picture: "", about: "New bio" },
+      { website: "https://example.test", tz: "" },
+    ),
+  );
+  expect(await screen.findByText("Profile updated")).toBeVisible();
+});
+
+it("a time zone only save keeps fields another client changed since Settings opened", async () => {
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { name: "Old", display_name: "Old", about: "Old bio" },
+    profile: { name: "Old", picture: "", about: "Old bio" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const share = await screen.findByRole("checkbox", {
+    name: "Show my local time on my profile",
+  });
+  await waitFor(() => expect(share).toBeChecked());
+  // Another device edits the profile while Settings is open.
+  const newer = {
+    name: "New",
+    display_name: "New",
+    picture: "",
+    about: "New bio",
+  };
+  inspect.mockResolvedValue({
+    exists: true,
+    existing: newer,
+    profile: { name: "New", picture: newer.picture, about: "New bio" },
+  });
+  await user.click(share);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "New", picture: newer.picture, about: "New bio" },
+      { ...newer, tz: "" },
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("Display name")).toHaveValue("New"),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("unchecking then checking a saved zone offers the saved zone again", async () => {
+  vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { tz: "Pacific/Kiritimati" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const share = await screen.findByRole("checkbox", {
+    name: "Show my local time on my profile",
+  });
+  await waitFor(() => expect(share).toBeChecked());
+  await user.click(share);
+  await user.click(share);
+  expect(screen.getByRole("combobox", { name: "Time zone" })).toHaveTextContent(
+    "Pacific/Kiritimati",
+  );
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 });

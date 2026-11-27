@@ -15,6 +15,10 @@
 //!   `initialize`, `server/discover` and `ping` are answered. A second
 //!   `initialize` means two clients hold the token, so the server stops: the
 //!   one that claimed the session may not be the agent.
+//! - A plugin can explicitly opt into a shared session for cooperating clients.
+//!   Every client holding the token can initialize and obtain the same session
+//!   ID. This forfeits stolen-token replay protection; use only when the handler
+//!   fixes the identity and all clients intentionally share its authority.
 //! - A refused request gets 404, never 401 or 403: MCP clients answer those
 //!   by starting an OAuth sign-in.
 //! - It answers in JSON, never SSE. `POST /mcp` carries one message: a request
@@ -25,32 +29,28 @@
 //!   before its answer drops the request; the page's late reply is refused.
 //! - A server belongs to the plugin and the page that started it. It stops
 //!   when the plugin closes it, when the page reloads, or when the app exits.
-use crate::{with_manager, PluginManager};
+use crate::{loopback, with_manager, PluginManager};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::header::{self, HeaderName};
-use hyper::{server::conn::http1, service::service_fn, Method, Request, Response, StatusCode};
-use hyper_util::rt::{TokioIo, TokioTimer};
+use hyper::{Method, Request, Response, StatusCode};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tauri::ipc::Channel;
-use tokio::net::TcpListener;
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
+mod authorization;
+pub(crate) use authorization::plugin_host_mcp_authorize;
+pub(crate) mod pairing;
+pub(crate) use pairing::plugin_host_mcp_pairing;
 
 /// Servers running at once across all plugins.
 const MAX_SERVERS: usize = 64;
-/// Open connections per server: an agent may call several tools at once.
-const CONNECTIONS: usize = 32;
-/// hyper's smallest read buffer, which bounds a request head.
-const HEAD_LIMIT: usize = 8192;
-const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 const BODY_LIMIT: usize = 4 * 1024 * 1024;
 const BODY_TIMEOUT: Duration = Duration::from_secs(30);
 const REPLY_LIMIT: usize = 16 * 1024 * 1024;
@@ -88,6 +88,11 @@ struct Shared {
     /// `UNCLAIMED`, `CLAIMING` while an `initialize` waits for its answer, or
     /// `CLAIMED` once one succeeded.
     claim: AtomicU8,
+    /// Explicitly let clients holding the token join the same session.
+    shared_session: bool,
+    authorization: Mutex<Option<authorization::Exchange>>,
+    pairing: Mutex<Option<pairing::Grant>>,
+    pairing_pending: AtomicBool,
     events: Channel<McpEvent>,
     stop: CancellationToken,
     pending: Mutex<Pending>,
@@ -141,6 +146,7 @@ impl HostMcpServers {
         page: u64,
         plugin: String,
         events: Channel<McpEvent>,
+        shared_session: bool,
     ) -> Result<McpServerInfo, String> {
         let mut registry = self.registry();
         if registry.page != page {
@@ -150,10 +156,7 @@ impl HostMcpServers {
             return Err("Too many MCP servers are running".into());
         }
         let failed = |_| "Could not start the MCP server".to_owned();
-        // Bound synchronously, so the address is known before any agent connects.
-        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(failed)?;
-        listener.set_nonblocking(true).map_err(failed)?;
-        let authority = listener.local_addr().map_err(failed)?.to_string();
+        let (listener, authority) = loopback::bind().map_err(failed)?;
         let secret = || {
             let mut secret = [0; 32];
             getrandom::fill(&mut secret).map_err(|_| "Could not start the MCP server")?;
@@ -165,6 +168,10 @@ impl HostMcpServers {
             token: token.clone(),
             session: secret()?,
             claim: AtomicU8::new(UNCLAIMED),
+            shared_session,
+            authorization: Mutex::new(None),
+            pairing: Mutex::new(None),
+            pairing_pending: AtomicBool::new(false),
             events,
             stop: CancellationToken::new(),
             pending: Mutex::default(),
@@ -181,7 +188,14 @@ impl HostMcpServers {
         drop(registry);
         let state = self.clone();
         tauri::async_runtime::spawn(async move {
-            accept(listener, shared.clone()).await;
+            let answer = {
+                let shared = shared.clone();
+                move |request| {
+                    let shared = shared.clone();
+                    async move { answer(&shared, request).await }
+                }
+            };
+            loopback::serve(listener, shared.stop.clone(), answer).await;
             state.registry().entries.remove(&handle);
             // Requests still waiting are answered 503 as their senders drop.
             shared.pending().replies.clear();
@@ -225,54 +239,13 @@ impl HostMcpServers {
     }
 }
 
-async fn accept(listener: std::net::TcpListener, shared: Arc<Shared>) {
-    let Ok(listener) = TcpListener::from_std(listener) else {
-        return;
-    };
-    let connections = Arc::new(Semaphore::new(CONNECTIONS));
-    loop {
-        let accepted = tokio::select! {
-            accepted = async {
-                let permit = connections.clone().acquire_owned().await.ok()?;
-                Some((permit, listener.accept().await))
-            } => accepted,
-            () = shared.stop.cancelled() => return,
-        };
-        let Some((permit, accepted)) = accepted else {
-            return;
-        };
-        let Ok((socket, _)) = accepted else {
-            drop(permit);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            continue;
-        };
-        let shared = shared.clone();
-        tauri::async_runtime::spawn(async move {
-            let shared = &*shared;
-            // One request per connection. hyper drops a request whose client
-            // closes before its answer, so the page's late reply is refused.
-            let connection = http1::Builder::new()
-                .timer(TokioTimer::new())
-                .header_read_timeout(HEAD_TIMEOUT)
-                .max_buf_size(HEAD_LIMIT)
-                .keep_alive(false)
-                .serve_connection(
-                    TokioIo::new(socket),
-                    service_fn(move |request| answer(shared, request)),
-                );
-            tokio::select! {
-                _ = connection => {}
-                () = shared.stop.cancelled() => {}
-            }
-            drop(permit);
-        });
-    }
-}
-
 async fn answer(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    if request.uri().path() == "/authorize/exchange" {
+        return Ok(authorization::exchange(shared, request).await);
+    }
     let (status, body, joined) = match refuse(shared, &request) {
         Err(status) => (status, None, false),
         Ok(named) => {
@@ -334,9 +307,8 @@ async fn forward(shared: &Shared, body: String) -> (StatusCode, Option<String>) 
         request
     };
     let _waiting = Waiting(shared, request);
-    if shared
-        .events
-        .send(McpEvent::Message { request, body })
+    if pairing::forward(shared, McpEvent::Message { request, body })
+        .await
         .is_err()
     {
         // Nobody is listening: the page that started it is gone.
@@ -414,6 +386,9 @@ fn join(shared: &Shared, named: bool, body: &str) -> Result<Join, StatusCode> {
         .and_then(|message| message.method);
     match method.as_deref() {
         Some("initialize") => {
+            if shared.shared_session {
+                return Ok(Join::Claiming);
+            }
             if shared
                 .claim
                 .compare_exchange(UNCLAIMED, CLAIMING, Ordering::SeqCst, Ordering::SeqCst)
@@ -455,7 +430,7 @@ impl Claim<'_> {
 impl Drop for Claim<'_> {
     fn drop(&mut self) {
         // Only the claim this guard holds is released.
-        if !self.claimed {
+        if !self.claimed && !self.shared.shared_session {
             let _ = self.shared.claim.compare_exchange(
                 CLAIMING,
                 UNCLAIMED,
@@ -466,7 +441,7 @@ impl Drop for Claim<'_> {
     }
 }
 
-fn header(request: &Request<Incoming>, name: HeaderName) -> Option<&str> {
+pub(crate) fn header(request: &Request<Incoming>, name: HeaderName) -> Option<&str> {
     request.headers().get(name)?.to_str().ok()
 }
 
@@ -484,6 +459,7 @@ pub(crate) async fn plugin_host_mcp_serve(
     id: String,
     revision: String,
     on_event: Channel<McpEvent>,
+    shared_session: Option<bool>,
 ) -> Result<McpServerInfo, String> {
     let page = servers.page();
     let plugin = id.clone();
@@ -494,7 +470,7 @@ pub(crate) async fn plugin_host_mcp_serve(
     if !granted {
         return Err("MCP servers are not declared".into());
     }
-    servers.serve(page, plugin, on_event)
+    servers.serve(page, plugin, on_event, shared_session.unwrap_or(false))
 }
 
 /// Answers a message with the JSON-RPC `body`; without one, with 202.

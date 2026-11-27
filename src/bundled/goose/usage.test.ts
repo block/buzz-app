@@ -3,11 +3,13 @@ import type { EventData } from "../../features/relay/events";
 import { turnPrompt } from "../claude-code/prompt";
 import { REQUEST_TIMEOUT_MS } from "./goose";
 import { type FakeSession, fakeSpawn } from "./goose-testing";
-import { GooseHistory } from "./transcript";
+import { standalonePrompt } from "./runtime";
+import { GooseHistory, marked } from "./transcript";
 import { readUsage, sessionUsage } from "./usage";
 
 const agent = "c".repeat(64);
 const other = "d".repeat(64);
+const third = "e".repeat(64);
 const start = 1_800_000_000;
 const mention = {
   id: "1".repeat(64),
@@ -26,8 +28,6 @@ const ask = (pubkey = agent) =>
     scope: "thread",
     context: [],
     total: 1,
-    label: "@mention",
-    name: () => undefined,
   });
 const user = (text: string, created = start, userVisible = true) => ({
   role: "user",
@@ -102,6 +102,116 @@ it("observes each reply's tokens and goose's price", () => {
   );
 });
 
+it("counts a watch's or timer's one-off session, which has no channel", () => {
+  const session = sessionUsage("s", [
+    user(standalonePrompt(agent, "Timer: daily\n\nReport ops in #ops.")),
+    reply(start + 1, tokens(4, 0, 100, 0.06)),
+  ]);
+  expect(session).toMatchObject({
+    id: "s",
+    startedAt: start * 1000,
+    lastAt: (start + 1) * 1000,
+    observations: [{ cost: { usd: 0.06 } }],
+  });
+  expect(session).not.toHaveProperty("channelId");
+});
+
+it("titles a session by its first prompt without Buzz's turn mark", () => {
+  const session = sessionUsage("s", [
+    user(marked(ask(), "11111111-1111-4111-8111-111111111111")),
+    reply(start + 1, tokens(1, 0, 0)),
+  ]);
+  expect(session).toMatchObject({
+    channelId: "chan",
+    root: mention.id,
+    title: "@Grok fix the build",
+  });
+});
+
+it("reads the agent's sessions in the folders its conversations were given too, each once", async () => {
+  const saved = (sessionId: string, cwd: string): FakeSession => ({
+    sessionId,
+    title: `Grok · #general · ${sessionId}`,
+    cwd,
+    updatedAt: "2027-01-15T08:00:00Z",
+    conversation: [user(ask()), reply(start + 1, tokens(1, 2, 3, 0.5))],
+  });
+  const fake = fakeSpawn({
+    home: "/home/test",
+    history: [
+      saved("home", "/home/test/.buzz"),
+      saved("there", "/repos/worktree"),
+      saved("elsewhere", "/repos/other"),
+    ],
+  });
+  const sessions = await readUsage(
+    new GooseHistory(fake),
+    agent,
+    "~/.buzz",
+    Date.parse("2026-06-01T00:00:00Z"),
+    new AbortController().signal,
+    // One of them is the workspace itself.
+    ["/repos/worktree", "/home/test/.buzz"],
+  );
+  expect(sessions.map((session) => session.id).sort()).toEqual([
+    "home",
+    "there",
+  ]);
+  // The workspace's shared listing, and the agent's own of its folders.
+  expect(fake.processes).toHaveLength(2);
+});
+
+it("exports a workspace's sessions once while several agents with folders read it", async () => {
+  const saved = (sessionId: string, cwd: string, pubkey: string) => ({
+    sessionId,
+    title: `Grok · #general · ${sessionId}`,
+    cwd,
+    updatedAt: "2026-06-15T08:00:00Z",
+    conversation: [user(ask(pubkey)), reply(start + 1, tokens(1, 2, 3, 0.5))],
+  });
+  const goose = fakeSpawn({
+    home: "/home/test",
+    history: [
+      saved("mine", "/home/test/.buzz", agent),
+      saved("theirs", "/home/test/.buzz", other),
+      saved("my-folder", "/repos/mine", agent),
+      saved("their-folder", "/repos/theirs", other),
+    ],
+  });
+  const history = new GooseHistory(goose);
+  const read = (pubkey: string, folders: readonly string[]) =>
+    readUsage(
+      history,
+      pubkey,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      new AbortController().signal,
+      folders,
+    ).then((sessions) => sessions.map((session) => session.id).sort());
+  // Some of them are given the workspace itself as a folder.
+  expect(
+    await Promise.all([
+      read(agent, ["/repos/mine", "/home/test/.buzz"]),
+      read(other, ["/repos/theirs"]),
+      read(third, ["~/.buzz", "/home/test/.buzz"]),
+    ]),
+  ).toEqual([["mine", "my-folder"], ["their-folder", "theirs"], []]);
+  // The workspace's shared listing, and one of each other folder: none of
+  // the workspace again.
+  expect(goose.geese).toHaveLength(3);
+  const exported = goose.geese.flatMap((one) =>
+    one.received
+      .filter((message) => message.method === "_goose/unstable/session/export")
+      .map((message) => (message.params as { sessionId: string }).sessionId),
+  );
+  expect(exported.sort()).toEqual([
+    "mine",
+    "my-folder",
+    "their-folder",
+    "theirs",
+  ]);
+});
+
 it("reads the agent's sessions in its workspace through goose, every page", async () => {
   const saved = (
     sessionId: string,
@@ -126,6 +236,11 @@ it("reads the agent's sessions in its workspace through goose, every page", asyn
         // A session of the user's own.
         saved("own", [user("Tidy my notes"), work]),
         saved("mine", [user(ask()), work]),
+        saved("once", [user(standalonePrompt(agent, "Timer: daily")), work]),
+        saved("theirs-once", [
+          user(standalonePrompt(other, "Timer: daily")),
+          work,
+        ]),
       ],
     }),
   );
@@ -136,11 +251,79 @@ it("reads the agent's sessions in its workspace through goose, every page", asyn
     Date.parse("2026-06-01T00:00:00Z"),
     new AbortController().signal,
   );
-  expect(sessions.map((session) => session.id)).toEqual(["mine"]);
+  expect(sessions.map((session) => session.id).sort()).toEqual([
+    "mine",
+    "once",
+  ]);
   expect(sessions[0]?.observations[0]).toMatchObject({
     tokens: { input: 1, cacheRead: 2, cacheWrite: 3 },
     cost: { usd: 0.5 },
   });
+});
+
+it("reads a workspace's sessions once for every agent, then only what goose updated", async () => {
+  const exported = (goose: ReturnType<typeof fakeSpawn>, index: number) =>
+    (goose.geese[index]?.received ?? [])
+      .filter((message) => message.method === "_goose/unstable/session/export")
+      .map((message) => (message.params as { sessionId: string }).sessionId);
+  const saved = (
+    sessionId: string,
+    conversation: Record<string, unknown>[],
+    updatedAt = "2026-06-15T08:00:00Z",
+  ): FakeSession => ({
+    sessionId,
+    title: `Grok · #general · ${sessionId}`,
+    cwd: "/home/test/.buzz",
+    updatedAt,
+    conversation,
+  });
+  const work = reply(start + 1, tokens(1, 2, 3, 0.5));
+  const history: FakeSession[] = [
+    saved("mine", [user(ask()), work]),
+    saved("theirs", [user(ask(other)), work]),
+    // Updated just now: goose may still save to it within the second.
+    saved("busy", [user(ask()), work], new Date().toISOString()),
+  ];
+  const goose = fakeSpawn({ home: "/home/test", history });
+  const gooseHistory = new GooseHistory(goose);
+  const read = (pubkey: string) =>
+    readUsage(
+      gooseHistory,
+      pubkey,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      new AbortController().signal,
+    ).then((sessions) => sessions.map((session) => session.id).sort());
+  expect(await Promise.all([read(agent), read(other)])).toEqual([
+    ["busy", "mine"],
+    ["theirs"],
+  ]);
+  expect(goose.geese).toHaveLength(1);
+  expect(exported(goose, 0).sort()).toEqual(["busy", "mine", "theirs"]);
+
+  history[0] = saved(
+    "mine",
+    [user(ask()), work, reply(start + 2, tokens(1, 0, 0))],
+    "2026-06-16T08:00:00Z",
+  );
+  history.push(saved("new", [user(ask()), work]));
+  history.splice(1, 1);
+  expect(await Promise.all([read(agent), read(other)])).toEqual([
+    ["busy", "mine", "new"],
+    [],
+  ]);
+  expect(goose.geese).toHaveLength(2);
+  expect(exported(goose, 1).sort()).toEqual(["busy", "mine", "new"]);
+  const [mine] = (
+    await readUsage(
+      gooseHistory,
+      agent,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      new AbortController().signal,
+    )
+  ).filter((session) => session.id === "mine");
+  expect(mine?.observations).toHaveLength(2);
 });
 
 it("stops goose when a read is cancelled while an export is pending", async () => {
@@ -174,6 +357,38 @@ it("stops goose when a read is cancelled while an export is pending", async () =
   controller.abort(new Error("left the page"));
   await expect(reading).rejects.toThrow("left the page");
   expect(goose.geese[0]?.killed).toBe(true);
+});
+
+it("reads anew when a read starts as every earlier one is cancelled", async () => {
+  const history = new GooseHistory(
+    fakeSpawn({
+      home: "/home/test",
+      history: [
+        {
+          sessionId: "mine",
+          title: "Grok · #general · mine",
+          cwd: "/home/test/.buzz",
+          updatedAt: "2026-06-15T08:00:00Z",
+          conversation: [user(ask()), reply(start + 1, tokens(1, 2, 3, 0.5))],
+        },
+      ],
+    }),
+  );
+  const read = (signal: AbortSignal) =>
+    readUsage(
+      history,
+      agent,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      signal,
+    );
+  // As a page that mounts twice cancels its first reads and reads again.
+  const first = new AbortController();
+  const cancelled = read(first.signal);
+  first.abort(new Error("left the page"));
+  const again = read(new AbortController().signal);
+  await expect(cancelled).rejects.toThrow("left the page");
+  expect((await again).map((session) => session.id)).toEqual(["mine"]);
 });
 
 afterEach(() => {
@@ -217,3 +432,14 @@ it.each(["session/list", "_goose/unstable/session/export"])(
     expect(goose.geese[0]?.killed).toBe(true);
   },
 );
+
+it("counts a community lifetime first opened by an unaddressed wake", () => {
+  const session = sessionUsage("wake", [
+    user(
+      `<context>\nScope: standalone\nSession scope: community\nAgent: ${agent}\n</context>\ncheck`,
+    ),
+    reply(start + 1, tokens(3, 0, 0)),
+  ]);
+  expect(session?.observations).toHaveLength(1);
+  expect(session?.channelId).toBeUndefined();
+});

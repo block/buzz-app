@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentType } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -9,7 +10,12 @@ import type {
   RegisteredAgentType,
   SessionUsage,
 } from "../../features/agents/service";
+import type { RelaySnapshot } from "../../features/relay/service";
+import type { PluginModule } from "../../plugins/api";
+import { readView, writeView } from "../../shared/view-state";
+import { apply } from "./index";
 import { loadPrices } from "./pricing";
+import { since } from "./stats";
 import { UsagePage } from "./UsagePage";
 
 vi.mock("./pricing", async (actual) => {
@@ -25,12 +31,16 @@ vi.stubGlobal(
     disconnect() {}
   },
 );
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const owner = "f".repeat(64);
 const root = "e".repeat(64);
 const agent = (name: string, type = "buzz.claude-code/claude"): Agent =>
   ({
+    key: name.padEnd(64, "0"),
     pubkey: name.padEnd(64, "0"),
     name,
     type,
@@ -97,8 +107,77 @@ function host(
     snapshot: () => snapshot,
     types: () => types,
     subscribe: () => () => {},
+    conversationReads: () => ({ ownerReadable: () => true }),
   } as unknown as Agents;
 }
+
+/** Pixel's $3 session and Relay's $1, both today. */
+const team = () =>
+  host([agent("Pixel"), agent("Relay")], async (target) => [
+    target.name === "Pixel"
+      ? session("a", 750_000, "Port the scroll patch")
+      : session("b", 250_000, "Tidy the docs"),
+  ]);
+/** Pixel's $3 Claude session and Sol's $1 Codex one, both today. */
+const mixed = () =>
+  host(
+    [agent("Pixel"), agent("Sol", "buzz.codex/codex")],
+    async () => [session("a", 750_000)],
+    async () => [session("b", 250_000)],
+  );
+const everyone = summary(
+  "Your 2 agents ran 2 sessions in the last 30 days. Pixel accounts for 75% of the cost, mostly on Claude Opus 5.5.",
+);
+const relayWeek = summary("Relay ran 1 session in the last 7 days.");
+const solMonth = summary("Sol ran 1 session in the last 30 days.");
+
+const one = `https://one.example:${owner}`;
+const two = `https://two.example:${owner}`;
+/** Usage as Settings shows it, through the plugin, beside a relay whose
+ * snapshot `publish` replaces. */
+function usageCard(
+  agents: Agents,
+  connection: Partial<RelaySnapshot> = { status: "ready", scope: one },
+) {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  let snapshot = connection;
+  const listeners = new Set<() => void>();
+  let Card: ComponentType = () => null;
+  apply({
+    agents,
+    navigation: { open },
+    relay: {
+      snapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    settingsCards: {
+      register: (card: { component: ComponentType }) => {
+        Card = card.component;
+      },
+    },
+  } as unknown as Parameters<PluginModule["apply"]>[0]);
+  return {
+    Card,
+    open,
+    publish: (next: Partial<RelaySnapshot>) =>
+      act(() => {
+        snapshot = next;
+        for (const listener of listeners) listener();
+      }),
+  };
+}
+/** Chooses `option` from the menu labelled `label`. */
+async function pick(label: string, option: string) {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+/** What the menu labelled `label` shows. */
+const chosen = (label: string) =>
+  screen.getByRole("combobox", { name: label }).textContent;
 
 it("summarises the agents' spend and opens a costly session's thread", async () => {
   const pixel = agent("Pixel");
@@ -141,9 +220,9 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
     ),
   ).toBeTruthy();
   expect(reads).toHaveLength(2);
-  // 30 days back, what Claude Code keeps by default.
-  expect(Date.now() - (reads[0]?.since ?? 0)).toBeGreaterThan(29 * 86_400_000);
-  expect(Date.now() - (reads[0]?.since ?? 0)).toBeLessThan(30 * 86_400_000);
+  // 30 days back, what Claude Code keeps by default: local midnight 29 days
+  // ago, which is not 29 × 24 h before now across a daylight-saving change.
+  expect(reads[0]?.since).toBe(since(Date.now()));
   const hero = screen.getByRole("region", { name: "Estimated cost" });
   expect(within(hero).getByText("$4.00")).toBeTruthy();
   // The daily figures are in a table for assistive technology.
@@ -166,6 +245,148 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
   });
 });
 
+it("counts a session with no conversation, listing it without a link to open", async () => {
+  const {
+    channelId: _channel,
+    root: _root,
+    ...standalone
+  } = session("a", 750_000);
+  render(
+    <UsagePage
+      agents={host([agent("Pixel")], async () => [standalone])}
+      open={vi.fn()}
+    />,
+  );
+  const hero = await screen.findByRole("region", { name: "Estimated cost" });
+  expect(within(hero).getByText("$3.00")).toBeTruthy();
+  expect(screen.getByText("No conversation")).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: /Open conversation/ }),
+  ).toBeNull();
+});
+
+it("groups cost by the timer or watch that started each session, the rest under Other", async () => {
+  render(
+    <UsagePage
+      agents={host([agent("Pixel"), agent("Relay")], async (target) => [
+        target.name === "Pixel"
+          ? { ...session("a", 750_000), wake: "timer/daily" }
+          : session("b", 250_000),
+      ])}
+      open={vi.fn()}
+    />,
+  );
+  const routines = await screen.findByRole("region", { name: "By routine" });
+  const rows = within(routines).getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    "timer/dailyPixel · 1 session$3.00",
+    "Other1 session$1.00",
+  ]);
+});
+
+it("shows no By routine when no session says which timer or watch started it", async () => {
+  render(<UsagePage agents={team()} open={vi.fn()} />);
+  await screen.findByRole("region", { name: "Estimated cost" });
+  expect(screen.queryByRole("region", { name: "By routine" })).toBeNull();
+});
+
+it("opens an agent from By agent in Agents", async () => {
+  const relay = agent("Relay");
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  render(
+    <UsagePage
+      agents={host([agent("Pixel"), relay], async (target) => [
+        target === relay ? session("b", 250_000) : session("a", 750_000),
+      ])}
+      open={open}
+    />,
+  );
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "Relay, Claude, $1.00. Open in Agents",
+    }),
+  );
+  expect(open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    route: { version: 1, params: { agent: relay.pubkey } },
+    scope: { viewer: owner, communityOrigin: "https://relay.example.com" },
+  });
+});
+
+it("waits for every agent before its totals, and shows each agent read meanwhile", async () => {
+  const pixel = agent("Pixel");
+  let finish = () => {};
+  const slow = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  render(
+    <UsagePage
+      agents={host([pixel, agent("Relay")], async (target) => {
+        if (target === pixel) return [session("a", 750_000)];
+        await slow;
+        return [session("b", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  // A quick read would show its result without a loading state first.
+  expect(screen.getByText("Reading your agents’ sessions…")).toBeTruthy();
+  expect(
+    await screen.findByText(
+      "Reading your agents’ sessions: 1 of 2 done…",
+      {},
+      { timeout: 2000 },
+    ),
+  ).toBeTruthy();
+  const hero = screen.getByRole("region", { name: "Estimated cost" });
+  expect(within(hero).getByText("—")).toBeTruthy();
+  expect(screen.getByText("Shown once every agent is read.")).toBeTruthy();
+  const rows = screen
+    .getAllByRole("listitem")
+    .map((row) => row.textContent ?? "");
+  expect(
+    rows.some((row) => row.includes("Pixel") && row.includes("$3.00")),
+  ).toBe(true);
+  expect(
+    rows.some((row) => row.includes("Relay") && row.includes("Reading…")),
+  ).toBe(true);
+  finish();
+  expect(
+    await screen.findByText(
+      summary(
+        "Your 2 agents ran 2 sessions in the last 30 days. Pixel accounts for 75% of the cost, mostly on Claude Opus 5.5.",
+      ),
+    ),
+  ).toBeTruthy();
+  expect(within(hero).getByText("$4.00")).toBeTruthy();
+});
+
+it("tries a failed read once more before reporting it", async () => {
+  let reads = 0;
+  render(
+    <UsagePage
+      agents={host([agent("Pixel")], async () => {
+        reads += 1;
+        if (reads === 1) throw new Error("busy");
+        return [session("a", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText(
+      summary("Pixel ran 1 session in the last 30 days."),
+      {},
+      { timeout: 2000 },
+    ),
+  ).toBeTruthy();
+  expect(reads).toBe(2);
+  expect(screen.queryByText(/Couldn’t read/)).toBeNull();
+});
+
 it("names the agents it could not read and reads them again", async () => {
   let fail = true;
   let reads = 0;
@@ -180,8 +401,10 @@ it("names the agents it could not read and reads them again", async () => {
     />,
   );
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Pixel.",
+    "Couldn’t read the sessions of Pixel: no workspace.",
   );
+  // Tried once more before it was reported, as each Try again is.
+  expect(reads).toBe(2);
   // A failed read is no evidence of an empty period; filters stay reachable.
   expect(screen.getByText("No sessions read")).toBeTruthy();
   expect(screen.queryByText("No sessions in this period")).toBeNull();
@@ -191,7 +414,7 @@ it("names the agents it could not read and reads them again", async () => {
   const retry = screen.getByRole("button", { name: "Try again" });
   retry.focus();
   await user.keyboard("{Enter}");
-  await vi.waitFor(() => expect(reads).toBe(2));
+  await vi.waitFor(() => expect(reads).toBe(4), { timeout: 2000 });
   await vi.waitFor(() => expect(retry.getAttribute("aria-busy")).toBeNull());
   expect(document.activeElement).toBe(retry);
   // One that succeeds removes it, and the keyboard moves to Refresh.
@@ -203,6 +426,53 @@ it("names the agents it could not read and reads them again", async () => {
     ),
   ).toBeTruthy();
   expect(screen.queryByRole("status")).toBeNull();
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Refresh usage" }),
+  );
+});
+
+it("keeps the keyboard on Try again until every agent it reads again is read", async () => {
+  const pixel = agent("Pixel");
+  let fail = true;
+  let held: Promise<void> | undefined;
+  let finish = () => {};
+  render(
+    <UsagePage
+      agents={host([pixel, agent("Relay")], async (target) => {
+        if (target === pixel) {
+          if (fail) throw new Error("no workspace");
+          return [session("a", 750_000)];
+        }
+        await held;
+        return [session("b", 250_000)];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  const retry = await screen.findByRole(
+    "button",
+    { name: "Try again" },
+    { timeout: 2000 },
+  );
+  // Pixel now reads at once, while Relay is held.
+  fail = false;
+  held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  retry.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  // Pixel's read is shown; it stays named as failed until Relay's ends.
+  expect(
+    await screen.findByText(
+      summary(
+        "Your 2 agents ran 2 sessions in the last 30 days. Pixel accounts for 75% of the counted cost, mostly on Claude Opus 5.5.",
+      ),
+    ),
+  ).toBeTruthy();
+  expect(retry.isConnected).toBe(true);
+  expect(document.activeElement).toBe(retry);
+  finish();
+  await vi.waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   expect(document.activeElement).toBe(
     screen.getByRole("button", { name: "Refresh usage" }),
   );
@@ -259,6 +529,48 @@ it("reads again when an agent is renamed or reconfigured", async () => {
   await vi.waitFor(() => expect(names).toEqual(["Pixel", "Pix"]));
 });
 
+it("reads the same agent apart in another community, without the first's sessions", async () => {
+  const pixel = agent("Pixel");
+  const there = {
+    ...pixel,
+    key: `${pixel.pubkey}@other.example.com`,
+    relay: "wss://other.example.com",
+  };
+  const read: string[] = [];
+  let listeners: (() => void)[] = [];
+  const agents = host([pixel], async (target) => {
+    read.push(target.key);
+    // Its read in the other community is still under way.
+    return target === pixel ? [session("a", 750_000)] : new Promise(() => {});
+  });
+  let snapshot = agents.snapshot();
+  const live = {
+    ...agents,
+    snapshot: () => snapshot,
+    types: agents.types,
+    subscribe: (listener: () => void) => {
+      listeners.push(listener);
+      return () => {
+        listeners = listeners.filter((entry) => entry !== listener);
+      };
+    },
+  } as unknown as Agents;
+  render(<UsagePage agents={live} open={vi.fn()} />);
+  expect(
+    await screen.findByText(
+      summary("Pixel ran 1 session in the last 30 days."),
+    ),
+  ).toBeTruthy();
+  snapshot = { ...snapshot, agents: [there], running: [there] };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  await vi.waitFor(() => expect(read).toEqual([pixel.key, there.key]));
+  expect(
+    screen.queryByText(summary("Pixel ran 1 session in the last 30 days.")),
+  ).toBeNull();
+});
+
 it("drops a filter whose agent is gone", async () => {
   const pixel = agent("Pixel");
   const relay = agent("Relay");
@@ -298,6 +610,97 @@ it("drops a filter whose agent is gone", async () => {
     ),
   ).toBeTruthy();
   expect(screen.queryByRole("combobox", { name: "Agent" })).toBeNull();
+});
+
+it("shows a community's filters again when Settings shows Usage again, as on Back from a session", async () => {
+  const { Card, open, publish } = usageCard(team());
+  const first = render(<Card />);
+  await pick("Period", "Last 7 days");
+  await pick("Agent", "Relay");
+  await userEvent.click(
+    await screen.findByRole("button", { name: /^Tidy the docs, Relay/ }),
+  );
+  expect(open).toHaveBeenCalledOnce();
+  // Settings unmounts the card as the conversation opens; Back mounts it again.
+  first.unmount();
+  render(<Card />);
+  expect(await screen.findByText(relayWeek)).toBeTruthy();
+  // Another community has its own filters, the defaults until chosen.
+  publish({ status: "ready", scope: two });
+  expect(await screen.findByText(everyone)).toBeTruthy();
+  expect(chosen("Period")).toContain("Last 30 days");
+  expect(chosen("Agent")).toContain("All agents");
+  publish({ status: "ready", scope: one });
+  expect(await screen.findByText(relayWeek)).toBeTruthy();
+});
+
+it("keeps the harness chosen too", async () => {
+  const { Card } = usageCard(mixed());
+  const first = render(<Card />);
+  await pick("Harness", "Codex");
+  expect(await screen.findByText(solMonth)).toBeTruthy();
+  first.unmount();
+  render(<Card />);
+  expect(await screen.findByText(solMonth)).toBeTruthy();
+  expect(chosen("Harness")).toContain("Codex");
+});
+
+it("saves nothing until a filter is chosen", async () => {
+  const { Card } = usageCard(team());
+  render(<Card />);
+  expect(await screen.findByText(everyone)).toBeTruthy();
+  expect(localStorage.length).toBe(0);
+  await pick("Agent", "Relay");
+  expect(readView(one, "usage:filters", undefined)).toEqual({
+    days: 30,
+    agent: agent("Relay").pubkey,
+    harness: "all",
+  });
+});
+
+it("filters nothing by a saved agent or harness that is gone, and keeps it saved", async () => {
+  const saved = {
+    days: 30,
+    agent: agent("Gone").pubkey,
+    harness: "buzz.goose/goose",
+  };
+  writeView(one, "usage:filters", saved);
+  const { Card } = usageCard(mixed());
+  render(<Card />);
+  expect(
+    await screen.findByText(
+      summary(
+        "Your 2 agents ran 2 sessions across 2 harnesses in the last 30 days. Pixel accounts for 75% of the cost, mostly on Claude Opus 5.5.",
+      ),
+    ),
+  ).toBeTruthy();
+  expect(chosen("Agent")).toContain("All agents");
+  expect(chosen("Harness")).toContain("All harnesses");
+  expect(readView(one, "usage:filters", undefined)).toEqual(saved);
+});
+
+it("uses the defaults in place of saved filters it can't read", async () => {
+  const { Card } = usageCard(team());
+  for (const saved of [{ days: "7", agent: 5 }, null, [7, "all", "all"]]) {
+    writeView(one, "usage:filters", saved);
+    const { unmount } = render(<Card />);
+    expect(await screen.findByText(everyone)).toBeTruthy();
+    expect(chosen("Period")).toContain("Last 30 days");
+    expect(chosen("Agent")).toContain("All agents");
+    unmount();
+  }
+});
+
+it("starts from the defaults each time, saving nothing, where the relay has no scope", async () => {
+  const { Card } = usageCard(team(), { status: "disconnected" });
+  const first = render(<Card />);
+  await pick("Period", "Last 7 days");
+  expect(chosen("Period")).toContain("Last 7 days");
+  expect(localStorage.length).toBe(0);
+  first.unmount();
+  render(<Card />);
+  expect(await screen.findByText(everyone)).toBeTruthy();
+  expect(chosen("Period")).toContain("Last 30 days");
 });
 
 it("switches periods without reading again, comparing only 7 days", async () => {
@@ -361,7 +764,7 @@ it("keeps showing what it read before when a refresh fails", async () => {
   fail = true;
   await userEvent.click(screen.getByRole("button", { name: "Refresh usage" }));
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Pixel; showing what was read before.",
+    "Couldn’t read the sessions of Pixel: no workspace. Showing what was read before.",
   );
   expect(
     within(screen.getByRole("region", { name: "Estimated cost" })).getByText(
@@ -464,7 +867,7 @@ it("compares nothing while an agent it shows could not be read", async () => {
     />,
   );
   expect((await screen.findByRole("status")).textContent).toContain(
-    "Couldn’t read the sessions of Relay.",
+    "Couldn’t read the sessions of Relay: no workspace.",
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Period" }));
@@ -476,13 +879,64 @@ it("compares nothing while an agent it shows could not be read", async () => {
   expect(hero.textContent).toContain("Partial");
 });
 
-it("explains where usage comes from when no agent reports any", () => {
+it("explains where usage comes from when no agent reports any, and opens Agents to add one", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
   render(
     <UsagePage
       agents={host([agent("Hosted", "buzz.codex/codex")], async () => [])}
-      open={vi.fn()}
+      open={open}
     />,
   );
   expect(screen.getByText("No agent usage to show")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Refresh usage" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Open Agents" }));
+  expect(open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+  });
+});
+
+it("says it runs in the desktop app where agents can't run", () => {
+  const snapshot = {
+    status: "unavailable",
+    agents: [],
+    running: [],
+  } as unknown as AgentsSnapshot;
+  render(
+    <UsagePage
+      agents={{ ...host([], async () => []), snapshot: () => snapshot }}
+      open={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Usage runs in the desktop app")).toBeTruthy();
+  expect(
+    screen.getByText("It reads the sessions your agents run on your computer."),
+  ).toBeTruthy();
+  expect(screen.queryByText(/community/)).toBeNull();
+});
+
+it("says why agents aren't available when they fail to load", () => {
+  const agents = host([], async () => []);
+  const failed = (error: string) => {
+    const snapshot = {
+      status: "error",
+      error,
+      agents: [],
+      running: [],
+    } as unknown as AgentsSnapshot;
+    return { ...agents, snapshot: () => snapshot };
+  };
+  const { rerender } = render(
+    <UsagePage
+      agents={failed("Agent keys couldn’t be read.")}
+      open={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Agents aren’t available")).toBeTruthy();
+  expect(screen.getByText("Agent keys couldn’t be read.")).toBeTruthy();
+  // An error with no message still says what to do.
+  rerender(<UsagePage agents={failed("")} open={vi.fn()} />);
+  expect(screen.getByText("Try again in a moment.")).toBeTruthy();
 });

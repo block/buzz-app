@@ -1,5 +1,12 @@
 import { expect } from "@playwright/test";
 
+export async function clickSidebarHeadingAction(action) {
+  // The heading must reveal its actions before the pointer can enter them.
+  const section = action.locator("xpath=ancestor::*[@data-sidebar-section][1]");
+  await section.locator("summary").first().hover();
+  await action.click();
+}
+
 export async function pageChoices(page, query = "") {
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
@@ -11,6 +18,14 @@ export async function pageChoices(page, query = "") {
   );
 }
 
+// Activity is a row at the top of the Messages sidebar; its name ends with its
+// unread count while conversations are unread.
+export function activityRow(page) {
+  return page
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: /^Activity(?: \d+ unread)?$/ });
+}
+
 export async function openPage(page, name, { connected = true } = {}) {
   // The community switcher appears after local startup has replaced the launch view.
   await expect(
@@ -20,14 +35,49 @@ export async function openPage(page, name, { connected = true } = {}) {
   await selectPage(page, name, { connected });
 }
 
-// A Solo chat is not a page: New → New chat opens a Solo draft in Messages.
+// The sidebar's floating New button hosts the New options menu.
 export async function newChat(page) {
   // The community switcher appears after local startup has replaced the launch view.
   await expect(
     page.getByRole("button", { name: /^Community switcher:/ }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await openPage(page, "Messages");
+  // The narrow drawer retains its startup owner while hidden from the AX tree.
+  const sidebar = page.locator('aside[aria-label="Sidebar"]');
+  await expect(sidebar).not.toHaveAttribute("data-buzz-launch-pending");
+  await expect(sidebar).not.toHaveAttribute("aria-busy", "true");
+  if (page.viewportSize().width <= 650) {
+    await settleShellToggle(page);
+    const show = page.getByRole("button", {
+      name: "Show navigation",
+      exact: true,
+    });
+    if (await show.isVisible()) await show.click();
+  }
+  const options = page.getByRole("button", {
+    name: "New options",
+    exact: true,
+  });
+  await options.focus();
+  await options.press("Enter");
   await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
+}
+
+// The agents-only composer pill's menu adds and removes agents, never the
+// last, and stays open: add this agent, drop the rest, then dismiss it, which
+// returns typing to the draft.
+export async function sendOnlyTo(page, pill, agent) {
+  await pill.click();
+  const menu = page.getByRole("dialog", { name: "Mention a member or agent" });
+  // A row's name no longer spells out its key; the row carries it instead.
+  const chosen = `[data-mention-choice="${agent.pubkey}"]`;
+  const row = menu.getByRole("button").and(page.locator(chosen));
+  if ((await row.getAttribute("aria-pressed")) !== "true") await row.click();
+  await expect(row).toHaveAttribute("aria-pressed", "true");
+  const others = menu.locator(`[aria-pressed="true"]:not(${chosen})`);
+  while (await others.count()) await others.first().click();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
 }
 
 // Select from an already-open palette, including tests that inspect page order.
@@ -41,7 +91,13 @@ export async function selectPage(page, name, { connected = true } = {}) {
   await expect(
     dialog.getByText("Connecting to this community…", { exact: true }),
   ).toHaveCount(connected ? 0 : 1);
-  await input.fill(name);
+  // On CI's Linux WebKit, startup work can drop the inserted text while the
+  // field stays focused and empty. Re-typing the name is idempotent; the
+  // selection below is never retried.
+  await expect(async () => {
+    await input.fill(name);
+    await expect(input).toHaveValue(name, { timeout: 1000 });
+  }).toPass({ timeout: 10_000 });
   const choice = pageChoice(
     dialog.locator(
       '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',
@@ -55,6 +111,8 @@ export async function selectPage(page, name, { connected = true } = {}) {
   // selection follows the choice itself, not its position.
   const id = await choice.getAttribute("id");
   const limit = await dialog.locator("[role=option], [role=row]").count();
+  // Establish keyboard modality without stepping past a preselected target.
+  await input.press("ArrowUp");
   for (
     let step = 0;
     (await input.getAttribute("aria-activedescendant")) !== id;
@@ -67,6 +125,16 @@ export async function selectPage(page, name, { connected = true } = {}) {
   }
   await input.press("Enter");
   await expect(dialog).not.toBeVisible();
+}
+
+// Activate a control by keyboard when the test is about the action, not
+// pointer hit testing: a click released after the control moved (a timeline's
+// re-pin after opening a thread, Virtua's pointer hold, a list's layout
+// motion) reaches whatever is under the pointer instead.
+export async function activate(control) {
+  await control.focus();
+  await expect(control).toBeFocused();
+  await control.press("Enter");
 }
 
 // The shell toggle's label follows a matchMedia change listener in AppShell,
@@ -129,23 +197,33 @@ export async function chooseColorMode(page, name) {
   await expect(choice).toHaveText(name);
 }
 
-// Secondary panels enter with a short horizontal transform. Positions compared
-// across separate reads must wait for that motion: each read sees a different
-// offset, so a fixed gap between two controls can appear to overlap.
+// Secondary panels enter with a transform and a parent grid transition.
+// Positions compared across separate reads must wait for both: each read sees
+// a different offset, so a fixed gap between controls can appear to overlap.
+// A covered tab skips rendering (content-visibility: hidden), so an animation
+// inside it, such as a loading mark's fade, does not advance until the tab is
+// shown again. It cannot move anything on screen, so it is not waited for.
 export async function settlePanelMotion(page) {
-  await page.locator("[data-panel-dock]").evaluateAll((docks) =>
-    Promise.allSettled(
-      docks.flatMap((dock) =>
-        dock
-          .getAnimations({ subtree: true })
-          .filter(
-            (animation) =>
-              animation.effect?.getComputedTiming().endTime !== Infinity,
-          )
-          .map((animation) => animation.finished),
+  await page
+    .locator("[data-panel-dock]")
+    .evaluateAll((docks) =>
+      Promise.allSettled(
+        docks.flatMap((dock) =>
+          [
+            ...dock.getAnimations({ subtree: true }),
+            ...(dock.parentElement?.getAnimations() ?? []),
+          ]
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().endTime !== Infinity &&
+                !animation.effect?.target?.closest?.(
+                  "[data-covered]:not([data-leaving])",
+                ),
+            )
+            .map((animation) => animation.finished),
+        ),
       ),
-    ),
-  );
+    );
 }
 
 // Dialogs enter with a short upward transform (overlays.css). Positions
@@ -170,20 +248,32 @@ export async function openCommunityPicker(page) {
   return picker;
 }
 
+/** The switcher trigger for `name`, with or without the elsewhere-unread suffix. */
+export function communitySwitcher(page, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return page.getByRole("button", {
+    name: new RegExp(
+      `^Community switcher: ${escaped}(, unread in other communities)?$`,
+    ),
+  });
+}
+
 export async function selectCommunity(page, name) {
   const picker = await openCommunityPicker(page);
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // A row's name carries its unread suffix once that community's unread is known.
   await picker
     .getByRole("button", {
-      name: name === "Personal space" ? name : `Switch to ${name}`,
+      name:
+        name === "Personal space"
+          ? name
+          : new RegExp(
+              `^Switch to ${escaped}(, unread|, \\d+ items? needs? you)?$`,
+            ),
       exact: true,
     })
     .click();
-  await expect(
-    page.getByRole("button", {
-      name: `Community switcher: ${name}`,
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(communitySwitcher(page, name)).toBeVisible();
 }
 
 export function pageChoice(group, name) {

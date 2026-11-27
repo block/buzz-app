@@ -1,3 +1,5 @@
+import { createGifShortcut } from "./gif-shortcut";
+import { createAddEmoji } from "./add-emoji";
 import { EmojiCompletion } from "./EmojiCompletion";
 import { emojiQuery } from "./emoji-query";
 import type { PluginModule } from "../../plugins/api";
@@ -21,6 +23,18 @@ const entries = (content: InlineContent) =>
       : []
     : (content.message.emoji ?? []);
 export const apply: PluginModule["apply"] = (ctx) => {
+  const gifShortcut = createGifShortcut();
+  const addEmoji = createAddEmoji();
+  ctx.inject(["shortcuts"], (scope) => {
+    scope.shortcuts.register({
+      id: "gif-picker",
+      title: "Open GIF picker",
+      binding: { key: "g", mod: true },
+      allowInEditable: true,
+      when: gifShortcut.available,
+      run: gifShortcut.run,
+    });
+  });
   // Authoring needs a relay host; conversation-only hosts still get the palette.
   ctx.inject(["relay", "settingsCards"], (scope) => {
     const relay = scope.relay;
@@ -32,6 +46,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
         <CustomEmojiSettings relay={relay} active={active} />
       ),
     });
+  });
+  // The pickers link to that card only where it exists and can be opened.
+  ctx.inject(["relay", "settingsCards", "navigation"], (scope) => {
+    const section = `${ctx.pluginOwner?.id ?? "buzz.emoji"}/custom-emoji`;
+    scope.effect(() =>
+      addEmoji.provide(
+        () =>
+          void scope.navigation.open({ version: 1, kind: "settings", section }),
+      ),
+    );
   });
   ctx.effect(() => {
     if (typeof document === "undefined") return () => {};
@@ -48,7 +72,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerTool({
     id: "picker",
     title: "Emoji",
-    reactionComponent: createReactionPicker(),
+    reactionComponent: createReactionPicker(addEmoji),
     component: ({
       session,
       scope,
@@ -56,6 +80,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       insertText,
     }: ComposerToolProps) => (
       <EmojiPicker
+        gifShortcut={gifShortcut}
+        addEmoji={addEmoji}
         session={session}
         scope={scope}
         disabled={disabled}

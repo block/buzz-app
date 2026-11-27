@@ -1,8 +1,11 @@
 // NIP-AP config history (plan §7): offset pages of one artifact's revisions,
 // every chain segment they form, the cause of each gap, diffs and revert.
 // Display only: history never decides artifact state (§3.2).
+import { notesOf } from "./plugin-notes";
+import { retryRead } from "../relay/read-retry";
 import type { EventData, RelayEvent } from "../relay/events";
 import { type SettingsSchema, syncedSettings } from "./agent-config";
+import { routedSettings } from "./synced-route";
 import {
   ARTIFACT_KIND,
   artifactOp,
@@ -12,6 +15,7 @@ import {
   type Expected,
   type SnapshotRead,
 } from "./agent-config-artifacts";
+import type { ConfigHistory } from "./service";
 
 /** Revisions per page: well under the relay's 1,000 so each "Load older"
  * stays a short list. The offset ceiling is the relay's (`buzz-core`
@@ -35,6 +39,59 @@ export const emptyHistory: History = {
   failed: false,
 };
 
+/** Preserve the open agent's two loaded tracks across presentation remounts.
+ * The reader is session-scoped; changed heads or redaction versions never reuse
+ * old pages. Keeping only two artifacts bounds retention to one agent's feed. */
+type LoadedHistory = {
+  channel: string;
+  d: string;
+  head: string | undefined;
+  version: number | undefined;
+  history: History;
+};
+const loadedHistories = new WeakMap<SnapshotRead, LoadedHistory[]>();
+export function recalledHistory(
+  read: SnapshotRead,
+  expected: Expected,
+  head: RelayEvent | undefined,
+  version?: number,
+) {
+  return loadedHistories
+    .get(read)
+    ?.find(
+      (value) =>
+        value.channel === expected.channel &&
+        value.d === expected.d &&
+        value.head === head?.id &&
+        value.version === version,
+    )?.history;
+}
+export function rememberHistory(
+  read: SnapshotRead,
+  expected: Expected,
+  head: RelayEvent | undefined,
+  version: number | undefined,
+  history: History,
+) {
+  if (!history.next) return;
+  const others = (loadedHistories.get(read) ?? []).filter(
+    (value) => value.channel !== expected.channel || value.d !== expected.d,
+  );
+  loadedHistories.set(
+    read,
+    [
+      {
+        channel: expected.channel,
+        d: expected.d,
+        head: head?.id,
+        version,
+        history,
+      },
+      ...others,
+    ].slice(0, 2),
+  );
+}
+
 /** Reads the next page. Revisions accepted since the last page shift offsets,
  * so repeats are dropped by event ID. A failed page keeps what was loaded.
  * Every page names the channel in `#h`: the relay leaves system channels out
@@ -49,18 +106,23 @@ export async function loadOlder(
   if (history.done || history.next > HISTORY_MAX_OFFSET)
     return { ...history, failed: false };
   try {
-    const page = await read(
-      [
-        {
-          kinds: [ARTIFACT_KIND],
-          "#h": [channel],
-          "#d": [d],
-          artifact: "history",
-          limit: HISTORY_PAGE,
-          offset: history.next,
-        },
-      ],
-      { signal },
+    const active = signal ?? new AbortController().signal;
+    const page = await retryRead(
+      (signal) =>
+        read(
+          [
+            {
+              kinds: [ARTIFACT_KIND],
+              "#h": [channel],
+              "#d": [d],
+              artifact: "history",
+              limit: HISTORY_PAGE,
+              offset: history.next,
+            },
+          ],
+          { signal },
+        ),
+      active,
     );
     const seen = new Set(history.revisions.map((event) => event.id));
     return {
@@ -191,8 +253,14 @@ export type FieldChange = Readonly<{
 
 /** Settings fields that differ between two `buzz.agent.settings` revisions. */
 export function settingsDiff(before: string, after: string): FieldChange[] {
-  const fields = (content: string) =>
-    (parse(content)?.settings ?? {}) as Record<string, unknown>;
+  // A route shows as the model it is in a config.
+  const fields = (content: string) => {
+    const body = parse(content) ?? {};
+    return routedSettings(
+      body,
+      (body.settings ?? {}) as Record<string, string>,
+    ) as Record<string, unknown>;
+  };
   const a = fields(before);
   const b = fields(after);
   return [...new Set([...Object.keys(a), ...Object.keys(b)])]
@@ -241,22 +309,36 @@ export function revisionProblem(
   return "problem" in checked ? checked.problem : undefined;
 }
 
+export function incompatibleSettings(history: ConfigHistory | undefined) {
+  const track = history?.sides.find(({ side }) => side === "settings");
+  return Boolean(
+    !history?.settingsProblem &&
+      history?.settings &&
+      track?.head &&
+      artifactOp(track.head) !== "delete" &&
+      revisionProblem(track.expected, track.head, history.settings),
+  );
+}
+
 const ENVELOPE = new Set(["ar", "d", "h", "type", "title", "op", "prev"]);
 
-/** Revert: a new `op=update` whose content is `target`'s snapshot and whose
- * `prev` is the current head. A team keeps its current name. Never redacts.
- * Only a valid snapshot is republished (NIP-AP); an invalid head is what a
- * revert repairs, so its name, title and client tags are kept only when the
- * head itself is valid. */
+/** Revert: a new revision whose content is `target`'s snapshot and whose
+ * `prev` is the current head: `op=update`, or `op=restore` over a deleted
+ * head. A team keeps its current name. Never redacts. Only a valid snapshot
+ * is republished (NIP-AP); an invalid or deleted head is what a revert
+ * repairs, so its name, title and client tags are kept only when the head
+ * itself is valid. */
 export function revertTemplate(
   expected: Expected,
   head: RelayEvent,
   target: RelayEvent,
   settings?: SettingsCheck,
 ) {
-  if (artifactOp(head) === "delete" || artifactOp(target) === "delete")
-    throw new Error("A deleted revision can't be reverted");
-  const base = revisionProblem(expected, head, settings) ? target : head;
+  if (artifactOp(target) === "delete")
+    throw new Error("A deleted revision can't be reverted to");
+  const restore = artifactOp(head) === "delete";
+  const base =
+    restore || revisionProblem(expected, head, settings) ? target : head;
   const title = base.tags.find((t) => t[0] === "title")?.[1] ?? "";
   let content = target.content;
   if (expected.type === "buzz.team")
@@ -264,9 +346,19 @@ export function revertTemplate(
       ...parse(target.content),
       name: parse(base.content)?.name,
     });
+  // Going back keeps the head's plugin notes: a plugin's memory of the agent
+  // isn't a setting to undo.
+  const reverted = parse(content);
+  if (expected.type === "buzz.agent.settings" && reverted) {
+    const { pluginNotes: _, ...rest } = reverted;
+    // A deleted or unreadable head has none to keep: the target's stay.
+    const current = restore ? undefined : parse(head.content);
+    const notes = notesOf(current ?? reverted);
+    content = JSON.stringify(notes ? { ...rest, pluginNotes: notes } : rest);
+  }
   const template = artifactTemplate({
     ...expected,
-    op: "update",
+    op: restore ? "restore" : "update",
     title,
     content,
     prev: head.id,

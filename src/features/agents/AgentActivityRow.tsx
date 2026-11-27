@@ -41,12 +41,16 @@ export function AgentActivityRow({
           <span className={styles.activityTimestamp}>{meta}</span>
         )}
       </span>
-      <span className={styles.activityItemMeta}>{status}</span>
-      {scope && (
-        <span className={styles.activityScope} title={scope}>
-          {scope}
-        </span>
-      )}
+      {/* One clipped line: the hint keeps a cut-off scope readable. */}
+      <span className={styles.activityItemMeta} title={scope || undefined}>
+        <span>{status}</span>
+        {scope && (
+          <>
+            {" "}
+            · <span>{scope}</span>
+          </>
+        )}
+      </span>
     </span>
   );
   return (

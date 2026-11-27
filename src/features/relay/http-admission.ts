@@ -23,6 +23,7 @@ export class ApiCapacity extends ApiNotSent {
 }
 export type ApiFailure = Readonly<{
   error: string;
+  code?: string;
   quota?: "api";
   paused?: true;
   retryAfterMs?: number;
@@ -30,7 +31,101 @@ export type ApiFailure = Readonly<{
   /** A relay-shaped 401/403. An edge or proxy page (for example a VPN still
    * reconnecting) has the same status but is not the relay's answer. */
   denied?: true;
+  /** The relay refused this account at its front door, for every request in
+   * the community, not one item: its sign-in ended or it has no access. */
+  admission?: CommunityRefusal;
 }>;
+export type CommunityRefusal = "sign-in" | "access";
+/** The development broker's mark on a response whose relay request the
+ * community refused (`relay-broker.mjs`). */
+export const BROKER_REFUSAL_HEADER = "x-buzz-refusal";
+/** The relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`): plain
+ * text with one trailing LF, decided before any route. Exact bytes and status
+ * only; any other text, such as an edge proxy's page, stays untrusted. Each maps
+ * to its Nostr wording so logs and the broker's JSON carry the same reason.
+ * `authorization unavailable` (503) is an outage and stays one. */
+const COMMUNITY_REFUSALS: ReadonlyMap<
+  string,
+  { status: number; error: string; admission: CommunityRefusal }
+> = new Map([
+  [
+    "authentication required\n",
+    {
+      status: 401,
+      error: "auth-required: authentication required",
+      admission: "sign-in",
+    },
+  ],
+  [
+    "evidence rejected\n",
+    {
+      status: 403,
+      error: "restricted: evidence rejected",
+      admission: "sign-in",
+    },
+  ],
+  [
+    "authorization denied\n",
+    {
+      status: 403,
+      error: "restricted: authorization denied",
+      admission: "access",
+    },
+  ],
+]);
+/** A community without NIP-FI refuses a key it doesn't admit with JSON, before
+ * any route (buzz-relay `api/mod.rs` `admit_member`): one that isn't a member,
+ * or one it banned. Its media routes refuse both with their own spelling
+ * (buzz-relay `api/media.rs` `membership_denial`). Exact status and `error`
+ * only, keyed by that `error`. */
+const MEMBERSHIP_REFUSALS: ReadonlyMap<
+  string,
+  { status: number; error: string; admission: CommunityRefusal }
+> = new Map([
+  [
+    "relay_membership_required",
+    {
+      status: 403,
+      error: "restricted: not a relay member",
+      admission: "access",
+    },
+  ],
+  [
+    "relay membership required",
+    {
+      status: 403,
+      error: "restricted: not a relay member",
+      admission: "access",
+    },
+  ],
+  [
+    "blocked: you are banned from this community",
+    {
+      status: 403,
+      error: "blocked: you are banned from this community",
+      admission: "access",
+    },
+  ],
+]);
+const REFUSALS = [
+  ...COMMUNITY_REFUSALS.values(),
+  ...MEMBERSHIP_REFUSALS.values(),
+];
+/** The refusal a read's error reports, when it was the relay's community-wide
+ * one (its `ApiFailure.error`): a refusal met while connecting. */
+export function refusalOfError(error: unknown): CommunityRefusal | undefined {
+  const text = error instanceof Error ? error.message : String(error);
+  return REFUSALS.find((refusal) => refusal.error === text)?.admission;
+}
+/** Native classifies the same bodies in `relay.rs` (`community_refusal`). */
+function communityRefusal(
+  status: number,
+  text: string,
+): ApiFailure | undefined {
+  const refusal = COMMUNITY_REFUSALS.get(text);
+  if (!refusal || refusal.status !== status) return undefined;
+  return { error: refusal.error, denied: true, admission: refusal.admission };
+}
 const MAX_ERROR_BYTES = 4096;
 /** Only a correlated relay quota reason becomes a shared API cooldown. Local
  * broker concurrency 429 and arbitrary response text must not impersonate it. */
@@ -74,6 +169,24 @@ export function apiFailure(status: number, value: unknown): ApiFailure {
     "Live stream capacity reached",
     "Relay unreachable",
   ];
+  // A community's own membership refusal, or one the broker already classified
+  // and forwarded as JSON.
+  const member = MEMBERSHIP_REFUSALS.get(reason);
+  const forwarded =
+    member?.status === status
+      ? member
+      : REFUSALS.find(
+          (refusal) =>
+            refusal.status === status &&
+            refusal.error === reason &&
+            refusal.admission === body.admission,
+        );
+  if (forwarded)
+    return {
+      error: forwarded.error,
+      denied: true,
+      admission: forwarded.admission,
+    };
   return {
     error: known.includes(reason) ? reason : `Relay request failed (${status})`,
     ...(body.sent === false ? { sent: false } : {}),
@@ -84,7 +197,10 @@ export function apiFailure(status: number, value: unknown): ApiFailure {
  * `reason` may keep an exact, caller-allowed upstream refusal from that body. */
 export async function readApiFailure(
   response: Response,
-  reason?: (body: unknown) => string | undefined,
+  reason?: (
+    body: unknown,
+    status: number,
+  ) => string | Pick<ApiFailure, "error" | "code"> | undefined,
 ): Promise<ApiFailure> {
   if (!response.body) return apiFailure(response.status, undefined);
   const reader = response.body.getReader();
@@ -105,11 +221,19 @@ export async function readApiFailure(
     try {
       body = JSON.parse(text);
     } catch {
-      return apiFailure(response.status, undefined);
+      return (
+        communityRefusal(response.status, text) ??
+        apiFailure(response.status, undefined)
+      );
     }
     const failure = apiFailure(response.status, body);
-    const allowed = failure.quota ? undefined : reason?.(body);
-    return allowed ? { ...failure, error: allowed } : failure;
+    const allowed = failure.quota ? undefined : reason?.(body, response.status);
+    return allowed
+      ? {
+          ...failure,
+          ...(typeof allowed === "string" ? { error: allowed } : allowed),
+        }
+      : failure;
   } finally {
     await reader.cancel().catch(() => {});
     reader.releaseLock();
@@ -117,19 +241,27 @@ export async function readApiFailure(
 }
 
 type Ticket = {
-  priority: "foreground" | "background";
+  priority: "foreground" | "background" | "artifact";
   signal?: AbortSignal | undefined;
   start(): void;
   reject(error: Error): void;
   abort(): void;
 };
-/** One host/principal API lane, bounded like the broker's six-request ceiling.
+/** Requests one API lane runs at once, like the browser broker's ceiling. */
+export const API_ACTIVE_LIMIT = 10;
+/** One host/principal API lane, bounded like the broker's ten-request ceiling.
  * Available capacity dispatches immediately; only server cooldowns pause starts.
  * Cooldowns reject queued work rather than spending a read's 10s deadline. */
 export function createApiAdmission() {
+  const activeLimit = API_ACTIVE_LIMIT;
+  const artifactActiveLimit = 4;
+  const queuedLimit = 128;
+  const artifactQueuedLimit = 120;
   let pausedUntil = 0,
     active = 0,
+    activeArtifacts = 0,
     preparing = 0,
+    preparingArtifacts = 0,
     presenceBusy = false,
     presenceNext = 0;
   const queue: Ticket[] = [];
@@ -149,8 +281,14 @@ export function createApiAdmission() {
       }
       return;
     }
-    while (active < 6 && queue.length) {
-      const ticket = queue.find((t) => t.priority === "foreground") ?? queue[0];
+    while (active < activeLimit && queue.length) {
+      const ticket =
+        queue.find((entry) => entry.priority === "foreground") ??
+        queue.find(
+          (entry) =>
+            entry.priority !== "artifact" ||
+            activeArtifacts < artifactActiveLimit,
+        );
       if (!ticket) return;
       remove(ticket);
       ticket.start();
@@ -174,14 +312,24 @@ export function createApiAdmission() {
     /** Retain bounded ownership across asynchronous auth and its final dispatch.
      * A cancelled unabortable signer keeps its slot until it settles: repeatedly
      * cancelling must not admit an unbounded number of outstanding sign prompts. */
-    async prepare<T>(work: () => Promise<T>): Promise<T> {
+    async prepare<T>(
+      work: () => Promise<T>,
+      priority: Ticket["priority"] = "foreground",
+    ): Promise<T> {
       if (performance.now() < pausedUntil) throw pauseError();
-      if (preparing >= 128) throw new ApiCapacity();
+      const artifact = priority === "artifact";
+      if (
+        preparing >= queuedLimit ||
+        (artifact && preparingArtifacts >= artifactQueuedLimit)
+      )
+        throw new ApiCapacity();
       preparing++;
+      if (artifact) preparingArtifacts++;
       try {
         return await work();
       } finally {
         preparing--;
+        if (artifact) preparingArtifacts--;
       }
     },
     idle: () =>
@@ -205,15 +353,22 @@ export function createApiAdmission() {
     ): Promise<T> {
       if (signal?.aborted) return Promise.reject(signal.reason);
       if (performance.now() < pausedUntil) return Promise.reject(pauseError());
-      if (queue.length >= 128) return Promise.reject(new ApiCapacity());
+      const artifact = priority === "artifact";
+      if (
+        queue.length >= queuedLimit ||
+        (artifact && queue.length >= artifactQueuedLimit)
+      )
+        return Promise.reject(new ApiCapacity());
       return new Promise((resolve, reject) => {
         const ticket: Ticket = {
           priority,
           signal,
           start() {
             active++;
+            if (artifact) activeArtifacts++;
             const finish = () => {
               active--;
+              if (artifact) activeArtifacts--;
               pump();
             };
             try {
@@ -248,14 +403,24 @@ export async function admittedApiRequest(
   request: () => Promise<Response>,
   signal?: AbortSignal,
   priority: Ticket["priority"] = "foreground",
-  reason?: (body: unknown) => string | undefined,
+  reason?: (
+    body: unknown,
+    status: number,
+  ) => string | Pick<ApiFailure, "error" | "code"> | undefined,
+  migrationWrite = false,
 ): Promise<Response> {
   return lane.run(
     async () => {
       const response = await request();
       if (response.ok) return response;
       const failure = await readApiFailure(response, reason);
-      if (failure.quota === "api" && failure.retryAfterMs !== undefined)
+      // The relay adds Retry-After to the migration budget's refusals. The
+      // shared API quota response has no such header, even for a tagged write.
+      if (
+        failure.quota === "api" &&
+        failure.retryAfterMs !== undefined &&
+        !(migrationWrite && response.headers.has("retry-after"))
+      )
         lane.pause(failure.retryAfterMs);
       const headers = new Headers(response.headers);
       headers.delete("content-length");

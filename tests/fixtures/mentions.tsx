@@ -1,10 +1,13 @@
+import { hostComposerProvenance } from "../../src/features/messages/mention-draft";
+import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { AgentSettings } from "../../src/app/AgentSettings";
-import { StrictMode, useState, useLayoutEffect } from "react";
+import { StrictMode, useEffect, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
 import { Context } from "@deepseek-ai/cordis";
+import { emptySync } from "../../src/features/communities/known-communities";
 import { createPluginManager } from "../../src/plugins/manager";
 import { PagesService } from "../../src/features/pages/service";
 import { PanelsService } from "../../src/features/panels/service";
@@ -13,6 +16,8 @@ import { SettingsCardsService } from "../../src/features/settings/service";
 import { provideNavigation } from "../../src/features/navigation/service";
 import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
+import { mentionQuery } from "../../src/bundled/mentions/mention-query";
+import { conversationFeatures } from "../../src/app/conversation-features";
 import { bindNames } from "../../src/features/identity-names/service";
 import { createAgentDirectory } from "../../src/features/identity-names/testing";
 import { createRelaySession } from "../../src/features/relay/session";
@@ -25,6 +30,7 @@ import {
   profile,
   message,
   signed,
+  bounds,
 } from "../../src/features/relay/testing";
 import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
@@ -38,6 +44,20 @@ const viewer = keypair(),
 let members = [viewer.pubkey, first.pubkey, second.pubkey];
 let time = 1700000000;
 const publications: RelayEvent[] = [];
+// Channel history the viewer wrote elsewhere, read like the relay's own.
+const history: RelayEvent[] = [];
+const invocation = (() => {
+  if (!new URLSearchParams(location.search).has("invocation")) return;
+  const root = message(first, "c", "Physical thread", ++time);
+  const anchor = message(first, "c", "Invocation", ++time, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const sibling = message(first, "c", "Sibling invocation", ++time, [
+    ["e", root.id, "", "reply"],
+  ]);
+  history.push(root, anchor, sibling);
+  return { rootId: root.id, anchorId: anchor.id, siblingId: sibling.id };
+})();
 let replaceRecipients = (
   _people: readonly { pubkey: string; name: string }[],
 ): boolean => false;
@@ -73,6 +93,7 @@ const secondProfile = () =>
   );
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const testControls = new URLSearchParams(location.search).has("test-controls");
+const supplement = new URLSearchParams(location.search).get("supplement");
 const channels = new URLSearchParams(location.search).has("channels");
 const stream = new URLSearchParams(location.search).has("stream");
 // Opt-in roster scale for local typing diagnostics; ordinary journeys keep two channels.
@@ -225,8 +246,9 @@ const owner = createRelaySession(
           ...extraChannels,
           ...openChannels,
           ...publications,
+          ...history,
         ];
-        return events.filter((event) =>
+        const matched = events.filter((event) =>
           filters.some((filter) => {
             const { search, search_mode: _mode, ...ordinary } = filter;
             // Name-prefix directory search, like the relay's prefix mode.
@@ -240,6 +262,17 @@ const owner = createRelaySession(
             );
           }),
         );
+        // Seeded history ends the channel's window: nothing older remains.
+        return history.length &&
+          filters.some((filter) => filter["#h"]?.includes("c"))
+          ? [
+              ...matched,
+              bounds(relay, "c", "head", {
+                has_more: false,
+                next_cursor: null,
+              }),
+            ]
+          : matched;
       } finally {
         pendingReads--;
       }
@@ -306,13 +339,60 @@ const disabledCalls: {
 }[] = [];
 const plugins = createPluginManager(context, {
   bundled: [
-    ...bundledPlugins.filter(({ manifest }) =>
-      [
-        "buzz.emoji",
-        "buzz.mentions",
-        ...(channels ? ["buzz.channels", "buzz.links"] : []),
-      ].includes(manifest.id),
+    // This harness deliberately makes the real providers optional to exercise
+    // contribution removal and stale callbacks. The app always loads them.
+    ...conversationFeatures,
+    ...bundledPlugins.filter(
+      ({ manifest }) =>
+        channels && ["buzz.channels", "buzz.links"].includes(manifest.id),
     ),
+    ...(supplement !== null
+      ? [
+          {
+            manifest: {
+              id: "test.crew",
+              name: "Crew supplement",
+              apiVersion: 1,
+            },
+            module: {
+              inject: ["conversation"],
+              apply(ctx) {
+                ctx.conversation.registerCompletionSupplement({
+                  id: "crew",
+                  title: "Crews",
+                  order: supplement === "hold" ? -20 : 10,
+                  match: ({ text, start }) => mentionQuery(text, start),
+                  component: ({ publish }) => {
+                    useEffect(() => {
+                      if (supplement === "silent") return;
+                      return (
+                        publish({
+                          items: [
+                            {
+                              id: "crew",
+                              label: "Honey crew",
+                              edit: {
+                                mentions: [
+                                  { pubkey: first.pubkey, name: "Honey" },
+                                  { pubkey: second.pubkey, name: "Honey" },
+                                ],
+                              },
+                            },
+                          ],
+                          ...(supplement === "hold"
+                            ? { holdAutoSelect: true }
+                            : {}),
+                        }) || undefined
+                      );
+                    }, [publish]);
+                    return null;
+                  },
+                });
+              },
+            },
+          },
+        ]
+      : []),
     {
       manifest: {
         id: "test.disabled-command",
@@ -368,6 +448,19 @@ if (channels) {
   provideNavigation(context);
   // Channels requires Agents for its page/settings, neither mounted here.
   context.provide("agents", {});
+  context.provide("communityReader", {
+    subscribe: () => () => {},
+    snapshot: () => ({
+      status: "unavailable",
+      relayAvailable: false,
+      profile: { name: "", picture: "" },
+      memberships: [],
+      selected: null,
+      sync: emptySync(),
+    }),
+  });
+  // Channels hands community membership to its page for the auto-join switch; no roster here.
+  context.provide("adminAccess", { membership: undefined });
   // Only the composer is mounted; the Channels page never consumes this service.
   context.provide("relay", {
     snapshot: () => ({ session: namedSession }),
@@ -386,7 +479,17 @@ Object.assign(window, {
     outsider: outsider.pubkey,
     first: first.pubkey,
     second: second.pubkey,
+    invocation,
     publications,
+    ownerMention: (rootId: string | null) =>
+      owner.session.ownerMentions?.latest({ channelId: "c", rootId }),
+    confirmedOwnerSends: (rootId: string | null, eventIds: readonly string[]) =>
+      owner.session.ownerMentions?.confirmedOwnerSends(
+        { channelId: "c", rootId },
+        eventIds,
+      ),
+    programmaticOwnerSend: (rootId: string, text: string) =>
+      owner.session.messages.reply("c", rootId, text),
     replaceRecipients: (people: readonly { pubkey: string; name: string }[]) =>
       replaceRecipients(people),
     disabledCalls,
@@ -440,7 +543,9 @@ Object.assign(window, {
 function Fixture() {
   useKeyboardFocusVisibility();
   const [thread, setThread] = useState(false);
+  const [replyParent, setReplyParent] = useState(invocation?.anchorId);
   const [disabled, setDisabled] = useState(false);
+  const [focusRequest, setFocusRequest] = useState(0);
   return (
     <main
       style={
@@ -455,6 +560,14 @@ function Fixture() {
             }
       }
     >
+      {invocation && (
+        <button
+          type="button"
+          onClick={() => setReplyParent(publications[0]?.id)}
+        >
+          Reply to first invocation message
+        </button>
+      )}
       {testControls && (
         <>
           <button type="button" onClick={() => setThread(!thread)}>
@@ -473,10 +586,30 @@ function Fixture() {
           <button type="button" onClick={() => setDisabled(!disabled)}>
             Toggle disabled
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              // The viewer's latest message tagged an agent, as when the
+              // channel's history lands after its composer mounted.
+              const sent = message(viewer, "c", "@Honey hi", ++time, [
+                ["p", second.pubkey],
+              ]);
+              history.push(sent);
+              owner.session.channels.ensure("c");
+              incoming([sent]);
+            }}
+          >
+            Load history
+          </button>
+          <button type="button" onClick={() => setFocusRequest((n) => n + 1)}>
+            Focus composer
+          </button>
         </>
       )}
       <div style={{ width: "100%", maxWidth: 720 }}>
-        <conversation.ui.Composer
+        <MessageComposer
+          evidenceOwner={hostComposerProvenance}
+          extensions={conversation}
           disabled={disabled}
           session={namedSession}
           scope={
@@ -486,7 +619,16 @@ function Fixture() {
           }
           channelId="c"
           channelName="General"
-          {...(thread ? { threadRootId: "a".repeat(64) } : {})}
+          {...(focusRequest ? { focusRequest } : {})}
+          {...(invocation
+            ? {
+                threadRootId: invocation.anchorId,
+                sourceRootId: invocation.rootId,
+                replyParentId: replyParent,
+              }
+            : thread
+              ? { threadRootId: "a".repeat(64) }
+              : {})}
         />
       </div>
       {showSettings && <AgentSettings />}

@@ -97,7 +97,7 @@ test.describe("Solo layout", () => {
     await newChat(page);
     const workspace = page;
     const sidebar = page.getByRole("navigation", {
-      name: "Solo conversations",
+      name: "Subscribed channels",
     });
     const composer = workspace.getByRole("textbox", {
       name: "Message your agents",
@@ -135,7 +135,10 @@ test.describe("Solo layout", () => {
     await expectReachable();
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
     await expect(
-      workspace.getByRole("heading", { name: "Alpha", exact: true }),
+      workspace.getByRole("button", {
+        name: "Share access to Alpha",
+        exact: true,
+      }),
     ).toBeVisible();
     await expectReachable();
     // The selected chat's column uses nearly all of the conversation panel.

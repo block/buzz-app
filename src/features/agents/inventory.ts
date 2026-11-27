@@ -1,5 +1,6 @@
 import type { AgentLibrary, AgentLibraryReader } from "./library";
 import { definitionSlug } from "./relay-library";
+import { retryRead } from "../relay/read-retry";
 
 /** Preserve local names/artwork; add relay-only keys. Names never join identities. */
 export function combineInventory(
@@ -66,9 +67,16 @@ export function inventoryReader(
     const empty = { definitions: [], identities: [] };
     const [saved, remote] = await Promise.allSettled([
       local ? local(signal) : Promise.resolve(empty),
-      relay(signal),
+      // Only the relay source is a finite network read; it owns its retries.
+      retryRead(relay, signal),
     ]);
     signal.throwIfAborted();
+    for (const [source, result] of [
+      ["Local agent library", saved],
+      ["Relay agent inventory", remote],
+    ] as const)
+      if (result.status === "rejected")
+        console.warn(`${source} read failed`, result.reason);
     if (remote.status === "rejected" && (!local || saved.status === "rejected"))
       throw new Error("Agent inventory sources unavailable");
     const error =

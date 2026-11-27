@@ -1,54 +1,55 @@
 use super::*;
 use buzz_pairing::{crypto, PairingMessage};
-use nostr_pairing::{EventBuilder, JsonUtil, Keys, Kind, Tag};
+use nostr::event::{EventBuilder, FinalizeEvent, Kind, Tag};
+use nostr::key::Keys;
 
 fn message(keys: &Keys, source: &PairingSession, value: PairingMessage) -> Event {
-    let content = nostr_pairing::nips::nip44::encrypt(
+    raw(keys, source, serde_json::to_value(&value).unwrap())
+}
+fn raw(keys: &Keys, source: &PairingSession, value: serde_json::Value) -> Event {
+    let content = nostr::nips::nip44::encrypt(
         keys.secret_key(),
         &source.pubkey(),
-        serde_json::to_string(&value).unwrap(),
-        nostr_pairing::nips::nip44::Version::V2,
+        value.to_string(),
+        nostr::nips::nip44::Version::V2,
     )
     .unwrap();
     EventBuilder::new(Kind::Custom(buzz_pairing::session::KIND_PAIRING), content)
         .tags([Tag::public_key(source.pubkey())])
-        .sign_with_keys(keys)
+        .finalize(keys)
         .unwrap()
 }
+// Current phones still request the removed desktop-code-v1 confirmation and
+// fall back to checking entered digits against their SAS when desktop ignores it.
 fn entry() -> (Exchange, Keys, buzz_pairing::QrPayload, String) {
     let (session, qr) = PairingSession::new_source("wss://relay.test".into());
     let target = Keys::generate();
     let mut exchange = Exchange {
         session,
         payload: Some(Zeroizing::new("identity-fixture".into())),
-        code_entry: false,
     };
-    let offer = message(
+    let offer = raw(
         &target,
         &exchange.session,
-        PairingMessage::Offer {
-            session_id: hex::encode(crypto::derive_session_id(&qr.session_secret)),
-            version: 1,
-            confirmation: Some("desktop-code-v1".into()),
-        },
+        serde_json::json!({
+            "type": "offer",
+            "session_id": hex::encode(crypto::derive_session_id(&qr.session_secret)),
+            "version": 1,
+            "confirmation": "desktop-code-v1",
+        }),
     );
     let output = exchange.receive(&offer).unwrap();
-    assert!(matches!(
-        output.status,
-        Some(Status::Code {
-            code_entry: true,
-            ..
-        })
-    ));
-    assert_eq!(output.events.len(), 1);
-    let Some(Status::Code { code, .. }) = output.status else {
+    assert!(
+        output.events.is_empty(),
+        "desktop must not start code entry"
+    );
+    let Some(Status::Code { code }) = output.status else {
         panic!("missing code")
     };
     (exchange, target, qr, code)
 }
 fn proof(exchange: &Exchange, target: &Keys, qr: &buzz_pairing::QrPayload) -> Event {
-    let shared =
-        nostr_pairing::util::generate_shared_key(target.secret_key(), &qr.source_pubkey).unwrap();
+    let shared = crypto::ecdh_shared_x(target.secret_key(), &qr.source_pubkey).unwrap();
     let (_, sas) = crypto::derive_sas(&shared, &qr.session_secret);
     let hash = crypto::derive_transcript_hash(
         &crypto::derive_session_id(&qr.session_secret),
@@ -65,44 +66,21 @@ fn proof(exchange: &Exchange, target: &Keys, qr: &buzz_pairing::QrPayload) -> Ev
         },
     )
 }
-fn submission(exchange: &Exchange, target: &Keys, code: &str, attempt: u8) -> Event {
-    message(
-        target,
-        &exchange.session,
-        PairingMessage::CodeSubmit {
-            code: code.into(),
-            request_id: attempt.to_string(),
-        },
-    )
-}
 #[test]
-fn transcript_alone_never_exports_and_guess_budget_cannot_be_reset() {
+fn phone_messages_alone_never_export_the_identity() {
     let (mut exchange, target, qr, code) = entry();
-    assert!(exchange
-        .receive(&proof(&exchange, &target, &qr))
-        .unwrap()
-        .events
-        .is_empty());
-    assert!(exchange.payload.is_some());
-    let wrong = if code == "000000" { "000001" } else { "000000" };
-    for attempt in 1..=5 {
-        let event = submission(&exchange, &target, wrong, attempt);
+    let submission = raw(
+        &target,
+        &exchange.session,
+        serde_json::json!({ "type": "code-submit", "code": code, "request_id": "1" }),
+    );
+    for event in [proof(&exchange, &target, &qr), submission] {
         let output = exchange.receive(&event).unwrap();
-        assert_eq!(output.events.len(), 1);
+        assert!(output.events.is_empty());
+        assert_eq!(output.status, None);
         assert!(exchange.payload.is_some());
-        if attempt == 5 {
-            assert!(matches!(output.status, Some(Status::Error { .. })));
-        }
-        if attempt < 5 {
-            assert!(exchange.receive(&event).unwrap().events.is_empty());
-        } else {
-            assert!(exchange.receive(&event).is_err());
-        }
     }
-    assert!(exchange
-        .receive(&submission(&exchange, &target, &code, 6))
-        .is_err());
-    assert!(exchange.payload.is_some());
+    assert_eq!(exchange.session.state(), SessionState::Confirming);
 }
 #[test]
 fn timeout_preserves_possible_import_only_after_payload_publication() {
@@ -134,19 +112,13 @@ fn timeout_preserves_possible_import_only_after_payload_publication() {
     );
 }
 #[test]
-fn entry_requires_phone_proof_and_real_completion() {
-    let (mut exchange, target, qr, code) = entry();
-    assert!(
-        exchange.confirm().is_err(),
-        "desktop cannot bypass code entry"
-    );
-    let output = exchange
-        .receive(&submission(&exchange, &target, &code, 1))
-        .unwrap();
+fn desktop_confirmation_transfers_and_waits_for_real_completion() {
+    let (mut exchange, target, qr, _) = entry();
+    let output = exchange.confirm().unwrap();
     assert_eq!(output.status, Some(Status::Transferring));
     assert_eq!(output.events.len(), 2);
     let plain = Zeroizing::new(
-        nostr_pairing::nips::nip44::decrypt(
+        nostr::nips::nip44::decrypt(
             target.secret_key(),
             &qr.source_pubkey,
             &output.events[1].content,
@@ -168,24 +140,9 @@ fn entry_requires_phone_proof_and_real_completion() {
     );
 }
 #[test]
-fn mismatch_and_phone_import_failure_never_claim_success() {
-    let (mut exchange, target, _, code) = entry();
-    let wrong = message(
-        &target,
-        &exchange.session,
-        PairingMessage::CodeSubmit {
-            code: if code == "000000" { "000001" } else { "000000" }.into(),
-            request_id: "wrong".into(),
-        },
-    );
-    let rejection = exchange.receive(&wrong).unwrap();
-    assert_eq!(rejection.events.len(), 1);
-    assert_ne!(rejection.status, Some(Status::Transferring));
-    assert!(exchange.payload.is_some());
-    let (mut exchange, target, _qr, code) = entry();
-    exchange
-        .receive(&submission(&exchange, &target, &code, 1))
-        .unwrap();
+fn phone_import_failure_never_claims_success() {
+    let (mut exchange, target, _, _) = entry();
+    exchange.confirm().unwrap();
     let rejected = message(
         &target,
         &exchange.session,
@@ -200,14 +157,10 @@ fn legacy_phone_still_needs_explicit_desktop_confirmation() {
     let mut exchange = Exchange {
         session,
         payload: Some(Zeroizing::new("fixture".into())),
-        code_entry: false,
     };
     assert!(matches!(
         exchange.receive(&offer).unwrap().status,
-        Some(Status::Code {
-            code_entry: false,
-            ..
-        })
+        Some(Status::Code { .. })
     ));
     let output = exchange.confirm().unwrap();
     phone.handle_sas_confirm(&output.events[0]).unwrap();
@@ -373,7 +326,6 @@ fn mismatched_legacy_code_sends_user_denied_without_exporting() {
     let mut exchange = Exchange {
         session,
         payload: Some(Zeroizing::new("fixture".into())),
-        code_entry: false,
     };
     exchange.receive(&offer).unwrap();
     let event = exchange
@@ -388,14 +340,6 @@ fn mismatched_legacy_code_sends_user_denied_without_exporting() {
         "denial must not release the identity"
     );
     assert!(exchange.confirm().is_err());
-    let (mut code_entry, _, _, _) = entry();
-    assert!(code_entry
-        .session
-        .abort(AbortReason::UserDenied)
-        .unwrap()
-        .is_some());
-    assert_eq!(code_entry.session.state(), SessionState::Aborted);
-    assert!(code_entry.payload.is_some());
 }
 
 // Exercise the actual post-setup owner, not just PairingSession::abort.
@@ -432,7 +376,6 @@ async fn cancellation_notifies_a_known_peer_before_transfer_and_waits_for_teardo
         confirm: tx,
         status: Status::Code {
             code: "000000".into(),
-            code_entry: true,
         },
         payload_sent: false,
     });
@@ -468,10 +411,9 @@ async fn cancellation_notifies_a_known_peer_before_transfer_and_waits_for_teardo
         .unwrap();
     let json: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
     assert_eq!(json[0], "EVENT");
-    let event = Event::from_json(json[1].to_string()).unwrap();
+    let event = serde_json::from_value::<Event>(json[1].clone()).unwrap();
     let plaintext =
-        nostr_pairing::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content)
-            .unwrap();
+        nostr::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content).unwrap();
     assert!(matches!(
         serde_json::from_str::<PairingMessage>(&plaintext).unwrap(),
         PairingMessage::Abort {
@@ -482,9 +424,8 @@ async fn cancellation_notifies_a_known_peer_before_transfer_and_waits_for_teardo
 
 #[tokio::test]
 async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone() {
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::StreamExt;
     let (exchange, target, _, code) = entry();
-    let request = submission(&exchange, &target, &code, 1);
     let (socket, mut server) = local_sockets().await;
     let (tx, mut rx) = mpsc::channel(1);
     let manager = Pairing::default();
@@ -495,10 +436,7 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
         cancel: cancel.clone(),
         finished: finished.clone(),
         confirm: tx,
-        status: Status::Code {
-            code: code.clone(),
-            code_entry: true,
-        },
+        status: Status::Code { code },
         payload_sent: false,
     });
     let owner = manager.clone();
@@ -525,14 +463,7 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
         finished.cancel();
         result
     });
-    server
-        .send(tokio_tungstenite::tungstenite::Message::Text(
-            serde_json::json!(["EVENT", "pair", request])
-                .to_string()
-                .into(),
-        ))
-        .await
-        .unwrap();
+    decide(&manager, "live", Decision::Confirm).unwrap();
     let mut messages = vec![];
     for _ in 0..2 {
         let frame = tokio::time::timeout(Duration::from_secs(2), server.next())
@@ -542,9 +473,9 @@ async fn cancellation_after_transfer_closes_without_aborting_the_importing_phone
             .unwrap();
         let json: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
         assert_eq!(json[0], "EVENT");
-        let event = Event::from_json(json[1].to_string()).unwrap();
+        let event = serde_json::from_value::<Event>(json[1].clone()).unwrap();
         let plaintext =
-            nostr_pairing::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content)
+            nostr::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content)
                 .unwrap();
         messages.push(serde_json::from_str::<PairingMessage>(&plaintext).unwrap());
     }
@@ -607,7 +538,6 @@ fn denial_keeps_native_code_until_abort_has_finished() {
         confirm: tx,
         status: Status::Code {
             code: "123456".into(),
-            code_entry: false,
         },
         payload_sent: false,
     });
@@ -672,7 +602,6 @@ async fn delayed_subscription_expires_before_sidecar_connection_cap() {
         let mut exchange = Exchange {
             session,
             payload: Some(Zeroizing::new("fixture".into())),
-            code_entry: false,
         };
         let (_tx, mut rx) = mpsc::channel(1);
         exchange_until_deadline(
@@ -725,7 +654,6 @@ async fn early_connection_loss_is_error_before_publication_and_uncertain_after()
         let mut exchange = Exchange {
             session,
             payload: Some(Zeroizing::new("fixture".into())),
-            code_entry: false,
         };
         drop(server);
         let result = exchange_until_deadline(
@@ -759,9 +687,8 @@ async fn early_connection_loss_is_error_before_publication_and_uncertain_after()
 
 #[tokio::test]
 async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::StreamExt;
     let (exchange, target, _, code) = entry();
-    let request = submission(&exchange, &target, &code, 1);
     let (socket, mut server) = local_sockets().await;
     let (tx, mut rx) = mpsc::channel(1);
     let manager = Pairing::default();
@@ -772,16 +699,18 @@ async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
         cancel,
         finished,
         confirm,
-        status: Status::Code {
-            code: code.clone(),
-            code_entry: true,
-        },
+        status: Status::Code { code: code.clone() },
         payload_sent: false,
     };
     manager
-        .admit(attempt("live", cancel.clone(), finished.clone(), tx))
+        .admit(attempt(
+            "live",
+            cancel.clone(),
+            finished.clone(),
+            tx.clone(),
+        ))
         .unwrap();
-    // The payload is prepared and waits only for the phone's code.
+    // The payload is prepared and waits only for desktop confirmation.
     manager.close();
     let owner = manager.clone();
     let task = tokio::spawn(async move {
@@ -804,22 +733,15 @@ async fn sign_out_blocks_a_prepared_payload_and_any_later_attempt() {
         finished.cancel();
         result
     });
-    server
-        .send(tokio_tungstenite::tungstenite::Message::Text(
-            serde_json::json!(["EVENT", "pair", request])
-                .to_string()
-                .into(),
-        ))
-        .await
-        .unwrap();
+    tx.send(Decision::Confirm).await.unwrap();
     while let Ok(Some(Ok(frame))) =
         tokio::time::timeout(Duration::from_millis(500), server.next()).await
     {
         let Ok(text) = frame.to_text() else { continue };
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
-        let event = Event::from_json(json[1].to_string()).unwrap();
+        let event = serde_json::from_value::<Event>(json[1].clone()).unwrap();
         let plaintext =
-            nostr_pairing::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content)
+            nostr::nips::nip44::decrypt(target.secret_key(), &event.pubkey, &event.content)
                 .unwrap();
         assert!(
             !matches!(

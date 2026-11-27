@@ -2,12 +2,21 @@ import { AgentAvatarArtworkProvider } from "../../features/agents/AgentAvatarArt
 import "../../shared/styles/globals.css";
 import "@fontsource-variable/inter/wght.css";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { TooltipProvider } from "../../shared/design-system/ui/Tooltip";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { HuddleAction, HuddleView } from "../../features/huddle/window";
 import { HuddleWindowView } from "./HuddleWindowView";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
+import { clearReactDevMeasures } from "../../features/developer/react-dev-timing";
+import { savedDownloadsFromChannel } from "../../features/messages/native-download";
+
+// React dev builds otherwise fill the User Timing buffer without limit.
+if (import.meta.env.DEV) clearReactDevMeasures();
+
+// This window may not listen for host events; its watch channel reports them.
+const savedDownloadsChanged = savedDownloadsFromChannel();
 
 function Companion() {
   useKeyboardFocusVisibility();
@@ -15,9 +24,13 @@ function Companion() {
   const [error, setError] = useState<string>();
   useEffect(() => {
     let mounted = true;
-    const updates = new Channel<HuddleView & { discussionOpen: boolean }>();
-    updates.onmessage = (next) => {
+    const updates = new Channel<
+      { view: HuddleView & { discussionOpen: boolean } } | "savedDownloads"
+    >();
+    updates.onmessage = (update) => {
       if (!mounted) return;
+      if (update === "savedDownloads") return savedDownloadsChanged();
+      const next = update.view;
       document.documentElement.classList.toggle("dark", next.dark);
       setView((previous) => ({
         ...next,
@@ -57,7 +70,9 @@ if (container) {
   container.style.height = "100dvh";
   createRoot(container).render(
     <AgentAvatarArtworkProvider>
-      <Companion />
+      <TooltipProvider>
+        <Companion />
+      </TooltipProvider>
     </AgentAvatarArtworkProvider>,
   );
 }

@@ -1,0 +1,220 @@
+import { expect, it, vi } from "vitest";
+import { activityTranscript } from "./activity-transcript";
+import type { ActivityTurn } from "./activity";
+import { requestActivity } from "./request-activity";
+
+const agent = "a".repeat(64);
+const trigger = "b".repeat(64);
+const record = (index: number, events: unknown[]) =>
+  Object.freeze({
+    id: index.toString(16).padStart(64, "0"),
+    agent,
+    receivedAt: 1800000000000 + index,
+    kind: "batch",
+    plaintext: JSON.stringify({ kind: "batch", payload: { events } }),
+  });
+const event = (kind: string, turnId: string, seq: number, payload = {}) => ({
+  kind,
+  turnId,
+  seq,
+  channelId: "c",
+  timestamp: new Date(1800000000000).toISOString(),
+  payload,
+});
+
+it("parses only newly appended records when the records array changes", () => {
+  const first = [
+    record(1, [
+      event("turn_started", "t", 1, { triggeringEventIds: [trigger] }),
+      event("step", "t", 2),
+    ]),
+    record(2, [event("step", "t", 3), event("step", "other", 1)]),
+  ];
+  requestActivity(first, agent, "c", trigger);
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    const added = record(3, [event("turn_completed", "t", 4)]);
+    const next = [...first, added];
+    const result = requestActivity(next, agent, "c", trigger);
+    // One envelope parse plus one parse for its single projected child.
+    expect(parse).toHaveBeenCalledTimes(2);
+    parse.mockClear();
+    const fresh = requestActivity(structuredClone(next), agent, "c", trigger);
+    expect(parse.mock.calls.length).toBeGreaterThan(2 * next.length);
+    expect(result).toEqual(fresh);
+    expect(result.records.map(({ id }) => id)).toEqual([
+      `${first[0]?.id}:0`,
+      `${first[0]?.id}:1`,
+      `${first[1]?.id}:0`,
+      `${added.id}:0`,
+    ]);
+    expect(result.terminal.get("t")).toBe("ended");
+  } finally {
+    parse.mockRestore();
+  }
+});
+
+it("lets transcripts of later selections reuse earlier record parses", () => {
+  const first = [
+    record(1, [
+      event("turn_started", "t", 1, { triggeringEventIds: [trigger] }),
+      event("step", "t", 2),
+    ]),
+  ];
+  const scope = { agent, channelId: "c" };
+  activityTranscript(
+    requestActivity(first, agent, "c", trigger).records,
+    scope,
+  );
+  const next = [...first, record(2, [event("step", "t", 3)])];
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    const { records } = requestActivity(next, agent, "c", trigger);
+    parse.mockClear();
+    const transcript = activityTranscript(records, scope);
+    // Only the newly selected projection is parsed.
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(transcript).toEqual(
+      activityTranscript(structuredClone(records), scope),
+    );
+  } finally {
+    parse.mockRestore();
+  }
+});
+
+it("gives a steered message the records of the turn it joined, from that turn's start", () => {
+  const steered = "d".repeat(64);
+  const records = [
+    record(1, [
+      event("turn_started", "t", 1, { triggeringEventIds: [trigger] }),
+      event("step", "t", 2),
+    ]),
+    record(2, [
+      event("turn_steered", "t", 3, { triggeringEventIds: [steered] }),
+      event("step", "t", 4),
+      event("turn_completed", "t", 5, { outcome: "completed" }),
+    ]),
+  ];
+  const result = requestActivity(records, agent, "c", steered);
+  expect([...result.turnIds]).toEqual(["t"]);
+  expect(result.uncertain).toBe(false);
+  expect(result.records).toHaveLength(5);
+  expect(result.terminal.get("t")).toBe("ended");
+  // Both messages select the turn once.
+  const both = requestActivity(records, agent, "c", [trigger, steered]);
+  expect(both.records).toHaveLength(5);
+  // Without its start, the steer anchors the turn's records.
+  const partial = requestActivity(records.slice(1), agent, "c", steered);
+  expect(partial.records).toHaveLength(3);
+  expect(partial.terminal.get("t")).toBe("ended");
+});
+
+it("selects no turn for a message in a start or steer list the lifecycle rejects", () => {
+  const id = (n: number) => n.toString(16).padStart(64, "0");
+  const malformed = "d".repeat(64),
+    oversized = "e".repeat(64),
+    overflow = "f".repeat(64);
+  const records = [
+    record(1, [
+      event("turn_started", "t", 1, {
+        triggeringEventIds: [
+          trigger,
+          ...Array.from({ length: 60 }, (_, i) => id(i + 1)),
+        ],
+      }),
+      event("turn_steered", "t", 2, {
+        triggeringEventIds: [malformed, "not-an-id"],
+      }),
+      event("turn_steered", "t", 3, {
+        triggeringEventIds: [
+          oversized,
+          ...Array.from({ length: 64 }, (_, i) => id(i + 100)),
+        ],
+      }),
+      event("turn_steered", "t", 4, {
+        triggeringEventIds: [
+          overflow,
+          ...Array.from({ length: 4 }, (_, i) => id(i + 200)),
+        ],
+      }),
+    ]),
+    record(2, [
+      event("turn_started", "bad", 1, {
+        triggeringEventIds: [malformed, 7],
+      }),
+    ]),
+  ];
+  for (const message of [malformed, oversized, overflow])
+    expect(requestActivity(records, agent, "c", message).turnIds.size).toBe(0);
+  expect([...requestActivity(records, agent, "c", trigger).turnIds]).toEqual([
+    "t",
+  ]);
+});
+
+it("indexes triggers so unrelated messages skip replay and trimmed starts still match", () => {
+  const records = Object.freeze([record(1, [event("step", "t", 2)])]);
+  const turns: readonly ActivityTurn[] = Object.freeze([
+    Object.freeze({
+      agent,
+      turnId: "t",
+      channelId: "c",
+      timestamp: 1800000000000,
+      state: "ended",
+      outcome: "ended",
+      triggeringEventIds: [trigger],
+      requests: [],
+    } satisfies ActivityTurn),
+  ]);
+  expect(
+    requestActivity(records, agent, "c", "d".repeat(64), turns).turnIds.size,
+  ).toBe(0);
+  const linked = requestActivity(records, agent, "c", trigger, turns);
+  expect([...linked.turnIds]).toEqual(["t"]);
+  expect(linked.terminal.get("t")).toBe("ended");
+  expect(
+    requestActivity(records, agent, "other", trigger, turns).turnIds.size,
+  ).toBe(0);
+  expect(
+    requestActivity(records, "e".repeat(64), "c", trigger, turns).turnIds.size,
+  ).toBe(0);
+});
+
+it("reads no records for a request that cannot match a trigger", () => {
+  const records = [
+    record(1, [
+      event("turn_started", "t", 1, { triggeringEventIds: [trigger] }),
+    ]),
+  ];
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    expect(
+      requestActivity(records, agent, "c", "not a trigger").turnIds.size,
+    ).toBe(0);
+    expect(requestActivity(records, agent, "c", []).turnIds.size).toBe(0);
+    expect(parse).not.toHaveBeenCalled();
+  } finally {
+    parse.mockRestore();
+  }
+});
+
+it("answers each request, agent and channel of a shared records array on its own", () => {
+  const other = "c".repeat(64);
+  const unrelated = "d".repeat(64);
+  const records = [
+    record(1, [
+      event("turn_started", "t", 1, { triggeringEventIds: [trigger] }),
+      event("step", "t", 2),
+    ]),
+  ];
+  const turnIds = (...args: [string, string, string | string[]]) => [
+    ...requestActivity(records, ...args).turnIds,
+  ];
+  expect(turnIds(agent, "c", trigger)).toEqual(["t"]);
+  expect(turnIds(agent, "c", unrelated)).toEqual([]);
+  expect(turnIds(agent, "c", [unrelated, trigger])).toEqual(["t"]);
+  expect(turnIds(agent, "c", trigger)).toEqual(["t"]);
+  expect(turnIds(agent, "c", "not a trigger")).toEqual([]);
+  expect(turnIds(other, "c", trigger)).toEqual([]);
+  expect(turnIds(agent, "elsewhere", trigger)).toEqual([]);
+  expect(turnIds(agent, "c", [trigger])).toEqual(["t"]);
+});

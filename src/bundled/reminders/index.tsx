@@ -4,6 +4,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Reminder, Reminders } from "../../features/relay/reminders";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { plainText } from "../../features/notifications/content";
+import { CountBadge } from "../../shared/design-system/ui/CountBadge";
 import { AlarmIcon } from "../../shared/design-system/icons/index";
 import {
   countDue,
@@ -103,7 +104,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       )
         return;
       const { hydrated, reminders } = bound.snapshot();
-      // Nothing notifies before the first history read succeeds.
+      // Nothing notifies before the first page of a history read lands; later
+      // pages notify as they arrive, and the saved time below waits for `ready`.
       if (!hydrated) return;
       // Notification access is judged against the channel list, so hold the
       // window until a full roster read has verified it rather than spend it
@@ -123,6 +125,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       // Every reminder notification opens in the community it came from.
       if (scope) {
         const { channels } = list;
+        const home: OpenTarget = { version: 1, kind: "page", ...page, scope };
         for (const reminder of dueSince(reminders, baseline, now)) {
           const sourceKey = keyOf(reminder);
           if (shown.has(sourceKey)) continue;
@@ -138,28 +141,43 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 channelId: message.channelId,
                 messageId: message.eventId,
               }
-            : { version: 1, kind: "page", ...page, scope };
-          void notify
-            .submit({
+            : home;
+          const alert = (to: OpenTarget) =>
+            notify.submit({
               sourceKey,
-              target,
+              target: to,
               title:
                 channel && channel.channelType !== "dm" && channel.name
                   ? `Reminder due · #${channel.name}`
                   : "Reminder due",
               body:
-                [reminder.target?.preview, reminder.note].find(
-                  (text) => text && plainText(text),
-                ) ?? "A reminder is waiting",
-            })
+                [
+                  plainText(reminder.target?.preview ?? "", {
+                    storedPreview: true,
+                  }),
+                  plainText(reminder.note ?? ""),
+                ].find(Boolean) || "A reminder is waiting",
+            });
+          // Access refuses the message when the viewer isn't in its channel, so
+          // that reminder opens Reminders instead of never alerting. The retry
+          // follows any refusal, so it relies on every other one refusing the
+          // page too: a closed service, a missing or different viewer, a stale
+          // category, the `seen` key (it ignores the target kind), the pending
+          // cap, the development pause, alerts or this category off, and the
+          // Focus gate; denied permission drops both at delivery. So a page
+          // alert appears only when access refused the message. A future gate
+          // that allows pages but blocks conversations would be routed around.
+          void alert(target)
+            .then((admitted) => admitted || !message || alert(home))
             .catch(() => {});
         }
       }
       // The saved time is what the next launch treats as seen, so it moves only
       // while the live connection is up and the latest read started during that
-      // connection, succeeded, and has none pending (`ready`). Reads made before
-      // the first connection, or before or during an outage, never count, since
-      // live events could not reach them.
+      // connection, succeeded, and has none pending (`ready`), or the list was
+      // complete at the drop and this connection's continuous replay carried
+      // every edit since. Reads made before the first connection, or before or
+      // during an outage, never count, since live events could not reach them.
       // Limit: a reminder decoded after the saved time passed its due time
       // still notifies this session via `notified`, but is lost if the app
       // quits before then.
@@ -216,11 +234,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const { state } = useReminders(relay);
     const at = useSyncExternalStore(subscribeClock, readClock, readClock);
     const due = countDue(state.reminders, at);
-    return due ? (
-      <span className={styles.badge} role="img" aria-label={`${due} due`}>
-        {due}
-      </span>
-    ) : null;
+    return <CountBadge count={due} label={`${due} due`} />;
   }
 
   ctx.pages.register({

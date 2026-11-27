@@ -1,3 +1,10 @@
+import { eventDto } from "../../src/features/relay/events";
+import { createNavigationController } from "../../src/features/navigation/controller";
+import { createMemoryHistory } from "../../src/features/navigation/history";
+import {
+  forwardBody,
+  forwardTag,
+} from "../../src/features/relay/forwarded-message";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // A second source consumer: ordinary prop changes, no caller remount keys.
 // Real React/session/outbox; local ephemeral signed events, never a live broker.
@@ -7,13 +14,14 @@ import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
-import { bundledPlugins } from "../../src/bundled";
+import { conversationFeatures } from "../../src/app/conversation-features";
 import { ThreadPanel } from "../../src/features/messages/ThreadPanel";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { VideoPlayer } from "../../src/features/messages/VideoPlayer";
 import { MediaReviewViewer } from "../../src/features/messages/MediaReviewViewer";
 import { ChannelTimeline } from "../../src/features/messages/ChannelTimeline";
 import styles from "../../src/features/messages/Messages.module.css";
+import { ForwardMessageProvider } from "../../src/features/messages/ForwardMessage";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import { threadReference } from "../../src/features/relay/threads";
@@ -31,6 +39,18 @@ import "../../src/shared/styles/globals.css";
 
 const strictWindows = new URLSearchParams(location.search).has("threadWindow");
 const nestedWindow = new URLSearchParams(location.search).has("nestedWindow");
+// The thread's height in px. Without it the thread is as tall as its content
+// allows, which a journey cannot set.
+const threadHeight =
+  Number(new URLSearchParams(location.search).get("threadHeight")) || undefined;
+// A long conversation name above the thread, as an Inbox tab would supply.
+const threadParent = new URLSearchParams(location.search).has("threadParent")
+  ? {
+      label:
+        "#release-coordination-for-client-platform-migrations-in-production",
+      open: () => report.parentOpens++,
+    }
+  : undefined;
 const channelOne = strictWindows
   ? "00000000-0000-0000-0000-000000000001"
   : "one";
@@ -39,9 +59,8 @@ const channelTwo = strictWindows
   : "two";
 const context = new Context();
 const plugins = createPluginManager(context, {
-  bundled: bundledPlugins.filter(({ manifest }) =>
-    ["buzz.emoji", "buzz.mentions"].includes(manifest.id),
-  ),
+  bundled: [],
+  builtIn: conversationFeatures,
 });
 const extensions = new ConversationService(context);
 const viewer = keypair(),
@@ -55,13 +74,52 @@ const replyAttachment = {
   url: "https://fixture.test/media/reply.png",
   kind: "image",
 } as const satisfies Attachment;
+const forwarded = new URLSearchParams(location.search).has("forwarded");
+const forwardSnapshot = {
+  id: "f".repeat(64),
+  channelId: "unreadable-source",
+  authorId: agent.pubkey,
+  authorName: "Original Author",
+  attachmentUrls: [
+    ...media.map(({ url }) => url),
+    "https://fixture.test/media/markdown.svg",
+  ],
+  createdAt: 1700000000,
+  mentionLabels: [{ id: "e".repeat(64), names: ["A*B*"] }],
+  content:
+    `@A*B* (${"e".repeat(64)}) [Reference](https://example.org/reference)\n\n` +
+    Array.from(
+      { length: 30 },
+      (_, index) =>
+        `Paragraph ${index + 1}: **Copied message content** with formatting.`,
+    ).join("\n\n") +
+    "\n\n![Markdown image](https://fixture.test/media/markdown.svg)",
+};
 const roots = [
   signed(viewer, {
     kind: 9,
-    content: "First root",
+    content: forwarded
+      ? forwardBody(forwardSnapshot, "A note from the forwarder")
+      : "First root",
     created_at: 1,
     tags: [
       ["h", channelOne],
+      ...(forwarded
+        ? [
+            forwardTag(forwardSnapshot),
+            [
+              "imeta",
+              "url https://fixture.test/media/forwarder.png",
+              "m image/png",
+              "filename ForwardersEvidence.png",
+            ],
+            [
+              "imeta",
+              "url https://fixture.test/media/markdown.svg",
+              "m image/svg+xml",
+            ],
+          ]
+        : []),
       ...media.map((item) => ["imeta", `url ${item.url}`, "m image/png"]),
     ],
   }),
@@ -74,7 +132,7 @@ function channelOf(event: RelayEvent) {
   return id;
 }
 const replies = roots.flatMap((root) =>
-  Array.from({ length: strictWindows ? 303 : 60 }, (_, i) =>
+  Array.from({ length: forwarded ? 1 : strictWindows ? 303 : 60 }, (_, i) =>
     i === 0 && root === roots[0]
       ? signed(viewer, {
           kind: 9,
@@ -150,6 +208,10 @@ if (nestedWindow && nestedParent && nestedChild) {
   );
   replies.splice(293, 1, child);
 }
+// A visit to the nested child itself, as a link to that reply opens it.
+const exactChild = new URLSearchParams(location.search).has("exactChild")
+  ? replies[293]?.id
+  : undefined;
 const exactReaction = signed(viewer, {
   kind: 7,
   content: "👍",
@@ -189,6 +251,7 @@ const report = {
   signings: [] as string[],
   publications: [] as RelayEvent[],
   links: [] as string[],
+  parentOpens: 0,
   rootId: roots[0].id,
   exactReplyId: exactReply.id,
 };
@@ -199,8 +262,12 @@ let repairGate = false;
 let failRepair = false;
 const rejected = new Set<string>();
 let releaseOlderPage: (() => void) | undefined;
-let holdOlderPage = false;
-let failOlderPages = 0;
+// The thread reads the page that holds the parent of a loaded reply on its own,
+// so a journey that holds or fails that read says so before the thread opens.
+let holdOlderPage = new URLSearchParams(location.search).has("holdOlderPage");
+let failOlderPages = Number(
+  new URLSearchParams(location.search).get("failOlderPages") ?? 0,
+);
 let failLegacyContinuation = new URLSearchParams(location.search).has(
   "failLegacyContinuation",
 );
@@ -211,7 +278,9 @@ const owner = createRelaySession({
   media: (url) => {
     if (url.startsWith("https://emoji.test/"))
       return "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
-    return media.some((item) => item.url === url) || url.endsWith("reply.png")
+    return media.some((item) => item.url === url) ||
+      url.endsWith("reply.png") ||
+      url.endsWith("forwarder.png")
       ? `/api/relay/media?url=${encodeURIComponent(url)}`
       : undefined;
   },
@@ -227,7 +296,15 @@ const owner = createRelaySession({
           if (filter.kinds?.includes(39002) || filter.kinds?.includes(39000))
             return [
               roster(relay, channelOne, [viewer.pubkey]),
-              metadata(relay, channelOne, "One"),
+              metadata(
+                relay,
+                channelOne,
+                "One",
+                1700000000,
+                new URLSearchParams(location.search).has("privateForward")
+                  ? [["private"]]
+                  : [],
+              ),
               roster(relay, channelTwo, [viewer.pubkey]),
               metadata(relay, channelTwo, "Two"),
             ];
@@ -361,7 +438,12 @@ const owner = createRelaySession({
           return [];
         }),
       )
-    ).flat();
+    )
+      .flat()
+      .map((event) => (forwarded ? eventDto(event) : event));
+  },
+  openDirectMessage: async () => {
+    throw new Error("Fixture does not open DMs");
   },
   writer: {
     kinds: [5, 7, 9],
@@ -410,6 +492,28 @@ Object.assign(window, {
     },
     extensionsActive() {
       return extensions.inline.snapshot().map((entry) => entry.id);
+    },
+    copiedForward: { text: "", html: "" },
+    forwardClipboard() {
+      class FixtureClipboardItem {
+        constructor(readonly items: Record<string, Blob>) {}
+      }
+      Object.defineProperty(window, "ClipboardItem", {
+        configurable: true,
+        value: FixtureClipboardItem,
+      });
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          write: async (items: FixtureClipboardItem[]) => {
+            const item = items[0];
+            window.messagesFixture.copiedForward = {
+              text: await item.items["text/plain"].text(),
+              html: await item.items["text/html"].text(),
+            };
+          },
+        },
+      });
     },
     imageClipboard(outcome: "success" | "failure", mode?: "deferred") {
       const clipboardGate = createClipboardGate();
@@ -497,15 +601,35 @@ function PortraitVideoFixture() {
 function Fixture() {
   useKeyboardFocusVisibility();
   const [selected, select] = useState(0),
-    [scope, setScope] = useState("fixture"),
+    [scope, setScope] = useState(forwarded ? owner.session.scope : "fixture"),
+    [tableMarkdown, setTableMarkdown] = useState(
+      "| Path | Purpose |\n| --- | --- |\n| `~/.local/share/xyz.block.buzz` | App data and plugin storage |",
+    ),
     [review, setReview] = useState<Attachment>();
   const reviewTrigger = useRef<HTMLButtonElement>(null);
   const root = roots[selected];
   if (!root) throw new Error("Missing fixture selection");
   const channelId = channelOf(root);
+  const thread = (
+    <ThreadPanel
+      extensions={extensions}
+      session={owner.session}
+      scope={scope}
+      channelId={channelId}
+      channelName={channelId}
+      messageId={exactChild ?? root.id}
+      revealSelected={exactChild !== undefined}
+      close={() => select(0)}
+      parent={threadParent}
+      onOpenLink={(url) => {
+        report.links.push(url);
+        return !url.includes("unhandled");
+      }}
+    />
+  );
   return (
     <>
-      <div style={{ display: "flex", width: 600, height: 240 }}>
+      <div style={{ display: "flex", width: 900, height: 240 }}>
         <ChannelTimeline
           channelId="markdown-feed"
           scope={scope}
@@ -513,21 +637,33 @@ function Fixture() {
           window={{
             channelId: "markdown-feed",
             status: "ready",
-            rows: [
-              {
-                id: "f".repeat(64),
-                channelId: "markdown-feed",
-                authorId: viewer.pubkey,
-                createdAt: 1,
-                content:
+            rows: (
+              [
+                // Wider than any message bubble.
+                [
+                  "c",
+                  "| What | Before | After |\n| --- | --- | --- |\n| App data, local data and plugin storage | `~/.local/share/xyz.block.buzz/old` | `~/.local/share/xyz.block.buzz/new` |\n| Config | `~/.config/old` | `~/.config/new` |",
+                ],
+                // Fits this feed, but not a narrow one.
+                ["d", tableMarkdown],
+                ["e", "Table follow-up"],
+                [
+                  "f",
                   "## Channel Markdown\n\n**Virtualized channel row**\n\nfirst\nsecond\n\n1. channel outer\n   1. channel nested",
-                mentions: [],
-                participants: [],
-                attachments: [],
-                reactions: [],
-                replyCount: 0,
-              },
-            ],
+                ],
+              ] as const
+            ).map(([id, content]) => ({
+              id: id.repeat(64),
+              channelId: "markdown-feed",
+              authorId: viewer.pubkey,
+              createdAt: 1,
+              content,
+              mentions: [],
+              participants: [],
+              attachments: [],
+              reactions: [],
+              replyCount: 0,
+            })),
             hasMore: false,
             loadingOlder: false,
             error: undefined,
@@ -536,9 +672,14 @@ function Fixture() {
         />
       </div>
       <nav>
+        <textarea
+          aria-label="Table markdown"
+          value={tableMarkdown}
+          onChange={(event) => setTableMarkdown(event.target.value)}
+        />
         {roots.map((root, i) => (
           <button key={root.id} type="button" onClick={() => select(i)}>
-            {root.content}
+            {forwarded && i === 0 ? "Forwarded example" : root.content}
           </button>
         ))}
         <button
@@ -561,32 +702,33 @@ function Fixture() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 440px",
+          gridTemplateColumns: forwarded ? "minmax(0, 1fr)" : "1fr 440px",
           height: "80vh",
         }}
       >
-        <MessageComposer
-          extensions={extensions}
-          session={owner.session}
-          scope={scope}
-          channelId={channelId}
-          channelName={channelId}
-        />
-        {!review && (
-          <ThreadPanel
+        {!forwarded && (
+          <MessageComposer
             extensions={extensions}
             session={owner.session}
             scope={scope}
             channelId={channelId}
             channelName={channelId}
-            messageId={root.id}
-            close={() => select(0)}
-            onOpenLink={(url) => {
-              report.links.push(url);
-              return !url.includes("unhandled");
-            }}
           />
         )}
+        {!review &&
+          (threadHeight ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateRows: "minmax(0, 1fr)",
+                height: threadHeight,
+              }}
+            >
+              {thread}
+            </div>
+          ) : (
+            thread
+          ))}
       </div>
       {review && (
         <MediaReviewViewer
@@ -611,6 +753,12 @@ function Fixture() {
     </>
   );
 }
+const navigationController = createNavigationController(createMemoryHistory());
+navigationController.navigation.subscribe(() => {
+  const state = navigationController.navigation.snapshot();
+  if (state.status === "opening")
+    navigationController.complete(state.attempt, { status: "opened" });
+});
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing fixture container");
 createRoot(container).render(
@@ -619,7 +767,14 @@ createRoot(container).render(
       {new URLSearchParams(location.search).has("portraitVideo") ? (
         <PortraitVideoFixture />
       ) : (
-        <Fixture />
+        <ForwardMessageProvider
+          session={owner.session}
+          scope={owner.session.scope}
+          navigation={navigationController.navigation}
+          renderDialog
+        >
+          <Fixture />
+        </ForwardMessageProvider>
       )}
     </ToastProvider>
   </StrictMode>,

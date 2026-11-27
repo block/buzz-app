@@ -1,7 +1,16 @@
+import { writeJSON } from "../../features/agent-protection/json-stream";
 // The Pi host (host.mjs): one process for every Pi agent here, started when
 // something needs it, spoken to over stdio, one JSON message a line. Requests
 // go both ways: the plugin asks the host to run turns, and the host asks the
 // plugin to run the Buzz tools, so the process holds no Buzz key.
+import type { AgentProtection } from "../../features/agent-protection/service";
+import type { GatewayProfile } from "../../features/agents/gateway/contract";
+import { pubkeyOf } from "../../features/agents/membership";
+import { hasOwnEnv } from "../agents/agent-env";
+import {
+  protectionChannel,
+  protectionEnvironment,
+} from "../../features/agent-protection/native-bridge";
 import type { Context } from "../../buzz-mcp/client";
 import type {
   HostProcess,
@@ -21,6 +30,9 @@ export type ToolCall = Readonly<{
   conversation: number;
   /** Where the tools default to for that conversation. */
   context: Context;
+  /** That conversation's context size when it called: the tokens of its
+   * latest model call; absent when unknown. */
+  contextTokens?: number;
   name: string;
   arguments: Record<string, unknown>;
 }>;
@@ -33,12 +45,58 @@ export type ToolResult = Readonly<{
 export type PiEvent = Readonly<
   { agent: string; conversation: number } & (
     | { type: "placed"; request: string; entry: number }
-    | { type: "step"; tool: string; target?: string }
+    | { type: "step"; tool: string; target?: string; origin?: "buzz" }
   )
 >;
+export type PiHookCall = Readonly<{
+  agent: string;
+  conversation: number;
+  event: "beforeTool" | "afterTool";
+  input: unknown;
+}>;
+/** The host asks for a gateway mode run's binding and Buzz context before it
+ * submits the run, and whether the run's binding is still admitted before
+ * each of its model requests. */
+export type PiGatewayCall = Readonly<
+  | {
+      op: "bind";
+      agent: string;
+      event: "resume" | "reset" | "new_generation" | "standalone";
+      saved: unknown;
+      turn: unknown;
+    }
+  | { op: "admit"; agent: string; binding: unknown }
+  /** The gateway refused a request made at that eligibility revision. */
+  | { op: "deny"; agent: string; revision: unknown }
+>;
+export type PiGatewayAnswer =
+  | {
+      ok: true;
+      binding?: unknown;
+      bundle?: Record<string, string>;
+      persist?: boolean;
+      /** The eligibility revision an admission holds at. */
+      revision?: number;
+      /** Where an admitted request goes: the gateway's root for Pi, ahead
+       * of each protocol's path, and the build's header profile. */
+      root?: string;
+      profile?: GatewayProfile;
+      /** Whether a refusal dropped the route's current access. */
+      applied?: boolean;
+    }
+  | { ok: false; message: string };
 type Handlers = Readonly<{
-  tool(call: ToolCall): Promise<ToolResult>;
+  hook?(call: PiHookCall): Promise<unknown>;
+  gateway?(call: PiGatewayCall, signal: AbortSignal): Promise<PiGatewayAnswer>;
+  tool(call: ToolCall, signal: AbortSignal): Promise<ToolResult>;
   event(event: PiEvent): void;
+  prompt?(call: {
+    agent: string;
+    request: string;
+    steers?: boolean;
+  }): Promise<
+    { text: string; steer: string; instructions?: string } | undefined
+  >;
 }>;
 
 /** The host stopped after it started; its runs continue in the next one. */
@@ -67,7 +125,23 @@ type Message = {
   result?: unknown;
   error?: string;
 };
+type RuntimeInfo = {
+  file: string;
+  node: string;
+  codeRoot: string;
+  nodeRoot: string;
+  data: string;
+  auth: string;
+};
+type ProtectedLaunch = {
+  agent: string;
+  gate: AgentProtection;
+  runtime: () => Promise<RuntimeInfo>;
+};
 type Connection = {
+  lifetime: AbortController;
+  /** Tool calls the host can cancel, by request id. */
+  checks: Map<number | string, AbortController>;
   process: HostProcess;
   calls: Map<
     number,
@@ -77,40 +151,141 @@ type Connection = {
   gone?: Error;
 };
 
+/** An `open` naming the agent `as` carries its tools' credential instead:
+ * only this host's agent's commands get it, never the host itself. */
+async function credentialed(connection: Connection, params: object) {
+  const { as, ...rest } = params as {
+    as?: Readonly<{ pubkey: string; relay: string }>;
+  };
+  const credential = as && (await connection.process.toolCredential?.(as));
+  return credential ? { ...rest, credential } : rest;
+}
+
 export class Pi {
   private connection: Promise<Connection> | undefined;
+  /** Counts started hosts, so only the current one's exit clears it. */
+  private generation = 0;
   private requests = 0;
   private stopped = false;
+  /** Each agent's worker: `pi` is its own host (protected, or with its own
+   * environment variables), else it uses this one. `on` is the host start an
+   * unprotected route was chosen for: its exit lets the next request choose
+   * again, as does an own host's exit. */
+  private hosts = new Map<
+    string,
+    Promise<{ key: string; pi: Pi | undefined; on?: Promise<Connection> }>
+  >();
+  /** Counts each agent's retirements, so a start that waited across one
+   * starts nothing. */
+  private retirements = new Map<string, number>();
 
   constructor(
     private readonly spawn: () => Spawn,
     private readonly handlers: Handlers,
+    private readonly protection?: (
+      agent: string,
+    ) => AgentProtection | undefined,
+    private readonly protectedLaunch?: ProtectedLaunch,
+    /** The agent whose own environment variables this host starts with. */
+    private readonly envAgent?: string,
   ) {}
 
   /** Asks the host, starting it first if it is not running. */
   async request<T>(method: string, params: object = {}): Promise<T> {
+    if (this.stopped) throw new Error("Pi has stopped");
+    const agent = (params as { agent?: string }).agent;
+    if (agent && this.protection) {
+      const gate = this.protection(agent);
+      gate?.assertAvailable();
+      const prior = this.hosts.get(agent);
+      const retirement = this.retirements.get(agent) ?? 0;
+      const next = (async () => {
+        const previous = await prior?.catch(() => undefined);
+        if (gate && previous?.key === (gate.key ?? "")) return previous;
+        // An unprotected route holds while the host it was chosen with runs.
+        if (
+          previous &&
+          !gate &&
+          (previous.key === "env"
+            ? !!previous.pi?.running()
+            : previous.key === "" && previous.on === this.connection)
+        )
+          return previous;
+        if (previous?.pi) await previous.pi.dispose();
+        else if (this.connection) await this.rawRequest("close", { agent });
+        // Unreadable is none; the next start reads again.
+        const own = !gate && (await hasOwnEnv(agent)) === true;
+        // An answer that outlived a retirement or dispose starts nothing.
+        if (this.stopped || (this.retirements.get(agent) ?? 0) !== retirement)
+          throw new Error("Pi has stopped");
+        const pi = gate
+          ? new Pi(this.spawn, this.handlers, undefined, {
+              agent,
+              gate,
+              runtime: () => this.rawRequest<RuntimeInfo>("runtime"),
+            })
+          : own
+            ? new Pi(this.spawn, this.handlers, undefined, undefined, agent)
+            : undefined;
+        const on = pi ? undefined : this.connect();
+        on?.catch(() => undefined);
+        return { key: gate?.key ?? (own ? "env" : ""), pi, ...(on && { on }) };
+      })();
+      this.hosts.set(agent, next);
+      const child = (await next).pi;
+      if (child) return child.request<T>(method, params);
+    }
+    return this.rawRequest<T>(method, params);
+  }
+  /** Whether its host started and has not exited or failed to start. */
+  private running() {
+    return !!this.connection;
+  }
+  /** Ends the old worker without resolving a possibly newer policy first. */
+  async retire(agent: string) {
+    const prior = this.hosts.get(agent);
+    this.retirements.set(agent, (this.retirements.get(agent) ?? 0) + 1);
+    const retired = (async () => {
+      const previous = await prior?.catch(() => undefined);
+      if (previous?.pi) await previous.pi.dispose();
+      else if (this.connection) await this.rawRequest("close", { agent });
+      return { key: "retired", pi: undefined };
+    })();
+    this.hosts.set(agent, retired);
+    await retired;
+  }
+  private async rawRequest<T>(method: string, params: object = {}): Promise<T> {
     const connection = await this.connect();
     if (connection.gone) throw connection.gone;
+    if (method === "open") params = await credentialed(connection, params);
     const id = ++this.requests;
     const answer = new Promise<unknown>((resolve, reject) =>
       connection.calls.set(id, { resolve, reject }),
     );
-    void connection.process
-      .write(`${JSON.stringify({ id, method, params })}\n`)
-      .catch((error: unknown) => {
+    void writeJSON(connection.process, { id, method, params }).catch(
+      (error: unknown) => {
         connection.calls
           .get(id)
           ?.reject(new Error(`Pi did not take that: ${error}`));
         connection.calls.delete(id);
-      });
+      },
+    );
     return answer as Promise<T>;
   }
 
   /** Stops the host: it closes each agent's storage, then it is killed. */
   async dispose() {
     this.stopped = true;
+    await Promise.all(
+      [...this.hosts.values()].map(async (pending) =>
+        (await pending.catch(() => undefined))?.pi?.dispose(),
+      ),
+    );
+    this.hosts.clear();
     const connection = await this.connection?.catch(() => undefined);
     if (!connection || connection.gone) return;
+    connection.lifetime.abort();
+    for (const check of connection.checks.values()) check.abort();
     await connection.process.end().catch(() => undefined);
     const timer = setTimeout(() => void connection.process.kill(), STOP_MS);
     await connection.process.exited;
@@ -120,7 +295,7 @@ export class Pi {
   private connect(): Promise<Connection> {
     if (this.stopped) return Promise.reject(new Error("Pi has stopped"));
     if (!this.connection) {
-      const connecting = this.start();
+      const connecting = this.start(++this.generation);
       this.connection = connecting;
       // One that failed to start is tried again by the next request.
       connecting.catch(() => {
@@ -130,7 +305,7 @@ export class Pi {
     return this.connection;
   }
 
-  private async start(): Promise<Connection> {
+  private async start(generation: number): Promise<Connection> {
     let ready!: () => void;
     let isReady = false;
     const started = new Promise<void>((resolve) => {
@@ -142,15 +317,55 @@ export class Pi {
     let buffer = "";
     let stderr = "";
     const connection: Connection = {
+      lifetime: new AbortController(),
+      checks: new Map(),
       calls: new Map(),
       process: undefined as unknown as HostProcess,
     };
+    const evidence =
+      this.protectedLaunch && protectionChannel(this.protectedLaunch.gate);
+    connection.lifetime.signal.addEventListener(
+      "abort",
+      () => evidence?.close(),
+      { once: true },
+    );
     const handle = (message: Message) => {
-      if (message.method === "ready") ready();
+      if (message.method?.startsWith("buzz/security/evidence/")) {
+        if (!evidence) {
+          void connection.process.kill();
+          return;
+        }
+        void evidence
+          .handler(message)
+          .then(
+            (reply) => connection.process.write(JSON.stringify(reply) + "\n"),
+            () =>
+              connection.process.write(
+                JSON.stringify({
+                  id: message.id,
+                  error: "Security evidence transfer failed",
+                }) + "\n",
+              ),
+          )
+          .catch(() => connection.process.kill());
+      } else if (message.method === "security_cancel") {
+        connection.checks.get((message.params as { id: string }).id)?.abort();
+      } else if (message.method === "ready") ready();
       else if (message.method === "event")
         this.handlers.event(message.params as PiEvent);
-      else if (message.method === "tool" && message.id !== undefined)
-        void this.answer(connection, message.id, message.params as ToolCall);
+      else if (
+        (message.method === "tool" ||
+          message.method === "prompt" ||
+          message.method === "hook" ||
+          message.method === "gateway") &&
+        message.id !== undefined
+      )
+        void this.answer(
+          connection,
+          message.id,
+          message.method,
+          message.params,
+        );
       else if (typeof message.id === "number") {
         const call = connection.calls.get(message.id);
         connection.calls.delete(message.id);
@@ -162,9 +377,74 @@ export class Pi {
     // its packages go on stdin: together they are past Windows' 32 KB
     // command line.
     const windows = /^Win/i.test(globalThis.navigator?.platform ?? "");
-    const starting = this.spawn()(windows ? "node" : "pi-sh", {
-      args: windows ? [launch] : [script, "pi.sh", launch],
-      cwd: "~",
+    const protectedLaunch = this.protectedLaunch;
+    protectedLaunch?.gate.assertAvailable();
+    const runtime = protectedLaunch && (await protectedLaunch.runtime());
+    if (
+      runtime &&
+      (!runtime.node.startsWith("/") ||
+        !runtime.file.startsWith("/") ||
+        !runtime.codeRoot.startsWith("/") ||
+        !runtime.nodeRoot.startsWith("/") ||
+        !runtime.data.startsWith("/") ||
+        !runtime.auth.startsWith("/"))
+    )
+      throw new Error("Invalid protected Pi runtime");
+    const boot =
+      runtime && protectedLaunch
+        ? `
+      import {createHash} from 'node:crypto';
+      import {join} from 'node:path';
+      import {pathToFileURL} from 'node:url';
+      import {builtinModels} from '@earendil-works/pi-ai/providers/all';
+      const {AuthFile,serve}=await import(pathToFileURL(${JSON.stringify(runtime.file)}).href);
+      const key=createHash('sha256').update(${JSON.stringify(protectedLaunch.gate.stateKey)}).digest('hex');
+      const {stop}=serve({data:join(${JSON.stringify(runtime.data)},'protected-v1',key),dir:${JSON.stringify(runtime.auth)},protectedAgent:${JSON.stringify(protectedLaunch.agent)},models:builtinModels({credentials:new AuthFile(join(${JSON.stringify(runtime.auth)},'auth.json'))})});
+      process.on('SIGTERM',stop);
+    `
+        : undefined;
+    const processId = boot ? "pi-protected-sh" : windows ? "node" : "pi-sh";
+    const starting = this.spawn()(processId, {
+      ...(!boot && {
+        secrets: ["agent-env"],
+        ...(this.envAgent && { envAgent: pubkeyOf(this.envAgent) }),
+      }),
+      args:
+        boot && runtime
+          ? [
+              'exec "$1" --disable-sigusr1 --input-type=module -e "$2"',
+              "buzz-pi-protected",
+              runtime.node,
+              boot,
+            ]
+          : windows
+            ? [launch]
+            : [script, "pi.sh", launch],
+      cwd: runtime ? runtime.file.slice(0, runtime.file.lastIndexOf("/")) : "~",
+      ...(runtime && protectedLaunch
+        ? {
+            env: {
+              ...protectionEnvironment(protectedLaunch.gate),
+              BASH_ENV: null,
+              ENV: null,
+              NODE_OPTIONS: null,
+              NODE_PATH: null,
+              DYLD_INSERT_LIBRARIES: null,
+              DYLD_LIBRARY_PATH: null,
+              DYLD_FRAMEWORK_PATH: null,
+              LD_PRELOAD: null,
+              LD_LIBRARY_PATH: null,
+            },
+            protection: {
+              readOnlyPaths: [
+                ...protectedLaunch.gate.processProtection.readOnlyPaths,
+                runtime.codeRoot,
+                runtime.nodeRoot,
+              ],
+              hiddenPaths: protectedLaunch.gate.processProtection.hiddenPaths,
+            },
+          }
+        : {}),
       onStdout: (data) => {
         buffer += data;
         let newline = buffer.indexOf("\n");
@@ -192,13 +472,17 @@ export class Pi {
           )
         : error;
     });
-    void connection.process
-      .write(
-        `${JSON.stringify({ host, package: packageJson, lock: packageLock })}\n`,
-      )
-      // A host that never has its source waits for it; it stops instead.
-      .catch(() => void connection.process.kill().catch(() => undefined));
+    if (!protectedLaunch)
+      void connection.process
+        .write(
+          `${JSON.stringify({ host, package: packageJson, lock: packageLock })}\n`,
+        )
+        // A host that never has its source waits for it; it stops instead.
+        .catch(() => void connection.process.kill().catch(() => undefined));
     void connection.process.exited.then((code) => {
+      connection.lifetime.abort();
+      for (const check of connection.checks.values()) check.abort();
+      connection.checks.clear();
       // Before it is ready, its last words are why it could not start, such
       // as Node missing.
       const why = cause(stderr);
@@ -209,8 +493,8 @@ export class Pi {
       for (const call of connection.calls.values())
         call.reject(connection.gone);
       connection.calls.clear();
-      // The next request starts another.
-      this.connection = undefined;
+      // The next request starts another, unless one already has.
+      if (this.generation === generation) this.connection = undefined;
       ready();
     });
     await started;
@@ -222,16 +506,51 @@ export class Pi {
   private async answer(
     connection: Connection,
     id: number | string,
-    call: ToolCall,
+    method: "tool" | "prompt" | "hook" | "gateway",
+    params: unknown,
   ) {
     let message: Message;
+    // A stopped run or a lost host cancels the Buzz tool or gateway check it
+    // called.
+    const controller = new AbortController();
+    const signal = AbortSignal.any([
+      controller.signal,
+      connection.lifetime.signal,
+    ]);
+    if (method === "tool" || method === "gateway")
+      connection.checks.set(id, controller);
     try {
-      message = { id, result: await this.handlers.tool(call) };
+      message = {
+        id,
+        result:
+          method === "hook"
+            ? ((await this.handlers.hook?.(params as PiHookCall)) ?? null)
+            : method === "gateway"
+              ? ((await this.handlers.gateway?.(
+                  params as PiGatewayCall,
+                  signal,
+                )) ?? {
+                  ok: false,
+                  message: "The model gateway is not available here",
+                })
+              : method === "tool"
+                ? await this.handlers.tool(params as ToolCall, signal)
+                : ((await this.handlers.prompt?.(
+                    params as {
+                      agent: string;
+                      request: string;
+                      steers?: boolean;
+                    },
+                  )) ?? false),
+      };
     } catch (error) {
       message = {
         id,
         error: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      if (connection.checks.get(id) === controller)
+        connection.checks.delete(id);
     }
     if (!connection.gone)
       await connection.process

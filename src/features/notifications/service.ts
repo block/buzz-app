@@ -24,24 +24,39 @@ export type NotificationCategoryDescriptor = Readonly<{
   id: string;
   label: string;
 }>;
+export type NotificationEligibility = boolean | "wait";
 export type NotificationInput = Readonly<{
   sourceKey: string;
   target: OpenTarget;
   /** Optional display text; the host flattens and bounds it before the OS sees it. */
   title?: string;
   body?: string;
+  /** Asked again at each host re-check until delivery, as for built-in
+   * alerts: false (or a throw) drops the alert, "wait" holds it. */
+  eligible?: () => NotificationEligibility;
+}>;
+/** Narrows which targets may alert: banners, sounds and the Dock unread dot. */
+export type NotificationGate = Readonly<{
+  id: string;
+  /** A throwing gate is skipped. */
+  allows(target: OpenTarget): boolean;
 }>;
 export interface Notifications {
   register(
     category: NotificationCategoryDescriptor,
   ): Readonly<{ submit(input: NotificationInput): Promise<boolean> }>;
+  /** While registered, only targets every gate allows may alert. Returns a
+   * remover; disabling the plugin removes it too. */
+  gate(gate: NotificationGate): () => void;
+  /** The owner's Notify while viewing choice, for an `eligible` check about
+   * a conversation the owner may have on screen. Changing it re-asks. */
+  notifyWhileViewing(): boolean;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
     notifications: Notifications;
   }
 }
-export type NotificationEligibility = boolean | "wait";
 type Candidate = {
   category: string;
   target: OpenTarget;
@@ -57,6 +72,7 @@ const categories = Object.freeze([
   { key: "mention", label: "Mentions" },
   { key: "direct", label: "Direct messages" },
   { key: "thread", label: "Thread replies" },
+  { key: "agent", label: "Solo chat completions" },
 ]);
 const FRESH_MS = 120_000;
 export type NotificationSnapshot = Readonly<{
@@ -76,6 +92,7 @@ export type NotificationSnapshot = Readonly<{
 export class NotificationsService extends Service implements Notifications {
   readonly indicator = createUnreadIndicator();
   private readonly contributions;
+  private readonly gates;
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Set<Candidate>();
   // Outstanding audio decisions for submissions awaiting platform acceptance.
@@ -90,6 +107,8 @@ export class NotificationsService extends Service implements Notifications {
   private generation = 0;
   private permissionGeneration = 0;
   private permissionRequest: Promise<void> | undefined;
+  private entered = false;
+  private askedAutomatically = false;
   private scheduled = false;
   private state: NotificationSnapshot;
   constructor(
@@ -101,10 +120,15 @@ export class NotificationsService extends Service implements Notifications {
       !("scope" in target && target.scope),
     private readonly playSound: (name: SoundName) => void = (name) =>
       void playNotificationSound(name),
+    private readonly present: () => boolean = () =>
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      document.hasFocus(),
   ) {
     super(ctx, "notifications");
     this.contributions =
       createContributions<NotificationCategoryDescriptor>(ctx);
+    this.gates = createContributions<NotificationGate>(ctx);
     this.state = Object.freeze({
       viewer: undefined,
       ...preferences.snapshot(),
@@ -133,6 +157,7 @@ export class NotificationsService extends Service implements Notifications {
         });
         this.revalidate();
       });
+      const stopGates = this.gates.subscribe(() => this.revalidate());
       const refresh = () => {
         void this.refreshPermission();
       };
@@ -148,6 +173,7 @@ export class NotificationsService extends Service implements Notifications {
         this.seen.clear();
         stopPreferences();
         stopCategories();
+        stopGates();
         preferences.dispose();
         platform.dispose();
         this.listeners.clear();
@@ -159,6 +185,7 @@ export class NotificationsService extends Service implements Notifications {
     void this.refreshPermission();
   }
   snapshot = () => this.state;
+  notifyWhileViewing = () => this.state.preferences.notifyWhileViewing;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -191,24 +218,41 @@ export class NotificationsService extends Service implements Notifications {
   reloadPreferences() {
     this.preferences.reload();
   }
-  async refreshPermission() {
+  /** `ask` is false for a read that no entry or window focus caused, such as
+   * the Settings check or the read after a failed request: it publishes the
+   * status and never sends the automatic request. */
+  async refreshPermission({ ask = true } = {}) {
     if (this.closed || this.permissionRequest) return;
     const generation = ++this.permissionGeneration;
     try {
       const permission = await this.platform.permission();
       if (generation === this.permissionGeneration) {
         this.publish({ permission });
+        if (ask && permission === "default") this.requestAutomatically();
         this.schedule();
       }
     } catch (error) {
       if (generation === this.permissionGeneration) this.reportError(error);
     }
   }
-  requestPermission() {
+  /** Whether the person is in the app with a community right now. Only
+   * records that: the one automatic system prompt follows from this read or a
+   * later window focus, and from neither once they are no longer there. */
+  setEntered(entered: boolean) {
+    if (this.entered === entered || !this.platform.requestsAutomatically)
+      return;
+    this.entered = entered;
+    if (entered) void this.refreshPermission();
+  }
+  /** `quiet` is the automatic request: nobody acted, so an ignored system
+   * prompt (a native timeout) is not reported and no shown error is cleared. */
+  requestPermission({ quiet = false } = {}) {
     if (this.closed || this.state.developmentPaused) return Promise.resolve();
     if (this.permissionRequest) return this.permissionRequest;
     const generation = ++this.permissionGeneration;
-    this.publish({ requesting: true, error: null });
+    const report = quiet ? () => {} : this.reportError;
+    let failed = false;
+    this.publish({ requesting: true, ...(quiet ? {} : { error: null }) });
     // Keep the browser's user gesture: no asynchronous probe before the request.
     try {
       this.permissionRequest = this.platform
@@ -216,18 +260,49 @@ export class NotificationsService extends Service implements Notifications {
         .then((permission) => {
           if (generation === this.permissionGeneration)
             this.publish({ permission });
-          this.schedule();
         })
-        .catch(this.reportError)
+        .catch((error: unknown) => {
+          failed = true;
+          report(error);
+        })
         .finally(() => {
           this.permissionRequest = undefined;
+          // A read sent while the prompt was up says denied whatever the
+          // answer. Supersede it, so its alert follows the published status.
+          this.permissionGeneration++;
           this.publish({ requesting: false });
+          // Allow is answered with Buzz in front, and the Dock dot otherwise
+          // re-reads its permission only at the next window focus. A Dock
+          // read still in flight was sent while the prompt was up.
+          void this.indicator.reread();
+          // A request that failed says nothing, and macOS reports the prompt
+          // it left unanswered as denied: read what the status is now. Only
+          // read: a failure is never followed by a request nobody caused.
+          if (failed) void this.refreshPermission({ ask: false });
+          // Alerts held for the answer are examined once nothing is in flight.
+          this.schedule();
         });
     } catch (error) {
-      this.reportError(error);
+      report(error);
       this.publish({ requesting: false });
     }
     return this.permissionRequest ?? Promise.resolve();
+  }
+  /** Sends the one automatic system prompt per device. Its caller has a
+   * status the OS itself just reported as not yet asked. A person who is not
+   * looking, or who has alerts off, is asked at a later window focus. */
+  private requestAutomatically() {
+    if (
+      !this.entered ||
+      this.askedAutomatically ||
+      this.state.developmentPaused ||
+      !this.state.preferences.enabled ||
+      !this.present()
+    )
+      return;
+    this.askedAutomatically = true;
+    if (this.preferences.claimAutomaticRequest())
+      void this.requestPermission({ quiet: true });
   }
   private allowed(item: Candidate) {
     return (
@@ -239,7 +314,8 @@ export class NotificationsService extends Service implements Notifications {
       item.valid() &&
       this.authorized(item.target) &&
       this.state.preferences.enabled &&
-      this.state.preferences.categories[item.category] !== false
+      this.state.preferences.categories[item.category] !== false &&
+      this.gated(item.target)
     );
   }
   private soundEnabled(category: string) {
@@ -247,6 +323,27 @@ export class NotificationsService extends Service implements Notifications {
       this.state.preferences.sound &&
       resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
     );
+  }
+  /** Whether every registered gate lets this target alert. */
+  gated(target: OpenTarget) {
+    return this.gates.snapshot().every((gate) => {
+      try {
+        return gate.allows(target);
+      } catch {
+        return true;
+      }
+    });
+  }
+  subscribeGates = (listener: () => void) => this.gates.subscribe(listener);
+  gate(gate: NotificationGate) {
+    if (
+      !gate ||
+      typeof gate.id !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(gate.id) ||
+      typeof gate.allows !== "function"
+    )
+      throw new Error("A notification gate needs an id and allows()");
+    return this.gates.register(this.ctx, gate);
   }
   revalidate() {
     for (const item of this.pending) {
@@ -306,13 +403,24 @@ export class NotificationsService extends Service implements Notifications {
           )
         )
           return Promise.reject(new Error("Invalid notification text"));
+        const eligible = input?.eligible;
+        if (eligible !== undefined && typeof eligible !== "function")
+          return Promise.reject(new Error("Invalid notification eligibility"));
         const text = pluginNotificationText(input, current.label);
         return this.admit(
           current.key,
           current.label,
           input,
           () => !disposed && entry() === current,
-          undefined,
+          eligible &&
+            (() => {
+              try {
+                const answer = eligible();
+                return answer === true || answer === "wait" ? answer : false;
+              } catch {
+                return false;
+              }
+            }),
           () => text,
         );
       },
@@ -412,7 +520,11 @@ export class NotificationsService extends Service implements Notifications {
         return;
       }
       if (permission !== "granted" && permission !== "unknown") {
-        if (permission !== "default") this.pending.delete(item);
+        // Not yet asked holds the alert for an Allow, and so does a request
+        // in flight: macOS reports its unanswered prompt as denied. An alert
+        // never asks by itself.
+        if (permission !== "default" && !this.permissionRequest)
+          this.pending.delete(item);
         return;
       }
       if (item.eligible() !== true) {

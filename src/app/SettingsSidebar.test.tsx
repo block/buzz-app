@@ -12,6 +12,8 @@ import {
   GlobeIcon,
 } from "../shared/design-system/icons";
 
+import { CpuIcon, ChatCircleIcon } from "../shared/design-system/icons";
+
 afterEach(cleanup);
 
 // The shared sidebar's resize handle measures its panel.
@@ -90,17 +92,6 @@ it("keeps Community admin separate and uses each card's navigation icon", () => 
   expect(membership).toHaveAttribute("aria-current", "page");
   expect(membership.closest("section")).toHaveTextContent("Community admin");
   expect(membership.closest("section")).not.toHaveTextContent("Primary");
-  expect(membership.querySelector("svg")).toHaveClass("tabler-icon-copy");
-  expect(
-    screen
-      .getByRole("button", { name: "Personal groups" })
-      .querySelector("svg"),
-  ).toHaveClass("tabler-icon-folder");
-  expect(
-    screen
-      .getByRole("button", { name: "Hosted communities" })
-      .querySelector("svg"),
-  ).toHaveClass("tabler-icon-world");
 });
 
 it.each([null, "primary"])(
@@ -161,12 +152,108 @@ it.each([null, "primary"])(
       expect(within(group).queryByRole("link")).toBeNull();
       const leave = screen.getByRole("button", { name: "Leave or remove" });
       expect(leave.closest("section")).toHaveTextContent("Community");
-      expect(leave.querySelector("svg")).toHaveClass("tabler-icon-logout");
     } else {
       expect(screen.queryByRole("heading", { name: "Community" })).toBeNull();
       expect(
         screen.queryByRole("button", { name: "Leave or remove" }),
       ).toBeNull();
     }
+  },
+);
+
+it("uses a contributed icon and preserves the chat fallback", () => {
+  const client = {
+    selected: "primary",
+    memberships: [{ id: "primary", name: "Primary" }],
+  };
+  const connection = { scope: "icon-test" };
+  const entries = [
+    {
+      id: "compute",
+      key: "mesh/compute",
+      pluginId: "mesh",
+      revision: "one",
+      title: "Compute",
+      component: () => null,
+      icon: CpuIcon,
+    },
+    {
+      id: "other",
+      key: "other/card",
+      pluginId: "other",
+      revision: "one",
+      title: "Other",
+      component: () => null,
+    },
+  ];
+  render(
+    <SettingsSidebar
+      communities={
+        {
+          snapshot: () => client,
+          subscribe: () => () => {},
+          relay: { snapshot: () => connection, subscribe: () => () => {} },
+        } as unknown as Communities
+      }
+      cards={
+        {
+          snapshot: () => entries,
+          subscribe: () => () => {},
+        } as unknown as SettingsCards
+      }
+      onSection={() => {}}
+    />,
+  );
+  const reference = render(
+    <>
+      <CpuIcon data-testid="cpu-reference" />
+      <ChatCircleIcon data-testid="chat-reference" />
+    </>,
+  );
+  expect(
+    screen.getByRole("button", { name: "Compute" }).querySelector("svg")
+      ?.innerHTML,
+  ).toBe(reference.getByTestId("cpu-reference").innerHTML);
+  expect(
+    screen.getByRole("button", { name: "Other" }).querySelector("svg")
+      ?.innerHTML,
+  ).toBe(reference.getByTestId("chat-reference").innerHTML);
+  expect(
+    screen.getByRole("button", { name: "Compute" }).closest("section"),
+  ).toHaveTextContent("Community");
+});
+
+it.each([
+  [0, "Manage plugins"],
+  [2, "Manage plugins2 recommended plugins"],
+])(
+  "shows %s managed plugin recommendations on Manage plugins only",
+  (count, name) => {
+    const client = { selected: null, memberships: [] };
+    const connection = {};
+    const cards: ReturnType<SettingsCards["snapshot"]> = [];
+    render(
+      <nav aria-label="Settings sections">
+        <SettingsSidebar
+          communities={
+            {
+              subscribe: () => () => {},
+              snapshot: () => client,
+              relay: { subscribe: () => () => {}, snapshot: () => connection },
+            } as unknown as Communities
+          }
+          cards={
+            {
+              subscribe: () => () => {},
+              snapshot: () => cards,
+            } as unknown as SettingsCards
+          }
+          recommendations={count}
+          onSection={() => {}}
+        />
+      </nav>,
+    );
+    expect(screen.getByRole("button", { name })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Appearance" })).toBeVisible();
   },
 );

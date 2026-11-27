@@ -3,14 +3,23 @@ import type { Communities } from "../communities/service";
 import { createRelaySession } from "../relay/session";
 import type { RelayEvent } from "../relay/events";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
+import type {
+  SidebarDecoder,
+  SidebarMuteMutator,
+} from "../relay/sidebar-preferences";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
-import { bindUnreadIndicator } from "./indicator-unread";
+import { bindUnreadIndicator, type IndicatorGates } from "./indicator-unread";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const stop of cleanups.splice(0).reverse()) stop();
 });
-function setup() {
+function setup(
+  sidebar?: Readonly<{
+    decode: SidebarDecoder;
+    write: SidebarMuteMutator;
+  }>,
+) {
   const viewer = keypair(),
     peer = keypair(),
     relay = keypair();
@@ -30,13 +39,21 @@ function setup() {
         },
         publish: async () => {},
       },
+      ...(sidebar
+        ? {
+            decodeSidebarPreferences: sidebar.decode,
+            writeSidebarMute: sidebar.write,
+          }
+        : {}),
       subscribe(callbacks) {
         incoming = callbacks.receive;
         return { update() {}, retry() {}, dispose() {} };
       },
     },
     {
+      readStateFloor: () => 0,
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         async update(change) {
           journal = readJournal(change(journal), viewer.pubkey);
           return journal;
@@ -71,8 +88,8 @@ function setup() {
     relay: { snapshot: () => relayState, subscribe },
   } as unknown as Communities;
   const project = vi.fn();
-  const bind = () => {
-    const stop = bindUnreadIndicator(communities, project);
+  const bind = (gates?: IndicatorGates) => {
+    const stop = bindUnreadIndicator(communities, project, gates);
     cleanups.push(stop);
     return stop;
   };
@@ -205,7 +222,7 @@ it("retargets an already-open community and ignores the prior session after swit
   expect(h.project).toHaveBeenCalledTimes(calls);
 });
 
-it.each(["huddle", "metadataPending"] as const)(
+it.each(["huddle", "metadataPending", "archived", "hidden"] as const)(
   "excludes %s channels from the Dock indicator",
   (flag) => {
     const h = setup();
@@ -229,3 +246,142 @@ it.each(["huddle", "metadataPending"] as const)(
     expect(h.project.mock.calls).toEqual([[false]]);
   },
 );
+
+function mutedSetup() {
+  return setup({
+    decode: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    write: async ({ channelId, muted }) => (muted ? [channelId] : []),
+  });
+}
+
+it("follows the sidebar row for a muted channel: mentions light the Dock, ordinary activity doesn't", async () => {
+  const h = mutedSetup();
+  h.grant();
+  await h.session.sidebarPreferences.ensure();
+  h.bind();
+  const row = message(h.peer, "room", "arrival", 11);
+  h.emit([row]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+
+  await h.session.sidebarPreferences.setMute("room", true);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  expect(h.session.unread.snapshot(target).observedCount).toBe(1);
+
+  await h.session.unread.markThrough(target, row.id);
+  h.emit([message(h.peer, "room", "muted arrival", 12)]);
+  expect(h.session.unread.snapshot(target).observedCount).toBe(1);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+
+  const mention = message(h.peer, "room", "muted mention", 13, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+
+  await h.session.unread.markThrough(target, mention.id);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+
+  // Manual unread makes a muted row bold, so it lights the Dock too.
+  await h.session.unread.markUnreadLocal(target);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+});
+
+it("lights the Dock for a muted DM, as its sidebar row shows it", async () => {
+  const h = mutedSetup();
+  h.emit([
+    roster(h.relay, "room", [h.viewer.pubkey, h.peer.pubkey], 10),
+    signed(h.relay, {
+      kind: 39000,
+      content: JSON.stringify({ name: "room", channel_type: "dm" }),
+      tags: [
+        ["d", "room"],
+        ["name", "room"],
+        ["t", "dm"],
+      ],
+      created_at: 10,
+    }),
+  ]);
+  await h.session.sidebarPreferences.ensure();
+  await h.session.sidebarPreferences.setMute("room", true);
+  h.bind();
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  h.emit([message(h.peer, "room", "muted DM", 11)]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+});
+
+it("follows the sidebar row: opening a channel clears the Dock without reading it", () => {
+  const h = setup();
+  h.grant();
+  h.bind();
+  h.emit([message(h.peer, "room", "arrival", 11)]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  void h.session.unread.enterChannel("room");
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  expect(h.session.unread.snapshot(target).observedCount).toBe(1);
+  h.session.unread.leaveChannel("room");
+  h.emit([message(h.peer, "room", "later", 12)]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+});
+
+it("stays off for coordination between agents and lights for the next message to everyone", () => {
+  const h = setup();
+  h.bind();
+  h.grant();
+  h.emit([message(h.peer, "room", "Progress", 11, [["audience", "agents"]])]);
+  expect(h.project.mock.calls).toEqual([[false]]);
+  h.emit([message(h.peer, "room", "Done", 12)]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+});
+
+it("counts only conversations the notification gates allow and follows gate changes", () => {
+  const h = setup();
+  h.grant();
+  let allowed = new Set<string>();
+  const gateListeners = new Set<() => void>();
+  const seen: unknown[] = [];
+  h.bind({
+    allows(target) {
+      seen.push(target);
+      return target.kind === "conversation" && allowed.has(target.channelId);
+    },
+    subscribe(listener) {
+      gateListeners.add(listener);
+      return () => void gateListeners.delete(listener);
+    },
+  });
+  h.emit([message(h.peer, "room", "held", 11)]);
+  expect(h.project.mock.calls).toEqual([[false]]);
+  expect(seen[0]).toEqual({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: h.viewer.pubkey, communityOrigin: "https://one.example" },
+    channelId: "room",
+  });
+  allowed = new Set(["room"]);
+  for (const listener of gateListeners) listener();
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  allowed = new Set();
+  for (const listener of gateListeners) listener();
+  expect(h.project).toHaveBeenLastCalledWith(false);
+});
+
+it("relights the Dock projection for attention arriving during a background visit", async () => {
+  const h = setup();
+  h.grant();
+  h.bind();
+  h.emit([message(h.peer, "room", "before", 11)]);
+  await h.session.unread.enterChannel("room");
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  h.session.unread.setChannelActive("room", false);
+  h.emit([
+    message(h.peer, "room", "background mention", 10, [["p", h.viewer.pubkey]]),
+  ]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  h.session.unread.leaveChannel("room");
+  expect(h.project).toHaveBeenLastCalledWith(true);
+});

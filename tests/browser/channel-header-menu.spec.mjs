@@ -30,6 +30,22 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await page
     .locator('button[data-channel-id="11111111-1111-4111-8111-111111111111"]')
     .click();
+  // The header identity fills the title slot: a long name truncates only when
+  // the header runs out of room, not at the tab strip's 12rem cap.
+  const heading = page.getByRole("button", {
+    name: `Manage members of ${channelName}`,
+    exact: true,
+  });
+  await expect(heading).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        heading
+          .getByText(channelName, { exact: true })
+          .evaluate((label) => label.scrollWidth <= label.clientWidth),
+      "the header title shows the whole channel name",
+    )
+    .toBe(true);
   const trigger = page.getByRole("button", {
     name: "Channel actions",
     exact: true,
@@ -114,29 +130,16 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await expect(
     settings.getByRole("button", { name: "Edit details", exact: true }),
   ).toHaveCount(0);
-  const checkInlineIcon = async (action) => {
+  const checkInlineIcon = async (action, { wholeRow = false } = {}) => {
     const row = action.locator("xpath=../..");
     const icon = action.locator("svg");
     const affordance = icon.locator("..");
     await action.scrollIntoViewIfNeeded();
     await page.mouse.move(0, 0);
-    await expect(affordance).toHaveCSS("opacity", "0");
-    await expect(affordance).toHaveCSS(
-      "transform",
-      "matrix(1, 0, 0, 1, -4, 0)",
-    );
+    await expect(affordance).toHaveCSS("opacity", "1");
     await expect(affordance).toHaveAttribute("aria-hidden", "true");
     await expect(icon).toHaveAttribute("width", "0.875rem");
     await expect(action.getByText(/^(Edit|Copy)$/)).toHaveCount(0);
-    const before = await row.boundingBox();
-    // Hover the value/padding, not just the label or the icon itself.
-    await page.mouse.move(
-      before.x + before.width / 2,
-      before.y + before.height - 8,
-    );
-    await expect(affordance).toHaveCSS("opacity", "1");
-    await expect(affordance).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
-    expect(await row.boundingBox()).toEqual(before);
     const geometry = await action.evaluate((node) => {
       // Measure the flex item's box, not a text Range's engine-specific glyph bounds.
       const label =
@@ -150,34 +153,51 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     });
     expect(geometry.gap).toBe(8);
     expect(Math.abs(geometry.centerOffset)).toBeLessThan(2);
-    await page.mouse.move(0, 0);
-    await expect(affordance).toHaveCSS("opacity", "0");
     // Establish keyboard modality without assuming macOS WebKit's Tab policy.
     await page.keyboard.press("Tab");
     await action.focus();
     await expect(action).toBeFocused();
-    await expect(affordance).toHaveCSS("opacity", "1");
-    await expect(row).toHaveCSS("outline-style", "none");
+    // Whole-row actions ring the row; label actions ring only the label.
+    await expect(wholeRow ? row : action).toHaveCSS("outline-style", "solid");
+    await expect(wholeRow ? action : row).toHaveCSS("outline-style", "none");
     await row.screenshot({
       path: testInfo.outputPath("metadata-keyboard-focus.png"),
     });
   };
-  for (const label of ["Edit description", "Edit visibility", "View members"]) {
+  for (const label of ["Edit description", "View members"]) {
     const action = settings.getByRole("button", { name: label, exact: true });
     const row = action.locator("xpath=../..");
+    // The description's value holds its own links, so only its label edits.
+    const wholeRow = label === "View members";
     await action.scrollIntoViewIfNeeded();
     await page.mouse.move(0, 0);
     const resting = await row.evaluate(
       (node) => getComputedStyle(node).backgroundColor,
     );
     const box = await row.boundingBox();
-    // Hit the value/padding below the text control, not just its label.
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height - 8);
-    await expect
-      .poll(() =>
-        row.evaluate((node) => getComputedStyle(node).backgroundColor),
-      )
-      .not.toBe(resting);
+    const background = () =>
+      row.evaluate((node) => getComputedStyle(node).backgroundColor);
+    if (wholeRow) {
+      // Hit the value/padding below the text control, not just its label.
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height - 8);
+      await expect.poll(background).not.toBe(resting);
+    } else {
+      // Hover the value text. Only the label takes the click, so the row
+      // stays unpainted.
+      const value = row.locator("dd");
+      const valueBox = await value.boundingBox();
+      await page.mouse.move(valueBox.x + 4, valueBox.y + valueBox.height / 2);
+      await expect
+        .poll(() => value.evaluate((node) => node.matches(":hover")))
+        .toBe(true);
+      expect(await background()).toBe(resting);
+      // Hovering the label itself doesn't paint the whole row either.
+      await action.hover();
+      await expect
+        .poll(() => action.evaluate((node) => node.matches(":hover")))
+        .toBe(true);
+      expect(await background()).toBe(resting);
+    }
     await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(action).toHaveCSS("padding", "0px");
     if (label === "View members") {
@@ -186,15 +206,23 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
         "aria-hidden",
         "true",
       );
+      await page.keyboard.press("Tab");
+      await action.focus();
+      await expect(row).toHaveCSS("outline-style", "solid");
+      await expect(action).toHaveCSS("outline-style", "none");
     } else {
       await checkInlineIcon(action);
     }
     await page.mouse.click(box.x + box.width / 2, box.y + box.height - 8);
     const dialog = page.getByRole("dialog", {
       name:
-        label === "View members" ? "Channel members" : "Edit channel details",
+        label === "View members" ? "Manage members" : "Edit channel details",
       exact: true,
     });
+    if (!wholeRow) {
+      await expect(dialog).toHaveCount(0);
+      await action.click();
+    }
     await expect(dialog).toBeVisible();
     await expect(
       label === "View members"
@@ -219,13 +247,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   });
   const pencil = title.locator("svg").locator("..");
   await page.mouse.move(0, 0);
-  await expect(pencil).toHaveCSS("opacity", "0");
-  await expect(pencil).toHaveCSS("transform", "matrix(1, 0, 0, 1, -4, 0)");
-  const titleBefore = await title.boundingBox();
-  await title.hover();
   await expect(pencil).toHaveCSS("opacity", "1");
-  await expect(pencil).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
-  expect(await title.boundingBox()).toEqual(titleBefore);
   const checkTitleGeometry = async () => {
     const geometry = await title.evaluate((node) => {
       const textNode = node.querySelector("span");
@@ -275,7 +297,12 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await nameEditor
     .getByRole("radio", { name: "Temporary", exact: true })
     .click();
-  await checkDurationConsumer(page, nameEditor, "edit-duration", testInfo);
+  await checkDurationConsumer(page, nameEditor, "edit-duration", testInfo, {
+    nextControl: nameEditor.getByRole("button", {
+      name: "Cancel",
+      exact: true,
+    }),
+  });
   await nameEditor.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(title).toBeFocused();
   if (browserName === "chromium") {
@@ -285,7 +312,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     name: "Copy channel id",
     exact: true,
   });
-  await checkInlineIcon(copy);
+  await checkInlineIcon(copy, { wholeRow: true });
   await expect(page.getByRole("tooltip")).toHaveCount(0);
   const idRow = copy.locator("xpath=../..");
   const rowHeight = (await idRow.boundingBox()).height;
@@ -309,7 +336,7 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     name: "Edit description",
     exact: true,
   });
-  await descriptionAction.hover();
+  await page.mouse.move(0, 0);
   await expect(descriptionAction.locator("svg").locator("..")).toHaveCSS(
     "opacity",
     "1",
@@ -318,50 +345,51 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
     path: testInfo.outputPath("channel-details-actions.png"),
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await title.hover();
   const narrow = await checkTitleGeometry();
   expect(narrow.textHeight).toBeGreaterThan(narrow.lineHeight);
   await settings.screenshot({
     path: testInfo.outputPath("channel-details-title-narrow.png"),
   });
-  // Reduced-motion users get immediate reveal without translation or fading.
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  const descriptionIcon = descriptionAction.locator("svg").locator("..");
-  await expect(descriptionIcon).toHaveCSS("transition-duration", "0s");
-  await expect(descriptionIcon).toHaveCSS("transform", "none");
-  await descriptionAction.hover();
-  await expect(descriptionIcon).toHaveCSS("opacity", "1");
-  await expect(descriptionIcon).toHaveCSS("transform", "none");
-  await expect(pencil).toHaveCSS("transition-duration", "0s");
-  await expect(pencil).toHaveCSS("transform", "none");
-  await title.hover();
-  await expect(pencil).toHaveCSS("opacity", "1");
-  await expect(pencil).toHaveCSS("transform", "none");
-  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.setViewportSize({ width: 1440, height: 950 });
   await page
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(trigger).toBeFocused();
+  // The split moves the trigger until the closing dock leaves; a mouseup
+  // outside the moved trigger cancels the menu it opened on mousedown.
+  await expect(
+    page.locator("[data-channel-workspace] > [data-panel-dock]:not([hidden])"),
+  ).toHaveCount(0);
   await trigger.click();
   await menu
     .getByRole("menuitem", { name: "View canvas", exact: true })
     .click();
-  const canvas = page.getByRole("dialog", {
+  const canvas = page.getByRole("region", {
     name: "Channel Canvas",
     exact: true,
   });
   await expect(canvas).toBeVisible();
   await expect(
-    canvas.getByRole("button", { name: "Close Canvas", exact: true }),
+    page.getByRole("button", { name: "Close Canvas tab", exact: true }),
   ).toBeEnabled();
+  await expect(
+    canvas.getByRole("article", { name: "Saved Canvas" }),
+  ).toBeVisible();
+  await canvas.getByRole("tab", { name: "Edit", exact: true }).click();
   await expect(
     canvas.getByRole("textbox", { name: "Canvas Markdown", exact: true }),
   ).toBeEnabled();
   await expect(menu).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
   await expect(canvas).toHaveCount(0);
   await expect(trigger).toBeFocused();
+  // The split moves the trigger until the closing dock leaves; a mouseup
+  // outside the moved trigger cancels the menu it opened on mousedown.
+  await expect(
+    page.locator("[data-channel-workspace] > [data-panel-dock]:not([hidden])"),
+  ).toHaveCount(0);
   for (const label of ["Archive channel", "Delete channel"]) {
     await trigger.click();
     await menu.getByRole("menuitem", { name: label, exact: true }).click();
@@ -413,12 +441,15 @@ test.describe("sidebar actions in the header", () => {
     const openMove = async () => {
       await trigger.click();
       const move = menu.getByRole("menuitem", {
-        name: "Move channel",
+        name: "Move to…",
         exact: true,
       });
       await move.focus();
       await page.keyboard.press("ArrowRight");
-      return page.getByRole("menu", { name: "Move channel", exact: true });
+      return page.getByRole("menu", {
+        name: "Move Beta to workspace",
+        exact: true,
+      });
     };
     let move = await openMove();
     await expect(move).toHaveAttribute("data-size", "default");
@@ -429,12 +460,10 @@ test.describe("sidebar actions in the header", () => {
       .getByRole("menuitem", { name: "Create new…", exact: true })
       .click();
     const create = page.getByRole("dialog", {
-      name: "Create new section",
+      name: "Move to new workspace",
       exact: true,
     });
-    await expect(
-      create.getByRole("textbox", { name: "Section name" }),
-    ).toBeFocused();
+    await expect(create.getByRole("textbox", { name: "Name" })).toBeFocused();
     await expect(menu).toHaveCount(0);
     await create.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(trigger).toBeFocused();
@@ -461,7 +490,7 @@ test.describe("sidebar actions in the header", () => {
       menu.getByRole("menuitem", { name: "Unmute", exact: true }),
     ).toBeVisible();
     await menu
-      .getByRole("menuitem", { name: /^Mark as (Read|Unread)$/ })
+      .getByRole("menuitem", { name: /^Mark as (read|unread)$/ })
       .click();
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();
@@ -480,24 +509,36 @@ test.describe("dialog origin retirement", () => {
   async function start(page, app) {
     await page.goto(app.origin);
     await openPage(page, "Messages");
-    await page.locator('button[data-channel-id="beta"]').click();
+    await page.getByRole("button", { name: "Beta", exact: true }).click();
     await expect(
-      page.getByRole("tab", { name: "Beta", exact: true }),
+      page.getByRole("button", { name: "Manage members of Beta", exact: true }),
     ).toBeVisible();
     await page.locator(`button[data-channel-id="${channelId}"]`).click();
     await expect(
-      page.getByRole("tab", { name: channelName, exact: true }),
+      page.getByRole("button", {
+        name: `Manage members of ${channelName}`,
+        exact: true,
+      }),
     ).toBeVisible();
   }
   async function back(page) {
     await page.goBack();
+    // Sidebar-origin dialogs keep the workspace inert on Back; inspect its retained identity.
     await expect(
-      page.locator(
-        '[aria-label="Conversation"] [role="tab"][aria-selected="true"]',
-      ),
-    ).toHaveText("Beta");
+      page
+        .getByRole("article", {
+          name: "Conversation",
+          exact: true,
+          includeHidden: true,
+        })
+        .getByRole("button", {
+          name: "Manage members of Beta",
+          exact: true,
+          includeHidden: true,
+        }),
+    ).toBeVisible();
   }
-  test("Canvas retires without reading the next channel or losing its original draft", async ({
+  test("Canvas stays open for its channel until closed, without reading the next channel", async ({
     page,
     app,
   }) => {
@@ -508,7 +549,7 @@ test.describe("dialog origin retirement", () => {
     await page
       .getByRole("menuitem", { name: "View canvas", exact: true })
       .click();
-    const canvas = page.getByRole("dialog", {
+    const canvas = page.getByRole("region", {
       name: "Channel Canvas",
       exact: true,
     });
@@ -516,6 +557,10 @@ test.describe("dialog origin retirement", () => {
       name: "Canvas Markdown",
       exact: true,
     });
+    const view = canvas.getByRole("article", { name: "Saved Canvas" });
+    const edit = canvas.getByRole("tab", { name: "Edit", exact: true });
+    await expect(view).toBeVisible();
+    await edit.click();
     await expect(editor).toBeEnabled();
     await editor.fill("Draft belongs to the original channel");
     const canvasReads = () =>
@@ -527,19 +572,42 @@ test.describe("dialog origin retirement", () => {
     expect(canvasReads()).toEqual(before);
     await page.goForward();
     await expect(
-      page.getByRole("tab", { name: channelName, exact: true }),
+      page.getByRole("button", {
+        name: `Manage members of ${channelName}`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    // Returning shows the open Canvas; Edit still holds the channel's draft.
+    await expect(canvas).toBeVisible();
+    await edit.click();
+    await expect(editor).toHaveValue("Draft belongs to the original channel");
+    // Choosing channels from the sidebar keeps the tab the same way.
+    await page.locator('button[data-channel-id="beta"]').click();
+    await expect(
+      page.getByRole("button", { name: "Manage members of Beta", exact: true }),
     ).toBeVisible();
     await expect(canvas).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Channel actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "View canvas", exact: true })
-      .click();
+    await page.locator(`button[data-channel-id="${channelId}"]`).click();
+    await expect(canvas).toBeVisible();
+    await edit.click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
-    await canvas
-      .getByRole("button", { name: "Close Canvas", exact: true })
+    await page
+      .getByRole("button", { name: "Close Canvas tab", exact: true })
       .click();
+    await expect(canvas).toHaveCount(0);
+    // Close is the end: returning to the channel does not reopen it.
+    await page.locator('button[data-channel-id="beta"]').click();
+    await expect(
+      page.getByRole("button", { name: "Manage members of Beta", exact: true }),
+    ).toBeVisible();
+    await page.locator(`button[data-channel-id="${channelId}"]`).click();
+    await expect(
+      page.getByRole("button", {
+        name: `Manage members of ${channelName}`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(canvas).toHaveCount(0);
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   });
   for (const entrance of ["header", "sidebar"]) {
@@ -559,7 +627,7 @@ test.describe("dialog origin retirement", () => {
             .click({ button: "right" });
         if (action === "create") {
           await page
-            .getByRole("menuitem", { name: "Move channel", exact: true })
+            .getByRole("menuitem", { name: "Move to…", exact: true })
             .focus();
           await page.keyboard.press("ArrowRight");
           await page
@@ -570,7 +638,7 @@ test.describe("dialog origin retirement", () => {
             .getByRole("menuitem", { name: "Delete channel", exact: true })
             .click();
         const dialog = page.getByRole("dialog", {
-          name: action === "create" ? "Create new section" : /^Delete .+\?$/,
+          name: action === "create" ? "Move to new workspace" : /^Delete .+\?$/,
         });
         await expect(dialog).toBeVisible();
         await back(page);
@@ -578,7 +646,10 @@ test.describe("dialog origin retirement", () => {
           await expect(dialog).toHaveCount(0);
           await page.goForward();
           await expect(
-            page.getByRole("tab", { name: channelName, exact: true }),
+            page.getByRole("button", {
+              name: `Manage members of ${channelName}`,
+              exact: true,
+            }),
           ).toBeVisible();
           await expect(dialog).toHaveCount(0);
         } else {

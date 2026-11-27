@@ -2,11 +2,20 @@ import { afterEach, expect, it, vi } from "vitest";
 import { getLogger, logLevel, setLogLevel } from "../developer/logging";
 import {
   createMediaPreparation,
+  decodedImageCapture,
+  hasDecodedImage,
   openingFrame,
   openingFrameCapture,
   rememberOpeningFrame,
+  retainDecodedImage,
   saveData,
+  takeDecodedImage,
 } from "./media";
+
+const remembered = vi.hoisted(() => vi.fn());
+vi.mock("../../shared/design-system/useReadyImage", () => ({
+  rememberLoadedImage: remembered,
+}));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -51,6 +60,58 @@ it.each([
   await flushDecode();
   // Oversized originals are not decoded just to prepare an avatar.
   expect(image.decode).toHaveBeenCalledTimes(decoded ? 1 : 0);
+});
+
+it("settled avatars are not reloaded until the intent TTL passes", async () => {
+  vi.useFakeTimers();
+  try {
+    const created = stubImages();
+    const media = createMediaPreparation();
+    media.prepare(["a", "b"]);
+    created[0]?.onload?.();
+    created[1]?.onerror?.();
+    await flushDecode();
+    // A loaded avatar and a failed one both settle; repeated intent skips them.
+    media.prepare(["a", "b"]);
+    media.warm(["a", "b"]);
+    expect(created).toHaveLength(2);
+    vi.advanceTimersByTime(5 * 60_000);
+    media.prepare(["a", "b"]);
+    expect(created).toHaveLength(4);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("overlaps up to eight warm requests", () => {
+  const created = stubImages();
+  createMediaPreparation().prepare(
+    Array.from({ length: 10 }, (_, i) => `u${i}`),
+  );
+  expect(created).toHaveLength(8);
+});
+
+it("starts the next warm as one settles and remembers only loaded ones", async () => {
+  vi.useFakeTimers();
+  try {
+    remembered.mockClear();
+    const created = stubImages();
+    const media = createMediaPreparation();
+    media.prepare(Array.from({ length: 11 }, (_, i) => `u${i}`));
+    expect(created).toHaveLength(8);
+    created[0]?.onload?.();
+    await flushDecode();
+    expect(created).toHaveLength(9);
+    created[1]?.onerror?.();
+    expect(created).toHaveLength(10);
+    // The remaining eight time out together, which starts the last one.
+    vi.advanceTimersByTime(10_000);
+    expect(created).toHaveLength(11);
+    media.dispose();
+    expect(remembered.mock.calls).toEqual([["u0"]]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("Save-Data disables warming but nothing else", () => {
@@ -126,4 +187,65 @@ it("bounds opening frames by encoded size and forgets them with session media", 
   expect(openingFrame("late")).toBeUndefined();
   rememberOpeningFrame("current", frame(10), openingFrameCapture());
   expect(openingFrame("current")).toBeDefined();
+});
+
+it("bounds decoded images by size and owner and forgets them with session media", () => {
+  // 64 MiB decoded each, the largest retained; the 512 MiB budget holds eight.
+  const image = (side = 4096) =>
+    ({ naturalWidth: side, naturalHeight: side }) as HTMLImageElement;
+  const owner = {};
+  createMediaPreparation().dispose();
+  const capture = decodedImageCapture();
+  retainDecodedImage(owner, "oversized", image(4097), capture);
+  retainDecodedImage(owner, "empty", image(0), capture);
+  expect(hasDecodedImage(owner, "oversized")).toBe(false);
+  expect(hasDecodedImage(owner, "empty")).toBe(false);
+  const images = Array.from({ length: 10 }, () => image());
+  for (const [i, item] of images.entries())
+    retainDecodedImage(owner, `image-${i}`, item, capture);
+  expect(hasDecodedImage(owner, "image-1")).toBe(false);
+  expect(hasDecodedImage(owner, "image-2")).toBe(true);
+  expect(takeDecodedImage({}, "image-9")).toBeUndefined();
+  const claimed = takeDecodedImage(owner, "image-9");
+  expect(claimed).toBe(images[9]);
+  expect(takeDecodedImage(owner, "image-9")).toBeUndefined();
+  // Claiming frees its budget; re-retaining makes the source newest.
+  if (claimed) retainDecodedImage(owner, "image-9", claimed, capture);
+  retainDecodedImage(owner, "image-10", image(), capture);
+  expect(hasDecodedImage(owner, "image-2")).toBe(false);
+  expect(hasDecodedImage(owner, "image-3")).toBe(true);
+  expect(hasDecodedImage(owner, "image-9")).toBe(true);
+
+  createMediaPreparation().dispose();
+  expect(hasDecodedImage(owner, "image-9")).toBe(false);
+  retainDecodedImage(owner, "late", image(), capture);
+  expect(hasDecodedImage(owner, "late")).toBe(false);
+  retainDecodedImage(owner, "current", image(), decodedImageCapture());
+  expect(hasDecodedImage(owner, "current")).toBe(true);
+});
+
+it("retains one decoded element per display of a shared source", () => {
+  const image = () =>
+    ({ naturalWidth: 4096, naturalHeight: 4096 }) as HTMLImageElement;
+  const owner = {};
+  createMediaPreparation().dispose();
+  const capture = decodedImageCapture();
+  // A channel row and its open thread show the same original; both detach.
+  const row = image();
+  const thread = image();
+  retainDecodedImage(owner, "shared", row, capture);
+  retainDecodedImage(owner, "shared", thread, capture);
+  const first = takeDecodedImage(owner, "shared");
+  const second = takeDecodedImage(owner, "shared");
+  expect(new Set([first, second])).toEqual(new Set([row, thread]));
+  expect(takeDecodedImage(owner, "shared")).toBeUndefined();
+  expect(hasDecodedImage(owner, "shared")).toBe(false);
+
+  // Every retained element counts against the budget, which holds eight.
+  for (let i = 0; i < 8; i++)
+    retainDecodedImage(owner, "shared", image(), capture);
+  retainDecodedImage(owner, "newest", image(), capture);
+  expect(hasDecodedImage(owner, "shared")).toBe(false);
+  expect(hasDecodedImage(owner, "newest")).toBe(true);
+  createMediaPreparation().dispose();
 });

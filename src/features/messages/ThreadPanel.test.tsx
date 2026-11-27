@@ -11,14 +11,24 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
-import { afterEach, expect, it, vi } from "vitest";
-import { useActivityLanePublisher } from "./activity-lane";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
+import { selectNewestMessage } from "./message-selection";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
 import { createAgentLibrary } from "../agents/library";
-import type { RelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
+import type { RelayEvent } from "../relay/events";
+import type { ReadStateSigning } from "../relay/read-state-host";
+import { readJournal, type ReadJournal } from "../relay/read-state-storage";
+import { keypair, message, metadata, roster } from "../relay/testing";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Test the production Node codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 import type { PageNavigation } from "../navigation/service";
+import type { JsonValue } from "../navigation/targets";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
@@ -31,20 +41,29 @@ import { formatPublicKey } from "../../shared/identity/public-key";
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
+// Activity rendering/subscriptions have their own mounted integration suite.
+vi.mock("./TypingIndicator", () => ({
+  TypingIndicator: () => null,
+  useLiveConversationAgents: () => [],
+}));
 vi.mock("../relay/react", () => {
   const profiles = new Map();
-  return { useRowProfiles: () => profiles };
+  return { useProfileGeneration: () => 0, useRowProfiles: () => profiles };
 });
 vi.mock("./MessageRow", () => ({
   MessageRow: ({
     row,
     scope,
     retry,
+    onReply,
     onOpenMediaReview,
     onMediaPlayback,
   }: MessageRowProps) => (
     <article data-message-id={row.id} data-scope={scope}>
       <span>{row.content}</span>
+      <button type="button" onClick={() => onReply?.(row.id)}>
+        Reply to {row.content}
+      </button>
       {row.attachments
         .filter((attachment) => attachment.kind === "video")
         .flatMap((attachment) =>
@@ -85,21 +104,23 @@ vi.mock("./MessageComposer", () => ({
     scope,
     onSend,
     ownSoloConversation,
-    activityClickOpensPanel,
     disabled,
     placeholder,
     focusRequest,
+    threadSeed,
+    shown,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
       data-root={threadRootId}
+      data-seed={threadSeed?.mentions.join(",")}
       data-channel={channelId}
       data-scope={scope}
       data-own-solo={ownSoloConversation}
-      data-direct-activity={activityClickOpensPanel}
       data-disabled={disabled}
       data-placeholder={placeholder}
       data-focus-request={focusRequest}
+      data-shown={shown}
     >
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
@@ -147,6 +168,9 @@ function ordinaryNavigation() {
     complete: vi.fn<PageNavigation["complete"]>(() => true),
     resolve: vi.fn(() => true),
     forSession: vi.fn<PageNavigation["forSession"]>(),
+    position: vi.fn<PageNavigation["position"]>(),
+    savePosition: vi.fn<PageNavigation["savePosition"]>(),
+    passThrough: () => () => {},
   } satisfies PageNavigation;
 }
 function messagesHarness(
@@ -195,10 +219,11 @@ function messagesHarness(
     .mockImplementationOnce(() => first)
     .mockImplementation(makeView);
   const ensure = vi.fn(async () => {});
+  const profiles = new Map();
   const session = {
     viewer,
     thread,
-    profiles: { ensure },
+    profiles: { ensure, snapshot: () => profiles, subscribe: () => () => {} },
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry: vi.fn() },
     media: () => undefined,
@@ -207,6 +232,7 @@ function messagesHarness(
       snapshot: () => undefined,
       subscribe: () => () => {},
       attention: () => ({ unread: false }),
+      threadReadThrough: () => -1,
     },
   } as unknown as RelaySession;
   vi.spyOn(document, "hasFocus").mockReturnValue(false);
@@ -323,8 +349,8 @@ it("allocates only after commit and disposes distinct owned views under StrictMo
   expect(h.thread).not.toHaveBeenCalled();
   h.render(true);
   expect(h.thread.mock.calls).toEqual([
-    ["channel", row.id],
-    ["channel", row.id],
+    ["channel", row.id, { exact: false, reading: true }],
+    ["channel", row.id, { exact: false, reading: true }],
   ]);
   expect(h.views[0]).not.toBe(h.views[1]);
   expect(h.views[0]?.dispose).toHaveBeenCalledOnce();
@@ -342,6 +368,30 @@ it("allocates only after commit and disposes distinct owned views under StrictMo
     expect(view.listeners.size).toBe(0);
   }
 });
+it("registers its messages for keyboard selection and leaves an Escape the selection handled open", () => {
+  const h = messagesHarness();
+  h.render();
+  const list = screen.getByRole("region", { name: "Thread messages" });
+  let selectedNewest = false;
+  act(() => {
+    selectedNewest = selectNewestMessage(list);
+  });
+  expect(selectedNewest).toBe(true);
+  const selected = document.activeElement;
+  expect(selected?.closest("[data-message-id]")).not.toBeNull();
+  // Shift+Escape is "Mark all as read", not a dismissal.
+  fireEvent.keyDown(selected as Element, { key: "Escape", shiftKey: true });
+  expect(h.close).not.toHaveBeenCalled();
+  // The mocked composer has no focus target; stand in for selection's handling.
+  const handled = (event: Event) => event.preventDefault();
+  selected?.addEventListener("keydown", handled);
+  fireEvent.keyDown(selected as Element, { key: "Escape" });
+  expect(h.close).not.toHaveBeenCalled();
+  selected?.removeEventListener("keydown", handled);
+  fireEvent.keyDown(selected as Element, { key: "Escape" });
+  expect(h.close).toHaveBeenCalledOnce();
+  h.unmount();
+});
 it("allocation failure exposes an effective retry rather than leaving a spinner", () => {
   const h = messagesHarness();
   h.thread
@@ -351,8 +401,10 @@ it("allocation failure exposes an effective retry rather than leaving a spinner"
     })
     .mockReturnValue(h.view);
   h.render();
-  expect(screen.getByRole("alert")).toHaveTextContent("capacity");
-  fireEvent.click(screen.getByRole("button", { name: "Retry thread" }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This thread didn’t load.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(screen.getByText("root")).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(h.thread).toHaveBeenCalledTimes(2);
@@ -364,8 +416,9 @@ it("loads history automatically with error-only retry and no routine history con
   expect(h.ensure).toHaveBeenCalledExactlyOnceWith(
     [row.authorId],
     "background",
+    { withStatuses: true },
   );
-  for (const name of ["Refresh thread", "Retry thread", "Load more replies"])
+  for (const name of ["Refresh thread", "Try again", "Load more replies"])
     expect(screen.queryByRole("button", { name })).toBeNull();
   expect(screen.queryByText(/Existing history may be incomplete/)).toBeNull();
   expect(h.view.loadMore).not.toHaveBeenCalled();
@@ -378,14 +431,14 @@ it("loads history automatically with error-only retry and no routine history con
   h.snapshot.status = "error";
   h.snapshot.error = "offline";
   h.render();
-  fireEvent.click(screen.getByRole("button", { name: "Retry thread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(h.view.loadMore).toHaveBeenCalledOnce();
   expect(h.view.refresh).toHaveBeenCalledTimes(2);
   h.snapshot.status = "ready";
   h.snapshot.error = undefined;
   h.snapshot.canLoadMore = false;
   h.render();
-  expect(screen.queryByRole("button", { name: "Retry thread" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   h.snapshot.limited = true;
   h.render();
   expect(screen.getByText("Thread history limit reached.")).toBeVisible();
@@ -393,7 +446,7 @@ it("loads history automatically with error-only retry and no routine history con
   h.snapshot.error = "Thread view exceeded its memory limit.";
   h.render();
   expect(screen.queryByText(/appear automatically/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Retry thread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(h.view.refresh).toHaveBeenCalledTimes(3);
   expect(h.ensure).toHaveBeenCalledOnce();
 });
@@ -410,7 +463,7 @@ it("keeps initial rows pending until positioned, exposes errors, and lets readin
   h.render();
   expect(h.element).not.toHaveAttribute("data-positioning");
   expect(
-    within(h.element).getByRole("button", { name: "Retry thread" }),
+    within(h.element).getByRole("button", { name: "Try again" }),
   ).toBeVisible();
   h.snapshot.status = "loading";
   h.snapshot.error = undefined;
@@ -442,11 +495,20 @@ it("starts a single older page after scrolling through 80% of loaded history", (
   expect(h.view.loadMore).toHaveBeenCalledOnce();
 });
 it("keeps initial thread loading until available content has been positioned", () => {
+  vi.useFakeTimers();
   const h = messagesHarness();
   h.snapshot.status = "loading";
   h.snapshot.root = undefined;
   const section = h.render();
-  expect(within(section).getByText("Loading thread…")).toBeVisible();
+  // No placeholders flash while a thread opens; the label is announced to
+  // screen readers after a delay.
+  expect(section.querySelector("[data-message-waiting]")).not.toBeNull();
+  expect(section.querySelector("[data-message-loading]")).toBeNull();
+  expect(within(section).queryByRole("status")).toBeNull();
+  act(() => vi.advanceTimersByTime(1000));
+  expect(within(section).getByRole("status")).toHaveTextContent(
+    "Loading thread…",
+  );
   expect(
     within(section).queryByText("Original message unavailable."),
   ).toBeNull();
@@ -504,6 +566,7 @@ it("holds seeded rows behind the loader until the first page, and unread until t
   Object.assign(h.session.unread, {
     sync: () => ({ capability: "frontier-sync" }),
     reading,
+    leave() {},
   });
   h.snapshot.status = "loading";
   h.snapshot.readKind = "refresh";
@@ -571,6 +634,7 @@ it.each([false, true])(
     Object.assign(h.session.unread, {
       sync: () => ({ capability: "frontier-sync" }),
       reading,
+      leave() {},
     });
     h.snapshot.status = "loading";
     h.snapshot.targetStatus = "loading";
@@ -609,6 +673,842 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
+it("scopes its reading leases to its thread while the original is unavailable", () => {
+  const h = messagesHarness();
+  h.resize(600);
+  vi.mocked(document.hasFocus).mockReturnValue(true);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  const reading = vi.fn((_channelId: string, _rootId?: string) => ({
+    view: vi.fn(),
+    observe: vi.fn(async () => {}),
+    catchUp: vi.fn(async () => {}),
+    dispose: vi.fn(),
+  }));
+  Object.assign(h.session.unread, {
+    sync: () => ({ capability: "frontier-sync" }),
+    reading,
+    leave() {},
+  });
+  h.snapshot.root = undefined;
+  h.snapshot.replies = [{ ...row, id: "reply", content: "reply" }];
+  h.render();
+  expect(screen.getByText("Original message unavailable.")).toBeVisible();
+  h.element.focus();
+  // In a DM, the thread it opened bounds what its reads may cover.
+  expect(reading.mock.calls).not.toHaveLength(0);
+  for (const call of reading.mock.calls)
+    expect(call).toEqual(["channel", row.id, {}]);
+});
+it("leaves a sibling reply it hides unread while a DM reply's original is unavailable", async () => {
+  // The real unread owner, so a dwell's DM read lands in its journal.
+  const self = keypair(),
+    relay = keypair(),
+    alice = keypair();
+  let journal: ReadJournal | undefined;
+  let incoming: (events: readonly RelayEvent[]) => void = () => {};
+  const owner = createRelaySession(
+    {
+      viewer: self.pubkey,
+      relayAuthor: relay.pubkey,
+      query: async () => [],
+      media: () => undefined,
+      readState: {
+        decode: async (events: readonly RelayEvent[]) =>
+          decodeReadState(events, self.secret),
+        sign: async (intent: ReadStateSigning) =>
+          signReadState(intent, self.secret),
+        publish: async () => {},
+      },
+      subscribe(callbacks) {
+        incoming = callbacks.receive;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    {
+      readStateFloor: () => 0,
+      readStateStorage: {
+        capture: async () => structuredClone(journal),
+        async update(change) {
+          journal = readJournal(change(journal), self.pubkey);
+          return journal;
+        },
+        close() {},
+      },
+      readPublisherLock: async (_signal, work) => work(),
+    },
+  );
+  onTestFinished(owner.dispose);
+  const h = messagesHarness();
+  const dm = h.props.channelId;
+  const unread = owner.session.unread;
+  // Neither the thread view nor the unread owner has the original.
+  const root = message(self, dm, "Original", 10);
+  const reply = (content: string, at: number) =>
+    message(alice, dm, content, at, [["e", root.id, "", "reply"]]);
+  const target = reply("Opened reply", 20);
+  const sibling = reply("Hidden sibling", 30);
+  incoming([
+    roster(relay, dm, [self.pubkey, alice.pubkey], 1),
+    metadata(relay, dm, "DM", 1, [["t", "dm"]]),
+    target,
+  ]);
+  await unread.ensure();
+  Object.assign(h.session, { viewer: self.pubkey, unread });
+  // What an exact view publishes when it cannot load the original: only its
+  // target, never the thread's other replies.
+  const shown = {
+    ...row,
+    id: target.id,
+    channelId: dm,
+    authorId: alice.pubkey,
+    content: target.content,
+    createdAt: target.created_at,
+    threadRootId: root.id,
+    replyParentId: root.id,
+    replyCount: 0,
+  };
+  h.snapshot.status = "error";
+  h.snapshot.error = "Error: The original thread message is unavailable.";
+  h.snapshot.root = undefined;
+  h.snapshot.replies = [shown];
+  h.snapshot.target = shown;
+  h.snapshot.targetStatus = "ready";
+  // Opened at the reply, as a conversation tab opens an exact message.
+  Object.assign(h.props as ThreadPanelProps, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.resize(600);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  // A controlled clock runs the reveal's frames and the dwell.
+  vi.useFakeTimers({
+    toFake: [
+      "setTimeout",
+      "clearTimeout",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+    ],
+  });
+  try {
+    h.render();
+    expect(screen.getByText("Original message unavailable.")).toBeVisible();
+    // A sibling reply in the same thread arrives after opening, unread.
+    act(() => incoming([sibling]));
+    expect(unread.attention(dm, sibling.id).unread).toBe(true);
+    // The window gains focus: once revealed, the reader dwells on its reply.
+    vi.mocked(document.hasFocus).mockReturnValue(true);
+    await act(async () => h.element.focus());
+    for (
+      let elapsed = 0;
+      (journal?.state.frontiers[dm] ?? -1) < target.created_at;
+      elapsed += 50
+    ) {
+      if (elapsed >= 2000) throw new Error("The dwell never read the reply.");
+      await act(() => vi.advanceTimersByTimeAsync(50));
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+  // It reads the reply, but stops one second before the sibling it hides.
+  expect(journal?.state.frontiers[dm]).toBe(sibling.created_at - 1);
+  expect(unread.attention(dm, target.id).unread).toBe(false);
+  expect(unread.attention(dm, sibling.id).unread).toBe(true);
+});
+function unreadReplies(h: ReturnType<typeof messagesHarness>) {
+  const reply = (name: string, createdAt: number): ChannelMessage => ({
+    ...row,
+    id: name,
+    content: name,
+    createdAt,
+    replyCount: 0,
+    threadRootId: row.id,
+    replyParentId: row.id,
+  });
+  const unread = new Set<string>();
+  // Replies unread as of an earlier thread read time.
+  const asOf = new Map<number, Set<string>>();
+  const read = { through: -1 };
+  Object.assign(h.session.unread, {
+    attention: (_channelId: string, id: string, through?: number) => ({
+      unread:
+        through === undefined
+          ? unread.has(id)
+          : (asOf.get(through)?.has(id) ?? false),
+      forced: false,
+    }),
+    threadReadThrough: () => read.through,
+  });
+  // The line sits 300 into the content, which scrolls under the viewport.
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return new DOMRect(
+        0,
+        this.hasAttribute("data-new-messages-boundary")
+          ? 300 - this.scrollTop
+          : 0,
+        500,
+        20,
+      );
+    },
+  );
+  return { reply, unread, asOf, read };
+}
+it("opens at the first unread reply behind a line that reading keeps, paging past the newest page to find it", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read: thread } = unreadReplies(h);
+  const [read, first, later] = [
+    reply("read", 2),
+    reply("first unread", 3),
+    reply("later unread", 4),
+  ];
+  unread.add(first.id).add(later.id);
+  thread.through = 2;
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [first, later];
+  h.render();
+  // No thread-wide read reaches a loaded reply: an earlier page may hold the
+  // first unread one.
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.replies = [read, first, later];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  const line = screen.getByRole("separator", { name: "New messages" });
+  const firstRow = h.element.querySelector(`[data-message-id="${first.id}"]`);
+  const readRow = h.element.querySelector(`[data-message-id="${read.id}"]`);
+  expect(
+    line.compareDocumentPosition(firstRow as Node) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    line.compareDocumentPosition(readRow as Node) &
+      Node.DOCUMENT_POSITION_PRECEDING,
+  ).toBeTruthy();
+  // The line starts the view instead of the latest reply.
+  expect(h.element.scrollTop).toBe(300);
+  // Reading starts there, so content-focused navigation moves focus in.
+  expect(h.element).toHaveFocus();
+
+  // Reading the replies leaves the line where the visit found it.
+  unread.clear();
+  h.snapshot.replies = [read, first, later, reply("arrival", 5)];
+  h.render();
+  expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
+    line,
+  ]);
+});
+it("shows the loaded page while the read for the first unread reply waits on recovery, and places the line once it recovers", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read: thread } = unreadReplies(h);
+  const [read, first] = [reply("read", 2), reply("first unread", 3)];
+  unread.add(first.id);
+  thread.through = 2;
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [first];
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  h.snapshot.recovering = true;
+  h.render();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.recovering = undefined;
+  h.snapshot.replies = [read, first];
+  h.render();
+  expect(screen.getByRole("separator", { name: "New messages" })).toBeVisible();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+});
+it("keeps the first unread reply and its line showing when a page brings the reply's parent", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read: thread } = unreadReplies(h);
+  const parent = reply("parent", 1);
+  const [read, first, later] = [
+    reply("read", 2),
+    { ...reply("first unread", 3), replyParentId: parent.id },
+    reply("later unread", 4),
+  ];
+  unread.add(first.id).add(later.id);
+  thread.through = 2;
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.seeking = true;
+  h.snapshot.replies = [read, first, later];
+  h.render();
+  const row = (id: string) =>
+    h.element.querySelector(`[data-message-id="${id}"]`);
+  const line = () => screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line().compareDocumentPosition(row(first.id) as Node) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  // The page read for the parent lands with no gesture.
+  h.snapshot.seeking = undefined;
+  h.snapshot.replies = [parent, read, first, later];
+  h.render();
+  // The reply shows in its parent's branch, under the line.
+  const branch = row(parent.id)?.closest("li");
+  expect(branch).toContainElement(row(first.id) as HTMLElement);
+  expect(branch).toContainElement(line());
+  expect(h.view.loadMore).not.toHaveBeenCalled();
+});
+it("pages past an own or individually read reply until history or a thread-wide read reaches it", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const [older, own, later] = [
+    reply("older unread", 2),
+    reply("own", 3),
+    reply("later unread", 4),
+  ];
+  unread.add(older.id).add(later.id);
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [own, later];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+
+  h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [older, own, later];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${older.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  h.unmount();
+  cleanup();
+
+  // Past the page limit the first unread reply is unknown: no line.
+  const limited = messagesHarness(ordinaryNavigation());
+  const limits = unreadReplies(limited);
+  limits.unread.add("later unread");
+  limited.snapshot.direction = "older";
+  limited.snapshot.limited = true;
+  limited.snapshot.replies = [
+    limits.reply("own", 3),
+    limits.reply("later unread", 4),
+  ];
+  limited.render();
+  expect(limited.view.loadMore).not.toHaveBeenCalled();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(limited.element).not.toHaveAttribute("data-positioning");
+});
+it("leaves focus the person moved while the first unread reply loads", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const first = reply("first unread", 3);
+  unread.add(first.id);
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [first];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  h.render();
+  const composer = document.createElement("textarea");
+  document.body.append(composer);
+  fireEvent.pointerDown(composer);
+  composer.focus();
+
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.canLoadMore = false;
+  h.render();
+  expect(screen.getByRole("separator", { name: "New messages" })).toBeVisible();
+  expect(h.element.scrollTop).toBe(300);
+  expect(composer).toHaveFocus();
+  composer.remove();
+});
+it("decides the line once a hidden reader is shown, and again for each ordinary opening", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const [first, later] = [reply("first unread", 2), reply("later", 3)];
+  unread.add(first.id);
+  // A covered tab keeps its layout but is inert and not visible.
+  const visible = vi.fn(() => false);
+  Object.assign(HTMLElement.prototype, { checkVisibility: visible });
+  onTestFinished(() => {
+    delete (HTMLElement.prototype as Partial<HTMLElement>).checkVisibility;
+  });
+  h.props.active = false;
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [first, later];
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(0);
+  // Leaving under the tab animation: visible, still inert.
+  const pane = h.element.parentElement as HTMLElement;
+  pane.setAttribute("inert", "");
+  visible.mockReturnValue(true);
+  h.snapshot.replies = [first, later];
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+
+  pane.removeAttribute("inert");
+  h.props.active = true;
+  h.rerenderProps();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(h.element.scrollTop).toBe(300);
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${first.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  // Read, scrolled away, then reopened with newer unread replies.
+  unread.clear();
+  const arrival = reply("arrival", 4);
+  unread.add(arrival.id);
+  h.snapshot.replies = [first, later, arrival];
+  h.render();
+  h.element.scrollTop = 100;
+  Object.assign(h.props, { navigation: ordinaryNavigation() });
+  h.rerenderProps();
+  const reopened = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    reopened.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${arrival.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    reopened.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${later.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_PRECEDING,
+  ).toBeTruthy();
+  expect(h.element.scrollTop).toBe(300);
+});
+it("keeps the day divider above a relayed group that starts a day, open or closed", () => {
+  const h = messagesHarness();
+  const { reply } = unreadReplies(h);
+  const later = row.createdAt + 2 * 86_400;
+  const relayed = ["a", "b"].map((name, index) => ({
+    ...reply(`relayed ${name}`, later + index),
+    authorId: viewer,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  h.snapshot.replies = [reply("plain", row.createdAt + 1), ...relayed];
+  h.render();
+  const dividers = () =>
+    [...h.element.querySelectorAll("[data-day]")].map((item) =>
+      item.getAttribute("data-day"),
+    );
+  const closed = dividers();
+  expect(closed.at(-1)).not.toBe(closed.at(-2));
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Show 2 messages by zerk\./ }),
+  );
+  expect(
+    screen.getByRole("button", { name: /^Collapse 2 messages by zerk\./ }),
+  ).toBeVisible();
+  expect(dividers()).toEqual(closed);
+});
+it("a kept line still splits relayed replies while a late navigation decides it again", () => {
+  const h = messagesHarness();
+  const { reply, unread } = unreadReplies(h);
+  const relayed = ["a", "b", "c", "d"].map((name, index) => ({
+    ...reply(`relayed ${name}`, 2 + index),
+    authorId: viewer,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  const [, , first] = relayed;
+  if (!first) throw new Error("Missing relayed fixture");
+  unread.add(first.id);
+  h.snapshot.direction = "older";
+  h.snapshot.replies = relayed;
+  h.render();
+  const groups = () =>
+    screen.getAllByRole("button", { name: /^Show 2 messages by zerk\./ });
+  expect(groups()).toHaveLength(2);
+  const line = screen.getByRole("separator", { name: "New messages" });
+
+  // The route's retarget rereads the thread before the line is decided again.
+  h.snapshot.status = "loading";
+  delete h.snapshot.direction;
+  h.render();
+  Object.assign(h.props, { navigation: ordinaryNavigation() });
+  h.rerenderProps();
+  expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
+    line,
+  ]);
+  expect(groups()).toHaveLength(2);
+});
+it("an opening's line keeps its place when relayed replies around it fold later", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const relayed = (verified: boolean) =>
+    ["a", "b", "c", "d"].map((name, index) => ({
+      ...reply(`relayed ${name}`, 2 + index),
+      authorId: viewer,
+      relayedFrom: { agent: "zerk", verified },
+    }));
+  const [readA, readB, first, later] = relayed(false);
+  if (!readA || !readB || !first || !later)
+    throw new Error("Missing relayed fixture");
+  unread.add(first.id).add(later.id);
+  // Rows and the line sit at these content offsets and scroll with the reader.
+  const tops = new Map([
+    [row.id, -1000],
+    [readA.id, 0],
+    [readB.id, 300],
+    ["line", 600],
+    [first.id, 620],
+    [later.id, 920],
+  ]);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const top = tops.get(
+        this.hasAttribute("data-new-messages-boundary")
+          ? "line"
+          : (this.dataset.messageId ?? ""),
+      );
+      return top === undefined
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(
+            0,
+            top - (this.closest("[data-message-scroller]")?.scrollTop ?? 0),
+            500,
+            20,
+          );
+    },
+  );
+  h.snapshot.direction = "older";
+  h.snapshot.replies = relayed(false);
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(h.element.scrollTop).toBe(600);
+  // Verification folds the read replies into a 28 px group above the line,
+  // and the unread ones into a closed group below it.
+  tops.set("line", 28);
+  h.snapshot.replies = relayed(true);
+  h.render();
+  expect(
+    screen.getAllByRole("button", { name: /^Show 2 messages by zerk\./ }),
+  ).toHaveLength(2);
+  expect(screen.getByRole("separator", { name: "New messages" })).toBe(line);
+  expect(h.element.scrollTop).toBe(28);
+});
+it("keeps a shown line while a late navigation for the opening decides it again", () => {
+  // Opening a thread from the timeline mounts it before its route arrives.
+  const h = messagesHarness();
+  const { reply, unread } = unreadReplies(h);
+  const [read, first] = [reply("read", 2), reply("first unread", 3)];
+  unread.add(first.id);
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [read, first];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(h.element.scrollTop).toBe(300);
+
+  // The route's retarget rereads the thread before the line is decided again.
+  h.snapshot.status = "loading";
+  delete h.snapshot.direction;
+  h.render();
+  Object.assign(h.props, { navigation: ordinaryNavigation() });
+  h.rerenderProps();
+  expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
+    line,
+  ]);
+
+  h.snapshot.status = "ready";
+  h.snapshot.direction = "older";
+  h.render();
+  expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
+    line,
+  ]);
+  expect(h.element.scrollTop).toBe(300);
+
+  // A later opening that finds nothing unread retires the kept line.
+  unread.clear();
+  h.snapshot.status = "loading";
+  delete h.snapshot.direction;
+  h.render();
+  Object.assign(h.props, { navigation: ordinaryNavigation() });
+  h.rerenderProps();
+  h.snapshot.status = "ready";
+  h.snapshot.direction = "older";
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+});
+it("shows a visible inactive preview and read resumed rows at once, without a line", () => {
+  // A draft preview is laid out but reads nothing.
+  const preview = messagesHarness();
+  const previewReplies = unreadReplies(preview);
+  previewReplies.unread.add("unread");
+  preview.props.active = false;
+  preview.snapshot.direction = "older";
+  preview.snapshot.canLoadMore = true;
+  preview.snapshot.replies = [previewReplies.reply("unread", 2)];
+  preview.render();
+  expect(preview.element).not.toHaveAttribute("data-positioning");
+  expect(preview.view.loadMore).not.toHaveBeenCalled();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  preview.unmount();
+  cleanup();
+
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply } = unreadReplies(h);
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [reply("read", 2)];
+  h.snapshot.resumed = true;
+  h.render();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(4000 - 600);
+});
+it("waits for resumed rows to refresh and a failed read to recover before deciding the line", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  // The store knows of unread in the thread that resumed rows may not hold.
+  const known = { observedCount: 1 };
+  Object.assign(h.session.unread, { snapshot: () => known });
+  const top = reply("read", 2);
+  const nested = { ...reply("nested unread", 4), replyParentId: top.id };
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [top];
+  h.snapshot.resumed = true;
+  h.render();
+  expect(h.element).toHaveAttribute("data-positioning");
+  h.snapshot.status = "error";
+  h.snapshot.resumed = undefined;
+  h.snapshot.error = "offline";
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+
+  // The retried refresh brings an unread reply nested in an earlier branch:
+  // the line goes above the branch holding it.
+  unread.add(nested.id);
+  h.snapshot.status = "ready";
+  h.snapshot.error = undefined;
+  h.snapshot.replies = [top, reply("later read", 3), nested];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${top.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(h.element.scrollTop).toBe(300);
+});
+it("keeps a place the reader chose after a failed read when it recovers", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [reply("read", 2)];
+  h.snapshot.status = "error";
+  h.snapshot.error = "offline";
+  h.render();
+  expect(h.element.scrollTop).toBe(4000 - 600);
+  h.element.scrollTop = 1200;
+  fireEvent.scroll(h.element);
+
+  const later = reply("unread", 3);
+  unread.add(later.id);
+  h.snapshot.status = "ready";
+  h.snapshot.error = undefined;
+  h.snapshot.replies = [reply("read", 2), later];
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(1200);
+
+  // Back at the latest reply, a live reply keeps following without a line.
+  h.element.scrollTop = 4000 - 600;
+  fireEvent.scroll(h.element);
+  h.snapshot.replies = [...h.snapshot.replies, reply("live", 4)];
+  h.render();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(4000 - 600);
+});
+it("opens a read thread at its latest reply, and an explicit target at itself, without a line", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply } = unreadReplies(h);
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [reply("read", 2), reply("also read", 3)];
+  h.render();
+  expect(h.view.loadMore).not.toHaveBeenCalled();
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+  expect(h.element.scrollTop).toBe(4000 - 600);
+  h.unmount();
+  cleanup();
+
+  const exact = messagesHarness();
+  const { reply: exactReply, unread } = unreadReplies(exact);
+  const target = exactReply("target", 3);
+  unread.add("first unread").add(target.id);
+  Object.assign(exact.props as ThreadPanelProps, {
+    messageId: target.id,
+    revealSelected: true,
+  });
+  exact.snapshot.direction = "older";
+  exact.snapshot.canLoadMore = true;
+  exact.snapshot.replies = [exactReply("first unread", 2), target];
+  exact.snapshot.target = target;
+  exact.snapshot.targetStatus = "ready";
+  exact.render();
+  expect(exact.view.loadMore).not.toHaveBeenCalled();
+  expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
+});
+it("pages past a read frontier for a reply marked unread older than the loaded replies", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read } = unreadReplies(h);
+  // The store knows of one unread reply in the thread, which no loaded row is.
+  const known = { observedCount: 1 };
+  Object.assign(h.session.unread, { snapshot: () => known });
+  const marked = reply("marked unread", 1);
+  unread.add(marked.id);
+  read.through = 4;
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [reply("read", 3), reply("also read", 4)];
+  h.render();
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+
+  h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [marked, ...h.snapshot.replies];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${marked.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});
+it("places a requested read time's line above the first branch unread as of that time, after the opener's read, and again for each request", () => {
+  // Page tabs open without navigation.
+  const h = messagesHarness();
+  const { reply, asOf } = unreadReplies(h);
+  // The opener has already read the thread: nothing is unread any more.
+  const top = reply("top", 2);
+  const nested = { ...reply("nested", 3), replyParentId: top.id };
+  const own = { ...reply("own", 4), authorId: viewer };
+  const later = reply("later", 5);
+  asOf.set(2, new Set([nested.id, later.id]));
+  asOf.set(4, new Set([later.id]));
+  const line = () => screen.getByRole("separator", { name: "New messages" });
+  const above = (message: ChannelMessage) =>
+    line().compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${message.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING;
+  Object.assign(h.props as ThreadPanelProps, {
+    unreadRequest: { readThrough: 2 },
+  });
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [later];
+  h.render();
+  // The oldest loaded reply is after the read time: an older page may hold
+  // the first unread one.
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("data-positioning");
+
+  h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [top, nested, own, later];
+  h.render();
+  expect(above(top)).toBeTruthy();
+  // The opener read the nested reply too, so its branch opens to show it.
+  expect(
+    h.element.querySelector(`[data-message-id="${nested.id}"]`),
+  ).not.toBeNull();
+  expect(h.element.scrollTop).toBe(300);
+
+  // The same mounted panel decides again for a new request.
+  h.element.scrollTop = 1200;
+  Object.assign(h.props as ThreadPanelProps, {
+    unreadRequest: { readThrough: 4 },
+  });
+  h.rerenderProps();
+  expect(
+    screen.getAllByRole("separator", { name: "New messages" }),
+  ).toHaveLength(1);
+  expect(above(later)).toBeTruthy();
+  expect(above(own)).toBeFalsy();
+  expect(h.element.scrollTop).toBe(300);
+});
+it("a retained panel shown at a reply places a requested read time's line once it retargets to the root, and moves it for the next request without reselecting", async () => {
+  const h = messagesHarness();
+  const { reply, asOf } = unreadReplies(h);
+  const earlier = reply("earlier", 2);
+  const later = reply("later", 5);
+  const newest = reply("newest", 6);
+  asOf.set(2, new Set([later.id, newest.id]));
+  asOf.set(5, new Set([newest.id]));
+  h.snapshot.replies = [earlier, later, newest];
+  const above = (message: ChannelMessage) =>
+    screen
+      .getByRole("separator", { name: "New messages" })
+      .compareDocumentPosition(
+        h.element.querySelector(`[data-message-id="${message.id}"]`) as Node,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING;
+  Object.assign(h.props as ThreadPanelProps, {
+    messageId: earlier.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  let release!: (value: "selected") => void;
+  h.view.retarget.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  Object.assign(h.props as ThreadPanelProps, {
+    messageId: row.id,
+    revealSelected: false,
+    revealRequest: undefined,
+    unreadRequest: { readThrough: 2 },
+  });
+  h.rerenderProps();
+  await act(async () => release("selected"));
+  expect(above(later)).toBeTruthy();
+  expect(above(earlier)).toBeFalsy();
+
+  // The root is already shown: the next request needs no relay selection.
+  h.view.retarget.mockClear();
+  Object.assign(h.props as ThreadPanelProps, {
+    unreadRequest: { readThrough: 5 },
+  });
+  h.rerenderProps();
+  expect(above(newest)).toBeTruthy();
+  expect(above(later)).toBeFalsy();
+  expect(h.view.retarget).not.toHaveBeenCalled();
+});
 it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, replyCount: 0 };
@@ -729,9 +1629,7 @@ it("keeps older-page loading quiet and retry between root and replies", () => {
   expect(
     alert.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  fireEvent.click(
-    within(section).getByRole("button", { name: "Retry thread" }),
-  );
+  fireEvent.click(within(section).getByRole("button", { name: "Try again" }));
   expect(h.view.loadMore).toHaveBeenCalledTimes(2);
   expect(h.view.refresh).toHaveBeenCalledOnce();
 
@@ -758,13 +1656,11 @@ it("keeps retained-range repair quiet and retry after the replies", () => {
   const reply = screen.getByText("retained reply").closest("article");
   if (!reply) throw new Error("Missing retained reply");
   const alert = within(section).getByRole("alert");
-  expect(alert).toHaveTextContent("repair failed");
+  expect(alert).toHaveTextContent("This thread didn’t load.");
   expect(
     reply.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  fireEvent.click(
-    within(section).getByRole("button", { name: "Retry thread" }),
-  );
+  fireEvent.click(within(section).getByRole("button", { name: "Try again" }));
   expect(h.view.refresh).toHaveBeenCalledTimes(2);
   expect(h.view.loadMore).not.toHaveBeenCalled();
 });
@@ -861,55 +1757,6 @@ it("counts replies recovered after a completed traversal, not initial history pa
   expect(screen.getByRole("button", { name: "2 new messages" })).toBeVisible();
 });
 
-it("reserves the jump button's activity lane only for this thread's composer in a live channel", () => {
-  const h = messagesHarness();
-  const listeners = new Set<() => void>();
-  const subscribe = (listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  };
-  let list: ChannelList = {
-    status: "ready",
-    channels: [{ id: "channel", name: "General" }],
-  };
-  Object.assign(h.session, {
-    channels: { list: () => list, subscribeList: subscribe },
-  });
-  // The composer is mocked here; publish what its TypingIndicator would.
-  function Shown({ threadRootId }: { threadRootId: string | undefined }) {
-    useActivityLanePublisher(h.session, "channel", threadRootId, true);
-    return null;
-  }
-  h.render();
-  h.scroll(500);
-  const lane = () =>
-    screen
-      .getByRole("button", { name: "Jump to latest" })
-      .closest("[data-visible]");
-  const live = lane();
-  expect(live).not.toHaveAttribute("data-activity-lane");
-  // Channel-level activity shows in the channel composer, not this thread's.
-  const channelLevel = render(<Shown threadRootId={undefined} />);
-  expect(live).not.toHaveAttribute("data-activity-lane");
-  channelLevel.unmount();
-  const thread = render(<Shown threadRootId={row.id} />);
-  expect(live).toHaveAttribute("data-activity-lane");
-  // A cached channel's composer mounts no TypingIndicator, so no lane; the
-  // gate flip keeps the same button mounted.
-  list = {
-    status: "ready",
-    channels: [{ id: "channel", name: "General", cached: true }],
-  };
-  act(() => {
-    for (const listener of listeners) listener();
-  });
-  expect(lane()).toBe(live);
-  expect(live).not.toHaveAttribute("data-activity-lane");
-  thread.unmount();
-});
-
 it("transfers keyboard focus to the thread history before removing the jump button", () => {
   const h = messagesHarness();
   h.render();
@@ -941,6 +1788,29 @@ it("routes media in replies through the resolved root review workspace", () => {
     undefined,
   );
 });
+
+it.each([false, true])(
+  "tells its composer whether its tab shows it, apart from whether it reads (retained=%s)",
+  (retainThread) => {
+    const h = messagesHarness();
+    const props = h.props as ThreadPanelProps;
+    Object.assign(props, { retainThread });
+    h.render();
+    const composer = () => screen.getByRole("region", { name: "Composer" });
+    // Hosts that retain nothing leave it to the composer's default, shown.
+    expect(composer()).not.toHaveAttribute("data-shown");
+    // A preview does not read, but its composer is on screen.
+    Object.assign(props, { active: false });
+    h.rerenderProps();
+    expect(composer()).not.toHaveAttribute("data-shown");
+    Object.assign(props, { active: true, shown: false });
+    h.rerenderProps();
+    expect(composer()).toHaveAttribute("data-shown", "false");
+    Object.assign(props, { shown: true });
+    h.rerenderProps();
+    expect(composer()).toHaveAttribute("data-shown", "true");
+  },
+);
 
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {
   const h = messagesHarness();
@@ -976,6 +1846,44 @@ it("uses the resolved root with the shared composer and reveals an own send even
   h.render();
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
 });
+it("does not count an own nested reply sent while reading above as a new message", () => {
+  const h = messagesHarness();
+  const parent = {
+    ...row,
+    id: "parent",
+    content: "parent",
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  h.snapshot.replies = [parent];
+  h.render();
+  h.scroll(500);
+  fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  const own = {
+    ...parent,
+    id: "own-reply",
+    content: "own reply",
+    authorId: viewer,
+    replyParentId: parent.id,
+    createdAt: 3,
+  };
+  h.snapshot.replies = [parent, own];
+  h.resize(4800);
+  h.render();
+  expect(h.element.scrollTop).toBe(500);
+  expect(
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mock.contexts,
+  ).toContain(screen.getByText("own reply").closest("article"));
+  expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+  h.snapshot.replies = [
+    parent,
+    own,
+    { ...row, id: "live", content: "live", authorId: viewer, createdAt: 4 },
+  ];
+  h.render();
+  expect(screen.getByRole("button", { name: "1 new message" })).toBeVisible();
+});
 it.each([
   {
     author: "another user",
@@ -1004,6 +1912,69 @@ it.each([
     );
   },
 );
+const composerSeed = () =>
+  screen.getByRole("region", { name: "Composer" }).getAttribute("data-seed");
+it("passes the viewer's latest message in the thread as the composer seed", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, authorId: viewer, mentions: ["d".repeat(64)] };
+  h.snapshot.replies = [
+    { ...row, id: "r1", createdAt: 2, mentions: ["e".repeat(64)] },
+    {
+      ...row,
+      id: "r2",
+      createdAt: 3,
+      authorId: viewer,
+      mentions: ["f".repeat(64)],
+    },
+    { ...row, id: "r3", createdAt: 4, mentions: ["g".repeat(64)] },
+  ];
+  h.render();
+  expect(composerSeed()).toBe("f".repeat(64));
+});
+it("seeds from the viewer's reply in someone else's thread", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, mentions: ["d".repeat(64)] };
+  h.snapshot.replies = [
+    {
+      ...row,
+      id: "r1",
+      createdAt: 2,
+      authorId: viewer,
+      mentions: ["e".repeat(64)],
+    },
+  ];
+  h.render();
+  expect(composerSeed()).toBe("e".repeat(64));
+});
+it.each([
+  {
+    author: "a workflow the viewer owns",
+    root: { ...row, workflowOwnerId: viewer },
+  },
+  { author: "another user", root: row },
+])(
+  "passes no seed for a thread the viewer never wrote in, rooted by $author",
+  ({ root }) => {
+    const h = messagesHarness();
+    h.snapshot.root = { ...root, mentions: ["d".repeat(64)] };
+    h.snapshot.replies = [
+      { ...row, id: "r1", createdAt: 2, mentions: ["e".repeat(64)] },
+    ];
+    h.render();
+    expect(composerSeed()).toBeNull();
+  },
+);
+it("passes no seed until the first page lands", () => {
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  h.snapshot.root = { ...row, authorId: viewer, mentions: ["d".repeat(64)] };
+  h.render();
+  expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
+  expect(composerSeed()).toBeNull();
+  h.snapshot.status = "ready";
+  h.render();
+  expect(composerSeed()).toBe("d".repeat(64));
+});
 it.each([
   { gap: 79, follows: true },
   { gap: 80, follows: false },
@@ -1116,6 +2087,7 @@ it("ordinary routed loading failure completes as unavailable, never as an opened
   expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
     status: "failed",
     reason: "unavailable",
+    presented: true,
   });
 });
 it.each(["ready", "unavailable", "error"] as const)(
@@ -1138,6 +2110,7 @@ it.each(["ready", "unavailable", "error"] as const)(
             status: "failed",
             reason:
               targetStatus === "unavailable" ? "not-found" : "unavailable",
+            presented: true,
           },
     );
   },
@@ -1145,6 +2118,8 @@ it.each(["ready", "unavailable", "error"] as const)(
 it("a presented ordinary thread survives the real navigation deadline while history is pending", async () => {
   vi.useFakeTimers();
   const controller = createNavigationController(createMemoryHistory());
+  // The visit deadline runs only while a presenter is attached, as the app's is.
+  controller.attach();
   let release = () => {};
   try {
     const navigation = ordinaryNavigation();
@@ -1182,6 +2157,41 @@ it("a presented ordinary thread survives the real navigation deadline while hist
     release();
     controller.dispose();
     vi.useRealTimers();
+  }
+});
+it("a routed thread that fails in place keeps its reader and recovers through its own Try again", () => {
+  const controller = createNavigationController(createMemoryHistory());
+  try {
+    const navigation = ordinaryNavigation();
+    void controller.navigation.open(navigation.target);
+    const { attempt } = controller.navigation.snapshot();
+    navigation.signal = attempt.signal;
+    navigation.complete.mockImplementation((result) =>
+      controller.complete(attempt, result),
+    );
+    const h = messagesHarness(navigation);
+    h.snapshot.status = "error";
+    h.snapshot.error = "offline";
+    h.render();
+    expect(controller.navigation.snapshot()).toMatchObject({
+      status: "failed",
+      presented: true,
+    });
+    expect(attempt.signal.aborted).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(h.view.refresh).toHaveBeenCalled();
+    h.snapshot.status = "ready";
+    h.snapshot.error = undefined;
+    h.render();
+    expect(h.view.dispose).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("region", { name: "Thread messages" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(h.element.scrollTop).toBe(3400);
+    h.unmount();
+  } finally {
+    controller.dispose();
   }
 });
 it("revoked ordinary presentation cannot position or complete after loading", () => {
@@ -1247,7 +2257,9 @@ it("without close, the embedded thread keeps its reader but has no close header 
   expect(
     screen.queryByRole("button", { name: "Close thread" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("alert")).toHaveTextContent("fixture unavailable");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This thread didn’t load.",
+  );
   fireEvent.keyDown(screen.getByRole("complementary", { name: "Thread" }), {
     key: "Escape",
   });
@@ -1262,23 +2274,96 @@ it("without close, the embedded thread keeps its reader but has no close header 
   expect(close).toHaveBeenCalledOnce();
 });
 
-it("observes a visible reply before its root resolves, then enables thread catch-up", async () => {
+it.each([false, true])(
+  "reads a visible reply before and after the root resolves (task=%s)",
+  async (task) => {
+    vi.useFakeTimers();
+    const h = messagesHarness();
+    const physicalRoot = task ? "d".repeat(64) : row.id;
+    (h.props as ThreadPanelProps).subthreadId = task ? row.id : undefined;
+    const reply = {
+      ...row,
+      id: "c".repeat(64),
+      content: "available reply",
+      createdAt: 2,
+      threadRootId: physicalRoot,
+      replyParentId: row.id,
+    };
+    h.snapshot.root = undefined;
+    h.snapshot.replies = [reply];
+    h.resize(600);
+    const observe = vi.fn(async () => {});
+    const catchUp = vi.fn(async (_id: string, rootId?: string) => {
+      if (rootId !== physicalRoot)
+        throw new Error("The reply belongs to a different thread");
+    });
+    h.props.session = {
+      ...h.session,
+      unread: {
+        ...h.session.unread,
+        sync: () =>
+          ({ capability: "frontier-sync" }) as ReturnType<
+            RelaySession["unread"]["sync"]
+          >,
+        reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+        leave() {},
+      },
+    };
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+      new DOMRect(0, 0, 500, 500),
+    ] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 500, 500),
+    );
+    h.render();
+    screen.getByRole("button", { name: "Close thread" }).focus();
+    // Focus rerenders the rows, which measure again in the next frame.
+    await act(async () => {});
+    await act(() => vi.advanceTimersToNextFrame());
+    await act(() => vi.advanceTimersByTimeAsync(299));
+    expect(observe).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(observe).toHaveBeenCalledExactlyOnceWith([reply.id]);
+    expect(catchUp).not.toHaveBeenCalled();
+
+    h.snapshot.root = row;
+    h.render();
+    // The rows measure in the next frame. That list mutation restarts dwell,
+    // which measures again in the frame after it.
+    await act(() => vi.advanceTimersToNextFrame());
+    await act(() => vi.advanceTimersToNextFrame());
+    await act(() => vi.advanceTimersByTimeAsync(299));
+    expect(catchUp).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    if (task) {
+      expect(observe).toHaveBeenLastCalledWith([row.id, reply.id]);
+      expect(catchUp).not.toHaveBeenCalled();
+    } else {
+      expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
+    }
+  },
+);
+
+it("a closed relayed group at the bottom catches up through its latest reply, same-second ties included", async () => {
   vi.useFakeTimers();
   const h = messagesHarness();
-  const reply = {
+  // Sent in the same second, so the id breaks the tie as the rows are shown.
+  const relayed = ["d", "e"].map((id) => ({
     ...row,
-    id: "c".repeat(64),
-    content: "available reply",
+    id: id.repeat(64),
+    authorId: viewer,
+    content: `Relayed ${id}`,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    replyCount: 0,
     createdAt: 2,
-  };
-  h.snapshot.root = undefined;
-  h.snapshot.replies = [reply];
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  h.snapshot.replies = relayed;
   h.resize(600);
-  const observe = vi.fn(async () => {});
-  const catchUp = vi.fn(async (_id: string, rootId?: string) => {
-    if (!rootId)
-      throw new Error("A thread reply cannot advance the channel frontier");
-  });
+  const catchUp = vi.fn(async () => {});
   h.props.session = {
     ...h.session,
     unread: {
@@ -1287,7 +2372,13 @@ it("observes a visible reply before its root resolves, then enables thread catch
         ({ capability: "frontier-sync" }) as ReturnType<
           RelaySession["unread"]["sync"]
         >,
-      reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+      reading: () => ({
+        view() {},
+        observe: async () => {},
+        catchUp,
+        dispose() {},
+      }),
+      leave() {},
     },
   };
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
@@ -1299,21 +2390,15 @@ it("observes a visible reply before its root resolves, then enables thread catch
     new DOMRect(0, 0, 500, 500),
   );
   h.render();
+  expect(
+    screen.getByRole("button", { name: /^Show 2 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "false");
   screen.getByRole("button", { name: "Close thread" }).focus();
-  // Focus rerenders the rows, which measure again in the next frame.
   await act(async () => {});
-  await act(() => vi.advanceTimersToNextFrame());
-  await act(() => vi.advanceTimersByTimeAsync(299));
-  expect(observe).not.toHaveBeenCalled();
-  await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(observe).toHaveBeenCalledExactlyOnceWith([reply.id]);
-  expect(catchUp).not.toHaveBeenCalled();
-
-  h.snapshot.root = row;
-  h.render();
-  await act(() => vi.advanceTimersToNextFrame());
+  for (let frame = 0; frame < 3; frame++)
+    await act(() => vi.advanceTimersToNextFrame());
   await act(() => vi.advanceTimersByTimeAsync(300));
-  expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
+  expect(catchUp).toHaveBeenCalledWith(relayed[1]?.id, row.id);
 });
 
 it("inline Inbox reveal opts into exact reader and composes origin action without changing ordinary tab focus", () => {
@@ -1327,7 +2412,10 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
       headerActions={headerAction}
     />,
   );
-  expect(h.thread).toHaveBeenCalledWith("channel", row.id, { exact: true });
+  expect(h.thread).toHaveBeenCalledWith("channel", row.id, {
+    exact: true,
+    reading: true,
+  });
   const thread = screen.getByRole("complementary", { name: "Thread" });
   expect(
     within(thread).getByRole("button", { name: "Open in channel" }),
@@ -1340,20 +2428,29 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   ).not.toHaveAttribute("data-positioning");
 });
 
-it("passes readiness and direct Activity through to thread composition, and gives a Solo thread none", () => {
+it("names the conversation a thread lives in as a link, only when its host can open it there", () => {
   const h = messagesHarness();
+  const open = vi.fn();
   const view = render(
-    <ThreadPanel {...h.props} activityClickOpensPanel disabled />,
+    <ThreadPanel {...h.props} parent={{ label: "#Alpha", open }} />,
   );
+  const thread = screen.getByRole("complementary", { name: "Thread" });
+  const link = within(thread).getByRole("button", { name: "#Alpha" });
+  expect(link.closest("p")).toHaveTextContent("In #Alpha");
+  fireEvent.click(link);
+  expect(open).toHaveBeenCalledOnce();
+  view.rerender(<ThreadPanel {...h.props} />);
+  expect(within(thread).queryByText("#Alpha")).toBeNull();
+});
+
+it("passes readiness through to thread composition, and gives a Solo thread none", () => {
+  const h = messagesHarness();
+  const view = render(<ThreadPanel {...h.props} disabled />);
   const composer = screen.getByRole("region", { name: "Composer" });
-  expect(composer).toHaveAttribute("data-direct-activity", "true");
   expect(composer).toHaveAttribute("data-disabled", "true");
-  view.rerender(
-    <ThreadPanel {...h.props} activityClickOpensPanel disabled={false} />,
-  );
+  view.rerender(<ThreadPanel {...h.props} disabled={false} />);
   expect(composer).toHaveAttribute("data-disabled", "false");
   view.rerender(<ThreadPanel {...h.props} />);
-  expect(composer).not.toHaveAttribute("data-direct-activity");
   // Solo agents answer at top level: its threads are read-only.
   view.rerender(<ThreadPanel {...h.props} soloConversation />);
   expect(
@@ -1367,12 +2464,27 @@ it("passes readiness and direct Activity through to thread composition, and give
 it.each([
   { channelType: "stream" as const, joinable: true },
   { channelType: "forum" as const, joinable: true },
+  {
+    channelType: "stream" as const,
+    joinRole: "guest" as const,
+    joinable: true,
+  },
   { channelType: "stream" as const, archived: true as const, joinable: false },
+  { channelType: "solo" as const, archived: true as const, joinable: false },
+  { channelType: "solo" as const, joinRole: "guest" as const, joinable: true },
+  {
+    channelType: "solo" as const,
+    joinRole: "member" as const,
+    joinable: false,
+  },
   { channelType: "solo" as const, joinable: false },
 ])(
-  "replaces the reply composer for a $channelType preview (joinable: $joinable)",
+  "replaces the reply composer for a $channelType preview (joinRole: $joinRole, joinable: $joinable)",
   ({ joinable, ...metadata }) => {
     const h = messagesHarness();
+    Object.assign(h.props, {
+      soloConversation: metadata.channelType === "solo",
+    });
     const channel: ChannelSummary = {
       id: "channel",
       name: "General",
@@ -1390,12 +2502,120 @@ it.each([
     });
     h.render();
     expect(
-      screen.getByRole("region", { name: "Channel preview" }),
+      screen.getByRole("region", {
+        name: metadata.archived
+          ? metadata.channelType === "solo"
+            ? "Archived chat"
+            : "Archived channel"
+          : metadata.joinRole === "guest"
+            ? `Read-only ${metadata.channelType === "solo" ? "chat" : "channel"}`
+            : metadata.channelType === "solo"
+              ? "Chat preview"
+              : "Channel preview",
+      }),
     ).toBeVisible();
+    if (metadata.archived) {
+      expect(
+        screen.getByText(
+          metadata.channelType === "solo"
+            ? "This chat is archived"
+            : "This channel is archived",
+          { exact: true },
+        ),
+      ).toBeVisible();
+    }
     expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
     expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);
   },
 );
+
+it("replaces an archived member thread composer and restores it on unarchive", () => {
+  const h = messagesHarness();
+  const channel: ChannelSummary = {
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+  };
+  let list: ChannelList = { status: "ready", channels: [channel] };
+  const listeners = new Set<() => void>();
+  Object.assign(h.session, {
+    channels: {
+      list: () => list,
+      get: () => list.channels[0],
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    channelLifecycle: { available: true, run: vi.fn() },
+  });
+  h.render();
+  expect(screen.getByRole("region", { name: "Composer" })).toBeInTheDocument();
+  act(() => {
+    list = { ...list, channels: [{ ...channel, archived: true }] };
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.getByRole("region", { name: "Archived channel" }),
+  ).toHaveTextContent("This channel is archived");
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  act(() => {
+    list = { ...list, channels: [channel] };
+    for (const listener of listeners) listener();
+  });
+  expect(screen.getByRole("region", { name: "Composer" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Archived channel" })).toBeNull();
+});
+
+it("keeps guest threads readable without a reply composer or Join action across default changes", () => {
+  const h = messagesHarness();
+  const channel: ChannelSummary = {
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+    viewerRole: "guest",
+    readOnly: true,
+    joinRole: "guest",
+  };
+  let list: ChannelList = { status: "ready", channels: [channel] };
+  const listeners = new Set<() => void>();
+  Object.assign(h.session, {
+    channels: {
+      list: () => list,
+      get: () => list.channels[0],
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    channelLifecycle: { available: true, run: vi.fn() },
+  });
+  h.render();
+  expect(
+    screen.getByRole("region", { name: "Read-only channel" }),
+  ).toHaveTextContent("This channel is read-only");
+  expect(
+    screen.getByRole("region", { name: "Thread messages" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  act(() => {
+    list = { ...list, channels: [{ ...channel, joinRole: "member" }] };
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.getByRole("region", { name: "Read-only channel" }),
+  ).toHaveTextContent("Read-only access");
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  act(() => {
+    const { readOnly: _, ...promoted } = channel;
+    list = { ...list, channels: [{ ...promoted, viewerRole: "member" }] };
+    for (const listener of listeners) listener();
+  });
+  expect(screen.getByRole("region", { name: "Composer" })).toBeInTheDocument();
+});
 
 it("keeps a thread preview until membership arrives, with failed joins retryable", async () => {
   const h = messagesHarness();
@@ -1520,6 +2740,7 @@ it.each(["unavailable", "error", "cancelled"] as const)(
     expect(next.complete).toHaveBeenCalledWith({
       status: "failed",
       reason: result === "unavailable" ? "not-found" : "unavailable",
+      presented: true,
     });
     if (result === "unavailable") {
       // Retrying can't restore a message that no longer exists.
@@ -1630,7 +2851,10 @@ it("a retained reader reveals its exact selected message, again for each new req
     revealRequest: 1,
   });
   h.render();
-  expect(h.thread).toHaveBeenCalledWith("channel", reply.id, { exact: true });
+  expect(h.thread).toHaveBeenCalledWith("channel", reply.id, {
+    exact: true,
+    reading: true,
+  });
   const revealedReply = () =>
     vi
       .mocked(HTMLElement.prototype.scrollIntoView)
@@ -1657,6 +2881,666 @@ it("a retained reader reveals its exact selected message, again for each new req
   expect(revealedReply()).toBe(false);
 });
 
+it("an open relayed group stays open when paging adds an earlier member", async () => {
+  const h = messagesHarness();
+  const relayed = ["d", "e", "f"].map((id, index) => ({
+    ...row,
+    id: id.repeat(64),
+    authorId: viewer,
+    content: `Relayed ${index}`,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    replyCount: 0,
+    createdAt: 2 + index,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  h.snapshot.replies = relayed.slice(1);
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /^Show 2 messages by zerk\./ }),
+  );
+  h.snapshot.replies = relayed;
+  h.render();
+  expect(
+    await screen.findByRole("button", {
+      name: /^Collapse 3 messages by zerk\./,
+    }),
+  ).toHaveAttribute("aria-expanded", "true");
+  // Closing it closes every member, the earlier one included.
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  );
+  expect(
+    screen.getByRole("button", { name: /^Show 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "false");
+});
+
+it("reopens collapsed activity for a new reveal of the same step", async () => {
+  const h = messagesHarness();
+  const replies = ["d", "e"].map((id, index) => ({
+    ...row,
+    id: id.repeat(64),
+    content: `Agent step ${index}`,
+    audience: "agents" as const,
+    threadRootId: row.id,
+    replyToId: row.id,
+    createdAt: 2 + index,
+  }));
+  const target = replies[1];
+  if (!target) throw new Error("Missing activity fixture target");
+  h.snapshot.replies = replies;
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Collapse activity history/ }),
+  );
+  expect(
+    screen.getByRole("button", { name: /Show activity history/ }),
+  ).toHaveAttribute("aria-expanded", "false");
+  props.revealRequest = 2;
+  h.rerenderProps();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+    ).toHaveAttribute("aria-expanded", "true"),
+  );
+});
+
+it("a new reveal request reopens a branch the reader collapsed, and live updates leave it closed", async () => {
+  const h = messagesHarness();
+  const reply = (id: string, content: string, replyParentId: string) => ({
+    ...row,
+    id: id.repeat(64),
+    content,
+    replyParentId,
+    createdAt: 2,
+  });
+  const parent = reply("d", "the parent", row.id);
+  const first = reply("e", "first child", parent.id);
+  const second = reply("f", "second child", parent.id);
+  h.snapshot.replies = [parent, first, second];
+  h.snapshot.target = first;
+  h.snapshot.targetStatus = "ready";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, {
+    messageId: first.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  const shown = (message: ChannelMessage) =>
+    h.element.querySelector(`[data-message-id="${message.id}"]`);
+  const collapse = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Collapse 2 replies" }));
+    expect(shown(first)).toBeNull();
+  };
+  const revealed = async (message: ChannelMessage) => {
+    await waitFor(() => expect(shown(message)).toHaveFocus());
+    expect(
+      vi
+        .mocked(HTMLElement.prototype.scrollIntoView)
+        .mock.contexts.some(
+          (context) =>
+            (context as HTMLElement).dataset.messageId === message.id,
+        ),
+    ).toBe(true);
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  };
+  await revealed(first);
+  collapse();
+  // An ordinary live update within the same request keeps the branch closed.
+  h.snapshot.replies = [parent, first, second, reply("9", "later", row.id)];
+  h.render();
+  expect(screen.getByText("later")).toBeInTheDocument();
+  expect(shown(first)).toBeNull();
+  // The same message requested again reopens its branch.
+  props.revealRequest = 2;
+  h.rerenderProps();
+  await revealed(first);
+  collapse();
+  // So does a request for another reply in that branch.
+  h.snapshot.target = second;
+  h.render();
+  Object.assign(props, { messageId: second.id, revealRequest: 3 });
+  h.rerenderProps();
+  await revealed(second);
+});
+
+/** Visits as navigation keeps them: a visit's place outlives each presentation. */
+function visitPlaces() {
+  const places = new Map<string, JsonValue>();
+  const visit = (entryId: string, traversal?: true) => ({
+    ...ordinaryNavigation(),
+    entryId,
+    ...(traversal && { traversal }),
+    position: (key: string) => places.get(`${entryId}:${key}`),
+    savePosition(key: string, value: JsonValue) {
+      places.set(`${entryId}:${key}`, value);
+    },
+  });
+  /** A link to the root message: an exact reveal, not an ordinary opening. */
+  const linked = (
+    entryId: string,
+    traversal?: true,
+    messageId = row.id,
+  ): PageNavigation => {
+    const navigation = visit(entryId, traversal);
+    const { threadRootId: _root, ...target } = navigation.target;
+    return { ...navigation, target: { ...target, messageId } };
+  };
+  return { places, visit, linked };
+}
+const threadReply = (id: string, replyParentId: string) => ({
+  ...row,
+  id: id.repeat(64),
+  content: `reply ${id}`,
+  replyParentId,
+  createdAt: 2,
+});
+/** Lays rows out 2,000 px apart, 500 px tall, scrolling with the reader. */
+function layOutRows(ids: readonly string[]) {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const index = ids.indexOf(this.dataset.messageId ?? "");
+      return index < 0
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(0, index * 2000 - this.scrollTop, 500, 500);
+    },
+  );
+}
+
+it.each([
+  ["the reply it was left at, reopening its branch", true],
+  ["the nearest ancestor of a reply that is gone", false],
+])("Back to a thread visit anchors on %s", (_, present) => {
+  const { places, visit } = visitPlaces();
+  const parent = threadReply("d", row.id);
+  const child = threadReply("e", parent.id);
+  places.set("thread-visit:thread", {
+    anchor: { id: child.id, top: -100, ancestors: [parent.id] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  h.snapshot.replies = present ? [parent, child] : [parent];
+  h.render();
+  const anchor = present ? child : parent;
+  expect(
+    h.element.querySelector(`[data-message-id="${anchor.id}"]`),
+  ).not.toBeNull();
+  // jsdom rows sit at the scroller top, so the row moves back to 100 px above
+  // it: the place, not the end of the thread.
+  expect(h.element.scrollTop).toBe(100);
+  expect(h.element).not.toHaveAttribute("data-positioning");
+});
+
+it("Back to a place inside a folded relayed group reopens that group at it", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = ["d", "e", "f"].map((id, index) => ({
+    ...threadReply(id, row.id),
+    authorId: viewer,
+    threadRootId: row.id,
+    replyCount: 0,
+    createdAt: 2 + index,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  const place = relayed[1];
+  if (!place) throw new Error("Missing relayed fixture");
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  h.snapshot.replies = relayed;
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  expect(h.element.scrollTop).toBe(100);
+});
+
+it("Back keeps a restored reply shown when it joins a relayed group later", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = (verified: boolean) =>
+    ["d", "e", "f"].map((id, index) => ({
+      ...threadReply(id, row.id),
+      authorId: viewer,
+      threadRootId: row.id,
+      replyCount: 0,
+      createdAt: 2 + index,
+      relayedFrom: { agent: "zerk", verified },
+    }));
+  const place = relayed(false)[1];
+  if (!place) throw new Error("Missing relayed fixture");
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  // Restored before the relaying owner is verified: an ordinary reply.
+  h.snapshot.replies = relayed(false);
+  h.render();
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  // Verification folds it into a group, which opens around it.
+  h.snapshot.replies = relayed(true);
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  // The reader can close it, and it stays closed.
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  );
+  h.snapshot.replies = [...relayed(true)];
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Show 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "false");
+});
+
+it("Back keeps a restored reply's place when its group opens around it later", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = (verified: boolean) =>
+    ["d", "e", "f"].map((id, index) => ({
+      ...threadReply(id, row.id),
+      authorId: viewer,
+      threadRootId: row.id,
+      replyCount: 0,
+      createdAt: 2 + index,
+      relayedFrom: { agent: "zerk", verified },
+    }));
+  const [tall, place] = relayed(false);
+  if (!tall || !place) throw new Error("Missing relayed fixture");
+  // An ordinary reply after the group stays shown while the group is folded.
+  const after = { ...threadReply("g", row.id), createdAt: 9 };
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  // Rows sit at these content offsets and scroll with the reader.
+  const tops = new Map([
+    [row.id, -1000],
+    [tall.id, 0],
+    [place.id, 1000],
+    [after.id, 1400],
+  ]);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const top = tops.get(this.dataset.messageId ?? "");
+      return top === undefined
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(
+            0,
+            top - (this.closest("[data-message-scroller]")?.scrollTop ?? 0),
+            500,
+            500,
+          );
+    },
+  );
+  h.snapshot.replies = [...relayed(false), after];
+  h.render();
+  expect(h.element.scrollTop).toBe(1100);
+  // Verification opens a group around the reply; the tall reply before it
+  // becomes a compact line, so the reply's row moves 600 px up.
+  tops.set(place.id, 400);
+  tops.set(after.id, 800);
+  h.snapshot.replies = [...relayed(true), after];
+  h.render();
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  expect(h.element.scrollTop).toBe(500);
+});
+
+it("Back shows a reply saved as a tall row that is a group's line by now", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = ["d", "e", "f"].map((id, index) => ({
+    ...threadReply(id, row.id),
+    authorId: viewer,
+    threadRootId: row.id,
+    replyCount: 0,
+    createdAt: 2 + index,
+    relayedFrom: { agent: "zerk", verified: true },
+  }));
+  const [place, next, last] = relayed;
+  if (!place || !next || !last) throw new Error("Missing relayed fixture");
+  // Saved with its top 100 px above the viewport, when it was a tall row.
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  const rows = new Map([
+    [row.id, { top: -1000, height: 500 }],
+    [place.id, { top: 0, height: 28 }],
+    [next.id, { top: 28, height: 28 }],
+    [last.id, { top: 56, height: 28 }],
+  ]);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const geometry = rows.get(this.dataset.messageId ?? "");
+      return geometry === undefined
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(
+            0,
+            geometry.top -
+              (this.closest("[data-message-scroller]")?.scrollTop ?? 0),
+            500,
+            geometry.height,
+          );
+    },
+  );
+  h.snapshot.replies = relayed;
+  h.render();
+  expect(
+    screen.getByRole("button", { name: /^Collapse 3 messages by zerk\./ }),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect(h.element.scrollTop).toBe(0);
+});
+
+it("Back keeps a restored reply shown when its group shrinks it to a line", () => {
+  const { places, visit } = visitPlaces();
+  const relayed = (verified: boolean) =>
+    ["d", "e", "f"].map((id, index) => ({
+      ...threadReply(id, row.id),
+      authorId: viewer,
+      threadRootId: row.id,
+      replyCount: 0,
+      createdAt: 2 + index,
+      relayedFrom: { agent: "zerk", verified },
+    }));
+  const [place, next, last] = relayed(false);
+  if (!place || !next || !last) throw new Error("Missing relayed fixture");
+  // Its top was left 100 px above the viewport, with its body shown.
+  places.set("thread-visit:thread", {
+    anchor: { id: place.id, top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  // Rows sit at these content offsets and heights and scroll with the reader.
+  const rows = new Map([
+    [row.id, { top: -1000, height: 500 }],
+    [place.id, { top: 0, height: 500 }],
+    [next.id, { top: 500, height: 500 }],
+    [last.id, { top: 1000, height: 500 }],
+  ]);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const geometry = rows.get(this.dataset.messageId ?? "");
+      return geometry === undefined
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(
+            0,
+            geometry.top -
+              (this.closest("[data-message-scroller]")?.scrollTop ?? 0),
+            500,
+            geometry.height,
+          );
+    },
+  );
+  h.snapshot.replies = relayed(false);
+  h.render();
+  expect(h.element.scrollTop).toBe(100);
+  // Verification opens a group around it, where each reply is a 28 px line:
+  // the saved offset would leave the whole line above the viewport.
+  rows.set(place.id, { top: 0, height: 28 });
+  rows.set(next.id, { top: 28, height: 28 });
+  rows.set(last.id, { top: 56, height: 28 });
+  h.snapshot.replies = relayed(true);
+  h.render();
+  expect(
+    h.element.querySelector(`[data-message-id="${place.id}"]`),
+  ).not.toBeNull();
+  expect(h.element.scrollTop).toBe(0);
+});
+
+it.each([
+  ["reveals its linked message again", true],
+  ["opens an ordinary thread at its end again", false],
+])("Back to a place no longer loaded %s", async (_, exact) => {
+  const { places, visit, linked } = visitPlaces();
+  // An older page the reopened thread has not loaded.
+  places.set("thread-visit:thread", {
+    anchor: { id: "f".repeat(64), top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(
+    exact ? linked("thread-visit", true) : visit("thread-visit", true),
+  );
+  h.snapshot.replies = [threadReply("d", row.id)];
+  h.snapshot.target = row;
+  h.snapshot.targetStatus = "ready";
+  h.render();
+  if (!exact) {
+    expect(h.element.scrollTop).toBe(3400);
+    return;
+  }
+  const root = h.element.querySelector(`[data-message-id="${row.id}"]`);
+  await waitFor(() => expect(root).toHaveFocus());
+  expect(
+    vi
+      .mocked(HTMLElement.prototype.scrollIntoView)
+      .mock.contexts.includes(root),
+  ).toBe(true);
+});
+
+it("records a visit's place only once that visit was presented", async () => {
+  const { places, visit, linked } = visitPlaces();
+  const reply = threadReply("d", row.id);
+  const h = messagesHarness(visit("thread-visit"));
+  h.snapshot.replies = [reply];
+  const mounted = render(<ThreadPanel {...h.props} retainThread />);
+  // The retained reader is already positioned for the ordinary visit; the
+  // linked reply's target is still loading, so its reveal has not run.
+  await act(async () =>
+    mounted.rerender(
+      <ThreadPanel
+        {...h.props}
+        retainThread
+        messageId={reply.id}
+        navigation={linked("linked", undefined, reply.id)}
+      />,
+    ),
+  );
+  expect(h.view.retarget).toHaveBeenCalledOnce();
+  expect(places.get("thread-visit:thread")).toEqual({});
+  mounted.unmount();
+  expect(places.has("linked:thread")).toBe(false);
+});
+
+it("records a visit's place when the reader leaves, not as replies arrive", () => {
+  const { places, visit } = visitPlaces();
+  // A return with no recorded place opens as it first did.
+  const h = messagesHarness(visit("thread-visit", true));
+  h.render();
+  expect(h.element.scrollTop).toBe(3400);
+  h.snapshot.replies = [threadReply("d", row.id)];
+  h.render();
+  expect(places.has("thread-visit:thread")).toBe(false);
+  h.unmount();
+  expect(places.has("thread-visit:thread")).toBe(true);
+});
+
+it("a reader still shown after its route is withdrawn records its place when it leaves", async () => {
+  const { visit } = visitPlaces();
+  // Rows sit below the scroller top, so the reader's first row anchors it.
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  const h = messagesHarness(visit("thread-visit"));
+  h.snapshot.replies = [threadReply("d", row.id)];
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, { retainThread: true });
+  h.render();
+  expect(h.element.scrollTop).toBe(3400);
+  // A link in the timeline routes elsewhere; the thread stays open beside it
+  // and the reader keeps scrolling.
+  Object.assign(props, { navigation: undefined });
+  h.rerenderProps();
+  h.scroll(1000);
+  Object.assign(props, { navigation: visit("thread-visit", true) });
+  await act(async () => h.rerenderProps());
+  expect(h.view.retarget).toHaveBeenCalledOnce();
+  expect(h.element.scrollTop).toBe(1000);
+});
+
+it.each([
+  ["withdrawn, then hidden", ["navigation", "active"]],
+  ["hidden, then withdrawn", ["active", "navigation"]],
+] as const)(
+  "a reader %s is shown again at its place, which the returning route keeps",
+  async (_, order) => {
+    const { visit } = visitPlaces();
+    const reply = threadReply("d", row.id);
+    layOutRows([row.id, reply.id]);
+    const h = messagesHarness(visit("thread-visit"));
+    h.snapshot.replies = [reply];
+    const props = h.props as ThreadPanelProps;
+    Object.assign(props, { retainThread: true });
+    h.render();
+    h.scroll(1000);
+    // Back to the channel withdraws the route and closes the pane around it.
+    for (const prop of order) {
+      Object.assign(props, { [prop]: prop === "active" ? false : undefined });
+      h.rerenderProps();
+    }
+    // WebKit drops the hidden reader's scroll offset.
+    h.element.scrollTop = 0;
+    // Forward shows it again before the route lands.
+    Object.assign(props, { active: true });
+    h.rerenderProps();
+    expect(h.element.scrollTop).toBe(1000);
+    Object.assign(props, { navigation: visit("thread-visit", true) });
+    await act(async () => h.rerenderProps());
+    expect(h.view.retarget).toHaveBeenCalledOnce();
+    expect(h.element.scrollTop).toBe(1000);
+  },
+);
+
+it("a withdrawn reader shown again records where it then reads", async () => {
+  const { visit } = visitPlaces();
+  const reply = threadReply("d", row.id);
+  layOutRows([row.id, reply.id]);
+  const h = messagesHarness(visit("thread-visit"));
+  h.snapshot.replies = [reply];
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, { retainThread: true });
+  h.render();
+  h.scroll(1000);
+  // A timeline link withdraws the route. The pane is closed and reopened
+  // around the thread, and the reader scrolls on before going Back.
+  Object.assign(props, { navigation: undefined });
+  h.rerenderProps();
+  Object.assign(props, { active: false });
+  h.rerenderProps();
+  Object.assign(props, { active: true });
+  h.rerenderProps();
+  h.scroll(2000);
+  Object.assign(props, { navigation: visit("thread-visit", true) });
+  await act(async () => h.rerenderProps());
+  expect(h.view.retarget).toHaveBeenCalledOnce();
+  expect(h.element.scrollTop).toBe(2000);
+});
+
+it("a reader first shown while its route retargets stays hidden until the route restores its place", async () => {
+  const { places, visit } = visitPlaces();
+  places.set("thread-visit:thread", {
+    anchor: { id: row.id, top: 100, ancestors: [] },
+  });
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, { retainThread: true });
+  h.render();
+  let release!: (value: "selected") => void;
+  h.view.retarget.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  Object.assign(props, { navigation: visit("thread-visit", true) });
+  h.rerenderProps();
+  try {
+    expect(h.view.retarget).toHaveBeenCalledOnce();
+    // The first page lands: the reader positions at the end, out of sight.
+    h.snapshot.status = "ready";
+    h.render();
+    expect(h.element.scrollTop).toBe(3400);
+    expect(h.element).toHaveAttribute("data-positioning");
+  } finally {
+    await act(async () => release("selected"));
+  }
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(h.element.scrollTop).toBe(3300);
+});
+
+it("a reader hidden while its route retargets reads nothing until the route restores its place", async () => {
+  vi.useFakeTimers();
+  const { places, visit } = visitPlaces();
+  places.set("thread-visit:thread", {
+    anchor: { id: row.id, top: 100, ancestors: [] },
+  });
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  h.snapshot.replies = [threadReply("d", row.id)];
+  vi.mocked(document.hasFocus).mockReturnValue(true);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  const observe = vi.fn(async () => {});
+  const catchUp = vi.fn(async () => {});
+  Object.assign(h.session.unread, {
+    sync: () => ({ capability: "frontier-sync" }),
+    reading: () => ({ view() {}, observe, catchUp, dispose() {} }),
+    leave() {},
+  });
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, { retainThread: true });
+  h.render();
+  let release!: (value: "selected") => void;
+  h.view.retarget.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  Object.assign(props, { navigation: visit("thread-visit", true) });
+  h.rerenderProps();
+  try {
+    // The first page lands at the end behind the loader, with focus inside.
+    h.snapshot.status = "ready";
+    h.render();
+    expect(h.element.scrollTop).toBe(3400);
+    h.element.focus();
+    await act(() => vi.advanceTimersToNextFrame());
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(catchUp).not.toHaveBeenCalled();
+    expect(observe).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => release("selected"));
+  }
+  // The restored place is read, not the end the reader never saw.
+  expect(h.element.scrollTop).toBe(3300);
+  await act(() => vi.advanceTimersToNextFrame());
+  await act(() => vi.advanceTimersByTimeAsync(300));
+  expect(observe).toHaveBeenCalled();
+  expect(catchUp).not.toHaveBeenCalled();
+});
+
 it("an unrouted retained opening retries allocation locally", () => {
   const h = messagesHarness();
   const navigationRetry = vi.fn();
@@ -1673,11 +3557,27 @@ it("an unrouted retained opening retries allocation locally", () => {
       onRetryNavigation={navigationRetry}
     />,
   );
-  expect(screen.getByRole("alert")).toHaveTextContent("capacity");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This thread didn’t load.",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
   expect(navigationRetry).not.toHaveBeenCalled();
   expect(h.thread).toHaveBeenCalledTimes(2);
+});
+
+it("reselecting an invocation thread returns its reader to the latest message", () => {
+  const h = messagesHarness();
+  const props: ThreadPanelProps = h.props;
+  props.subthreadId = row.id;
+  h.render();
+  h.scroll(2000);
+  expect(h.element.scrollTop).toBe(2000);
+
+  props.latestRequest = new AbortController().signal;
+  h.rerenderProps();
+
+  expect(h.element.scrollTop).toBe(3400);
 });
 
 it("releases bottom following after a jump that included child-only resizing", () => {
@@ -1696,4 +3596,41 @@ it("releases bottom following after a jump that included child-only resizing", (
   h.snapshot.replies = [{ ...row, id: "new", content: "new" }];
   h.render();
   expect(h.element.scrollTop).toBe(2000);
+});
+
+it("reveals a completed step selected by an exact thread link", async () => {
+  const h = messagesHarness();
+  const target = {
+    ...row,
+    id: "d".repeat(64),
+    content: "Completed tool result",
+    audience: "agents" as const,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  h.snapshot.replies = [
+    target,
+    {
+      ...row,
+      id: "e".repeat(64),
+      content: "Final response",
+      threadRootId: row.id,
+      replyParentId: row.id,
+      createdAt: 3,
+    },
+  ];
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  Object.assign(h.props, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  expect(await screen.findByText("Completed tool result")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Collapse activity history/ }),
+  ).toBeVisible();
 });

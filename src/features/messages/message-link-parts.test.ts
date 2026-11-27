@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { messageLinkParts } from "./message-link-parts";
+import { bareHostParts, messageLinkParts } from "./message-link-parts";
 
 it("recognizes bare and wrapped Buzz channel, message and thread links", () => {
   const urls = [
@@ -151,6 +151,49 @@ it("keeps balanced bare URL delimiters in the decorated range and trims only unm
 });
 
 it.each([
+  ["https://github.com/block/buzz-app。", "https://github.com/block/buzz-app"],
+  ["看这个 https://example.com/spec，大家看一下", "https://example.com/spec"],
+  ["（https://example.com）", "https://example.com"],
+  ["https://example.com/a?b=c。", "https://example.com/a?b=c"],
+  ["https://example.com/path．", "https://example.com/path"],
+  ["https://example.com/path［注］", "https://example.com/path"],
+  ["他说“https://example.com”。", "https://example.com"],
+  ["｢https://example.com｣", "https://example.com"],
+  ["https://example.com。大家", "https://example.com"],
+  ["https://example.com/a。b", "https://example.com/a"],
+  ["https://github。com/block/buzz-app", "https://github。com/block/buzz-app"],
+  ["https://github．com:8080/x。", "https://github．com:8080/x"],
+  ["http://localhost:3000。OK", "http://localhost:3000"],
+  ["https://[::1]。OK", "https://[::1]"],
+  ["https:///example.com/x。", "https:///example.com/x"],
+  [
+    "https://github。com:/block/buzz-app",
+    "https://github。com:/block/buzz-app",
+  ],
+  ["https://github｡com/x。", "https://github｡com/x"],
+  [
+    "见 https://zh.wikipedia.org/wiki/中文",
+    "https://zh.wikipedia.org/wiki/中文",
+  ],
+])(
+  "ends a bare URL at fullwidth punctuation but keeps CJK letters: %s",
+  (content, url) => {
+    const parts = messageLinkParts(content);
+    expect(parts.filter((part) => part.url)).toEqual([{ text: url, url }]);
+    expect(parts.map((part) => part.text).join("")).toBe(content);
+  },
+);
+
+it("ends a bare URL at fullwidth punctuation before another scheme", () => {
+  expect(
+    messageLinkParts("https://a.com。https://b.com").filter((part) => part.url),
+  ).toEqual([
+    { text: "https://a.com", url: "https://a.com" },
+    { text: "https://b.com", url: "https://b.com" },
+  ]);
+});
+
+it.each([
   "[this shadcdn/ui clone](https://github.com/duobaseio/forui)",
   "[this shadcdn/ui clone](<https://github.com/duobaseio/forui>)",
   String.raw`[this shadcdn/ui clone]\(https://github.com/duobaseio/forui\)`,
@@ -249,5 +292,51 @@ it("bounds repeated unfinished wrappers while retaining a later valid link", () 
       { text: "Docs", label: "Docs", url: "https://example.com/docs" },
     ]);
     expect(parts.map((part) => part.text).join("")).toBe(`${prefix} Docs`);
+  }
+});
+
+it("recognizes bare, wrapped and labelled plugin page links, and not malformed ones", () => {
+  const url =
+    "buzz://plugin?id=com.example.catalog&page=detail&route.slug=hello";
+  for (const text of [url, `<${url}>`, `[Open](${url})`]) {
+    const parts = messageLinkParts(`See ${text}.`);
+    expect(parts.filter((part) => part.url).map((part) => part.url)).toEqual([
+      url,
+    ]);
+  }
+  const malformed = "<buzz://plugin?id=Not.Valid>";
+  expect(messageLinkParts(malformed).some((part) => part.url)).toBe(false);
+});
+
+it("links scheme-less hosts under common web TLDs, ending them like bare URLs", () => {
+  for (const [content, ...links] of [
+    ["check example.com", "example.com"],
+    ["see builderlab.xyz.", "builderlab.xyz"],
+    ["try GitHub.com", "GitHub.com"],
+    ["(docs.github.com/en/rest?x=1#top)", "docs.github.com/en/rest?x=1#top"],
+    ["a.co.uk:8443/path, then", "a.co.uk:8443/path"],
+    ["看 example.com/a，foo.io。", "example.com/a", "foo.io"],
+  ] as const) {
+    const parts = bareHostParts(content);
+    expect(parts.filter((part) => part.url)).toEqual(
+      links.map((text) => ({ text, label: text, url: `https://${text}` })),
+    );
+    expect(parts.map((part) => part.text).join("")).toBe(content);
+  }
+});
+
+it("leaves file names, emails, paths and partial hosts as plain text", () => {
+  for (const content of [
+    "edit main.rs, app.py and notes.md",
+    "run package.json or node.js",
+    "mail me@example.com",
+    "open src/example.com or #example.com",
+    "example.comfoo and example.com.zz",
+    "built on ASP.NET and VB.NET, see Example.COM",
+    "localhost:3000",
+  ]) {
+    const parts = bareHostParts(content);
+    expect(parts.some((part) => part.url)).toBe(false);
+    expect(parts.map((part) => part.text).join("")).toBe(content);
   }
 });

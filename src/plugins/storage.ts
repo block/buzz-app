@@ -11,7 +11,7 @@ export const desktop = isTauri();
 const storageKey = "buzzodz.plugins.v1";
 
 export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
-  function webCatalog(): StorageResult {
+  function webCatalog(reset = false): StorageResult {
     const catalog: Catalog = {
       profile: "browser",
       location: "This browser",
@@ -19,7 +19,14 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     };
     try {
       const raw = localStorage.getItem(storageKey);
-      if (raw !== null) {
+      const existing =
+        !reset &&
+        (raw !== null ||
+          Object.keys(localStorage).some((key) =>
+            /^buzz-client\.v1:[a-f0-9]{64}$/.test(key),
+          ));
+      const flags: Record<string, boolean> = {};
+      if (raw !== null && !reset) {
         const value: unknown = JSON.parse(raw);
         if (!value || typeof value !== "object" || !("version" in value))
           throw new Error("Invalid browser plugin settings");
@@ -39,18 +46,21 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
             (flag) => typeof flag === "boolean",
           )
         ) {
-          const flags = value.enabled as Record<string, boolean>;
+          Object.assign(flags, value.enabled);
           if (value.version === 2) {
             migrateAgentFlag(flags);
-            localStorage.setItem(
-              storageKey,
-              JSON.stringify({ version: 3, enabled: flags }),
-            );
           }
-          for (const plugin of catalog.plugins)
-            plugin.enabled = flags[plugin.manifest.id] ?? plugin.enabled;
         } else throw new Error("Invalid browser plugin settings");
       }
+      for (const plugin of catalog.plugins) {
+        const id = plugin.manifest.id;
+        flags[id] ??=
+          (plugin.enabled && !(existing && id === "buzz.bestie")) ||
+          (existing && (id === "buzz.reminders" || id === "buzz.workflows"));
+        plugin.enabled = flags[id];
+      }
+      const saved = JSON.stringify({ version: 3, enabled: flags });
+      if (saved !== raw) localStorage.setItem(storageKey, saved);
     } catch (error) {
       return { status: "recovery", reason: String(error), canReset: true };
     }
@@ -61,6 +71,9 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
   }
   async function getCatalog(): Promise<StorageResult> {
     return desktop ? invoke("plugin_catalog") : webCatalog();
+  }
+  async function refreshManaged(): Promise<StorageResult> {
+    return desktop ? invoke("plugin_managed_refresh") : webCatalog();
   }
   async function changePlugin(
     action: ManagementAction,
@@ -97,8 +110,7 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     const raw = localStorage.getItem(storageKey);
     if (raw !== null)
       localStorage.setItem(`${storageKey}.backup.${Date.now()}`, raw);
-    localStorage.removeItem(storageKey);
-    return webCatalog();
+    return webCatalog(true);
   }
   async function readModule(id: string, revision: string): Promise<string> {
     if (!desktop) throw new Error("Local plugins require the desktop app");
@@ -111,20 +123,32 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
 
   const imports: PluginImports | undefined = desktop
     ? {
-        folder: () => invoke("plugin_import_folder"),
+        folder: (path) =>
+          invoke("plugin_import_folder", path ? { path } : undefined),
+        checkPath: (path) =>
+          invoke("plugin_import_folder", { path, checkOnly: true }),
         checkFolder: (id) => invoke("plugin_update_check", { id }),
         previewFolder: (id) => invoke("plugin_update_preview", { id }),
         files: (source, files) =>
           invoke("plugin_import_folder", { upload: { source, files } }),
-        git: (repository, reference, authorization) =>
-          invoke("plugin_import_git", { repository, reference, authorization }),
-        checkGit: (repository, reference, authorization) =>
+        git: (repository, reference, authorization, scope) =>
           invoke("plugin_import_git", {
             repository,
             reference,
             authorization,
+            commit: scope?.commit,
+            path: scope?.path,
+          }),
+        checkGit: (repository, reference, authorization, scope) =>
+          invoke("plugin_import_git", {
+            repository,
+            reference,
+            authorization,
+            commit: scope?.commit,
+            path: scope?.path,
             checkOnly: true,
           }),
+        url: (url, sha256) => invoke("plugin_import_url", { url, sha256 }),
         install: (token, path) =>
           invoke("plugin_import_install", { token, path }),
         discard: (token) => invoke("plugin_import_discard", { token }),
@@ -136,12 +160,14 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     recoverSettings,
     readModule,
     reloadPlugin,
+    refreshManaged,
     imports,
   };
 }
 export type PluginStorage = Omit<
   ReturnType<typeof createPluginStorage>,
-  "imports"
+  "imports" | "refreshManaged"
 > & {
   imports?: PluginImports | undefined;
+  refreshManaged?: (() => Promise<StorageResult>) | undefined;
 };

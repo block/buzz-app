@@ -1,5 +1,8 @@
+import { finalizeEvent } from "nostr-tools";
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 const localAgentKey =
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -60,7 +63,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   const second = send("Second local request");
   const secondRow = thread.locator(`[data-message-id="${second.id}"]`);
   const waiting = secondRow.getByRole("button", {
-    name: /^View agent activity:/,
+    name: /^(View agent activity|Show activity history|Collapse activity history):/,
   });
   await expect(waiting).toHaveAccessibleName(
     /Local tester, Received · waiting to start/,
@@ -74,7 +77,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   // Neither request has reported a first step yet, so the sidebar breathes.
   await expect(sidebar).toHaveAccessibleName(/Local tester waiting in Alpha/);
   const summary = rootRow.getByRole("button", { name: /^View thread:/ });
-  await expect(summary).toHaveAccessibleName(/Local tester waiting/);
+  await expect(summary).toContainText("replies");
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),
     first.id,
@@ -89,15 +92,34 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
     firstRow.getByRole("button", { name: /^View agent activity:/ }),
   ).toHaveCount(0);
   await page.evaluate((id) => window.localAgentFixture.handover(id), second.id);
-  await expect(
-    waiting.locator('[data-state="working"] > span').first(),
-  ).toHaveCSS("animation-duration", "1.4s");
+  await expect(waiting).toContainText("Reading notes.txt");
+  // The message's live bubble is the only working indicator: the thread tail
+  // adds no second one. Its dots stay visible without motion; jsdom cannot
+  // prove CSS visibility.
+  const liveStep = thread.getByRole("button", {
+    name: "Activity: Local tester working",
+    exact: true,
+  });
+  await expect(liveStep).toHaveCount(0);
+  const dots = waiting.locator('[data-state="working"] > span');
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(dots).toHaveCount(3);
+  await expect(dots.first()).toBeVisible();
+  await expect(dots.first()).toHaveCSS("animation-name", "none");
+  await page.screenshot({
+    path: testInfo.outputPath("local-working-reduced-motion.png"),
+  });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   // Work remains after run() returns; only actual completion settles it.
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, false),
     second.id,
   );
-  await expect(waiting).toContainText("1 failed");
+  await expect(
+    secondRow.getByText("Couldn’t finish", { exact: true }),
+  ).toBeVisible();
+  await expect(waiting).toHaveText("Couldn’t finish");
+  await expect(liveStep).toHaveCount(0);
   await expect(waiting).toHaveAccessibleName(
     /Local tester, Fixture provider unavailable/,
   );
@@ -109,32 +131,57 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
       await page.setViewportSize({ width, height: 950 });
       await waiting.focus();
       await page.keyboard.press("Enter");
-      const popup = page.getByRole("dialog", {
-        name: "Agent activity",
-        exact: true,
-      });
+      const popup = secondRow.locator("[data-activity-details]");
       await expect(popup).toContainText("Fixture provider unavailable");
       await expect(popup).not.toHaveAttribute("data-starting-style", "");
       const box = await popup.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
-      // Errors stay on one line; the full reason remains in the accessible name.
+      // The full explanation stays readable inside the expanded history.
       await expect(popup.getByText("Fixture provider unavailable")).toHaveCSS(
         "white-space",
-        "nowrap",
+        "normal",
       );
       const dismiss = await popup
         .getByRole("button", { name: /^Dismiss error from / })
         .boundingBox();
       expect(dismiss.x + dismiss.width).toBeLessThanOrEqual(box.x + box.width);
+      const retry = await popup
+        .getByRole("button", { name: /^Retry / })
+        .boundingBox();
+      expect(retry.x).toBeGreaterThanOrEqual(box.x);
+      expect(retry.x + retry.width).toBeLessThanOrEqual(dismiss.x);
       await page.screenshot({
         path: testInfo.outputPath(`local-activity-${colorScheme}-${width}.png`),
       });
-      await page.keyboard.press("Escape");
+      await waiting.click();
       await expect(popup).toBeHidden();
       await expect(waiting).toBeFocused();
     }
   }
+  // Retry asks the agent again with the same message; focus returns to the row.
+  await waiting.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Retry Local tester" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(waiting).toBeFocused();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          window.localAgentFixture.pending().filter((row) => row === id).length,
+        second.id,
+      ),
+    )
+    .toBe(2);
+  await expect(waiting).toHaveAccessibleName(/Local tester, Starting/);
+  await page.evaluate(
+    (id) => window.localAgentFixture.finish(id, false),
+    second.id,
+  );
+  await expect(
+    secondRow.getByText("Couldn’t finish", { exact: true }),
+  ).toBeVisible();
   // Dismiss hides only this device's view of the error; focus stays in the row.
   await waiting.focus();
   await page.keyboard.press("Enter");
@@ -146,7 +193,8 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
 test("Stop in a message's activity ends its local work quietly", async ({
   page,
   app,
-}, testInfo) => {
+  browserName,
+}) => {
   await open(page, app);
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
@@ -193,91 +241,73 @@ test("Stop in a message's activity ends its local work quietly", async ({
       ),
     event.id,
   );
-  await activity.hover();
-  const popup = page.getByRole("dialog", {
-    name: "Agent activity",
-    exact: true,
-  });
-  const stop = popup.getByRole("button", {
+  const row = thread.locator(`[data-message-id="${event.id}"]`);
+  const stop = row.getByRole("button", {
     name: "Stop Local tester",
     exact: true,
   });
-  await expect(stop).toBeVisible();
+  await page.mouse.move(0, 0);
+  const restingBox = await activity.boundingBox();
+  await row
+    .getByRole("region", { name: "Agent activity on this message" })
+    .hover();
   await expect(stop).toHaveText("Stop");
-  // The small action sits inside a padded slot; its hit area stays unobscured.
-  await expect
-    .poll(() =>
-      stop.evaluate((element) => {
-        const button = element.getBoundingClientRect();
-        const slot = element.parentElement.getBoundingClientRect();
-        return (
-          slot.height > button.height &&
-          slot.width > button.width &&
-          element.contains(
-            document.elementFromPoint(
-              button.x + button.width / 2,
-              button.y + button.height / 2,
-            ),
-          )
-        );
-      }),
-    )
-    .toBe(true);
-  await expect(popup).not.toHaveAttribute("data-starting-style", "");
-  const preview = popup.getByText(/^Reading /);
-  await expect(preview).toBeVisible();
-  const line = await preview.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      height: element.getBoundingClientRect().height,
-      lineHeight: Number.parseFloat(style.lineHeight),
-      clipped: element.scrollWidth > element.clientWidth,
-      ellipsis: style.textOverflow,
-    };
-  });
-  expect(line.height).toBeLessThan(line.lineHeight * 1.5);
-  expect(line.clipped).toBe(true);
-  expect(line.ellipsis).toBe("ellipsis");
-  // Stop stays inside the popup, after its row's preview.
-  const [box, frame, text] = await Promise.all([
-    stop.boundingBox(),
-    popup.boundingBox(),
-    preview.boundingBox(),
-  ]);
-  expect(box.x).toBeGreaterThanOrEqual(text.x + text.width);
-  expect(box.x + box.width).toBeLessThanOrEqual(frame.x + frame.width);
-  const row = thread.locator(`[data-message-id="${event.id}"]`);
-  const around = await row.boundingBox();
-  const left = Math.min(frame.x, around.x) - 16;
-  const top = Math.min(frame.y, around.y) - 16;
-  await page.screenshot({
-    path: testInfo.outputPath("local-activity-stop.png"),
-    clip: {
-      x: Math.max(0, left),
-      y: Math.max(0, top),
-      width:
-        Math.max(frame.x + frame.width, around.x + around.width) + 16 - left,
-      height:
-        Math.max(frame.y + frame.height, around.y + around.height) + 16 - top,
-    },
-  });
-  await stop.click();
+  await expect(
+    page.getByRole("dialog", { name: "Agent activity", exact: true }),
+  ).toHaveCount(0);
+  expect((await activity.boundingBox()).width).toBe(restingBox.width);
+  await stop.click({ trial: true });
+  await page.mouse.move(0, 0);
+  await activity.focus();
+  await page.keyboard.press(
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab",
+  );
+  await expect(stop).toBeFocused();
+  await stop.focus();
+  await stop.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
     .toEqual([event.id]);
-  // Stopped work is neither finished nor failed: its activity just goes, and a
-  // toast confirms the stop.
+  // Stopped work is neither finished nor failed: its live activity goes, a
+  // toast confirms the stop, and the message keeps a note that it stopped.
   await expect(activity).toHaveCount(0);
   await expect(
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
   await expect(
+    row.getByRole("button", {
+      name: /activity history: Local tester, Stopped/,
+    }),
+  ).toBeFocused();
+  const note = row.getByText("Stopped", { exact: true });
+  await expect(note).toBeVisible();
+  // The outcome keeps an inset inside its outlined bubble in every density.
+  for (const density of ["default", "compact"]) {
+    await page.evaluate((density) => {
+      document.documentElement.dataset.messageDensity = density;
+    }, density);
+    const inset = await note.evaluate((label) => {
+      const text = label.getBoundingClientRect();
+      const bubble = label
+        .closest('[class*="messageBubble"]')
+        .getBoundingClientRect();
+      return Math.min(
+        text.left - bubble.left,
+        text.top - bubble.top,
+        bubble.bottom - text.bottom,
+      );
+    });
+    expect(inset, density).toBeGreaterThanOrEqual(4);
+  }
+  await expect(
     page.locator('[data-channel-id="alpha"] [data-channel-working]'),
   ).toHaveCount(0);
 });
 
-// The channel's thread summary is host-owned; its activity popup offers Stop.
-test("Stop in a thread summary's activity stops its work", async ({
+// A top-level mention's work is in its thread, where its activity offers Stop.
+test("Stop in a top-level mention's thread activity stops its work", async ({
   page,
   app,
 }) => {
@@ -294,6 +324,7 @@ test("Stop in a thread summary's activity stops its work", async ({
       ["p", localAgentKey],
     ],
   });
+  app.histories.get("primary/alpha").push(request);
   app.relay.publish("primary", request);
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
@@ -302,31 +333,103 @@ test("Stop in a thread summary's activity stops its work", async ({
     (id) => window.localAgentFixture.handover(id),
     request.id,
   );
-  const row = page.locator(
-    `[data-channel-timeline] [data-message-id="${request.id}"]`,
-  );
-  const summary = row.getByRole("button", { name: /^View thread:/ });
-  await expect(summary).toBeVisible();
-  await expect(row.getByRole("button", { name: /^Stop/ })).toHaveCount(0);
-  await summary.hover();
-  const popup = page.getByRole("dialog", {
-    name: "Agent activity",
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${request.id}"]`)
+    .getByRole("button", { name: /^View thread:.*Local tester/ })
+    .click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
     exact: true,
   });
-  const stop = popup.getByRole("button", {
+  const row = thread.locator(`[data-message-id="${request.id}"]`);
+  const summary = row.getByRole("button", { name: /^View agent activity:/ });
+  await expect(summary).toBeVisible();
+  await expect(
+    row.getByRole("button", { name: "Stop Local tester" }),
+  ).toHaveCount(1);
+  // Recorded updates must not remove the only control that can stop this turn.
+  const key = new Uint8Array(32);
+  key[31] = 1;
+  for (const [index, content] of [
+    "Checking the request",
+    "Checking the final detail",
+  ].entries()) {
+    app.relay.publish(
+      "primary",
+      finalizeEvent(
+        {
+          kind: 40002,
+          content,
+          created_at: request.created_at + index + 1,
+          tags: [
+            ["h", "alpha"],
+            ["e", request.id, "", "root"],
+            ["e", request.id, "", "reply"],
+            ["audience", "agents"],
+          ],
+        },
+        key,
+      ),
+    );
+  }
+  const history = page.getByRole("button", {
+    name: /Show activity history:.*Checking the final detail/,
+  });
+  await expect(history).toBeVisible();
+  await history.click();
+  await expect(
+    page.getByText("Checking the request", { exact: true }),
+  ).toBeVisible();
+  await expect(summary).toHaveCount(0);
+  const stop = page.getByRole("button", {
     name: "Stop Local tester",
     exact: true,
   });
   await expect(stop).toBeVisible();
-  await expect(popup).not.toHaveAttribute("data-starting-style", "");
+  await expect(
+    page.getByRole("button", { name: "View transcript", exact: true }),
+  ).toBeVisible();
+  app.relay.publish(
+    "primary",
+    app.sign({
+      kind: 9,
+      content: "Keep going while I check the result",
+      created_at: request.created_at + 3,
+      tags: [
+        ["h", "alpha"],
+        ["e", request.id, "", "root"],
+        ["e", request.id, "", "reply"],
+      ],
+    }),
+  );
+  await expect(
+    page.getByText("Keep going while I check the result", { exact: true }),
+  ).toBeVisible();
+  const live = thread.locator("[data-conversation-activity]");
+  await expect(live.getByText("Local tester", { exact: true })).toBeVisible();
   await stop.click();
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
     .toEqual([request.id]);
-  await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
+  await expect(summary).toHaveCount(0);
   await expect(
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^Collapse activity history:/ }),
+  ).toBeFocused();
+  // The agent replied in the thread, so the outcome follows its replies.
+  const note = thread.getByRole("button", {
+    name: /activity history: Local tester: Stopped/,
+  });
+  await expect(note).toBeVisible();
+  await expect(thread.getByText("Stopped", { exact: true })).toBeVisible();
+  const [bounds, noted] = await Promise.all([
+    thread.boundingBox(),
+    note.boundingBox(),
+  ]);
+  expect(noted.x).toBeGreaterThanOrEqual(bounds.x);
+  expect(noted.x + noted.width).toBeLessThanOrEqual(bounds.x + bounds.width);
 });
 
 // Real host composition: one summary combines replies and exact-message work.
@@ -348,18 +451,21 @@ test("one thread summary retains reply navigation and work on another reply", as
       ["p", agent],
     ],
   });
+  app.histories.get("primary/alpha").push(request);
   app.relay.publish("primary", request);
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
   const summary = row.getByRole("button", { name: /^View thread:/ });
-  await expect(summary).toBeVisible();
-  await expect(row.locator("[data-thread-summary]")).toHaveCount(1);
-  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
-  // Existing replies share navigation with the message's live work.
+  const activity = row.getByRole("button", { name: /^View agent activity:/ });
+  // The turn is in the mention's thread, so its work is there from the start.
+  await expect(summary).toHaveAccessibleName(
+    /Local tester is (working|waiting)/,
+  );
+  await expect(activity).toHaveCount(0);
   app.threadSummary(request.id, [agent], 1);
   await expect(summary).toContainText("1 reply");
-  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
+  await expect(row.locator("[data-thread-summary]")).toHaveCount(1);
   await page.evaluate(
     (id) => window.localAgentFixture.handover(id),
     request.id,
@@ -375,35 +481,33 @@ test("one thread summary retains reply navigation and work on another reply", as
       ["p", agent],
     ],
   });
+  app.histories.get("primary/alpha").push(reply);
   app.relay.publish("primary", reply);
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
     .toBe(2);
-  await expect(summary).toBeVisible();
-  // Same agent, different requests: render one working indicator, then retain
-  // the mounted summary and its reply navigation when the first request ends.
-  await expect(summary.locator("[data-thread-working]")).toHaveCount(1);
-  await expect(summary.locator('[data-state="working"]')).toBeVisible();
-  await summary.evaluate((element) => {
-    window.activitySummary = element;
-  });
+  await expect(summary).toHaveAccessibleName(/Local tester (working|waiting)/);
+  await expect(activity).toHaveCount(0);
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),
     request.id,
   );
-  // The surviving request has no first step: waiting proves the completed
-  // request has left the activity projection before checking DOM continuity.
-  await expect(summary.locator('[data-state="waiting"]')).toBeVisible();
+  await expect(activity).toHaveCount(0);
   await expect(summary).toContainText("1 reply");
-  expect(
-    await summary.evaluate((element) => element === window.activitySummary),
-  ).toBe(true);
-  await expect(summary.locator("[data-thread-working]")).toBeVisible();
+  await summary.click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const replyActivity = thread
+    .locator(`[data-message-id="${reply.id}"]`)
+    .getByRole("button", { name: /^View agent activity:/ });
+  await expect(replyActivity.locator('[data-state="waiting"]')).toBeVisible();
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),
     reply.id,
   );
-  await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
+  await expect(replyActivity).toHaveCount(0);
   await expect(summary).toContainText("1 reply");
 });
 
@@ -431,14 +535,23 @@ test("opens an active message's empty thread without losing its activity preview
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
-  const trigger = row.getByRole("button", { name: /^View thread:/ });
-  await expect(trigger).toBeVisible();
-  await trigger.hover();
+  const trigger = row.getByRole("button", { name: "Reply", exact: true });
   const preview = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,
   });
-  await expect(preview).toBeVisible();
+  // The work is in the thread before its first reply: the channel row shows
+  // the thread summary, and no bubble or Stop of its own.
+  await expect(
+    row.getByRole("button", { name: /^View thread:.*Local tester/ }),
+  ).toBeVisible();
+  await expect(
+    row.getByRole("button", { name: /^View agent activity:/ }),
+  ).toHaveCount(0);
+  await expect(
+    row.getByRole("button", { name: "Stop Local tester" }),
+  ).toHaveCount(0);
+  await hoverMessage(row);
   await trigger.click();
   const thread = page.getByRole("complementary", {
     name: "Thread",
@@ -452,13 +565,11 @@ test("opens an active message's empty thread without losing its activity preview
   await expect(root).toContainText(request.content);
   const activity = root.getByRole("button", { name: /^View agent activity:/ });
   await expect(activity).toBeVisible();
-  await activity.click();
-  await expect(preview).toBeVisible();
-  await expect(
-    preview.getByRole("button", { name: "View activity for Local tester" }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
+  await activity.locator("..").hover();
   await expect(preview).toHaveCount(0);
+  await expect(
+    root.getByRole("button", { name: "Stop Local tester" }).locator(".."),
+  ).toHaveCSS("opacity", "1");
   // The tab title may be the loaded message preview, not literally "Thread".
   await page
     .locator(
@@ -474,13 +585,28 @@ test("opens an active message's empty thread without losing its activity preview
     thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeVisible();
   await expect(activity).toBeVisible();
+  // Reopening schedules composer focus after the pane becomes visible.
+  // Observe that handoff before sending a key to another control.
+  await expect(
+    thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeFocused();
+  // The composer takes focus before the rows finish positioning, and the
+  // rows stay inert until then, so a press on one would land in the composer.
+  await expect(
+    thread.getByRole("region", { name: "Thread messages", exact: true }),
+  ).toHaveAttribute("aria-busy", "false");
+  await activity.press("Enter");
+  await expect(
+    page.getByRole("tab", { name: "Activity", selected: true }),
+  ).toBeVisible();
+  await expect(preview).toHaveCount(0);
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),
     request.id,
   );
 });
 
-for (const focusOn of ["bubble", "popup", "composer"]) {
+for (const focusOn of ["bubble", "stop", "composer"]) {
   test(`finishing activity retires keyboard controls without stealing focus: ${focusOn}`, async ({
     page,
     app,
@@ -522,15 +648,13 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
       name: /^View agent activity:/,
     });
     await expect(bubble).toBeVisible();
+    // Rows stay inert while the thread positions its first page, so focus()
+    // on a control inside one is a no-op until the region is no longer busy.
+    await expect(
+      thread.getByRole("region", { name: "Thread messages", exact: true }),
+    ).toHaveAttribute("aria-busy", "false");
     // Finish entrance and hold only the exit so the intermediate state is testable.
-    await message.locator("section").evaluate(async (element) => {
-      await Promise.all(
-        element
-          .getAnimations({ subtree: true })
-          .filter((a) => a.effect.getTiming().iterations !== Infinity)
-          .map((a) => a.finished),
-      );
-    });
+    await animationsSettled(message.locator("section"), { subtree: true });
     // Hold the actual exit animation before its first frame, rather than racing
     // a delayed animationstart event on a busy runner. Release in finally.
     const exitGate = await page.addStyleTag({
@@ -540,11 +664,8 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
       name: "Agent activity",
       exact: true,
     });
-    if (focusOn === "popup") {
-      await bubble.click();
-      await popup
-        .getByRole("button", { name: "View activity for Local tester" })
-        .focus();
+    if (focusOn === "stop") {
+      await message.getByRole("button", { name: "Stop Local tester" }).focus();
     } else if (focusOn === "bubble") await bubble.focus();
     else await composer.focus();
     const section = message.locator("section");
@@ -572,8 +693,9 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
   });
 }
 
-// Real browser focus must survive removal of the decorated host button/portal.
-test("finishing a zero-reply summary hands focus back only when it owns focus", async ({
+// Real browser focus must survive removal of the host's thread summary when
+// a top-level mention's work ends before anyone replied.
+test("finishing a zero-reply mention hands focus back only when it owns focus", async ({
   page,
   app,
 }) => {
@@ -585,11 +707,7 @@ test("finishing a zero-reply summary hands focus back only when it owns focus", 
     name: "Message #Alpha",
     exact: true,
   });
-  for (const focusOn of ["summary", "popup", "composer"]) {
-    // Exercise immediate popup removal without depending on an exit animation.
-    await page.emulateMedia({
-      reducedMotion: focusOn === "popup" ? "reduce" : "no-preference",
-    });
+  for (const focusOn of ["summary", "composer"]) {
     const request = app.sign({
       kind: 9,
       content: `Finish zero-reply activity: ${focusOn}`,
@@ -603,25 +721,17 @@ test("finishing a zero-reply summary hands focus back only when it owns focus", 
     const row = page.locator(
       `[data-channel-timeline] [data-message-id="${request.id}"]`,
     );
-    const summary = row.getByRole("button", { name: /^View thread:/ });
-    const popup = page.getByRole("dialog", {
-      name: "Agent activity",
-      exact: true,
+    const summary = row.getByRole("button", {
+      name: /^View thread:.*Local tester/,
     });
     await expect(summary).toBeVisible();
-    if (focusOn === "popup") {
-      await summary.hover();
-      await popup
-        .getByRole("button", { name: "View activity for Local tester" })
-        .focus();
-    } else if (focusOn === "summary") await summary.focus();
+    if (focusOn === "summary") await summary.focus();
     else await composer.focus();
     await page.evaluate(
       (id) => window.localAgentFixture.finish(id, true),
       request.id,
     );
     await expect(summary).toHaveCount(0);
-    await expect(popup).toHaveCount(0);
     await expect(
       focusOn === "composer"
         ? composer
@@ -669,16 +779,17 @@ test("the published-activity tab shows turns its agent published", async ({
     key,
   );
   await page
-    .getByRole("form", { name: "Send a message to Alpha", exact: true })
+    .locator("[data-composer-dock]", {
+      has: page.getByRole("form", {
+        name: "Send a message to Alpha",
+        exact: true,
+      }),
+    })
     .locator("..")
     .getByRole("button", { name: /^Activity: .+ working$/ })
     .hover();
   const popup = page.getByRole("dialog", { name: "Working now", exact: true });
-  await popup
-    .getByRole("button", {
-      name: /^Open (?:thread|conversation) for Local tester/,
-    })
-    .hover();
+  // The channel is already shown, so the agent's row opens its activity.
   await popup
     .getByRole("button", { name: /^View .*Local tester.* activity$/ })
     .click();
@@ -686,6 +797,156 @@ test("the published-activity tab shows turns its agent published", async ({
     page.getByRole("tab", { name: "Activity", selected: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Published reply", { exact: true }),
+    page.locator("summary").getByText("Published reply", { exact: true }),
   ).toBeVisible();
+  // Real browser layout is required: jsdom cannot catch flex min-content collapse.
+  const path = "src/features/agents/ActivityTranscript.tsx";
+  app.observer(
+    frame("acp_read", {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "S",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "layout-tool",
+          kind: "read",
+          title: path,
+          status: "completed",
+          rawInput: { path },
+        },
+      },
+    }),
+    key,
+  );
+  const toolSummary = page.locator("summary").filter({ hasText: path });
+  await toolSummary.click();
+  for (const width of [390, 360]) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const size of ["150%", "200%"]) {
+      await page.evaluate((value) => {
+        document.documentElement.style.fontSize = value;
+      }, size);
+      await expect
+        .poll(async () => {
+          const label = await toolSummary
+            .getByText(path, { exact: true })
+            .boundingBox();
+          return label?.width ?? 0;
+        })
+        .toBeGreaterThan(100);
+      await expect
+        .poll(async () => (await toolSummary.boundingBox())?.height ?? Infinity)
+        .toBeLessThan(300);
+      // The host inset, hero, and footer must agree after the dock narrows it.
+      await expect
+        .poll(() =>
+          toolSummary.evaluate((summary) => {
+            let host = summary.parentElement;
+            while (host && getComputedStyle(host).overflowY !== "auto")
+              host = host.parentElement;
+            if (!host) throw new Error("Missing activity scrollport");
+            return host.scrollWidth - host.clientWidth;
+          }),
+        )
+        .toBe(0);
+    }
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.removeProperty("font-size");
+  });
+  await page.setViewportSize({ width: 1280, height: 950 });
+  // A turn's thread label opens that thread.
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  app.observer(
+    {
+      ...frame("turn_started", { threadRootEventId: root.id }),
+      sessionId: "T",
+      turnId: "threaded",
+    },
+    key,
+  );
+  await page
+    .getByRole("button", { name: `Thread ${root.id.slice(0, 8)}`, exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("complementary", { name: "Thread", exact: true })
+      .getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeVisible();
+});
+
+test.describe("Inline threads", () => {
+  test.use({ threadPlacement: "inline" });
+
+  // Only the tab workspace beside a real conversation shows where it opens.
+  test("a turn's thread label in an agent's activity in the side pane opens the thread as a tab", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await expect
+      .poll(() => page.evaluate(() => !!window.localAgentFixture))
+      .toBe(true);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    // The fixture agent's key is the curve generator: secret key 1.
+    const key = new Uint8Array(32);
+    key[31] = 1;
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content.startsWith("Thread root"));
+    const turn = (turnId, payload) =>
+      app.observer(
+        {
+          kind: "turn_started",
+          seq: 1,
+          timestamp: new Date().toISOString(),
+          channelId: "alpha",
+          sessionId: turnId,
+          turnId,
+          payload,
+        },
+        key,
+      );
+    // Working in the channel, so its row there opens its activity.
+    turn("channel", {});
+    await page
+      .locator("[data-composer-dock]", {
+        has: page.getByRole("form", {
+          name: "Send a message to Alpha",
+          exact: true,
+        }),
+      })
+      .locator("..")
+      .getByRole("button", { name: /^Activity: .+ working$/ })
+      .hover();
+    await page
+      .getByRole("dialog", { name: "Working now", exact: true })
+      .getByRole("button", { name: /^View .*Local tester.* activity$/ })
+      .click();
+    // The activity is a profile tab in the side pane.
+    const side = page.locator("[data-panel-workspace]");
+    await expect(
+      side.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    turn("threaded", { threadRootEventId: root.id });
+    await side
+      .getByRole("button", {
+        name: `Thread ${root.id.slice(0, 8)}`,
+        exact: true,
+      })
+      .click();
+    // Chosen in the side pane, the thread opens there, not over the composer.
+    await expect(
+      side.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      side.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("[data-details-sheet-surface]")).toHaveCount(0);
+  });
 });

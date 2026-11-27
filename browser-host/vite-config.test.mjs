@@ -1,26 +1,42 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getPublicKey } from "nostr-tools";
+import { createServer } from "vite";
 import { expect, it } from "vitest";
+import { relayBrokerPlugin } from "./relay-broker.mjs";
 
 it("loads the broker's Vite config without native-compatibility warnings", () => {
   // A fresh Node process exercises real config imports, not Vitest's resolver.
-  // Loading config creates the plugin but never invokes configureServer, so it
-  // cannot read the Keychain, open a server, or contact a relay.
+  // Loading and resolving config never invoke configureServer, so they cannot
+  // read the Keychain, open a server, or contact a relay.
   const result = spawnSync(
     process.execPath,
     [
+      "--experimental-transform-types",
       "--input-type=module",
       "-e",
       `
           import assert from 'node:assert/strict';
-          import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+          import fs, { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+          import { syncBuiltinESMExports } from 'node:module';
           import { tmpdir } from 'node:os';
           import { join } from 'node:path';
-          import { loadConfigFromFile } from 'vite';
+          import { pathToFileURL } from 'node:url';
+          import { loadConfigFromFile, resolveConfig } from 'vite';
           const configFile = join(process.cwd(), 'vite.config.ts');
           // Load the real config with isolated .env files, never personal settings.
           const directory = mkdtempSync(join(tmpdir(), 'buzz-vite-config-'));
           const cwd = process.cwd();
+          // Feed the build a fixture independently of the distributor's file.
+          const gatewayListPath = join(cwd, 'src/bundled/org-gateways.json');
+          const readFile = fs.readFileSync;
+          let packagedGateways = '[]';
+          fs.readFileSync = (path, ...options) =>
+            path === gatewayListPath ? packagedGateways : readFile(path, ...options);
+          syncBuiltinESMExports();
           try {
             process.chdir(directory);
             const loaded = await loadConfigFromFile(
@@ -28,19 +44,41 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             );
             assert(loaded?.config.plugins.some(p => p?.name === 'buzz-relay-broker'));
             assert.equal(loaded.config.define['import.meta.env.VITE_BUZZ_LIVE'], '"1"');
+            // Inline server options are how Vite applies CLI --host overrides.
+            // Resolve the real config without opening any listener or reading credentials.
+            for (const host of [undefined, false, 'localhost', '127.0.0.1', '::1']) {
+              await resolveConfig({ configFile, server: { host } }, 'serve');
+            }
+            const unsafeHosts = [true, '0.0.0.0', '::', '', '192.0.2.1', 'dev.example'];
+            for (const host of unsafeHosts) {
+              await assert.rejects(
+                resolveConfig({ configFile, server: { host } }, 'serve'),
+                /requires a loopback-only Vite listener/,
+              );
+            }
+            // Unpinned fixture servers and packaged builds do not load a signer.
+            process.env.BUZZ_DEV_VIEWER = '';
+            const fixture = await resolveConfig({ configFile, server: { host: true } }, 'serve');
+            assert(!fixture.plugins.some(p => p.name === 'buzz-relay-broker'));
+            assert.equal(fixture.server.host, true);
+            process.env.BUZZ_DEV_VIEWER = 'a'.repeat(64);
+            const packaged = await resolveConfig({ configFile, server: { host: true } }, 'build');
+            assert(!packaged.plugins.some(p => p.name === 'buzz-relay-broker'));
+            // Re-evaluate the real config for each environment case. Node can
+            // reuse the loaded factory without rebuilding its module graph.
+            const { default: config } = await import(pathToFileURL(configFile).href);
+            const configure = (env) => config({ isSsrBuild: false, isPreview: false, ...env });
             for (const command of ['serve', 'build']) {
               for (const setting of [undefined, '', '0', '1', 'true', 'invalid']) {
                 if (setting === undefined) delete process.env.BUZZ_DEV_NOTIFICATIONS;
                 else process.env.BUZZ_DEV_NOTIFICATIONS = setting;
-                const result = await loadConfigFromFile(
-                  { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
-                );
+                const result = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
                 assert.equal(
-                  result.config.plugins.some(p => p?.name === 'buzz-relay-broker'),
+                  result.plugins.some(p => p?.name === 'buzz-relay-broker'),
                   command === 'serve',
                 );
                 assert.equal(
-                  result.config.define['import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED'],
+                  result.define['import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED'],
                   JSON.stringify(command === 'serve' && setting === '0' ? '1' : '0'),
                 );
               }
@@ -48,11 +86,9 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             delete process.env.BUZZ_DEV_NOTIFICATIONS;
             writeFileSync('.env.local', 'BUZZ_DEV_NOTIFICATIONS=0');
             for (const command of ['serve', 'build']) {
-              const result = await loadConfigFromFile(
-                { command, mode: 'development' }, configFile,
-              );
+              const result = await configure({ command, mode: 'development' });
               assert.equal(
-                result.config.define['import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED'],
+                result.define['import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED'],
                 JSON.stringify(command === 'serve' ? '1' : '0'),
               );
             }
@@ -63,11 +99,9 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               for (const setting of [undefined, '', '0', '1', 'true']) {
                 if (setting === undefined) delete process.env.BUZZ_DEV_OPEN_RELAY;
                 else process.env.BUZZ_DEV_OPEN_RELAY = setting;
-                const result = await loadConfigFromFile(
-                  { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
-                );
+                const result = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
                 assert.equal(
-                  result.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'],
+                  result.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'],
                   JSON.stringify(
                     command === 'serve' && setting === '1' ? 'https://relay.example.com' : '',
                   ),
@@ -83,10 +117,8 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 for (const override of [undefined, '0', '1']) {
                   if (override === undefined) delete process.env.BUZZ_DEV_OPEN_RELAY;
                   else process.env.BUZZ_DEV_OPEN_RELAY = override;
-                  const result = await loadConfigFromFile(
-                    { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
-                  );
-                  assert.equal(result.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'],
+                  const result = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
+                  assert.equal(result.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'],
                     JSON.stringify(command === 'serve' && override !== '0' ? 'https://relay.example.com' : ''));
                 }
               }
@@ -102,23 +134,180 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             ]) {
               if (override === undefined) delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
               else process.env.BUZZ_DEFAULT_COMMUNITY_URL = override;
-              const result = await loadConfigFromFile(
-                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
-              );
-              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'], JSON.stringify(expected));
+              const result = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
+              assert.equal(result.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'], JSON.stringify(expected));
             }
             // Invalid packaged inputs fail the build without echoing credentials.
             for (const invalid of ['http://insecure.example', 'wss://user:secret@relay.example', 'https://relay.example/path']) {
               process.env.BUZZ_DEFAULT_COMMUNITY_URL = invalid;
               await assert.rejects(
-                loadConfigFromFile({ command: 'build', mode: 'production' }, configFile),
+                configure({ command: 'build', mode: 'production' }),
                 error => !String(error).includes('secret') && /relay URL/.test(String(error)),
               );
             }
             delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
+            // A packaged Databricks workspace reaches goose verbatim; invalid hosts
+            // fail the build without echoing credentials.
+            for (const [command, host, expected] of [
+              ['build', 'https://workspace.example.com/', 'https://workspace.example.com/'],
+              ['serve', ' https://workspace.example.com ', 'https://workspace.example.com'],
+              ['build', '', ''],
+              ['build', undefined, ''],
+            ]) {
+              if (host === undefined) delete process.env.BUZZ_DATABRICKS_HOST;
+              else process.env.BUZZ_DATABRICKS_HOST = host;
+              const result = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
+              assert.equal(result.define['import.meta.env.VITE_BUZZ_DATABRICKS_HOST'], JSON.stringify(expected));
+            }
+            for (const invalid of ['http://workspace.example', 'https://user:secret@workspace.example', 'workspace.example']) {
+              process.env.BUZZ_DATABRICKS_HOST = invalid;
+              await assert.rejects(
+                configure({ command: 'build', mode: 'production' }),
+                error => !String(error).includes('secret') && /BUZZ_DATABRICKS_HOST/.test(String(error)),
+              );
+            }
+            delete process.env.BUZZ_DATABRICKS_HOST;
+            // The gateway descriptor is read from the process only (never
+            // .env files), compiled canonically, and off when unset.
+            const descriptor = (communities, gateway = 'https://gateway.example') => ({
+              version: 2, gateway, communities, access_path: '/v9/access', launcher_client: 'client-a',
+              headers: Object.fromEntries(
+                ['launcher_client', 'launcher_session'].map(role => [role, 'x-gw-' + role.replace('_', '-')]).concat(
+                  ['human_pubkey', 'agent_pubkey', 'community_id', 'channel_id', 'message_id', 'thread_id']
+                    .map(role => [role, 'x-gw-ctx-' + role.replace('_', '-')]),
+                ),
+              ),
+              reserved_prefixes: ['x-gw-ctx-'],
+              upstreams: { pi: { base: '/upstream/pi' } },
+            });
+            const gateway = (communities) => JSON.stringify(descriptor(communities));
+            const id = '22222222-2222-4222-8222-222222222222';
+            writeFileSync('.env.production', 'BUZZ_AGENT_GATEWAY=' + gateway([{ id, origin: 'wss://env.example' }]));
+            for (const [raw, expected] of [
+              [undefined, ''],
+              ['', ''],
+              ['  ', ''],
+              [gateway([{ id, origin: 'wss://relay.example/' }]), gateway([{ id, origin: 'https://relay.example' }])],
+            ]) {
+              if (raw === undefined) delete process.env.BUZZ_AGENT_GATEWAY;
+              else process.env.BUZZ_AGENT_GATEWAY = raw;
+              const result = await configure({ command: 'build', mode: 'production' });
+              assert.equal(result.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY'], JSON.stringify(expected));
+            }
+            const defaultLauncher = descriptor([{ id, origin: 'https://relay.example' }]);
+            delete defaultLauncher.launcher_client;
+            process.env.BUZZ_AGENT_GATEWAY = JSON.stringify(defaultLauncher);
+            const defaultConfig = await configure({ command: 'build', mode: 'production' });
+            assert.deepEqual(
+              JSON.parse(JSON.parse(defaultConfig.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY'])),
+              { ...defaultLauncher, launcher_client: 'buzz' },
+            );
+            rmSync('.env.production');
+            // The build only selects a packaged entry for a process relay URL.
+            const gatewayCommunity = { id, origin: 'https://relay.example' };
+            const packagedGateway = descriptor([gatewayCommunity]);
+            const explicitGateway = descriptor([gatewayCommunity], 'https://explicit.example');
+            writeFileSync('.env.local', 'BUZZ_DEFAULT_COMMUNITY_URL=wss://relay.example');
+            for (const [listed, relay, explicit, expected] of [
+              [[], 'wss://relay.example', undefined, null],
+              [[packagedGateway], undefined, undefined, null],
+              [[packagedGateway], ' ' + String.fromCharCode(0xfeff) + 'wss://relay.example/ ', undefined, packagedGateway],
+              [[packagedGateway], 'wss://relay.example', explicitGateway, explicitGateway],
+            ]) {
+              packagedGateways = JSON.stringify(listed);
+              if (relay === undefined) delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
+              else process.env.BUZZ_DEFAULT_COMMUNITY_URL = relay;
+              if (explicit === undefined) delete process.env.BUZZ_AGENT_GATEWAY;
+              else process.env.BUZZ_AGENT_GATEWAY = JSON.stringify(explicit);
+              const result = await configure({ command: 'build', mode: 'production' });
+              const compiled = JSON.parse(result.define['import.meta.env.VITE_BUZZ_AGENT_GATEWAY']);
+              assert.deepEqual(compiled ? JSON.parse(compiled) : null, expected);
+            }
+            packagedGateways = '[]';
+            delete process.env.BUZZ_DEFAULT_COMMUNITY_URL;
+            // Anything else must be a valid version 2 descriptor, and the
+            // build's error never echoes it.
+            for (const invalid of [
+              descriptor([{ id, origin: 'wss://relay.example' }], 'https://u:secret@gateway.example'),
+              { version: 1, gateway: 'https://secret.example', communities: [{ id, origin: 'wss://relay.example' }] },
+            ]) {
+              process.env.BUZZ_AGENT_GATEWAY = JSON.stringify(invalid);
+              await assert.rejects(
+                configure({ command: 'build', mode: 'production' }),
+                error => !String(error).includes('secret') && /BUZZ_AGENT_GATEWAY/.test(String(error)),
+              );
+            }
+            delete process.env.BUZZ_AGENT_GATEWAY;
+            // Mobile app store listings reach the mobile card verbatim; invalid
+            // links fail the build without echoing credentials.
+            const mobileApps = ['BUZZ_MOBILE_APP_IOS_URL', 'BUZZ_MOBILE_APP_ANDROID_URL'];
+            for (const [link, expected] of [[' https://apps.example.com/buzz ', 'https://apps.example.com/buzz'], [undefined, '']]) {
+              for (const name of mobileApps) {
+                if (link === undefined) delete process.env[name];
+                else process.env[name] = link;
+              }
+              const result = await configure({ command: 'build', mode: 'production' });
+              for (const name of mobileApps)
+                assert.equal(result.define['import.meta.env.VITE_' + name], JSON.stringify(expected));
+            }
+            for (const [name, invalid] of [[mobileApps[0], 'https://user:secret@apps.example.com'], [mobileApps[1], 'http://apps.example.com']]) {
+              process.env[name] = invalid;
+              await assert.rejects(
+                configure({ command: 'build', mode: 'production' }),
+                error => !String(error).includes('secret') && String(error).includes(name),
+              );
+              delete process.env[name];
+            }
+            // Recommended agent candidates reach the frontend as validated;
+            // unset (every OSS build) leaves no recommendation.
+            const candidates = '[{"harness":"codex","model":"model-a","effort":"high","label":"Model A"},{"harness":"goose","provider":"provider-a","model":"model-b","effort":"high","label":"Model B"}]';
+            for (const [value, expected] of [[candidates, candidates], [' ' + candidates + ' ', candidates], ['', ''], [undefined, '']]) {
+              if (value === undefined) delete process.env.BUZZ_RECOMMENDED_AGENT;
+              else process.env.BUZZ_RECOMMENDED_AGENT = value;
+              const result = await configure({ command: 'build', mode: 'production' });
+              assert.equal(result.define['import.meta.env.VITE_BUZZ_RECOMMENDED_AGENT'], JSON.stringify(expected));
+            }
+            for (const invalid of ['{"harness":"goose"}', '[]', '[{"harness":"pi","model":"m","effort":"high","label":"M"}]', '[{"harness":"goose","model":"m","effort":"high","label":"M"}]', '[{"harness":"codex","provider":"p","model":"m","effort":"high","label":"M"}]', 'not json']) {
+              process.env.BUZZ_RECOMMENDED_AGENT = invalid;
+              await assert.rejects(
+                configure({ command: 'build', mode: 'production' }),
+                /BUZZ_RECOMMENDED_AGENT/,
+              );
+            }
+            // The build names the candidate and field at fault, not their values.
+            process.env.BUZZ_RECOMMENDED_AGENT = '[{"harness":"codex","model":"m","effort":"high","label":"M"},{"harness":"codex","model":"","effort":"secret","label":"M"}]';
+            await assert.rejects(
+              configure({ command: 'build', mode: 'production' }),
+              error => String(error).includes('BUZZ_RECOMMENDED_AGENT[1].model') && !String(error).includes('secret'),
+            );
+            delete process.env.BUZZ_RECOMMENDED_AGENT;
+            // A fresh checkout uses production for both dev and packaged frontends.
+            // Explicit empty values retain the deployment opt-out.
+            for (const local of ['', 'BUZZ_BUILDERLAB_URL=']) {
+              writeFileSync('.env.local', local);
+              delete process.env.BUZZ_BUILDERLAB_URL;
+              for (const command of ['serve', 'build']) {
+                const result = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
+                assert.equal(
+                  result.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'],
+                  JSON.stringify(local ? '' : 'https://app.builderlab.xyz'),
+                );
+              }
+            }
             // Desktop shares .env.local/process inputs with the native build.
-            // An explicit empty process value clears the frontend URL too.
-            writeFileSync('.env.local', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');
+            // Mode-specific values cannot point the renderer at another same-origin path.
+            writeFileSync('.env.local', String.fromCharCode(0xfeff) + 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');
+            writeFileSync('.env.development', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/staging');
+            writeFileSync('.env.production', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/staging');
+            for (const [command, mode] of [['serve', 'development'], ['build', 'production']]) {
+              delete process.env.BUZZ_BUILDERLAB_URL;
+              const result = await configure({ command, mode });
+              assert.equal(
+                result.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'],
+                JSON.stringify('https://app.builderlab.xyz/'),
+              );
+            }
+            // Process input still overrides the shared local value, including empty.
             for (const [command, override, expected] of [
               ['serve', undefined, 'https://app.builderlab.xyz/'],
               ['build', 'https://login.example:8443/deployment/', 'https://login.example:8443/deployment/'],
@@ -126,26 +315,84 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             ]) {
               if (override === undefined) delete process.env.BUZZ_BUILDERLAB_URL;
               else process.env.BUZZ_BUILDERLAB_URL = override;
-              const result = await loadConfigFromFile(
-                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
-              );
-              assert.equal(result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'], JSON.stringify(expected));
+              const result = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
+              assert.equal(result.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'], JSON.stringify(expected));
             }
+            // The Apps control plane follows the native build's sources too:
+            // a mode file alone sets nothing, .env.local and process do.
+            delete process.env.BUZZ_BUILDERLAB_URL;
+            const plane = 'import.meta.env.VITE_BUZZ_BUILDERLAB_APPS_CONTROL_PLANE';
+            writeFileSync('.env.local', '');
+            writeFileSync('.env.production', 'BUZZ_BUILDERLAB_APPS_CONTROL_PLANE=https://ctrl.example');
+            const modeOnly = await configure({ command: 'build', mode: 'production' });
+            assert.equal(modeOnly.define[plane], JSON.stringify(''));
+            writeFileSync('.env.local', 'BUZZ_BUILDERLAB_APPS_CONTROL_PLANE=https://local.example');
+            const local = await configure({ command: 'build', mode: 'production' });
+            assert.equal(local.define[plane], JSON.stringify('https://local.example'));
+            process.env.BUZZ_BUILDERLAB_APPS_CONTROL_PLANE = 'https://process.example';
+            const fromProcess = await configure({ command: 'build', mode: 'production' });
+            assert.equal(fromProcess.define[plane], JSON.stringify('https://process.example'));
+            process.env.BUZZ_BUILDERLAB_APPS_CONTROL_PLANE = 'https://process.example/';
+            await assert.rejects(
+              configure({ command: 'build', mode: 'production' }),
+              /HTTPS origin/,
+            );
+            delete process.env.BUZZ_BUILDERLAB_APPS_CONTROL_PLANE;
+            writeFileSync('.env.local', '');
+            writeFileSync('.env.production', '');
+            // The first-run account seed reaches only a dev server, and a
+            // malformed value fails at configuration time without being echoed.
+            for (const command of ['serve', 'build']) {
+              process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = 'unlinked';
+              const seeded = await configure({ command, mode: command === 'serve' ? 'development' : 'production' });
+              assert.equal(
+                seeded.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
+                JSON.stringify(command === 'serve' ? 'unlinked' : ''),
+              );
+            }
+            // A backup kind resolves against the failure table, and backups
+            // and a recovery key decode, through the native loader.
+            const failingSeed = JSON.stringify({
+              backup: 'unreachable',
+              known: ['design.example.com'],
+              backups: ['npub1424242424242424242424242424242424242424242424242424qamrcaj'],
+              recovery: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw',
+            });
+            process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = failingSeed;
+            const failing = await configure({ command: 'serve', mode: 'development' });
+            assert.equal(
+              failing.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
+              JSON.stringify(failingSeed),
+            );
+            for (const seed of [
+              '{"npub":"s3cret"}',
+              '{"backup":"s3cret"}',
+              '{"backups":["s3cret"]}',
+              '{"recovery":"nsec1s3cret"}',
+              '{"known":["http://s3cret.example"]}',
+            ]) {
+              process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = seed;
+              await assert.rejects(
+                configure({ command: 'serve', mode: 'development' }),
+                (error) => /BUZZ_DEV_FIRST_RUN_ACCOUNT must be/.test(error.message) && !error.message.includes('s3cret'),
+              );
+            }
+            delete process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT;
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
             process.env.BUZZ_RELAY_URL = '';
             process.env.BUZZ_DEV_VIEWER = '';
-            const shell = await loadConfigFromFile(
-              { command: 'serve', mode: 'development' }, configFile,
-            );
-            assert.equal(shell.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'], '""');
+            const shell = await configure({ command: 'serve', mode: 'development' });
+            assert.equal(shell.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'], '""');
             // A live server with the flag but no relay URL fails at configuration time.
             process.env.BUZZ_DEV_VIEWER = 'a'.repeat(64);
             await assert.rejects(
-              loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
+              configure({ command: 'serve', mode: 'development' }),
               /BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL/,
             );
           } finally {
+            fs.readFileSync = readFile;
+            syncBuiltinESMExports();
             process.chdir(cwd);
             rmSync(directory, { recursive: true, force: true });
           }
@@ -173,3 +420,50 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
   expect(result.status, result.stderr).toBe(0);
   expect(result.stderr).not.toContain("configLoader: 'native'");
 }, 35_000);
+
+it("refuses exposed Vite servers before reading identity and serves the broker on loopback", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "buzz-broker-listener-"));
+  const key = new Uint8Array(32).fill(1);
+  let identityReads = 0;
+  const options = (host) => ({
+    root: directory,
+    configFile: false,
+    logLevel: "silent",
+    optimizeDeps: { noDiscovery: true, include: [] },
+    server: { host, port: 0, watch: null, hmr: false },
+    plugins: [
+      relayBrokerPlugin({
+        archiveFile: ":memory:",
+        identity: () => {
+          identityReads++;
+          return key.slice();
+        },
+      }),
+    ],
+  });
+  try {
+    // Real Vite server construction, without listen(), is safe even pre-fix.
+    // A rejected config must never reach the broker's credential loader.
+    await expect(async () => {
+      const server = await createServer(options(true));
+      await server.close();
+    }).rejects.toThrow("requires a loopback-only Vite listener");
+    expect(identityReads).toBe(0);
+    const server = await createServer(options("127.0.0.1"));
+    try {
+      expect(identityReads).toBe(1);
+      await server.listen();
+      const address = server.httpServer.address();
+      expect(address.address).toBe("127.0.0.1");
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/relay/identity`,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ viewer: getPublicKey(key) });
+    } finally {
+      await server.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

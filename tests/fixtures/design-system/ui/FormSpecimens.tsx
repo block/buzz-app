@@ -1,15 +1,22 @@
 import { ExamplePreview } from "./ExamplePreview";
 import { Section } from "./primitives";
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
 import { InputGroup } from "../../../../src/shared/design-system/ui/InputGroup";
-import { CodeIcon } from "../../../../src/shared/design-system/icons";
+import {
+  CodeIcon,
+  Filter2Icon,
+} from "../../../../src/shared/design-system/icons";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
 import { Textarea } from "../../../../src/shared/design-system/ui/Textarea";
 import { SearchField } from "../../../../src/shared/design-system/ui/SearchField";
 import { Select } from "../../../../src/shared/design-system/ui/Select";
+import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
+import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
 import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
+
+import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 
 const destinations = [
   {
@@ -31,8 +38,12 @@ const destinations = [
 export const workspaceGroups = [
   {
     label: "Workspaces",
+    options: destinations,
+  },
+  {
+    label: "",
+    separator: true,
     options: [
-      ...destinations,
       { value: "archive", label: "Archived workspace", disabled: true },
     ],
   },
@@ -59,6 +70,7 @@ export function FormExample({
 }
 
 export function InputExamples() {
+  const suffixId = useId();
   return (
     <div className="component-specimen-stack">
       <FormExample
@@ -110,6 +122,21 @@ export function InputExamples() {
         <Field label="Filled">
           <Input defaultValue="Design studio" />
         </Field>
+        <Field label="Site address" description="The domain stays fixed.">
+          <InputGroup wrap>
+            <Input
+              textSize="large"
+              placeholder="studio"
+              aria-describedby={suffixId}
+            />
+            <span
+              id={suffixId}
+              className="min-w-0 wrap-anywhere text-body-lg text-primary"
+            >
+              .example.org
+            </span>
+          </InputGroup>
+        </Field>
         <Field
           label="Read-only"
           description="You can focus and copy this value."
@@ -154,6 +181,9 @@ export function TextareaExamples() {
     placeholder="A place to explore and share ideas."
   />
 </Field>
+<Field label="Document title" labelVisibility="hidden">
+  <Textarea appearance="heading" rows={2} defaultValue="A title that can wrap" />
+</Field>
 <Field label="On a floating surface">
   <Textarea surface="panel" rows={3} placeholder="Describe what I should do" />
 </Field>
@@ -187,6 +217,13 @@ export function TextareaExamples() {
             appearance="outlined"
             rows={3}
             placeholder="Describe what I should do"
+          />
+        </Field>
+        <Field label="Document title" labelVisibility="hidden">
+          <Textarea
+            appearance="heading"
+            rows={2}
+            defaultValue="A title that can wrap"
           />
         </Field>
         <Field label="On a floating surface">
@@ -240,6 +277,21 @@ export function SearchExamples() {
   const [invalid, setInvalid] = useState("unknown");
   return (
     <div className="component-specimen-stack">
+      <FormExample
+        title="Search with a trailing action"
+        description="Search and its filter action share one frame; Clear remains separate."
+        code={
+          '<SearchField value={query} onValueChange={setQuery} trailing={<IconButton aria-label="Filter" icon={<Filter2Icon />} />} />'
+        }
+      >
+        <SearchField
+          value={query}
+          onValueChange={setQuery}
+          trailing={
+            <IconButton aria-label="Filter" icon={<Filter2Icon size={16} />} />
+          }
+        />
+      </FormExample>
       <FormExample
         title="Search palette"
         description="Composer surface, generous input spacing, and larger search text."
@@ -339,6 +391,9 @@ export function SearchExamples() {
 export function SelectExamples() {
   const [value, setValue] = useState("");
   const [inline, setInline] = useState("studio");
+  const [detailed, setDetailed] = useState("automatic");
+  const detailedModel =
+    "Atlas Reasoning Model — Extended Context Preview with Additional Reasoning Capacity for Large Workloads and Complex Tasks · High";
   return (
     <div className="component-specimen-stack">
       <FormExample
@@ -410,6 +465,22 @@ export function SelectExamples() {
           description="Choose where this item belongs."
         />
         <Select
+          label="Filled workspace"
+          variant="compact"
+          appearance="inverted"
+          value={value}
+          onValueChange={setValue}
+          groups={workspaceGroups}
+        />
+        <Select
+          label="Subtle workspace"
+          variant="compact"
+          appearance="subtle"
+          value={value}
+          onValueChange={setValue}
+          groups={workspaceGroups}
+        />
+        <Select
           label="Read-only workspace"
           variant="field"
           readOnly
@@ -441,9 +512,19 @@ export function SelectExamples() {
           groups={workspaceGroups}
         />
         <Select
+          label="Text link choice"
+          variant="compact"
+          appearance="link"
+          value={inline}
+          onValueChange={setInline}
+          groups={workspaceGroups}
+        />
+        <Select
           label="Input-height filter"
           variant="compact"
           size="md"
+          leading={<CodeIcon size={20} />}
+          align="end"
           value={inline}
           onValueChange={setInline}
           groups={workspaceGroups}
@@ -463,12 +544,109 @@ export function SelectExamples() {
           label="Card workspace"
           valueSuffix=" · Default"
           variant="compact"
-          appearance="subtle"
+          appearance="glass-ghost"
           leading={<CodeIcon size={16} aria-hidden="true" />}
           value={inline}
           onValueChange={setInline}
           groups={workspaceGroups}
         />
+      </FormExample>
+      <FormExample
+        title="Description details"
+        description="An option can show a model with parenthetical attribution beneath explanatory copy."
+        code={`// An option's description
+description: (
+  <span className="grid gap-1.5 text-caption">
+    <span className="text-body-sm">Recommended by Example Co. Use recommended settings for a balance of capability, speed, and availability.</span>{" "}
+    <span className="text-subtle">
+      <span title={modelName}>{modelName}</span>{" "}
+
+    </span>
+  </span>
+)`}
+      >
+        <SettingsGroup>
+          <PreferenceRow
+            title="AI setup"
+            subtitle={
+              <span className="grid min-w-0 gap-1">
+                <span
+                  className="flex min-w-0 items-baseline gap-1"
+                  title={`Set to ${detailedModel} (recommended)`}
+                >
+                  <span className="shrink-0">Set to</span>{" "}
+                  <span className="truncate">{detailedModel}</span>{" "}
+                  <span className="shrink-0"> (recommended)</span>
+                </span>
+              </span>
+            }
+            trailing={
+              <Select
+                label="Mode with description details"
+                variant="compact"
+                value={detailed}
+                onValueChange={setDetailed}
+                groups={[
+                  {
+                    label: "",
+                    options: [
+                      {
+                        value: "automatic",
+                        label: "Automatic",
+                        description: (
+                          <span className="grid gap-1.5 text-caption">
+                            <span className="text-body-sm">
+                              Recommended by Example Co. Use recommended
+                              settings for a balance of capability, speed, and
+                              availability.
+                            </span>{" "}
+                            <span className="text-subtle">
+                              <span title={detailedModel}>
+                                {detailedModel}
+                              </span>{" "}
+                            </span>
+                          </span>
+                        ),
+                      },
+                      { value: "manual", label: "Custom" },
+                    ],
+                  },
+                ]}
+              />
+            }
+          />
+        </SettingsGroup>
+      </FormExample>
+      <FormExample
+        title="Disabled choices"
+        description="Unavailable choices keep the same disabled text and caret whether showing a value or a placeholder."
+        code={`<Select label="Thinking" variant="preference" disabled
+  value="" placeholder="Unavailable" groups={workspaceGroups}
+  onValueChange={() => {}} />`}
+      >
+        {(["field", "inline", "compact", "preference"] as const).map(
+          (variant) => (
+            <div key={variant}>
+              <Select
+                label={`${variant} placeholder`}
+                variant={variant}
+                disabled
+                value=""
+                placeholder="Unavailable"
+                groups={workspaceGroups}
+                onValueChange={() => {}}
+              />
+              <Select
+                label={`${variant} value`}
+                variant={variant}
+                disabled
+                value="studio"
+                groups={workspaceGroups}
+                onValueChange={() => {}}
+              />
+            </div>
+          ),
+        )}
       </FormExample>
     </div>
   );
@@ -545,8 +723,19 @@ export function WorkspaceCombobox({
   );
 }
 
-function PopupSearchExample() {
-  const options = ["Anthropic", "Databricks", "OpenAI"];
+function PopupSearchExample({ compact = false }: { compact?: boolean }) {
+  const options = compact
+    ? [
+        "Anthropic",
+        "Databricks",
+        "OpenAI",
+        "Google",
+        "Mistral",
+        "Ollama",
+        "OpenRouter",
+        "xAI",
+      ]
+    : ["Anthropic", "Databricks", "OpenAI"];
   const [value, setValue] = useState<string | null>("Databricks");
   const [query, setQuery] = useState("");
   return (
@@ -561,10 +750,20 @@ function PopupSearchExample() {
       }}
       autoHighlight
     >
-      <Combobox.Trigger label="Provider">
+      <Combobox.Trigger
+        label={compact ? "Compact provider picker" : "Provider"}
+      >
         {value ?? "Choose a provider"}
       </Combobox.Trigger>
-      <Combobox.Popup search empty="No matching providers.">
+      <Combobox.Popup
+        search
+        size={compact ? "compact" : "default"}
+        side="bottom"
+        collisionAvoidance={
+          compact ? { side: "none", align: "shift" } : undefined
+        }
+        empty="No matching providers."
+      >
         <Combobox.List>
           {(item: string) => (
             <Combobox.Item key={item} value={item}>
@@ -593,6 +792,7 @@ ${workspaceComboboxCode}`}
       >
         <WorkspaceCombobox />
         <PopupSearchExample />
+        <PopupSearchExample compact />
         <WorkspaceCombobox label="Compact row choice" compact />
         <WorkspaceCombobox label="Read-only choices" readOnly />
         <WorkspaceCombobox label="Disabled choices" disabled />
@@ -659,7 +859,9 @@ ${workspaceComboboxCode}`}
 }
 
 /** Full source for examples that compose the public Combobox parts. */
-export const workspaceComboboxCode = `const destinations = [
+export const workspaceComboboxCode = `import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
+
+const destinations = [
   {
     value: "studio",
     label: "Design studio",

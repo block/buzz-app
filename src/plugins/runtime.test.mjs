@@ -90,6 +90,7 @@ test("pages wait for dependencies and completion of async activation", async () 
     await settle();
     assert.equal(starts, 0);
     assert.equal(h.states["example.page"].status, "starting");
+    assert.equal(h.root.pluginStatus.settled(), false);
     assert.deepEqual(h.pages.snapshot(), []);
     h.root.provide("connection", {});
     await started.promise;
@@ -98,9 +99,77 @@ test("pages wait for dependencies and completion of async activation", async () 
     release.resolve();
     await h.wait((s) => s["example.page"]?.status === "active");
     assert.equal(h.pages.snapshot()[0].key, "example.page/main");
+    assert.equal(h.root.pluginStatus.settled(), true);
   } finally {
     release.resolve();
     await h.dispose();
+  }
+});
+
+test("bundled start-up is over while an installed plugin still starts", async () => {
+  const release = deferred();
+  const h = harness(async (info) =>
+    info.source === "external"
+      ? { inject: ["pages"], apply: () => release.promise }
+      : { inject: ["pages"], apply() {} },
+  );
+  try {
+    h.runtime.reconcile([
+      { ...plugin("example.bundled"), source: "bundled", revision: "bundled" },
+      plugin("example.slow"),
+    ]);
+    await h.wait((s) => s["example.bundled"]?.status === "active");
+    assert.equal(h.states["example.slow"].status, "starting");
+    assert.equal(h.root.pluginStatus.settled(), false);
+    assert.equal(h.root.pluginStatus.bundledSettled(), true);
+    release.resolve();
+    await h.wait((s) => s["example.slow"]?.status === "active");
+    assert.equal(h.root.pluginStatus.settled(), true);
+  } finally {
+    release.resolve();
+    await h.dispose();
+  }
+});
+
+test("bundled start-up is not over while a bundled plugin starts", async () => {
+  const release = deferred();
+  const h = harness(async () => ({
+    inject: ["pages"],
+    apply: () => release.promise,
+  }));
+  try {
+    h.runtime.reconcile([
+      { ...plugin("example.bundled"), source: "bundled", revision: "bundled" },
+    ]);
+    await settle();
+    assert.equal(h.root.pluginStatus.bundledSettled(), false);
+    release.resolve();
+    await h.wait((s) => s["example.bundled"]?.status === "active");
+    assert.equal(h.root.pluginStatus.bundledSettled(), true);
+  } finally {
+    release.resolve();
+    await h.dispose();
+  }
+});
+
+test("startup is not over while the plugin settings are being read", async () => {
+  let configuring = true;
+  const root = new Context();
+  const runtime = new PluginRuntime(
+    root,
+    async () => ({ apply() {} }),
+    undefined,
+    () => configuring,
+  );
+  try {
+    assert.equal(root.pluginStatus.settled(), false);
+    assert.equal(root.pluginStatus.bundledSettled(), false);
+    configuring = false;
+    assert.equal(root.pluginStatus.settled(), true);
+    assert.equal(root.pluginStatus.bundledSettled(), true);
+  } finally {
+    await runtime.dispose();
+    await root.fiber.dispose();
   }
 });
 
@@ -223,6 +292,64 @@ test("enabled plugin stays active across catalog refreshes and cleans up on disa
   await h.dispose();
   assert.equal(cleanups, 1);
   assert.equal(h.states["example.page"], undefined);
+});
+
+test("a plugin's declared host access is readable only while the plugin is active", async () => {
+  const gate = deferred();
+  const h = harness(async () => ({
+    async apply(ctx) {
+      await gate.promise;
+      ctx.pages.register({ id: "main", title: "Main", component: Page });
+    },
+  }));
+  const declared = {
+    ...plugin(),
+    manifest: {
+      ...plugin().manifest,
+      host: { agentPromptSections: ["progress"] },
+    },
+  };
+  try {
+    assert.equal(h.root.pluginStatus.promptSections("example.page"), undefined);
+    assert.equal(h.root.pluginStatus.on("example.page"), false);
+    h.runtime.reconcile(desired([declared]));
+    await h.wait((s) => s["example.page"]?.status === "starting");
+    assert.equal(h.root.pluginStatus.promptSections("example.page"), undefined);
+    // It is on before it is active.
+    assert.equal(h.root.pluginStatus.on("example.page"), true);
+    gate.resolve();
+    await h.wait((s) => s["example.page"]?.status === "active");
+    assert.deepEqual(h.root.pluginStatus.promptSections("example.page"), [
+      "progress",
+    ]);
+    assert.equal(
+      h.root.pluginStatus.promptSections("example.other"),
+      undefined,
+    );
+    assert.equal(h.root.pluginStatus.on("example.other"), false);
+    h.runtime.reconcile(desired([{ ...declared, enabled: false }]));
+    assert.equal(h.root.pluginStatus.promptSections("example.page"), undefined);
+    assert.equal(h.root.pluginStatus.on("example.page"), false);
+  } finally {
+    gate.resolve();
+    await h.dispose();
+  }
+});
+
+test("a plugin that failed to start is still on, with no declared access to read", async () => {
+  const h = harness(async () => ({
+    apply() {
+      throw new Error("no start");
+    },
+  }));
+  try {
+    h.runtime.reconcile(desired([plugin()]));
+    await h.wait((s) => s["example.page"]?.status === "failed");
+    assert.equal(h.root.pluginStatus.on("example.page"), true);
+    assert.equal(h.root.pluginStatus.promptSections("example.page"), undefined);
+  } finally {
+    await h.dispose();
+  }
 });
 
 test("replacement and rapid disable/enable wait for async cleanup", async () => {

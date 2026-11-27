@@ -1,15 +1,39 @@
+import {
+  forwardBody,
+  forwardQuote,
+  forwardTag,
+  snapshotMessage,
+  snapshotAttachments,
+} from "./forwarded-message";
+import { byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { attestedOwner } from "../agents/owner-attestation";
 import { hasEventProof } from "./events";
 import type { ProfileQueries } from "./profile-directory";
 import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
-import type { ChannelMessage } from "./contracts";
+import {
+  INVOCATION_INTENT_TAG,
+  INVOCATION_INTENT_VERSION,
+  MEDIA_TARGET_TAG,
+  type ChannelMessage,
+} from "./contracts";
 import { messageAuthor } from "./fold";
-import { sharedSessionTags } from "../sessions/shared-session-marker";
-import { threadReference } from "./thread-reference";
+import { isThreadContent, threadReference } from "./thread-reference";
+import { reactionTarget as reactionTargetId } from "./reaction-target";
+import { safeMessageUrl } from "./message-content";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
+import { signedMessageTokenTags } from "../messages/message-tokens";
+import type { AgentInvocationIntent } from "../agents/session-admission";
+import { PIN_KIND, UNPIN_KIND } from "./pins";
+import type { RelaySession } from "./session";
+
+/** The agent service binds its active matcher to each live relay session. */
+export const replyInvocationIntents = new WeakMap<
+  RelaySession,
+  (input: AgentInvocationIntent) => boolean
+>();
 
 /** Owner authorization is supplied only after the agent's signed profile is verified. */
 export type AgentOwnerAuthorization = Readonly<{
@@ -29,11 +53,11 @@ export const REPORT_TYPES = [
 ] as const;
 export type ReportType = (typeof REPORT_TYPES)[number];
 /** `["effort", agentPubkey, level]` and `["model", agentPubkey, model]`: what
- * a mentioned agent's owner asks of its next run. Only the owner is honoured. */
+ * an addressed agent's owner asks of its next run. Only the owner is honoured. */
 export const EFFORT_TAG = "effort";
 export const MODEL_TAG = "model";
 export type RunPick = Readonly<{ model?: string; effort?: string }>;
-/** The model and effort picked for each mentioned agent, by pubkey. */
+/** The model and effort picked for each addressed agent, by pubkey. */
 export type MentionPicks = Readonly<Record<string, RunPick>>;
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
@@ -43,17 +67,33 @@ export function createMessages(
   find: (id: string) => EventData | undefined,
   emojiTags: (content: string) => string[][],
   validateMentions: (channelId: string, pubkeys: readonly string[]) => void,
-  canParticipate: (channelId: string) => boolean = () => true,
+  canWrite: (
+    channelId: string,
+    owner?: AgentOwnerAuthorization,
+  ) => boolean = () => true,
   relayOrigin?: string,
   /** Resolves on relay OK. Reports are never echoed, so they bypass the outbox. */
   publishReport?: (template: EventTemplate) => Promise<void>,
   /** Explicit relay NIP-11 self; never inferred from contacts or a displayed row. */
   signingAuthority?: string,
   profiles?: ProfileQueries,
+  /** Who a message in the channel addresses without a mention: a one-to-one
+   * DM's other member. A pick may name them as well as a mention. */
+  unmentionedRecipients: (channelId: string) => readonly string[] = () => [],
+  /** Events whose `buzz:copy-of` tag names this message id (sent-to-channel copies). */
+  copiesOf: (id: string) => readonly EventData[] = () => [],
+  invocationScope?: (
+    channelId: string,
+    rootId: string,
+  ) => ((agentPubkey: string) => boolean) | undefined,
 ) {
-  const writer = (kind: number, channelId: string) => {
-    if (!canParticipate(channelId))
-      throw new Error("Join the conversation before posting");
+  const writer = (
+    kind: number,
+    channelId: string,
+    owner?: AgentOwnerAuthorization,
+  ) => {
+    if (!canWrite(channelId, owner))
+      throw new Error("You don’t have write access to this conversation.");
     if (!outbox?.supports(kind))
       throw new Error("This connection cannot publish that operation");
     return outbox;
@@ -75,6 +115,22 @@ export function createMessages(
     validateMentions(channelId, unique);
     return unique.map((key) => ["p", key]);
   };
+  /** A one-to-one DM's agent partner must be `p`-tagged: a hosted agent is
+   * woken only by a `p` tag naming it, and local agents already treat any
+   * 1:1 DM message as addressed. Never a human partner: a `p` tag is a
+   * mention and would bypass their mute. "Agent" is the profile's `isAgent`
+   * (a NIP-OA `auth` tag or a declared agent flag), the app's shared agent
+   * signal. Only new messages and replies call this; edits and reactions
+   * are not new turns. */
+  const withDmAgents = (channelId: string, mentions: readonly string[]) => {
+    const profileMap = profiles?.snapshot();
+    return [
+      ...mentions,
+      ...unmentionedRecipients(channelId).filter(
+        (key) => profileMap?.get(key)?.isAgent,
+      ),
+    ];
+  };
   const referenceTags = (pubkeys: readonly string[]) => {
     if (
       pubkeys.length > 32 ||
@@ -83,19 +139,82 @@ export function createMessages(
       throw new Error("Choose at most 32 valid mention references");
     return [...new Set(pubkeys)].map((key) => ["mention", key]);
   };
-  const pickTags = (mentions: readonly string[], picks: MentionPicks) =>
-    Object.entries(picks).flatMap(([key, { model, effort }]) => {
+  const invocationTags = (
+    channelId: string,
+    rootId: string,
+    parentId: string,
+    recipients: readonly string[][],
+  ) => {
+    if (!recipients.length) return [];
+    const optedIn = invocationScope?.(channelId, rootId);
+    if (!optedIn) return [];
+    const inChannel = (event: EventData | undefined) => {
+      if (!event || !isThreadContent(event) || !hasEventProof(event))
+        return false;
+      const channels = event.tags.filter(([name]) => name === "h");
+      return channels.length === 1 && channels[0]?.[1] === channelId;
+    };
+    const root = find(rootId);
+    if (!root || !inChannel(root) || threadReference(root)) return [];
+    if (parentId !== rootId) {
+      const parent = find(parentId);
       if (
-        !mentions.includes(key) ||
+        !parent ||
+        !inChannel(parent) ||
+        threadReference(parent)?.rootId !== rootId
+      )
+        return [];
+    }
+    return recipients.flatMap(([, pubkey]) =>
+      pubkey && optedIn(pubkey)
+        ? [[INVOCATION_INTENT_TAG, String(INVOCATION_INTENT_VERSION), pubkey]]
+        : [],
+    );
+  };
+  const pickTags = (
+    channelId: string,
+    mentions: readonly string[],
+    picks: MentionPicks,
+  ) => {
+    const entries = Object.entries(picks);
+    const addressed = entries.length
+      ? [...mentions, ...unmentionedRecipients(channelId)]
+      : mentions;
+    return entries.flatMap(([key, { model, effort }]) => {
+      if (
+        !addressed.includes(key) ||
         (model !== undefined && !/^[\w.:/[\]-]{1,64}$/.test(model)) ||
         (effort !== undefined && !/^[a-z0-9-]{1,32}$/.test(effort))
       )
-        throw new Error("A model or effort applies only to a mentioned agent");
+        throw new Error("A model or effort applies only to an addressed agent");
       return [
         ...(model === undefined ? [] : [[MODEL_TAG, key, model]]),
         ...(effort === undefined ? [] : [[EFFORT_TAG, key, effort]]),
       ];
     });
+  };
+  /** The author's other copies of a message: its source reply and every
+   * sent-to-channel copy of it, deduplicated, never the message itself. */
+  const linkedCopies = (message: EventData, channelId: string) => {
+    if (!ownedMessage(message) || message.kind !== 9) return [];
+    const sourceId = message.tags.find(
+      ([name, value]) => name === "buzz:copy-of" && value,
+    )?.[1];
+    const root = sourceId ? find(sourceId) : message;
+    const candidates = [
+      ...(root ? [root] : []),
+      ...copiesOf(sourceId ?? message.id),
+    ];
+    return [
+      ...new Map(candidates.map((event) => [event.id, event])).values(),
+    ].filter(
+      (other) =>
+        other.id !== message.id &&
+        other.kind === 9 &&
+        ownedMessage(other) &&
+        other.tags.some(([name, value]) => name === "h" && value === channelId),
+    );
+  };
   const edit = (
     messageId: string,
     content: string,
@@ -135,16 +254,28 @@ export function createMessages(
           !attachmentSource.tags.some(([name]) => name === "imeta")))
     )
       throw new Error("Reload the message before editing its attachments.");
-    return writer(40003, channelId).send({
-      kind: 40003,
-      content: text(content),
-      tags: [
-        ["h", channelId],
-        ["e", messageId],
-        ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
-        ...emojiTags(content),
-      ],
-    });
+    const sendEdit = (targetId: string) =>
+      writer(40003, channelId, ownerEdit ? authorization : undefined).send({
+        kind: 40003,
+        content: text(content),
+        tags: [
+          ["h", channelId],
+          ["e", targetId],
+          ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
+          ...emojiTags(content),
+        ],
+      });
+    const id = sendEdit(messageId);
+    // A sent-to-channel copy and its thread reply are one message to the author:
+    // mirror the edit onto the counterpart. Best effort; the primary edit stands.
+    for (const other of linkedCopies(original, channelId)) {
+      try {
+        sendEdit(other.id);
+      } catch {
+        // Counterpart unavailable; leave it as-is.
+      }
+    }
+    return id;
   };
   const remove = (
     eventIds: readonly string[],
@@ -173,7 +304,7 @@ export function createMessages(
     const channel = (event: EventData) =>
       event.tags.find(([name]) => name === "h")?.[1] ??
       (event.kind === 7
-        ? find(event.tags.find(([name]) => name === "e")?.[1] ?? "")?.tags.find(
+        ? find(reactionTargetId(event) ?? "")?.tags.find(
             ([name]) => name === "h",
           )?.[1]
         : undefined);
@@ -181,20 +312,175 @@ export function createMessages(
     const channelId = first ? channel(first) : undefined;
     if (!channelId || originals.some((event) => channel(event) !== channelId))
       throw new Error("Removal must belong to one loaded conversation");
-    return writer(5, channelId).send({
-      kind: 5,
-      content: "",
+    // Deleting a thread reply or its sent-to-channel copy removes the author's
+    // other linked copies too, so none lingers as an orphan.
+    const linked = originals
+      .flatMap((event) => linkedCopies(event, channelId))
+      .filter((event) => !ids.includes(event.id));
+    const all = [...ids, ...new Set(linked.map((event) => event.id))];
+    const targets = [
+      ...new Map(
+        [...originals, ...(all.length <= 100 ? linked : [])].map((event) => [
+          event.id,
+          event,
+        ]),
+      ).values(),
+    ];
+    // The relay accepts exactly one target per deletion, so each copy gets its
+    // own event. One that cannot be queued does not stop the rest; any failure
+    // is reported once every other target has been attempted.
+    const queue = writer(5, channelId, authorization);
+    const failures: unknown[] = [];
+    const operations = targets.flatMap((event) => {
+      try {
+        return [
+          queue.send({
+            kind: 5,
+            content: "",
+            tags: [
+              ["h", channelId],
+              ["e", event.id],
+              ["k", String(event.kind)],
+            ],
+          }),
+        ];
+      } catch (cause) {
+        failures.push(cause);
+        return [];
+      }
+    });
+    if (failures.length)
+      throw new Error(
+        `Could not delete ${failures.length} of ${targets.length} linked messages`,
+        { cause: failures[0] },
+      );
+    return operations[0] as string;
+  };
+  const prepareForward = (
+    channelId: string,
+    row: ChannelMessage,
+    authorName: string,
+    note: string,
+  ) => {
+    const original = find(row.id);
+    if (
+      !original ||
+      !hasEventProof(original) ||
+      row.channelId !== original.tags.find(([name]) => name === "h")?.[1] ||
+      (row.delivery && !["accepted", "seen"].includes(row.delivery))
+    )
+      throw new Error("Reload the message before forwarding it.");
+    const attachmentSource = find(row.attachmentSourceId ?? row.id);
+    if (
+      !attachmentSource ||
+      !hasEventProof(attachmentSource) ||
+      (attachmentSource.id !== original.id &&
+        (attachmentSource.kind !== 40003 ||
+          !attachmentSource.tags.some(
+            ([name, id]) => name === "e" && id === row.id,
+          ) ||
+          attachmentSource.tags.some(
+            ([name, id]) => name === "h" && id !== row.channelId,
+          )))
+    )
+      throw new Error("Reload the message attachments before forwarding it.");
+    const snapshot = snapshotMessage(row, authorName, profiles?.snapshot());
+    const sourceAttachments = snapshotAttachments(row);
+    const sourceUrls = new Set(
+      [...sourceAttachments, ...(snapshot.emoji ?? [])].map(({ url }) => {
+        try {
+          return new URL(url, relayOrigin).href;
+        } catch {
+          return url;
+        }
+      }),
+    );
+    const mediaTags = attachmentSource.tags.filter(
+      ([name, ...fields]) =>
+        name === "imeta" &&
+        (!row.forward ||
+          fields.some((field) => {
+            if (!field.startsWith("url ")) return false;
+            try {
+              return sourceUrls.has(new URL(field.slice(4), relayOrigin).href);
+            } catch {
+              return sourceUrls.has(field.slice(4));
+            }
+          })),
+    );
+    // Free-text local media URLs grant no destination download access. An
+    // admitted upload tag is required; never invent MIME/hash/size metadata.
+    const localHash = (value: string) => {
+      if (!relayOrigin) return undefined;
+      try {
+        const url = new URL(value, relayOrigin);
+        if (url.host !== new URL(relayOrigin).host) return undefined;
+        return /^\/media\/([0-9a-f]{64})(?:\.[a-z0-9]{1,8}|\.thumb\.(?:jpg|webp))?$/.exec(
+          url.pathname,
+        )?.[1];
+      } catch {
+        return undefined;
+      }
+    };
+    const sharedHashes = new Set(
+      mediaTags.flatMap((tag) =>
+        tag
+          .slice(1)
+          .flatMap((field) =>
+            /^(url|image) /.test(field)
+              ? [localHash(field.slice(field.indexOf(" ") + 1))]
+              : [],
+          ),
+      ),
+    );
+    if (
+      [...sourceAttachments, ...(snapshot.emoji ?? [])].some((attachment) => {
+        const hash = localHash(attachment.url);
+        return hash && !sharedHashes.has(hash);
+      })
+    )
+      throw new Error(
+        "This message contains an attachment that can’t be forwarded. Copy its link instead.",
+      );
+    const event = {
+      kind: 9,
+      content: forwardBody(snapshot, note),
       tags: [
         ["h", channelId],
-        ...ids.map((id) => ["e", id]),
-        ...[...new Set(originals.map((event) => event.kind))].map((kind) => [
-          "k",
-          String(kind),
+        forwardTag(snapshot),
+        ...mentionTags(channelId, withDmAgents(channelId, [])),
+        ...mediaTags,
+        ...(snapshot.emoji ?? []).map(({ shortcode, url }) => [
+          "emoji",
+          shortcode,
+          url,
         ]),
+        ...signedMessageTokenTags(),
       ],
-    });
+    };
+    // Reserve the outbox's client-id and millisecond tags as well.
+    if (byteSize(event) + 160 > OUTBOX_INPUT_MAX_BYTES)
+      throw new Error(
+        "This message is too long to forward. Copy its link instead.",
+      );
+    return event;
   };
   return Object.freeze({
+    forwardProblem(
+      channelId: string,
+      row: ChannelMessage,
+      authorName: string,
+      note: string,
+    ): string | undefined {
+      try {
+        prepareForward(channelId, row, authorName, note);
+        return undefined;
+      } catch (error) {
+        return error instanceof Error
+          ? error.message
+          : "This message cannot be forwarded.";
+      }
+    },
     send(
       channelId: string,
       content: string,
@@ -203,7 +489,6 @@ export function createMessages(
       recovery?: OutboxRecovery,
       references: readonly string[] = [],
       picks: MentionPicks = {},
-      sharedSessions: readonly string[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
@@ -213,16 +498,87 @@ export function createMessages(
           content: text(message.content),
           tags: [
             ["h", channelId],
-            ...mentionTags(channelId, mentions),
+            ...mentionTags(channelId, withDmAgents(channelId, mentions)),
             ...referenceTags(references),
-            ...pickTags(mentions, picks),
-            ...sharedSessionTags(content, sharedSessions),
+            ...pickTags(channelId, mentions, picks),
             ...emojiTags(content),
             ...message.tags,
+            ...signedMessageTokenTags(),
           ],
         },
         ...(recovery ? [recovery] : []),
       );
+    },
+    /** Forward only the reconciled row supplied by an authorized source reader. */
+    forward(
+      channelId: string,
+      row: ChannelMessage,
+      authorName: string,
+      note: string,
+      recovery?: OutboxRecovery,
+      options?: {
+        rootId?: string;
+        parentId?: string;
+        mediaTargetUrl?: string;
+        mentions?: readonly string[];
+        references?: readonly string[];
+        attachments?: readonly UploadedAttachment[];
+        picks?: MentionPicks;
+      },
+    ) {
+      const event = prepareForward(channelId, row, authorName, note);
+      if (options) {
+        const root = options.rootId;
+        const parent = options.parentId ?? root;
+        if (
+          (root && !/^[0-9a-f]{64}$/.test(root)) ||
+          (parent && !/^[0-9a-f]{64}$/.test(parent))
+        )
+          throw new Error("A valid thread is required");
+        const mediaTarget = options.mediaTargetUrl
+          ? safeMessageUrl(options.mediaTargetUrl)
+          : undefined;
+        if (options.mediaTargetUrl && !mediaTarget)
+          throw new Error("A valid media target is required");
+        const caption = attachmentMessage(
+          note,
+          options.attachments ?? [],
+          relayOrigin,
+        );
+        event.content = [
+          caption.content.trim(),
+          forwardQuote(snapshotMessage(row, authorName, profiles?.snapshot())),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        const recipients = mentionTags(
+          channelId,
+          withDmAgents(channelId, options.mentions ?? []),
+        );
+        event.tags = [
+          ...event.tags.filter(([tag]) => tag !== "p" && tag !== "mention"),
+          ...(root && parent
+            ? [
+                ...(parent === root ? [] : [["e", root, "", "root"]]),
+                ["e", parent, "", "reply"],
+              ]
+            : []),
+          ...recipients,
+          ...(root && parent
+            ? invocationTags(channelId, root, parent, recipients)
+            : []),
+          ...referenceTags(options.references ?? []),
+          ...pickTags(channelId, options.mentions ?? [], options.picks ?? {}),
+          ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),
+          ...emojiTags(note),
+          ...caption.tags,
+        ];
+        if (byteSize(event) + 160 > OUTBOX_INPUT_MAX_BYTES)
+          throw new Error(
+            "This message is too long to forward. Shorten your note and try again.",
+          );
+      }
+      return writer(9, channelId).send(event, ...(recovery ? [recovery] : []));
     },
     /** Copy an authored reply as a fresh top-level event, preserving its displayed semantics. */
     sendToChannel(row: ChannelMessage, root?: ChannelMessage) {
@@ -288,6 +644,8 @@ export function createMessages(
         tags: [
           ["h", channelId],
           ["buzz:sent-from-thread", thread.rootId, ...(label ? [label] : [])],
+          // Links the copy to its reply so later edits reach both.
+          ["buzz:copy-of", original.id],
           // Sharing does not notify the original recipients again. Preserve display binding only.
           ...referenceTags(
             row.edited
@@ -314,34 +672,48 @@ export function createMessages(
       parentId: string = rootId,
       references: readonly string[] = [],
       picks: MentionPicks = {},
-      sharedSessions: readonly string[] = [],
+      mediaTargetUrl?: string,
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
         throw new Error("A valid thread root is required");
       if (!/^[0-9a-f]{64}$/.test(parentId))
         throw new Error("A valid reply parent is required");
+      const mediaTarget = mediaTargetUrl
+        ? safeMessageUrl(mediaTargetUrl)
+        : undefined;
+      if (mediaTargetUrl && !mediaTarget)
+        throw new Error("A valid media target is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
-      return writer(9, channelId).send({
+      const out = writer(9, channelId);
+      const recipients = mentionTags(
+        channelId,
+        withDmAgents(channelId, mentions),
+      );
+      return out.send({
         kind: 9,
         content: text(message.content),
         tags: [
           ["h", channelId],
           ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
           ["e", parentId, "", "reply"],
-          ...mentionTags(channelId, mentions),
+          ...recipients,
+          ...invocationTags(channelId, rootId, parentId, recipients),
           ...referenceTags(references),
-          ...pickTags(mentions, picks),
-          ...sharedSessionTags(content, sharedSessions),
+          ...pickTags(channelId, mentions, picks),
+          ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),
           ...emojiTags(content),
           ...message.tags,
+          ...signedMessageTokenTags(),
         ],
       });
     },
     /** Supply the current folded attachmentSourceId, or the row ID for original media. */
     edit: (messageId: string, content: string, attachmentSourceId: string) =>
       edit(messageId, content, attachmentSourceId),
-    /** Verified owner edit. Empty text removes the message, as in the composer. */
+    /** Verified owner edit. Empty text removes the message, as in the composer.
+     * As a guest it signs only once `profiles.owner` names the viewer; an
+     * earlier call fails delivery as read-only, and `retry(id)` resends it. */
     async editOwnedAgent(
       messageId: string,
       content: string,
@@ -381,9 +753,25 @@ export function createMessages(
         tags: [
           ["h", channelId],
           ["e", messageId],
+          ["p", messageAuthor(original, signingAuthority)],
           ...(emoji && value.toLowerCase() === `:${emoji.shortcode}:`
             ? [["emoji", emoji.shortcode, emoji.url]]
             : emojiTags(value)),
+        ],
+      });
+    },
+    /** Pin or unpin a message in its channel. The relay applies the command
+     * and publishes the channel's new pin list. */
+    pin(channelId: string, messageId: string, pinned: boolean) {
+      if (!/^[0-9a-f]{64}$/.test(messageId))
+        throw new Error("Choose a valid message");
+      const kind = pinned ? PIN_KIND : UNPIN_KIND;
+      return writer(kind, channelId).send({
+        kind,
+        content: "",
+        tags: [
+          ["h", channelId],
+          ["e", messageId],
         ],
       });
     },
@@ -410,13 +798,11 @@ export function createMessages(
         }
       : undefined,
     reactionTarget(event: Pick<EventData, "kind" | "tags">) {
+      if (event.kind === 7) return reactionTargetId(event);
       const target = event.tags.find(([name]) => name === "e")?.[1];
-      if (event.kind === 7) return target;
       if (event.kind !== 5 || !target) return undefined;
       const original = find(target);
-      return original?.kind === 7
-        ? original.tags.find(([name]) => name === "e")?.[1]
-        : undefined;
+      return original?.kind === 7 ? reactionTargetId(original) : undefined;
     },
     retry(id: string) {
       outbox?.retry(id);

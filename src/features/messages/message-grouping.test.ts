@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
-import { continuesMessageGroup } from "./message-grouping";
+import {
+  continuesMessageGroup,
+  publicMessageNeighbor,
+} from "./message-grouping";
 
 const first: ChannelMessage = {
   id: "first",
@@ -64,6 +67,18 @@ it("keeps thread shares separate from adjacent authored messages", () => {
   expect(continuesMessageGroup(shared, first)).toBe(false);
 });
 
+it("keeps a verified relayed message out of its signer's group", () => {
+  const relayed = (verified: boolean) => ({
+    ...first,
+    id: "relayed",
+    relayedFrom: { agent: "agent", verified },
+  });
+  expect(continuesMessageGroup(first, relayed(true))).toBe(false);
+  expect(continuesMessageGroup(relayed(true), first)).toBe(false);
+  // Unverified, it is the signer's ordinary message.
+  expect(continuesMessageGroup(first, relayed(false))).toBe(true);
+});
+
 it("keeps automation bylines on every row, even for a common signer and owner", () => {
   const workflow = { ...first, workflowOwnerId: "owner" };
   expect(continuesMessageGroup(first, workflow)).toBe(false);
@@ -72,3 +87,29 @@ it("keeps automation bylines on every row, even for a common signer and owner", 
     false,
   );
 });
+
+it("continues a reply into activity but starts the next public reply separately", () => {
+  const activity = { ...first, id: "activity", audience: "agents" as const };
+  expect(continuesMessageGroup(first, activity)).toBe(true);
+  expect(continuesMessageGroup(activity, { ...activity, id: "next" })).toBe(
+    true,
+  );
+  expect(continuesMessageGroup(activity, first)).toBe(false);
+});
+
+it.each([-1, 1] as const)(
+  "does not bridge another author's visible activity in direction %s",
+  (direction) => {
+    const rows = [
+      first,
+      { ...first, id: "work", authorId: "agent", audience: "agents" as const },
+      { ...first, id: "followup" },
+    ];
+    const index = direction === 1 ? 0 : 2;
+    expect(publicMessageNeighbor(rows, index, direction)).toBeUndefined();
+    rows[1] = { ...first, id: "work", audience: "agents" };
+    expect(publicMessageNeighbor(rows, index, direction)?.id).toBe(
+      direction === 1 ? "followup" : "first",
+    );
+  },
+);

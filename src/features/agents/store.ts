@@ -1,6 +1,8 @@
-// Device-local settings for agents: each agent's attention objects in the
-// `agent-attention/v1` shape, one JSON blob its plugin type owns, and its timers'
-// run state. Which agents exist, their type and name, and their keys live in
+import { sourceCompleted, sourceSignature } from "./attention";
+// Device-local settings for agents: the attention objects of each agent's
+// membership in a community, in the `agent-attention/v1` shape, with its
+// timers' run state, and one JSON blob the agent's plugin type owns. Which
+// agents exist, their type and name, and their keys live in
 // native custody, never here; a record without an identity does nothing. A
 // relay-backed store can replace this later without changing the record shape.
 import {
@@ -12,6 +14,8 @@ import {
   type TimerState,
   type TimerWatch,
 } from "./attention";
+import { AGENT_KEY, type AgentKey } from "./membership";
+import { loadedRoute, savedRoute } from "./synced-route";
 
 /** Agent state as every program that runs this machine's agents shares it.
  * Reads are synchronous, from this program's copy. Each write changes the
@@ -21,6 +25,10 @@ import {
 export type AgentStore = Readonly<{
   keys(): readonly string[];
   get(key: string): string | null;
+  /** Reads saved state after this program's pending writes to the key. */
+  read(key: string): Promise<string | null>;
+  /** Reads saved entries under a prefix without changing this program's copy. */
+  scan(prefix: string): Promise<Record<string, string>>;
   /** Saves `value` under `key`; null removes the key. */
   set(key: string, value: string | null): Promise<void>;
   /** Saves `value` only if no program saved a value under `key`. Resolves
@@ -39,6 +47,16 @@ export function localStore(
         storage.key(index),
       ).filter((key): key is string => key !== null),
     get: (key: string) => storage.getItem(key),
+    read: async (key: string) => storage.getItem(key),
+    scan: async (prefix: string) =>
+      Object.fromEntries(
+        Array.from({ length: storage.length }, (_, index) => storage.key(index))
+          .filter((key): key is string => Boolean(key?.startsWith(prefix)))
+          .flatMap((key) => {
+            const value = storage.getItem(key);
+            return value === null ? [] : [[key, value]];
+          }),
+      ),
     set: async (key: string, value: string | null) => {
       if (value === null) storage.removeItem(key);
       else storage.setItem(key, value);
@@ -59,14 +77,80 @@ export type SkippedObject = Readonly<{
   modifiedAt: number;
   problem: string;
 }>;
+/** One event a watch woke its agent for, or one output of a source. */
+export type AttentionEntry = Readonly<{
+  /** The woken event's id, so it can show as that message. */
+  id?: string | undefined;
+  at: number;
+  text: string;
+  author?: string | undefined;
+  channel?: string | undefined;
+  /** Pubkeys its signed `p` tags name. */
+  mentions?: readonly string[] | undefined;
+  /** Pubkeys its signed two-field `mention` tags name. */
+  mentionReferences?: readonly string[] | undefined;
+}>;
+export type AttentionHistory = Readonly<{
+  lastWokeAt?: number;
+  /** What a watch saved before it kept `events`. */
+  output?: string;
+  events?: readonly AttentionEntry[];
+}>;
+const pubkeys = (value: unknown) =>
+  Array.isArray(value)
+    ? [
+        ...new Set(
+          value.filter(
+            (key): key is string =>
+              typeof key === "string" && /^[0-9a-f]{64}$/.test(key),
+          ),
+        ),
+      ].slice(0, 100)
+    : [];
+/** The latest valid `entries` a watch's history keeps, each clipped. */
+export const recentEntries = (entries: readonly unknown[]) =>
+  entries
+    .flatMap((value): AttentionEntry[] => {
+      const entry = value as Partial<AttentionEntry> | null;
+      // An event keeps its place even without a body, as a deletion has none.
+      return entry &&
+        Number.isFinite(entry.at) &&
+        typeof entry.text === "string" &&
+        (entry.text || typeof entry.id === "string")
+        ? [
+            {
+              at: entry.at as number,
+              text: entry.text.slice(0, 2000),
+              ...(typeof entry.id === "string" ? { id: entry.id } : {}),
+              ...(typeof entry.author === "string"
+                ? { author: entry.author }
+                : {}),
+              ...(typeof entry.channel === "string"
+                ? { channel: entry.channel }
+                : {}),
+              ...(pubkeys(entry.mentions).length
+                ? { mentions: pubkeys(entry.mentions) }
+                : {}),
+              ...(pubkeys(entry.mentionReferences).length
+                ? { mentionReferences: pubkeys(entry.mentionReferences) }
+                : {}),
+            },
+          ]
+        : [];
+    })
+    .slice(-10);
 export type AgentRecord = Readonly<{
-  pubkey: string;
+  /** Its membership's key (see `agentKey`): the agent's pubkey in its home
+   * community. Saved as `pubkey`, which every record had before agents
+   * joined more than one community. */
+  pubkey: AgentKey;
   /** Keyed by slug (`interest/<id>` or `watch/<id>`). */
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored objects that are invalid or over a limit. They do nothing, and stay
    * stored until they are fixed or removed. */
   skipped?: Readonly<Record<string, SkippedObject>>;
-  /** Plugin-owned config. The host never reads it. */
+  /** Plugin-owned config, shared by all its communities, so only the home
+   * record keeps it. The host never reads it. */
   config: unknown;
   /** True when the owner turned attention on. Off, its watches and timers
    * stay stored but wake nothing, and the agent is not offered attention
@@ -76,6 +160,9 @@ export type AgentRecord = Readonly<{
   /** Run state of its timers, by slug. Not config, so it never leaves the device;
    * kept here so removing a timer or the agent removes its state with it. */
   timers?: Readonly<Record<string, TimerState>>;
+  /** Terminal source runs, matched to the exact registration. */
+  sourceRuns?: Readonly<Record<string, string>>;
+  attentionHistory?: Readonly<Record<string, AttentionHistory>>;
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -84,8 +171,20 @@ export const STORAGE_KEY = "buzz.agents.v1";
 /** Each agent's record has its own key, so programs that run different
  * agents and share this storage never write over each other's records. */
 export const RECORD_PREFIX = "buzz.agent.v1:";
-export const recordKey = (pubkey: string) => `${RECORD_PREFIX}${pubkey}`;
+export const recordKey = (key: AgentKey) => `${RECORD_PREFIX}${key}`;
 const PUBKEY = /^[0-9a-f]{64}$/;
+/** Whether an older reader cannot apply this Interest: it is paused, or has a
+ * title or summary its validator rejects. Its watches are saved in an envelope
+ * that reader rejects too, so it never runs them without the instructions. */
+const sealed = (attention: AgentRecord["attention"], id: string) => {
+  const value = attention[`interest/${id}`]?.value;
+  return (
+    value?.type === "interest" &&
+    (value.paused === true ||
+      value.title !== undefined ||
+      value.summary !== undefined)
+  );
+};
 const group = (value: AttentionValue) =>
   value.type === "interest" ? "Interests" : "watches and timers";
 
@@ -99,9 +198,9 @@ export function readRecords(storage: AgentStore): Record<string, AgentRecord> {
     if (record) stored[key.slice(RECORD_PREFIX.length)] = record as AgentRecord;
   }
   const records: Record<string, AgentRecord> = {};
-  for (const [pubkey, record] of Object.entries(stored)) {
-    const read = readRecord(pubkey, record);
-    if (read) records[pubkey] = read;
+  for (const [key, record] of Object.entries(stored)) {
+    const read = readRecord(key, record);
+    if (read) records[key] = read;
   }
   return records;
 }
@@ -127,17 +226,63 @@ function legacyRecords(storage: AgentStore): Record<string, AgentRecord> {
 }
 
 function readRecord(
-  pubkey: string,
+  key: AgentKey,
   record: AgentRecord | undefined,
 ): AgentRecord | undefined {
-  if (!PUBKEY.test(pubkey) || record?.pubkey !== pubkey) return undefined;
+  if (!AGENT_KEY.test(key) || record?.pubkey !== key) return undefined;
   const attention: Record<string, AttentionObject> = {};
   const skipped: Record<string, SkippedObject> = {};
   const counts = { Interests: 0, "watches and timers": 0 };
   const entries = Object.entries(record.attention ?? {}).sort(([a], [b]) =>
     a < b ? -1 : a > b ? 1 : 0,
   );
-  for (const [slug, object] of entries) {
+  for (const [slug, stored] of entries) {
+    // Older readers reject this watch extension and retain it for repair. Only
+    // unwrap after its parent has been validated (Interests sort before watches).
+    let object = stored;
+    const value = stored?.value;
+    if (
+      value &&
+      typeof value === "object" &&
+      "interest_paused" in value &&
+      value.interest_paused &&
+      typeof value.interest_paused === "object" &&
+      value.type !== "interest" &&
+      sealed(attention, value.interest_id)
+    ) {
+      const { interest_paused, ...watch } = value;
+      // Skipped objects survive older rewrites, while their top-level runtime
+      // metadata does not. Recover it here, then use the usual validators below.
+      const state = interest_paused as {
+        timer?: TimerState;
+        completed?: true;
+        history?: AttentionHistory;
+      };
+      record = {
+        ...record,
+        ...(state.timer && {
+          timers: { [slug]: state.timer, ...record.timers },
+        }),
+        ...(state.completed === true &&
+          watch.type === "source" && {
+            sourceRuns: {
+              ...record.sourceRuns,
+              [slug]: sourceSignature({
+                slug,
+                value: watch,
+                modifiedAt: stored.modifiedAt,
+              }),
+            },
+          }),
+        ...(state.history && {
+          attentionHistory: {
+            [slug]: state.history,
+            ...record.attentionHistory,
+          },
+        }),
+      };
+      object = { ...stored, value: watch };
+    }
     const modifiedAt = Number.isSafeInteger(object?.modifiedAt)
       ? object.modifiedAt
       : 0;
@@ -151,7 +296,7 @@ function readRecord(
         problem = `Over the limit of ${OBJECT_LIMIT} ${kind}`;
     }
     if (problem)
-      skipped[slug] = { slug, value: object?.value, modifiedAt, problem };
+      skipped[slug] = { slug, value: stored?.value, modifiedAt, problem };
     else attention[slug] = { slug, value: object.value, modifiedAt };
   }
   const timers: Record<string, TimerState> = {};
@@ -162,10 +307,67 @@ function readRecord(
     )
       timers[slug] = state;
   return {
-    pubkey,
+    pubkey: key,
     attention,
     skipped,
-    config: record.config,
+    config: loadedRoute(
+      (record as { modelRoute?: unknown }).modelRoute,
+      record.config,
+    ),
+    ...(record.sourceRuns
+      ? {
+          sourceRuns: Object.fromEntries(
+            Object.entries(record.sourceRuns)
+              .filter(
+                ([slug, signature]) =>
+                  attention[slug]?.value.type === "source" &&
+                  typeof signature === "string" &&
+                  (sourceCompleted({ [slug]: signature }, attention[slug]) ||
+                    sourceCompleted(
+                      { [slug]: signature },
+                      record.attention[slug],
+                    )),
+              )
+              .map(([slug]) => [
+                slug,
+                sourceSignature(attention[slug] as AttentionObject),
+              ]),
+          ),
+        }
+      : {}),
+    ...(record.attentionHistory
+      ? {
+          attentionHistory: Object.fromEntries(
+            Object.entries(record.attentionHistory ?? {}).flatMap(
+              ([slug, entry]) =>
+                attention[slug] && entry && typeof entry === "object"
+                  ? [
+                      [
+                        slug,
+                        {
+                          ...(Number.isFinite(entry.lastWokeAt)
+                            ? { lastWokeAt: entry.lastWokeAt }
+                            : {}),
+                          ...(typeof entry.output === "string"
+                            ? {
+                                output: entry.output
+                                  .slice(-16384)
+                                  .split("\n")
+                                  .slice(-40)
+                                  .join("\n"),
+                              }
+                            : {}),
+                          ...(Array.isArray(entry.events)
+                            ? { events: recentEntries(entry.events) }
+                            : {}),
+                        },
+                      ],
+                    ]
+                  : [],
+            ),
+          ),
+        }
+      : {}),
     timers,
     ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
   };
@@ -200,27 +402,98 @@ export async function splitLegacyRecords(
   }
 }
 
-/** Removes an agent's record. */
-export function removeRecord(storage: AgentStore, pubkey: string) {
-  return storage.set(recordKey(pubkey), null);
+/** Removes a membership's record. */
+export function removeRecord(storage: AgentStore, key: AgentKey) {
+  return storage.set(recordKey(key), null);
 }
 
 /** A record as it is saved. */
-function recordText({ skipped, ...record }: AgentRecord) {
-  // Skipped objects go back where they were read from, so a later reader that
-  // can apply them still finds them.
+export function recordText({ skipped, ...record }: AgentRecord) {
+  // A sealed Interest's watches are saved in an envelope older readers reject.
+  // Their history moves into the envelope rather than being saved twice.
+  const enveloped = new Set(
+    Object.values(record.attention)
+      .filter(
+        ({ value }) =>
+          value.type !== "interest" &&
+          sealed(record.attention, value.interest_id),
+      )
+      .map(({ slug }) => slug),
+  );
+  // A route leaves `config.model`, which an older reader would run.
+  const { config, modelRoute } = savedRoute(record.config);
   return JSON.stringify({
     ...record,
+    config,
+    ...(modelRoute && { modelRoute }),
+    ...(record.attentionHistory && {
+      attentionHistory: Object.fromEntries(
+        Object.entries(record.attentionHistory).filter(
+          ([slug]) => !enveloped.has(slug),
+        ),
+      ),
+    }),
     attention: {
+      // Skipped objects go back where they were read from, so a later reader
+      // that can apply them still finds them, enveloped as their Interest
+      // requires: one over a limit here can be within an older reader's.
       ...Object.fromEntries(
         Object.values(skipped ?? {}).map(({ problem: _, ...object }) => [
           object.slug,
-          object,
+          { ...object, value: skippedValue(record.attention, object.value) },
         ]),
       ),
-      ...record.attention,
+      ...Object.fromEntries(
+        Object.entries(record.attention).map(([slug, object]) => {
+          const value = object.value;
+          if (value.type === "interest") {
+            // Active Interests need no extension, so older readers keep their instructions.
+            const { paused, ...interest } = value;
+            return [slug, paused ? object : { ...object, value: interest }];
+          }
+          return [
+            slug,
+            enveloped.has(slug)
+              ? {
+                  ...object,
+                  value: {
+                    ...value,
+                    interest_paused: {
+                      ...(record.timers?.[slug] && {
+                        timer: record.timers[slug],
+                      }),
+                      ...(sourceCompleted(record.sourceRuns, object) && {
+                        completed: true,
+                      }),
+                      ...(record.attentionHistory?.[slug] && {
+                        history: record.attentionHistory[slug],
+                      }),
+                    },
+                  },
+                }
+              : object,
+          ];
+        }),
+      ),
     },
   });
+}
+
+/** A skipped watch's value, enveloped while its Interest is sealed and
+ * unwrapped once that Interest is readable again. */
+function skippedValue(
+  attention: AgentRecord["attention"],
+  value: unknown,
+): unknown {
+  if (!value || typeof value !== "object") return value;
+  const { interest_paused, ...watch } = value as Record<string, unknown>;
+  if (watch.type === "interest" || typeof watch.interest_id !== "string")
+    return value;
+  const parent = attention[`interest/${watch.interest_id}`]?.value;
+  if (parent?.type !== "interest") return value;
+  if (sealed(attention, watch.interest_id))
+    return { ...watch, interest_paused: interest_paused ?? {} };
+  return watch;
 }
 
 /** Saves one record, when it changed. */
@@ -247,6 +520,11 @@ export function setAttention(
   schedule?: "rearm" | "restart",
 ): AgentRecord {
   const prior = record.attention[slug]?.value;
+  const { [slug]: history, ...attentionHistory } =
+    record.attentionHistory ?? {};
+  if (history !== undefined) record = { ...record, attentionHistory };
+  const { [slug]: completed, ...sourceRuns } = record.sourceRuns ?? {};
+  if (completed !== undefined) record = { ...record, sourceRuns };
   const { [slug]: _, ...rest } = record.attention;
   const { [slug]: __, ...skipped } = record.skipped ?? {};
   const { [slug]: state, ...timers } = record.timers ?? {};
@@ -324,6 +602,8 @@ export type Team = Readonly<{
   instructions: string;
   /** Agent pubkeys, in the order shown. */
   members: readonly string[];
+  /** A synced team's confirmed head, the base its editor revises. */
+  revision?: string;
 }>;
 export const TEAMS_KEY = "buzz.agents.teams.v1";
 
@@ -373,6 +653,8 @@ export type Unfinished = Readonly<{
   owner: string;
   /** The HTTPS image URL it was made with, listed once it is set up. */
   picture?: string;
+  /** Provider-owned creation settings, retained only until setup succeeds. */
+  config?: unknown;
 }>;
 export const UNFINISHED_KEY = "buzz.agents.unfinished.v1";
 
@@ -405,6 +687,7 @@ export function readUnfinished(storage: AgentStore): readonly Unfinished[] {
             ...(typeof agent.picture === "string"
               ? { picture: agent.picture }
               : {}),
+            ...(agent.config !== undefined ? { config: agent.config } : {}),
           },
         ]
       : [],
@@ -432,8 +715,9 @@ function rearmed(
   };
 }
 
-/** Imported agents whose archive state could not be checked, so their
- * settings keep offering Retry across restarts until a check confirms it. */
+/** Agent memberships, by key, imported or added to their community where its
+ * archive state could not be checked, so their settings keep offering Retry
+ * across restarts until a check confirms it. */
 export const ARCHIVE_UNCHECKED_KEY = "buzz.agents.archive-unchecked.v1";
 
 export function readArchiveUnchecked(storage: AgentStore): Set<string> {
@@ -449,7 +733,7 @@ export function readArchiveUnchecked(storage: AgentStore): Set<string> {
       : undefined;
   return new Set(
     Array.isArray(agents)
-      ? agents.filter((key): key is string => PUBKEY.test(String(key)))
+      ? agents.filter((key): key is string => AGENT_KEY.test(String(key)))
       : [],
   );
 }

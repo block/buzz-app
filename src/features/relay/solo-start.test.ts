@@ -470,7 +470,7 @@ it("a chat's local agents get its first message and its Canvas before the relay 
       h.session.channelWrites.startingCanvas(channelId),
     );
   expect(heard.map((event) => event.id)).toEqual([message]);
-  await expect(canvas(id)).resolves.toBe("# Brief");
+  await expect(canvas(id)).resolves.toEqual({ content: "# Brief" });
   expect(
     h.query.mock.calls.some(([filters]) =>
       filters.some((filter) => filter["#h"]?.includes(id)),
@@ -536,4 +536,85 @@ it("a create that never arrives backs off, then ends the start once the relay sh
   expect(
     h.session.channels.list().channels.some((channel) => channel.id === id),
   ).toBe(false);
+});
+
+it("lists a labeled region start only with the same labels as its single create", async () => {
+  const id = "66666666-6666-4666-8666-666666666666";
+  const h = setup(id);
+  await h.established();
+  const region = "buzz.region:example:work";
+  const start = h.session.channelWrites.start(
+    id,
+    "Start",
+    [],
+    undefined,
+    true,
+    undefined,
+    { labels: [region] },
+  );
+  const pending = h.session.channels
+    .list()
+    .channels.find((channel) => channel.id === id);
+  expect(pending).toMatchObject({
+    pending: true,
+    channelType: "solo",
+    labels: [SOLO_LABEL, "buzz.session.named", region],
+  });
+  try {
+    await vi.waitFor(() => expect(h.publish).toHaveBeenCalled());
+    expect(
+      h.publish.mock.calls[0]?.[0].tags.filter(([tag]) => tag === "t"),
+    ).toEqual([
+      ["t", SOLO_LABEL],
+      ["t", "buzz.session.named"],
+      ["t", region],
+    ]);
+  } finally {
+    h.release();
+  }
+  await start.ready;
+});
+
+it("a held first message reaches a starting chat's local agents only after its hold", async () => {
+  const id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const h = setup(id);
+  await h.established();
+  const heard: RelayEvent[] = [];
+  h.session.subscribeLive((batch) => heard.push(...batch.events), {
+    replay: true,
+  });
+  const { ready } = h.session.channelWrites.start(id, "Start", [
+    h.agent.pubkey,
+  ]);
+  let release = () => {};
+  const hold = vi.fn(
+    (_id: string) =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  assert.exists(h.session.outbox?.sendHeld);
+  const message = h.session.outbox.sendHeld(
+    {
+      kind: 9,
+      content: "@Agent go",
+      tags: [
+        ["h", id],
+        ["p", h.agent.pubkey],
+      ],
+    },
+    hold,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(hold).toHaveBeenCalledExactlyOnceWith(message);
+  // An agent's first turn cannot start before the plugin's work ends.
+  expect(heard).toEqual([]);
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(heard.map((event) => event.id)).toEqual([message]);
+  expect(h.publish.mock.calls.map(([event]) => event.kind)).toEqual([9007]);
+  h.release();
+  await settle(ready);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.publish.mock.calls.at(-1)?.[0].id).toBe(message);
 });

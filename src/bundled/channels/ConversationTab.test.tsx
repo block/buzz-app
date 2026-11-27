@@ -22,12 +22,20 @@ import type { ConversationTab as Tab } from "./useChannelTabState";
 vi.mock("../../features/messages/ThreadPanel", () => ({
   ThreadPanel: ({
     active,
+    messageId,
+    subthreadId,
+    sourceThreadId,
+    shown,
     replyRequest,
     focusRequest,
     revealSelected,
     revealRequest,
   }: {
     active: boolean;
+    messageId: string;
+    subthreadId?: string;
+    sourceThreadId?: string;
+    shown?: boolean;
     replyRequest?: number;
     focusRequest?: number;
     revealSelected?: boolean;
@@ -35,6 +43,10 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
   }) => (
     <aside
       data-active={active}
+      data-message={messageId}
+      data-subthread={subthreadId}
+      data-source-thread={sourceThreadId}
+      data-shown={shown}
       data-reply-request={replyRequest}
       data-focus-request={focusRequest}
       data-reveal-selected={revealSelected}
@@ -44,33 +56,54 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
     </aside>
   ),
 }));
+const threadOpeners = vi.hoisted(
+  () => [] as ((id: string, root: string, intent?: "reply") => void)[],
+);
 vi.mock("./ChannelBody", () => ({
   ChannelBody: ({
-    activityLane,
     holding,
     inlineTarget,
     marksRead,
+    onOpenThread,
+    trailing,
   }: {
-    activityLane?: boolean;
     holding?: boolean;
     inlineTarget?: { messageId: string };
     marksRead?: boolean;
+    onOpenThread(id: string, root: string, intent?: "reply"): void;
+    trailing?: { content(state: object): import("react").ReactNode };
+  }) => {
+    threadOpeners.push(onOpenThread);
+    return (
+      <div
+        data-holding={holding}
+        data-target={inlineTarget?.messageId}
+        data-marks-read={marksRead}
+      >
+        Conversation content
+        {trailing?.content({ expanded: false, toggle() {} })}
+      </div>
+    );
+  },
+}));
+vi.mock("../../features/messages/MessageComposer", () => ({
+  MessageComposer: ({
+    focusRequest,
+    shown,
+  }: {
+    focusRequest?: number;
+    shown?: boolean;
   }) => (
-    <div
-      data-activity-lane={activityLane}
-      data-holding={holding}
-      data-target={inlineTarget?.messageId}
-      data-marks-read={marksRead}
-    >
-      Conversation content
+    <div data-focus-request={focusRequest} data-shown={shown}>
+      Composer content
     </div>
   ),
 }));
-vi.mock("../../features/messages/MessageComposer", () => ({
-  MessageComposer: ({ focusRequest }: { focusRequest?: number }) => (
-    <div data-focus-request={focusRequest}>Composer content</div>
-  ),
-}));
+const unreadEvidence = {
+  setChannelActive: vi.fn(),
+  revision: () => 0,
+  sync: () => ({ capability: "unsupported" }),
+};
 const owners: ReturnType<typeof createOutbox>[] = [];
 afterEach(() => {
   cleanup();
@@ -122,11 +155,18 @@ it.each(["thread", "conversation"] as const)(
         { id: "beta", name: "Beta" },
       ],
     };
-    // Only management consumes this session; the independent child views above
-    // are stubbed, so the fixture supplies just its list and outbox boundary.
+    // Only management consumes this session; independent child views above are
+    // stubbed. These writable tabs have static eligibility/profile evidence.
     const session = {
+      unread: unreadEvidence,
       outbox: owner.outbox,
-      channels: { list: () => channels, subscribeList: () => () => {} },
+      channels: {
+        window: () => ({ rows: [] }),
+        list: () => channels,
+        subscribeList: () => () => {},
+      },
+      profiles: { subscribe: () => () => {} },
+      messages: { canRetry: () => true },
     } as unknown as RelaySession;
     render(
       <ConversationTab
@@ -186,8 +226,13 @@ it.each(["thread", "conversation"] as const)(
     const leaveChannel = vi.fn();
     const session = {
       viewer: "viewer",
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
-      unread: { enterChannel, leaveChannel },
+      channels: {
+        window: () => ({ rows: [] }),
+        list: () => snapshot,
+        subscribeList: () => () => {},
+      },
+      profiles: {},
+      unread: { ...unreadEvidence, enterChannel, leaveChannel },
     } as unknown as RelaySession;
     const props = {
       tab: {
@@ -207,18 +252,32 @@ it.each(["thread", "conversation"] as const)(
     const mounted = render(<ConversationTab {...props} active={false} />);
     const content = screen.getByLabelText("Conversation in Beta");
     expect(enterChannel).not.toHaveBeenCalled();
-    if (kind === "thread")
+    // A thread's composer follows the tab, as a conversation's does.
+    if (kind === "thread") {
       expect(screen.getByText("Thread content")).toHaveAttribute(
         "data-active",
         "false",
       );
+      expect(screen.getByText("Thread content")).toHaveAttribute(
+        "data-shown",
+        "false",
+      );
+    }
     mounted.rerender(<ConversationTab {...props} active />);
-    expect(enterChannel).toHaveBeenCalledExactlyOnceWith("beta");
-    if (kind === "thread")
+    expect(enterChannel).toHaveBeenCalledExactlyOnceWith(
+      "beta",
+      document.hasFocus(),
+    );
+    if (kind === "thread") {
       expect(screen.getByText("Thread content")).toHaveAttribute(
         "data-active",
         "true",
       );
+      expect(screen.getByText("Thread content")).toHaveAttribute(
+        "data-shown",
+        "true",
+      );
+    }
     mounted.rerender(<ConversationTab {...props} active={false} />);
     expect(leaveChannel).toHaveBeenCalledExactlyOnceWith("beta");
     expect(screen.getByLabelText("Conversation in Beta")).toBe(content);
@@ -237,8 +296,13 @@ it.each(["thread", "conversation"] as const)(
     const enterChannel = vi.fn(async () => {});
     const session = {
       viewer: "viewer",
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
-      unread: { enterChannel, leaveChannel: vi.fn() },
+      channels: {
+        window: () => ({ rows: [] }),
+        list: () => snapshot,
+        subscribeList: () => () => {},
+      },
+      profiles: {},
+      unread: { ...unreadEvidence, enterChannel, leaveChannel: vi.fn() },
     } as unknown as RelaySession;
     render(
       <ConversationTab
@@ -277,7 +341,12 @@ it.each([false, true])(
     const channel = { id: "beta", name: "Beta" };
     const snapshot = { status: "ready", channels: [channel] };
     const session = {
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      unread: unreadEvidence,
+      channels: {
+        window: () => ({ rows: [] }),
+        list: () => snapshot,
+        subscribeList: () => () => {},
+      },
     } as unknown as RelaySession;
     const tab = {
       id: "thread",
@@ -323,7 +392,12 @@ it("a tab mounted later in its visit treats the visit's requests as restored", (
   const channel = { id: "beta", name: "Beta" };
   const snapshot = { status: "ready", channels: [channel] };
   const session = {
-    channels: { list: () => snapshot, subscribeList: () => () => {} },
+    unread: unreadEvidence,
+    channels: {
+      window: () => ({ rows: [] }),
+      list: () => snapshot,
+      subscribeList: () => () => {},
+    },
   } as unknown as RelaySession;
   const tab: Tab = {
     id: "thread",
@@ -373,7 +447,12 @@ it.each([
     const channel = { id: "beta", name: "Beta" };
     const snapshot = { status: "ready", channels: [channel] };
     const session = {
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      unread: unreadEvidence,
+      channels: {
+        window: () => ({ rows: [] }),
+        list: () => snapshot,
+        subscribeList: () => () => {},
+      },
     } as unknown as RelaySession;
     const tab: Tab =
       kind === "thread"
@@ -417,7 +496,12 @@ it.each(["pointerDown", "keyDown"] as const)(
     const channel = { id: "beta", name: "Beta" };
     const snapshot = { status: "ready", channels: [channel] };
     const session = {
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      unread: unreadEvidence,
+      channels: {
+        window: () => ({ rows: [] }),
+        list: () => snapshot,
+        subscribeList: () => () => {},
+      },
     } as unknown as RelaySession;
     const tab: Tab = {
       id: "thread",
@@ -452,39 +536,6 @@ it.each(["pointerDown", "keyDown"] as const)(
   },
 );
 
-it.each([false, true])(
-  "conversation tabs reserve the jump button's activity lane only for a live channel (cached=%s)",
-  (cached) => {
-    const channel = {
-      id: "beta",
-      name: "Beta",
-      ...(cached ? { cached: true as const } : {}),
-    };
-    const snapshot = { status: "ready", channels: [channel] };
-    const session = {
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
-    } as unknown as RelaySession;
-    render(
-      <ConversationTab
-        tab={{ id: "beta-tab", kind: "conversation", channelId: "beta" }}
-        channel={channel}
-        session={session}
-        scope="lane-test"
-        active
-        openLink={() => false}
-        canOpenLink={() => false}
-        openThread={() => {}}
-        close={() => {}}
-      />,
-    );
-    // The composer below the body mounts TypingIndicator only when live.
-    expect(screen.getByText("Conversation content")).toHaveAttribute(
-      "data-activity-lane",
-      String(!cached),
-    );
-  },
-);
-
 function openingAt(rows: { id: string; threadRootId?: string }[]) {
   const channel = { id: "beta", name: "Beta" };
   const snapshot = { status: "ready", channels: [channel] };
@@ -498,6 +549,7 @@ function openingAt(rows: { id: string; threadRootId?: string }[]) {
   };
   const listeners = new Set<() => void>();
   const session = {
+    unread: unreadEvidence,
     channels: {
       list: () => snapshot,
       subscribeList: () => () => {},
@@ -549,6 +601,28 @@ it("a conversation tab opens at its message once the reader finds it", () => {
   expect(body).toHaveAttribute("data-marks-read", "true");
 });
 
+it("a retained conversation tab gives its rows one thread opener that reaches the latest handler", () => {
+  const c = openingAt([]);
+  const tab = {
+    id: "conversation:beta",
+    kind: "conversation" as const,
+    channelId: "beta",
+  };
+  const first = vi.fn();
+  const latest = vi.fn();
+  threadOpeners.length = 0;
+  const view = render(
+    <ConversationTab {...c.props} tab={tab} openThread={first} />,
+  );
+  // The page re-renders its retained tabs with new handlers.
+  view.rerender(<ConversationTab {...c.props} tab={tab} openThread={latest} />);
+  expect(threadOpeners.length).toBeGreaterThan(1);
+  expect(new Set(threadOpeners).size).toBe(1);
+  threadOpeners[0]?.("reply", "root", "reply");
+  expect(latest).toHaveBeenCalledWith("reply", "root", "reply");
+  expect(first).not.toHaveBeenCalled();
+});
+
 it("a conversation tab opens a reply at its message as the thread", () => {
   const c = openingAt([{ id: "root" }, { id: "reply", threadRootId: "root" }]);
   render(
@@ -596,6 +670,29 @@ it("a thread tab asks its reader to reveal for each open at a message, not on re
   expect(thread).toHaveAttribute("data-reveal-request", "2");
 });
 
+it("opens the selected reply within the requested workspace branch", () => {
+  const c = openingAt([]);
+  render(
+    <ConversationTab
+      {...c.props}
+      subthreadId="invocation"
+      tab={{
+        id: "conversation",
+        kind: "thread",
+        channelId: "beta",
+        rootId: "source",
+        messageId: "reply",
+        revealRequest: 1,
+      }}
+    />,
+  );
+  const thread = screen.getByText("Thread content");
+  expect(thread).toHaveAttribute("data-message", "reply");
+  expect(thread).toHaveAttribute("data-subthread", "invocation");
+  expect(thread).toHaveAttribute("data-source-thread", "source");
+  expect(thread).toHaveAttribute("data-reveal-selected", "true");
+});
+
 it("markRead false reaches the reader, and a restored tab does not reveal again", () => {
   const c = openingAt([{ id: "post" }]);
   const tab = {
@@ -635,7 +732,12 @@ it("lets the tab supply Solo chat identity without repeating a visible heading",
   const idle = () => () => {};
   const profiles = new Map();
   const session = {
-    channels: { list: () => snapshot, subscribeList: idle },
+    unread: unreadEvidence,
+    channels: {
+      window: () => ({ rows: [] }),
+      list: () => snapshot,
+      subscribeList: idle,
+    },
     profiles: { snapshot: () => profiles, subscribe: idle },
     agentChoices: { snapshot: () => undefined, subscribe: idle },
   } as unknown as RelaySession;
@@ -661,4 +763,42 @@ it("lets the tab supply Solo chat identity without repeating a visible heading",
   ).toBeNull();
   expect(within(conversation).getByText("Conversation content")).toBeVisible();
   expect(within(conversation).getByText("Composer content")).toBeVisible();
+});
+
+it("tells the composer when its tab is shown, apart from whether showing visits", () => {
+  const channel = { id: "beta", name: "Chat", channelType: "solo" as const };
+  const snapshot = { status: "ready", channels: [channel] };
+  const idle = () => () => {};
+  const profiles = new Map();
+  const session = {
+    unread: unreadEvidence,
+    channels: {
+      window: () => ({ rows: [] }),
+      list: () => snapshot,
+      subscribeList: idle,
+    },
+    profiles: { snapshot: () => profiles, subscribe: idle },
+    agentChoices: { snapshot: () => undefined, subscribe: idle },
+  } as unknown as RelaySession;
+  const tab = (active: boolean) => (
+    <ConversationTab
+      tab={{ id: "chat", kind: "conversation", channelId: "beta" }}
+      channel={channel}
+      session={session}
+      scope="tab-shown-test"
+      openLink={() => false}
+      canOpenLink={() => false}
+      openThread={() => {}}
+      close={() => {}}
+      active={active}
+      visit={false}
+    />
+  );
+  const view = render(tab(true));
+  const composer = screen.getByText("Composer content");
+  expect(composer).toHaveAttribute("data-shown", "true");
+  view.rerender(tab(false));
+  expect(composer).toHaveAttribute("data-shown", "false");
+  view.rerender(tab(true));
+  expect(composer).toHaveAttribute("data-shown", "true");
 });

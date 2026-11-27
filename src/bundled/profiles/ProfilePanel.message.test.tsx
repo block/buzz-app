@@ -14,6 +14,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { profileTarget } from "../../features/profiles/target";
+import { newMessageTarget } from "../../features/channel-navigation/routes";
 import { ProfilePanel } from "./ProfilePanel";
 
 const viewer = "b".repeat(64);
@@ -22,8 +23,10 @@ const other = "c".repeat(64);
 const origin = "https://relay.example.test";
 afterEach(cleanup);
 
-function fixture(available = true) {
+/** Without `dm`, the viewer has no DM with `person` yet. */
+function fixture(available = true, dm = true) {
   const owner = createRelaySession(null);
+  const list = owner.session.channels.list();
   const open =
     vi.fn<(keys: readonly string[], signal: AbortSignal) => Promise<string>>();
   let choices = owner.session.agentChoices.snapshot();
@@ -31,6 +34,22 @@ function fixture(available = true) {
   const session = {
     ...owner.session,
     directMessages: { ...owner.session.directMessages, available, open },
+    channels: {
+      ...owner.session.channels,
+      list: () => ({
+        ...list,
+        channels: dm
+          ? [
+              {
+                id: "dm-1",
+                name: "Person",
+                channelType: "dm" as const,
+                participants: [person],
+              },
+            ]
+          : [],
+      }),
+    },
     agentChoices: {
       ...owner.session.agentChoices,
       snapshot: () => choices,
@@ -40,12 +59,19 @@ function fixture(available = true) {
       },
     },
   };
-  /** Makes `person` a known agent; `managed` means ready native control here. */
-  const agent = (managed: boolean, notify = true) => {
+  /** Makes `person` a known agent with local control or hosted DM evidence. */
+  const agent = (eligibility: boolean | "hosted", notify = true) => {
     choices = {
       ...choices,
       status: "ready",
-      identities: [{ pubkey: person, name: "Agent", managed }],
+      identities: [
+        {
+          pubkey: person,
+          name: "Agent",
+          managed: eligibility === true,
+          ...(eligibility === "hosted" ? { messageable: true as const } : {}),
+        },
+      ],
     };
     if (notify)
       act(() => {
@@ -73,6 +99,7 @@ function fixture(available = true) {
       return () => listeners.delete(listener);
     },
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -103,6 +130,29 @@ function deferred() {
   return { promise, resolve, reject };
 }
 const message = () => screen.queryByRole("button", { name: "Message" });
+const editProfile = () =>
+  screen.queryByRole("button", { name: "Edit profile" });
+
+it("offers Edit profile only on the viewer's own profile in a community and opens its Settings there", () => {
+  const f = fixture();
+  const view = render(f.panel(person));
+  expect(message()).toBeTruthy();
+  expect(editProfile()).toBeNull();
+  view.rerender(f.panel(viewer));
+  expect(message()).toBeNull();
+  fireEvent.click(editProfile() as HTMLElement);
+  expect(f.navigate).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "profile",
+    scope: { viewer, communityOrigin: origin },
+  });
+  // A scope for another identity names no community for this viewer.
+  f.reconnect(`${origin}:${other}`);
+  expect(screen.getByRole("region", { name: "Profile details" })).toBeTruthy();
+  expect(editProfile()).toBeNull();
+  f.owner.dispose();
+});
 
 it("offers Message only for a foreign profile on a DM-capable connection", () => {
   const unavailable = fixture(false);
@@ -118,18 +168,21 @@ it("offers Message only for a foreign profile on a DM-capable connection", () =>
   f.owner.dispose();
 });
 
-it("offers Message to a known agent only under this community's native control", () => {
-  const f = fixture();
-  f.agent(false);
-  const view = render(f.panel(person));
-  expect(message()).toBeNull();
-  f.agent(true);
-  expect(message()).toBeTruthy();
-  f.agent(false);
-  expect(message()).toBeNull();
-  view.unmount();
-  f.owner.dispose();
-});
+it.each([true, "hosted"] as const)(
+  "offers Message to a known agent with current eligibility (%s)",
+  (eligibility) => {
+    const f = fixture();
+    f.agent(false);
+    const view = render(f.panel(person));
+    expect(message()).toBeNull();
+    f.agent(eligibility);
+    expect(message()).toBeTruthy();
+    f.agent(false);
+    expect(message()).toBeNull();
+    view.unmount();
+    f.owner.dispose();
+  },
+);
 
 it("does not offer Message for an agent-hinted profile after native choices fail", () => {
   const f = fixture();
@@ -143,20 +196,23 @@ it("does not offer Message for an agent-hinted profile after native choices fail
   f.owner.dispose();
 });
 
-it("rechecks agent control on activation", async () => {
-  const f = fixture();
-  f.agent(true);
-  f.open.mockResolvedValue("dm-1");
-  render(f.panel(person));
-  f.agent(false, false);
-  fireEvent.click(message() as HTMLElement);
-  expect(f.open).not.toHaveBeenCalled();
-  f.agent(true, false);
-  fireEvent.click(message() as HTMLElement);
-  expect(f.open).toHaveBeenCalledWith([person], expect.any(AbortSignal));
-  await waitFor(() => expect(f.navigate).toHaveBeenCalledOnce());
-  f.owner.dispose();
-});
+it.each([true, "hosted"] as const)(
+  "rechecks agent messaging eligibility on activation (%s)",
+  async (eligibility) => {
+    const f = fixture();
+    f.agent(eligibility);
+    f.open.mockResolvedValue("dm-1");
+    render(f.panel(person));
+    f.agent(false, false);
+    fireEvent.click(message() as HTMLElement);
+    expect(f.open).not.toHaveBeenCalled();
+    f.agent(eligibility, false);
+    fireEvent.click(message() as HTMLElement);
+    expect(f.open).toHaveBeenCalledWith([person], expect.any(AbortSignal));
+    await waitFor(() => expect(f.navigate).toHaveBeenCalledOnce());
+    f.owner.dispose();
+  },
+);
 
 it("opens the DM, shows pending state, then navigates in the captured scope", async () => {
   const f = fixture();
@@ -176,6 +232,23 @@ it("opens the DM, shows pending state, then navigates in the captured scope", as
     scope: { viewer, communityOrigin: origin },
   });
   expect(message()?.getAttribute("aria-busy")).not.toBe("true");
+  f.owner.dispose();
+});
+
+it("opens a draft to someone without a DM, creating nothing until it is sent", async () => {
+  const f = fixture(true, false);
+  render(f.panel(person));
+  fireEvent.click(message() as HTMLElement);
+  await waitFor(() =>
+    expect(f.navigate).toHaveBeenCalledExactlyOnceWith(
+      newMessageTarget(
+        { viewer, communityOrigin: origin },
+        person,
+        expect.any(Number),
+      ),
+    ),
+  );
+  expect(f.open).not.toHaveBeenCalled();
   f.owner.dispose();
 });
 

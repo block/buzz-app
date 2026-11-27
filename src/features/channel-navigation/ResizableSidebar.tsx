@@ -88,7 +88,7 @@ export function ResizableSidebar({
           : { scope, width },
       );
     };
-    const stop = subscribeView(scope, update);
+    const stop = subscribeView(scope, update, VIEW);
     update();
     return stop;
   }, [scope]);
@@ -100,10 +100,11 @@ export function ResizableSidebar({
   };
   return (
     <>
-      <div className={className} style={{ width }}>
+      <div className={`${className} ${styles.sidebar}`} style={{ width }}>
         {children}
       </div>
       <ResizeHandle
+        key={scope}
         width={width}
         setWidth={resize}
         min={SIDEBAR_MIN_WIDTH}

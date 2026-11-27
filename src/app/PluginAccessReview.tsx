@@ -1,4 +1,8 @@
-import type { Ref } from "react";
+import { type Ref, useContext, useSyncExternalStore } from "react";
+import { AgentsContext } from "../features/agents/react";
+import type { RegisteredAgentType } from "../features/agents/service";
+
+import { pluginSection } from "../features/agent-harness/sections";
 import type { PluginManifest } from "../plugins/api";
 import { Accordion } from "../shared/design-system/ui/Accordion";
 import { Button } from "../shared/design-system/ui/Button";
@@ -10,6 +14,11 @@ import {
   MonitorIcon,
 } from "../shared/design-system/icons/index";
 import styles from "./PluginImport.module.css";
+
+const noSubscribe = () => () => {};
+const noTypes = () => EMPTY_TYPES;
+const EMPTY_TYPES: readonly RegisteredAgentType[] = [];
+
 function ProgramDetails({
   program,
   args,
@@ -42,8 +51,53 @@ function ProgramDetails({
   );
 }
 
-function hostDeclarations(manifest: PluginManifest) {
+function hostDeclarations(
+  manifest: PluginManifest,
+  types: readonly RegisteredAgentType[],
+) {
   return [
+    ...(manifest.host?.agentExecution ?? []).map((harness) => ({
+      key: `agentExecution:${harness}`,
+      signature: `Agent execution: ${harness}`,
+      title: "Agent execution:",
+      label: `Run ${types.find((type) => type.key === harness)?.title ?? harness} on another host`,
+      hint: "Can run native agent code and read files on that host. Buzz keeps the agent's identity.",
+      icon: PlugIcon,
+      details: <code className={styles.sourcePath}>{harness}</code>,
+    })),
+    ...(manifest.host?.agentHooks ?? []).map((harness) => ({
+      key: `agentHooks:${harness}`,
+      signature: `Agent hooks: ${harness}`,
+      title: "Agent hooks:",
+      label: `Observe and influence ${types.find((type) => type.key === harness)?.title ?? harness}`,
+      hint: "Can read hook events and change or block agent actions.",
+      icon: PlugIcon,
+      details: <code className={styles.sourcePath}>{harness}</code>,
+    })),
+    ...(manifest.host?.agentPromptSections ?? []).map((id) => {
+      const section = pluginSection(id);
+      const title = section?.title ?? id;
+      return {
+        key: `agentPromptSections:${id}`,
+        signature: `Agent instructions: ${id}`,
+        title: "Agent instructions:",
+        name: `Agent instructions ${title}`,
+        label: `Replace the ${title} instructions for agents`,
+        hint: "Can replace this part of the base instructions in chats it manages.",
+        icon: PlugIcon,
+        details: (
+          <p className="m-0">
+            In a chat this plugin manages, agents get the plugin’s text for{" "}
+            {title} in place of the text Buzz gives them.
+            {section?.owner &&
+              " Your own choice for this part in Settings → Agent setup still applies there."}{" "}
+            When this plugin first manages a Codex chat that an earlier Buzz
+            version started, that chat starts over once, without its earlier
+            context; on another computer, it asks for a new session.
+          </p>
+        ),
+      };
+    }),
     ...(manifest.host?.commands ?? []).map((command) => ({
       key: `command:${command.id}`,
       signature: `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · input: ${command.maxInputBytes === undefined ? "none" : `up to ${command.maxInputBytes} bytes`} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,
@@ -76,9 +130,69 @@ function hostDeclarations(manifest: PluginManifest) {
       icon: GlobeIcon,
       details: <code className={styles.sourcePath}>{origin}</code>,
     })),
+    ...(manifest.host?.publicImages
+      ? [
+          {
+            key: "publicImages",
+            signature:
+              "Public images: any public HTTPS site · images returned only · no cookies",
+            title: "Public images:",
+            label: "Contact any public website for images",
+            hint: "The plugin picks the address, so it can send what it knows to any site in that address. Only images come back, without your cookies.",
+            icon: GlobeIcon,
+            details: (
+              <p className="m-0">
+                Each request goes to port 443 on a public address and follows no
+                redirect: the plugin sees where a redirect points and decides
+                whether to ask again. Only PNG, JPEG, GIF, WebP and AVIF images
+                are returned. The address check can't recognize internal sites
+                that resolve to public addresses, such as those reached through
+                a company VPN, so the plugin has to refuse those itself. Sites
+                see your IP address.
+              </p>
+            ),
+          },
+        ]
+      : []),
+    ...(manifest.host?.publicPages
+      ? [
+          {
+            key: "publicPages",
+            signature:
+              "Public pages: any public HTTPS site · title, description and image only · no cookies",
+            title: "Public pages:",
+            label: "Contact any public website for link previews",
+            hint: "The plugin picks the address, so it can send what it knows to any site in that address. Only a page's title, description, site name, image and icon come back, without your cookies.",
+            icon: GlobeIcon,
+            details: (
+              <p className="m-0">
+                Each request goes to port 443 on a public address and follows no
+                redirect: the plugin sees where a redirect points and decides
+                whether to ask again. Buzz reads at most the page's head and
+                returns only its preview fields, never the page itself. The
+                address check can't recognize internal sites that resolve to
+                public addresses, such as those reached through a company VPN,
+                so the plugin has to refuse those itself. Sites see your IP
+                address.
+              </p>
+            ),
+          },
+        ]
+      : []),
+    ...(manifest.host?.federatedIdentity?.operations ?? []).map(
+      (operation) => ({
+        key: `federated:${operation.method} ${operation.path}`,
+        signature: `Federated authority ${manifest.host?.federatedIdentity?.authority}: ${operation.method} ${operation.path}`,
+        title: `Federated authority ${manifest.host?.federatedIdentity?.authority}:`,
+        label: `${operation.method} ${operation.path}`,
+        hint: "Buzz can call this route with your community session for the plugin.",
+        icon: GlobeIcon,
+        details: <code className={styles.sourcePath}>{operation.path}</code>,
+      }),
+    ),
     ...(manifest.host?.processes ?? []).map((process) => ({
       key: `process:${process.id}`,
-      signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""} and any further arguments · stdin, full user access`,
+      signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""} · artifact: ${JSON.stringify(process.artifact ?? null)} and any further arguments · stdin, full user access`,
       title: `Process ${process.id}:`,
       label: `Start ${process.program}`,
       hint: "Can start a background process with additional arguments, using your account’s full access.",
@@ -87,6 +201,22 @@ function hostDeclarations(manifest: PluginManifest) {
         <>
           <ProgramDetails program={process.program} args={process.args ?? []} />
           {process.bundled && <p className="mb-0 mt-2">Bundled with Buzz.</p>}
+          {process.artifact && (
+            <div className="mt-2 break-all">
+              <p className="m-0">
+                Executable artifact: <code>{process.artifact.path}</code>
+              </p>
+              <p className="m-0">
+                SHA-256: <code>{process.artifact.sha256}</code>
+              </p>
+              {process.artifact.siblings?.map((sibling) => (
+                <p className="m-0" key={sibling.name}>
+                  Sibling <code>{sibling.name}</code>:{" "}
+                  <code>{sibling.sha256}</code>
+                </p>
+              ))}
+            </div>
+          )}
           <p className="mb-0 mt-2">
             Allows further arguments and standard input, with your account’s
             full access.
@@ -107,6 +237,29 @@ function hostDeclarations(manifest: PluginManifest) {
             details: (
               <p className="m-0">
                 Tools served to local agents over loopback HTTP.
+              </p>
+            ),
+          },
+        ]
+      : []),
+    ...(manifest.host?.managedFiles
+      ? [
+          {
+            key: "managedFiles",
+            signature:
+              "Managed files: temporary private saves · no file reading",
+            title: "Managed files:",
+            label: "Save temporary plugin files",
+            hint: "Save up to 16 MiB at a time in host-selected private storage, without file-reading access.",
+            icon: FolderOpenIcon,
+            details: (
+              <p className="m-0">
+                Shared storage is limited to 64 MiB and 16 files; any plugin can
+                fill it. Files normally remain for 24 hours, survive plugin
+                unload and app restart, and are removed on a later save after
+                expiry. Explicit app-data erase or user deletion can remove them
+                sooner. This does not grant file reading or arbitrary-path
+                writes.
               </p>
             ),
           },
@@ -134,6 +287,18 @@ function hostDeclarations(manifest: PluginManifest) {
   ];
 }
 
+export function pluginAccessIncreases(
+  manifest: PluginManifest,
+  previous: PluginManifest,
+) {
+  const granted = new Set(
+    hostDeclarations(previous, []).map((item) => item.signature),
+  );
+  return hostDeclarations(manifest, []).some(
+    (item) => !granted.has(item.signature),
+  );
+}
+
 export function PluginAccessReview({
   manifest,
   previousManifest,
@@ -147,10 +312,16 @@ export function PluginAccessReview({
   unchangedTrigger?: Ref<HTMLButtonElement>;
   onShowUnchanged?: () => void;
 }) {
+  const agents = useContext(AgentsContext);
+  const types = useSyncExternalStore(
+    agents?.subscribe ?? noSubscribe,
+    agents?.types ?? noTypes,
+    noTypes,
+  );
   const updating = !!previousManifest;
-  const declaredDetails = hostDeclarations(manifest);
+  const declaredDetails = hostDeclarations(manifest, types);
   const previousDetails = previousManifest
-    ? hostDeclarations(previousManifest)
+    ? hostDeclarations(previousManifest, types)
     : [];
   const previousGrants = previousDetails.map((grant) => grant.signature);
   const removedDetails = previousDetails.filter(

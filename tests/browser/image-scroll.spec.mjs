@@ -26,9 +26,30 @@ async function navigate(page, direction) {
   while (true) {
     const before = await remaining();
     if (before < 4) break;
+    // Virtual measurements change the estimated extent. Compare the reader's
+    // position in these numbered fixture messages instead of scrollTop.
+    const position = () =>
+      feed.evaluate((element) => {
+        const top = element.getBoundingClientRect().top;
+        const row = [...element.querySelectorAll("[data-message-id]")].find(
+          (row) => row.getBoundingClientRect().bottom > top,
+        );
+        if (!row) return { index: 0, offset: element.scrollTop };
+        const number = row.textContent.match(/Message (\d+)\./);
+        if (!number) throw new Error("Missing numbered image fixture message");
+        return {
+          index: Number(number[1]),
+          offset: top - row.getBoundingClientRect().top,
+        };
+      });
+    const start = await position();
     await wheel(page, direction * Math.min(2000, before));
+    const end = await position();
     expect(
-      before - (await remaining()),
+      direction *
+        (end.index === start.index
+          ? end.offset - start.offset
+          : end.index - start.index),
       "image navigation retains progress after settling",
     ).toBeGreaterThan(0);
   }
@@ -522,6 +543,10 @@ test("decoded image resizing preserves reading and bottom following across remou
       expect(visible.name).not.toBeNull();
       expect(visible.imageTop).toBeLessThan(visible.viewportTop);
       expect(visible.imageBottom).toBeGreaterThan(visible.viewportTop);
+      // This placeholder decodes to 10 px. Keeping the paragraph after it would
+      // move the row by the rest of its height, so that must stay well past the
+      // 4 px tolerance of the check after the decode below.
+      expect(visible.imageBottom - visible.imageTop).toBeGreaterThan(40);
       const delayed = await feed
         .locator("[data-media-preview] img")
         .evaluateAll((images) =>
@@ -587,6 +612,11 @@ test("decoded image resizing preserves reading and bottom following across remou
 
       // A shrinking visible placeholder changes its following content, while
       // Virtua retains the first visible message rather than the next paragraph.
+      // Retaining the paragraph would move this row by most of the
+      // placeholder's height. In WebKit the shrink also measures rows above,
+      // and Virtua's compensation for them lands on whole-pixel scrollTop
+      // values, so the row can settle about a pixel away. Allow the same
+      // tolerance as expectAnchor.
       await waiting(page, visible.name);
       await releaseDecode(page, visible.name);
       await expect(
@@ -601,32 +631,31 @@ test("decoded image resizing preserves reading and bottom following across remou
             visible.top,
           ),
         )
-        .toBeLessThan(1);
+        .toBeLessThan(4);
       expect(await bottomDistance()).toBeGreaterThan(400);
 
-      await navigate(page, 1);
-      await waiting(page, "58");
-      expect(
-        await latestImage.evaluate(
-          (node, previous) => node !== previous,
-          originalNode,
-        ),
-      ).toBe(true);
-      await expect(latestImage).toHaveCSS("visibility", "hidden");
-      // A loaded image must retain its learned frame while the new DOM node's
-      // decode is pending. Otherwise eviction restores the 320px placeholder
-      // and feeds another geometry correction back into the virtualizer.
-      await expect(latestImage).toHaveCSS("height", "10px");
-      await settle(page, feed);
       const completed = await page.evaluate(() =>
         window.imageTest.completed("58"),
       );
-      await releaseDecode(page, "58");
-      await expect
-        .poll(() => page.evaluate(() => window.imageTest.completed("58")))
-        .toBeGreaterThan(completed);
+      await navigate(page, 1);
+      await expect(latestImage).toHaveCount(1);
+      // The remount re-adopts the decoded original instead of hiding a new
+      // node until it decodes, which flashed an empty frame on every return.
+      expect(
+        await latestImage.evaluate(
+          (node, previous) => node === previous,
+          originalNode,
+        ),
+      ).toBe(true);
       await expect(latestImage).toHaveCSS("visibility", "visible");
+      await expect(latestImage).toHaveCSS("height", "10px");
       await settle(page, feed);
+      expect(
+        await page.evaluate(() => [
+          window.imageTest.waiting("58"),
+          window.imageTest.completed("58"),
+        ]),
+      ).toEqual([false, completed]);
       expect(await bottomDistance()).toBeLessThan(4);
     } finally {
       await originalNode.dispose();

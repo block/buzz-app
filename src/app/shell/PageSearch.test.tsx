@@ -7,11 +7,13 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PageSearch, type SearchServices } from "./PageSearch";
+import { BestieConversationContext } from "./bestie-context";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
   createShortcutBindings,
@@ -19,6 +21,21 @@ import {
 } from "../../features/shortcuts/preferences";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { isApplePlatform } from "../../features/shortcuts/format";
+import { createRelaySession } from "../../features/relay/session";
+import type { ChannelList } from "../../features/relay/contracts";
+import type { RelaySnapshot } from "../../features/relay/service";
+import {
+  keypair,
+  metadata,
+  profile,
+  roster,
+  scriptedTransport,
+} from "../../features/relay/testing";
+import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
+import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { readView, writeView } from "../../shared/view-state";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
@@ -26,6 +43,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -209,6 +227,14 @@ it("keeps result shortcuts without badges and follows the hovered row", async ()
   expect(settings).toHaveAttribute("aria-selected", "true");
   expect(messages).toHaveAttribute("aria-selected", "false");
   expect(input).toHaveAttribute("aria-activedescendant", settings.id);
+  // Leaving the list hands the highlight back to the keyboard's row.
+  const palette = dialog.querySelector("[data-search-palette]");
+  if (!palette) throw new Error("Missing search palette");
+  fireEvent.pointerLeave(palette, { pointerType: "mouse" });
+  expect(messages).toHaveAttribute("aria-selected", "true");
+  expect(settings).toHaveAttribute("aria-selected", "false");
+  at(14);
+  expect(settings).toHaveAttribute("aria-selected", "true");
   fireEvent.keyDown(input, {
     key: "@",
     code: "Digit2",
@@ -256,11 +282,31 @@ it("selects the first typed result and keeps it as results change", async () => 
     "aria-activedescendant",
     screen.getByRole("option", { name: "Target ahead" }).id,
   );
+  // A pointer passing over the results returns Enter to the first one.
+  const other = screen.getByRole("option", { name: /^Target$/ });
+  for (const clientX of [10, 12])
+    fireEvent.pointerMove(other, {
+      pointerType: "mouse",
+      clientX,
+      clientY: 10,
+    });
+  expect(other).toHaveAttribute("aria-selected", "true");
+  const palette = document.querySelector("[data-search-palette]");
+  if (!palette) throw new Error("Missing search palette");
+  const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+  scroll.mockClear();
+  fireEvent.pointerLeave(palette, { pointerType: "mouse" });
+  expect(input).toHaveAttribute(
+    "aria-activedescendant",
+    screen.getByRole("option", { name: "Target ahead" }).id,
+  );
+  // The list stays where the pointer left it.
+  expect(scroll).not.toHaveBeenCalled();
   await user.keyboard("{Enter}");
   expect(select).toHaveBeenCalledExactlyOnceWith("test/second");
 });
 
-it("shows the live search shortcut in the trigger hint and follows a rebind", async () => {
+it("shows the live search shortcut in the trigger and its hint, following a rebind", async () => {
   Object.defineProperty(navigator, "platform", {
     configurable: true,
     value: "MacIntel",
@@ -273,7 +319,8 @@ it("shows the live search shortcut in the trigger hint and follows a rebind", as
   const bindings = createShortcutBindings(window);
   const shortcuts = new ShortcutsService(root, window, bindings);
   try {
-    // Only the shortcut services are read while the dialog is closed.
+    // Only the shortcut services, and the relay when given, are read while
+    // the dialog is closed.
     render(
       <PageSearch
         pages={[]}
@@ -286,7 +333,9 @@ it("shows the live search shortcut in the trigger hint and follows a rebind", as
     // The title renders as a focus/hover tooltip rather than a native attribute.
     const user = userEvent.setup();
     await user.tab();
-    expect(screen.getByRole("button", { name: "Search Buzz" })).toHaveFocus();
+    const trigger = screen.getByRole("button", { name: "Search Buzz" });
+    expect(trigger).toHaveFocus();
+    expect(within(trigger).getByText("⌘K")).toBeInTheDocument();
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Search Buzz (⌘K)",
     );
@@ -294,6 +343,7 @@ it("shows the live search shortcut in the trigger hint and follows a rebind", as
       bindings.set("global-search", { key: "p", mod: true, shift: true }),
     );
     expect(screen.getByRole("tooltip")).toHaveTextContent("Search Buzz (⇧⌘P)");
+    expect(within(trigger).getByText("⇧⌘P")).toBeInTheDocument();
     act(() => bindings.reset());
     expect(screen.getByRole("tooltip")).toHaveTextContent("Search Buzz (⌘K)");
   } finally {
@@ -363,6 +413,381 @@ it("opens conversation-scoped search with Command F and returns to overall searc
   }
 });
 
+/** A connected community whose promoted Bestie DM is with Pollen, beside an
+ * ordinary DM with Ada, shown through the shell's Bestie projection, on a
+ * navigation target that can change. */
+async function bestieSearch() {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const viewer = keypair(),
+    relay = keypair(),
+    pollen = keypair(),
+    ada = keypair();
+  const bestieDm = "11111111-1111-4111-8111-111111111111";
+  const adaDm = "22222222-2222-4222-8222-222222222222";
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async (filters) =>
+      filters.flatMap((filter) =>
+        filter.kinds?.includes(0)
+          ? [profile(pollen, { name: "Pollen" }), profile(ada, { name: "Ada" })]
+          : filter.kinds?.includes(39000)
+            ? [bestieDm, adaDm].map((id) =>
+                metadata(relay, id, "", 1_700_000_000, [["t", "dm"]]),
+              )
+            : filter.kinds?.includes(39002)
+              ? [
+                  roster(relay, bestieDm, [viewer.pubkey, pollen.pubkey]),
+                  roster(relay, adaDm, [viewer.pubkey, ada.pubkey]),
+                ]
+              : [],
+      ),
+  });
+  await new Promise<void>((resolve) => {
+    const unsubscribe = owner.session.channels.subscribeList(() => {
+      if (owner.session.channels.list().status !== "ready") return;
+      unsubscribe();
+      resolve();
+    });
+    owner.session.channels.ensureList();
+  });
+  const connection = {
+    status: "ready",
+    generation: 1,
+    session: owner.session,
+    scope: "s",
+  };
+  const community = { selected: "wss://relay.example", viewer: viewer.pubkey };
+  let navigation = {
+    entry: {
+      target: { kind: "page", pluginId: "buzz.bestie", pageId: "bestie" },
+    },
+  };
+  const listeners = new Set<() => void>();
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => navigation,
+      open: vi.fn(async () => {}),
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  // In production, AppShell mounts BestieNavigationProvider above PageSearch,
+  // and both read the same relay (searchServices.communities.relay), so the
+  // context's session is the one search compares against. This stands in for it.
+  render(
+    <BestieConversationContext
+      value={{ session: owner.session, channelId: bestieDm }}
+    >
+      <PageSearch
+        pages={[
+          {
+            key: "buzz.channels/channels",
+            pluginId: "buzz.channels",
+            id: "channels",
+            title: "Channels",
+            revision: "bundled",
+            component: () => null,
+          },
+        ]}
+        onSelect={vi.fn()}
+        services={services}
+      />
+    </BestieConversationContext>,
+  );
+  const apple = isApplePlatform(navigator.platform);
+  return {
+    adaDm,
+    press: (key: string) =>
+      fireEvent.keyDown(window, { key, metaKey: apple, ctrlKey: !apple }),
+    navigate(target: object) {
+      navigation = { entry: { target } } as typeof navigation;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    },
+    async dispose() {
+      cleanup();
+      owner.dispose();
+      bindings.dispose();
+      await root.fiber.dispose();
+    },
+  };
+}
+
+it("scopes Command F to the Bestie page's DM, from outside search and inside it, keeping the typed text", async () => {
+  const f = await bestieSearch();
+  try {
+    f.press("f");
+    const scoped = await screen.findByRole("dialog", {
+      name: "Search this conversation",
+    });
+    expect(
+      await within(scoped).findByRole("button", {
+        name: "Remove Pollen search scope",
+      }),
+    ).toBeVisible();
+    fireEvent.keyDown(
+      within(scoped).getByRole("combobox", {
+        name: "Search this conversation",
+      }),
+      { key: "Escape" },
+    );
+    f.press("k");
+    const search = await screen.findByRole("dialog", { name: "Search Buzz" });
+    const field = within(search).getByRole("combobox", { name: "Search Buzz" });
+    fireEvent.change(field, { target: { value: "deploy" } });
+    expect(
+      within(search).queryByRole("option", { name: /Search conversation/ }),
+    ).toBeNull();
+    f.press("f");
+    expect(
+      await within(search).findByRole("button", {
+        name: "Remove Pollen search scope",
+      }),
+    ).toBeVisible();
+    expect(
+      within(search).getByRole("combobox", {
+        name: "Search this conversation",
+      }),
+    ).toHaveValue("deploy");
+  } finally {
+    await f.dispose();
+  }
+});
+
+it("scopes Command F to another conversation, not the Bestie DM, while a Bestie DM exists", async () => {
+  const f = await bestieSearch();
+  try {
+    f.navigate({ kind: "conversation", channelId: f.adaDm });
+    f.press("f");
+    const scoped = await screen.findByRole("dialog", {
+      name: "Search this conversation",
+    });
+    expect(
+      await within(scoped).findByRole("button", {
+        name: "Remove Ada search scope",
+      }),
+    ).toBeVisible();
+    expect(
+      within(scoped).queryByRole("button", {
+        name: "Remove Pollen search scope",
+      }),
+    ).toBeNull();
+  } finally {
+    await f.dispose();
+  }
+});
+
+it("opens nothing with Command F on another page while a Bestie DM exists", async () => {
+  const f = await bestieSearch();
+  try {
+    f.navigate({ kind: "page", pluginId: "buzz.agents", pageId: "agents" });
+    f.press("f");
+    await act(async () => {});
+    expect(screen.queryByRole("dialog")).toBeNull();
+    f.press("k");
+    const search = await screen.findByRole("dialog", { name: "Search Buzz" });
+    expect(
+      within(search).queryByRole("option", { name: /Search conversation/ }),
+    ).toBeNull();
+  } finally {
+    await f.dispose();
+  }
+});
+
+it("does not open a DM that finishes opening after search closed and reopened", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const relay = keypair(),
+    viewer = keypair(),
+    bob = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query: async () => [],
+  });
+  let started!: (channelId: string) => void;
+  let attempt!: AbortSignal;
+  // Bob already has a DM, so choosing him waits on its confirmed open.
+  let listed: [ChannelList, ChannelList] | undefined;
+  const session = {
+    ...owner.session,
+    channels: {
+      ...owner.session.channels,
+      list: () => {
+        const base = owner.session.channels.list();
+        if (listed?.[0] !== base)
+          listed = [
+            base,
+            {
+              ...base,
+              channels: [
+                ...base.channels,
+                {
+                  id: "bob-dm",
+                  name: "",
+                  channelType: "dm",
+                  participants: [bob.pubkey],
+                },
+              ],
+            },
+          ];
+        return listed[1];
+      },
+      // The started DM is known, so only the closed palette stops it.
+      get: (id: string) =>
+        id === "bob-dm"
+          ? { id, name: "", channelType: "dm" }
+          : owner.session.channels.get?.(id),
+    },
+    directMessages: {
+      ...owner.session.directMessages,
+      available: true,
+      people: async () => ({
+        people: [{ pubkey: bob.pubkey, name: "Bob" }],
+        hasMore: false,
+      }),
+      open: (_pubkeys: readonly string[], signal: AbortSignal) => {
+        attempt = signal;
+        return new Promise<string>((resolve) => (started = resolve));
+      },
+    },
+  } as unknown as typeof owner.session;
+  const connection = { status: "ready", generation: 0, session, scope: "s" };
+  const community = {
+    selected: "wss://relay.example",
+    viewer: viewer.pubkey,
+  };
+  const open = vi.fn(async () => {});
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => ({ entry: { target: null } }),
+      open,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  const user = userEvent.setup();
+  try {
+    render(
+      <PageSearch
+        pages={[
+          {
+            key: "buzz.channels/channels",
+            pluginId: "buzz.channels",
+            id: "channels",
+            title: "Channels",
+            revision: "bundled",
+            component: () => null,
+          },
+        ]}
+        onSelect={vi.fn()}
+        services={services}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+    const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+    await user.type(input, "bob");
+    await user.click(await screen.findByRole("option", { name: /Bob/ }));
+    expect(
+      await screen.findByText("Opening your conversation with Bob…"),
+    ).toBeVisible();
+    // Hold the dialog's close animation, so search reopens with the same
+    // results still mounted before the DM resolves.
+    let release!: () => void;
+    const finished = new Promise<void>((resolve) => (release = resolve));
+    const animations = vi.fn(() => [{ finished }]);
+    const dialog = screen.getByRole("dialog", { name: "Search Buzz" });
+    Object.defineProperty(dialog, "getAnimations", { value: animations });
+    try {
+      fireEvent.keyDown(input, { key: "Escape" });
+      await vi.waitFor(() => expect(animations).toHaveBeenCalled());
+      expect(attempt.aborted).toBe(true);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Search Buzz", hidden: true }),
+      );
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveValue("");
+      await act(async () => started("bob-dm"));
+      expect(open).not.toHaveBeenCalled();
+      expect(
+        screen.queryByText("Opening your conversation with Bob…"),
+      ).toBeNull();
+    } finally {
+      await act(async () => release());
+    }
+  } finally {
+    cleanup();
+    owner.dispose();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it("opens Search Buzz with Command T as well as Command K, as Slack does", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const connection = { status: "disconnected", generation: 0 };
+  const community = { selected: null, viewer: null };
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => ({ entry: { target: null } }),
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  try {
+    render(<PageSearch pages={[]} onSelect={vi.fn()} services={services} />);
+    const apple = isApplePlatform(navigator.platform);
+    fireEvent.keyDown(window, { key: "t", metaKey: apple, ctrlKey: !apple });
+    expect(
+      await screen.findByRole("dialog", { name: "Search Buzz" }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
 it("ranks pages by match when no community is connected", async () => {
   const root = new Context();
   root.provide("pluginStatus", {
@@ -409,52 +834,17 @@ it("ranks pages by match when no community is connected", async () => {
     );
     await user.click(screen.getByRole("button", { name: "Search Buzz" }));
     const input = await screen.findByRole("combobox", { name: "Search Buzz" });
-    // "ses" starts Sessions, appears inside Processes, and only fuzzily
-    // matches Settings.
+    // "ses" starts Sessions and appears inside Processes. Settings only holds
+    // its letters scattered, so it does not match.
     await user.type(input, "ses");
     expect(
       screen.getAllByRole("option").map((option) => option.textContent),
-    ).toEqual(["Sessions", "Processes", "Settings"]);
+    ).toEqual(["Sessions", "Processes"]);
     await user.keyboard("{Enter}");
     expect(select).toHaveBeenCalledExactlyOnceWith("test/sessions");
   } finally {
     cleanup();
     bindings.dispose();
-    await root.fiber.dispose();
-  }
-});
-
-it("renders a restored prototype-named search key and remains resettable", async () => {
-  localStorage.setItem(
-    SHORTCUT_BINDINGS_KEY,
-    JSON.stringify({ "global-search": { key: "constructor", mod: true } }),
-  );
-  const root = new Context();
-  root.provide("pluginStatus", {
-    isActive: () => true,
-    subscribe: () => () => {},
-  });
-  const bindings = createShortcutBindings(window);
-  const shortcuts = new ShortcutsService(root, window, bindings);
-  try {
-    render(
-      <PageSearch
-        pages={[]}
-        onSelect={vi.fn()}
-        services={
-          { shortcuts, shortcutBindings: bindings } as unknown as SearchServices
-        }
-      />,
-    );
-    const user = userEvent.setup();
-    await user.tab();
-    expect(screen.getByRole("button", { name: "Search Buzz" })).toHaveFocus();
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("constructor");
-    act(() => bindings.reset());
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Ctrl+K");
-  } finally {
-    bindings.dispose();
-    localStorage.clear();
     await root.fiber.dispose();
   }
 });
@@ -528,4 +918,851 @@ it("shows a plugin page's declared icon on its search row", async () => {
   expect(image).toBeInstanceOf(HTMLImageElement);
   expect(image).toHaveAttribute("src", icon);
   expect(plain.querySelector("img")).toBeNull();
+});
+
+it("opens a Settings section from overall search, never from a conversation's", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const connection = { status: "disconnected", generation: 0 };
+  const community = {
+    selected: "primary",
+    viewer: "viewer",
+    memberships: [{ id: "primary", name: "Primary" }],
+  };
+  const navigation = {
+    entry: { target: { kind: "conversation", channelId: "crew" } },
+  };
+  const cards: never[] = [];
+  const release = vi.fn();
+  const retainVisibility = vi.fn(() => release);
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => navigation,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+    settingsCards: {
+      subscribe: () => () => {},
+      snapshot: () => cards,
+      retainVisibility,
+    },
+  } as unknown as SearchServices;
+  const select = vi.fn();
+  const user = userEvent.setup();
+  try {
+    render(
+      <>
+        <PageSearch pages={[]} onSelect={select} services={services} />
+        <main id="main-content" tabIndex={-1} />
+      </>,
+    );
+    const apple = isApplePlatform(navigator.platform);
+    fireEvent.keyDown(window, { key: "f", metaKey: apple, ctrlKey: !apple });
+    const scoped = await screen.findByRole("dialog", {
+      name: "Search this conversation",
+    });
+    await user.type(
+      within(scoped).getByRole("combobox", {
+        name: "Search this conversation",
+      }),
+      "shortcuts",
+    );
+    expect(
+      within(scoped).queryByRole("group", { name: "Settings" }),
+    ).toBeNull();
+    await user.click(
+      within(scoped).getByRole("button", {
+        name: "Remove This conversation search scope",
+      }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Search Buzz" });
+    expect(
+      within(within(dialog).getByRole("group", { name: "Settings" })).getByRole(
+        "option",
+        { name: /^Shortcuts/ },
+      ),
+    ).toHaveTextContent("Buzz");
+    expect(retainVisibility).toHaveBeenCalled();
+    await user.keyboard("{Enter}");
+    expect(select).toHaveBeenCalledExactlyOnceWith("settings", {
+      section: "shortcuts",
+    });
+    await vi.waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(release).toHaveBeenCalled();
+    // A community section names only its section; select() adds the
+    // selected community's scope.
+    await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+    // Search reopens on the kept text, selected, so typing replaces it.
+    const field = await screen.findByRole("combobox", { name: "Search Buzz" });
+    await vi.waitFor(() => expect(field).toHaveFocus());
+    await user.keyboard("local settings");
+    await user.click(screen.getByRole("option", { name: /^Local settings/ }));
+    expect(select).toHaveBeenLastCalledWith("settings", {
+      section: "local-settings",
+    });
+  } finally {
+    cleanup();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it("finds and opens saved conversations while the community is unreachable or still connecting", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const viewer = keypair(),
+    relay = keypair();
+  // Every relay read fails, as it does for a saved session.
+  const query = vi.fn(async () => {
+    throw new Error("Reconnect to update saved conversations.");
+  });
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      query,
+      media: () => undefined,
+    },
+    {
+      cachedOnly: true,
+      prepared: true,
+      persistence: {
+        readStartup: async () => ({
+          discovery: {
+            savedAt: Date.now(),
+            relayAuthor: relay.pubkey,
+            events: [
+              roster(relay, "alpha", [viewer.pubkey]),
+              metadata(relay, "alpha", "Alpha", 1_700_000_000),
+              roster(relay, "beta", [viewer.pubkey]),
+              metadata(relay, "beta", "Beta", 1_700_000_100),
+            ],
+          },
+        }),
+        read: async () => [],
+        write: async () => {},
+        remove: async () => {},
+        retain: async () => {},
+        clear: async () => {},
+        close() {},
+      },
+    },
+  );
+  await owner.restore();
+  // The live session that replaces it, whose reads stay pending.
+  const live = createRelaySession(
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+  );
+  let connection: RelaySnapshot = {
+    status: "error",
+    error: "Relay broker session is malformed",
+    cached: true,
+    generation: 1,
+    scope: "s",
+    session: owner.session,
+  };
+  const listeners = new Set<() => void>();
+  // Retrying publishes connecting at once, as the relay service does.
+  const retry = vi.fn(() => {
+    connection = { ...connection, status: "connecting" };
+    for (const listener of listeners) listener();
+  });
+  const open = vi.fn(async () => {});
+  const community = { selected: "wss://relay.example", viewer: viewer.pubkey };
+  const navigation = {
+    entry: { target: { kind: "conversation", channelId: "alpha" } },
+  };
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => navigation,
+      open,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: {
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        snapshot: () => connection,
+        tryAgain: retry,
+      },
+    },
+  } as unknown as SearchServices;
+  vi.useFakeTimers();
+  try {
+    render(
+      <PageSearch
+        pages={[
+          {
+            key: "buzz.channels/channels",
+            pluginId: "buzz.channels",
+            id: "channels",
+            title: "Channels",
+            revision: "bundled",
+            component: () => null,
+          },
+        ]}
+        onSelect={vi.fn()}
+        services={services}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
+    const dialog = screen.getByRole("dialog", { name: "Search Buzz" });
+    const field = within(dialog).getByRole("combobox", { name: "Search Buzz" });
+    // Recents lists the saved conversations.
+    const recent = within(dialog).getByRole("group", {
+      name: "Recents",
+    });
+    expect(
+      within(recent)
+        .getAllByRole("option")
+        .map((option) => option.textContent)
+        .sort(),
+    ).toEqual(["AlphaConversation · 1 member", "BetaConversation · 1 member"]);
+    // A saved session has no message scope or open-channel view to offer.
+    expect(within(dialog).queryByText(/^Search in Alpha/)).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: "Channels" }),
+    ).toBeNull();
+    // The author picker offers only people already known, and says the
+    // people search that needs the relay waits for the connection.
+    for (const text of ["from:al", "in:@al", "in:beta from:al"]) {
+      fireEvent.change(field, { target: { value: text } });
+      await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+      expect(
+        within(dialog).getByText("Connect to this community to search people."),
+      ).toBeVisible();
+    }
+    expect(query).not.toHaveBeenCalled();
+    fireEvent.change(field, { target: { value: "beta" } });
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(within(dialog).getByRole("option", { name: /^Beta/ })).toBeVisible();
+    expect(within(dialog).queryByText("No matching pages.")).toBeNull();
+    const savedNotice = within(dialog).getByText(
+      "Only saved conversations are searched while this community is disconnected.",
+    );
+    expect(savedNotice).toBeVisible();
+    // Lookups that need the relay wait for it, so nothing offers a Retry that
+    // cannot succeed; the connection's own Retry is the way back.
+    expect(query).not.toHaveBeenCalled();
+    expect(
+      within(dialog)
+        .getAllByRole("button", { name: /^Retry/ })
+        .map((button) => button.textContent),
+    ).toEqual(["Retry connection"]);
+    const retryButton = within(dialog).getByRole("button", {
+      name: "Retry connection",
+    });
+    // The notice and its Retry stay below the results, outside their
+    // scrollport, so a long list of rows can't push them out of view.
+    const results = dialog.querySelector(".search-palette-scroll");
+    expect(results).toContainElement(
+      within(dialog).getByRole("option", { name: /^Beta/ }),
+    );
+    expect(results).not.toContainElement(savedNotice);
+    expect(results).not.toContainElement(retryButton);
+    retryButton.focus();
+    fireEvent.click(retryButton);
+    expect(retry).toHaveBeenCalledOnce();
+    // The button goes as the retry starts; focus stays with the field.
+    expect(field).toHaveFocus();
+
+    // While a launch is still connecting, the same results say why.
+    expect(within(dialog).getByRole("option", { name: /^Beta/ })).toBeVisible();
+    const connectingNotice = within(dialog).getByText(
+      "Only saved conversations are searched until this community connects.",
+    );
+    expect(connectingNotice).toBeVisible();
+    expect(results).not.toContainElement(connectingNotice);
+    expect(within(dialog).queryByRole("button", { name: /^Retry/ })).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("option", { name: /^Beta/ }));
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "conversation", channelId: "beta" }),
+    );
+    expect(query).not.toHaveBeenCalled();
+
+    // Search scoped to a conversation is unchanged with a saved copy: it
+    // waits for the connection without the saved or connecting line.
+    const apple = isApplePlatform(navigator.platform);
+    fireEvent.keyDown(window, { key: "f", metaKey: apple, ctrlKey: !apple });
+    const scoped = screen.getByRole("dialog", {
+      name: "Search this conversation",
+    });
+    fireEvent.change(within(scoped).getByRole("combobox"), {
+      target: { value: "beta" },
+    });
+    expect(
+      within(scoped).getByText("Connect to this community to search messages."),
+    ).toBeVisible();
+    expect(within(scoped).queryByText(/^Only saved conversations/)).toBeNull();
+    expect(within(scoped).queryByText(/^Connecting/)).toBeNull();
+
+    // Once the session is live, the author picker waits for the relay rather
+    // than repeating the saved session's answer.
+    fireEvent.click(
+      within(scoped).getByRole("button", {
+        name: "Remove This conversation search scope",
+      }),
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      target: { value: "from:al" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(
+      screen.getByText("Connect to this community to search people."),
+    ).toBeVisible();
+    connection = {
+      status: "ready",
+      generation: 1,
+      scope: "s",
+      session: live.session,
+    };
+    await act(async () => {
+      for (const listener of listeners) listener();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(screen.getByText("Searching people…")).toBeVisible();
+    expect(
+      screen.queryByText("Connect to this community to search people."),
+    ).toBeNull();
+  } finally {
+    vi.useRealTimers();
+    cleanup();
+    live.dispose();
+    owner.dispose();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+/** Cmd+K on `ask: …` with an agent New chat would tag, and a New chat draft. */
+async function askSearch(existingDraft?: {
+  text: string;
+  recipients: readonly never[];
+}) {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const relay = keypair(),
+    viewer = keypair(),
+    agent = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query: async () => [],
+  });
+  const source = owner.session.agentChoices;
+  const picked = { pubkey: agent.pubkey, name: "Aria", managed: true };
+  const choices = {
+    ...source.snapshot(),
+    complete: true,
+    identities: [picked],
+    selectable: [picked],
+    archives: { status: "unavailable", archived: [] },
+  } as ReturnType<typeof source.snapshot>;
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  const scope = `wss://relay.example:${viewer.pubkey}`;
+  const connection = { status: "ready", generation: 1, session, scope };
+  let community = { selected: "wss://relay.example", viewer: viewer.pubkey };
+  const open = vi.fn(async () => {});
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => ({ entry: { target: null } }),
+      open,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  if (existingDraft) writeView(scope, "solo:new-draft", existingDraft);
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <PageSearch
+        pages={[
+          {
+            key: "buzz.channels/channels",
+            pluginId: "buzz.channels",
+            id: "channels",
+            title: "Channels",
+            revision: "bundled",
+            component: () => null,
+          },
+        ]}
+        onSelect={vi.fn()}
+        services={services}
+      />
+    </ToastProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Search Buzz" }));
+  const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+  await user.type(input, "ask: summarize the release");
+  // The Ask row appears once the default agent is read.
+  await screen.findByRole("option", { name: /Aria/ });
+  return {
+    agent,
+    scope,
+    open,
+    user,
+    switchCommunity() {
+      community = { ...community, selected: "wss://other.example" };
+    },
+    draft: () => readView<unknown>(scope, "solo:new-draft", null),
+    async dispose() {
+      cleanup();
+      owner.dispose();
+      bindings.dispose();
+      await root.fiber.dispose();
+    },
+  };
+}
+
+it("asks in New chat by writing the question draft and opening it for the agent", async () => {
+  const f = await askSearch();
+  try {
+    expect(f.draft()).toBeNull();
+    await f.user.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(f.open).toHaveBeenCalledExactlyOnceWith(
+        soloDraftTarget(f.scope, { agent: f.agent.pubkey }),
+      ),
+    );
+    expect(f.draft()).toEqual({
+      text: "@Aria Search Buzz to answer: summarize the release",
+      recipients: [
+        { pubkey: f.agent.pubkey, name: "Aria", start: 0, end: "@Aria".length },
+      ],
+    });
+  } finally {
+    await f.dispose();
+  }
+});
+
+it("keeps an unsent New chat draft when asking, and opens New chat with the question only on Replace", async () => {
+  const unsent = { text: "my half-written note", recipients: [] };
+  const f = await askSearch(unsent);
+  const question = {
+    text: "@Aria Search Buzz to answer: summarize the release",
+    recipients: [
+      {
+        pubkey: f.agent.pubkey,
+        name: "Aria",
+        start: 0,
+        end: "@Aria".length,
+      },
+    ],
+  };
+  // New chat's composer reads its draft as it opens, so it must open only
+  // once the question is written.
+  const opened: unknown[] = [];
+  f.open.mockImplementation(async () => {
+    opened.push(f.draft());
+  });
+  try {
+    await f.user.keyboard("{Enter}");
+    const notice = await screen.findByRole("dialog", {
+      name: "New chat already has an unsent draft",
+    });
+    expect(f.draft()).toEqual(unsent);
+    expect(f.open).not.toHaveBeenCalled();
+    fireEvent.click(within(notice).getByRole("button", { name: "Replace it" }));
+    await vi.waitFor(() =>
+      expect(f.open).toHaveBeenCalledExactlyOnceWith(
+        soloDraftTarget(f.scope, { agent: f.agent.pubkey }),
+      ),
+    );
+    expect(opened).toEqual([question]);
+    expect(f.draft()).toEqual(question);
+  } finally {
+    await f.dispose();
+  }
+});
+
+it("does nothing on Replace once the person has switched community", async () => {
+  const unsent = { text: "my half-written note", recipients: [] };
+  const f = await askSearch(unsent);
+  try {
+    await f.user.keyboard("{Enter}");
+    const notice = await screen.findByRole("dialog", {
+      name: "New chat already has an unsent draft",
+    });
+    f.switchCommunity();
+    fireEvent.click(within(notice).getByRole("button", { name: "Replace it" }));
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: "New chat already has an unsent draft",
+        }),
+      ).toBeNull(),
+    );
+    expect(f.draft()).toEqual(unsent);
+    expect(f.open).not.toHaveBeenCalled();
+  } finally {
+    await f.dispose();
+  }
+});
+
+/** A connected search whose viewer has joined `design`, `design-crit` and
+ * `release-notes`, for the place search keeps between openings. */
+function memorySearch() {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const viewer = keypair(),
+    relay = keypair();
+  const channels = [
+    ["design", "design"],
+    ["crit", "design-crit"],
+    ["release", "release-notes"],
+  ] as const;
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query: async (filters) =>
+      filters.flatMap((filter) =>
+        filter.kinds?.includes(39000)
+          ? channels.map(([id, name]) =>
+              metadata(relay, id, name, 1_700_000_000, [["t", "stream"]]),
+            )
+          : filter.kinds?.includes(39002)
+            ? channels.map(([id]) => roster(relay, id, [viewer.pubkey]))
+            : [],
+      ),
+  });
+  const navigate = vi.fn(async () => {});
+  const connection = {
+    status: "ready",
+    generation: 1,
+    session: owner.session,
+    scope: "s",
+  };
+  const community = { selected: "wss://relay.example", viewer: viewer.pubkey };
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => ({ entry: { target: null } }),
+      open: navigate,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  render(
+    <PageSearch
+      pages={[
+        {
+          key: "buzz.channels/channels",
+          pluginId: "buzz.channels",
+          id: "channels",
+          title: "Channels",
+          revision: "bundled",
+          component: () => null,
+        },
+      ]}
+      onSelect={vi.fn()}
+      services={services}
+    />,
+  );
+  const field = () => screen.getByRole("combobox", { name: "Search Buzz" });
+  const closed = () =>
+    waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
+    );
+  return {
+    bindings,
+    shortcuts,
+    navigate,
+    field,
+    closed,
+    async open() {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Search Buzz" }),
+      );
+      await screen.findByRole("dialog", { name: "Search Buzz" });
+    },
+    /** The empty view's rows, once the joined channels have loaded. */
+    async recentRows() {
+      const recent = await screen.findByRole("group", {
+        name: "Recents",
+      });
+      await waitFor(() =>
+        expect(within(recent).getAllByRole("option")).not.toHaveLength(0),
+      );
+      return within(recent).getAllByRole("option");
+    },
+    /** Types `text` and opens the matching channel, closing search. */
+    async openMatch(text: string, name: RegExp) {
+      await userEvent.type(field(), text);
+      await userEvent.click(await screen.findByRole("option", { name }));
+      await closed();
+    },
+    async dispose() {
+      cleanup();
+      owner.dispose();
+      bindings.dispose();
+      await root.fiber.dispose();
+    },
+  };
+}
+
+it("reopens with the text it was left on after opening a channel, and fresh after Escape", async () => {
+  const t = memorySearch();
+  try {
+    await t.open();
+    await t.openMatch("crit", /design-crit/);
+    // Back within a few minutes: same text, same rows.
+    await t.open();
+    expect(t.field()).toHaveValue("crit");
+    expect(
+      await screen.findByRole("option", { name: /design-crit/ }),
+    ).toBeVisible();
+    expect(screen.queryByRole("option", { name: /release-notes/ })).toBeNull();
+    // The kept text is selected, so new typing replaces it.
+    await waitFor(() => expect(t.field()).toHaveFocus());
+    expect(t.field()).toHaveProperty("selectionStart", 0);
+    expect(t.field()).toHaveProperty("selectionEnd", 4);
+    await userEvent.keyboard("release");
+    expect(t.field()).toHaveValue("release");
+    // Escape means done: the next opening starts fresh.
+    await userEvent.keyboard("{Escape}");
+    await t.closed();
+    await t.open();
+    expect(t.field()).toHaveValue("");
+  } finally {
+    await t.dispose();
+  }
+});
+
+it("keeps its place for under five minutes away, and starts fresh from five", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const t = memorySearch();
+  try {
+    await t.open();
+    await t.openMatch("crit", /design-crit/);
+    // One tick inside the memory: still kept, and this opening is the new
+    // one the time away is counted from.
+    vi.setSystemTime(Date.now() + 5 * 60_000 - 1);
+    await t.open();
+    expect(t.field()).toHaveValue("crit");
+    await userEvent.click(
+      await screen.findByRole("option", { name: /design-crit/ }),
+    );
+    await t.closed();
+    // Exactly five minutes away: the kept place has expired.
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    await t.open();
+    expect(t.field()).toHaveValue("");
+  } finally {
+    vi.useRealTimers();
+    await t.dispose();
+  }
+});
+
+it("moves through results with the person's own keys, saved, alongside the arrows", async () => {
+  Object.defineProperty(navigator, "platform", {
+    configurable: true,
+    value: "MacIntel",
+  });
+  const t = memorySearch();
+  try {
+    await t.open();
+    const rows = await t.recentRows();
+    const hints = () =>
+      [...document.querySelectorAll(".search-peek-keys kbd")]
+        .slice(0, 2)
+        .map((key) => key.textContent);
+    expect(hints()).toEqual(["↑", "↓"]);
+    act(() => {
+      t.bindings.set("search-previous-result", { key: "k", ctrl: true });
+      t.bindings.set("search-next-result", { key: "j", ctrl: true });
+    });
+    expect(hints()).toEqual(["⌃K", "⌃J"]);
+    expect(
+      JSON.parse(localStorage.getItem(SHORTCUT_BINDINGS_KEY) ?? "null"),
+    ).toEqual({
+      "search-previous-result": { key: "k", ctrl: true },
+      "search-next-result": { key: "j", ctrl: true },
+    });
+    const restored = createShortcutBindings(window);
+    expect(restored.resolve("search-next-result")).toEqual([
+      { key: "j", ctrl: true },
+    ]);
+    restored.dispose();
+    await userEvent.keyboard("{Control>}j{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    await userEvent.keyboard("{Control>}j{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
+    await userEvent.keyboard("{Control>}k{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    // Up and Down still move, as a combobox's arrows do.
+    expect(fireEvent.keyDown(t.field(), { key: "ArrowDown" })).toBe(false);
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
+    expect(fireEvent.keyDown(t.field(), { key: "ArrowUp" })).toBe(false);
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    await userEvent.keyboard("j");
+    expect(t.field()).toHaveValue("j");
+  } finally {
+    localStorage.removeItem(SHORTCUT_BINDINGS_KEY);
+    Reflect.deleteProperty(navigator, "platform");
+    await t.dispose();
+  }
+});
+
+it("lets an app shortcut that runs inside search keep a chord the field's Control keys use", async () => {
+  // Not a Mac, so Mod is Control and a rebind can land on Control+P.
+  Object.defineProperty(navigator, "platform", {
+    configurable: true,
+    value: "Linux x86_64",
+  });
+  const t = memorySearch();
+  const find = vi.fn();
+  const remove = t.shortcuts.registerHost({
+    id: "test-find",
+    title: "Find on screen",
+    binding: { key: "f", mod: true, shift: true },
+    allowInEditable: true,
+    allowInModal: true,
+    run: find,
+  });
+  try {
+    await t.open();
+    const rows = await t.recentRows();
+    // Control+N and Control+P step while no shortcut claims them.
+    await userEvent.keyboard("{Control>}n{/Control}{Control>}n{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
+    await userEvent.keyboard("{Control>}p{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    // From a row that could step back, the rebound Control+P only finds.
+    await userEvent.keyboard("{Control>}n{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
+    act(() => t.bindings.set("test-find", { key: "p", mod: true }));
+    expect(fireEvent.keyDown(t.field(), { key: "p", ctrlKey: true })).toBe(
+      false,
+    );
+    expect(find).toHaveBeenCalledOnce();
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[1]?.id);
+    // Search Buzz's own Control+K runs nothing inside search, so it steps.
+    await userEvent.keyboard("{Control>}k{/Control}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    expect(find).toHaveBeenCalledOnce();
+  } finally {
+    remove();
+    localStorage.removeItem(SHORTCUT_BINDINGS_KEY);
+    Reflect.deleteProperty(navigator, "platform");
+    await t.dispose();
+  }
+});
+
+it("reopens an empty search fresh while unread leads, so it shows what is unread now", async () => {
+  const t = memorySearch();
+  try {
+    setUnreadFirstPreference(true);
+    await t.open();
+    await t.recentRows();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(t.field()).toHaveAttribute("aria-activedescendant");
+    await userEvent.keyboard("{Enter}");
+    await t.closed();
+    await t.open();
+    await t.recentRows();
+    expect(t.field()).not.toHaveAttribute("aria-activedescendant");
+  } finally {
+    setUnreadFirstPreference(true);
+    await t.dispose();
+  }
+});
+
+it("keeps an empty search's place only while unread does not lead it", async () => {
+  const t = memorySearch();
+  try {
+    setUnreadFirstPreference(false);
+    await t.open();
+    await t.recentRows();
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.keyboard("{Enter}");
+    await t.closed();
+    // Off, an empty search reopens where it was left.
+    await t.open();
+    const kept = (await t.recentRows())[0];
+    expect(t.field()).toHaveAttribute("aria-activedescendant", kept?.id);
+    await userEvent.keyboard("{Enter}");
+    await t.closed();
+    // Turned back on, that place is not restored over what is unread now.
+    setUnreadFirstPreference(true);
+    await t.open();
+    await t.recentRows();
+    expect(t.field()).not.toHaveAttribute("aria-activedescendant");
+  } finally {
+    setUnreadFirstPreference(true);
+    await t.dispose();
+  }
+});
+
+it("goes back to Top results on Escape from a clicked group filter, and closes on the next", async () => {
+  const t = memorySearch();
+  try {
+    await t.open();
+    await userEvent.type(t.field(), "design");
+    const shown = () => screen.getByRole("button", { pressed: true });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Channels/ }),
+    );
+    expect(shown()).toHaveAccessibleName(/^Channels/);
+    expect(shown()).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Search Buzz" })).toBeVisible();
+    expect(shown()).toHaveAccessibleName(/^Top results/);
+    expect(t.field()).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await t.closed();
+  } finally {
+    await t.dispose();
+  }
 });

@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { createBackupStatus } from "./backup";
 
 export type BackupChoice = Readonly<{
   available: boolean;
@@ -29,6 +30,23 @@ export type RecoveryState =
   | ({ status: "choosing" } & RecoveryResult)
   | { status: "error"; error: string };
 
+/**
+ * Native restore's answer for a saved key it can't read (`identity.rs`
+ * MALFORMED). No retry changes it: only removing the key does.
+ */
+export const MALFORMED_IDENTITY =
+  "Saved identity is malformed; nothing was changed. Keep your key backup and contact support before changing secure storage.";
+/** Native recovery's answer when this build or the tenant has no recovery (`nsec_backup.rs` UNAVAILABLE). */
+export const RECOVERY_UNAVAILABLE = "Backup recovery is unavailable.";
+/** Native recovery's refusal for this account (`nsec_backup.rs` REFUSED: a public org, or no Buzz access). */
+export const RECOVERY_REFUSED =
+  "Backup recovery is not offered for this account.";
+/** A recovery error no retry changes: none here, or the account is refused it. */
+export const recoveryOff = (recovery: RecoveryState | undefined) =>
+  recovery?.status === "error" &&
+  (recovery.error === RECOVERY_UNAVAILABLE ||
+    recovery.error === RECOVERY_REFUSED);
+
 // App-owned, not registered on the plugin context. Snapshots contain public data only.
 export function createIdentity() {
   let state: IdentitySnapshot = { status: "loading" };
@@ -37,6 +55,7 @@ export function createIdentity() {
   let recoveryGeneration = 0;
   let recoveryAttempt: Promise<{ attempt: string }> | undefined;
   const listeners = new Set<() => void>();
+  const backup = createBackupStatus();
   let resolveReady!: (viewer: string) => void;
   const ready = new Promise<string>((resolve) => {
     resolveReady = resolve;
@@ -159,7 +178,7 @@ export function createIdentity() {
       | "identity_create"
       | "identity_import"
       | "identity_import_legacy",
-    nsec?: string,
+    args: Readonly<Record<string, string>> = {},
   ) {
     if (busy || disposed) return;
     const restoring = command === "identity_restore";
@@ -169,11 +188,9 @@ export function createIdentity() {
       restoring ? { status: "loading" } : { status: "missing", busy: true },
     );
     try {
-      const viewer = await invoke<string | null>(
-        command,
-        nsec === undefined ? {} : { nsec },
-      );
-      if (viewer === null && restoring)
+      const viewer = await invoke<string | null>(command, args);
+      // Restore finds no key; an expected old Buzz import finds another one.
+      if (viewer === null && (restoring || "expected" in args))
         update({ status: "missing", busy: false });
       else if (typeof viewer === "string" && /^[a-f0-9]{64}$/.test(viewer))
         update({ status: "ready", viewer });
@@ -203,12 +220,17 @@ export function createIdentity() {
       };
     },
     retry: () => run("identity_restore"),
-    importKey: (nsec: string) => run("identity_import", nsec),
+    importKey: (nsec: string) => run("identity_import", { nsec }),
     create: () => run("identity_create"),
     /** Whether installed old Buzz left data here; never opens secure storage. */
     legacyAvailable: () => invoke<boolean>("identity_legacy_available"),
-    /** Reads old Buzz's saved key only now, so any OS prompt follows this click. */
-    importLegacy: () => run("identity_import_legacy"),
+    /**
+     * Reads old Buzz's saved key only now, so any OS prompt follows this click.
+     * With `expected`, saves it only when it is that key, and otherwise leaves
+     * no key and no error.
+     */
+    importLegacy: (expected?: string) =>
+      run("identity_import_legacy", expected === undefined ? {} : { expected }),
     backupAvailable: () => invoke<boolean>("nsec_backup_available"),
     beginRecovery,
     installRecovery,
@@ -216,17 +238,30 @@ export function createIdentity() {
     exportKey: () => invoke<string>("identity_export"),
     /** Public consent only; enabling it wakes the configured native uploader after sign-in. */
     getBackupChoice: () => invoke<BackupChoice>("nsec_backup_choice"),
-    /** Pass the key returned by getBackupChoice so a stale selection cannot affect another key. */
-    setBackupChoice: (pubkey: string, automatic: boolean) =>
-      invoke<BackupChoice>("nsec_backup_set_choice", { pubkey, automatic }),
+    /**
+     * Pass the key returned by getBackupChoice so a stale selection cannot affect another key.
+     * With `unlessSaved`, a choice already saved for it stands and is returned instead.
+     */
+    setBackupChoice: (pubkey: string, automatic: boolean, unlessSaved?: true) =>
+      invoke<BackupChoice>("nsec_backup_set_choice", {
+        pubkey,
+        automatic,
+        unlessSaved,
+      }),
+    /** Whether this device confirmed a stored backup of `pubkey`, under any account. */
+    backedUp: (pubkey: string) =>
+      invoke<boolean>("nsec_backup_confirmed", { pubkey }),
     /** Why this build can't wipe, if it can't; `sign_out` enforces it either way. */
     wipeRefusal: () => invoke<string | null>("sign_out_wipe_refusal"),
     /** Stops agents and restarts; the key (and data, with wipe) goes on next launch. */
     signOut: (choices: { wipe: boolean; removeAgents: boolean }) =>
       invoke<void>("sign_out", choices),
+    /** The native uploader's status; registers on first read, outside the snapshot. */
+    backup,
     dispose() {
       disposed = true;
       void cancelRecovery();
+      backup.dispose();
       listeners.clear();
     },
   };

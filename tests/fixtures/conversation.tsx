@@ -1,6 +1,7 @@
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // Automated boundary proof only. No live broker, persistent messages or real keys.
 import { Context } from "@deepseek-ai/cordis";
+import { emptySync } from "../../src/features/communities/known-communities";
 import {
   StrictMode,
   useState,
@@ -15,7 +16,9 @@ import { PanelsService } from "../../src/features/panels/service";
 import { ConversationService } from "../../src/features/conversation/service";
 import { ShortcutsService } from "../../src/features/shortcuts/service";
 import { SettingsCardsService } from "../../src/features/settings/service";
-import { bundledPlugins } from "../../src/bundled";
+import channelsManifest from "../../src/bundled/channels/manifest.json";
+import * as channels from "../../src/bundled/channels";
+import { conversationFeatures } from "../../src/app/conversation-features";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import {
@@ -48,9 +51,13 @@ const owners = ["a", "b"].map((community) => {
       ["emoji", "party", `https://${community}.test/media/current.png`],
     ],
   });
-  const historic = message(viewer, "general", "History :party:", 10, [
-    ["emoji", "party", `https://${community}.test/media/history.png`],
-  ]);
+  const historic = message(
+    viewer,
+    "general",
+    "History :party: [Inspect fixture](consumer://message/inspect)",
+    10,
+    [["emoji", "party", `https://${community}.test/media/history.png`]],
+  );
   const reaction = signed(member, {
     kind: 7,
     content: ":party:",
@@ -59,7 +66,14 @@ const owners = ["a", "b"].map((community) => {
       ["emoji", "party", `https://${community}.test/media/reaction.png`],
     ],
   });
-  const events = [historic, reaction];
+  // These rows give the panel journey a scroll position above the latest row.
+  const events = [
+    historic,
+    reaction,
+    ...Array.from({ length: 24 }, (_, index) =>
+      message(viewer, "general", `Fixture context ${index + 1}`, index + 1),
+    ),
+  ];
   const rejected = new Set<string>();
   const owner = createRelaySession(
     {
@@ -266,7 +280,17 @@ const probe = {
   },
 };
 const plugins = createPluginManager(ctx, {
-  bundled: [...bundledPlugins, probe],
+  // The proof opens Channels and installed contributions, not the other bundled
+  // plugins. Keep their cold module transforms out of the navigation budget.
+  bundled: [
+    {
+      manifest: { ...channelsManifest, apiVersion: 1 },
+      module: channels,
+      enabledByDefault: true,
+    },
+    probe,
+  ],
+  builtIn: conversationFeatures,
   storage,
 });
 provideNavigation(ctx);
@@ -289,12 +313,25 @@ conversation.tools.subscribe(() => {
   }
 });
 ctx.provide("relay", relay);
+ctx.provide("communityReader", {
+  subscribe: () => () => {},
+  snapshot: () => ({
+    status: "unavailable",
+    relayAvailable: false,
+    profile: { name: "", picture: "" },
+    memberships: [],
+    selected: null,
+    sync: emptySync(),
+  }),
+});
 // Channels needs Agents for its members/templates; this fixture has no agents.
 const noAgents = { status: "unavailable", agents: [], running: [], teams: [] };
 ctx.provide("agents", {
   snapshot: () => noAgents,
   subscribe: () => () => {},
 });
+// Channels hands community membership to its page for the auto-join switch; no roster here.
+ctx.provide("adminAccess", { membership: undefined });
 Object.assign(window, {
   conversationFixture: {
     report,

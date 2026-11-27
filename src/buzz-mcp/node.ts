@@ -12,7 +12,12 @@ import { decode } from "nostr-tools/nip19";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
+import { CANVAS_MAX_EVENT_BYTES } from "../features/channel-templates/canvas-limits.ts";
 import { eventsDto } from "../features/relay/events";
+import {
+  effectiveEditDto,
+  effectiveEditFilter,
+} from "../features/relay/effective-edit";
 import type {
   BuzzClient,
   BuzzEvent,
@@ -37,6 +42,46 @@ const MEDIA_FILE_LIMIT = 500 * 1024 * 1024;
 /** Images an agent can be shown. */
 const SHOWN_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
+/** The relay's own key, as its NIP-11 document at `relay` advertises it in
+ * `self` (the operator-contact `pubkey` is not one): what relay-signed records,
+ * such as channel rosters, are checked against.
+ * `undefined` when the document advertises none; rejects when the document
+ * cannot be read or its key is unusable, so a caller can tell an outage from a
+ * relay without a key. */
+export async function relayAuthority(relay: string) {
+  const response = await fetch(httpBase(relay), {
+    headers: { Accept: "application/nostr+json" },
+    redirect: "error",
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok)
+    throw new Error(`The relay answered ${response.status} for its key.`);
+  const nip11 = (await response.json()) as { self?: unknown } | null;
+  const author = nip11?.self;
+  if (author === undefined || author === null) return undefined;
+  if (typeof author === "string" && /^[0-9a-f]{64}$/.test(author))
+    return author;
+  throw new Error("The relay advertises an unusable key.");
+}
+
+/** `relayAuthority` that asks again until the relay answers with a key, then
+ * keeps it: a relay unreachable at startup does not disable its tools until restart. */
+export function relayAuthorityLookup(relay: string) {
+  let known: string | undefined;
+  return async () => {
+    if (known) return known;
+    const found = await relayAuthority(relay).catch((error: unknown) => {
+      if (known) return known;
+      throw error;
+    });
+    known ??= found;
+    return known;
+  };
+}
+
+const httpBase = (relay: string) =>
+  relay.replace(/^ws/, "http").replace(/\/+$/, "");
+
 export function nodeClient(
   options: Readonly<{
     relay: string;
@@ -54,7 +99,7 @@ export function nodeClient(
     ? (decode(options.key as `nsec1${string}`).data as Uint8Array)
     : hexToBytes(options.key);
   const pubkey = getPublicKey(secret);
-  const base = options.relay.replace(/^ws/, "http").replace(/\/+$/, "");
+  const base = httpBase(options.relay);
   const auth = options.auth
     ? (JSON.parse(options.auth) as string[])
     : undefined;
@@ -124,8 +169,19 @@ export function nodeClient(
 
   return {
     pubkey,
+    key: pubkey,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
+    async effectiveEdit(id, channel) {
+      return effectiveEditDto(
+        await request(
+          "/query",
+          JSON.stringify(effectiveEditFilter(id, channel)),
+        ),
+        id,
+        channel,
+      );
+    },
     async searchProfiles(query, limit) {
       const response = await send(
         "/profiles/search",
@@ -142,7 +198,15 @@ export function nodeClient(
       if (tags.some((tag) => tag[0] === "h"))
         tags.push(["ms", String(Date.now() % 1000)]);
       if (auth) tags.push(auth);
-      return post(sign({ ...event, tags }));
+      const signed = sign({ ...event, tags });
+      // Escaping can carry Canvas content within its limit past the frame.
+      if (
+        signed.kind === 40100 &&
+        new TextEncoder().encode(JSON.stringify(signed)).length >
+          CANVAS_MAX_EVENT_BYTES
+      )
+        throw new Error("The canvas event is too large to publish.");
+      return post(signed);
     },
     async upload(data, mime) {
       const hash = sha256(data);
@@ -179,7 +243,7 @@ export function nodeClient(
       const name = input.trim().startsWith(prefix)
         ? input.trim().slice(prefix.length)
         : input.trim();
-      if (!/^[0-9a-f]{64}(\.[a-z0-9]{1,8}|\.thumb\.jpg)?$/.test(name))
+      if (!/^[0-9a-f]{64}(\.[a-z0-9]{1,8}|\.thumb\.(?:jpg|webp))?$/.test(name))
         throw new Error("Agents fetch only their community's media");
       const blossom = sign({
         kind: 24242,
@@ -243,7 +307,7 @@ export function nodeClient(
           createWriteStream(partial),
         );
         if (
-          !name.endsWith(".thumb.jpg") &&
+          !/\.thumb\.(?:jpg|webp)$/.test(name) &&
           hash.digest("hex") !== name.slice(0, 64)
         )
           throw new Error("Media did not match its SHA-256");
@@ -298,20 +362,26 @@ export function nodeClient(
           heads.set(d, event);
       }
       const entries: Memory[] = [];
+      const deleted: { slug: string; createdAt: number }[] = [];
       for (const event of heads.values()) {
         try {
           const entry = JSON.parse(decrypt(event.content, key));
           const body = entry.slug === "core" ? entry.profile : entry.value;
-          if (typeof entry.slug === "string" && typeof body === "string")
+          if (typeof entry.slug !== "string") continue;
+          if (typeof body === "string")
             entries.push({
               slug: entry.slug,
               body,
               createdAt: event.created_at,
             });
+          // A write that recreates a deleted slug must follow its tombstone.
+          else if (body === null && entry.slug !== "core")
+            deleted.push({ slug: entry.slug, createdAt: event.created_at });
         } catch {}
       }
       return {
         entries: entries.sort((a, b) => a.slug.localeCompare(b.slug)),
+        ...(deleted.length ? { deleted } : {}),
         partial: events.length >= MEMORY_LIMIT,
       };
     },

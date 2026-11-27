@@ -1,7 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type {
+  ConversationExtensions,
+  ConversationWorkspaceProps,
+} from "../../features/conversation/contracts";
 import {
   ConversationChannel,
   ConversationComposer,
@@ -12,14 +22,23 @@ import { MessageManagementStatus } from "../../features/messages/MessageManageme
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { usePendingRequest } from "../../features/messages/use-pending-request";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
+import type { ThreadPanelProps } from "../../features/messages/ThreadPanel";
 import { ChannelBody } from "./ChannelBody";
 import { SoloColumn } from "../../features/solo/SoloPresentation";
-import type { ConversationTab as Tab } from "./useChannelTabState";
+import { rootOfTab, type ConversationTab as Tab } from "./useChannelTabState";
+import { ComposerScopeProvider } from "../../features/messages/composer-overlay";
+import { LayerReader } from "../../features/messages/LayerReader";
 import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
 
 type ConversationTabProps = {
   tab: Tab;
+  intro?: ReactNode;
+  /** The channel timeline and a thread tab show it, not a thread a
+   * conversation tab opens in place. */
+  trailing?: ConversationWorkspaceProps["trailing"];
+  subthreadId?: string | undefined;
+  latestRequest?: AbortSignal | undefined;
   active: boolean;
   /** Showing the tab visits its conversation, as Channels does. */
   visit?: boolean | undefined;
@@ -39,10 +58,16 @@ type ConversationTabProps = {
   onRetryNavigation?: (() => void) | undefined;
   onResolvedRoot?: ((rootId: string) => void) | undefined;
   onDifferentThread?: ((requested: string, kept: string) => void) | undefined;
+  /** Where a thread shown here lives, when it can open there. */
+  parent?: ThreadPanelProps["parent"];
 };
 /** Each secondary conversation retains its own editing and media-review scope. */
 export function ConversationTab({
   tab,
+  intro,
+  trailing,
+  subthreadId,
+  latestRequest,
   active,
   visit = true,
   focusOnMount = true,
@@ -59,6 +84,7 @@ export function ConversationTab({
   onRetryNavigation,
   onResolvedRoot,
   onDifferentThread,
+  parent,
 }: ConversationTabProps) {
   // A saved reply intent belongs to the previous visit, not this restoration;
   // a renamed or merged copy of the tab carries the same request.
@@ -69,6 +95,12 @@ export function ConversationTab({
   );
   if (reply !== restoredReply.current) restoredReply.current = undefined;
   const soloConversation = channel.channelType === "solo";
+  // Likewise a saved unread request.
+  const unread = tab.kind === "thread" ? tab.unreadRequest : undefined;
+  const restoredUnread = useRef(
+    initial?.kind === "thread" ? initial.unreadRequest : undefined,
+  );
+  if (unread !== restoredUnread.current) restoredUnread.current = undefined;
   // Likewise a saved reveal belongs to the opening that asked for it.
   const restoredReveal = useRef(initial?.revealRequest);
   if (tab.revealRequest !== restoredReveal.current)
@@ -107,6 +139,22 @@ export function ConversationTab({
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
   const media = useMediaReview();
+  // A retained tab re-renders with its page. Its memoized rows open links and
+  // threads through stable openers that consult the latest handlers when chosen.
+  const latest = useRef({ openLink, openThread });
+  useLayoutEffect(() => {
+    latest.current = { openLink, openThread };
+  });
+  const onOpenLink = useCallback(
+    (url: string, origin?: MessageLinkOrigin) =>
+      latest.current.openLink(url, origin),
+    [],
+  );
+  const onOpenThread = useCallback<typeof openThread>(
+    (messageId, rootId, intent) =>
+      latest.current.openThread(messageId, rootId, intent),
+    [],
+  );
   return (
     <ConversationChannel
       session={session}
@@ -115,7 +163,7 @@ export function ConversationTab({
       channel={channel}
       active={active && visit}
       interactions={{
-        onOpenLink: openLink,
+        onOpenLink,
         canOpenLink,
         onOpenMediaReview: media.open,
       }}
@@ -128,57 +176,84 @@ export function ConversationTab({
       >
         <MessageManagementStatus />
         {tab.kind === "thread" ? (
-          <ConversationThread
-            active={active}
-            messageId={tab.messageId}
-            navigation={navigation}
-            retainThread
-            tabbed
-            onRetryNavigation={onRetryNavigation}
-            onResolvedRoot={onResolvedRoot}
-            onDifferentThread={onDifferentThread}
-            replyRequest={reply === restoredReply.current ? undefined : reply}
-            focusRequest={focusRequest}
-            revealSelected={threadReveal !== undefined}
-            revealRequest={threadReveal}
-            close={close}
-          />
-        ) : target && inTimeline === false ? (
-          <ConversationThread
-            active={active}
-            messageId={target}
-            retainThread
-            tabbed
-            revealSelected
-            revealRequest={revealRequest}
-            close={close}
-          />
-        ) : (
-          <SoloColumn enabled={soloConversation}>
-            <ChannelBody
-              viewer={session.viewer}
-              cached={!!channel.cached}
-              // The composer below mounts TypingIndicator for a live channel.
-              activityLane={!channel.cached}
-              onOpenThread={openThread}
-              revealMessageId={sent}
-              // Mount the list once, at the message, not while it is sought.
-              holding={!!target && inTimeline === undefined}
-              inlineTarget={
-                target &&
-                reveal &&
-                reveal.key === revealKey &&
-                !reveal.signal.aborted
-                  ? { messageId: target, signal: reveal.signal }
-                  : undefined
+          // The thread's own view, for the details its rows open.
+          <ComposerScopeProvider rootId={rootOfTab(tab)} shown={active}>
+            <ConversationThread
+              intro={intro}
+              trailing={trailing}
+              latestRequest={active ? latestRequest : undefined}
+              active={active}
+              shown={active}
+              messageId={tab.messageId}
+              subthreadId={subthreadId}
+              sourceThreadId={subthreadId ? tab.rootId : undefined}
+              navigation={navigation}
+              retainThread
+              tabbed
+              onRetryNavigation={onRetryNavigation}
+              onResolvedRoot={onResolvedRoot}
+              onDifferentThread={onDifferentThread}
+              replyRequest={reply === restoredReply.current ? undefined : reply}
+              focusRequest={focusRequest}
+              revealSelected={threadReveal !== undefined}
+              revealRequest={threadReveal}
+              unreadRequest={
+                unread === restoredUnread.current ? undefined : unread
               }
-              marksRead={opening?.markRead !== false}
+              close={close}
+              parent={parent}
             />
-            <ConversationComposer
-              onSend={setSent}
-              {...(focusRequest ? { focusRequest } : {})}
-            />
-          </SoloColumn>
+            <LayerReader channelId={channel.id} />
+          </ComposerScopeProvider>
+        ) : (
+          // The address names no view in a conversation tab, so its details
+          // open in place.
+          <ComposerScopeProvider local shown={active}>
+            {target && inTimeline === false ? (
+              <ConversationThread
+                intro={intro}
+                active={active}
+                shown={active}
+                messageId={target}
+                retainThread
+                tabbed
+                revealSelected
+                revealRequest={revealRequest}
+                close={close}
+                parent={parent}
+              />
+            ) : (
+              <SoloColumn enabled={soloConversation}>
+                <ChannelBody
+                  intro={intro}
+                  trailing={trailing}
+                  latestRequest={active ? latestRequest : undefined}
+                  viewer={session.viewer}
+                  cached={!!channel.cached}
+                  // The composer below mounts TypingIndicator for a live channel.
+                  onOpenThread={onOpenThread}
+                  revealMessageId={sent}
+                  // Mount the list once, at the message, not while it is sought.
+                  holding={!!target && inTimeline === undefined}
+                  inlineTarget={
+                    target &&
+                    reveal &&
+                    reveal.key === revealKey &&
+                    !reveal.signal.aborted
+                      ? { messageId: target, signal: reveal.signal }
+                      : undefined
+                  }
+                  marksRead={opening?.markRead !== false}
+                />
+                <ConversationComposer
+                  // Shown follows the tab, not whether showing it visits the chat.
+                  shown={active}
+                  onSend={setSent}
+                  {...(focusRequest ? { focusRequest } : {})}
+                />
+              </SoloColumn>
+            )}
+          </ComposerScopeProvider>
         )}
       </section>
     </ConversationChannel>

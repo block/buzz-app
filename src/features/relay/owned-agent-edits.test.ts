@@ -16,10 +16,12 @@ import { MessageProjection } from "./message-projection";
 import { createRelayProfiler } from "./profiling";
 import {
   bounds,
+  completeHeads,
   flush,
   keypair,
   message,
   metadata,
+  profile,
   roster,
   scriptedTransport,
   signed,
@@ -108,10 +110,137 @@ it("admits owner edits only after verifying the current signed profile, and revo
   }
 });
 
-it("publishes an owned-agent edit through the real session and refuses a foreign agent", async () => {
+it.each(["member", "guest"])(
+  "publishes a %s owner's agent edit through the real session and refuses a foreign agent",
+  async (role) => {
+    const owner = keypair(),
+      agent = keypair(),
+      stranger = keypair(),
+      relay = keypair();
+    const wire = scriptedTransport(owner.pubkey, relay.pubkey);
+    const published: RelayEvent[] = [];
+    let live!: LiveCallbacks;
+    const connection = createRelaySession(
+      {
+        ...wire.transport,
+        archiveAuthority: relay.pubkey,
+        writer: {
+          sign: async (template) => signed(owner, template),
+          publish: async (event) => {
+            published.push(event);
+          },
+        },
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { outboxStorage: { load: () => [], save() {} } },
+    );
+    const profile = (author: typeof agent, controller: typeof owner) =>
+      eventDto(
+        signed(author, {
+          kind: 0,
+          created_at: 10,
+          content: "{}",
+          tags: [
+            [
+              "auth",
+              controller.pubkey,
+              "",
+              bytesToHex(
+                schnorr.sign(
+                  createHash("sha256")
+                    .update(`nostr:agent-auth:${author.pubkey}:`)
+                    .digest(),
+                  controller.secret,
+                ),
+              ),
+            ],
+          ],
+        }),
+      );
+    const original = message(agent, "c", "Whole answer", 11);
+    const foreign = message(stranger, "c", "Foreign answer", 11);
+    try {
+      connection.session.channels.ensure("c");
+      live.receive([
+        signed(relay, {
+          kind: 39002,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["d", "c"],
+            ["p", owner.pubkey, "", role],
+            ["p", agent.pubkey, "", "bot"],
+            ["p", stranger.pubkey, "", "bot"],
+          ],
+        }),
+        original,
+        foreign,
+        profile(agent, owner),
+        profile(stranger, stranger),
+      ]);
+      completeHeads(wire, relay);
+      await connection.session.outbox?.ready();
+      // A guest's edit is signed only once the directory's own attestation
+      // names its owner; editOwnedAgent's check can settle first.
+      await vi.waitFor(() =>
+        expect(connection.session.profiles.owner?.(agent.pubkey)).toBe(
+          owner.pubkey,
+        ),
+      );
+      await expect(
+        connection.session.messages.editOwnedAgent(
+          foreign.id,
+          "Forged",
+          foreign.id,
+        ),
+      ).rejects.toThrow("verified owner");
+      expect(published.filter((event) => event.kind === 40003)).toEqual([]);
+      const id = await connection.session.messages.editOwnedAgent(
+        original.id,
+        "Spoken",
+        original.id,
+      );
+      await vi.waitFor(() =>
+        expect(published.some((event) => event.id === id)).toBe(true),
+      );
+      const edit = published.find((event) => event.id === id);
+      if (!edit) throw new Error("Missing owner edit");
+      expect(edit).toMatchObject({
+        kind: 40003,
+        pubkey: owner.pubkey,
+        content: "Spoken",
+      });
+      expect(edit.tags).toContainEqual(["e", original.id]);
+      live.receive([edit]);
+      await vi.waitFor(() =>
+        expect(
+          connection.session.channels
+            .window("c")
+            .rows.find((row) => row.id === original.id)?.content,
+        ).toBe("Spoken"),
+      );
+      const removed = await connection.session.messages.editOwnedAgent(
+        original.id,
+        "",
+        original.id,
+      );
+      await vi.waitFor(() =>
+        expect(
+          published.some((event) => event.id === removed && event.kind === 5),
+        ).toBe(true),
+      );
+    } finally {
+      connection.dispose();
+    }
+  },
+);
+
+it("fails a guest's agent edit sent before the directory verifies its owner, and publishes the retry", async () => {
   const owner = keypair(),
     agent = keypair(),
-    stranger = keypair(),
     relay = keypair();
   const wire = scriptedTransport(owner.pubkey, relay.pubkey);
   const published: RelayEvent[] = [];
@@ -133,84 +262,83 @@ it("publishes an owned-agent edit through the real session and refuses a foreign
     },
     { outboxStorage: { load: () => [], save() {} } },
   );
-  const profile = (author: typeof agent, controller: typeof owner) =>
-    eventDto(
-      signed(author, {
-        kind: 0,
-        created_at: 10,
-        content: "{}",
-        tags: [
-          [
-            "auth",
-            controller.pubkey,
-            "",
-            bytesToHex(
-              schnorr.sign(
-                createHash("sha256")
-                  .update(`nostr:agent-auth:${author.pubkey}:`)
-                  .digest(),
-                controller.secret,
-              ),
-            ),
-          ],
-        ],
-      }),
-    );
   const original = message(agent, "c", "Whole answer", 11);
-  const foreign = message(stranger, "c", "Foreign answer", 11);
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${agent.pubkey}:`),
+  );
+  let verify!: (digest: ArrayBuffer) => void;
+  const verification = new Promise<ArrayBuffer>((resolve) => {
+    verify = resolve;
+  });
+  // Hold the directory's attestation; editOwnedAgent's own check still runs.
+  const attestation = vi
+    .spyOn(crypto.subtle, "digest")
+    .mockImplementationOnce(() => verification);
+  const { messages, outbox, profiles } = connection.session;
   try {
     connection.session.channels.ensure("c");
     live.receive([
-      roster(relay, "c", [owner.pubkey, agent.pubkey, stranger.pubkey], 1),
+      signed(relay, {
+        kind: 39002,
+        created_at: 1,
+        content: "",
+        tags: [
+          ["d", "c"],
+          ["p", owner.pubkey, "", "guest"],
+          ["p", agent.pubkey, "", "bot"],
+        ],
+      }),
       original,
-      foreign,
-      profile(agent, owner),
-      profile(stranger, stranger),
-    ]);
-    await connection.session.outbox?.ready();
-    await expect(
-      connection.session.messages.editOwnedAgent(
-        foreign.id,
-        "Forged",
-        foreign.id,
+      eventDto(
+        signed(agent, {
+          kind: 0,
+          created_at: 10,
+          content: "{}",
+          tags: [
+            [
+              "auth",
+              owner.pubkey,
+              "",
+              bytesToHex(schnorr.sign(new Uint8Array(digest), owner.secret)),
+            ],
+          ],
+        }),
       ),
-    ).rejects.toThrow("verified owner");
-    expect(published.filter((event) => event.kind === 40003)).toEqual([]);
-    const id = await connection.session.messages.editOwnedAgent(
+    ]);
+    expect(attestation).toHaveBeenCalledOnce();
+    await outbox?.ready();
+    const id = await messages.editOwnedAgent(
       original.id,
       "Spoken",
       original.id,
     );
     await vi.waitFor(() =>
-      expect(published.some((event) => event.id === id)).toBe(true),
+      expect(
+        outbox?.snapshot().find((item) => item.event.id === id),
+      ).toMatchObject({
+        delivery: "failed",
+        error: "You have read-only access to this channel.",
+      }),
     );
-    const edit = published.find((event) => event.id === id);
-    if (!edit) throw new Error("Missing owner edit");
-    expect(edit).toMatchObject({
+    expect(published).toEqual([]);
+    expect(profiles.owner?.(agent.pubkey)).toBeUndefined();
+    verify(digest);
+    await vi.waitFor(() =>
+      expect(profiles.owner?.(agent.pubkey)).toBe(owner.pubkey),
+    );
+    messages.retry(id);
+    await vi.waitFor(() =>
+      expect(published.map((event) => event.id)).toEqual([id]),
+    );
+    expect(published[0]).toMatchObject({
       kind: 40003,
       pubkey: owner.pubkey,
       content: "Spoken",
     });
-    expect(edit.tags).toContainEqual(["e", original.id]);
-    live.receive([edit]);
-    await vi.waitFor(() =>
-      expect(
-        connection.session.channels
-          .window("c")
-          .rows.find((row) => row.id === original.id)?.content,
-      ).toBe("Spoken"),
-    );
-    const removed = await connection.session.messages.editOwnedAgent(
-      original.id,
-      "",
-      original.id,
-    );
-    await vi.waitFor(() =>
-      expect(
-        published.some((event) => event.id === removed && event.kind === 5),
-      ).toBe(true),
-    );
   } finally {
+    verify(digest);
+    attestation.mockRestore();
     connection.dispose();
   }
 });
@@ -384,6 +512,55 @@ it.each(["head", "tail"])(
   },
 );
 
+it("refreshes an unopened channel's tail preview after its head changes", async () => {
+  const author = keypair(),
+    relay = keypair();
+  const wire = scriptedTransport(author.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const connection = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { prepared: true },
+  );
+  const original = message(author, "c", "Original", 11);
+  const edit = signed(author, {
+    kind: 40003,
+    created_at: 12,
+    content: "Edited",
+    tags: [
+      ["h", "c"],
+      ["e", original.id],
+    ],
+  });
+  const channels = connection.session.channels;
+  const preview = () =>
+    channels.list().channels.find((channel) => channel.id === "c")?.preview;
+  try {
+    live.receive([roster(relay, "c", [author.pubkey], 1), original]);
+    live.receive([eventDto(profile(keypair(), { name: "First" }))]);
+    await flush();
+    expect(preview()).toBe("Original");
+    channels.prepare?.("c");
+    wire
+      .next()
+      .respond([
+        original,
+        edit,
+        bounds(relay, "c", "head", { has_more: false, next_cursor: null }),
+      ]);
+    await flush();
+    live.receive([eventDto(profile(keypair(), { name: "Second" }))]);
+    await vi.waitFor(() => expect(preview()).toBe("Edited"));
+  } finally {
+    connection.dispose();
+  }
+});
+
 it.each(["actor", "p"])(
   "fetches a cold %s-attributed agent profile for owner-edited unread previews",
   async (attribution) => {
@@ -392,14 +569,17 @@ it.each(["actor", "p"])(
       relay = keypair();
     const wire = scriptedTransport(owner.pubkey, relay.pubkey);
     let live!: LiveCallbacks;
-    const connection = createRelaySession({
-      ...wire.transport,
-      archiveAuthority: relay.pubkey,
-      subscribe(callbacks) {
-        live = callbacks;
-        return { update() {}, retry() {}, dispose() {} };
+    const connection = createRelaySession(
+      {
+        ...wire.transport,
+        archiveAuthority: relay.pubkey,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
       },
-    });
+      { readStateFloor: () => 0 },
+    );
     const root = message(owner, "c", "Question", 10);
     const original = signed(relay, {
       kind: 9,
@@ -483,13 +663,16 @@ it("uses the same verified owner edit in the conversation, prompt history and un
     relay = keypair();
   const wire = scriptedTransport(owner.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
-  const connection = createRelaySession({
-    ...wire.transport,
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, retry() {}, dispose() {} };
+  const connection = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
     },
-  });
+    { readStateFloor: () => 0 },
+  );
   const root = message(owner, "c", "Question", 10);
   const original = signed(agent, {
     kind: 9,
@@ -566,6 +749,20 @@ it("uses the same verified owner edit in the conversation, prompt history and un
     expect(unread.activity("c").items?.[0]?.preview).toBe("Spoken");
     expect(unread.inbox().items?.[0]?.preview).toBe("Spoken");
     expect(changed).toHaveBeenCalled();
+    const stranger = keypair();
+    live.receive([
+      signed(stranger, {
+        kind: 0,
+        created_at: 12,
+        content: '{"name":"Stranger"}',
+        tags: [],
+      }),
+    ]);
+    await vi.waitFor(() =>
+      expect(
+        connection.session.profiles.snapshot().get(stranger.pubkey)?.name,
+      ).toBe("Stranger"),
+    );
     profile = eventDto(
       signed(agent, { kind: 0, created_at: 13, content: "{}", tags: [] }),
     );
@@ -574,6 +771,9 @@ it("uses the same verified owner edit in the conversation, prompt history and un
       expect(unread.activity("c").items?.[0]?.preview).toBe("Whole answer"),
     );
     expect(unread.inbox().items?.[0]?.preview).toBe("Whole answer");
+    expect(
+      view.snapshot().replies.find((row) => row.id === original.id)?.content,
+    ).toBe("Whole answer");
     expect(await history()).toContain('"content":"Whole answer"');
   } finally {
     connection.dispose();

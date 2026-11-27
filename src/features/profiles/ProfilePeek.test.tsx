@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+stubAvatarBrowserApis();
 import {
   act,
   cleanup,
@@ -10,7 +12,12 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { createRelaySession } from "../relay/session";
+import { createAgentChoices } from "../agents/choices";
+import { createAgentLibrary } from "../agents/library";
+import { localAgentsFixture } from "../agents/local-testing";
+import { createRelaySession, type RelaySession } from "../relay/session";
+import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
+import { newMessageLink } from "../direct-messages/message-person";
 import { ProfilePeek } from "./ProfilePeek";
 
 beforeEach(() => {
@@ -28,18 +35,42 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
 });
 const person = "a".repeat(64);
 const viewer = "b".repeat(64);
-function fixture() {
+/** Without `dm`, the viewer has no DM with the person yet. */
+function fixture(
+  agent = false,
+  agentChoices?: RelaySession["agentChoices"],
+  dm = true,
+) {
   const owner = createRelaySession(null);
+  const list = owner.session.channels.list();
   const open =
     vi.fn<(keys: readonly string[], signal: AbortSignal) => Promise<string>>();
   const onOpen = vi.fn(() => true);
   const session = {
     ...owner.session,
+    agentChoices: agentChoices ?? owner.session.agentChoices,
     directMessages: { ...owner.session.directMessages, available: true, open },
+    channels: {
+      ...owner.session.channels,
+      list: () => ({
+        ...list,
+        channels: dm
+          ? [
+              {
+                id: "dm-1",
+                name: "Morgan",
+                channelType: "dm" as const,
+                participants: [person],
+              },
+            ]
+          : [],
+      }),
+    },
   };
   const view = render(
     <>
@@ -48,7 +79,7 @@ function fixture() {
         name="Morgan"
         picture={undefined}
         pubkey={person}
-        agent={false}
+        agent={agent}
         session={session}
         viewer={viewer}
         channelId="source"
@@ -65,6 +96,57 @@ function fixture() {
   ).mockReturnValue(new DOMRect(100, 100, 40, 40));
   return { owner, open, onOpen, view };
 }
+
+it("offers Message for a hosted agent while owned community evidence is available", async () => {
+  const source = localAgentsFixture();
+  const lifetime = new AbortController();
+  const hosted = {
+    pubkey: person,
+    name: "Morgan",
+    owner: viewer,
+    relayUrl: "https://relay.example.test",
+  };
+  source.set({ hosted: [hosted] });
+  const choices = createAgentChoices({
+    scope: `${hosted.relayUrl}:${viewer}`,
+    library: createAgentLibrary(undefined).queries,
+    native: source,
+    signal: lifetime.signal,
+  });
+  const f = fixture(true, choices);
+  const user = userEvent.setup();
+  try {
+    expect(choices.snapshot().identities).toEqual([
+      {
+        pubkey: person,
+        name: "Morgan",
+        managed: false,
+        messageable: true,
+        execution: "remote",
+      },
+    ]);
+    f.open.mockResolvedValueOnce("hosted-dm");
+    await user.tab();
+    await screen.findByRole("dialog", { name: "Morgan profile preview" });
+    expect(screen.getByRole("button", { name: "Message" })).toBeVisible();
+    act(() => source.set({ hosted: [] }));
+    expect(screen.queryByRole("button", { name: "Message" })).toBeNull();
+    act(() => source.set({ hosted: [hosted] }));
+    fireEvent.click(screen.getByRole("button", { name: "Message" }));
+    expect(f.open).toHaveBeenCalledExactlyOnceWith(
+      [person],
+      expect.any(AbortSignal),
+    );
+    await waitFor(() =>
+      expect(f.onOpen).toHaveBeenCalledWith("buzz://channel/hosted-dm"),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } finally {
+    f.view.unmount();
+    lifetime.abort();
+    f.owner.dispose();
+  }
+});
 
 it("tabs through both actions, restores the avatar on Escape, and resumes after the preview", async () => {
   const f = fixture();
@@ -148,6 +230,24 @@ it("cancels a pending open when the preview is dismissed and ignores its late re
   }
 });
 
+it("opens a draft to someone without a DM, creating nothing until it is sent", async () => {
+  const f = fixture(false, undefined, false);
+  const user = userEvent.setup();
+  try {
+    await user.tab();
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Message" }));
+    await waitFor(() =>
+      expect(f.onOpen).toHaveBeenCalledExactlyOnceWith(newMessageLink(person)),
+    );
+    expect(f.open).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } finally {
+    f.view.unmount();
+    f.owner.dispose();
+  }
+});
+
 it("records the originating avatar as the profile navigation focus target", async () => {
   const f = fixture();
   const user = userEvent.setup();
@@ -164,5 +264,36 @@ it("records the originating avatar as the profile navigation focus target", asyn
   } finally {
     f.view.unmount();
     f.owner.dispose();
+  }
+});
+
+it("opens on hover over revealed message actions only in compact density", async () => {
+  vi.useFakeTimers();
+  const rest = () => act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+  const f = fixture();
+  const avatar = screen.getByRole("button", { name: "Avatar" });
+  // The row's hover toolbar is showing, as it is while the pointer is anywhere
+  // in a compact row.
+  f.view.container.setAttribute("data-actions-revealed", "");
+  try {
+    fireEvent.mouseEnter(avatar);
+    fireEvent.mouseMove(avatar, { movementX: 4 });
+    await rest();
+    expect(avatar).not.toHaveAttribute("data-popup-open");
+    fireEvent.mouseLeave(avatar);
+    act(() =>
+      document.documentElement.setAttribute("data-message-density", "compact"),
+    );
+    fireEvent.mouseEnter(avatar);
+    fireEvent.mouseMove(avatar, { movementX: 4 });
+    await rest();
+    expect(
+      screen.getByRole("dialog", { name: "Morgan profile preview" }),
+    ).toBeVisible();
+  } finally {
+    document.documentElement.removeAttribute("data-message-density");
+    f.view.unmount();
+    f.owner.dispose();
+    vi.useRealTimers();
   }
 });

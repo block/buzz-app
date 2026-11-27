@@ -1,4 +1,7 @@
 import type { EventData } from "./events";
+import { channelRowChannel, channelRowKind } from "./membership";
+import { reactionTarget } from "./reaction-target";
+import { channelSourceKind } from "./channel-kinds";
 
 const AUXILIARY = new Set([5, 7, 9005, 40003, 39005]);
 /** Visibility, not a second membership model. Reference-only auxiliaries need
@@ -10,15 +13,56 @@ export function eventVisibility(
 ) {
   const memo = new Map<string, boolean>();
   const visiting = new Set<string>();
+  const homesById = new Map<string, string | undefined>();
+  function home(event: EventData, depth = 0): string | undefined {
+    if (homesById.has(event.id)) return homesById.get(event.id);
+    if (depth >= 32 || !channelSourceKind(event.kind)) return undefined;
+    homesById.set(event.id, undefined);
+    const homes = event.tags.filter(([name]) => name === "h");
+    if (homes.length) {
+      const channel = homes.length === 1 ? homes[0]?.[1] : undefined;
+      homesById.set(event.id, channel);
+      return channel;
+    }
+    if (!AUXILIARY.has(event.kind)) return undefined;
+    const targets =
+      event.kind === 7
+        ? [reactionTarget(event)]
+        : event.tags.filter(([name]) => name === "e").map((tag) => tag[1]);
+    let channel: string | undefined;
+    for (const id of targets) {
+      const parent = id ? find(id) : undefined;
+      const source = parent && home(parent, depth + 1);
+      if (!source || (channel && source !== channel)) return undefined;
+      channel = source;
+    }
+    homesById.set(event.id, channel);
+    return channel;
+  }
   function visible(event: EventData): boolean {
+    const isRow = channelRowKind(event.kind);
+    const rowChannel = isRow ? channelRowChannel(event) : undefined;
+    if (isRow && !rowChannel) return false;
     const cached = memo.get(event.id);
     if (cached !== undefined) return cached;
     if (visiting.has(event.id) || visiting.size >= 32) return false;
+    // Row membership already checked every tag and found exactly one home.
+    if (rowChannel) {
+      const allowed = canAccess(rowChannel);
+      memo.set(event.id, allowed);
+      return allowed;
+    }
     visiting.add(event.id);
-    const channels = event.tags.flatMap(([name, value]) =>
-      name === "h" && value ? [value] : [],
-    );
-    if ([39000, 39001, 39002].includes(event.kind)) {
+    // The relay stores kind 0 globally and ignores a stray h tag
+    // (is_global_only_kind), so a profile is never a channel's evidence.
+    const channels =
+      event.kind === 0
+        ? []
+        : event.tags.flatMap(([name, value]) =>
+            name === "h" && value ? [value] : [],
+          );
+    // Relay-signed per-channel state names its channel in d, not h.
+    if ([39000, 39001, 39002, 30623].includes(event.kind)) {
       const channel = event.tags.find((tag) => tag[0] === "d")?.[1];
       if (channel) channels.push(channel);
     }
@@ -35,10 +79,35 @@ export function eventVisibility(
           // cannot launder a second denied/unknown target in the same raw event.
           return !!parent && visible(parent);
         });
+      // A readable target does not authorize a different claimed source. The
+      // reaction's last valid e is authoritative; deletion targets all apply.
+      const scopedTargets =
+        event.kind === 7 ? [reactionTarget(event)] : targets;
+      if (allowed && channels.length)
+        allowed =
+          channels.length === 1 &&
+          scopedTargets.length > 0 &&
+          scopedTargets.every((id) => {
+            const parent = id ? find(id) : undefined;
+            return !!parent && home(parent) === channels[0];
+          });
     }
     visiting.delete(event.id);
     memo.set(event.id, allowed);
     return allowed;
   }
   return visible;
+}
+/** Reads each channel's access once: for a visibility used in one synchronous
+ * pass, where access cannot change. */
+export function accessOnce(canAccess: (channelId: string) => boolean) {
+  const answers = new Map<string, boolean>();
+  return (channelId: string) => {
+    let allowed = answers.get(channelId);
+    if (allowed === undefined) {
+      allowed = canAccess(channelId);
+      answers.set(channelId, allowed);
+    }
+    return allowed;
+  };
 }

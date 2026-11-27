@@ -1,20 +1,23 @@
-import { communityDestination } from "./destination";
+import { communityDestination, enteredRelayOrigin } from "./destination";
 
 export type InviteLink = Readonly<{
   community: string;
   code: string;
 }>;
 
-/** Parse a relay invite without treating its URL as authority to join. */
+/** Parse a relay invite (`buzz://join`) or a code-less community link
+ * (`buzz://connect`, `buzz://add-community`) without treating its URL as
+ * authority to join. */
 export function parseInviteLink(input: string): InviteLink | null {
   if (input.length > 4096) return null;
   // Windows can supply an explicit root path before the query.
-  if (!/^buzz:\/\/join\/?\?/.test(input)) return null;
+  const form = /^buzz:\/\/(join|connect|add-community)\/?\?/.exec(input)?.[1];
+  if (!form) return null;
   try {
     const url = new URL(input);
     if (
       url.protocol !== "buzz:" ||
-      url.host !== "join" ||
+      url.host !== form ||
       (url.pathname !== "" && url.pathname !== "/") ||
       url.username ||
       url.password ||
@@ -22,31 +25,30 @@ export function parseInviteLink(input: string): InviteLink | null {
     )
       return null;
     const relay = url.searchParams.getAll("relay");
+    if (relay.length !== 1 || !relay[0]) return null;
+    // Unlike the reference's broad URL parser, the target transport is HTTPS-only.
+    // Delegate origin validation to the same gate used by the manual join dialog.
+    const community = communityDestination(relay[0]).url;
+    if (form !== "join") return { community, code: "" };
     const codes = url.searchParams.getAll("code");
     const receipts = url.searchParams.getAll("policy_receipt");
     if (
-      relay.length !== 1 ||
       codes.length !== 1 ||
       receipts.length > 1 ||
       !codes[0] ||
       codes[0].length > 256 ||
-      !relay[0] ||
       (receipts.length === 1 && !receipts[0])
     )
       return null;
-    // Unlike the reference's broad URL parser, the target transport is HTTPS-only.
-    // Delegate origin validation to the same gate used by the manual join dialog.
-    const community = communityDestination(relay[0]).url;
-    return {
-      community,
-      code: codes[0],
-    };
+    return { community, code: codes[0] };
   } catch {
     return null;
   }
 }
 
-/** A pasted invite: the app link, the relay's invite page, or a bare community address. */
+/** Typed or pasted community input: the app link, the relay's invite page, or
+ * a community address, where a bare host is a secure relay. A typed address
+ * never resolves an alias. */
 export function parsePastedInvite(input: string): InviteLink | null {
   const value = input.trim();
   if (value.length > 4096) return null;
@@ -67,11 +69,37 @@ export function parsePastedInvite(input: string): InviteLink | null {
         : null;
     }
   } catch {
-    // Not a URL; a bare address still fails closed below.
+    // Not a URL; a bare host is read as wss:// below.
   }
+  // Looking a code up as a host would send it to DNS and fail as a lookup.
+  if (isBareInviteCode(value)) return null;
   try {
-    return { community: communityDestination(value).url, code: "" };
+    return { community: enteredRelayOrigin(value), code: "" };
   } catch {
     return null;
   }
+}
+
+/** The relay mints a code as `v2.` (buzz-core `V2_PREFIX`) and 32 random
+ * bytes as unpadded base64url: 43 characters. A scheme-less value whose
+ * normalized hostname has that shape is a code pasted without its link,
+ * whatever its case, final dot, port or root slash; `v2.dev`,
+ * `v2.relay.example` and `wss://v2.<code>` stay addresses. */
+function isBareInviteCode(value: string) {
+  try {
+    return (
+      !value.includes("://") &&
+      /^v2\.[\w-]{43}$/.test(new URL(enteredRelayOrigin(value)).hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Refusal copy for input `parsePastedInvite` cannot read: a bare invite code
+ * asks for its whole link, which also names the community. */
+export function pastedInviteError(input: string, fallback: string) {
+  return isBareInviteCode(input)
+    ? "Paste the whole invite link, not only its code."
+    : fallback;
 }

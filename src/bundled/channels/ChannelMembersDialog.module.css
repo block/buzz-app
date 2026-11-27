@@ -1,22 +1,63 @@
+[role="dialog"]:has(.generalAccess, .accessControl) {
+  /* Reserve room for access controls as text grows; retain the usual gutter
+     when the viewport has enough height. Narrow windows retain the fallback. */
+  --dialog-top: clamp(1rem, calc(100dvh - 40rem), 8rem);
+}
 .layout {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   gap: var(--space-4);
+  /* When enlarged text leaves too little room, scroll the whole layout. */
+  overflow-y: auto;
+  /* Contain the member list's edge bleed so the fallback never scrolls sideways. */
+  --member-bleed: min(
+    var(--dialog-padding),
+    var(--space-control-inset) +
+    var(--space-1)
+  );
+  margin-inline: calc(-1 * var(--member-bleed));
+  padding-inline: var(--member-bleed);
+}
+.searchControls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.memberSearch {
+  flex: 1;
+  min-width: min(100%, 10rem);
+}
+/* Only the member list (flex: 1, below) shrinks to fit. */
+.layout > * {
+  flex-shrink: 0;
+}
+/* Action feedback above the list stacks tighter than the layout's sections. */
+.feedback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 .memberList {
+  container: member-list / size;
+  /* Contain absolutely positioned descendants (sr-only pager text) here.
+     Otherwise they reach the overflow: hidden dialog body, giving it hidden
+     scroll overflow that highlight scrolling and scroll anchoring then move,
+     pushing the search field and the feedback above this list out of view. */
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
+  /* Keep a usable results area before the whole layout scrolls. */
+  min-height: calc(var(--size-row) * 2);
   overflow: auto;
+  /* Reveal rows below sticky group headings, including their compact actions. */
+  scroll-padding-block-start: calc(var(--space-6) + var(--space-4));
   gap: var(--space-4);
   /* Align headings with the field while retaining row focus clearance. */
-  margin-inline: calc(
-    -1 *
-    min(var(--dialog-padding), var(--space-control-inset) + var(--space-1))
-  );
+  margin-inline: calc(-1 * var(--member-bleed));
   padding: 0 var(--space-1) var(--space-6);
 }
 .memberList > * {
@@ -40,6 +81,12 @@
   padding-block-start: var(--space-2);
   padding-inline: var(--space-control-inset);
   background: var(--surface-popover);
+}
+/* Short lists cannot spare room for a wrapped label and a complete action. */
+@container member-list (max-height: 8rem) {
+  .groupHeading {
+    position: static;
+  }
 }
 .listNote {
   padding-inline: var(--space-control-inset);
@@ -76,16 +123,6 @@
   align-self: stretch;
   flex-shrink: 0;
 }
-@media (hover: hover) and (pointer: fine) {
-  .memberActions {
-    opacity: 0;
-    pointer-events: none;
-  }
-  .member:is(:hover, :focus-within, [data-menu-open]) .memberActions {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
 .profile {
   flex: 1;
   min-width: 0;
@@ -121,18 +158,6 @@
   inset: 0;
   display: flex;
 }
-.identity {
-  display: block;
-  overflow-wrap: anywhere;
-}
-.identityName {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-  vertical-align: bottom;
-}
 .name {
   display: block;
   overflow: hidden;
@@ -140,31 +165,93 @@
   white-space: nowrap;
 }
 .manager {
+  display: block;
   color: var(--text-subtle);
   font-size: var(--text-caption);
 }
 .manager > * {
   pointer-events: auto;
 }
-.publicKey {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  opacity: 0;
-  visibility: hidden;
+
+.generalAccess {
+  min-width: 0;
 }
-.metadata {
-  display: block;
-  overflow: hidden;
+/* Read-only explanations retain their visible-content spacing. */
+.generalAccess > :where(.accessRow) ~ * {
+  margin-block-start: var(--space-3);
 }
-.metadataContent {
-  position: relative;
-  display: block;
-  min-height: calc(var(--text-body-sm) * var(--text-body-sm--line-height));
+/* Recovery follows the access row without widening its Select. */
+.accessFeedback {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  padding-inline: var(--space-control-inset);
 }
-.member:is(:hover, :focus-within) .publicKey {
-  opacity: 1;
-  visibility: visible;
+.accessFeedback > p {
+  width: 100%;
+}
+.accessControl {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-row-gap);
+  padding: var(--space-half) 0 var(--space-half) var(--space-control-inset);
+  min-width: 0;
+  max-width: 100%;
+}
+.accessIdentity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-row-gap);
+  flex: 1;
+  min-width: min(100%, 10rem);
+}
+.accessSummary {
+  flex: 1;
+  min-width: 0;
+}
+.accessRow {
+  display: grid;
+  grid-template-columns: var(--size-control-sm) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-row-gap);
+  padding: var(--space-half) 0 var(--space-half) var(--space-row-gap);
+}
+.accessIcon {
+  display: flex;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-sm);
+  min-height: var(--size-control-sm);
+  color: var(--text-subtle);
+}
+.accessRow > .accessIcon {
+  width: 100%;
+}
+.generalAccess > .accessRow {
+  padding: var(--space-half) var(--space-control-inset);
+}
+.accessAudience {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: var(--space-1);
+}
+.accessAudience > * {
+  max-width: 100%;
+}
+.accessControl > .accessAudience {
+  margin-inline-start: auto;
+}
+@media (max-width: 480px) {
+  .member:has(> .addAction[data-split]) .staticProfile > span > span {
+    flex-direction: column;
+    align-items: start;
+    gap: 0;
+  }
+  .member:has(> .addAction[data-split]) .name {
+    max-width: 100%;
+  }
 }

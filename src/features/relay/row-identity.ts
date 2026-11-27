@@ -29,6 +29,11 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.sourceContent === right.sourceContent &&
     left.agentEnvelope === right.agentEnvelope &&
     left.audience === right.audience &&
+    left.relayedFrom?.agent === right.relayedFrom?.agent &&
+    left.relayedFrom?.channelId === right.relayedFrom?.channelId &&
+    left.relayedFrom?.verified === right.relayedFrom?.verified &&
+    left.relayedFrom?.notice === right.relayedFrom?.notice &&
+    left.request === right.request &&
     !!left.diff === !!right.diff &&
     left.diff?.filePath === right.diff?.filePath &&
     left.diff?.repoUrl === right.diff?.repoUrl &&
@@ -81,6 +86,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     ) &&
     left.threadRootId === right.threadRootId &&
     left.replyParentId === right.replyParentId &&
+    left.mediaTargetUrl === right.mediaTargetUrl &&
     left.sentFromThread?.rootId === right.sentFromThread?.rootId &&
     left.sentFromThread?.excerpt === right.sentFromThread?.excerpt &&
     left.replyCount === right.replyCount &&

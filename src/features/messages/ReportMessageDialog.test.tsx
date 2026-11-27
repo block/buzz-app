@@ -12,6 +12,8 @@ import {
   keypair,
   message,
   roster,
+  completeHeads,
+  flush,
   scriptedTransport,
   signed,
 } from "../relay/testing";
@@ -31,6 +33,7 @@ const release = vi.fn(() => {
 const keepMounted = vi.fn((_id: string) => release);
 afterEach(async () => {
   cleanup();
+  vi.unstubAllGlobals();
   for (const owner of owners.splice(0)) owner.dispose();
   await waitFor(() =>
     expect(release).toHaveBeenCalledTimes(keepMounted.mock.calls.length),
@@ -40,11 +43,12 @@ afterEach(async () => {
   keepMounted.mockClear();
 });
 
-function mount(publish: (event: RelayEvent) => Promise<void>) {
+async function mount(publish: (event: RelayEvent) => Promise<void>) {
   let live: LiveCallbacks | undefined;
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const owner = createRelaySession(
     {
-      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      ...wire.transport,
       writer: { sign: async (template) => signed(viewer, template), publish },
       subscribe(callbacks) {
         live = callbacks;
@@ -56,6 +60,8 @@ function mount(publish: (event: RelayEvent) => Promise<void>) {
   owners.push(owner);
   owner.session.channels.ensure("c");
   live?.receive([roster(relay, "c", [viewer.pubkey], 1), root]);
+  completeHeads(wire, relay, [root]);
+  await flush();
   const row = owner.session.channels.window("c").rows[0];
   if (!row) throw new Error("Missing row");
   const tree = (active: boolean) => (
@@ -78,6 +84,33 @@ function mount(publish: (event: RelayEvent) => Promise<void>) {
   return { present: (active: boolean) => view.rerender(tree(active)) };
 }
 
+it("keeps coarse-pointer entry on the dialog until a reason is chosen", async () => {
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    matches: media === "(pointer: coarse)",
+    media,
+    onchange: null,
+    addListener() {},
+    removeListener() {},
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent: () => true,
+  }));
+  const publish = vi.fn(async () => {});
+  const user = userEvent.setup();
+  await mount(publish);
+  await user.click(
+    screen.getByRole("button", { name: "More message actions" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Report" }));
+  const dialog = await screen.findByRole("dialog", { name: "Report message" });
+  await waitFor(() => expect(document.activeElement).toBe(dialog));
+  const reason = screen.getByRole("radio", { name: "Spam" });
+  expect(reason.getAttribute("aria-checked")).toBe("false");
+  await user.click(reason);
+  expect(reason.getAttribute("aria-checked")).toBe("true");
+  expect(publish).not.toHaveBeenCalled();
+});
+
 it("reports from the message menu, keeps input after failure and confirms success", async () => {
   const user = userEvent.setup();
   let settle!: (error?: Error) => void;
@@ -87,11 +120,16 @@ it("reports from the message menu, keeps input after failure and confirms succes
         settle = (error) => (error ? reject(error) : resolve());
       }),
   );
-  mount(publish);
+  await mount(publish);
   const trigger = screen.getByRole("button", { name: "More message actions" });
   await user.click(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "Report" }));
   const dialog = await screen.findByRole("dialog", { name: "Report message" });
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole("radio", { name: "Spam" }),
+    ),
+  );
   // A virtualized list must not evict the row owning the draft and outcome.
   expect(keepMounted.mock.calls).toEqual([[root.id]]);
   const submit = screen.getByRole("button", { name: "Submit report" });
@@ -145,7 +183,7 @@ it("reports from the message menu, keeps input after failure and confirms succes
 
 it("starts each report with an empty form", async () => {
   const user = userEvent.setup();
-  mount(async () => {});
+  await mount(async () => {});
   const trigger = screen.getByRole("button", { name: "More message actions" });
   await user.click(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "Report" }));
@@ -183,7 +221,7 @@ it.each([
           settle = (error) => (error ? reject(error) : resolve());
         }),
     );
-    const h = mount(publish);
+    const h = await mount(publish);
     const openMenu = async () => {
       await user.click(
         screen.getByRole("button", { name: "More message actions" }),
@@ -226,9 +264,11 @@ it.each([
       }
       expect(publish).toHaveBeenCalledOnce();
       if (!outcome.endsWith("while hidden")) {
-        expect(screen.getByRole("status").textContent).toContain(
-          "Submitting report",
-        );
+        expect(
+          screen.getByText(/Submitting report/, {
+            selector: '[role="status"]',
+          }),
+        ).toBeDefined();
         await act(async () =>
           settle(
             outcome === "success" ? undefined : new PublishRejected("blocked"),

@@ -119,6 +119,8 @@ function HuddleCapsuleContent({
         >
           <span className={styles.capsuleContent}>
             <HuddleAvatarStack
+              thinking={call.thinking}
+              speakers={call.speakers}
               participants={call.participants}
               relay={relay}
               transition
@@ -160,9 +162,39 @@ function HuddleCapsuleContent({
       </fieldset>
     );
   }
+  if (call.phase === "connecting")
+    return (
+      <fieldset
+        id="huddle-capsule"
+        tabIndex={-1}
+        className={`${styles.capsule} glass-primary`}
+        ref={focus.requestRef}
+        aria-label="Connecting to Huddle"
+      >
+        <span className={styles.callerName}>Connecting to Huddle…</span>
+        <Button
+          size="sm"
+          variant="destructive"
+          ref={focus.cancel}
+          onClick={() => void huddles.leave()}
+        >
+          Cancel
+        </Button>
+      </fieldset>
+    );
   if (call.phase !== "connected") return null;
   return (
     <div className={styles.capsuleWrap}>
+      {call.error && (
+        <ToastNotice
+          title="Agent voice stopped"
+          description={call.error}
+          closeLabel="Dismiss agent voice error"
+          onDismiss={() => {
+            if (call.id) huddles.voiceError(call.id);
+          }}
+        />
+      )}
       {presentation.error && (
         <ToastNotice
           title="Couldn’t update Huddle"
@@ -191,6 +223,8 @@ function HuddleCapsuleContent({
           <span className={styles.capsuleContent}>
             <HuddleWaveform level={call.level ?? 0} muted={call.muted} />
             <HuddleAvatarStack
+              thinking={call.thinking}
+              speakers={call.speakers}
               participants={call.participants}
               relay={relay}
               transition
@@ -198,6 +232,7 @@ function HuddleCapsuleContent({
           </span>
         </Button>
         <IconButton
+          hint="familiar"
           size="toolbar"
           variant="ghost"
           ref={focus.mute}
@@ -226,7 +261,6 @@ function HuddleCapsuleContent({
           data-huddle-leave=""
           style={{ alignSelf: "stretch" }}
           aria-label="Leave huddle"
-          title="Leave huddle"
           onClick={() => void huddles.leave()}
         >
           Leave

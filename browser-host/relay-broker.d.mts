@@ -2,6 +2,7 @@ import type { Plugin } from "vite";
 export function relayBrokerPlugin(options?: {
   archiveFile?: string;
   authorizedViewer?: string | undefined;
+  browserOrigin?: string | undefined;
   agentLibrary?: () => Promise<
     import("../src/features/agents/library").AgentLibrary
   >;
@@ -15,6 +16,8 @@ export function relayBrokerPlugin(options?: {
   upstreamFetch?: typeof fetch;
   socketFactory?: (url: string) => WebSocket;
   builderlab?: {
+    api?: string;
+    appsBase?: string | undefined;
     fetch?: typeof fetch;
     open?: (url: string) => Promise<void>;
   };

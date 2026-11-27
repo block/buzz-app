@@ -88,6 +88,7 @@ const acceptedAwayMeasurements = new Map();
 const META_ROLES = new Set([
   "--text-tertiary",
   "--text-metadata",
+  "--text-metadata-own",
   "--text-row-metadata",
   "--text-row-selected-metadata",
 ]);
@@ -155,6 +156,10 @@ const TEXT_ROLES = [
  * every fill it can actually sit on, and hover is one of them.
  */
 const PAIRS = [
+  ...["--text-standard", "--text-subtle", "--text-metadata"].map((role) => [
+    role,
+    "--surface-inset-subtle",
+  ]),
   ["--text-control-selected", "--surface-control-selected"],
   ...[
     "affordance-call-join",
@@ -193,6 +198,7 @@ const PAIRS = [
   ].map((role) => [role, "--affordance-navigation-selected"]),
   // Small status/count badges on a selected row keep their own readable pair.
   ["--text-row-selected-detail", "--surface-row-selected-detail"],
+  ["--text-dock-count", "--surface-dock-count"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(
     (state) => ["--text-standard", `--affordance-floating-${state}`],
@@ -200,6 +206,8 @@ const PAIRS = [
   ["--text-standard", "--affordance-floating-hover"],
   ["--text-danger", "--affordance-floating-hover"],
   ["--text-inverse", "--surface-inverse"],
+  ["--text-on-status-success", "--surface-status-success"],
+  ["--text-on-status", "--surface-status-danger"],
   ["--text-link", "--affordance-link-hover"],
   // Mentions: ink on the highlight, and the own-bubble pairing, at rest and hover.
   ...["", "-hover"].flatMap((state) => [
@@ -207,6 +215,16 @@ const PAIRS = [
     ["--text-mention-own", `--affordance-mention-own${state}`],
     ["--text-mention-self", `--affordance-mention-self${state}`],
   ]),
+  // Reaction counts sit on the strip overlay, and your whole bubble takes a
+  // quieter overlay under the pointer.
+  ["--text-standard", "--affordance-reaction"],
+  ["--text-message-own", "--affordance-reaction-own"],
+  ["--text-reaction-self", "--affordance-reaction-self"],
+  ["--text-reaction-self-own", "--affordance-reaction-self-own"],
+  ["--text-message-own", "--affordance-message-own-hover"],
+  // An arrival cue lays the regular step across the whole bubble.
+  ["--text-standard", "--affordance-message-highlight"],
+  ["--text-message-own", "--affordance-message-own-highlight"],
   ...["subtle", "subtle-hover", "subtle-pressed"].map((state) => [
     "--text-standard",
     `--affordance-${state}`,
@@ -229,7 +247,7 @@ const PAIRS = [
 /**
  * Tint surfaces and the coloured text that sits on them, as steps.
  *
- * DESIGN.md: "tint carries a meaning and takes coloured text". The accent tint
+ * A tint carries a meaning and takes coloured text. The accent tint
  * and its hover are both real surfaces — a chip at rest and a chip under the
  * cursor — and the hover is the harder one, which is where the gap was.
  */
@@ -238,6 +256,19 @@ const BOUNDARY_SURFACES = [
   "--surface-panel",
   "--surface-inset",
   "--surface-popover",
+];
+/**
+ * State icons that also sit inside message bubbles: a pull request link's
+ * glyph and the sidebar's. Each is measured against the received bubble, and
+ * its `-own` pair against the own bubble, per accent family and level below.
+ * On the high level the own bubble is the solid accent step, which neither
+ * grey nor any one hue clears on every family, so there the `-own` pair is the
+ * bubble's link ink.
+ */
+const MESSAGE_ICON_ROLES = [
+  "--icon-subtle",
+  "--icon-success",
+  "--icon-categorical-purple",
 ];
 const BOUNDARY_ROLES = [
   // Dots and insertion lines in the prominent color stand alone on a surface.
@@ -254,10 +285,18 @@ const BOUNDARY_ROLES = [
   "--chart-series-2",
   "--chart-series-3",
   "--chart-series-4",
+  // Categorical glyphs and dots stand on the palette's surfaces.
+  "--icon-categorical-blue",
+  "--icon-categorical-green",
+  "--icon-categorical-amber",
+  "--icon-categorical-orange",
+  ...MESSAGE_ICON_ROLES,
 ];
 
 const TINT_PAIRS = [
   ["--text-warning", "--affordance-warning"],
+  ["--text-on-find-match", "--surface-find-match"],
+  ["--text-on-find-match", "--surface-find-match-active"],
   ["--text-success", "--affordance-success"],
   ["--text-success", "--affordance-success-hover"],
   ["--text-success", "--affordance-success-pressed"],
@@ -269,6 +308,13 @@ const TINT_PAIRS = [
   ["--green-12", "--green-3"],
   ["--purple-12", "--purple-3"],
   ["--purple-12", "--purple-4"],
+  ["--text-categorical-blue", "--surface-categorical-blue"],
+  ["--text-categorical-blue", "--surface-categorical-blue-hover"],
+  ["--text-categorical-green", "--surface-categorical-green"],
+  ["--text-categorical-green", "--surface-categorical-green-hover"],
+  ["--text-categorical-amber", "--surface-categorical-amber"],
+  ["--text-categorical-amber", "--surface-categorical-amber-hover"],
+  ["--text-search-match", "--surface-search-match"],
 ];
 
 const css = readFileSync(TOKENS, "utf8");
@@ -316,14 +362,59 @@ function declarationsByMode(
   return { light, dark };
 }
 
-/** Follows a `var()` chain to its literal, or null if it is not a plain colour. */
-function resolve(map, name, depth = 0) {
+/**
+ * See-through fills and the message surface each is measured on. A chip overlay
+ * is measured as the colour it makes there, which is what a reader sees. A
+ * mention can also sit on the composer or a panel; those hosts are unmeasured.
+ * A translucent role missing here stays unmeasurable and is reported, and a
+ * listed role that does not resolve fails.
+ */
+const SITS_ON = new Map([
+  ["--affordance-mention", "--surface-message"],
+  ["--affordance-mention-hover", "--surface-message"],
+  ["--affordance-mention-own", "--surface-message-own"],
+  ["--affordance-mention-own-hover", "--surface-message-own"],
+  ["--affordance-message-own-hover", "--surface-message-own"],
+  ["--affordance-message-highlight", "--surface-message"],
+  ["--affordance-message-own-highlight", "--surface-message-own"],
+  ["--affordance-reaction", "--surface-message"],
+  ["--affordance-reaction-own", "--surface-message-own"],
+]);
+
+/** `#rgb` or `#rrggbb` as three 0–255 channels. */
+function channels(hex) {
+  const digits =
+    hex.length === 4
+      ? [...hex.slice(1)].map((d) => d + d)
+      : [1, 3, 5].map((i) => hex.slice(i, i + 2));
+  return digits.map((d) => Number.parseInt(d, 16));
+}
+
+/**
+ * Follows a `var()` chain to its literal, or null if it is not a plain colour.
+ * An `rgb(r g b / a%)` overlay resolves only for a role in `SITS_ON`, as the
+ * flat colour it composites to over its surface.
+ */
+function resolve(map, name, depth = 0, role = name) {
   if (depth > 10) return null;
   const value = map.get(name);
   if (!value) return null;
   const single = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value);
-  if (single) return resolve(map, single[1], depth + 1);
-  return /^#[0-9a-fA-F]{3,6}$/.test(value) ? value : null;
+  if (single) return resolve(map, single[1], depth + 1, role);
+  if (/^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/.test(value)) return value;
+  const overlay = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)%\s*\)$/.exec(
+    value,
+  );
+  const under = SITS_ON.has(role) ? resolve(map, SITS_ON.get(role)) : null;
+  if (!overlay || !under) return null;
+  const alpha = Number(overlay[4]) / 100;
+  return `#${channels(under)
+    .map((base, i) =>
+      Math.round(Number(overlay[i + 1]) * alpha + base * (1 - alpha))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
 }
 
 const failures = [];
@@ -349,7 +440,13 @@ function audit(mode, map, baseline) {
     // A translucent or gradient value cannot be measured against one colour;
     // record it rather than passing it silently.
     if (!text || !surface) {
-      skipped.push(`${mode}: ${textRole} on ${surfaceRole}`);
+      // An overlay listed in SITS_ON is meant to be measurable, so a missing
+      // token there is a defect, not a value the guard cannot read.
+      if (SITS_ON.has(surfaceRole))
+        boundaryFailures.push(
+          `${mode}: unresolved overlay pair ${textRole} on ${surfaceRole}`,
+        );
+      else skipped.push(`${mode}: ${textRole} on ${surfaceRole}`);
       return;
     }
     const lc = Math.abs(apcaContrast(text, surface));
@@ -456,6 +553,7 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-dock-count", "--surface-dock-count"],
   ["--text-on-selection", "--surface-text-selection"],
   ["--text-on-selection-own", "--surface-text-selection-own"],
   ["--text-sidebar-selected", "--surface-sidebar-selected"],
@@ -470,6 +568,8 @@ const ACCENT_PAIRS = [
   ]),
   ["--text-message-own", "--surface-message-own"],
   ["--text-message-link-own", "--surface-message-own"],
+  ["--text-metadata", "--surface-message"],
+  ["--text-metadata-own", "--surface-message-own"],
   ...["", "-hover", "-pressed"].map((state) => [
     "--text-on-prominent",
     `--affordance-prominent${state}`,
@@ -502,8 +602,9 @@ for (const family of accentFamilies) {
           continue;
         }
         const lc = Math.abs(apcaContrast(text, surface));
+        const target = META_ROLES.has(textRole) ? TARGET_META : TARGET_BODY;
         const wcag = wcagRatio(text, surface);
-        if (lc < TARGET_BODY || wcag < 4.5)
+        if (lc < target || wcag < 4.5)
           failures.push({
             mode: `${family}/${level}/${mode}`,
             textRole,
@@ -511,7 +612,7 @@ for (const family of accentFamilies) {
             surfaceRole,
             surface,
             lc,
-            target: TARGET_BODY,
+            target,
             wcag,
           });
       }
@@ -542,6 +643,20 @@ for (const family of accentFamilies) {
           boundaryFailures.push(
             `${family}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
           );
+      }
+      for (const baseRole of MESSAGE_ICON_ROLES) {
+        for (const [role, surfaceRole] of [
+          [baseRole, "--surface-message"],
+          [`${baseRole}-own`, "--surface-message-own"],
+        ]) {
+          const icon = resolve(map, role);
+          const surface = resolve(map, surfaceRole);
+          const ratio = icon && surface ? wcagRatio(icon, surface) : null;
+          if (ratio === null || ratio < 3)
+            boundaryFailures.push(
+              `${family}/${level}/${mode}: ${role} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+            );
+        }
       }
     }
   }

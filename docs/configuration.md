@@ -1,123 +1,296 @@
-# Deployment configuration: current-feature parity
+# Build configuration
 
-Buzz Foundation supports configuration for capabilities that exist here, not a
-port of every OG Buzz feature. Keep deployment values in local/CI configuration,
-not in source. Build defaults are readable binary data, **never secret storage**.
+A distributor configures Buzz at build time. Every input below is compiled into
+the app, so changing the launched app's environment has no effect; rebuild to
+change one. Builds embed these values as readable data, so **never put a key,
+token or other secret in one**. Open-source builds leave them all unset.
 
-## Supported inputs and surfaces
+## How values are read
 
-| Input | Consumer and boundary |
+- Set each input in repository-root `.env.local` or in the environment of the
+  build command. A process value wins, including an explicit empty one.
+- `just desktop` and `just desktop-bundle` pass every `BUZZ_` value from
+  `.env.local` to Vite, Cargo and the native app, so both halves of the build
+  agree. Other names stay out, as do the release-only `BUZZ_UPDATER_*` inputs.
+  `$VAR` is never expanded, so values need no escaping. A direct
+  `pnpm tauri build` or `cargo` run doesn't read `.env.local` this way.
+- Vite's other `.env` files configure only the frontend.
+- An invalid value fails the build, with an error that never echoes it.
+- Restart the dev server after changing an input.
+
+## Inputs
+
+| Input | What it sets |
 | --- | --- |
-| `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: public login URL and the bundled plugin's exact HTTPS host grant; no runtime override. |
-| `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
-| `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
-| `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
-| `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
-| `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
-| `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Native release build, process environment only: two non-empty values register the updater plugin. The same public key and endpoint must reach `tauri build --config` as `plugins.updater`, and update archives must be signed by the matching private key. Desktop preview release runs supply both for every platform (see [releases](releases.md)); candidate-only and local builds report automatic updates as unavailable. |
+| `BUZZ_DEFAULT_COMMUNITY_URL` | A `wss://` or `https://` relay origin selected once on a fresh install. Any saved choice, including Personal space, wins. It also picks a [packaged gateway](#packaged-gateway-descriptors). |
+| `BUZZ_EXTERNAL_MCP_COMMUNITIES` | Space-separated community origins where external MCP apps may connect. Empty disables external MCP everywhere. |
+| `BUZZ_AGENT_GATEWAY` | An [agent gateway](#agent-gateway) descriptor. |
+| `BUZZ_RECOMMENDED_AGENT` | The [recommended agent](#recommended-agent) setup offered as **Automatic**. |
+| `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | [Sign-in servers](#federated-identity-build-input) added to the built-in one. Empty means none. |
+| `BUZZ_BUILDERLAB_URL` | Whether the build keeps the built-in Builderlab; see [Builderlab](#builderlab). |
+| `BUZZ_BUILDERLAB_APPS_DOMAIN` | The Apps cookie domain for in-app SSO, for Builderlab deployments other than the public one. Empty disables SSO. |
+| `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | The Apps control plane origin, for deployments the built-in table doesn't list. |
+| `BUZZ_BUILD_MANAGED_PLUGINS_URL` | An `https` URL of a version 1 [managed plugin policy](managed-plugins.md#packaged-policy), used when no `managed-plugins.json` exists. |
+| `BUZZ_BUILD_REPOSITORY_ACCESS` | Default [repository access rules](repository-access.md#default-rules). |
+| `BUZZ_DATABRICKS_HOST` | An `https://` Databricks workspace URL passed to every bundled goose as `DATABRICKS_HOST`. Only the host; model and sign-in stay goose's. |
+| `BUZZ_MOBILE_APP_IOS_URL`, `BUZZ_MOBILE_APP_ANDROID_URL` | Store links shown with QR codes on the mobile Settings card, for people whose Builderlab account holds this device's backed-up key. |
+| `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Release builds only. Both together turn on the updater; the release workflow sets them (see [releases](releases.md)). |
 
-The retired v1 inputs `BUZZ_BUILD_AGENT_ENV`, `BUZZ_BUILD_BUZZ_AGENT_PROVIDER`
-and `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` are no longer read or compiled. Agents
-uses each plugin agent type's settings. Remove these old defaults from local/CI
-configuration; they do not configure Agents. Restart Vite to change broker or
-routing configuration. Production frontend builds never load the dev broker or
-expose its auto-open seed. They can separately opt into the packaged community
-default below.
+**Development only:** `BUZZ_RELAY_URL`, `BUZZ_DEV_VIEWER`,
+`BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS`, `BUZZ_DEV_OPEN_RELAY`,
+`BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` (see [CONTRIBUTING](../CONTRIBUTING.md)),
+and [`BUZZ_DEV_FIRST_RUN_ACCOUNT`](#first-run-account-seed-development).
 
-## Packaged community default
+`BUZZ_BUILD_AGENT_ENV`, `BUZZ_BUILD_BUZZ_AGENT_PROVIDER`,
+`BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` and `BUZZ_OWNER_MCP_COMMUNITIES` are no
+longer read. Remove them.
 
-Internal packagers can set a public community origin for fresh installs:
+## Agent gateway
 
-```sh
-BUZZ_DEFAULT_COMMUNITY_URL=wss://relay.example.com bin/pnpm tauri build
+A gateway sits between local agents and their model providers, so an
+organization can route and attribute inference for its communities. The
+descriptor is public routing data, version 2:
+
+```json
+{
+  "version": 2,
+  "gateway": "https://gateway.example",
+  "communities": [{ "id": "<NIP-11 community UUID>", "origin": "wss://relay.example" }],
+  "access_path": "/v9/access",
+  "launcher_client": "client-a",
+  "headers": {
+    "launcher_client": "x-gw-launcher-client",
+    "launcher_session": "x-gw-launcher-session",
+    "human_pubkey": "x-gw-ctx-human-pubkey",
+    "agent_pubkey": "x-gw-ctx-agent-pubkey",
+    "community_id": "x-gw-ctx-community-id",
+    "channel_id": "x-gw-ctx-channel-id",
+    "message_id": "x-gw-ctx-message-id",
+    "thread_id": "x-gw-ctx-thread-id"
+  },
+  "reserved_prefixes": ["x-gw-ctx-"],
+  "upstreams": { "pi": { "base": "/upstream/pi" } }
+}
 ```
 
-The frontend build reads this value from repository-root `.env.local` or the build
-process environment (process wins, including an explicit empty value). It accepts
-only `wss://` or `https://` origins without credentials, paths, queries or fragments;
-invalid values fail the build. It is compiled into the frontend, so changing the
-launched app's environment cannot override it. Leave it unset for OSS builds.
-The dev server ignores it; live development retains its existing opt-in inputs.
+- `gateway`: an `https://` origin with no path.
+- `communities`: 1 to 16 communities, each a NIP-11 community UUID and relay
+  origin.
+- `access_path`: the gateway's access check.
+- `launcher_client`: optional, defaults to `"buzz"`.
+- `headers`: a lowercase header name for each context field. Buzz strips any
+  incoming header matching these names or `reserved_prefixes` (up to 4) before
+  adding its own.
+- `upstreams`: a base path per harness (`claude-code`, `goose`, `codex`, `pi`).
+  A harness without one keeps the user's own setup.
 
-After native identity restoration, creation or import, the existing community
-service selects and saves this origin only if the viewer has no `buzz-client.v1`
-record on this device. Any saved record wins, including Personal space, malformed
-records and unresolvable aliases. A later build default cannot change that saved
-choice. Selection starts the normal authenticated relay session; it grants no
-membership or admission bypass. If the relay refuses admission or is offline,
-the normal connection error/retry flow applies. No legacy preferences are copied.
+The shared validation cases are in
+`src/features/agents/gateway/descriptor-vectors.json`, and the request
+contract is in `src/features/agents/gateway/`.
 
-## Builderlab URL build input
+**When a turn uses it.** An agent's turn goes through the gateway only when its
+community's NIP-11 ID is listed, its harness has an upstream, and the access
+check succeeds and lists that harness. A bundled plugin can supply the harness
+list instead with `ctx.agents.gatewayHarnesses(source)`.
 
-Set `BUZZ_BUILDERLAB_URL` in repository-root `.env.local` for development, or in
-the process running `bin/pnpm build` / `bin/pnpm tauri build` for packaging:
+**When it can't.**
+- While an access check is pending, a turn waits up to 5 seconds, then fails
+  and asks the user to try again.
+- A 401 or 403, from the check or from inference, fails the turn and asks the
+  user to sign in again. It never falls back, and it holds until a check
+  succeeds or the identity, community or relay session changes.
+- Any other failure (network, gateway error) runs the turn on the user's own
+  setup with no Buzz context, and notes "Ran without the agent gateway".
+- Claude Code and Codex use attribution mode: they never wait or fail on the
+  gateway, and a blocked route runs unattributed with a note.
+- A descriptor that is invalid at runtime turns the gateway off silently.
+
+**Security.** Goose strips `Authorization` before sending to the gateway. The
+gateway must authenticate callers itself; the context headers are attribution,
+not authentication. Goose can't use the gateway in Community session scope.
+
+**Codex** uses its own configured provider. Buzz adds context when that
+provider's `base_url` is on the gateway's origin.
+
+### Packaged gateway descriptors
+
+Instead of setting `BUZZ_AGENT_GATEWAY`, an organization's build can list up to
+8 descriptors in `src/bundled/org-gateways.json` (`[]` in open source), for
+example one for production and one for staging. When `BUZZ_AGENT_GATEWAY` is
+blank, the build uses the entry whose `communities` include
+`BUZZ_DEFAULT_COMMUNITY_URL`. A `ws://` relay never matches, and an explicit
+`BUZZ_AGENT_GATEWAY` overrides the file.
+
+## Recommended agent
+
+This offers new agents an **Automatic** AI setup: a ranked list of harness,
+model and thinking level, from which Buzz picks the first one ready on this
+computer.
 
 ```sh
-BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz bin/pnpm tauri build
+BUZZ_RECOMMENDED_AGENT='{"recommendedBy":"Example Co","candidates":[{"harness":"goose","provider":"example","model":"model-b","effort":"high","label":"Model B"},{"harness":"codex","model":"model-a","effort":"high","label":"Model A"},{"harness":"claude-code","model":"model-c","effort":"high","label":"Model C"}]}' bin/pnpm tauri build
 ```
 
-Vite uses its existing environment loader; the native plugin-manager build reads
-repository-root `.env.local` and process values using the native dotenv pattern.
-For desktop, supply the full URL in `.env.local` or the build process environment
-so both stages receive it. Vite's additional `.env` and mode-specific files do
-not configure native grants. Process values take precedence, including an
-explicit empty value. When unset or empty, login is unconfigured and no network
-origin is granted. Local builds have no deployment default. The desktop release
-workflow supplies the production URL by default; see [release configuration](releases.md#builderlab-url).
+- `candidates`: best first. Each has `harness` (`goose`, `codex` or
+  `claude-code`), `model`, `effort`, `label` (the model's display name) and, for
+  goose, `provider`. A plain array of candidates also works.
+- `recommendedBy` and `description`: optional text shown with Automatic.
 
-Any HTTPS host is supported, including an explicit port or deployment path. URL
-credentials, query parameters and fragments are rejected by the native build.
-The desktop's native plugin catalog supplies the effective manifest, granting
-only the configured URL's exact origin. Never put credentials in this input.
+Unset, the create form has no Automatic option.
 
-The bundled Builderlab login consumes this public URL and appends `/api/goose`.
+**How it behaves:**
+- A candidate is ready when its harness is installed and signed in and lists
+  the model. Each check gets 8 seconds. Codex and Claude Code aren't offered on
+  Windows.
+- An agent on Automatic saves only `preset: "recommended"`. Changing its model,
+  provider or thinking level anywhere takes it off Automatic.
+- Once per launch, Buzz moves an Automatic agent to the first ready
+  candidate's harness, so an agent whose harness is signed out moves to the next
+  one. It moves only on definite answers, never on a timeout, and never while
+  it's working or syncing. Its old sessions end and new ones start on the new
+  harness.
+- If no candidate's model is offered at run time, the agent runs on its
+  harness's default instead of failing.
+- On a config channel the mark syncs as `"preset": "recommended"` beside
+  `settings` in the agent's settings revision (kind 45010), with a matching
+  `["preset", "recommended"]` tag. Older versions keep it when they edit.
 
-Restart desktop development after changing this input so Vite and the native
-grant rebuild together; browser-only development needs a Vite restart. Production
-web and desktop frontend builds substitute the value into compiled code: changing `.env.local`
-or the launched app's environment afterward cannot override it. Rebuild and
-redistribute to change a packaged value.
+A bundled plugin can replace the setup per launch with
+`ctx.agents.recommend(source)`, for example per team. Buzz waits up to five
+seconds for it, then falls back to `BUZZ_RECOMMENDED_AGENT`, so set both.
 
-## Whole-video limit
+A bundled plugin can also add **model routes**, such as "Auto Balanced", to the
+Claude Code, Codex and Goose Model menus with `ctx.agents.registerModelRouter(router)`.
+An agent on a route runs with `route:<id>` as its model, but no copy of its
+settings stores that. Its synced settings revision keeps the route beside
+`settings`, as `"modelRoute": "<id>"`, with an empty `model`, and its saved
+record keeps it beside `config` the same way. A catalog share keeps it as
+`model_route` and an exported snapshot as `modelRoute`, with no `model`. Older
+versions run the harness's default. A model saved by an older version takes
+the agent off the route. Before each turn it starts
+while idle in a conversation, Buzz asks `router.select` for one of the
+harness's models and a thinking level. A turn that steers a running one keeps
+its pick, and a failure or no answer within 30 seconds uses the route's
+fallback. The router can ask for the conversation's earlier messages
+(`request.history()`) and for what Buzz already holds about the turn
+(`request.context()`): what started it, the agent's instructions, skills and
+workspace, attached files, and the conversation's last routed pick with when
+that turn ended. Buzz runs no git or GitHub calls for either. The router can
+also choose the route new agents and Automatic agents use. See
+`src/features/agents/model-routes.ts`.
 
-The desktop app reads relay video from its origin one bounded `Range` at a
-time. When an origin ignores it and answers a video with a whole `200`, the app
-copies that video to a temporary file, up to the development broker's 500 MiB
-video limit, and answers the player's requests from the file as bytes arrive.
-The limit is the compile-time constant `WHOLE_VIDEO_MAX` in
-`src-tauri/src/relay.rs`; edit it and rebuild to change it.
+## Federated identity build input
 
-- A video of exactly the limit plays. A larger `Content-Length` is rejected with
-  413 before any download; without one, the download stops and is rejected once
-  it passes the limit. Without a `Content-Length`, playback starts once the
-  whole video has arrived, since a range answer needs the total size.
-- At most two such files exist at once, each anonymous and deleted by the OS
-  when it closes. Opening a third drops the least recently used one. A file is
-  kept while a player's connection to it is open or a read waits for its
-  bytes, and for 60 seconds after; then it is dropped, stopping its download,
-  and playing the video again downloads it again.
+A build trusts a compiled list of sign-in servers. Each community is matched by
+its host to a server, and a community no server covers connects without a
+token; a relay never chooses one. Each server keeps its own session.
 
-## Deliberate exclusions
+**Built in:** Builderlab for the public hosted communities.
 
-Inventory source: `block/buzz-releases` at
-`af57fbf40b50941c03cef2466b1e6970ab6bc779` (`.buildkite/pipeline*.yml`,
-`scripts/build-macos.sh`, mobile helpers, `scripts/lib.sh` and publishing helpers),
-compared with OG `block/buzz` at
-`99c2acf90cfbb1cb2d3a8bd900c0ec1642e20540` (`desktop/src-tauri/build.rs` and its
-runtime consumers). No deployment-specific values from those repositories are
-copied here.
+```json
+{
+  "version": 1,
+  "id": "bb-public",
+  "identityOrigin": "https://app.builderlab.xyz",
+  "communityHosts": ["*.communities.buzz.xyz", "communities.buzz.xyz"],
+  "adapterBase": "https://app.builderlab.xyz/api/goose",
+  "apiBasePath": "/api/goose/"
+}
+```
 
-| OG/release input | Why it is not implemented here |
-| --- | --- |
-| `BUZZ_DESKTOP_BUILD_RELAY_URL` | Retired name; internal builds use `BUZZ_DEFAULT_COMMUNITY_URL` above. No legacy input alias or admission bypass is added. Native macOS, Windows and Linux otherwise restore the selected saved community; new admission uses Join a community. Windows/Linux installed-app acceptance remains unverified. The dev broker and saved agent destinations remain separate. See [packaged identity](identity.md). |
-| `BUZZ_BUILD_RELAY_RECONNECT_CMD` | No reconnect-command feature; arbitrary deployment command execution is not added. |
-| Updater helper fallback aliases | Only the two canonical updater names above are read. Private signing keys never belong in app defaults. |
-| `--features mesh-llm` | No mesh/provider integration is supplied by the native identity crate. Import carries identities, not legacy runtimes. |
-| `BUZZ_BUILD_OBSERVER_ARCHIVE_DEFAULT`, `BUZZ_BUILD_AGENT_METRIC_ARCHIVE_DEFAULT` | Already no-ops in inspected OG: its archive capability checks return true for all builds. This app does not claim equivalent archive collection by accepting inert flags. |
-| Build-command `BUZZ_ACP_ALLOWED_RESPOND_TO`, `BUZZ_ACP_ALLOWED_CHANNEL_ADD_POLICIES` | OG consumers are runtime-only; setting these around compilation does not bake them. The retired v1 listener no longer consumes these inputs; Agents uses its attention settings. |
-| Mobile `BUZZ_AGE_GATING_ENABLED`, Android `BUZZ_ANDROID_RELEASE_SIGNING=external` | No corresponding Flutter/Android target in this app. |
-| CI version/tag metadata, artifact paths/upload controls, signing teams/profiles, Apple/App Store/Artifactory/Play credentials, Android signer roles/sockets, SDK/JDK/toolchain settings, Tauri bundle/config arguments | Release infrastructure and packaging controls, not product defaults. No new build-variable forwarding API. |
+With the built-in server, a build also trusts each Builderlab customer on
+demand: a community at `buzz.{name}.builderlab.xyz` signs in at
+`https://{name}.builderlab.xyz/api/goose`, as server `bb-{name}`. A server the
+build lists for the same host or id takes precedence.
 
-Ignored `.env.local` can contain unrelated development settings. Only the inputs
-with current consumers listed above have an effect. Do not use any build input
-for private keys, tokens or raw agent configuration.
+**Adding servers.** Set `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` to one descriptor
+or a list. They come before the built-in server, and the first becomes the
+build's Builderlab (used for backup, known communities, hosted communities,
+Apps and Decisions). No two servers may share an id or a community host. For
+`just desktop`, single-quote the JSON in `.env.local`.
+
+```json
+{
+  "version": 1,
+  "id": "example",
+  "identityOrigin": "https://identity.example",
+  "communityHosts": ["*.communities.example", "custom.example:8443"],
+  "adapterBase": "https://identity.example/nip-fa/",
+  "apiBasePath": "/api/goose/",
+  "signIn": "at-launch",
+  "organization": "Example"
+}
+```
+
+- `signIn`: `on-demand` (the default) asks only when a protected community
+  refuses the user, or from Settings → Identity. `at-launch` signs in before
+  the app opens, and again whenever the session ends.
+- `organization`: up to 64 characters, used in the sign-in copy.
+
+Changing either keeps saved sessions. The welcome screen's **Sign in with
+email** is this sign-in.
+
+Hosted agents follow the selected community: in a community another server
+covers, their calls use that server's session.
+
+The development broker (`tauri dev` with `BUZZ_DEV_VIEWER` pinned) compiles no
+sign-in servers unless you add some. Packaged builds always keep them.
+
+### Builderlab staging
+
+There's no built-in staging server. To sign in to Builderlab staging, add it
+(a native test checks this exact descriptor):
+
+```sh
+BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG='{"version":1,"id":"bb-public-staging","identityOrigin":"https://app.builderlabstaging.xyz","communityHosts":["*.communities.public.builderlabstaging.xyz","communities.public.builderlabstaging.xyz"],"adapterBase":"https://app.builderlabstaging.xyz/api/goose","apiBasePath":"/api/goose/"}'
+```
+
+Staging then becomes the build's Builderlab, with production after it for the
+public communities.
+
+## Builderlab
+
+The build's Builderlab is its first sign-in server. With no server added,
+`BUZZ_BUILDERLAB_URL` decides whether it keeps the built-in one: unset or
+`https://app.builderlab.xyz` keeps it, and anything else turns Builderlab off.
+In live development another origin still works through the broker. Setting it
+alongside an added sign-in server fails the build.
+
+The bundled Builderlab plugin has no network access of its own. Native code
+forwards only its Builderlab routes, with that server's session. Apps deploys
+go to the control plane for the identity origin
+(`https://compose-ctrl.builderlab.xyz` for production; others set
+`BUZZ_BUILDERLAB_APPS_CONTROL_PLANE`). In-app SSO to Apps also needs
+`BUZZ_BUILDERLAB_APPS_DOMAIN` (for example `apps.example.com` for a Builderlab at
+`https://login.example.com`); only the public deployment has a default.
+
+## First-run account seed (development)
+
+The first-run flow reads and writes the developer's real Builderlab account
+(its bound key, owned communities, saved destinations and backups).
+`BUZZ_DEV_FIRST_RUN_ACCOUNT` replaces exactly those calls on a dev server, so
+you can test first run without touching your real key's binding:
+
+```sh
+# A brand-new account.
+BUZZ_DEV_FIRST_RUN_ACCOUNT=unlinked
+# A returning user, with owned communities.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","communities":["design.example.com"]}'
+# Destinations saved to the account.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"known":["chat.example.com","wss://buzz.example.org:8443"]}'
+# Every backup fails as if Builderlab were unreachable.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"backup":"unreachable"}'
+# The first backup fails, so Try again succeeds.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"backup":"fail-once"}'
+# Start over's unlink fails with this HTTP status.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","unlink":503}'
+# Restore from backup is offered, but recovery is unavailable.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","backups":["npub1…"]}'
+# Restore recovers this throwaway key.
+BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","backups":["npub1…"],"recovery":"nsec1…"}'
+```
+
+Every field is optional. `backup` takes a failure kind from
+`src/features/identity/backup-failure.ts`. Use a throwaway key: the value is
+plain text in your environment. Builds always define it empty, so packaged apps
+never use it.

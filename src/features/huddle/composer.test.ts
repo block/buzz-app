@@ -1,3 +1,4 @@
+import { gifDraftPreview } from "../../bundled/emoji/GifDraftPreview";
 import { useHuddleComposer } from "../../bundled/huddles/HuddleComposer";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -9,16 +10,27 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { createElement } from "react";
-import { attachmentDraft } from "../messages/attachment-draft";
 import { MessageComposer } from "../messages/MessageComposer";
-import { composerDOMFixture } from "../messages/composer-testing";
-import { followupDraft } from "../messages/mention-draft";
+import { composerDOMFixture, typedDraft } from "../messages/composer-testing";
+import { followupDraft, mentionDraft } from "../messages/mention-draft";
 import { afterEach, expect, it, vi } from "vitest";
-import { communityFromScope, relayGifRequests } from "../relay/gifs";
+import {
+  communityFromScope,
+  gifMarkdown,
+  relayGifRequests,
+} from "../relay/gifs";
 import { createRelaySession } from "../relay/session";
-import { readView, writeView } from "../../shared/view-state";
+import { UPLOAD_FAILURES, UploadError } from "../relay/attachments";
+import { attachmentDraft } from "../messages/attachment-draft";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import { createHuddleComposerOwner } from "./composer-owner";
 import { createHuddleComposerClient } from "./composer-client";
 import type { ComposerCommand, ComposerResponse } from "./composer-contract";
@@ -29,6 +41,7 @@ afterEach(() => {
   cleanupReact();
   for (const fn of cleanup.splice(0).reverse()) fn();
   localStorage.clear();
+  sessionStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -131,6 +144,9 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
   expect(communityFromScope(remote.scope)).toBe("https://example.test");
   const draft = { text: "Hello", recipients: [] };
   writeView(h.scope, "draft:room", draft);
+  const revision = viewRevision(h.scope, "draft:room");
+  const changed = vi.fn();
+  const stop = subscribeView(h.scope, changed, "draft:room");
   h.send.mockImplementationOnce(() => {
     throw new Error("Rejected");
   });
@@ -138,6 +154,7 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
     "Rejected",
   );
   expect(readView(h.scope, "draft:room", null)).toEqual(draft);
+  expect(changed).not.toHaveBeenCalled();
   await expect(remote.messages.send("room", "Hello")).resolves.toBe(
     "accepted-id",
   );
@@ -145,6 +162,10 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
     text: "",
     recipients: [],
   });
+  expect(changed).toHaveBeenCalledExactlyOnceWith("draft:room", [
+    { key: "draft:room", revision },
+  ]);
+  stop();
   await remote.agentChoices.refresh();
   expect(h.refresh).toHaveBeenCalledWith(true);
   h.revoke();
@@ -307,9 +328,9 @@ it.each(["cancel", "close"])(
   },
 );
 
-it.each([false, true])(
-  "preserves the real owner's remembered-agent followup and concurrent drafts (changed=%s)",
-  async (changed) => {
+it.each(["unchanged", "different", "re-entered"] as const)(
+  "preserves the owner's remembered-agent followup and concurrent drafts (%s)",
+  async (peer) => {
     const h = harness();
     const agent = { pubkey: "ef".repeat(32), name: "Helper" };
     const profiles = new Map([
@@ -317,16 +338,43 @@ it.each([false, true])(
     ]);
     h.session.profiles = { ...h.session.profiles, snapshot: () => profiles };
     h.session.channels.get().members.push(agent.pubkey);
-    const draft = followupDraft([agent]);
+    const draft = typedDraft(followupDraft([agent]));
     writeView(h.scope, "draft:room", draft);
     const { remote } = await h.connect();
     const sent = vi.fn();
-    const newer = { text: "New work from another editor", recipients: [] };
-    if (changed)
+    const newer =
+      peer === "re-entered"
+        ? draft
+        : { text: "New work from another editor", recipients: [] };
+    if (peer === "different")
       h.send.mockImplementationOnce(() => {
         writeView(h.scope, "draft:room", newer);
         return "accepted-id";
       });
+    if (peer === "re-entered") {
+      const setItem = Storage.prototype.setItem;
+      const quota = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(function (this: Storage, key, value) {
+          if (this === localStorage && key.startsWith("buzz-ret.v1:"))
+            throw new DOMException(
+              "Storage quota exceeded",
+              "QuotaExceededError",
+            );
+          setItem.call(this, key, value);
+        });
+      cleanup.push(() => quota.mockRestore());
+      const stop = subscribeView(
+        h.scope,
+        (_key, removed) => {
+          if (!removed?.length) return;
+          stop();
+          writeView(h.scope, "draft:room", draft);
+        },
+        "draft:room",
+      );
+      cleanup.push(stop);
+    }
     render(
       createElement(MessageComposer, {
         session: remote,
@@ -343,9 +391,11 @@ it.each([false, true])(
     await waitFor(() => expect(sent).toHaveBeenCalledWith("accepted-id"));
     await act(async () => {});
     expect(readView(h.scope, "draft:room", null)).toEqual(
-      changed ? newer : draft,
+      peer === "unchanged" ? mentionDraft("") : newer,
     );
-    expect(editor).toHaveTextContent(changed ? newer.text : "Helper");
+    expect(editor).toHaveTextContent(
+      peer === "different" ? newer.text : "Helper",
+    );
     expect(h.send).toHaveBeenCalledTimes(1);
     expect(h.send).toHaveBeenCalledWith(
       "room",
@@ -359,9 +409,117 @@ it.each([false, true])(
   },
 );
 
-it("retains valid voice metadata and releases enriched upload identities", async () => {
-  // Node's BroadcastChannel does not preserve File instances as browsers do.
-  // Keep message ordering while retaining files in this owner/client fixture.
+it("recovers a peer draft when saved storage is unreadable at Huddle acknowledgement", async () => {
+  const h = harness();
+  const { remote } = await h.connect();
+  writeView(h.scope, "draft:room", mentionDraft("Send this"));
+  const peerDraft = mentionDraft("Unsent peer edit");
+  const getItem = Storage.prototype.getItem;
+  let readBlocked = false;
+  const reads = vi
+    .spyOn(Storage.prototype, "getItem")
+    .mockImplementation(function (this: Storage, key) {
+      if (
+        readBlocked &&
+        this === localStorage &&
+        key.startsWith("buzz-view.v1:") &&
+        key.endsWith(',"draft:room"]')
+      )
+        throw new DOMException("Storage access denied", "SecurityError");
+      return getItem.call(this, key);
+    });
+  cleanup.push(() => reads.mockRestore());
+  const stop = subscribeView(
+    h.scope,
+    (_key, removed) => {
+      if (!removed?.length) return;
+      stop();
+      writeView(h.scope, "draft:room", peerDraft);
+      readBlocked = true;
+    },
+    "draft:room",
+  );
+  cleanup.push(stop);
+  const sent = vi.fn();
+  render(
+    createElement(MessageComposer, {
+      session: remote,
+      scope: h.scope,
+      channelId: "room",
+      channelName: "Huddle",
+      label: "Huddle draft",
+      onSend: sent,
+    }),
+  );
+  const editor = screen.getByRole("textbox", { name: "Huddle draft" });
+  await waitFor(() => expect(editor).toHaveTextContent("Send this"));
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(sent).toHaveBeenCalledWith("accepted-id"));
+  const retry = await screen.findByRole("button", {
+    name: "Retry draft cleanup",
+  });
+  readBlocked = false;
+  fireEvent.click(retry);
+  expect(editor).toHaveTextContent(peerDraft.text);
+  expect(
+    screen.queryByRole("button", { name: "Retry draft cleanup" }),
+  ).toBeNull();
+  expect(readView(h.scope, "draft:room", null)).toEqual(peerDraft);
+  expect(h.send).toHaveBeenCalledTimes(1);
+});
+
+it("keeps a peer draft saved while a detached send prepares its files", async () => {
+  const h = harness();
+  const { remote } = await h.connect();
+  if (!remote.attachments) throw new Error("Missing attachments");
+  type Upload = Awaited<ReturnType<typeof remote.attachments.upload>>;
+  let finishUpload!: (result: Upload) => void;
+  const upload = new Promise<Upload>((resolve) => {
+    finishUpload = resolve;
+  });
+  const transfer = vi
+    .spyOn(remote.attachments, "upload")
+    .mockReturnValue(upload);
+  const publish = vi.spyOn(remote, "sendDraft");
+  const caption = { text: "Original caption", recipients: [] };
+  writeView(h.scope, "draft:room", caption);
+  const files = attachmentDraft(remote, `${h.scope}:draft:room`, "room");
+  const prepare = vi.spyOn(files, "prepareForSend");
+  cleanup.push(() => files.clear());
+  files.add([new File(["notes"], "notes.txt", { type: "text/plain" })]);
+  render(
+    createElement(MessageComposer, {
+      session: remote,
+      scope: h.scope,
+      channelId: "room",
+      channelName: "Huddle",
+    }),
+  );
+  await waitFor(() => expect(transfer).toHaveBeenCalledOnce());
+  const send = screen.getByRole("button", { name: "Send message" });
+  fireEvent.click(send);
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  expect(send).toBeDisabled();
+  const newer = { text: "Peer caption", recipients: [] };
+  act(() => writeView(h.scope, "draft:room", newer));
+  await act(async () => {
+    finishUpload({
+      name: "notes.txt",
+      url: "https://example.test/notes.txt",
+      sha256: "ab".repeat(32),
+      type: "text/plain",
+      size: 5,
+    });
+  });
+  expect(screen.getByRole("button", { name: "Keep my draft" })).toBeVisible();
+  expect(readView(h.scope, "draft:room", null)).toEqual(newer);
+  expect(publish).not.toHaveBeenCalled();
+  expect(h.send).not.toHaveBeenCalled();
+});
+
+/** Node's BroadcastChannel does not preserve File instances as browsers do.
+ * Keeps message ordering while retaining files in this owner/client fixture. */
+function keepFiles() {
   const peers = new Set<{
     name: string;
     onmessage?: (event: { data: unknown }) => void;
@@ -387,6 +545,10 @@ it("retains valid voice metadata and releases enriched upload identities", async
       }
     },
   );
+}
+
+it("retains valid voice metadata and releases enriched upload identities", async () => {
+  keepFiles();
   const h = harness();
   const { remote } = await h.connect();
   const file = new File([new Uint8Array(64)], "voice.wav", {
@@ -444,6 +606,41 @@ it("retains valid voice metadata and releases enriched upload identities", async
       [{ ...invalid, voice: { ...voice, duration: Infinity } }],
     ),
   ).rejects.toThrow("Invalid voice");
+});
+
+it("carries an upload's failure code to the detached editor, so its draft marks a refused type", async () => {
+  keepFiles();
+  const h = harness();
+  const { remote } = await h.connect();
+  if (!remote.attachments) throw new Error("Missing attachments");
+  const file = () => new File(["MZ"], "setup.exe");
+  const signal = new AbortController().signal;
+  h.session.attachments.upload.mockRejectedValueOnce(new UploadError("type"));
+  const refusal = await remote.attachments
+    .upload(file(), "room", signal)
+    .catch((error: unknown) => error);
+  expect(refusal).toBeInstanceOf(UploadError);
+  expect(refusal).toMatchObject({
+    code: "type",
+    message: UPLOAD_FAILURES.type,
+  });
+  // A failure without a code stays a plain error with its own text.
+  h.session.attachments.upload.mockRejectedValueOnce(new Error("Relay down"));
+  const plain = await remote.attachments
+    .upload(file(), "room", signal)
+    .catch((error: unknown) => error);
+  expect(plain).not.toBeInstanceOf(UploadError);
+  expect(plain).toMatchObject({ message: "Relay down" });
+  // The detached editor's own draft offers no Retry for the refused file.
+  h.session.attachments.upload.mockRejectedValueOnce(new UploadError("type"));
+  const draft = attachmentDraft(remote, "detached", "room");
+  cleanup.push(() => draft.clear());
+  draft.add([file()]);
+  await vi.waitFor(() =>
+    expect(draft.snapshot()).toMatchObject([
+      { status: "error", error: UPLOAD_FAILURES.type, unsupported: true },
+    ]),
+  );
 });
 
 it("projects owned model choices and carries validated picks through the companion transport", async () => {
@@ -563,7 +760,7 @@ it("shows and refreshes model defaults in the standalone companion composer", as
     snapshot: () => new Map([[pubkey, { ...agent, isAgent: true as const }]]),
   };
   h.session.channels.get().members.push(pubkey);
-  writeView(h.scope, "draft:room", followupDraft([agent]));
+  writeView(h.scope, "draft:room", typedDraft(followupDraft([agent])));
   function Companion() {
     return useHuddleComposer(h.owner.token);
   }
@@ -589,3 +786,312 @@ it("shows and refreshes model defaults in the standalone companion composer", as
     ),
   );
 });
+
+it("carries owner-authorized GIF media into companion previews across searches", async () => {
+  const asset = {
+    url: "https://example.test/hello(1).gif",
+    width: 100,
+    height: 100,
+    size: 20,
+  };
+  const gif = {
+    id: 1,
+    slug: "hello",
+    title: "Hello",
+    preview: asset,
+    original: asset,
+  };
+  const search = vi
+    .spyOn(relayGifRequests, "search")
+    .mockResolvedValueOnce([gif])
+    .mockResolvedValue([]);
+  const h = harness();
+  const media = vi
+    .spyOn(h.session, "media")
+    .mockImplementation(
+      (url) => `https://proxy.test/?url=${encodeURIComponent(url)}`,
+    );
+  const { client, remote } = await h.connect();
+  const url = "https://example.test/hello%281%29.gif";
+  expect(remote.media(url)).toBeUndefined();
+  await client.gifs.search("https://example.test", "hello");
+  const source = remote.media(url);
+  expect(source).toBe(media(url));
+  render(gifDraftPreview(url, gif.title, remote.media));
+  expect(screen.getByRole("img", { name: "Hello" })).toHaveAttribute(
+    "src",
+    source,
+  );
+  await client.gifs.search("https://example.test", "other");
+  expect(remote.media(url)).toBe(source);
+  await remote.messages.send("room", gifMarkdown(gif));
+  expect(h.send).toHaveBeenCalledWith(
+    "room",
+    `![Hello](${url})`,
+    [],
+    [],
+    undefined,
+    [],
+    {},
+  );
+  expect(search).toHaveBeenCalledTimes(2);
+  client.dispose();
+  const next = await h.connect();
+  expect(next.remote.media(url)).toBeUndefined();
+});
+
+// Picked assets need no `.gif` suffix; only the thumbnail depends on it.
+it.each([
+  ["https://example.test/chosen.gif", true],
+  ["https://example.test/media/123", false],
+])(
+  "stages a selected GIF in the standalone composer and sends its Markdown: %s",
+  async (url, thumbnail) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(relayGifRequests, "supports").mockResolvedValue(true);
+    const asset = {
+      url,
+      width: 100,
+      height: 100,
+      size: 20,
+    };
+    const gif = {
+      id: 1,
+      slug: "chosen",
+      title: "Chosen GIF",
+      preview: asset,
+      original: asset,
+    };
+    vi.spyOn(relayGifRequests, "search").mockResolvedValue([gif]);
+    const h = harness();
+    vi.spyOn(h.session, "media").mockImplementation((url) => url);
+    function Companion() {
+      return useHuddleComposer(h.owner.token);
+    }
+    render(createElement(Companion));
+    const draft = await screen.findByRole("textbox", {
+      name: "Message this Huddle",
+    });
+    fireEvent.keyDown(draft, { key: "g", ctrlKey: true });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose Chosen GIF" }),
+    );
+    const row = await screen.findByRole("region", { name: "Attachments" });
+    if (thumbnail)
+      await waitFor(() =>
+        expect(row.querySelector("img")).toHaveAttribute("src", asset.url),
+      );
+    else expect(row.querySelector("img")).toBeNull();
+    expect(draft).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Remove Chosen GIF" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Attachments" })).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    fireEvent.keyDown(draft, { key: "g", ctrlKey: true });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Choose Chosen GIF" }),
+    );
+    await screen.findByRole("button", { name: "Remove Chosen GIF" });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() =>
+      expect(h.send).toHaveBeenCalledWith(
+        "room",
+        gifMarkdown(gif),
+        [],
+        [],
+        undefined,
+        [],
+        {},
+      ),
+    );
+  },
+);
+
+it("carries the owner's profile purge generation so the companion rereads shown names", async () => {
+  const h = harness();
+  let generation = 0;
+  const ensure = vi.fn(async () => {});
+  h.session.profiles = {
+    ...h.session.profiles,
+    snapshot: () => new Map(),
+    ensure,
+    generation: () => generation,
+  };
+  const { client, remote } = await h.connect();
+  expect(remote.profiles.generation?.()).toBe(0);
+  const seen = vi.fn();
+  cleanup.push(remote.profiles.subscribe(seen));
+  await remote.profiles.ensure(["cd".repeat(32)], "background");
+  await vi.waitFor(() => expect(ensure).toHaveBeenCalledTimes(1));
+  // A purge in the main window advances its generation; the owner publishes.
+  generation = 1;
+  h.owner.refresh();
+  await vi.waitFor(() => expect(remote.profiles.generation?.()).toBe(1));
+  expect(client.snapshot().data?.profileGeneration).toBe(1);
+  expect(seen).toHaveBeenCalled();
+  await remote.profiles.ensure(["cd".repeat(32)], "background");
+  await vi.waitFor(() => expect(ensure).toHaveBeenCalledTimes(2));
+});
+
+it.each(["private", "dm", "solo", "public"] as const)(
+  "resolves and discloses a detached %s forward in the owning session",
+  async (privacy) => {
+    const h = harness();
+    const reference = {
+      version: 1 as const,
+      origin: "https://example.test",
+      channelId: "source",
+      id: "c".repeat(64),
+    };
+    const agent = "de".repeat(32);
+    Object.assign(h.session, {
+      agentLibrary: {
+        snapshot: () => ({
+          identities: [{ pubkey: agent, name: "Local Agent" }],
+        }),
+      },
+    });
+    let content = "Authorized source @Local Agent";
+    const row = () => ({
+      id: reference.id,
+      channelId: "source",
+      authorId: h.session.viewer,
+      createdAt: 1,
+      content,
+      mentions: [agent],
+      participants: [],
+      attachments: [],
+      reactions: [],
+      replyCount: 0,
+    });
+    const dispose = vi.fn();
+    vi.spyOn(h.session, "thread").mockImplementation(
+      () =>
+        ({
+          snapshot: () => ({
+            status: "ready",
+            targetStatus: "ready",
+            target: row(),
+            replies: [],
+            canLoadMore: false,
+          }),
+          subscribe: () => () => {},
+          refresh: async () => {},
+          dispose,
+        }) as unknown as ReturnType<typeof h.session.thread>,
+    );
+    vi.spyOn(h.session.messages, "forwardProblem").mockReturnValue(undefined);
+    const forward = vi
+      .spyOn(h.session.messages, "forward")
+      .mockReturnValue("forwarded-id");
+    Object.assign(h.session.channels, {
+      resolve: async () => {},
+      describe: () => ({
+        state: "found",
+        name: "Source",
+        private: privacy === "private",
+        hidden: false,
+        archived: false,
+        joined: true,
+        channelType:
+          privacy === "dm" || privacy === "solo" ? privacy : "stream",
+      }),
+    });
+    let { remote } = await h.connect();
+    expect(
+      (
+        await remote.forwarding?.resolve(
+          reference,
+          new AbortController().signal,
+        )
+      )?.row.content,
+    ).toBe("Authorized source @Local Agent");
+    expect(
+      (
+        await remote.forwarding?.resolve(
+          reference,
+          new AbortController().signal,
+        )
+      )?.privateSource,
+    ).toBe(privacy !== "public");
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    function Companion() {
+      return useHuddleComposer(h.owner.token);
+    }
+    const view = render(createElement(Companion));
+    await screen.findByRole("textbox", { name: "Message this Huddle" });
+    const { forwardClipboard } = await import("../messages/forward-clipboard");
+    const payload = forwardClipboard(reference, "Untrusted clipboard text");
+    fireEvent.paste(
+      screen.getByRole("textbox", { name: "Message this Huddle" }),
+      {
+        clipboardData: {
+          getData: (type: string) =>
+            type === "text/html" ? payload.html : payload.text,
+          items: [],
+        },
+      },
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      Boolean(
+        within(screen.getByRole("form")).queryByText(
+          /will be able to read this message/,
+        ),
+      ),
+    ).toBe(privacy !== "public");
+    if (privacy !== "public")
+      expect(
+        within(screen.getByRole("form")).getByText(
+          /will be able to read this message/,
+        ),
+      ).toHaveTextContent("Everyone in this Huddle");
+    view.unmount();
+    // A detached host owns one bridge client at a time. Reconnect after closing it.
+    ({ remote } = await h.connect());
+    content = "Current authorized source @Local Agent";
+    expect(
+      await remote.forwarding?.send(reference, "Note", [], [], [], {}),
+    ).toBe("forwarded-id");
+    expect(forward).toHaveBeenCalledWith(
+      "room",
+      expect.objectContaining({
+        content,
+        mentionLabels: [{ id: agent, names: ["Local Agent"] }],
+      }),
+      expect.any(String),
+      "Note",
+      undefined,
+      { mentions: [], attachments: [], references: [], picks: {} },
+    );
+    expect(dispose).toHaveBeenCalledTimes(4);
+    await expect(
+      remote.forwarding?.resolve(
+        { ...reference, origin: "https://other.example" },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/another community/);
+    h.revoke();
+    await expect(
+      remote.forwarding?.send(reference, "", [], [], [], {}),
+    ).rejects.toThrow();
+    expect(forward).toHaveBeenCalledOnce();
+  },
+);

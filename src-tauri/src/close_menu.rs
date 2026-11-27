@@ -1,13 +1,16 @@
-//! Cmd+W is a menu action that only ever closes a tab, never the window: with
-//! no tab to close it does nothing. Cmd+Shift+W clears the current channel's tabs.
-//! The red button still closes the window.
+//! Cmd+W closes the active tab, or the window when no tab handles the request.
+//! Cmd+Shift+W only clears the current channel's tabs.
+//! The red button still closes the window directly.
+//! Edit → Paste and Match Style (Cmd+Shift+V) pastes the clipboard as plain text.
+//! Buzz → Settings… (Cmd+,) runs the app's Open Settings shortcut.
+//! Buzz → Check for Updates… opens Settings → Software updates and checks.
 //! Ctrl+Tab bypasses macOS menu highlighting latency. Menu commands and the
 //! native key handler both work while a raw guest webview owns keyboard focus.
 use std::{cell::RefCell, ptr::NonNull};
 
 use block2::RcBlock;
-use objc2::{rc::Retained, runtime::AnyObject};
-use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
+use objc2::{rc::Retained, runtime::AnyObject, sel, MainThreadMarker};
+use objc2_app_kit::{NSApplication, NSEvent, NSEventMask, NSEventModifierFlags};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, WINDOW_SUBMENU_ID},
     AppHandle, Manager, Runtime,
@@ -17,12 +20,18 @@ const CLOSE: &str = "buzz-close";
 const CLOSE_ALL: &str = "buzz-close-all";
 const NEXT: &str = "buzz-next-tab";
 const PREVIOUS: &str = "buzz-previous-tab";
+const PASTE_PLAIN: &str = "buzz-paste-plain";
+const SETTINGS: &str = "buzz-settings";
+const CHECK_UPDATES: &str = "buzz-check-for-updates";
+// The focused composer marks the paste that follows as raw, whether or not a
+// key fired. A focused guest browser takes the paste itself.
+const PASTE_PLAIN_REQUEST: &str = "if (browserSessionId === null) document.activeElement?.dispatchEvent(new Event(\"buzz:paste-plain\"));";
 const REQUEST: &str = include_str!("close-request.js");
 const SWITCH: &str = include_str!("switch-tab-request.js");
 
 pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
-    let close = MenuItem::with_id(app, CLOSE, "Close Tab", true, Some("CmdOrCtrl+W"))?;
+    let close = MenuItem::with_id(app, CLOSE, "Close", true, Some("CmdOrCtrl+W"))?;
     let close_all = MenuItem::with_id(
         app,
         CLOSE_ALL,
@@ -38,22 +47,52 @@ pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let close_label = PredefinedMenuItem::close_window(app, None)?
         .text()?
         .replace('&', "");
+    // Tauri has no predefined Paste and Match Style. Cmd+Shift+V is the
+    // chord Slack and Google Docs use for pasting without formatting.
+    let paste_plain = MenuItem::with_id(
+        app,
+        PASTE_PLAIN,
+        "Paste and Match Style",
+        true,
+        Some("CmdOrCtrl+Shift+V"),
+    )?;
+    let paste_label = PredefinedMenuItem::paste(app, None)?
+        .text()?
+        .replace('&', "");
     let mut replaced = 0;
     for item in menu.items()? {
         if let Some(submenu) = item.as_submenu() {
             for (index, item) in submenu.items()?.iter().enumerate() {
                 if let Some(predefined) = item.as_predefined_menuitem() {
-                    if predefined.text()?.replace('&', "") == close_label {
+                    let label = predefined.text()?.replace('&', "");
+                    if label == close_label {
                         submenu.remove(item)?;
                         submenu.insert(&close, index)?;
                         submenu.insert(&close_all, index + 1)?;
                         replaced += 1;
+                    } else if label == paste_label {
+                        submenu.insert(&paste_plain, index + 1)?;
                     }
                 }
             }
         }
     }
     debug_assert_eq!(replaced, 2, "Tauri default Close menu structure changed");
+    // The app menu opens with About and a separator. As in other Mac apps,
+    // Check for Updates… follows About and Settings follows the separator.
+    if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu()) {
+        app_menu.insert(
+            &MenuItem::with_id(app, CHECK_UPDATES, "Check for Updates…", true, None::<&str>)?,
+            1,
+        )?;
+        app_menu.insert_items(
+            &[
+                &MenuItem::with_id(app, SETTINGS, "Settings…", true, Some("CmdOrCtrl+,"))?,
+                &PredefinedMenuItem::separator(app)?,
+            ],
+            3,
+        )?;
+    }
     if let Some(window) = menu.get(WINDOW_SUBMENU_ID) {
         if let Some(window) = window.as_submenu() {
             window.append_items(&[
@@ -80,12 +119,58 @@ pub(crate) fn handle<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEve
         // A block keeps the binding out of the page's global scope.
         NEXT => format!("{{ const tabEvent = \"buzz:next-tab\";\n{SWITCH}}}"),
         PREVIOUS => format!("{{ const tabEvent = \"buzz:previous-tab\";\n{SWITCH}}}"),
+        SETTINGS => return show_and_request(app, "buzz:open-settings"),
+        CHECK_UPDATES => return show_and_request(app, "buzz:check-for-updates"),
+        PASTE_PLAIN => {
+            // On the UI thread the script is sent to the page at once, so it
+            // runs before the paste command that follows it.
+            send_request(app, PASTE_PLAIN_REQUEST);
+            return paste_plain();
+        }
         _ => return,
     };
-    send_request(app, &script);
+    dispatch_request(app, &script, event.id().as_ref());
 }
 
-fn send_request<R: Runtime>(app: &AppHandle<R>, script: &str) -> bool {
+// Unlike a tab request, Settings and Check for Updates bring back a hidden or
+// minimized window, as the red button only hides it.
+fn show_and_request<R: Runtime>(app: &AppHandle<R>, event: &str) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if let Err(error) = crate::notifications::focus(&window) {
+        eprintln!("Could not show Buzz for {event}: {error}");
+    }
+    if let Err(error) = window.eval(format!("window.dispatchEvent(new Event(\"{event}\"));")) {
+        eprintln!("Could not send Buzz request: {error}");
+    }
+}
+
+// As a native Paste and Match Style item does: the focused web view, main or
+// guest, fires a paste event holding only the clipboard's plain text.
+fn paste_plain() {
+    let Some(marker) = MainThreadMarker::new() else {
+        return;
+    };
+    // A nil target walks the key window's responder chain; none may answer.
+    unsafe {
+        NSApplication::sharedApplication(marker).sendAction_to_from(
+            sel!(pasteAsPlainText:),
+            None,
+            None,
+        )
+    };
+}
+
+pub(crate) fn send_request<R: Runtime>(app: &AppHandle<R>, script: &str) -> bool {
+    dispatch_request(app, script, "")
+}
+
+fn closes_window(action: &str, result: &str) -> bool {
+    action == CLOSE && result == r#""unhandled""#
+}
+
+fn dispatch_request<R: Runtime>(app: &AppHandle<R>, script: &str, action: &str) -> bool {
     let Some(window) = app.get_webview_window("main") else {
         return false;
     };
@@ -99,8 +184,29 @@ fn send_request<R: Runtime>(app: &AppHandle<R>, script: &str) -> bool {
     }
     // Evaluate only in the trusted main view, even when a raw guest webview
     // owns keyboard focus.
-    if let Err(error) = window.eval(script) {
-        eprintln!("Could not send Buzz tab request: {error}");
+    let browser = serde_json::to_string(&crate::browser::focused_session())
+        .expect("Browser session IDs are JSON strings");
+    let script = format!("{{ const browserSessionId = {browser};\n{script}\n}}");
+    let result = if action == CLOSE {
+        let target = window.clone();
+        window.eval_with_callback(script, move |result| {
+            // Evaluation failures and handled tab/modal requests must never
+            // cause a second, window-level close. Recheck focus after the reply.
+            if closes_window(CLOSE, &result)
+                && target.is_visible().unwrap_or(false)
+                && !target.is_minimized().unwrap_or(true)
+                && target.is_focused().unwrap_or(false)
+            {
+                if let Err(error) = target.close() {
+                    eprintln!("Could not close Buzz window: {error}");
+                }
+            }
+        })
+    } else {
+        window.eval(script)
+    };
+    if let Err(error) = result {
+        eprintln!("Could not send Buzz request: {error}");
         return false;
     }
     true
@@ -167,6 +273,23 @@ fn install_tab_keys<R: Runtime>(app: &AppHandle<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_unhandled_close_falls_back_to_the_window() {
+        assert!(closes_window(CLOSE, r#""unhandled""#));
+        for result in [
+            r#""handled""#,
+            "null",
+            "",
+            "unhandled",
+            r#"{"error":"failed"}"#,
+        ] {
+            assert!(!closes_window(CLOSE, result));
+        }
+        for action in [CLOSE_ALL, NEXT, PREVIOUS, PASTE_PLAIN, ""] {
+            assert!(!closes_window(action, r#""unhandled""#));
+        }
+    }
 
     #[test]
     fn tab_keys_preserve_direction_and_leave_other_chords_to_appkit() {

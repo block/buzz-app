@@ -16,11 +16,29 @@ export const agent = "c".repeat(64);
 const workflowRelay = keypair();
 const workflowOwner = keypair();
 const missingWorkflowOwner = keypair();
+const reviewers = [
+  "Jordan Lee",
+  "Priya Shah",
+  "Chen Wei",
+  "Maya Ortiz",
+  "Noah Kim",
+  "Ines Duarte",
+  "Tariq Haddad",
+  "Lena Fischer",
+  "Omar Farouk",
+  "Ruth Okafor",
+  "Diego Alvarez",
+  "Hana Sato",
+].map((name, index) => ({
+  name,
+  pubkey: "123456789def".charAt(index).repeat(64),
+}));
 export const profiles = new Map<string, Profile>([
   [workflowOwner.pubkey, { name: "Wes" }],
   [reader, { name: "Alex Morgan", picture: "https://fixture.test/avatar" }],
   [teammate, { name: "Sam Rivera" }],
   [agent, { name: "Studio assistant", isAgent: true }],
+  ...reviewers.map(({ name, pubkey }) => [pubkey, { name }] as const),
 ]);
 export const artwork = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#e9e8e4"/><circle cx="460" cy="100" r="48" fill="#cda97c"/><path d="M0 360L180 120L390 360M210 360L425 180L640 360" fill="#859e89"/></svg>')}`;
 export const media = (url: string) => {
@@ -79,25 +97,98 @@ const references =
   "@Sam Rivera and @Studio assistant — check [the design notes](https://example.com/notes), [PR #42](https://github.com/block/buzz/pull/42), and [#design](buzz://channel/gallery).\n\nRaw service link: https://github.com/block/buzz/issues/42\n\n||The surprise is in the [release notes](https://example.com/release).||";
 const patch =
   "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
+const reactionAuthorId = (index: number) =>
+  index.toString(16).padStart(2, "0").repeat(32);
+const readOnlyReactionAuthors = Array.from({ length: 12 }, (_, index) =>
+  reactionAuthorId(index),
+);
+const reactionEvents = (prefix: string, authors: readonly string[]) =>
+  authors.map((authorId, index) => ({ id: `${prefix}-${index}`, authorId }));
+const readOnlyReactions = [
+  {
+    content: "👀",
+    events: [
+      ...reactionEvents("attention", readOnlyReactionAuthors),
+      { id: "attention-repeat", authorId: reactionAuthorId(0) },
+    ],
+  },
+  {
+    content: "👍",
+    events: reactionEvents("approval", readOnlyReactionAuthors.slice(0, 3)),
+  },
+  {
+    content: "🎉",
+    events: reactionEvents("celebration", readOnlyReactionAuthors.slice(0, 4)),
+  },
+  {
+    content: ":party:",
+    emoji: { shortcode: "party", url: "https://fixture.test/media/avatar" },
+    events: reactionEvents("party-image", readOnlyReactionAuthors.slice(0, 2)),
+  },
+  {
+    content: ":party:",
+    emoji: { shortcode: "party", url: "https://fixture.test/media/party" },
+    events: reactionEvents("party-text", readOnlyReactionAuthors.slice(0, 1)),
+  },
+  {
+    content:
+      ":celebrating_the_quarterly_release_readiness_milestone_together_:",
+    emoji: {
+      shortcode:
+        "celebrating_the_quarterly_release_readiness_milestone_together_",
+      url: "https://fixture.test/media/long-shortcode-unavailable",
+    },
+    events: reactionEvents(
+      "long-shortcode",
+      readOnlyReactionAuthors.slice(0, 5),
+    ),
+  },
+  {
+    content: "✅",
+    events: reactionEvents("check", readOnlyReactionAuthors),
+  },
+  {
+    content: "🔥",
+    events: reactionEvents("fire", readOnlyReactionAuthors),
+  },
+  {
+    content: "💡",
+    events: reactionEvents("idea", readOnlyReactionAuthors),
+  },
+  {
+    content: "🚀",
+    events: reactionEvents("launch", readOnlyReactionAuthors),
+  },
+  {
+    content: "💙",
+    events: reactionEvents("heart", readOnlyReactionAuthors),
+  },
+];
 export const groups: Group[] = [
   {
     id: "agent-coordination",
     title: "Agent coordination",
-    description: "Every compact entry keeps its author's avatar visible.",
+    description:
+      "Compact activity rows use author avatars, inline mentions, and expandable text.",
     examples: [
       {
         id: "repeated-agent",
         title: "Consecutive agent updates",
         description:
-          "Author icons remain visible before and after expanding a row.",
+          "Individual rows keep previews within the message width. Timeline group folding is exercised separately.",
         rows: [
+          message(
+            "coordination-intro",
+            "I’ll investigate the missing icons and check the rendered result.",
+            { authorId: agent },
+          ),
           message("coordination-first", "Investigating the missing icons.", {
             authorId: agent,
             audience: "agents",
           }),
           message(
             "coordination-next",
-            "Found the cause.\n\nThe fix is ready to try.",
+            "Found the cause. The activity rows were rendering their own avatars rather than using the conversation’s message grouping. I’m updating the shared grouping and matching the width of these previews to the surrounding messages.\n\nThe fix is ready to try.",
             {
               authorId: agent,
               audience: "agents",
@@ -110,6 +201,28 @@ export const groups: Group[] = [
               authorId: agent,
               audience: "agents",
               mentions: [teammate],
+            },
+          ),
+        ],
+      },
+      {
+        id: "relayed-message",
+        title: "Relayed from another chat",
+        description:
+          "Another agent's message, relayed by its owner, reads as that agent's collapsed line. Opening it shows the text and who it was sent as and to.",
+        rows: [
+          message(
+            "relayed-message",
+            "@Sam Rivera Message from Studio assistant (relayed as the owner)\n\nRebase the icon fix on main before review; the grouping change landed there this morning.",
+            {
+              mentions: [teammate],
+              relayedFrom: {
+                agent,
+                channelId: "gallery",
+                notice:
+                  "@Sam Rivera Message from Studio assistant (relayed as the owner)",
+                verified: true,
+              },
             },
           ),
         ],
@@ -189,10 +302,27 @@ export const groups: Group[] = [
         { mentions: [teammate, agent] },
       ),
       single(
+        "wrapped-mentions",
+        "Wrapped mentions",
+        "Mentions that start a line, wrap or follow a line break all meet the prose edge.",
+        `Tagging everyone who reviews message styling. Please check the narrow layout before Friday.\n@Studio assistant can collect the notes.\n\n${reviewers.map(({ name }) => `@${name}`).join(" ")}`,
+        {
+          authorId: teammate,
+          mentions: [agent, ...reviewers.map(({ pubkey }) => pubkey)],
+        },
+      ),
+      single(
         "long-links",
         "Long links",
         "Long destinations wrap inside the bubble. Try Narrow preview.",
         "Join https://feedback.communities.buzz.xyz/invite/workshop-testing to help test, and review https://github.com/block/buzz-app/pull/1423 too.",
+        { authorId: teammate },
+      ),
+      single(
+        "table-received",
+        "Received standalone table",
+        "A received table owns its surface even while message actions show.",
+        "| Item | State |\n| --- | --- |\n| Review | Ready |",
         { authorId: teammate },
       ),
       single(
@@ -325,7 +455,7 @@ export const groups: Group[] = [
         id: "workflow-owner",
         title: "Automated message",
         description:
-          "Automation leads; owner navigation is labelled. Open the information icon to inspect the separate owner and relay keys.",
+          "Automation leads; owner navigation is labelled. Rest on or open the information icon to read that the owner didn’t send it personally.",
         rows: foldMessages(
           "studio",
           workflowRelay.pubkey,
@@ -400,6 +530,43 @@ export const groups: Group[] = [
         "I reviewed the changes. **Two details** still need attention:\n\n- Align the labels.\n- Check the narrow layout.",
         { authorId: agent, agentEnvelope: true },
       ),
+      {
+        id: "edited",
+        title: "Edited messages",
+        description:
+          "An author's edit is marked after the last line, or below a closing block.",
+        rows: [
+          message("edited-own", "Hi how are ya.", { edited: true }),
+          message("edited-own-emoji", "🎉", { edited: true }),
+          message(
+            "edited-own-table",
+            "| Day | Room |\n| --- | --- |\n| Thu | 4B |",
+            {
+              edited: true,
+            },
+          ),
+          message("edited-teammate", "Moved the review to Thursday.", {
+            authorId: teammate,
+            edited: true,
+          }),
+          message(
+            "edited-block",
+            "Use this command instead:\n\n```sh\njust iterate\n```",
+            { authorId: teammate, edited: true },
+          ),
+          message("edited-attachment", "", {
+            authorId: teammate,
+            edited: true,
+            attachments: [
+              {
+                url: "https://fixture.test/landscape",
+                kind: "image",
+                dimensions: { width: 640, height: 360 },
+              },
+            ],
+          }),
+        ],
+      },
       single(
         "fallback",
         "Unknown author",
@@ -490,13 +657,6 @@ export const groups: Group[] = [
         "@Sam Rivera could you review the spacing?",
         { mentions: [teammate] },
       ),
-      single(
-        "edited",
-        "Edited content",
-        "The current renderer shows the replacement body without a separate edited badge.",
-        "Updated: the review is now at 3 pm.",
-        { edited: true },
-      ),
     ],
   },
   {
@@ -535,6 +695,37 @@ export const groups: Group[] = [
       ),
     ],
   },
+
+  {
+    id: "charts",
+    title: "Charts",
+    description:
+      "Fenced buzz-chart JSON drawn by the bundled plugin inside the host code frame.",
+    examples: [
+      single(
+        "chart-line",
+        "Series chart",
+        "Two series follow the first chart colors; a data table sits below.",
+        '```buzz-chart\n{"version":1,"type":"line","title":"Weekly reviews","x":"week","y":"reviews","series":"team","data":[{"week":1,"reviews":8,"team":"Web"},{"week":2,"reviews":11,"team":"Web"},{"week":3,"reviews":9,"team":"Web"},{"week":1,"reviews":5,"team":"Relay"},{"week":2,"reviews":6,"team":"Relay"},{"week":3,"reviews":10,"team":"Relay"}],"source":{"name":"Example data"}}\n```',
+        { authorId: agent },
+      ),
+      single(
+        "chart-pie",
+        "ECharts option",
+        "Slices cycle through the four series colors.",
+        '```buzz-chart\n{"version":2,"title":"Review time","height":280,"option":{"series":[{"type":"pie","radius":["40%","70%"],"data":[{"name":"Waiting","value":45},{"name":"Reviewing","value":30},{"name":"Fixing","value":15},{"name":"Merging","value":10}]}]}}\n```',
+        { authorId: agent },
+      ),
+      single(
+        "chart-invalid",
+        "Invalid chart",
+        "The validation error and the source replace the chart.",
+        '```buzz-chart\n{"version":1,"type":"bar"}\n```',
+        { authorId: agent },
+      ),
+    ],
+  },
+
   {
     id: "conversation",
     title: "Conversation context",
@@ -565,6 +756,26 @@ export const groups: Group[] = [
           })),
         },
       ),
+      {
+        id: "read-only-reactions",
+        title: "Read-only grouped reactions",
+        description:
+          "A local message row with many fictional reactions and a stable neighbor.",
+        rows: [
+          message(
+            "read-only-reactions-main",
+            "A short update with reactions.",
+            {
+              reactions: readOnlyReactions,
+            },
+          ),
+          message(
+            "read-only-reactions-next",
+            "The next message remains separate.",
+            { authorId: teammate },
+          ),
+        ],
+      },
       single(
         "thread",
         "Thread summary",
@@ -674,7 +885,7 @@ export const groups: Group[] = [
         "video",
         "Video attachment",
         "The clip uses a locally generated sample and the real play/fullscreen controls.",
-        "A quick walkthrough.",
+        "",
         {
           attachments: [
             {
@@ -682,6 +893,38 @@ export const groups: Group[] = [
               kind: "video",
               previewUrl: "https://fixture.test/poster",
               dimensions: { width: 640, height: 360 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-portrait",
+        "Portrait video geometry",
+        "Portrait metadata keeps a readable preview width without a height clamp.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 360, height: 640 },
+            },
+          ],
+        },
+      ),
+      single(
+        "video-extreme",
+        "Extreme video metadata",
+        "An extreme aspect ratio keeps the preview and controls bounded.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 1, height: 1000000 },
             },
           ],
         },
@@ -825,6 +1068,35 @@ export const groups: Group[] = [
             }),
             membershipRows: [reader, teammate, agent].map((id, index) =>
               message(`join-${index}`, "", {
+                membership: { type: "member_joined", actor: id, target: id },
+              }),
+            ),
+          },
+        ],
+      },
+      {
+        id: "grouped-members-overflow",
+        title: "Grouped joins with overflow",
+        description:
+          "Beyond three identities the avatar stack ends in a count that must stay legible at two or three digits.",
+        rows: [
+          {
+            ...message("grouped-overflow", "", {
+              membership: {
+                type: "member_joined",
+                actor: reader,
+                target: reader,
+              },
+            }),
+            membershipRows: [
+              reader,
+              teammate,
+              agent,
+              ...Array.from({ length: 31 }, (_, index) =>
+                index.toString(16).padStart(2, "0").repeat(32),
+              ),
+            ].map((id, index) =>
+              message(`join-overflow-${index}`, "", {
                 membership: { type: "member_joined", actor: id, target: id },
               }),
             ),

@@ -1,10 +1,17 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { ResolvePull } from "./ResolvePull";
+import type { PullChecklist as Checklist } from "./pull";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import {
@@ -13,35 +20,74 @@ import {
   GitHubIssueIcon,
   GitCommitIcon,
   FolderSimpleIcon,
+  GithubLogoIcon,
 } from "../../shared/design-system/icons/index";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
+import { usePanelTabTitle } from "../../features/panels/PanelWorkspace";
 import { parseGitHubReference, type GitHubReference } from "./references";
-import { gitHubCli, type GitHubCli } from "./gh";
-import { loadGitHubObject, type GitHubObject } from "./object";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
+import {
+  gitHubCli,
+  gitHubDiff,
+  GitHubError,
+  type GitHubCli,
+  type GitHubDiff,
+} from "./gh";
+import { loadGitHubObject, readable, type GitHubObject } from "./object";
 import { PublicChecklist, PullChecklist } from "./PullChecklist";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { RelaySession } from "../../features/relay/session";
-import { ownSolo } from "../../features/solo/labels";
-import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
-import { SoloPullIcon, SoloPullLink, stateIcons } from "./SoloPull";
+import {
+  createSoloPulls,
+  linksSolo,
+  writeLink,
+  type SoloPulls,
+} from "./solo-pull";
+import {
+  createPullStates,
+  PANEL_REFRESH_MS,
+  type PullDetails,
+  type PullStates,
+} from "./pull-states";
+import { addPullStateTool } from "./pull-state-tool";
+import { gitHubPulls } from "./service";
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
+import { stateIcons } from "./pull-state-view";
+import { GitHubLink } from "./GitHubLink";
+import {
+  SoloPullIcon,
+  SoloPullLink,
+  SoloPullMenu,
+  SoloPullLauncher,
+} from "./SoloPull";
 import { watchPulls } from "./watcher";
+import { presentPull } from "./attention";
+import { SubmitReview } from "./SubmitReview";
+import { createPanelMemory, type PanelMemory } from "./panel-memory";
+import { PullFiles } from "./PullFiles";
+import { GitHubSettings } from "./GitHubSettings";
+import { openGitHubLinksInBuzz } from "./link-preference";
 
 /** How often an open pull request panel reads GitHub again. */
-export const REFRESH_MS = 30_000;
+export const REFRESH_MS = PANEL_REFRESH_MS;
 
 export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const gh = gitHubCli(ctx.host);
+  const diff = gitHubDiff(ctx.host);
+  // A pull request's state is nobody's community's: one store serves every
+  // session's sidebar, every link in messages, the panel and agents, so one
+  // shown in several places costs one read.
+  const states = createPullStates(gh);
+  const memory = createPanelMemory();
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);
     if (!found) {
-      found = createSoloPulls(session, gh);
+      found = createSoloPulls(session, states);
       pulls.set(session, found);
     }
     return found;
@@ -49,14 +95,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "object",
     title: "GitHub",
-    matches: (target) => !!parseGitHubReference(target),
+    channelLauncher: (props) => (
+      <SoloPullLauncher {...props} relay={ctx.relay} pullsFor={pullsFor} />
+    ),
+    deferUntilShown: true,
+    matches: (target) =>
+      openGitHubLinksInBuzz() && !!parseGitHubReference(target),
     component: (props: PanelProps) => {
       const channelId = props.context?.channelId;
       return (
         <GitHubPanel
           {...props}
           gh={gh}
+          diff={diff}
+          states={states}
+          memory={memory}
           {...(channelId && {
+            resolveActions: (
+              url: string,
+              pull: Checklist,
+              action: "failures" | "conflicts",
+            ) => (
+              <ResolvePull
+                relay={ctx.relay}
+                channelId={channelId}
+                rootId={props.context?.rootId}
+                url={url}
+                pull={pull}
+                action={action}
+              />
+            ),
             chatLink: (url: string) => (
               <SoloPullLink
                 relay={ctx.relay}
@@ -70,6 +138,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
     },
   });
+  ctx.conversation.registerLink({
+    id: "pull",
+    title: "GitHub links",
+    matches: (url) => !!parseGitHubReference(url, { pullSubtargets: true }),
+    // Links claims GitHub at the default band, 0, and a tie falls to the
+    // contribution key; only a lower order makes this the GitHub renderer
+    // whichever plugin registered first. Other GitHub pages stay with Links.
+    order: -1,
+    className: inlineStyles.link,
+    component: ({ url }) => <GitHubLink url={url} states={states} />,
+  });
+  ctx.conversation.registerChatMenu(({ session, channelId }) => (
+    <SoloPullMenu
+      session={session}
+      pulls={pullsFor(session)}
+      channelId={channelId}
+    />
+  ));
   ctx.conversation.registerChatIcon(({ session, channelId, fallback }) => (
     <SoloPullIcon
       pulls={pullsFor(session)}
@@ -78,7 +164,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     />
   ));
   ctx.agents.addTool({
-    name: "link_pr",
+    name: "github_link_pr",
     description:
       "Links a GitHub pull request to this Solo chat, so the owner's sidebar shows its state (draft, checks, merged) in place of the chat's icon. A chat has one; linking another replaces it.",
     inputSchema: {
@@ -104,17 +190,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
             : undefined;
       if (url !== null && url?.kind !== "pull")
         throw new Error("url must be a GitHub pull request URL");
-      const relay = ctx.agents.relay(client.pubkey)?.snapshot();
+      const relay = ctx.agents.relay(client.key)?.snapshot();
       const channel = context.channel;
       const session = relay?.status === "ready" ? relay.session : undefined;
       if (!session || !channel)
-        throw new Error("link_pr needs this conversation's community");
-      if (
-        !ownSolo(
-          session.channels.list().channels.find((item) => item.id === channel),
-          session.viewer,
-        )
-      )
+        throw new Error("github_link_pr needs this conversation's community");
+      const found = session.channels
+        .list()
+        .channels.find((item) => item.id === channel);
+      // The owner's Solo chats include ones this agent started for them.
+      if (!linksSolo(found, session.viewer, client.pubkey))
         throw new Error("Only a Solo chat can be linked to a pull request");
       const link = url === null ? null : url.url;
       await writeLink(session, channel, link);
@@ -128,9 +213,114 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : "Unlinked this chat's pull request.";
     },
   });
+  addPullStateTool(ctx.agents, states);
+  // Other plugins can see the states the app holds, without reading GitHub.
+  ctx.provide("githubPulls", gitHubPulls(states));
   // Agents can watch pull requests where the app runs them.
-  ctx.inject(["agents", "host"], watchPulls);
+  ctx.inject(["agents", "host", "navigation"], (scope) =>
+    watchPulls(scope, states, gh, presentPull(scope.navigation)),
+  );
+  // One settings destination for the plugin, retaining its existing deep link.
+  ctx.inject(["settingsCards"], (scope) => {
+    scope.settingsCards.register({
+      id: "authors",
+      title: "GitHub",
+      group: "Plugins",
+      icon: GithubLogoIcon,
+      component: ({ active }) => <GitHubSettings active={active} gh={gh} />,
+    });
+  });
 };
+/** A repository, issue or commit, read when the panel opens. */
+function useGitHubObject(
+  reference: GitHubReference,
+  gh: GitHubCli | undefined,
+  enabled: boolean,
+) {
+  const [loaded, setLoaded] = useState<GitHubObject | string>();
+  const live = useRef<AbortController>(undefined);
+  const load = useCallback(async () => {
+    live.current?.abort();
+    const controller = new AbortController();
+    live.current = controller;
+    try {
+      const next = await loadGitHubObject(
+        reference,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
+        gh,
+      );
+      if (!controller.signal.aborted) setLoaded(next);
+    } catch (error) {
+      // A failed read again keeps what is shown.
+      if (!controller.signal.aborted)
+        setLoaded((shown) =>
+          typeof shown === "object"
+            ? shown
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        );
+    }
+  }, [reference, gh]);
+  useEffect(() => {
+    if (!enabled) return;
+    void load();
+    return () => live.current?.abort();
+  }, [enabled, load]);
+  return { loaded, load };
+}
+
+/** A pull request's details from the store, kept current while shown:
+ * always the latest the store has. Opening it reads GitHub; that read
+ * retries transient failures quietly, and shows an error only while nothing
+ * is held. */
+function usePullPanel(states: PullStates, url: string, enabled: boolean) {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      enabled ? states.watch(url, listener, "details") : () => {},
+    [states, url, enabled],
+  );
+  const state = useSyncExternalStore(subscribe, () =>
+    enabled ? states.get(url) : undefined,
+  );
+  const held = typeof state === "object" ? state.details : undefined;
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    // Opening the panel reads GitHub, as it always has.
+    retryRead(
+      async () => {
+        const read = await states.read(url, {
+          maxAge: 0,
+          level: "details",
+          interactive: true,
+        });
+        if (typeof read.state !== "object" || !read.state.details)
+          throw read.error ?? new Error("GitHub did not answer");
+        return read;
+      },
+      controller.signal,
+      (failure) =>
+        isRetryableRead(failure) ||
+        (failure instanceof GitHubError &&
+          (failure.type === "INTERNAL" ||
+            failure.type === "SERVICE_UNAVAILABLE")),
+    ).catch((failure: unknown) => {
+      if (!controller.signal.aborted) setError(readable(failure).message);
+    });
+    return () => controller.abort();
+  }, [states, url, enabled]);
+  const load = useCallback(async () => {
+    // What changed is shown once read; a failed read keeps what is shown.
+    await states
+      .read(url, { maxAge: 0, level: "details", interactive: true })
+      .catch(() => {});
+  }, [states, url]);
+  const loaded: GitHubObject | string | undefined = held ?? error;
+  return { loaded, load };
+}
+
 const labels = {
   repository: "Repository",
   pull: "Pull request",
@@ -146,22 +336,51 @@ const icons = {
 
 export function GitHubPanel({
   target,
+  context,
   gh,
+  diff,
+  states: shared,
+  memory: sharedMemory,
   chatLink,
+  resolveActions,
 }: PanelProps & {
+  resolveActions?:
+    | ((
+        url: string,
+        pull: Checklist,
+        action: "failures" | "conflicts",
+      ) => ReactNode)
+    | undefined;
   /** The person's `gh`, where the app can run it. */
   gh?: GitHubCli | undefined;
+  diff?: GitHubDiff | undefined;
+  /** The plugin's pull request store; a panel alone keeps its own. */
+  states?: PullStates | undefined;
+  /** The plugin's panel memory; a panel alone keeps its own. */
+  memory?: PanelMemory | undefined;
   /** Links a pull request to the chat the panel was opened from. */
   chatLink?: ((url: string) => ReactNode) | undefined;
 }) {
   const [attempt, retry] = useState(0);
   const reference = useMemo(() => parseGitHubReference(target), [target]);
-  return reference ? (
+  const own = useMemo(
+    () => (shared ? undefined : createPullStates(gh)),
+    [shared, gh],
+  );
+  const states = shared ?? own;
+  const [ownMemory] = useState(createPanelMemory);
+  const memory = sharedMemory ?? ownMemory;
+  return reference && states ? (
     <ObjectPanel
       key={`${reference.url}:${attempt}`}
       reference={reference}
       gh={gh}
+      diff={diff}
+      states={states}
+      memory={memory}
+      channelId={context?.channelId}
       chatLink={chatLink}
+      resolveActions={resolveActions}
       retry={() => retry(attempt + 1)}
     />
   ) : (
@@ -169,60 +388,77 @@ export function GitHubPanel({
   );
 }
 
+/** Tauri's automatic link opener skips Command-clicks, which left the panel's
+ * GitHub links doing nothing; send them to the browser as message links do. */
+function openCommandClickInBrowser(event: MouseEvent<HTMLElement>) {
+  if (
+    event.defaultPrevented ||
+    !event.metaKey ||
+    event.button !== 0 ||
+    !isTauri()
+  )
+    return;
+  const anchor =
+    event.target instanceof Element ? event.target.closest("a[href]") : null;
+  if (
+    !(anchor instanceof HTMLAnchorElement) ||
+    (anchor.protocol !== "https:" && anchor.protocol !== "http:")
+  )
+    return;
+  event.preventDefault();
+  return invoke("plugin:opener|open_url", { url: anchor.href });
+}
+
 function ObjectPanel({
   reference,
   gh,
+  diff,
+  states,
+  memory,
+  channelId,
   chatLink,
+  resolveActions,
   retry,
 }: {
   reference: GitHubReference;
   gh: GitHubCli | undefined;
+  diff: GitHubDiff | undefined;
+  states: PullStates;
+  memory: PanelMemory;
+  /** Where it was opened: each channel keeps its own view of a pull request. */
+  channelId: string | undefined;
   chatLink: ((url: string) => ReactNode) | undefined;
+  resolveActions:
+    | ((
+        url: string,
+        pull: Checklist,
+        action: "failures" | "conflicts",
+      ) => ReactNode)
+    | undefined;
   retry(): void;
 }) {
-  const [loaded, setLoaded] = useState<GitHubObject | string>();
+  const isPull = reference.kind === "pull";
+  const pull = usePullPanel(states, reference.url, isPull);
+  const [openFailed, setOpenFailed] = useState(false);
+  const [view, setView] = useState(
+    () => memory.get(reference.url, channelId).view ?? "summary",
+  );
+  // Files changed stays mounted once shown, so going back to it doesn't read
+  // the diff again.
+  const [changesShown, setChangesShown] = useState(view === "changes");
+  const other = useGitHubObject(reference, gh, !isPull);
+  const loaded = isPull ? pull.loaded : other.loaded;
+  const load = isPull ? pull.load : other.load;
   const link = reference.url;
-  const live = useRef<AbortController>(undefined);
-  /** Reads it again. A failed refresh keeps what is shown; only the first
-   * read shows an error. */
-  const load = useCallback(async () => {
-    live.current?.abort();
-    const controller = new AbortController();
-    live.current = controller;
-    try {
-      const next = await loadGitHubObject(
-        reference,
-        AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
-        gh,
-      );
-      if (!controller.signal.aborted) setLoaded(next);
-    } catch (error) {
-      if (!controller.signal.aborted)
-        setLoaded((current) =>
-          typeof current === "object"
-            ? current
-            : error instanceof Error
-              ? error.message
-              : String(error),
-        );
-    }
-  }, [reference, gh]);
-  useEffect(() => {
-    void load();
-    return () => live.current?.abort();
-  }, [load]);
-  // Merged and closed pull requests don't change, so only these are read again.
-  const watching =
-    typeof loaded === "object" &&
-    (loaded.checklist?.state === "open" || loaded.checklist?.state === "draft");
-  useEffect(() => {
-    if (!watching) return;
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") void load();
-    }, REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [watching, load]);
   const result = typeof loaded === "object" ? loaded.details : loaded;
+  // The number leads, so tabs of several pull requests stay apart when narrow.
+  usePanelTabTitle(
+    reference.kind === "repository"
+      ? reference.repository
+      : typeof result === "object" && result.title
+        ? `${reference.label} ${result.title}`
+        : reference.label,
+  );
   const Icon = icons[reference.kind];
   const state = typeof result === "object" ? result.state.toLowerCase() : "";
   const StateIcon =
@@ -230,6 +466,29 @@ function ObjectPanel({
       ? stateIcons[state as keyof typeof stateIcons]
       : undefined;
   const [owner, repositoryName] = reference.repository.split("/");
+  const files =
+    diff && gh && typeof loaded === "object" && loaded.checklist
+      ? {
+          repository: reference.repository,
+          base: loaded.checklist.base,
+          head: loaded.checklist.head,
+          merged:
+            loaded.checklist.state === "merged"
+              ? Number(reference.label.slice(1))
+              : undefined,
+          diff,
+        }
+      : undefined;
+  const counts =
+    typeof result === "object"
+      ? result.facts
+          .map(([, value]) => value)
+          .find(
+            (value): value is { additions: number; deletions: number } =>
+              typeof value === "object" && "additions" in value,
+          )
+      : undefined;
+  const showChanges = !!files && view === "changes";
   const title = (
     <h2 className={reference.kind === "pull" ? styles.pullTitle : undefined}>
       {reference.kind === "pull" ? (
@@ -248,7 +507,17 @@ function ObjectPanel({
     </h2>
   );
   return (
-    <div className={styles.root}>
+    // biome-ignore lint/a11y/noStaticElementInteractions: Delegates Command-clicks on the links inside; it adds no interaction of its own.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: Command-click is a pointer gesture on a link, which keeps its own keyboard behavior.
+    <div
+      className={styles.root}
+      onClick={(event) => {
+        const opening = openCommandClickInBrowser(event);
+        if (!opening) return;
+        setOpenFailed(false);
+        opening.catch(() => setOpenFailed(true));
+      }}
+    >
       <div className={styles.identity}>
         <span className={styles.icon}>
           <Icon size={22} aria-hidden="true" />
@@ -286,7 +555,64 @@ function ObjectPanel({
             </>
           )}
         </div>
+        {/* Pull requests someone else opened take reviews. */}
+        {gh &&
+          typeof loaded === "object" &&
+          loaded.checklist &&
+          !loaded.checklist.authored && (
+            <span className={styles.identityAction}>
+              <SubmitReview
+                pull={loaded.checklist}
+                gh={gh}
+                url={reference.url}
+                refresh={load}
+                memory={memory}
+              />
+            </span>
+          )}
       </div>
+      {files && (
+        <div className={styles.views}>
+          <Tabs
+            label="Pull request view"
+            variant="segmented"
+            size="sm"
+            value={view}
+            items={[
+              { value: "summary", label: "Summary" },
+              {
+                value: "changes",
+                label: "Changes",
+                trailing: counts && (
+                  <span className={styles.tabCounts}>
+                    <span className={styles.additions}>
+                      +{counts.additions}
+                    </span>{" "}
+                    <span className={styles.deletions}>
+                      −{counts.deletions}
+                    </span>
+                  </span>
+                ),
+              },
+            ]}
+            onValueChange={(next) => {
+              memory.setView(reference.url, next, channelId);
+              setView(next);
+              if (next === "changes") setChangesShown(true);
+            }}
+          />
+        </div>
+      )}
+      {files && changesShown && (
+        <div hidden={!showChanges}>
+          <PullFiles
+            key={`${files.base}...${files.head}:${files.merged}`}
+            url={reference.url}
+            pull={files}
+            diff={files.diff}
+          />
+        </div>
+      )}
       {reference.kind !== "pull" && (
         <a
           className={styles.external}
@@ -297,189 +623,201 @@ function ObjectPanel({
           Open on GitHub <ArrowSquareOutIcon size={14} />
         </a>
       )}
-      {reference.kind === "pull" && typeof result !== "object" && title}
-      {result === undefined ? (
-        <p role="status">Loading from GitHub…</p>
-      ) : typeof result === "string" ? (
-        <div role="alert">
-          <p>{result}</p>
-          <div className={styles.errorActions}>
-            <Button
-              variant="prominent"
-              nativeButton={false}
-              role="link"
-              render={
-                <a
-                  className={styles.errorExternal}
-                  href={link}
-                  target="_blank"
-                  rel="noreferrer"
-                />
-              }
-            >
-              <span className={styles.errorActionLabel}>Open on Github</span>
-            </Button>
-            <Button type="button" onClick={retry}>
-              Retry
-            </Button>
-          </div>
-        </div>
-      ) : (
+      {!showChanges && (
         <>
-          {reference.kind === "pull" && title}
-          <div className={styles.byline}>
-            {result.state && (
-              <span
-                className={styles.state}
-                data-pr-state={
-                  reference.kind === "pull"
-                    ? result.state.toLowerCase()
-                    : undefined
-                }
-              >
-                {StateIcon && <StateIcon size={12} aria-hidden="true" />}
-                {result.state}
-              </span>
-            )}
-            {result.author && (
-              <span>
-                by{" "}
-                {result.authorUrl ? (
-                  <a
-                    className={inlineStyles.link}
-                    href={result.authorUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {result.author}
-                  </a>
-                ) : (
-                  result.author
-                )}
-              </span>
-            )}
-          </div>
-          {reference.kind !== "pull" && title}
-          {(!!result.facts.length || reference.kind === "pull") && (
-            <dl className={styles.facts}>
-              {result.facts.map(([label, value]) => (
-                <div key={label}>
-                  <dt>{label}</dt>
-                  <dd>
-                    {typeof value !== "object" ? (
-                      value
-                    ) : "head" in value ? (
-                      <>
-                        {value.head.url ? (
-                          <a
-                            className={styles.branch}
-                            href={value.head.url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {value.head.label}
-                          </a>
-                        ) : (
-                          <span className={styles.branchLabel}>
-                            {value.head.label}
-                          </span>
-                        )}
-                        {" → "}
-                        {value.base.url ? (
-                          <a
-                            className={styles.branch}
-                            href={value.base.url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {value.base.label}
-                          </a>
-                        ) : (
-                          <span className={styles.branchLabel}>
-                            {value.base.label}
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <span className={styles.additions}>
-                          +{value.additions}
-                        </span>
-                        {" / "}
-                        <span className={styles.deletions}>
-                          −{value.deletions}
-                        </span>
-                      </>
-                    )}
-                  </dd>
-                </div>
-              ))}
-              {reference.kind === "pull" && (
-                <div>
-                  <dt>Last updated</dt>
-                  <dd>
-                    {result.updatedAt ? (
-                      <time
-                        dateTime={result.updatedAt}
-                        title={new Date(result.updatedAt).toLocaleString()}
-                      >
-                        {relativeTimestamp(Date.parse(result.updatedAt) / 1000)}
-                      </time>
-                    ) : (
-                      "Unavailable"
-                    )}
-                  </dd>
-                </div>
-              )}
-            </dl>
-          )}
-          {reference.kind === "pull" ? (
+          {reference.kind === "pull" && typeof result !== "object" && title}
+          {result === undefined ? (
+            <p role="status">Loading from GitHub…</p>
+          ) : typeof result === "string" ? (
+            <div role="alert">
+              <p>{result}</p>
+              <div className={styles.errorActions}>
+                <Button
+                  variant="prominent"
+                  nativeButton={false}
+                  role="link"
+                  render={
+                    <a
+                      className={styles.errorExternal}
+                      href={link}
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  <span className={styles.errorActionLabel}>
+                    Open on Github
+                  </span>
+                </Button>
+                <Button type="button" onClick={retry}>
+                  Retry
+                </Button>
+              </div>
+            </div>
+          ) : (
             <>
-              {typeof loaded === "object" && loaded.checklist && gh ? (
-                <PullChecklist
-                  url={reference.url}
-                  details={result}
-                  checklist={loaded.checklist}
-                  gh={gh}
-                  refresh={load}
-                />
-              ) : (
-                <PublicChecklist
-                  url={reference.url}
-                  repository={reference.repository}
-                  sha={result.headSha}
-                />
+              {reference.kind === "pull" && title}
+              <div className={styles.byline}>
+                {result.state && (
+                  <span
+                    className={styles.state}
+                    data-pr-state={
+                      reference.kind === "pull"
+                        ? result.state.toLowerCase()
+                        : undefined
+                    }
+                  >
+                    {StateIcon && <StateIcon size={12} aria-hidden="true" />}
+                    {result.state}
+                  </span>
+                )}
+                {result.author && (
+                  <span>
+                    by{" "}
+                    {result.authorUrl ? (
+                      <a
+                        className={inlineStyles.link}
+                        href={result.authorUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {result.author}
+                      </a>
+                    ) : (
+                      result.author
+                    )}
+                  </span>
+                )}
+              </div>
+              {reference.kind !== "pull" && title}
+              {(!!result.facts.length || reference.kind === "pull") && (
+                <dl className={styles.facts}>
+                  {result.facts.map(([label, value]) => (
+                    <div key={label}>
+                      <dt>{label}</dt>
+                      <dd>
+                        {typeof value !== "object" ? (
+                          value
+                        ) : "head" in value ? (
+                          <>
+                            {value.head.url ? (
+                              <a
+                                className={styles.branch}
+                                href={value.head.url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {value.head.label}
+                              </a>
+                            ) : (
+                              <span className={styles.branchLabel}>
+                                {value.head.label}
+                              </span>
+                            )}
+                            {" → "}
+                            {value.base.url ? (
+                              <a
+                                className={styles.branch}
+                                href={value.base.url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {value.base.label}
+                              </a>
+                            ) : (
+                              <span className={styles.branchLabel}>
+                                {value.base.label}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <span className={styles.additions}>
+                              +{value.additions}
+                            </span>
+                            {" / "}
+                            <span className={styles.deletions}>
+                              −{value.deletions}
+                            </span>
+                          </>
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                  {reference.kind === "pull" && (
+                    <div>
+                      <dt>Last updated</dt>
+                      <dd>
+                        {result.updatedAt ? (
+                          <time
+                            dateTime={result.updatedAt}
+                            title={new Date(result.updatedAt).toLocaleString()}
+                          >
+                            {relativeTimestamp(
+                              Date.parse(result.updatedAt) / 1000,
+                            )}
+                          </time>
+                        ) : (
+                          "Unavailable"
+                        )}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
               )}
-              {chatLink?.(reference.url)}
-              {result.body && (
-                <div className={styles.description}>
-                  <Accordion
-                    variant="activity"
-                    items={[
-                      {
-                        value: "description",
-                        title: "Description",
-                        content: (
-                          <GitHubBody
-                            body={result.body}
-                            bodyHtml={result.bodyHtml}
-                            url={reference.url}
-                          />
-                        ),
-                      },
-                    ]}
+              {reference.kind === "pull" ? (
+                <>
+                  {typeof loaded === "object" && loaded.checklist && gh ? (
+                    <PullChecklist
+                      url={reference.url}
+                      details={result}
+                      checklist={loaded.checklist}
+                      gh={gh}
+                      refresh={load}
+                      resolveAction={(action) =>
+                        loaded.checklist
+                          ? resolveActions?.(
+                              reference.url,
+                              loaded.checklist,
+                              action,
+                            )
+                          : undefined
+                      }
+                    />
+                  ) : (
+                    <PublicChecklist
+                      url={reference.url}
+                      sha={result.headSha}
+                      checks={
+                        typeof loaded === "object" && "publicChecks" in loaded
+                          ? (loaded as PullDetails).publicChecks
+                          : undefined
+                      }
+                    />
+                  )}
+                  {chatLink?.(reference.url)}
+                  {result.body && (
+                    <div className={styles.description}>
+                      <GitHubBody
+                        body={result.body}
+                        bodyHtml={result.bodyHtml}
+                        url={reference.url}
+                        refresh={load}
+                      />
+                    </div>
+                  )}
+                </>
+              ) : (
+                result.body && (
+                  <GitHubBody
+                    body={result.body}
+                    bodyHtml={result.bodyHtml}
+                    url={reference.url}
+                    refresh={load}
                   />
-                </div>
+                )
               )}
             </>
-          ) : (
-            result.body && (
-              <GitHubBody
-                body={result.body}
-                bodyHtml={result.bodyHtml}
-                url={reference.url}
-              />
-            )
           )}
         </>
       )}
@@ -489,6 +827,12 @@ function ObjectPanel({
             ? "Read with your gh sign-in."
             : "Public GitHub data · Sign in to the gh CLI to see private repositories and merge from here."}
         </p>
+      )}
+      {openFailed && (
+        <ToastNotice
+          title="Couldn’t open the link in your browser."
+          onDismiss={() => setOpenFailed(false)}
+        />
       )}
     </div>
   );

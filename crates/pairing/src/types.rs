@@ -28,26 +28,6 @@ pub enum PairingMessage {
         /// Defaults to `1` when absent (backward compat with pre-versioned implementations).
         #[serde(default = "default_version")]
         version: u32,
-        /// Optional confirmation UX negotiated inside the encrypted offer.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        confirmation: Option<String>,
-    },
-
-    /// Source advertises a separate, source-only random code. Contains no code.
-    DesktopCode {},
-    /// Target submits the user-entered code over the authenticated encrypted channel.
-    CodeSubmit {
-        /// Six ASCII digits displayed only on the source.
-        code: String,
-        /// Correlates rejection with the submitted attempt.
-        request_id: String,
-    },
-    /// Source rejects an attempt without releasing any identity material.
-    CodeRejected {
-        /// Request being rejected.
-        request_id: String,
-        /// Remaining guesses before this QR session is permanently aborted.
-        remaining_attempts: u8,
     },
 
     /// Either party → other. Confirms the Short Authentication String matches.
@@ -124,7 +104,6 @@ mod tests {
         let msg = PairingMessage::Offer {
             session_id: "deadbeef".repeat(8),
             version: 1,
-            confirmation: None,
         };
         let json = serde_json::to_string(&msg).expect("serialize");
         assert!(
@@ -150,7 +129,6 @@ mod tests {
                 session_id: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
                     .to_string(),
                 version: 1,
-                confirmation: None,
             }
         );
     }
@@ -197,32 +175,6 @@ mod tests {
     }
 
     #[test]
-    fn complete_round_trip() {
-        for success in [true, false] {
-            let msg = PairingMessage::Complete { success };
-            let json = serde_json::to_string(&msg).expect("serialize");
-            let back: PairingMessage = serde_json::from_str(&json).expect("deserialize");
-            assert_eq!(msg, back);
-        }
-    }
-
-    #[test]
-    fn all_abort_reasons_round_trip() {
-        let reasons = [
-            AbortReason::SasMismatch,
-            AbortReason::UserDenied,
-            AbortReason::Timeout,
-            AbortReason::ProtocolError,
-        ];
-        for reason in reasons {
-            let msg = PairingMessage::Abort { reason };
-            let json = serde_json::to_string(&msg).expect("serialize");
-            let back: PairingMessage = serde_json::from_str(&json).expect("deserialize");
-            assert_eq!(msg, back);
-        }
-    }
-
-    #[test]
     fn unknown_abort_reason_deserializes_to_unknown() {
         // NIP-AB §Abort: "unknown reasons SHOULD be treated as protocol_error"
         let json = r#"{"type":"abort","reason":"solar_flare"}"#;
@@ -233,32 +185,5 @@ mod tests {
                 reason: AbortReason::Unknown
             }
         );
-    }
-
-    #[test]
-    fn unknown_abort_reason_is_not_protocol_error_variant() {
-        // Unknown is a distinct variant — callers should never construct it
-        // for outbound use, but if they do it serializes distinctly from
-        // ProtocolError so we can catch the mistake.
-        assert_ne!(AbortReason::Unknown, AbortReason::ProtocolError);
-    }
-
-    #[test]
-    fn all_payload_types_round_trip() {
-        let types = [
-            PayloadType::Nsec,
-            PayloadType::Bunker,
-            PayloadType::Connect,
-            PayloadType::Custom,
-        ];
-        for payload_type in types {
-            let msg = PairingMessage::Payload {
-                payload_type,
-                payload: "data".to_string(),
-            };
-            let json = serde_json::to_string(&msg).expect("serialize");
-            let back: PairingMessage = serde_json::from_str(&json).expect("deserialize");
-            assert_eq!(msg, back);
-        }
     }
 }

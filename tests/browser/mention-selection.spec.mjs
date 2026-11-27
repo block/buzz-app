@@ -1,5 +1,6 @@
 import { test, expect } from "./source-fixture.mjs";
 import { wcagRatio } from "../../scripts/design-system/apca.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 // The browser moves the caret through prose, words and lines; the editor takes
 // over only at a mention's edge. That handoff is a native selection contract,
@@ -14,15 +15,15 @@ const variants = [
   {
     title: "one-word labels",
     query: "",
-    first: (keys) => `Honey ${keys.first}`,
-    second: (keys) => `Honey (agent) ${keys.second}`,
+    first: (keys) => keys.first,
+    second: (keys) => keys.second,
     value: "@Honey say hello to @Honey ",
   },
   {
     title: "a label with a space",
     query: "?delayed-profiles",
-    first: (keys) => `Honey ${keys.second}`,
-    second: (keys) => `Mary Jane ${keys.first}`,
+    first: (keys) => keys.second,
+    second: (keys) => keys.first,
     value: "@Honey say hello to @Mary Jane ",
   },
 ];
@@ -35,11 +36,15 @@ async function compose(page, variant) {
     second: window.mentionFixture.second,
   }));
   const input = page.getByRole("textbox", { name: "Message #General" });
-  const mention = async (name) => {
+  // Rows no longer spell out their key, so each picks by the key it carries.
+  const mention = async (key) => {
     await page
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
-    await page.getByRole("button", { name, exact: true }).click();
+    await page
+      .getByRole("button")
+      .and(page.locator(`[data-mention-choice="${key}"]`))
+      .click();
     // The picker restores focus and the caret on the next animation frame.
     await page.evaluate(() => new Promise(requestAnimationFrame));
     await expect(input).toBeFocused();
@@ -194,15 +199,162 @@ for (const variant of variants) {
   });
 }
 
+// Only browser paint can prove nested fills remain visible on the real composer.
+test("composer code and recipient fills remain distinct in both themes", async ({
+  page,
+}) => {
+  const { input } = await compose(page, variants[0]);
+  await page
+    .getByRole("button", { name: "Toggle formatting", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Code", exact: true }).click();
+  await page.keyboard.type("sample");
+  await expect(input.locator("code")).toHaveText("sample");
+  await page
+    .getByRole("button", { name: "Close formatting", exact: true })
+    .click();
+  const composer = input.locator("xpath=ancestor::form");
+  await expect(composer.locator("[data-recipients]")).toBeVisible();
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, mode);
+    await settleComposer(page, composer);
+    const points = await composer.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const code = el.querySelector("code").getBoundingClientRect();
+      const pill = el
+        .querySelector("[data-recipients]")
+        .getBoundingClientRect();
+      return {
+        clip: {
+          x: Math.floor(box.left),
+          y: Math.floor(box.top),
+          width: Math.ceil(box.right) - Math.floor(box.left),
+          height: Math.ceil(box.bottom) - Math.floor(box.top),
+        },
+        surface: { x: box.right - 10, y: box.top + box.height / 2 },
+        code: { x: code.left + 1, y: code.top + code.height / 2 },
+        pill: { x: pill.left + 1, y: pill.top + pill.height / 2 },
+      };
+    });
+    const colors = await samplePaint(page, points);
+    expect.soft(colors.code, `${mode} inline code`).not.toEqual(colors.surface);
+    expect
+      .soft(colors.pill, `${mode} recipient pill`)
+      .not.toEqual(colors.surface);
+    await page
+      .getByRole("button", { name: "Toggle formatting", exact: true })
+      .click();
+    const active = page.getByRole("button", { name: "Code", exact: true });
+    await expect(active).toHaveAttribute("aria-pressed", "true");
+    await page.mouse.move(0, 0);
+    await settleComposer(page, composer);
+    const surface = await composer.evaluate(
+      (el) => getComputedStyle(el).backgroundColor,
+    );
+    await expect(active).not.toHaveCSS("background-color", surface);
+    const resting = await active.evaluate(
+      (el) => getComputedStyle(el).backgroundColor,
+    );
+    await active.hover();
+    await settleComposer(page, composer);
+    await expect(active).not.toHaveCSS("background-color", resting);
+    await page.mouse.move(0, 0);
+    await settleComposer(page, composer);
+    await expect(active).toHaveCSS("background-color", resting);
+    await page
+      .getByRole("button", { name: "Close formatting", exact: true })
+      .click();
+  }
+});
+
+// WebKit paints list markers and their indent apart from the selected text.
+test("selecting a list paints its text, not boxes around its markers", async ({
+  page,
+}) => {
+  const { input } = await compose(page, variants[0]);
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("- one");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("two");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("three");
+  await expect(input.locator("ul > li")).toHaveCount(3);
+  const gutters = () =>
+    input.evaluate((el) =>
+      [...el.querySelectorAll("li")].map((item) => {
+        const list = item.parentElement.getBoundingClientRect();
+        const box = item.getBoundingClientRect();
+        return {
+          x: Math.floor(list.left),
+          // Inset from the neighbouring lines, whose own selection may paint.
+          y: Math.ceil(box.top) + 2,
+          width: Math.floor(box.left) - Math.floor(list.left),
+          height: Math.floor(box.height) - 4,
+        };
+      }),
+    );
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, mode);
+    await input.press("ControlOrMeta+End");
+    const idle = [];
+    for (const clip of await gutters())
+      idle.push(await page.screenshot({ clip, scale: "css" }));
+    await input.press("ControlOrMeta+a");
+    const clips = await gutters();
+    for (const [index, clip] of clips.entries())
+      expect(
+        await page.screenshot({ clip, scale: "css" }),
+        `${mode} item ${index + 1}`,
+      ).toEqual(idle[index]);
+  }
+});
+
+// Focus can leave the editor or its window while the selection still paints.
+test("a selected mention stays painted while the selection outlives focus", async ({
+  page,
+}) => {
+  const { input, caret, end } = await compose(page, variants[0]);
+  await caret(end);
+  const idle = await paint(page, input);
+  await input.press("ControlOrMeta+a");
+  const selected = await paint(page, input);
+  expect(selected.mention).not.toEqual(idle.mention);
+  await input.evaluate((el) => el.blur());
+  await expect(input).not.toBeFocused();
+  expect(await page.evaluate(() => String(getSelection()))).not.toBe("");
+  expect(await paint(page, input)).toEqual(selected);
+  // Without the selection the mention is no longer painted selected.
+  await page.evaluate(() => getSelection().removeAllRanges());
+  await expect
+    .poll(async () => (await paint(page, input)).mention)
+    .toEqual(idle.mention);
+});
+
+async function settleComposer(page, composer) {
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  await expect
+    .poll(() =>
+      composer.evaluate(
+        (el) =>
+          el
+            .getAnimations({ subtree: true })
+            .filter((a) => a.playState === "running" || a.pending).length,
+      ),
+    )
+    .toBe(0);
+}
+
 /** Painted colours inside the first mention, between two prose words, inside
  * the second mention, and in the trailing space. Sampled in CSS pixels at the
  * line's vertical centre, away from any glyph, so only highlight paint differs. */
 async function paint(page, input) {
   // The chip fades its background away to reveal the token's selection paint.
   // Sample the settled state, not whichever frame the screenshot happens to win.
-  await input.evaluate((el) =>
-    Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)),
-  );
+  await animationsSettled(input, { subtree: true });
   await page.evaluate(() => new Promise(requestAnimationFrame));
   const points = await input.evaluate((el) => {
     const paragraph = el.querySelector("p");
@@ -236,6 +388,10 @@ async function paint(page, input) {
       space: centre(paragraph.lastChild, 0, 1),
     };
   });
+  return samplePaint(page, points);
+}
+
+async function samplePaint(page, points) {
   const png = await page.screenshot({ clip: points.clip, scale: "css" });
   return page.evaluate(
     async ({ base64, points }) => {
@@ -316,13 +472,23 @@ test("selection remains visible on outgoing bubbles and their neutral content", 
         while (getComputedStyle(parent).backgroundColor === "rgba(0, 0, 0, 0)")
           parent = parent.parentElement;
         const selection = getComputedStyle(el, "::selection");
-        const hex = (rgb) =>
-          "#" +
-          rgb
-            .match(/\d+/g)
-            .slice(0, 3)
-            .map((n) => Number(n).toString(16).padStart(2, "0"))
-            .join("");
+        // WebKit serializes mixed hover fills as color(srgb ...), not rgb().
+        // Let the browser resolve CSS colors before comparing the same ratios.
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        const hex = (color) => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = color;
+          context.fillRect(0, 0, 1, 1);
+          return (
+            "#" +
+            [...context.getImageData(0, 0, 1, 1).data]
+              .slice(0, 3)
+              .map((value) => value.toString(16).padStart(2, "0"))
+              .join("")
+          );
+        };
         return {
           surface: hex(getComputedStyle(parent).backgroundColor),
           fill: hex(selection.backgroundColor),

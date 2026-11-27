@@ -8,14 +8,31 @@
     "tags": ["Essentials", "code", "coding-agents"]
   },
   "host": {
-    "networkOrigins": ["https://releases.openai.com"],
+    "mcp": true,
+    "networkOrigins": [
+      "https://releases.openai.com",
+      "https://chatgpt.com",
+      "https://persistent.oaistatic.com"
+    ],
+    "files": true,
     "processes": [
+      {
+        "id": "read-protected",
+        "program": "buzz-agent-command",
+        "bundled": true,
+        "args": [
+          "--shell",
+          "case \"$1\" in \"~/\"*) set -- \"$HOME/${1:2}\";; esac; exec /usr/bin/base64 -i \"$1\"",
+          "buzz-read"
+        ]
+      },
       {
         "id": "workspace",
         "program": "pwd"
       },
       {
         "id": "codex-sh",
+        "agentEnv": true,
         "program": "bash",
         "args": ["-c"]
       },

@@ -48,7 +48,8 @@ test("editing selected name plus pasting same name cannot transfer notification 
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
     await page
-      .getByRole("button", { name: `Honey ${first}`, exact: true })
+      .getByRole("button")
+      .and(page.locator(`[data-mention-choice="${first}"]`))
       .click();
     await expect(input).toHaveJSProperty("value", "@Honey ");
     // The picker restores focus/caret on the next animation frame. Let that
@@ -94,7 +95,8 @@ test("typing after an unchanged agent prefill does not consume a stale caret com
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
   await page
-    .getByRole("button", { name: `Honey (agent) ${agent}`, exact: true })
+    .getByRole("button")
+    .and(page.locator(`[data-mention-choice="${agent}"]`))
     .click();
   await expect(input).toHaveJSProperty("value", "@Honey ");
   await expect(input).toBeFocused();
@@ -140,7 +142,8 @@ test("focus during the first edit after send preserves the advanced native caret
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
   await page
-    .getByRole("button", { name: `Honey (agent) ${agent}`, exact: true })
+    .getByRole("button")
+    .and(page.locator(`[data-mention-choice="${agent}"]`))
     .click();
   await expect(input).toHaveJSProperty("value", "@Honey ");
   await page.keyboard.type("hello");
@@ -152,6 +155,13 @@ test("focus during the first edit after send preserves the advanced native caret
 
   const firstEdit = await input.evaluate((el) => {
     el.setSelectionRange(el.value.length, el.value.length);
+    // Retain the native edit point before blur releases the DOM caret. The
+    // modeled insertion below must not depend on a blurred editor owning it.
+    const selection = getSelection();
+    const node = selection.focusNode;
+    const offset = selection.focusOffset;
+    if (!(node instanceof Text))
+      throw new Error("Expected editable text caret");
     el.blur();
     const focusedBefore = document.activeElement === el;
     const allowed = el.dispatchEvent(
@@ -165,11 +175,6 @@ test("focus during the first edit after send preserves the advanced native caret
     if (!allowed) throw new Error("First insertion was prevented");
     // Model the native insertion while unfocused. Advancing the real browser
     // Selection returns focus synchronously, before the queued selectionchange.
-    const selection = getSelection();
-    const node = selection.focusNode;
-    const offset = selection.focusOffset;
-    if (!(node instanceof Text))
-      throw new Error("Expected editable text caret");
     node.insertData(offset, "n");
     selection.setBaseAndExtent(node, offset + 1, node, offset + 1);
     const result = {
@@ -208,4 +213,24 @@ test("focus during the first edit after send preserves the advanced native caret
   expect(sent.content).toBe("@Honey nice");
   expect(sent.tags.filter(([tag]) => tag === "p")).toEqual([["p", agent]]);
   await expect(input).toHaveJSProperty("value", "@Honey ");
+});
+
+// A retained editor keeps its native caret when focused again, so the seed
+// must leave it after the mention, not where reset() put it.
+test("a seed that lands while the composer is unfocused leaves the caret after the mention", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/mentions.html?test-controls");
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  // Focused once, the composer keeps its caret when focused again.
+  await input.click();
+  await expect(input).toBeFocused();
+  await page.getByRole("button", { name: "Load history" }).click();
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+  await expect(input).not.toBeFocused();
+  await page.getByRole("button", { name: "Focus composer" }).click();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveJSProperty("selectionStart", 7);
+  await page.keyboard.type("hi");
+  await expect(input).toHaveJSProperty("value", "@Honey hi");
 });

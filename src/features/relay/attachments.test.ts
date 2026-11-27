@@ -216,6 +216,38 @@ it("keeps ordinary text unchanged and marks prepared image/video links as media"
   }
 });
 
+const image = {
+  ...descriptor,
+  url: `${origin}/media/${hash}.png`,
+  type: "image/png",
+};
+
+it("carries relay-measured image dimensions into imeta for receiver layout", () => {
+  const uploaded = validateUploadResult(
+    { ...image, dim: "1280x400" },
+    origin,
+    3,
+    "shot.png",
+  );
+  const result = attachmentMessage("", [uploaded], origin);
+  expect(result.tags[0]).toContain("dim 1280x400");
+  expect(
+    parseAttachments(
+      { id: "", pubkey: "", kind: 9, created_at: 1, ...result },
+      [],
+    )[0]?.dimensions,
+  ).toEqual({ width: 1280, height: 400 });
+});
+
+it.each(["1280 x 400", "1280x400x2", 1280, "-1x4"])(
+  "drops malformed relay dimensions %j without failing the upload",
+  (dim) => {
+    expect(
+      validateUploadResult({ ...image, dim }, origin, 3, "shot.png"),
+    ).not.toHaveProperty("dim");
+  },
+);
+
 it.each([
   [401, "denied"],
   [403, "denied"],
@@ -404,10 +436,27 @@ it.each([
     "unsupported media codec: only H.264 video and AAC audio are accepted",
     "codec",
   ],
-  [415, "unsupported container: only MP4 is accepted", "rejected"],
+  [415, "unsupported container: only MP4 is accepted", "type"],
+  [
+    415,
+    "disallowed content type: application/vnd.microsoft.portable-executable",
+    "type",
+  ],
+  [415, "unknown content type", "type"],
+  // Relays older than block/buzz#2006 answer this one with 400.
+  [400, "unknown content type", "type"],
+  // A refusal the relay does not name as a type is not called one.
+  [415, "unsupported", "rejected"],
   [422, "moov atom not at front of file (not fast-start)", "rejected"],
-])("names the relay's %i video rule: %s", async (status, error, code) => {
+  [422, "invalid image data", "rejected"],
+])("names the relay's %i content rule: %s", async (status, error, code) => {
   await expect(
     readUploadResponse(Response.json({ error }, { status })),
   ).rejects.toMatchObject({ code });
+});
+
+it("takes the broker's name for a refused type", async () => {
+  await expect(
+    readUploadResponse(Response.json({ code: "type" }, { status: 400 })),
+  ).rejects.toMatchObject({ code: "type" });
 });

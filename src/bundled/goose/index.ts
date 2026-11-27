@@ -1,4 +1,5 @@
 import { repositoriesContext } from "../../features/communities/repositories";
+import { usageOn } from "../../features/agents/standalone-sessions";
 // goose agents: an agent type whose agents are goose on this computer, all in
 // one `goose-acp` process. Each conversation an agent is in is one ACP session
 // in it; goose answers with the in-process Buzz tools, served to it over
@@ -6,29 +7,71 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
-import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
+import { GatewayForwarding } from "../../features/agents/gateway/forwarding";
+import { upstreamFor } from "../../features/agents/gateway/route";
+import {
+  type Config,
+  config,
+  DEFAULT_CONFIG,
+  GooseRuntime,
+  running,
+} from "./runtime";
+import {
+  type RecommendedCandidate,
+  onAutomatic,
+  onRecommended,
+  recommendedRun,
+} from "../../features/agents/recommended";
+import { activeRoute, routeLabel } from "../../features/agents/model-routes";
+import { REQUEST_TIMEOUT_MS } from "./goose";
 import { gooseRun } from "./run";
-import { GooseSetup } from "./setup";
+import { readModelSettings } from "../../features/agents/model-settings";
+import { explainTurn, GooseSetup, readNoProxy, REVIEW_REFUSED } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 import { readUsage } from "./usage";
 
 export const TYPE_ID = "goose";
-
-export const inject = ["agents", "host"];
+/** The harness goose declares to the gateway, its descriptor upstream key. */
+export const HARNESS = "goose";
+export const inject = ["agents", "host", "agentProtection", "settingsCards"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `goose-acp`; no unusable type elsewhere.
   if (!isTauri()) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
+  // goose is bundled: a candidate needs only its provider and model offered.
+  const offered = (candidate: RecommendedCandidate) => setup.offers(candidate);
+  const recommended = recommendedRun(TYPE_ID, offered);
   const runtime = new GooseRuntime(
     host,
     agents.relay,
-    (pubkey, signal) => agents.core(pubkey, signal),
+    (key, signal) => agents.core(key, signal),
     localStorage,
     () => agents.tools(),
     repositoriesContext,
+    agents.storage,
+    recommended,
+    // Without a goose upstream in this build, the runner sends every turn
+    // without the gateway, so nothing forwards.
+    ctx.pluginOwner && upstreamFor(HARNESS)
+      ? new GatewayForwarding(
+          ctx.pluginOwner,
+          { upstream: HARNESS, native: "goose" },
+          async () => {
+            // Without a host to read them, a forwarded goose could send its
+            // loopback requests to a proxy, so nothing opens.
+            if (!host.spawn)
+              throw new Error("No host to read proxy exceptions");
+            return readNoProxy(host.spawn.bind(host));
+          },
+        )
+      : undefined,
+    // Read at a forwarded turn, after `setup` exists.
+    () => setup.defaultProvider(),
+    agents.conversationReads,
   );
+  runtime.usageOn = usageOn(ctx.settingsCards);
   const desktop =
     host.spawn && host.resolveDirectory
       ? {
@@ -39,12 +82,48 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const setup = new GooseSetup(
     desktop,
     () => runtime.defaultsChanged(),
+    true,
     (provider) => runtime.credentialsChanged(provider),
   );
+  // Failed turns' reports link to where goose's provider keys are set up.
+  runtime.explain = (error) =>
+    explainTurn(
+      error,
+      `buzz://settings?section=agents&provider=${encodeURIComponent(typeKey)}`,
+    );
+  ctx.agentProtection.registerModels({
+    label: "Goose",
+    models: async () => {
+      // Read afresh, and as the review worker sees goose: without the
+      // device's variables, which it never gets.
+      const review = new GooseSetup(desktop, undefined, false);
+      const { providers } = await review.providers();
+      const listed = await Promise.allSettled(
+        providers
+          .filter(
+            (provider) =>
+              provider.configured && !REVIEW_REFUSED.has(provider.id),
+          )
+          .map(async (provider) =>
+            (await review.models(provider.id)).map((model) => ({
+              provider: provider.id,
+              id: model.id,
+              label: `${provider.name} · ${model.label}`,
+            })),
+          ),
+      );
+      return listed.flatMap((result) =>
+        result.status === "fulfilled" ? result.value : [],
+      );
+    },
+    complete: (model, prompt, signal, protectedSpawn) =>
+      setup.review(model, prompt, signal, protectedSpawn),
+  });
   const history = new GooseHistory(desktop);
   const {
     Create,
     CreateModel,
+    CreateThinking,
     SettingsTab,
     ActivityTab,
     DefaultControl,
@@ -53,6 +132,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     setup,
     runtime,
     history,
+    recommended,
   });
   const sync = () => {
     const snapshot = agents.snapshot();
@@ -70,11 +150,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
+    // Declares its harness to the gateway, which forwards its agents' turns
+    // where their membership routes through it.
+    gateway: { harness: HARNESS },
+    retire: (pubkey) => runtime.retire(pubkey),
+    protection: true,
+    conversationFolders: true,
+    conversationSections: true,
+    skillFolders: ["~/.agents/skills"],
+    notes: true,
     title: "Goose",
     icon: GooseLogoIcon,
     description:
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    settingsProposal: { compactAt: true, resolveRecommended: recommended.find },
+    readModelSettings: (saved) =>
+      readModelSettings(config(saved), {
+        provider: true,
+        recommended: onRecommended(saved),
+      }),
     importShared: (source) =>
       source.runtime === "goose" || source.runtime === "goose-ai"
         ? {
@@ -83,8 +178,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
             provider: source.provider ?? "",
           }
         : undefined,
+    exportShared: (saved) => {
+      const { provider, model } = running(saved, recommended.current());
+      return { runtime: "goose", ...(provider && { provider }), model };
+    },
     Create,
     CreateModel,
+    CreateThinking,
+    createModelReportsReadiness: true,
     provider: {
       snapshot: setup.snapshot,
       subscribe: setup.subscribe,
@@ -95,25 +196,40 @@ export const apply: PluginModule["apply"] = (ctx) => {
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
+      scope: carry.sessionScope ?? saved.scope,
       workspace: carry.workspace ?? saved.workspace,
     }),
     carry: (saved) => {
-      const { instructions, workspace } = config(saved);
+      const { instructions, workspace, scope } = config(saved);
       return {
         ...(instructions.trim() && { instructions }),
         ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+        ...(scope !== DEFAULT_CONFIG.scope && { sessionScope: scope }),
       };
     },
     summary: (agent) => {
-      const { model, provider } = config(agent.config);
-      return [provider, model].filter(Boolean).join(" · ") || "Goose";
+      const { model, provider } = running(agent.config, recommended.current());
+      const route =
+        activeRoute(TYPE_ID, model, onAutomatic(agent.config, TYPE_ID))
+          ?.label ?? routeLabel(TYPE_ID, model);
+      return [provider, route ?? model].filter(Boolean).join(" · ") || "Goose";
     },
     sessions: {
-      list: (pubkey) => {
-        const live = runtime.sessions(pubkey);
+      ready: (agentKey) => runtime.listed(agentKey),
+      // The sessions `list` remembers are the latest 200 conversations; goose
+      // keeps the rest, and finds them by tag.
+      history: (agent, conversation) =>
+        history.started(
+          config(agent.config).workspace,
+          agent.key,
+          conversation,
+          AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        ),
+      list: (agentKey) => {
+        const live = runtime.sessions(agentKey);
         const busy = new Map(live.map((view) => [view.key, view.busy]));
         const used = new Map(
-          runtime.conversations(pubkey).map(({ key, at }) => [key, at]),
+          runtime.conversations(agentKey).map(({ key, at }) => [key, at]),
         );
         // Open ones are listed even when saving them failed. A one-off turn
         // joins no conversation.
@@ -121,10 +237,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
         return [...used]
           .sort(([, a], [, b]) => b - a)
           .map(([key, at]) => {
-            const [channelId = key, root] = key.split("/");
+            const { channelId, root, community } = runtime.source(
+              agentKey,
+              key,
+            );
             const working = busy.get(key);
             return {
               channelId,
+              ...(community && { community }),
               ...(root && { root }),
               at,
               ...(working !== undefined && {
@@ -136,13 +256,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
       subscribe: (listener) => runtime.subscribe(listener),
     },
     ...(desktop && {
-      usage: (agent, { since, signal }) =>
-        readUsage(
-          history,
-          agent.pubkey,
-          config(agent.config).workspace,
-          since,
-          signal,
+      usage: async (agent, { since, signal }) =>
+        runtime.withWakes(
+          agent.key,
+          await readUsage(
+            history,
+            agent.key,
+            config(agent.config).workspace,
+            since,
+            signal,
+            [...new Set(runtime.folders(agent.key).values())],
+          ),
         ),
     }),
     tabs: [
@@ -161,6 +285,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     models: (agent) => setup.picks(config(agent.config)),
+    recommends: offered,
     ...gooseRun(runtime),
   });
 };

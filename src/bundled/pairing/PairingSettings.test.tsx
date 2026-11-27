@@ -53,10 +53,15 @@ it.each([
       selected: null,
       profile: { name: "", picture: "" },
       memberships: [],
+      sync: { known: [], outbox: [] },
     };
     render(
       <PairingSettings
-        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        communities={{
+          snapshot: () => snapshot,
+          subscribe: () => () => {},
+          retained: () => undefined,
+        }}
         active={() => true}
         native={native}
       />,
@@ -95,6 +100,7 @@ it.each([true, false])(
       selected: null,
       profile: { name: "", picture: "" },
       memberships: [],
+      sync: { known: [], outbox: [] },
     };
     let status: PairingStatus = { phase: "idle" };
     const native = {
@@ -111,7 +117,11 @@ it.each([true, false])(
     } satisfies PairingNative;
     render(
       <PairingSettings
-        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        communities={{
+          snapshot: () => snapshot,
+          subscribe: () => () => {},
+          retained: () => undefined,
+        }}
         active={() => true}
         available
         native={native}
@@ -175,6 +185,7 @@ it.each(["uncertain", "cancelled"] as const)(
       selected: "https://community.example",
       profile: { name: "", picture: "" },
       memberships: [],
+      sync: { known: [], outbox: [] },
     };
     let status: PairingStatus = { phase: "idle" };
     const native = {
@@ -192,7 +203,11 @@ it.each(["uncertain", "cancelled"] as const)(
     let mounted!: ReturnType<typeof render>;
     const view = () => (
       <PairingSettings
-        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+        communities={{
+          snapshot: () => snapshot,
+          subscribe: () => () => {},
+          retained: () => undefined,
+        }}
         active={() => true}
         available
         native={native}
@@ -201,7 +216,11 @@ it.each(["uncertain", "cancelled"] as const)(
     await act(async () => {
       mounted = render(
         <PairingSettings
-          communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+          communities={{
+            snapshot: () => snapshot,
+            subscribe: () => () => {},
+            retained: () => undefined,
+          }}
           active={() => true}
           available
           native={native}
@@ -260,7 +279,7 @@ it.each(["uncertain", "cancelled"] as const)(
   },
 );
 
-it("copies the pairing code shown in the current QR", async () => {
+it("copies the current QR and explains phone verification", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("matchMedia", () => ({
     matches: false,
@@ -283,6 +302,7 @@ it("copies the pairing code shown in the current QR", async () => {
     selected: "https://community.example",
     profile: { name: "", picture: "" },
     memberships: [],
+    sync: { known: [], outbox: [] },
   };
   let status: PairingStatus = {
     phase: "qr",
@@ -299,7 +319,11 @@ it("copies the pairing code shown in the current QR", async () => {
   } satisfies PairingNative;
   render(
     <PairingSettings
-      communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+      communities={{
+        snapshot: () => snapshot,
+        subscribe: () => () => {},
+        retained: () => undefined,
+      }}
       active={() => true}
       available
       native={native}
@@ -324,14 +348,28 @@ it("copies the pairing code shown in the current QR", async () => {
     screen.getByRole("button", { name: "Couldn’t copy. Try again" }),
   ).toBeTruthy();
 
-  status = { phase: "code", code: "123456", codeEntry: true };
+  status = { phase: "code", code: "123456" };
   await act(async () => {
     await vi.advanceTimersByTimeAsync(400);
   });
   expect(screen.queryByRole("button", { name: /cop/i })).toBeNull();
+  const instructions = screen.getByRole("list", { name: "Pairing steps" });
+  const announcement = screen.getByText(/^Verification code 1 2 3 4 5 6\./);
+  expect(announcement.getAttribute("aria-live")).toBe("polite");
+  for (const surface of [instructions, announcement]) {
+    expect(surface.textContent).toContain(
+      "If your phone asks for a code, enter these digits and finish confirming on your phone.",
+    );
+    expect(surface.textContent).toContain(
+      "If it shows a code, check that the digits match.",
+    );
+    expect(surface.textContent).toContain(
+      "Then choose Codes match here to send your Buzz identity.",
+    );
+  }
 });
 
-it("rejects a legacy mismatch and requires explicit retry", async () => {
+it("rejects a mismatch and requires explicit retry", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("matchMedia", () => ({
     matches: false,
@@ -346,11 +384,11 @@ it("rejects a legacy mismatch and requires explicit retry", async () => {
     selected: "https://community.example",
     profile: { name: "", picture: "" },
     memberships: [],
+    sync: { known: [], outbox: [] },
   };
   let status: PairingStatus = {
     phase: "code",
     code: "123456",
-    codeEntry: false,
   };
   const native = {
     account: vi.fn(async () => viewer),
@@ -364,7 +402,11 @@ it("rejects a legacy mismatch and requires explicit retry", async () => {
   } satisfies PairingNative;
   render(
     <PairingSettings
-      communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+      communities={{
+        snapshot: () => snapshot,
+        subscribe: () => () => {},
+        retained: () => undefined,
+      }}
       active={() => true}
       available
       native={native}
@@ -405,11 +447,11 @@ it("keeps rejection progress truthful until native denial finishes", async () =>
     selected: "https://community.example",
     profile: { name: "", picture: "" },
     memberships: [],
+    sync: { known: [], outbox: [] },
   };
   let status: PairingStatus = {
     phase: "code",
     code: "123456",
-    codeEntry: false,
   };
   const native = {
     account: vi.fn(async () => viewer),
@@ -421,7 +463,11 @@ it("keeps rejection progress truthful until native denial finishes", async () =>
   } satisfies PairingNative;
   render(
     <PairingSettings
-      communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
+      communities={{
+        snapshot: () => snapshot,
+        subscribe: () => () => {},
+        retained: () => undefined,
+      }}
       active={() => true}
       available
       native={native}
@@ -456,55 +502,3 @@ it("keeps rejection progress truthful until native denial finishes", async () =>
     );
   }
 });
-
-it.each([
-  ["cancelled", "Pairing was canceled.", "Try again"],
-  ["uncertain", "Check your phone", "Start a new pairing"],
-] as const)(
-  "explains code-entry %s cancellation before retry",
-  async (outcome, text, retry) => {
-    vi.stubGlobal("matchMedia", () => ({
-      matches: false,
-      addEventListener() {},
-      removeEventListener() {},
-    }));
-    const viewer = "a".repeat(64);
-    const snapshot: ClientSnapshot = {
-      status: "ready",
-      relayAvailable: true,
-      viewer,
-      selected: "https://community.example",
-      profile: { name: "", picture: "" },
-      memberships: [],
-    };
-    const native = {
-      account: vi.fn(async () => viewer),
-      start: vi.fn(async () => {}),
-      status: vi.fn(
-        async (): Promise<PairingStatus> => ({
-          phase: "code",
-          code: "123456",
-          codeEntry: true,
-        }),
-      ),
-      confirm: vi.fn(async () => {}),
-      deny: vi.fn(async () => {}),
-      cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: outcome })),
-    } satisfies PairingNative;
-    render(
-      <PairingSettings
-        communities={{ snapshot: () => snapshot, subscribe: () => () => {} }}
-        active={() => true}
-        available
-        native={native}
-      />,
-    );
-    await act(async () => {});
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    });
-    expect(native.cancel).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("status").textContent).toContain(text);
-    expect(screen.getByRole("button", { name: retry })).toBeTruthy();
-  },
-);

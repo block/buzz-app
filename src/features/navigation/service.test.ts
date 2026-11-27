@@ -24,6 +24,8 @@ function setup(retain = false) {
   const ctx = new Context();
   contexts.push(ctx);
   const host = provideNavigation(ctx);
+  // The visit deadline runs only while a presenter is attached, as the app's is.
+  host.attach();
   let live = true;
   const listeners = new Set<() => void>();
   const owner: PresentationOwner = {
@@ -160,6 +162,37 @@ it("preserves opening focus through session binding, resolution and retry, not l
   expect(request().focus).toBe("content");
 });
 
+it("exposes Back/Forward through session binding, not openings or retry, and keeps each visit's positions", async () => {
+  const t = setup();
+  const nav = t.host.navigation;
+  const relay = provideRelay(t.ctx);
+  const request = () => t.host.request(nav.snapshot().attempt, t.owner).request;
+  const first = t.presentation.request.forSession(relay, relay.snapshot());
+  expect(first.traversal).toBeUndefined();
+  expect(first.complete({ status: "opened" })).toBe(true);
+  await t.promise;
+  void nav.open(settings);
+  // Leaving revokes the visit's presentation, which can still record its place.
+  expect(first.signal.aborted).toBe(true);
+  first.savePosition("thread", { top: 1 });
+  const other = request();
+  expect(other.traversal).toBeUndefined();
+  expect(other.position("thread")).toBeUndefined();
+  other.savePosition("thread", { top: 2 });
+  nav.back();
+  const returned = request().forSession(relay, relay.snapshot());
+  expect(returned.entryId).toBe(first.entryId);
+  expect(returned.traversal).toBe(true);
+  expect(returned.position("thread")).toEqual({ top: 1 });
+  expect(returned.position("timeline")).toBeUndefined();
+  void nav.retry();
+  expect(
+    request().forSession(relay, relay.snapshot()).traversal,
+  ).toBeUndefined();
+  void nav.open(target);
+  expect(request().traversal).toBeUndefined();
+});
+
 it("returning to a retained connection mints fresh authority without reviving its old request", async () => {
   const t = setup();
   const source = provideRelay(t.ctx);
@@ -270,4 +303,26 @@ it("defers workspace normalization until Settings closes", () => {
   );
   expect(t.host.navigation.snapshot().entry.target).toEqual(destination);
   expect(t.host.navigation.snapshot().entry.id).toBe(t.attempt.entry.id);
+});
+
+it("keeps Settings alive under a join dialog over it, not under another Settings visit", () => {
+  const t = setup();
+  void t.host.navigation.open(settings);
+  const shown = t.host.request(
+    t.host.navigation.snapshot().attempt,
+    t.owner,
+    true,
+  );
+  const request = shown.request;
+  expect(request.complete({ status: "opened" })).toBe(true);
+  void t.host.navigation.open({
+    ...settings,
+    join: { viewer: "a".repeat(64), visit: "v1" },
+  });
+  expect(request.signal.aborted).toBe(false);
+  // Settings beneath cannot acknowledge the dialog's visit.
+  expect(request.complete({ status: "opened" })).toBe(false);
+  t.host.navigation.back();
+  void t.host.navigation.open({ ...settings, section: "profile" });
+  expect(request.signal.aborted).toBe(true);
 });

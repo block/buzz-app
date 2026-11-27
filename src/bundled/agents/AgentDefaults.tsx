@@ -13,8 +13,17 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialog } from "./ProviderDialog";
+import type { PageNavigation } from "../../features/navigation/service";
 
-export function AgentDefaults({ agents }: { agents: Agents }) {
+export function AgentDefaults({
+  agents,
+  navigation,
+  onProvider,
+}: {
+  agents: Agents;
+  navigation?: PageNavigation | undefined;
+  onProvider?: ((provider?: string) => void) | undefined;
+}) {
   const types = useSyncExternalStore(
     agents.subscribe,
     agents.types,
@@ -55,7 +64,12 @@ export function AgentDefaults({ agents }: { agents: Agents }) {
               key={contributionKey(type)}
               fallback={fallback}
             >
-              <ProviderDefaults type={type} provider={type.provider} />
+              <ProviderDefaults
+                type={type}
+                provider={type.provider}
+                navigation={navigation}
+                onProvider={onProvider}
+              />
             </ContributionBoundary>
           );
         })}
@@ -67,18 +81,34 @@ export function AgentDefaults({ agents }: { agents: Agents }) {
 function ProviderDefaults({
   type,
   provider,
+  navigation,
+  onProvider,
 }: {
   type: RegisteredAgentType;
   provider: NonNullable<RegisteredAgentType["provider"]>;
+  navigation?: PageNavigation | undefined;
+  onProvider?: ((provider?: string) => void) | undefined;
 }) {
   const state = useSyncExternalStore(
     provider.subscribe,
     provider.snapshot,
     provider.snapshot,
   );
-  const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const [localOpen, setLocalOpen] = useState(false);
+  const routed = navigation?.target.kind === "settings" && !!onProvider;
+  const open = routed
+    ? navigation.target.kind === "settings" &&
+      navigation.target.provider === type.key
+    : localOpen;
+  const setOpen = (open: boolean) => {
+    if (!routed) setLocalOpen(open);
+    else if (!navigation.signal.aborted)
+      onProvider(open ? type.key : undefined);
+  };
+  const focusTarget = useRef<HTMLElement>(null);
   const checking = state.readiness === "checking";
+  const statusOnly =
+    state.readiness === "attention" && state.attentionLabel === null;
   // A recheck must not unmount the focused inline defaults control.
   const [settledReadiness, setSettledReadiness] = useState(state.readiness);
   if (!checking && settledReadiness !== state.readiness) {
@@ -106,12 +136,27 @@ function ProviderDefaults({
       <PreferenceRow
         title={type.title}
         icon={Icon && <Icon size={20} />}
-        trailing={
-          (checking ? settledReadiness : state.readiness) === "ready" &&
-          DefaultControl ? (
+        subtitle={
+          statusOnly ? (
+            <span
+              ref={(node) => {
+                focusTarget.current = node;
+              }}
+              tabIndex={-1}
+            >
+              {state.attentionDescription}
+            </span>
+          ) : state.readiness === "attention" ? (
+            state.attentionDescription
+          ) : undefined
+        }
+        trailing={(description) => {
+          if (statusOnly) return null;
+          return (checking ? settledReadiness : state.readiness) === "ready" &&
+            DefaultControl ? (
             <div
               ref={(node) => {
-                if (node) trigger.current = node.querySelector("button");
+                if (node) focusTarget.current = node.querySelector("button");
               }}
               className="flex flex-wrap items-center gap-2"
             >
@@ -124,9 +169,12 @@ function ProviderDefaults({
             </div>
           ) : (
             <Button
-              ref={trigger}
+              ref={(node) => {
+                focusTarget.current = node;
+              }}
               size="sm"
               aria-label={`${label}, ${state.readiness}`}
+              aria-describedby={description["aria-describedby"]}
               aria-busy={checking || undefined}
               disabled={checking}
               onClick={select}
@@ -144,13 +192,14 @@ function ProviderDefaults({
                   ? label
                   : "Edit configuration"}
             </Button>
-          )
-        }
+          );
+        }}
       />
       {open && (
         <ProviderDialog
           type={type}
-          finalFocus={trigger}
+          finalFocus={focusTarget}
+          visit={routed}
           onClose={() => setOpen(false)}
         />
       )}

@@ -6,10 +6,16 @@
 import { spawn as spawnChild } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { respond } from "../../buzz-mcp/rpc";
 import {
   answerMcp,
@@ -23,7 +29,10 @@ import {
   type Spawn,
   type ToolServer,
 } from "./goose";
+import { forwardedEnv, forwardedTurn, GATEWAY_TOKEN } from "./forwarded";
+import type { Generation } from "../../features/agents/gateway/forwarding";
 import { GooseSetup } from "./setup";
+import { GooseHistory, sessionTags } from "./transcript";
 
 const BIN = process.env.GOOSE_ACP_BIN;
 
@@ -179,7 +188,7 @@ type Send = {
 
 /** A goose whose Buzz tool calls and own requests are recorded; sends
  * succeed without reaching a relay. */
-async function live() {
+async function live(env?: Readonly<Record<string, string | null>>) {
   const calls: Call[] = [];
   const tools: ToolServer = async (conversation, message) => {
     calls.push({
@@ -196,7 +205,11 @@ async function live() {
     return respond(undefined, {}, message);
   };
   const cwd = mkdtempSync(join(tmpdir(), "buzz-goose-"));
-  const goose = await GooseProcess.start(spawn, { cwd, serve });
+  const goose = await GooseProcess.start(spawn, {
+    cwd,
+    serve,
+    ...(env && { env }),
+  });
   const requests: { method: string; ok?: boolean }[] = [];
   /** What each request that succeeded answered, in order. */
   const results: { method: string; result: unknown }[] = [];
@@ -230,6 +243,164 @@ const homeSetup = () =>
   });
 
 describe.skipIf(!BIN)("goose-acp", () => {
+  it("enables a deferred Buzz tool before executing it", {
+    timeout: 180_000,
+  }, async () => {
+    const catalogs: string[][] = [];
+    const provider = createServer(async (request, response) => {
+      if (request.method === "GET") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            object: "list",
+            data: [{ id: "gpt-4o", object: "model" }],
+          }),
+        );
+        return;
+      }
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const input = JSON.parse(body) as {
+        tools?: { function: { name: string } }[];
+      };
+      catalogs.push((input.tools ?? []).map((tool) => tool.function.name));
+      const step = catalogs.length;
+      const call =
+        step === 1
+          ? {
+              id: "enable-interest",
+              type: "function",
+              function: {
+                name: "enable_tools",
+                arguments: JSON.stringify({
+                  tool_names: ["buzz__interest_list"],
+                }),
+              },
+            }
+          : {
+              id: "list-interests",
+              type: "function",
+              function: {
+                name: "buzz__interest_list",
+                arguments: "{}",
+              },
+            };
+      const delta =
+        step <= 2
+          ? { role: "assistant", tool_calls: [{ index: 0, ...call }] }
+          : { role: "assistant", content: "done" };
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      for (const choice of [
+        { index: 0, delta, finish_reason: null },
+        {
+          index: 0,
+          delta: {},
+          finish_reason: step <= 2 ? "tool_calls" : "stop",
+        },
+      ]) {
+        response.write(
+          `data: ${JSON.stringify({
+            id: `response-${step}`,
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "gpt-4o",
+            choices: [choice],
+          })}\n\n`,
+        );
+      }
+      response.end("data: [DONE]\n\n");
+    });
+    await new Promise<void>((resolve) =>
+      provider.listen(0, "127.0.0.1", resolve),
+    );
+    const address = provider.address();
+    if (!address || typeof address === "string")
+      throw new Error("No provider address");
+    const { goose, cwd, tools, calls } = await live({
+      OPENAI_API_KEY: "local-test-only",
+      OPENAI_HOST: `http://127.0.0.1:${address.port}`,
+      OPENAI_BASE_PATH: "v1/chat/completions",
+      OPENAI_BASE_URL: null,
+      GOOSE_DISABLE_SESSION_NAMING: "true",
+    });
+    try {
+      const session = await goose.open({
+        cwd,
+        tools,
+        choice: () => ({ provider: "openai", model: "gpt-4o" }),
+        systemPrompt: "You are a Buzz agent.",
+      });
+      const result = await session.send("List my interests, then reply done.");
+      expect(result.ok).toBe(true);
+      expect(catalogs).toHaveLength(3);
+      expect(catalogs[0]).toContain("enable_tools");
+      expect(catalogs[0]).toContain("buzz__send");
+      expect(catalogs[0]).not.toContain("buzz__interest_list");
+      expect(catalogs[1]).toContain("buzz__interest_list");
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "tools/call" &&
+            (call.params as Send).name === "interest_list",
+        ),
+      ).toBe(true);
+      const exported = (await goose.request("_goose/unstable/session/export", {
+        sessionId: session.id,
+        format: "json",
+      })) as { data: string };
+      type Content = {
+        type: string;
+        id?: string;
+        toolCall?: { status: string; value: { name: string } };
+        toolResult?: {
+          status: string;
+          value: {
+            isError?: boolean;
+            structuredContent?: { enabled: string[] };
+          };
+        };
+      };
+      const history = JSON.parse(exported.data) as {
+        conversation: { role: string; content: Content[] }[];
+      };
+      const events = history.conversation.flatMap((message) =>
+        message.content.map((content) => ({ role: message.role, ...content })),
+      );
+      const enabledAt = events.findIndex(
+        (event) =>
+          event.role === "assistant" &&
+          event.type === "toolRequest" &&
+          event.toolCall?.status === "success" &&
+          event.toolCall.value.name === "enable_tools",
+      );
+      expect(enabledAt).toBeGreaterThanOrEqual(0);
+      const activation = events.findIndex(
+        (event) =>
+          event.type === "toolResponse" &&
+          event.id === events[enabledAt]?.id &&
+          event.toolResult?.status === "success" &&
+          event.toolResult.value.isError !== true &&
+          event.toolResult.value.structuredContent?.enabled.includes(
+            "buzz__interest_list",
+          ),
+      );
+      expect(activation).toBeGreaterThan(enabledAt);
+      const executedAt = events.findIndex(
+        (event) =>
+          event.role === "assistant" &&
+          event.type === "toolRequest" &&
+          event.toolCall?.status === "success" &&
+          event.toolCall.value.name === "buzz__interest_list",
+      );
+      expect(executedAt).toBeGreaterThan(activation);
+    } finally {
+      await goose.kill();
+      await new Promise<void>((resolve, reject) =>
+        provider.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
   it("answers with the Buzz tools, the Buzz prompt and a title", {
     timeout: 180_000,
   }, async () => {
@@ -254,7 +425,7 @@ describe.skipIf(!BIN)("goose-acp", () => {
       })) as { session: { title?: string } };
       expect(info.session.title).toBe(title);
       const settled = await session.send("Say hello to me in Buzz.");
-      expect(settled).toEqual({ ok: true });
+      expect(settled).toEqual({ ok: true, answered: true });
       expect(calls.some((call) => call.method === "tools/list")).toBe(true);
       // goose reached the tools over HTTP with the token, and no request was
       // refused.
@@ -262,14 +433,6 @@ describe.skipIf(!BIN)("goose-acp", () => {
       expect(hits.filter((hit) => hit.status === 404)).toEqual([]);
       const server = session.server;
       if (!server) throw new Error("no Buzz MCP server");
-      // goose keeps the server's URL and token out of its sessions.db.
-      const files = sessionsDb();
-      expect(files.length).toBeGreaterThan(0);
-      for (const secret of [
-        server.url,
-        ...server.headers.map((h) => h.value.replace(/^Bearer /, "")),
-      ])
-        expect(files.some((file) => file.includes(secret))).toBe(false);
       // Alone, the token admits nothing.
       const stolen = await fetch(server.url, {
         method: "POST",
@@ -288,6 +451,88 @@ describe.skipIf(!BIN)("goose-acp", () => {
       const last = sends().at(-1);
       expect(last?.arguments?.final).toBe(true);
       expect(last?.arguments?.text).toContain(code);
+    } finally {
+      await goose.kill();
+    }
+  });
+
+  // Re-enable when Buzz can keep MCP credentials out of Goose's saved
+  // extension allowlist. aaif-goose/goose#13435 only protects mcpServers.
+  it.skip("keeps the Buzz MCP token out of the session database", {
+    timeout: 180_000,
+  }, async () => {
+    // Use Goose's own MCP client. CLI providers can defer tools until a turn.
+    const { goose, cwd, tools } = await live({
+      OPENAI_API_KEY: "local-test-only",
+      OPENAI_HOST: "http://127.0.0.1:1",
+      OPENAI_BASE_URL: null,
+    });
+    try {
+      const session = await goose.open({
+        cwd,
+        tools,
+        choice: () => ({ provider: "openai", model: "gpt-4o" }),
+        title: "Buzz MCP token persistence",
+        systemPrompt: "",
+      });
+      const server = session.server;
+      if (!server) throw new Error("no Buzz MCP server");
+      const listed = (await goose.request("_goose/unstable/tools/list", {
+        sessionId: session.id,
+        extensionName: "buzz",
+      })) as { tools: { name: string }[] };
+      expect(listed.tools.map((tool) => tool.name)).toContain("buzz__send");
+      const files = sessionsDb();
+      expect(files.some((file) => file.includes(session.id))).toBe(true);
+      for (const { value } of server.headers) {
+        const token = value.replace(/^Bearer /, "");
+        expect(files.some((file) => file.includes(token))).toBe(false);
+      }
+    } finally {
+      await goose.kill();
+    }
+  });
+
+  it("finds a conversation's session by the tags it opened with", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, tools } = await live();
+    const agent = "a".repeat(64);
+    const place = { channelId: "chan", root: "b".repeat(64) };
+    try {
+      const session = await goose.open({
+        cwd,
+        title: "Ada · #general · bbbbbbbb",
+        tools,
+        systemPrompt: "",
+        tags: sessionTags(agent, `${place.channelId}/${place.root}`),
+      });
+      // goose lists only sessions with messages.
+      expect(
+        await session.send("Reply with the single word ok."),
+      ).toMatchObject({
+        ok: true,
+      });
+      await goose.close(session);
+      const history = new GooseHistory({
+        spawn,
+        resolveDirectory: async (path) => path.replace(/^~/, homedir()),
+      });
+      const signal = new AbortController().signal;
+      // No saved id goose still has: the tags find it.
+      const read = await history.transcript(
+        { agent, workspace: cwd, place, sessions: ["gone"] },
+        signal,
+      );
+      expect(read?.turns.map((turn) => turn.sessionId)).toEqual([session.id]);
+      // Another thread, and another agent, find nothing.
+      for (const lookup of [
+        { agent, place: { ...place, root: "c".repeat(64) } },
+        { agent: "d".repeat(64), place },
+      ])
+        expect(
+          await history.transcript({ ...lookup, workspace: cwd }, signal),
+        ).toBeUndefined();
     } finally {
       await goose.kill();
     }
@@ -322,8 +567,8 @@ describe.skipIf(!BIN)("goose-acp", () => {
         )
         .toBe(true);
       const second = session.send("Also put the word banana in that reply.");
-      await expect(first).resolves.toEqual({ ok: true });
-      await expect(second).resolves.toEqual({ ok: true });
+      await expect(first).resolves.toMatchObject({ ok: true });
+      await expect(second).resolves.toMatchObject({ ok: true });
       expect(
         requests.filter(
           (item) => item.method === "_goose/unstable/session/steer",
@@ -368,7 +613,7 @@ describe.skipIf(!BIN)("goose-acp", () => {
         .toBe(true);
       session.interrupt();
       const answer = await settled;
-      expect(answer).toEqual({ ok: true });
+      expect(answer).toEqual({ ok: true, stopped: true });
       // It ended well before the command would have.
       expect(Date.now() - started).toBeLessThan(55_000);
       expect(session.busy).toBe(false);
@@ -376,8 +621,39 @@ describe.skipIf(!BIN)("goose-acp", () => {
       // The session takes the next message as usual.
       await expect(
         session.send("Reply in Buzz with the word again."),
-      ).resolves.toEqual({ ok: true });
+      ).resolves.toEqual({ ok: true, answered: true });
       expect(sends().at(-1)?.arguments?.text?.toLowerCase()).toContain("again");
+    } finally {
+      await goose.kill();
+    }
+  });
+
+  it("ends the turn after a final send, keeping the send's result", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, tools, sends } = await live();
+    const cancels: unknown[] = [];
+    const notify = goose.notify.bind(goose);
+    goose.notify = (method, params) => {
+      if (method === "session/cancel") cancels.push(params);
+      return notify(method, params);
+    };
+    try {
+      const session = await goose.open({
+        cwd,
+        tools,
+        systemPrompt:
+          "You are a Buzz agent. You reply in Buzz only by calling the send tool, once, with final true.",
+      });
+      await session.send("Reply in Buzz with the word hello.");
+      await session.idle();
+      expect(cancels).toEqual([{ sessionId: session.id }]);
+      // goose saved the send's result, not an interrupted call.
+      await session.send(
+        "Reply in Buzz with the exact text your last send tool call returned, or the word interrupted if it did not complete.",
+      );
+      await session.idle();
+      expect(sends().at(-1)?.arguments?.text).toContain("Sent.");
     } finally {
       await goose.kill();
     }
@@ -442,7 +718,10 @@ describe.skipIf(!BIN)("goose-acp", () => {
             ),
           ),
         ),
-      ).resolves.toEqual([{ ok: true }, { ok: true }]);
+      ).resolves.toEqual([
+        { ok: true, answered: true },
+        { ok: true, answered: true },
+      ]);
       const [ada, bo] = agents;
       // Each ran in its own workspace, and answered through its own tools.
       expect(ada?.sent.join("\n")).toContain(basename(ada?.cwd ?? "-"));
@@ -591,5 +870,377 @@ describe.skipIf(!BIN)("goose-acp", () => {
           model: "no-such-model-xyz",
         }),
       ).toMatchObject({ ok: false });
+  });
+
+  it.each(["databricks", "databricks_v2"] as const)(
+    "sends only the forwarded bearer for a %s turn and its delegate",
+    {
+      timeout: 180_000,
+    },
+    async (providerId) => {
+      // A generation's base path, as native serves it: goose's Databricks
+      // routes follow the handle.
+      const seen: {
+        path: string;
+        auth: string | undefined;
+        session?: string;
+      }[] = [];
+      type Message = { role: string; content?: unknown };
+      const text = (message: Message) => JSON.stringify(message);
+      const provider = createServer(async (request, response) => {
+        let body = "";
+        for await (const chunk of request) body += chunk;
+        const path = request.url ?? "";
+        const session = request.headers["agent-session-id"];
+        seen.push({
+          path,
+          auth: request.headers.authorization,
+          ...(typeof session === "string" ? { session } : {}),
+        });
+        if (request.method === "GET") {
+          response.writeHead(200, { "Content-Type": "application/json" });
+          response.end(
+            JSON.stringify(
+              path.endsWith("serving-endpoints")
+                ? { endpoints: [{ name: "fake-model" }] }
+                : { name: "fake-model" },
+            ),
+          );
+          return;
+        }
+        const messages =
+          (JSON.parse(body) as { messages?: Message[] }).messages ?? [];
+        const all = messages.map(text).join("\n");
+        const child = all.includes("Subagent ID:");
+        const call = (name: string, args: object) => ({
+          role: "assistant",
+          tool_calls: [
+            {
+              index: 0,
+              id: `call-${seen.length}`,
+              type: "function",
+              function: { name, arguments: JSON.stringify(args) },
+            },
+          ],
+        });
+        const delta = child
+          ? messages.at(-1)?.role === "tool"
+            ? { role: "assistant", content: "ok" }
+            : call("recipe__final_output", { summary: "child done" })
+          : /Subagent \S+ completed/.test(all)
+            ? { role: "assistant", content: "done" }
+            : all.includes("Delegated to subagent")
+              ? { role: "assistant", content: "Waiting for the subagent." }
+              : // Off the Buzz tools: a delegate's own connection to them
+                // would be a second claim on their one session.
+                call("delegate", {
+                  instructions: "Write one line.",
+                  extensions: ["developer"],
+                });
+        response.writeHead(200, { "Content-Type": "text/event-stream" });
+        for (const choice of [
+          { index: 0, delta, finish_reason: null },
+          {
+            index: 0,
+            delta: {},
+            finish_reason: "tool_calls" in delta ? "tool_calls" : "stop",
+          },
+        ])
+          response.write(
+            `data: ${JSON.stringify({ id: `r${seen.length}`, object: "chat.completion.chunk", created: 1, model: "fake-model", choices: [choice] })}\n\n`,
+          );
+        response.end("data: [DONE]\n\n");
+      });
+      await new Promise<void>((resolve) =>
+        provider.listen(0, "127.0.0.1", resolve),
+      );
+      const address = provider.address();
+      if (!address || typeof address === "string")
+        throw new Error("No provider address");
+      // A token the app's environment passes on, and one the owner's goose
+      // stores; neither may be sent.
+      const root = mkdtempSync(join(tmpdir(), "buzz-goose-root-"));
+      mkdirSync(join(root, "config"), { recursive: true });
+      writeFileSync(
+        join(root, "config", "secrets.yaml"),
+        "DATABRICKS_TOKEN: stored-owner-token\n",
+      );
+      vi.stubEnv("DATABRICKS_TOKEN", "inherited-app-token");
+      const choice = () => ({ provider: providerId, model: "fake-model" });
+      const { goose, cwd, tools } = await live({
+        ...forwardedEnv(
+          {
+            url: `http://127.0.0.1:${address.port}/generation-handle`,
+            noProxy: "127.0.0.1,localhost",
+          },
+          { provider: providerId, choice },
+        ),
+        GOOSE_PATH_ROOT: root,
+        GOOSE_DISABLE_KEYRING: "1",
+      });
+      try {
+        // Buzz's sessions don't enable goose's `summon`; this one does, to
+        // have a delegate.
+        const session = await goose.open({
+          cwd,
+          tools,
+          choice,
+          systemPrompt: "You are a Buzz agent.",
+          platform: [
+            { type: "platform", name: "developer" },
+            { type: "platform", name: "summon" },
+          ],
+        });
+        expect(await session.send("Delegate one task.")).toMatchObject({
+          ok: true,
+        });
+        const path =
+          providerId === "databricks_v2"
+            ? "/ai-gateway/mlflow/v1/chat/completions"
+            : "/serving-endpoints/fake-model/invocations";
+        const inference = seen.filter((request) => request.path.endsWith(path));
+        const sessions = new Set(inference.map((request) => request.session));
+        // The turn's own session and its delegate's.
+        expect(sessions.size).toBe(2);
+        expect(sessions).toContain(session.id);
+        expect(sessions).not.toContain(undefined);
+        if (providerId === "databricks")
+          expect(seen.length).toBeGreaterThan(inference.length);
+        for (const request of seen) {
+          expect(request.path.startsWith("/generation-handle/")).toBe(true);
+          expect(request.auth).toBe(`Bearer ${GATEWAY_TOKEN}`);
+        }
+      } finally {
+        vi.unstubAllEnvs();
+        await goose.kill();
+        await new Promise<void>((resolve, reject) =>
+          provider.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
+
+  it("resumes a session the agent's ordinary goose saved through the gateway, and starts afresh after New session", {
+    timeout: 240_000,
+  }, async () => {
+    // One upstream for both: the owner's Databricks host, as their goose
+    // config names it, and a generation's base path, as native serves it.
+    const seen: {
+      path: string;
+      auth: string | undefined;
+      session?: string;
+      body: string;
+    }[] = [];
+    const provider = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const path = request.url ?? "";
+      const session = request.headers["agent-session-id"];
+      seen.push({
+        path,
+        auth: request.headers.authorization,
+        ...(typeof session === "string" ? { session } : {}),
+        body,
+      });
+      if (request.method === "GET") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify(
+            path.endsWith("serving-endpoints")
+              ? { endpoints: [{ name: "fake-model" }] }
+              : { name: "fake-model" },
+          ),
+        );
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "text/event-stream" });
+      for (const choice of [
+        { index: 0, delta: { role: "assistant", content: "noted" } },
+        { index: 0, delta: {}, finish_reason: "stop" },
+      ])
+        response.write(
+          `data: ${JSON.stringify({ id: `r${seen.length}`, object: "chat.completion.chunk", created: 1, model: "fake-model", choices: [choice] })}\n\n`,
+        );
+      response.end("data: [DONE]\n\n");
+    });
+    await new Promise<void>((resolve) =>
+      provider.listen(0, "127.0.0.1", resolve),
+    );
+    const address = provider.address();
+    if (!address || typeof address === "string")
+      throw new Error("No provider address");
+    const base = `http://127.0.0.1:${address.port}`;
+    // The owner's own goose: Databricks on their host and token, in config
+    // and secrets, as an ordinary session runs on them.
+    const root = mkdtempSync(join(tmpdir(), "buzz-goose-root-"));
+    mkdirSync(join(root, "config"), { recursive: true });
+    writeFileSync(
+      join(root, "config", "config.yaml"),
+      `GOOSE_PROVIDER: databricks\nGOOSE_MODEL: fake-model\nDATABRICKS_HOST: ${base}/ordinary\n`,
+    );
+    writeFileSync(
+      join(root, "config", "secrets.yaml"),
+      "DATABRICKS_TOKEN: stored-owner-token\n",
+    );
+    // Both geese inherit the app's environment, this root included.
+    const owned = {
+      GOOSE_PATH_ROOT: root,
+      GOOSE_DISABLE_KEYRING: "1",
+      DATABRICKS_HOST: null,
+      DATABRICKS_TOKEN: null,
+    } as const;
+    const choice = () => ({ provider: "databricks", model: "fake-model" });
+    const agent = "agent-pubkey";
+    const conversation = "channel/root";
+    const inference = (prefix: string) =>
+      seen.filter(
+        (request) =>
+          request.path.startsWith(prefix) &&
+          request.path.endsWith("/invocations"),
+      );
+
+    // 1. An ordinary turn, before the agent's membership routes through the
+    // gateway: its session is saved as the conversation's.
+    const ordinary = await live(owned);
+    let saved: string;
+    try {
+      const session = await ordinary.goose.open({
+        cwd: ordinary.cwd,
+        tools: ordinary.tools,
+        choice,
+        systemPrompt: "You are a Buzz agent.",
+        tags: sessionTags(agent, conversation),
+      });
+      saved = session.id;
+      expect(
+        await session.send("Remember the word PELICAN-ORDINARY."),
+      ).toMatchObject({ ok: true });
+    } finally {
+      await ordinary.goose.kill();
+      await ordinary.goose.exited;
+    }
+    const before = inference("/ordinary/");
+    expect(before.length).toBeGreaterThan(0);
+    for (const request of before)
+      expect(request.auth).toBe("Bearer stored-owner-token");
+
+    /** One forwarded turn, as the runtime runs it: its own goose on a
+     * generation's URL, resuming `load` when given. */
+    const forwarded = async (handle: string, text: string, load?: string) => {
+      const calls: string[] = [];
+      const fresh: boolean[] = [];
+      const kept: string[] = [];
+      const generation: Generation = {
+        url: `${base}/${handle}`,
+        revision: 1,
+        isSealed: () => false,
+        admitted: () => inference(`/${handle}/`).length > 0,
+        noProxy: "127.0.0.1,localhost",
+        seal: () => void calls.push("seal"),
+        close: async () => void calls.push("close"),
+        revoked: new Promise<void>(() => undefined),
+        isRevoked: () => false,
+        associate: async (session) => void calls.push(`associate ${session}`),
+        registerChild: async () => ({ type: "registered" }),
+      };
+      const cwd = mkdtempSync(join(tmpdir(), "buzz-goose-"));
+      const retired: Promise<void>[] = [];
+      const settled = await forwardedTurn(
+        {
+          open: async () => generation,
+          start: (env, onProcess) =>
+            GooseProcess.start(spawn, {
+              cwd,
+              env: { ...owned, ...env },
+              serve,
+              onProcess,
+            }),
+          launch: async () => ({ cwd, systemPrompt: "You are a Buzz agent." }),
+          tools: async (_conversation, message) =>
+            respond(undefined, {}, message),
+          provider: "databricks",
+          choice,
+          conversation,
+          tags: sessionTags(agent, conversation),
+          ...(load ? { load } : {}),
+          prompt: async (isFresh) => {
+            fresh.push(isFresh);
+            return text;
+          },
+          keep: (session) => {
+            kept.push(session);
+            return true;
+          },
+          outlives: (retirement) => void retired.push(retirement),
+          signal: new AbortController().signal,
+        },
+        "The route changed",
+      );
+      await Promise.all(retired);
+      return { settled, calls, fresh, kept };
+    };
+
+    try {
+      // 2. The conversation's next turn is forwarded: it resumes the
+      // ordinary session, history and all, on the gateway alone.
+      const resumed = await forwarded(
+        "generation-1",
+        "Which word did I ask you to remember?",
+        saved,
+      );
+      expect(resumed.settled).toMatchObject({ ok: true });
+      expect(resumed.fresh).toEqual([false]);
+      expect(resumed.kept).toEqual([saved]);
+      expect(resumed.calls).toEqual([`associate ${saved}`, "seal", "close"]);
+      const continued = inference("/generation-1/");
+      expect(continued.length).toBeGreaterThan(0);
+      for (const request of continued) {
+        expect(request.session).toBe(saved);
+        expect(request.auth).toBe(`Bearer ${GATEWAY_TOKEN}`);
+        expect(request.body).toContain("PELICAN-ORDINARY");
+        expect(request.body).toContain("Which word did I ask you");
+      }
+      // Nothing of the forwarded turn reached the owner's own host.
+      expect(inference("/ordinary/")).toHaveLength(before.length);
+      for (const request of seen.filter((r) =>
+        r.path.startsWith("/generation-1/"),
+      ))
+        expect(request.auth).toBe(`Bearer ${GATEWAY_TOKEN}`);
+
+      // 3. After New session, the runtime loads nothing: a fresh session,
+      // with none of the ordinary history.
+      const reset = await forwarded(
+        "generation-2",
+        "Remember the word HERON-RESET.",
+      );
+      expect(reset.settled).toMatchObject({ ok: true });
+      expect(reset.fresh).toEqual([true]);
+      const [opened] = reset.kept;
+      expect(opened).toBeDefined();
+      expect(opened).not.toBe(saved);
+      expect(reset.calls).toEqual([`associate ${opened}`, "seal", "close"]);
+      const afresh = inference("/generation-2/");
+      expect(afresh.length).toBeGreaterThan(0);
+      for (const request of afresh) {
+        expect(request.session).toBe(opened);
+        expect(request.body).not.toContain("PELICAN-ORDINARY");
+      }
+
+      // 4. The reset session is the one that continues after.
+      const after = await forwarded("generation-3", "Which word now?", opened);
+      expect(after.settled).toMatchObject({ ok: true });
+      expect(after.fresh).toEqual([false]);
+      const later = inference("/generation-3/");
+      expect(later.length).toBeGreaterThan(0);
+      for (const request of later) {
+        expect(request.session).toBe(opened);
+        expect(request.body).toContain("HERON-RESET");
+        expect(request.body).not.toContain("PELICAN-ORDINARY");
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        provider.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });

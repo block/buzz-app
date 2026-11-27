@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useId, useRef, useEffect, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -28,14 +28,20 @@ export function WorkspaceFields({
   value,
   onChange,
   disabled = false,
+  instructionRows = 5,
+  instructionScope = "chat",
 }: {
   value: Workspace;
   disabled?: boolean;
+  /** Edit surfaces with room to spare give Instructions more visible lines. */
+  instructionRows?: number;
+  instructionScope?: "chat" | "workspace";
   onChange(value: Workspace): void;
 }) {
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState("");
   const [typed, setTyped] = useState("");
+  const folderErrorId = useId();
   const current = useRef({ value, onChange, disabled });
   current.current = { value, onChange, disabled };
   const alive = useRef(true);
@@ -131,26 +137,35 @@ export function WorkspaceFields({
   };
   const full = folders.length >= MAX_FOLDERS;
   const worktree = value.worktree;
+  const folderError =
+    error ||
+    (worktree && !folders.length
+      ? "Add at least one folder to use a new worktree."
+      : undefined);
   return (
     <div className={styles.sections}>
       <Field label="Instructions" optional>
         <Textarea
           disabled={disabled}
-          rows={5}
+          rows={instructionRows}
           value={value.canvas}
           onChange={(event) =>
             onChange({ ...value, canvas: event.target.value })
           }
-          placeholder="Instructions and context for agents working in this chat."
+          placeholder={`Instructions and context for agents working in this ${instructionScope}.`}
         />
       </Field>
       <div className={styles.fields}>
         <Field
           label="Folders"
-          optional
+          optional={!worktree}
           nativeLabel={false}
           description={full ? "Up to 20 folders." : undefined}
-          error={error || undefined}
+          error={
+            folderError ? (
+              <span id={folderErrorId}>{folderError}</span>
+            ) : undefined
+          }
         >
           {folders.length > 0 && (
             <div className={styles.folderList}>
@@ -187,6 +202,7 @@ export function WorkspaceFields({
                 size="sm"
                 disabled={disabled || full || picking}
                 loading={picking}
+                aria-describedby={folderError ? folderErrorId : undefined}
                 onClick={() => void browse()}
               >
                 <FolderPlusIcon size={16} aria-hidden="true" />

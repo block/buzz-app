@@ -1,6 +1,8 @@
+import { Virtualizer } from "virtua";
 import { Popover } from "@base-ui/react/popover";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAgentChoices } from "../agents/use-choices";
+import { agentUnavailable, canMessageAgent } from "../agents/choices";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
 import { exactName, matchPerson } from "../search/person-match";
@@ -11,37 +13,89 @@ import {
   searchOrder,
 } from "../search/usage";
 import { useSearchHighlight } from "../search/use-search-highlight";
-import { publicKeyLabels } from "../../shared/identity/public-key";
+import {
+  abbreviatedPublicKey,
+  publicKeyLabels,
+  typedPublicKey,
+} from "../../shared/identity/public-key";
+import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { XIcon } from "../../shared/design-system/icons/index";
 import { usePeople, type Recipient } from "./usePeople";
+import {
+  useVerifiedNames,
+  verifiedName,
+  withVerifiedNames,
+  type VerifiedPerson,
+} from "../profiles/useVerifiedNames";
+import type { VerifiedProfile } from "../relay/verified-profile";
 import { peopleRelationships } from "../profiles/relationships";
 import { useChipRemoval } from "./useChipRemoval";
 import styles from "./NewMessage.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
+export type RecipientChannel = Readonly<{
+  id: string;
+  name: string;
+  private?: boolean;
+}>;
+const noChannels: readonly RecipientChannel[] = [];
+const noExclusions: readonly string[] = [];
 const personKey = (pubkey: string) => `person:${pubkey}`;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+/** At most 24 characters, cut between characters rather than inside one. */
+function shortened(text: string) {
+  const characters = Array.from(
+    graphemes.segment(text),
+    (part) => part.segment,
+  );
+  return characters.length > 24
+    ? `${characters.slice(0, 23).join("").trimEnd()}…`
+    : text;
+}
 
 export function RecipientPicker({
   session,
   scope,
   selected,
+  labels,
   disabled,
-  excludedPubkeys = [],
+  excludedPubkeys = noExclusions,
   initiallyOpen = true,
+  searchOnly = false,
+  maxRecipients = 8,
+  appearance = "header",
+  channelOptions = noChannels,
+  selectedChannel,
+  onChannelChange,
   onChange,
+  onComplete,
+  onTyped,
 }: {
   session: RelaySession;
   /** View-state partition whose DM visits and earlier choices rank people. */
   scope: string;
   selected: Recipient[];
+  /** `selected` as shown: named by their current verified names. */
+  labels: readonly VerifiedPerson<Recipient>[];
   disabled: boolean;
   excludedPubkeys?: readonly string[];
   /** Share dialogs keep the people list closed until the To field is used. */
   initiallyOpen?: boolean;
+  /** Keep results closed until a search is typed. */
+  searchOnly?: boolean;
+  maxRecipients?: number;
+  /** A panel's header row, or a filled control inside a dialog form. */
+  appearance?: "header" | "field";
+  channelOptions?: readonly RecipientChannel[];
+  selectedChannel?: RecipientChannel | undefined;
+  onChannelChange?(channel: RecipientChannel | undefined): void;
   onChange(people: Recipient[]): void;
+  onComplete(): void;
+  /** Whether the To field holds text that is not a recipient yet. */
+  onTyped(typed: boolean): void;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(initiallyOpen);
@@ -53,148 +107,299 @@ export function RecipientPicker({
   const selection = useRef(selected);
   selection.current = selected;
   const id = useId();
+  const errorId = useId();
   const directory = usePeople(session, query);
-  const agents = useAgentChoices(session, false);
-  const controlled = new Set(
-    agents.identities
-      .filter((agent) => agent.managed)
-      .map((agent) => agent.pubkey),
-  );
+  // Searched people the community verified carry their verified names, as in
+  // Command-K; the read waits for the directory to settle.
+  const verified = useVerifiedNames(session, directory.people, {
+    key: query,
+    settled: !directory.loading,
+  });
+  const agents = useAgentChoices(session, false, true);
   const removal = useChipRemoval();
-  const atLimit = selected.length >= 8;
-  const relationships = peopleRelationships(
-    session.channels.list().channels,
-    controlled,
-  );
+  const atLimit = !!selectedChannel || selected.length >= maxRecipients;
   const needle = query.trim().toLowerCase();
   const typed = pickerText("dm", needle);
-  // The shared name rule, the same as mentions: whole name, start of name,
-  // whole word, start of a word, all without accents or case.
-  const matchOf = (person: Recipient) =>
-    needle ? matchPerson(person.name, needle) : undefined;
-  // Read again when the selection changes, so a person chosen earlier in this
-  // message counts. Rows already showing keep their order either way.
+  const invalid = !open && !!needle && selected.length > 0;
   // biome-ignore lint/correctness/useExhaustiveDependencies: a choice or removal makes the stored usage newer.
   const usage = useMemo(() => readSearchUsage(scope), [scope, selected.length]);
-  // Remember eligible namesakes while search text and selection change.
   const known = useRef(new Map<string, Recipient>());
-  // A managed agent also matches by its own name, as in mentions, even when
-  // its profile name differs. The directory searches profile names only.
-  const inDirectory = new Map(
-    directory.people.map((person) => [person.pubkey, person]),
-  );
-  // A managed agent's own name, kept for ranking and for Space.
-  const agentName = new Map(
-    agents.identities.flatMap((agent) =>
-      agent.managed && agent.name ? [[agent.pubkey, agent.name] as const] : [],
-    ),
-  );
-  const namesOf = (person: Recipient) => {
-    const own = agentName.get(person.pubkey);
-    return own && own !== person.name ? [person.name, own] : [person.name];
-  };
-  const byAgentName = query.trim()
-    ? agents.identities.flatMap((agent): Recipient[] => {
-        if (
-          !agent.managed ||
-          !agent.name ||
-          inDirectory.has(agent.pubkey) ||
-          matchPerson(agent.name, query) === undefined
-        )
-          return [];
-        // Show the profile already seen for this key, as browsing did.
-        const profile =
-          known.current.get(agent.pubkey) ??
-          session.profiles.snapshot().get(agent.pubkey);
-        return [
-          {
-            ...(profile ?? { name: agent.name }),
-            pubkey: agent.pubkey,
-            isAgent: true,
-          },
-        ];
-      })
-    : [];
-  const eligible = [...directory.people, ...byAgentName].filter(
-    (person) =>
-      person.pubkey !== session.viewer &&
-      !excludedPubkeys.includes(person.pubkey) &&
-      (!person.isAgent || controlled.has(person.pubkey)) &&
-      !selected.some((item) => item.pubkey === person.pubkey),
-  );
-  const picked = usage.pick(
-    typed,
-    new Set(eligible.map((person) => personKey(person.pubkey))),
-  );
-  // Typed text uses the search order with relationship as its band: an exact
-  // name, then the person chosen before for this text, then relationship,
-  // then match quality lifted by how often you choose this person or visit
-  // your DM with them. The directory's own order breaks ties.
-  const order = (person: Recipient) => {
-    if (!needle) return 0;
-    const key = personKey(person.pubkey);
-    const dm = relationships.dm(person.pubkey);
-    return searchOrder(usage, picked, {
-      key,
-      rank: Math.min(
-        ...namesOf(person).map((name) => matchPerson(name, needle)?.tier ?? 3),
-      ),
-      band: relationships.rank(person.pubkey),
-      usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
-    });
-  };
   const ordered = useRef<{ query: string; pubkeys: string[] }>({
     query,
     pubkeys: [],
   });
-  if (ordered.current.query !== query) ordered.current = { query, pubkeys: [] };
-  const knownOrder = new Set(ordered.current.pubkeys);
-  ordered.current.pubkeys.push(
-    ...eligible
-      .filter((person) => !knownOrder.has(person.pubkey))
-      .sort((left, right) => order(left) - order(right))
-      .map((person) => person.pubkey),
+  const channels = session.channels.list().channels;
+  const profiles = session.profiles.snapshot();
+  const people = useMemo(
+    () => withVerifiedNames(directory.people, verified, profiles),
+    [directory.people, verified, profiles],
   );
-  const byPubkey = new Map(eligible.map((person) => [person.pubkey, person]));
-  const candidates = ordered.current.pubkeys.flatMap((pubkey) => {
-    const person = byPubkey.get(pubkey);
-    return person ? [person] : [];
-  });
-  for (const person of [...candidates, ...selected])
-    known.current.set(person.pubkey, person);
-  const groups = new Map<string, string[]>();
-  for (const person of known.current.values()) {
-    const keys = groups.get(person.name) ?? [];
-    keys.push(person.pubkey);
-    groups.set(person.name, keys);
-  }
-  const identities = new Map<string, string>();
-  for (const keys of groups.values()) {
-    if (keys.length > 1)
-      for (const [key, value] of publicKeyLabels(keys))
-        identities.set(key, value);
-  }
+  const viewer = session.viewer;
+  const {
+    controlled,
+    eligible,
+    namesOf,
+    byPubkey,
+    raw,
+    candidates: allCandidates,
+    identities,
+    keys: peopleKeys,
+  } = useMemo(() => {
+    const controlled = new Set(
+      agents.selectable.filter(canMessageAgent).map((agent) => agent.pubkey),
+    );
+    const relationships = peopleRelationships(channels, controlled);
+    const inDirectory = new Map(
+      people.map((person) => [person.pubkey, person]),
+    );
+    // An eligible agent's own name, kept for ranking and for Space.
+    const agentName = new Map(
+      agents.selectable.flatMap((agent) =>
+        canMessageAgent(agent) && agent.name
+          ? [[agent.pubkey, agent.name] as const]
+          : [],
+      ),
+    );
+    // The names a row shows: its label, a verified handle and full name, and
+    // an eligible agent's own name. Editable profile names stay hidden.
+    const namesOf = (person: VerifiedPerson<Recipient>) => [
+      ...new Set(
+        [
+          person.name,
+          agentName.get(person.pubkey),
+          ...(person.profileNames ? [person.username, person.fullName] : []),
+        ].filter((name): name is string => !!name),
+      ),
+    ];
+    // People verified by a matching name, in the shared profiles (as Command-K
+    // finds them) or found here and verified for a page. The directory's
+    // profile-name search cannot find them by that name.
+    const pool: Recipient[] = [];
+    const pageNames = new Map<string, VerifiedProfile>();
+    if (query.trim())
+      for (const [pubkey, person] of [...profiles, ...known.current]) {
+        if (person.isAgent || inDirectory.has(pubkey) || pageNames.has(pubkey))
+          continue;
+        const identity = verifiedName(session.profiles, pubkey);
+        if (
+          identity &&
+          [identity.displayName, identity.username, identity.fullName].some(
+            (name) => !!name && matchPerson(name, query) !== undefined,
+          )
+        ) {
+          pageNames.set(pubkey, identity);
+          // A shared head replaced the profile name with the verified one:
+          // keep the profile seen here, or the key, for when it is withdrawn.
+          const { verified: _verified, username: _username, ...facts } = person;
+          pool.push(
+            person.verified
+              ? (known.current.get(pubkey) ?? {
+                  ...facts,
+                  pubkey,
+                  name: abbreviatedPublicKey(pubkey) ?? pubkey,
+                })
+              : { ...person, pubkey },
+          );
+        }
+      }
+    const byVerifiedName = withVerifiedNames(pool, pageNames, profiles);
+    const typedKey = typedPublicKey(query);
+    const localAgents = query.trim()
+      ? agents.selectable.flatMap((agent): Recipient[] => {
+          if (
+            !canMessageAgent(agent) ||
+            !agent.name ||
+            inDirectory.has(agent.pubkey) ||
+            (agent.pubkey !== typedKey &&
+              matchPerson(agent.name, query) === undefined)
+          )
+            return [];
+          // Show the profile already seen for this key, as browsing did.
+          const profile =
+            known.current.get(agent.pubkey) ?? profiles.get(agent.pubkey);
+          return [
+            {
+              ...(profile ?? { name: agent.name }),
+              pubkey: agent.pubkey,
+              isAgent: true,
+            },
+          ];
+        })
+      : [];
+    const eligible: VerifiedPerson<Recipient>[] = [
+      ...people,
+      ...byVerifiedName,
+      ...localAgents,
+    ].filter(
+      (person) =>
+        person.pubkey !== viewer &&
+        !excludedPubkeys.includes(person.pubkey) &&
+        !agentUnavailable(session, person.pubkey) &&
+        (!person.isAgent || controlled.has(person.pubkey)) &&
+        !selected.some((item) => item.pubkey === person.pubkey),
+    );
+    const picked = usage.pick(
+      typed,
+      new Set(eligible.map((person) => personKey(person.pubkey))),
+    );
+    // Typed text uses the search order with relationship as its band: an exact
+    // name, then the person chosen before for this text, then relationship,
+    // then match quality lifted by how often you choose this person or visit
+    // your DM with them. The directory's own order breaks ties.
+    const order = (person: VerifiedPerson<Recipient>) => {
+      if (!needle) return 0;
+      const key = personKey(person.pubkey);
+      const dm = relationships.dm(person.pubkey);
+      return searchOrder(usage, picked, {
+        key,
+        rank: Math.min(
+          ...namesOf(person).map(
+            (name) => matchPerson(name, needle)?.tier ?? 3,
+          ),
+        ),
+        band: relationships.rank(person.pubkey),
+        usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
+      });
+    };
+    if (ordered.current.query !== query)
+      ordered.current = { query, pubkeys: [] };
+    const knownOrder = new Set(ordered.current.pubkeys);
+    ordered.current.pubkeys.push(
+      ...eligible
+        .filter((person) => !knownOrder.has(person.pubkey))
+        .sort((left, right) => order(left) - order(right))
+        .map((person) => person.pubkey),
+    );
+    const byPubkey = new Map(eligible.map((person) => [person.pubkey, person]));
+    // Rows as found, before naming: a choice keeps these facts, so its label
+    // follows the current verification instead of the one shown when chosen.
+    const raw = new Map(
+      [...directory.people, ...pool, ...localAgents].map((person) => [
+        person.pubkey,
+        person,
+      ]),
+    );
+    const candidates = ordered.current.pubkeys.flatMap((pubkey) => {
+      const person = byPubkey.get(pubkey);
+      return person ? [person] : [];
+    });
+    for (const person of [...candidates, ...selected])
+      known.current.set(person.pubkey, raw.get(person.pubkey) ?? person);
+    const knownNames = new Map<string, VerifiedProfile>();
+    for (const pubkey of known.current.keys()) {
+      const identity = verifiedName(session.profiles, pubkey);
+      if (identity) knownNames.set(pubkey, identity);
+    }
+    // Everyone seen, by the names they show now; chosen people as their chips.
+    const shown = new Map(
+      withVerifiedNames([...known.current.values()], knownNames, profiles).map(
+        (person) => [person.pubkey, person.name],
+      ),
+    );
+    for (const person of labels) shown.set(person.pubkey, person.name);
+    const groups = new Map<string, string[]>();
+    for (const [pubkey, name] of shown) {
+      const keys = groups.get(name) ?? [];
+      keys.push(pubkey);
+      groups.set(name, keys);
+    }
+    const identities = new Map<string, string>();
+    for (const keys of groups.values()) {
+      if (keys.length > 1)
+        for (const [key, value] of publicKeyLabels(keys))
+          identities.set(key, value);
+    }
+    return {
+      controlled,
+      eligible,
+      namesOf,
+      byPubkey,
+      raw,
+      candidates,
+      identities,
+      keys: candidates.map((person) => person.pubkey),
+    };
+  }, [
+    agents.selectable,
+    channels,
+    profiles,
+    directory.people,
+    people,
+    viewer,
+    query,
+    needle,
+    typed,
+    usage,
+    selected,
+    labels,
+    excludedPubkeys,
+    session,
+  ]);
+  const candidates =
+    channelOptions.length && query.trim().startsWith("#") ? [] : allCandidates;
   const discriminator = (person: Recipient) => identities.get(person.pubkey);
+  // Only a community-verified identity supplies the detail beside the name.
+  const verifiedDetail = (person: VerifiedPerson<Recipient>) =>
+    person.profileNames
+      ? [
+          person.fullName !== person.name ? person.fullName : undefined,
+          // Kept when it equals the name: it marks the name as verified.
+          `@${person.username}`,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined
+      : undefined;
   const label = (person: Recipient) =>
     [person.name, discriminator(person)].filter(Boolean).join(" ");
-  const listed = open && !disabled && !atLimit;
+  const matchingChannels =
+    selected.length || selectedChannel
+      ? []
+      : channelOptions.filter(
+          (channel) =>
+            !query.trim().replace(/^#/, "") ||
+            matchPerson(channel.name, query.replace(/^#/, "")) !== undefined,
+        );
+  const keys = [
+    ...matchingChannels.map((channel) => `channel:${channel.id}`),
+    ...(candidates.length ? peopleKeys : []),
+  ];
+  const chooseKey = (key: string) => {
+    const channel = matchingChannels.find(
+      (item) => `channel:${item.id}` === key,
+    );
+    if (channel && !disabled) {
+      onChannelChange?.(channel);
+      setQuery("");
+      onTyped(false);
+      setOpen(false);
+      input.current?.focus();
+    } else {
+      const person = byPubkey.get(key);
+      if (person) choose(person);
+    }
+  };
+  const visible = open && !disabled && (!searchOnly || !!needle);
+  const listed = visible && !atLimit;
+  const channelsOnly = channelOptions.length > 0 && needle.startsWith("#");
   const highlight = useSearchHighlight({
     query,
-    keys: candidates.map((person) => person.pubkey),
-    onChoose: (pubkey) => {
-      const person = byPubkey.get(pubkey);
-      if (person) choose(person);
-    },
+    keys,
+    onChoose: chooseKey,
     open: listed,
     onOpen: () => setOpen(true),
   });
   // Space completes like an @ mention: only for one exact name, and only when
   // no longer name continues it ("Avery" waits while "Avery Chen" exists).
   // A search still running, failed, or with more pages could hold that longer
-  // name or a namesake, so Space waits for the full list.
+  // name or a namesake, so Space waits for the full list. A verified person
+  // found by an editable profile name is that name's namesake too.
   const exactRecipient = () =>
-    listed && !directory.loading && !directory.error
-      ? exactName(eligible, namesOf, query)
+    listed && !directory.loading && !directory.error && !directory.tooShort
+      ? exactName(
+          eligible,
+          (person) => [...namesOf(person), ...(person.profileNames ?? [])],
+          query,
+        )
       : undefined;
   const loadingRows = useRef(10);
   useEffect(() => {
@@ -217,18 +422,29 @@ export function RecipientPicker({
   function choose(person: Recipient) {
     if (
       disabled ||
-      selection.current.length >= 8 ||
+      selection.current.length >= maxRecipients ||
       person.pubkey === session.viewer ||
       excludedPubkeys.includes(person.pubkey) ||
+      agentUnavailable(session, person.pubkey) ||
       (person.isAgent && !controlled.has(person.pubkey)) ||
       selection.current.some((item) => item.pubkey === person.pubkey)
     )
       return;
     recordChoice(scope, typed, personKey(person.pubkey));
-    selection.current = [...selection.current, person];
+    selection.current = [
+      ...selection.current,
+      raw.get(person.pubkey) ?? person,
+    ];
     onChange(selection.current);
     setQuery("");
+    onTyped(false);
     focus();
+    // The pick that fills a one-person To closes the list rather than show
+    // the limit it just reached: the dialog's purpose and "1 person selected"
+    // already say it is full. A multi-person field's count ("8 people
+    // selected") doesn't state the maximum, so it keeps showing the limit.
+    if (maxRecipients === 1 && selection.current.length >= maxRecipients)
+      setOpen(false);
   }
   function remove(pubkey: string, point?: { x: number; y: number }) {
     if (
@@ -253,10 +469,24 @@ export function RecipientPicker({
       shape={person.isAgent ? "squircle" : "circle"}
     />
   );
+  const renderOption = (person: VerifiedPerson<Recipient>, index: number) => (
+    <RecipientOption
+      key={person.pubkey}
+      person={person}
+      id={highlight.rowId(person.pubkey)}
+      active={person.pubkey === highlight.active}
+      discriminator={discriminator(person)}
+      verified={verifiedDetail(person)}
+      query={needle}
+      media={session.media}
+      position={index + 1}
+      count={keys.length}
+    />
+  );
   return (
     <Popover.Root
       modal={false}
-      open={open && !disabled}
+      open={visible}
       onOpenChange={(next, details) => {
         // The editable To field is the anchor, rather than a toggle button.
         const target =
@@ -277,6 +507,7 @@ export function RecipientPicker({
       <fieldset
         aria-label="Recipients"
         className={styles.recipientHeader}
+        data-appearance={appearance}
         ref={field}
         onBlur={(event) => {
           if (
@@ -293,14 +524,31 @@ export function RecipientPicker({
           className={styles.toField}
           onClick={focus}
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
+            // Escape closes an open list; otherwise it is the host's.
+            if (event.key === "Escape" && visible) {
               event.stopPropagation();
               setOpen(false);
             }
           }}
         >
           <label htmlFor={id}>To:</label>
-          {selected.map((person) => (
+          {selectedChannel && (
+            <span className={styles.chip}>
+              <Button
+                size="inline"
+                disabled={disabled}
+                aria-label={`Remove ${selectedChannel.name}`}
+                onClick={() => {
+                  onChannelChange?.(undefined);
+                  focus();
+                }}
+              >
+                <XIcon size={12} aria-hidden="true" />
+              </Button>
+              <span className={styles.chipName}>#{selectedChannel.name}</span>
+            </span>
+          )}
+          {labels.map((person) => (
             <span className={styles.chip} key={person.pubkey}>
               <button
                 type="button"
@@ -334,6 +582,9 @@ export function RecipientPicker({
                 <span className={styles.agent}>{discriminator(person)}</span>
               )}
               {person.isAgent && <span className={styles.agent}>Agent</span>}
+              {agentUnavailable(session, person.pubkey) && (
+                <span className={styles.agent}>Unavailable</span>
+              )}
             </span>
           ))}
           <input
@@ -342,16 +593,19 @@ export function RecipientPicker({
             className={styles.toInput}
             aria-label="Message recipients"
             role="combobox"
-            aria-expanded={open && !disabled}
+            aria-expanded={visible}
             aria-controls={listed ? highlight.listId : undefined}
             aria-autocomplete="list"
+            aria-describedby={invalid ? errorId : undefined}
             {...highlight.fieldProps}
             placeholder={
               selected.length
                 ? atLimit
-                  ? "8 people selected"
+                  ? `${maxRecipients} ${maxRecipients === 1 ? "person" : "people"} selected`
                   : "Add another person…"
-                : "Find a person…"
+                : channelOptions.length
+                  ? "Find a person or channel…"
+                  : "Find a person…"
             }
             value={query}
             disabled={disabled}
@@ -364,6 +618,7 @@ export function RecipientPicker({
             onFocus={() => setOpen(true)}
             onChange={(event) => {
               setQuery(event.target.value);
+              onTyped(!!event.target.value.trim());
               setOpen(true);
             }}
             onKeyDown={(event) => {
@@ -376,14 +631,32 @@ export function RecipientPicker({
                 event.altKey
               )
                 return;
-              if (event.key === "Backspace" && !query && selected.length) {
+              if (event.key === "Backspace" && !query && selectedChannel) {
+                event.preventDefault();
+                onChannelChange?.(undefined);
+              } else if (
+                event.key === "Backspace" &&
+                !query &&
+                selected.length
+              ) {
                 event.preventDefault();
                 const last = selected.at(-1);
                 if (last) remove(last.pubkey);
               } else if (event.key === "Escape") {
+                if (visible) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setOpen(false);
+                }
+              } else if (
+                event.key === "Tab" &&
+                !event.shiftKey &&
+                !query.trim() &&
+                selected.length > 0
+              ) {
                 event.preventDefault();
-                event.stopPropagation();
                 setOpen(false);
+                onComplete();
               } else if (atLimit) {
                 if (event.key === "Enter" && open) event.preventDefault();
               } else if (event.key === " " && !event.shiftKey) {
@@ -395,12 +668,9 @@ export function RecipientPicker({
               } else if (event.key === "Tab" && !event.shiftKey) {
                 // Tab picks the highlighted row, as in @ mentions. With no
                 // highlight it moves focus as usual.
-                const person = listed
-                  ? byPubkey.get(highlight.active)
-                  : undefined;
-                if (person) {
+                if (listed && keys.includes(highlight.active)) {
                   event.preventDefault();
-                  choose(person);
+                  chooseKey(highlight.active);
                 }
               } else if (
                 !highlight.keyDown(event) &&
@@ -412,6 +682,21 @@ export function RecipientPicker({
             }}
           />
         </div>
+        {/* Text left in To holds Send, so say why once the list closes, not
+            while a name is typed. Below the list's anchor, so the list keeps
+            its place. A polite status, read after whatever focus moved to,
+            and To's description, as Escape leaves focus there: any To edit
+            opens the list and unmounts it, so its text never changes while
+            shown. */}
+        {invalid && (
+          <p
+            id={errorId}
+            role="status"
+            className="mt-1 text-body-sm text-danger"
+          >
+            “{shortened(query.trim())}” is not a valid recipient
+          </p>
+        )}
         <Popover.Portal>
           <Popover.Positioner
             anchor={anchor}
@@ -428,63 +713,107 @@ export function RecipientPicker({
               finalFocus={false}
               className={styles.picker}
             >
+              {/* Shown whenever a full field's list is open: right after the
+                  eighth pick in New message, and when a full one-person
+                  field is used again. The one-person text explains the
+                  limit rather than asking for a choice already made. */}
               {atLimit ? (
-                <p role="status">You can message up to 8 people at once.</p>
+                <p role="status">
+                  {selectedChannel
+                    ? "Remove this channel to choose another destination."
+                    : maxRecipients === 1
+                      ? "One person at a time. Remove them to choose someone else."
+                      : `You can message up to ${maxRecipients} people at once.`}
+                </p>
               ) : (
                 <div
                   className={styles.people}
                   id={highlight.listId}
                   role="listbox"
-                  aria-label="People"
-                  {...highlight.listProps}
+                  aria-label={
+                    channelOptions.length ? "People and channels" : "People"
+                  }
+                  onPointerMove={(event) => {
+                    const key = optionKey(event.target);
+                    if (key) highlight.rowProps(key).onPointerMove(event);
+                    highlight.listProps.onPointerMove(event);
+                  }}
+                  onPointerLeave={highlight.listProps.onPointerLeave}
+                  onFocus={(event) => {
+                    const key = optionKey(event.target);
+                    if (key) highlight.rowProps(key).onFocus();
+                  }}
+                  onKeyDown={(event) => {
+                    const key = optionKey(event.target);
+                    if (key) highlight.rowProps(key).onKeyDown(event);
+                  }}
+                  onClick={(event) => {
+                    const key = optionKey(event.target);
+                    if (key) chooseKey(key);
+                  }}
                   onScroll={(event) => {
                     const list = event.currentTarget;
                     if (
                       list.scrollHeight - list.scrollTop - list.clientHeight <
                         80 &&
+                      !channelsOnly &&
                       !directory.loading &&
                       !directory.error
                     )
                       directory.loadMore();
                   }}
                 >
-                  {candidates.map((person) => (
-                    <NavigationItem
-                      key={person.pubkey}
-                      {...highlight.rowProps(person.pubkey)}
-                      role="option"
-                      aria-label={`${label(person)}${person.isAgent ? ", Agent" : ""}`}
-                      tabIndex={-1}
-                      selected={person.pubkey === highlight.active}
-                      aria-selected={person.pubkey === highlight.active}
-                      aria-current={false}
-                      icon={avatar(person)}
-                      label={
-                        <MatchedLabel
-                          label={person.name}
-                          positions={matchOf(person)?.positions}
+                  <Virtualizer
+                    data={keys}
+                    keepMounted={
+                      keys.includes(highlight.active)
+                        ? [keys.indexOf(highlight.active)]
+                        : []
+                    }
+                  >
+                    {(key, index) => {
+                      const channel = matchingChannels.find(
+                        (item) => `channel:${item.id}` === key,
+                      );
+                      if (!channel) {
+                        const person = byPubkey.get(key);
+                        return person ? renderOption(person, index) : <></>;
+                      }
+                      return (
+                        <NavigationItem
+                          key={key}
+                          id={highlight.rowProps(key).id}
+                          data-recipient-key={key}
+                          variant="option"
+                          role="option"
+                          tabIndex={-1}
+                          selected={highlight.active === key}
+                          aria-selected={highlight.active === key}
+                          aria-current={false}
+                          aria-label={`${channel.name}, ${channel.private ? "private channel" : "channel"}`}
+                          label={`#${channel.name}`}
+                          trailing={
+                            channel.private ? "Private channel" : "Channel"
+                          }
+                          onMouseDown={(event) => event.preventDefault()}
                         />
-                      }
-                      trailing={
-                        discriminator(person) || person.isAgent ? (
-                          <span className={styles.agent}>
-                            {[
-                              discriminator(person),
-                              person.isAgent ? "Agent" : "",
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </span>
-                        ) : undefined
-                      }
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => choose(person)}
-                    />
-                  ))}
-                  {!directory.loading &&
-                    !directory.error &&
-                    !candidates.length && <p>No matching people.</p>}
-                  {directory.loading &&
+                      );
+                    }}
+                  </Virtualizer>
+                  {(channelsOnly || (!directory.loading && !directory.error)) &&
+                    !candidates.length &&
+                    !matchingChannels.length && (
+                      <p>
+                        {channelOptions.length &&
+                        (channelsOnly || !directory.tooShort)
+                          ? `No people or channels match "${query.trim()}".`
+                          : directory.tooShort
+                            ? `Type at least ${SEARCH_MIN_CHARS} characters to search people.`
+                            : "No matching people."}
+                      </p>
+                    )}
+                  {!channelsOnly &&
+                    directory.loading &&
                     (!query.trim() || !candidates.length) && (
                       <div role="status" aria-label="Loading people">
                         <div aria-hidden="true">
@@ -504,10 +833,10 @@ export function RecipientPicker({
                         </div>
                       </div>
                     )}
-                  {directory.error && (
+                  {!channelsOnly && directory.error && (
                     <p role="alert">Could not load people.</p>
                   )}
-                  {!directory.loading && directory.hasMore && (
+                  {!channelsOnly && !directory.loading && directory.hasMore && (
                     <Button
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
@@ -528,3 +857,83 @@ export function RecipientPicker({
     </Popover.Root>
   );
 }
+
+function optionKey(target: EventTarget | null) {
+  return target instanceof Element
+    ? target.closest<HTMLElement>("[data-recipient-key]")?.dataset.recipientKey
+    : undefined;
+}
+
+/** Hover changes two rows; the other avatars and labels keep their render. */
+const RecipientOption = memo(function RecipientOption({
+  person,
+  id,
+  active,
+  discriminator,
+  verified,
+  query,
+  media,
+  position,
+  count,
+}: {
+  person: Recipient;
+  id: string;
+  active: boolean;
+  discriminator: string | undefined;
+  /** The verified full name and handle, never an editable profile name. */
+  verified: string | undefined;
+  query: string;
+  media: RelaySession["media"];
+  position: number;
+  count: number;
+}) {
+  return (
+    <NavigationItem
+      id={id}
+      data-recipient-key={person.pubkey}
+      variant="option"
+      role="option"
+      aria-posinset={position}
+      aria-setsize={count}
+      aria-label={`${[person.name, discriminator].filter(Boolean).join(" ")}${verified ? `, ${verified}` : ""}${person.isAgent ? ", Agent" : ""}`}
+      tabIndex={-1}
+      selected={active}
+      aria-selected={active}
+      aria-current={false}
+      icon={
+        <Avatar
+          alt=""
+          fallback={person.name}
+          src={avatarMedia(person.picture, media)}
+          size="default"
+          shape={person.isAgent ? "squircle" : "circle"}
+        />
+      }
+      label={
+        // The verified detail sits below the name, as in mentions, so a long
+        // full name never squeezes the name it identifies.
+        <span className="flex flex-col whitespace-normal">
+          <span>
+            <MatchedLabel
+              label={person.name}
+              positions={
+                query ? matchPerson(person.name, query)?.positions : undefined
+              }
+            />
+          </span>
+          {verified && <small className={styles.agent}>{verified}</small>}
+        </span>
+      }
+      trailing={
+        discriminator || person.isAgent ? (
+          <span className={styles.agent}>
+            {[discriminator, person.isAgent ? "Agent" : ""]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        ) : undefined
+      }
+      onMouseDown={(event) => event.preventDefault()}
+    />
+  );
+});

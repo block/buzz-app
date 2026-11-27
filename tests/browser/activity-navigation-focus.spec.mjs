@@ -2,6 +2,7 @@ import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { generateSecretKey } from "nostr-tools";
+import { channelUnread } from "./unread-state.mjs";
 
 test.use({
   productionBroker: true,
@@ -29,7 +30,13 @@ test("mark-read retains focus through a gated storage failure, working transitio
   await open(page, app);
   const row = page.locator('button[data-channel-id="alpha"]');
   const popup = page.getByRole("dialog", { name: "Activity in Alpha" });
-  await expect(row.getByRole("img", { name: /unread threads?/ })).toBeVisible();
+  // The open channel's row is quiet; its activity popup still lists threads.
+  await expect
+    .poll(async () => (await channelUnread(page, "alpha")).threads)
+    .toBeGreaterThan(0);
+  await expect(row.getByRole("img", { name: /unread threads?/ })).toHaveCount(
+    0,
+  );
   await row.focus();
   const originalRow = await row.elementHandle();
   await row.press("Enter");
@@ -138,15 +145,21 @@ for (const destination of ["reply", "off-window root"]) {
     // another tab is selected or the entire pane is collapsed.
     const workspace = page.locator("[data-panel-workspace]");
     for (const hiddenBy of ["settings", "collapsed"]) {
-      // This journey tests focus, not activity expiry. Renew the turn as a live
-      // agent would, keeping the browser clock aligned with relay timestamps.
-      app.observer(activity("turn_liveness", target.id), key);
       await openChannelDetails(page);
       await expect(panel).toBeHidden();
       if (hiddenBy === "collapsed")
         await workspace
           .getByRole("button", { name: "Toggle tab pane", exact: true })
           .click();
+      // This journey tests focus, not activity expiry. A slow runner can spend
+      // most of the 30 s activity window above, and the popover only opens and
+      // stays open while the turn is fresh. Renew it as a live agent would,
+      // keeping the browser clock aligned with relay timestamps, and wait for
+      // the badge that shares the popover's working-agent state before Enter.
+      app.observer(activity("turn_liveness", target.id), key);
+      await expect(
+        row.getByRole("img", { name: /working in Alpha/ }),
+      ).toBeVisible();
       await row.focus();
       await row.press("Enter");
       await expect(popup).toBeVisible();
@@ -176,3 +189,42 @@ for (const destination of ["reply", "off-window root"]) {
     await expect(row).toBeFocused();
   });
 }
+
+test("hover turns an activity row's unread dot into Mark as read, in the dot's place", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const row = page.locator('button[data-channel-id="alpha"]');
+  const popup = page.getByRole("dialog", { name: "Activity in Alpha" });
+  await row.hover();
+  await expect(popup).toBeVisible();
+  const item = popup.getByRole("button", { name: /^Open unread thread / });
+  const markRead = popup.getByRole("button", {
+    name: /Mark thread from .+ as read/,
+  });
+  const dot = popup.locator("[data-activity-unread]");
+  const time = item.locator("strong + span");
+  await expect(markRead).toHaveCount(1);
+  await expect(dot).toHaveCSS("opacity", "1");
+  await expect(markRead.locator("xpath=..")).toHaveCSS("opacity", "0");
+  const center = async (locator) => {
+    const { x, y, width, height } = await locator.boundingBox();
+    return { x: x + width / 2, y: y + height / 2 };
+  };
+  const [actionCenter, dotCenter] = [await center(markRead), await center(dot)];
+  expect(Math.abs(actionCenter.x - dotCenter.x)).toBeLessThan(1);
+  expect(Math.abs(actionCenter.y - dotCenter.y)).toBeLessThan(1);
+  // The action's hover fill clears the timestamp, which stays.
+  const [action, stamp] = [
+    await markRead.boundingBox(),
+    await time.boundingBox(),
+  ];
+  expect(stamp.x + stamp.width).toBeLessThanOrEqual(action.x);
+  await item.hover();
+  await expect(markRead.locator("xpath=..")).toHaveCSS("opacity", "1");
+  await expect(dot).toHaveCSS("opacity", "0");
+  await expect(time).toHaveCSS("opacity", "1");
+  await markRead.click();
+  await expect(markRead).toHaveCount(0);
+});

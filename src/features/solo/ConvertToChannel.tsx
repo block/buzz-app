@@ -1,25 +1,47 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { prepareSoloMove } from "../channel-navigation/solo-navigation";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import {
+  canonicalDetailsName,
+  detailsDraftErrors,
   sameLabels,
   type ChannelDetails,
 } from "../relay/channel-details-protocol";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import { Select } from "../../shared/design-system/ui/Select";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { soloShareAttempt, useSoloShareAttempts } from "./share-attempt";
 import {
   chatConversion,
   updateChatConversion,
   useChatConversions,
   type ChatConversion,
 } from "./conversion";
-import { SOLO_LABEL, soloLabels } from "./labels";
+import {
+  SOLO_ACCESS_DISCLOSURE,
+  SOLO_LABEL,
+  soloLabels,
+  soloRetainedAccessWarning,
+} from "./labels";
 import { applySharedChannelDetails } from "./share";
+import {
+  generalAccessOptions,
+  generalAccessPolicy,
+  generalAccessValue,
+  type GeneralAccess,
+} from "../channels/general-access";
+import { channelIcon } from "../channels/channel-icon";
+import { ChannelTextField } from "../../bundled/channels/ChannelTextField";
+import styles from "./ConvertToChannel.module.css";
 
 /** Presentation gating only; fresh signed details authorize the actual write. */
 export function canConvertToChannel(
@@ -32,14 +54,26 @@ export function canConvertToChannel(
     (channel.channelType === "solo" || !!chatConversion(session, channel.id)) &&
     !channel.cached &&
     !channel.readOnly &&
-    !channel.archived
+    !channel.archived &&
+    !prepareSoloMove(session, channel.id)
   );
 }
 
 const withoutSolo = (labels: readonly string[] | undefined) =>
   (labels ?? []).filter((label) => label !== SOLO_LABEL);
 
-/** Clear the Solo label, drop the chat's project filing, then hand off navigation. */
+function matchesConversion(base: ChannelDetails, receipt: ChatConversion) {
+  return (
+    !soloLabels(base.labels) &&
+    base.name === receipt.draft.name &&
+    base.visibility === receipt.draft.visibility &&
+    (receipt.draft.joinRole === undefined ||
+      base.joinRole === receipt.draft.joinRole) &&
+    base.ttlSeconds === receipt.draft.ttlSeconds
+  );
+}
+
+/** Clear the Solo label, keeping the chat's workspace, then hand off navigation. */
 export function ConvertToChannel({
   session,
   id,
@@ -56,19 +90,22 @@ export function ConvertToChannel({
   finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const details = session.channelDetails;
-  const sharing = useSoloShareAttempts(session).has(id);
   const receipt = useChatConversions(session).get(id);
   const converted = !!receipt?.converted;
   const notify = useToastNotification();
   const attempt = useSyncExternalStore(details.subscribe, () =>
     details.snapshot(id),
   );
+  const cancel = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(true);
   const completed = useRef(false);
   const [base, setBase] = useState<ChannelDetails>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const [access, setAccess] = useState<GeneralAccess>();
+  // Unset until edited, so the chat's current title stays the default.
+  const [name, setName] = useState<string>();
+  const formId = useId();
   const lifetime = useRef<AbortController | undefined>(undefined);
   const pending = useRef(false);
   const conversionAttempt =
@@ -78,7 +115,8 @@ export function ConvertToChannel({
   const matchingAttempt = !!(
     base &&
     conversionAttempt?.draft.labels &&
-    conversionAttempt.draft.name === base.name &&
+    // An uncertain conversion carries the name chosen here, kept in its receipt.
+    conversionAttempt.draft.name === (receipt?.draft.name ?? base.name) &&
     conversionAttempt.draft.description === base.description &&
     conversionAttempt.draft.ttlSeconds === base.ttlSeconds &&
     sameLabels(conversionAttempt.draft.labels, withoutSolo(base.labels))
@@ -90,17 +128,47 @@ export function ConvertToChannel({
     base &&
     receipt &&
     !attempt &&
-    !soloLabels(base.labels) &&
-    base.name === receipt.draft.name &&
-    base.visibility === receipt.draft.visibility &&
-    base.ttlSeconds === receipt.draft.ttlSeconds
+    matchesConversion(base, receipt)
   );
   const canFinish = converted || confirmedElsewhere;
-  // Uncertain intent belongs to the details owner, including the chosen privacy.
-  const selectedVisibility =
-    receipt?.draft.visibility ??
-    conversionAttempt?.draft.visibility ??
-    visibility;
+  // Uncertain intent belongs to the details owner, including admission.
+  const savedDraft = receipt?.draft ?? conversionAttempt?.draft;
+  const selectedAccess = savedDraft
+    ? generalAccessValue(savedDraft)
+    : (access ?? (base ? generalAccessValue(base) : "private"));
+  const shownName = savedDraft ? savedDraft.name : (name ?? base?.name ?? "");
+  const channelName = canonicalDetailsName(shownName);
+  const nameError =
+    base && eligible && !savedDraft
+      ? detailsDraftErrors({ ...base, name: channelName }).name
+      : undefined;
+  const preview = { private: selectedAccess === "private" || undefined };
+  const PreviewIcon = channelIcon(preview);
+  const locked =
+    busy ||
+    converted ||
+    !!receipt?.running ||
+    !!attempt ||
+    !eligible ||
+    !!signal?.aborted;
+
+  const acceptDetails = useCallback(
+    (next: ChannelDetails) => {
+      setBase(next);
+      const saved = chatConversion(session, id);
+      // A fresh superseding edit retires only unconfirmed local orchestration.
+      // Durable uncertainty and a completed metadata phase retain their owners.
+      if (
+        saved &&
+        !saved.running &&
+        !saved.converted &&
+        !details.snapshot(id) &&
+        !matchesConversion(next, saved)
+      )
+        updateChatConversion(session, id, undefined);
+    },
+    [details, id, session],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -110,21 +178,22 @@ export function ConvertToChannel({
       ...(signal ? [signal] : []),
     ]);
     setBase(undefined);
-    setVisibility("private");
+    setAccess(undefined);
+    setName(undefined);
     setError("");
     setBusy(false);
     pending.current = false;
     void details
       .load(id, active)
       .then((next) => {
-        if (!active.aborted) setBase(next);
+        if (!active.aborted) acceptDetails(next);
       })
       .catch((reason) => {
         if (!active.aborted)
           setError(reason instanceof Error ? reason.message : String(reason));
       });
     return () => controller.abort();
-  }, [details, id, signal]);
+  }, [details, id, signal, acceptDetails]);
 
   const run = async (action: "convert" | "reload" | "check" | "finish") => {
     const controller = lifetime.current;
@@ -132,7 +201,8 @@ export function ConvertToChannel({
       !controller ||
       controller.signal.aborted ||
       signal?.aborted ||
-      pending.current
+      pending.current ||
+      prepareSoloMove(session, id)
     )
       return;
     const active = AbortSignal.any([
@@ -146,7 +216,7 @@ export function ConvertToChannel({
     try {
       if (action === "reload") {
         const next = await details.load(id, active);
-        if (!active.aborted) setBase(next);
+        if (!active.aborted) acceptDetails(next);
       } else {
         if (chatConversion(session, id)?.running)
           throw new Error("Conversion is already in progress in another view.");
@@ -155,20 +225,16 @@ export function ConvertToChannel({
           (!base ||
             (action === "check"
               ? !matchingAttempt || attempt?.status !== "unconfirmed"
-              : !eligible || !!attempt))
+              : !eligible || !!attempt || !!nameError))
         )
           return;
         if (action === "finish" && !canFinish) return;
-        if (action === "convert" && soloShareAttempt(session, id))
-          throw new Error(
-            "Finish sharing or choose Start over before converting.",
-          );
         if (!base && !receipt) return;
         exact = chatConversion(session, id) ?? {
           draft: {
-            name: base?.name ?? "",
+            name: channelName,
             description: base?.description ?? "",
-            visibility: selectedVisibility,
+            ...generalAccessPolicy(selectedAccess, base?.joinRole),
             ttlSeconds: base?.ttlSeconds,
             labels: withoutSolo(base?.labels),
           },
@@ -179,15 +245,14 @@ export function ConvertToChannel({
           if (action === "check") await details.check(id, active);
           else if (action === "finish") {
             const fresh = await details.load(id, active);
-            if (
-              soloLabels(fresh.labels) ||
-              fresh.name !== exact.draft.name ||
-              fresh.visibility !== exact.draft.visibility ||
-              fresh.ttlSeconds !== exact.draft.ttlSeconds
-            )
+            if (!matchesConversion(fresh, exact)) {
+              setBase(fresh);
+              if (!details.snapshot(id))
+                updateChatConversion(session, id, undefined);
               throw new Error(
                 "Channel settings changed. Reload details before continuing.",
               );
+            }
           } else if (base)
             await applySharedChannelDetails(
               session,
@@ -200,20 +265,6 @@ export function ConvertToChannel({
           updateChatConversion(session, id, exact);
         }
         active.throwIfAborted();
-        // A channel is no longer filed in a Solo project.
-        const projects = session.soloPreferences;
-        if (projects.snapshot().status !== "unsupported") {
-          await projects.refresh();
-          active.throwIfAborted();
-          const filing = projects.snapshot();
-          if (filing.status !== "ready")
-            throw new Error(
-              filing.error ?? "Solo workspaces could not be read. Try again.",
-            );
-          if (filing.data?.assignments[id])
-            await projects.assign(id, undefined);
-          active.throwIfAborted();
-        }
         updateChatConversion(session, id, undefined);
         if (!active.aborted) {
           notify("Converted to channel.", "success");
@@ -231,7 +282,9 @@ export function ConvertToChannel({
           updateChatConversion(
             session,
             id,
-            exact.converted || details.snapshot(id) ? exact : undefined,
+            exact.converted || details.snapshot(id) || action === "finish"
+              ? exact
+              : undefined,
           );
       }
       if (!controller.signal.aborted) {
@@ -248,8 +301,18 @@ export function ConvertToChannel({
         close();
         if (completed.current && !signal?.aborted) onConverted?.();
       }}
+      initialFocus={cancel}
       title="Convert to channel"
-      description="Move this conversation from Solo to Team. History, Canvas, members and lifetime stay the same."
+      size="compact"
+      footerGap="compact"
+      description={
+        base?.visibility === "private" && selectedAccess !== "private"
+          ? SOLO_ACCESS_DISCLOSURE
+          : (base &&
+              selectedAccess === "private" &&
+              soloRetainedAccessWarning(base)) ||
+            "Change this chat to a channel. It keeps its workspace, history, Canvas, members and lifetime."
+      }
       onOpenChange={(open) => {
         if (!open) setOpen(false);
       }}
@@ -257,7 +320,7 @@ export function ConvertToChannel({
       finalFocus={completed.current ? false : finalFocus}
       actions={
         <>
-          <Button onClick={() => setOpen(false)} disabled={busy}>
+          <Button ref={cancel} onClick={() => setOpen(false)} disabled={busy}>
             {converted ? "Close" : "Cancel"}
           </Button>
           {canFinish ? (
@@ -277,16 +340,17 @@ export function ConvertToChannel({
             </Button>
           ) : (
             <Button
+              type="submit"
+              form={formId}
               variant="prominent"
               disabled={
                 busy ||
                 !!receipt?.running ||
-                sharing ||
                 !!attempt ||
                 !eligible ||
+                !!nameError ||
                 !!signal?.aborted
               }
-              onClick={() => void run("convert")}
             >
               Convert to channel
             </Button>
@@ -294,43 +358,41 @@ export function ConvertToChannel({
         </>
       }
     >
-      <Field label="Visibility" nativeLabel={false}>
-        <RadioGroup
-          aria-label="Visibility"
-          value={selectedVisibility}
-          disabled={
-            busy ||
-            converted ||
-            !!receipt?.running ||
-            sharing ||
-            !!attempt ||
-            !eligible ||
-            !!signal?.aborted
-          }
+      <form
+        id={formId}
+        className={styles.form}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void run("convert");
+        }}
+      >
+        <ChannelTextField
+          field="name"
+          // The icon the sidebar will show for the chosen access. It stays
+          // decorative: General access states the choice in words.
+          leading={<PreviewIcon size={16} />}
+          value={shownName}
+          error={nameError}
+          disabled={locked}
+          onChange={setName}
+        />
+        <Select
+          label="General access"
+          variant="field"
+          value={selectedAccess}
+          groups={[{ label: "", options: Object.values(generalAccessOptions) }]}
+          disabled={locked}
           onValueChange={(value) => {
-            if (value === "private" || value === "public") setVisibility(value);
+            const option = Object.values(generalAccessOptions).find(
+              (option) => option.value === value,
+            );
+            if (option) setAccess(option.value);
           }}
-        >
-          <Radio
-            value="private"
-            label="Private"
-            description="Only channel members will have access."
-          />
-          <Radio
-            value="public"
-            label="Public"
-            description="Everyone in this community will be able to view this channel’s full history."
-          />
-        </RadioGroup>
-      </Field>
+        />
+      </form>
       {converted && (
         <p role="status">
-          Channel converted. Finish removing it from its Solo workspace.
-        </p>
-      )}
-      {sharing && !converted && (
-        <p role="status">
-          Finish sharing or choose Start over before converting.
+          Channel converted. Finish to return to the conversation.
         </p>
       )}
       {!base && !error && <p role="status">Loading chat details…</p>}

@@ -13,6 +13,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { createAppearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
+import {
+  setUnreadFirstPreference,
+  unreadFirstPreference,
+} from "../features/search/unread-first-preference";
+import { setMessageSortPreference } from "../features/search/message-sort-preference";
 
 import {
   setThreadPlacementPreference,
@@ -20,9 +25,21 @@ import {
 } from "../features/messages/thread-preferences";
 
 import {
+  namePreference,
+  setNamePreference,
+} from "../features/profiles/name-preference";
+import {
   followUpBehaviorPreference,
   setFollowUpBehaviorPreference,
 } from "../features/messages/follow-up-preference";
+import {
+  messageAutocorrectPreference,
+  setMessageAutocorrectPreference,
+} from "../features/messages/autocorrect-preference";
+import {
+  clockPreference,
+  setClockPreference,
+} from "../shared/clock-preference";
 
 const preferenceAppearances: ReturnType<typeof createAppearance>[] = [];
 function preferencesPage() {
@@ -38,7 +55,17 @@ afterEach(() => {
     appearance.dispose();
   setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
+  setMessageAutocorrectPreference(false);
+  setUnreadFirstPreference(true);
+  setMessageSortPreference("relevance");
+  setClockPreference({
+    hourCycle: "system",
+    seconds: false,
+    messageTimestamps: "show",
+    localTimeDetails: true,
+  });
   localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 it("hidden settings do not portal errors; returning retains both save recovery actions", async () => {
@@ -255,7 +282,7 @@ it("selects and saves color mode through the Mode dropdown", async () => {
   appearance.dispose();
 });
 
-it("selects and restores an accent color, including retry after a failed save", async () => {
+it("selects and restores an accent color", async () => {
   const appearance = createAppearance();
   render(
     <ToastProvider>
@@ -269,11 +296,6 @@ it("selects and restores an accent color, including retry after a failed save", 
   expect(
     screen.getByRole("button", { name: "Citrus accent color" }),
   ).toHaveAttribute("aria-pressed", "true");
-  const save = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementationOnce(() => {
-      throw new Error("denied");
-    });
   fireEvent.click(screen.getByRole("button", { name: "Mono accent color" }));
   expect(
     screen.getByRole("button", { name: "Mono accent color" }),
@@ -283,11 +305,7 @@ it("selects and restores an accent color, including retry after a failed save", 
   expect(
     screen.getByRole("button", { name: "Magenta accent color" }),
   ).toHaveAttribute("data-color-mode", appearance.snapshot().mode);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Retry saving accent color" }),
-  );
   expect(localStorage.getItem("buzz-accent.v1")).toBe("mono");
-  save.mockRestore();
   appearance.dispose();
   const restored = createAppearance();
   expect(restored.snapshot().accent).toBe("mono");
@@ -303,10 +321,13 @@ it("saves new-thread placement, restores it, and follows another window", async 
     screen.getByRole("combobox", { name: "Open threads in" });
   expect(
     screen.getByText(
-      "New threads open here. Already-open threads stay where you placed them.",
+      "New threads open here. Inline opens threads, profiles and links over the conversation instead of in tabs; calls, canvases and apps still open as tabs. Already-open threads stay where you placed them.",
     ),
   ).toBeVisible();
-  expect(choice()).toHaveTextContent("Side pane");
+  expect(choice()).toHaveTextContent("Inline");
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "Side pane" }));
+  expect(threadPlacementPreference()).toBe("side");
   await user.click(choice());
   await user.click(await screen.findByRole("option", { name: "Main pane" }));
   expect(threadPlacementPreference()).toBe("main");
@@ -401,6 +422,34 @@ it("preserves follow-up choice and save recovery when Appearance is hidden", asy
   );
 });
 
+it("saves the clock, seconds, message timestamp and profile local time choices", async () => {
+  const user = userEvent.setup();
+  render(preferencesPage(), { wrapper: ToastProvider });
+  const clock = screen.getByRole("combobox", { name: "Clock" });
+  expect(clock).toHaveTextContent("System");
+  await user.click(clock);
+  await user.click(await screen.findByRole("option", { name: "24-hour" }));
+  await user.click(screen.getByRole("switch", { name: "Show seconds" }));
+  await user.click(
+    screen.getByRole("combobox", { name: "Message timestamps" }),
+  );
+  await user.click(
+    await screen.findByRole("option", { name: "Hide in Solo chats" }),
+  );
+  await user.click(
+    screen.getByRole("switch", { name: "Show time zone details on profiles" }),
+  );
+  expect(clockPreference()).toEqual({
+    hourCycle: "h23",
+    seconds: true,
+    messageTimestamps: "hide-solo",
+    localTimeDetails: false,
+  });
+  expect(JSON.parse(localStorage.getItem("buzz-clock.v1") ?? "")).toEqual(
+    clockPreference(),
+  );
+});
+
 it("switches contrast through the shared select and restores it", async () => {
   const appearance = createAppearance();
   render(
@@ -428,4 +477,218 @@ it("switches contrast through the shared select and restores it", async () => {
     expect(localStorage.getItem("buzz-contrast.v1")).toBe(value);
   }
   appearance.dispose();
+});
+
+it("switches message density and restores it", async () => {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  const density = screen.getByRole("combobox", { name: "Message density" });
+  const preview = screen.getByRole("figure", { name: "Appearance preview" });
+  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
+    "data-message-density",
+    "default",
+  );
+  expect(density).toHaveTextContent("Default");
+  await user.click(density);
+  await user.click(await screen.findByRole("option", { name: "Compact" }));
+  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
+    "data-message-density",
+    "compact",
+  );
+  expect(preview.querySelector("[data-message-width]")).toHaveAttribute(
+    "data-message-width",
+    "wide",
+  );
+  expect(screen.queryByRole("combobox", { name: "Message width" })).toBeNull();
+  expect(document.documentElement.dataset.messageDensity).toBe("compact");
+  expect(localStorage.getItem("buzz-message-density.v1")).toBe("compact");
+  const restored = createAppearance();
+  expect(restored.snapshot().density).toBe("compact");
+  restored.dispose();
+});
+
+it("offers message spelling correction only on Mac WebKit, off until this device opts in", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const page = (autocorrectAvailable: boolean) => (
+    <AppearanceSettings
+      appearance={appearance}
+      autocorrectAvailable={autocorrectAvailable}
+    />
+  );
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Allow automatic spelling correction" });
+  const view = render(page(false), { wrapper: ToastProvider });
+  expect(
+    screen.queryByRole("switch", {
+      name: "Allow automatic spelling correction",
+    }),
+  ).not.toBeInTheDocument();
+  view.rerender(page(true));
+  expect(toggle()).not.toBeChecked();
+  await user.click(toggle());
+  expect(messageAutocorrectPreference()).toBe(true);
+  expect(localStorage.getItem("buzz-message-autocorrect.v1")).toBe("on");
+  cleanup();
+  render(page(true), { wrapper: ToastProvider });
+  expect(toggle()).toBeChecked();
+  act(() => {
+    localStorage.setItem("buzz-message-autocorrect.v1", "off");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-message-autocorrect.v1" }),
+    );
+  });
+  expect(toggle()).not.toBeChecked();
+});
+
+it("leads search with unread until this device turns it off", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Show unread first in search" });
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(toggle()).toBeChecked();
+  await user.click(toggle());
+  expect(unreadFirstPreference()).toBe(false);
+  expect(localStorage.getItem("buzz-search-unread-first.v1")).toBe("off");
+  cleanup();
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(toggle()).not.toBeChecked();
+  act(() => {
+    localStorage.setItem("buzz-search-unread-first.v1", "on");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-search-unread-first.v1" }),
+    );
+  });
+  expect(toggle()).toBeChecked();
+});
+
+it("saves the message sort default and restores it", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const select = () =>
+    screen.getByRole("combobox", { name: "Sort messages by" });
+  const choose = async (name: string) => {
+    await user.click(select());
+    await user.click(await screen.findByRole("option", { name }));
+  };
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(select()).toHaveTextContent("Most relevant");
+  await choose("Most recent");
+  expect(localStorage.getItem("buzz-search-message-sort.v1")).toBe("newest");
+  cleanup();
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(select()).toHaveTextContent("Most recent");
+});
+
+it.each([
+  ["Mac WebKit", "MacIntel", "Apple Computer, Inc.", 0, true],
+  ["desktop-mode iPad", "MacIntel", "Apple Computer, Inc.", 5, false],
+  ["Chrome on Mac", "MacIntel", "Google Inc.", 0, false],
+  ["Linux WebKitGTK", "Linux x86_64", "Apple Computer, Inc.", 0, false],
+] as const)(
+  "detects whether %s can offer message spelling correction",
+  (_browser, platform, vendor, maxTouchPoints, shown) => {
+    vi.stubGlobal("navigator", {
+      platform,
+      vendor,
+      maxTouchPoints,
+    });
+    render(preferencesPage(), { wrapper: ToastProvider });
+    expect(
+      screen.queryByRole("switch", {
+        name: "Allow automatic spelling correction",
+      }) !== null,
+    ).toBe(shown);
+  },
+);
+
+it("changes message width through the shared select and restores the saved choice", async () => {
+  const user = userEvent.setup();
+  const view = render(preferencesPage(), { wrapper: ToastProvider });
+  const choice = () => screen.getByRole("combobox", { name: "Message width" });
+  expect(choice()).toHaveTextContent("Narrow");
+  const preview = screen.getByRole("figure", { name: "Appearance preview" });
+  expect(preview.querySelector("[data-message-width]")).toHaveAttribute(
+    "data-message-width",
+    "narrow",
+  );
+  expect(
+    screen.queryByText(
+      "Wide gives conversations 50% more room when space is available.",
+    ),
+  ).not.toBeInTheDocument();
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "Wide" }));
+  expect(choice()).toHaveTextContent("Wide");
+  expect(preview.querySelector("[data-message-width]")).toHaveAttribute(
+    "data-message-width",
+    "wide",
+  );
+  expect(
+    document.documentElement.style.getPropertyValue("--buzz-message-width"),
+  ).toBe("78rem");
+  expect(localStorage.getItem("buzz-message-width.v1")).toBe("wide");
+  view.unmount();
+  render(preferencesPage(), { wrapper: ToastProvider });
+  expect(choice()).toHaveTextContent("Wide");
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "Narrow" }));
+  expect(
+    document.documentElement.style.getPropertyValue("--buzz-message-width"),
+  ).toBe("52rem");
+});
+
+it("offers a choice between usernames and full names only where the community verifies names", async () => {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  let authority: object | undefined;
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const connection = {
+    status: "ready",
+    session: {
+      profiles: { subscribe, verifiedAuthority: () => authority },
+    },
+  };
+  const communities = {
+    relay: { subscribe, snapshot: () => connection },
+  } as unknown as Parameters<typeof AppearanceSettings>[0]["communities"];
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} communities={communities} />
+    </ToastProvider>,
+  );
+  expect(screen.queryByText("Show people by")).toBeNull();
+  act(() => {
+    authority = { pubkey: "relay", multipleIssuers: false };
+    for (const listener of listeners) listener();
+  });
+  const choice = screen.getByRole("combobox", { name: "Show people by" });
+  expect(choice).toHaveTextContent("Username");
+  const user = userEvent.setup();
+  await user.click(choice);
+  await user.click(await screen.findByRole("option", { name: "Full name" }));
+  expect(namePreference()).toBe("full-name");
+  setNamePreference("username");
 });

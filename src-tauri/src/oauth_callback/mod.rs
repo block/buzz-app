@@ -1,12 +1,16 @@
 //! Browser sign-in startup and loopback OAuth authorization-code responses.
 //! RFC 8252 §§7.3, 8.3, 8.4, 8.9; RFC 6749 §§4.1.2, 4.1.2.1; RFC 9700 §2.1.
-//! See this folder's README.md for the command contract, ownership, and limits.
+//! See this folder's README.md for ownership and limits.
+mod focus;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+pub(crate) use focus::capture as capture_browser;
+use focus::READABLE_DELAY;
+use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tauri_plugin_opener::OpenerExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -14,13 +18,15 @@ use tokio::{
     task::JoinHandle,
 };
 
-#[derive(Debug, PartialEq, serde::Serialize)]
+/// Rejection when no callback arrives in time; the app tells it apart from a failure.
+pub(crate) const TIMED_OUT: &str = "Sign-in timed out. Try again.";
+
+#[derive(Debug, PartialEq)]
 pub(crate) struct OAuthCallback {
-    // Preserve ordering and duplicates so the plugin can validate known parameters.
+    // Preserve ordering and duplicates so the caller can validate known parameters.
     pub(crate) parameters: Vec<(String, String)>,
 }
-#[derive(Debug, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, PartialEq)]
 pub(crate) struct OAuthAttempt {
     pub(crate) id: String,
     // Reuse this exact redirect_uri in token exchange (RFC 6749 §4.1.3).
@@ -29,21 +35,25 @@ pub(crate) struct OAuthAttempt {
 pub(crate) struct OAuthRequest {
     pub(crate) authorization_url: String,
     pub(crate) callback_path: String,
-    pub(crate) use_state: Option<bool>,
+    pub(crate) use_state: bool,
 }
 type CallbackResult = Result<OAuthCallback, String>;
 struct Attempt {
     id: String,
     result: Option<oneshot::Receiver<CallbackResult>>,
     task: JoinHandle<()>,
+    retain_result: bool,
+    focus: focus::FocusReturn,
 }
 impl Drop for Attempt {
     fn drop(&mut self) {
         self.task.abort();
+        self.focus.cancel(Some(&self.id));
     }
 }
+/// One pending attempt per owner, keyed by the caller's owner key.
 #[derive(Clone, Default)]
-pub(crate) struct OAuthCallbackHost(Arc<Mutex<Option<Attempt>>>);
+pub(crate) struct OAuthCallbackHost(Arc<Mutex<HashMap<String, Attempt>>>);
 
 impl OAuthCallbackHost {
     pub(crate) fn document_load(
@@ -53,15 +63,50 @@ impl OAuthCallbackHost {
     ) -> Result<(), String> {
         if label == "main" && event == tauri::webview::PageLoadEvent::Started {
             // The new document cannot recover the previous plugin's attempt ID.
-            self.0.lock().map_err(|_| "Sign-in unavailable")?.take();
+            self.0.lock().map_err(|_| "Sign-in unavailable")?.clear();
         }
         Ok(())
     }
 
     pub(crate) fn begin(
         &self,
+        owner: &str,
         request: OAuthRequest,
         open: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<OAuthAttempt, String> {
+        self.begin_with_parameter(owner, request, "redirect_uri", open, None)
+    }
+
+    /// NIP-FA binds its handoff secret instead of requiring echoed OAuth state.
+    /// The attempt and all callback values stay inside the native session owner;
+    /// only the authorization page URL is shown, so a person can copy it.
+    pub(crate) fn begin_federated(
+        &self,
+        owner: &str,
+        authorization_url: String,
+        open: impl FnOnce(&str) -> Result<(), String>,
+        browser: Option<String>,
+    ) -> Result<OAuthAttempt, String> {
+        self.begin_with_parameter(
+            owner,
+            OAuthRequest {
+                authorization_url,
+                callback_path: format!("/federated/{}", uuid::Uuid::new_v4()),
+                use_state: false,
+            },
+            "return_to",
+            open,
+            browser,
+        )
+    }
+
+    fn begin_with_parameter(
+        &self,
+        owner: &str,
+        request: OAuthRequest,
+        callback_parameter: &str,
+        open: impl FnOnce(&str) -> Result<(), String>,
+        browser: Option<String>,
     ) -> Result<OAuthAttempt, String> {
         let mut authorization =
             url::Url::parse(&request.authorization_url).map_err(|_| "Invalid authorization URL")?;
@@ -74,7 +119,7 @@ impl OAuthCallbackHost {
         }
         if authorization
             .query_pairs()
-            .any(|(name, _)| name == "state" || name == "redirect_uri")
+            .any(|(name, _)| name == "state" || name == "redirect_uri" || name == "return_to")
         {
             return Err("Invalid authorization parameters".into());
         }
@@ -90,11 +135,13 @@ impl OAuthCallbackHost {
         {
             return Err("Invalid callback path".into());
         }
-        let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
-        if current
-            .as_ref()
-            .is_some_and(|attempt| !attempt.task.is_finished())
-        {
+        let mut attempts = self.0.lock().map_err(|_| "Sign-in unavailable")?;
+        // A consumed handoff can be replaced while only its focus return remains.
+        if attempts.get(owner).is_some_and(|attempt| {
+            let returning =
+                attempt.result.is_none() && attempt.focus.deadline(&attempt.id).is_some();
+            !returning && (attempt.retain_result || !attempt.task.is_finished())
+        }) {
             return Err("An OAuth callback is already pending".into());
         }
         // Binding is synchronous so cancellation cannot overtake listener registration.
@@ -112,10 +159,10 @@ impl OAuthCallbackHost {
         let callback = format!("http://{authority}{path}");
         authorization
             .query_pairs_mut()
-            .append_pair("redirect_uri", &callback);
+            .append_pair(callback_parameter, &callback);
         // Native-owned, single-use CSRF correlation (RFC 8252 §8.9; RFC 9700 §2.1).
         // Disabled only for an explicit custom-protocol compatibility exception.
-        let expected_state = if request.use_state.unwrap_or(true) {
+        let expected_state = if request.use_state {
             let mut random = [0; 32];
             getrandom::fill(&mut random).map_err(|_| "Could not start sign-in")?;
             let value = URL_SAFE_NO_PAD.encode(random);
@@ -124,23 +171,47 @@ impl OAuthCallbackHost {
         } else {
             None
         };
+        // Generic OAuth keeps Builderlab presentation and browser-close behavior.
+        let builderlab = callback_parameter == "redirect_uri";
+        let id = uuid::Uuid::new_v4().to_string();
+        let focus = focus::FocusReturn::default();
+        focus.arm(&id, browser);
+        let completion = (focus.clone(), id.clone());
         let (send, receive) = oneshot::channel();
         let task = tokio::spawn(async move {
             let result = tokio::time::timeout(
                 Duration::from_secs(600),
-                receive_callback(listener, &authority, &path, expected_state.as_deref()),
+                receive_callback(
+                    listener,
+                    &authority,
+                    &path,
+                    expected_state.as_deref(),
+                    builderlab,
+                ),
             )
             .await
-            .unwrap_or_else(|_| Err("Sign-in timed out. Try again.".into()));
+            .unwrap_or_else(|_| Err(TIMED_OUT.into()));
+            completion.0.received(
+                &completion.1,
+                result.as_ref().is_ok_and(|callback| {
+                    !callback.parameters.iter().any(|(name, _)| name == "error")
+                }),
+            );
             let _ = send.send(result);
         });
-        let id = uuid::Uuid::new_v4().to_string();
-        *current = Some(Attempt {
-            id: id.clone(),
-            result: Some(receive),
-            task,
-        });
-        drop(current);
+        attempts.insert(
+            owner.to_owned(),
+            Attempt {
+                id: id.clone(),
+                result: Some(receive),
+                task,
+                // A native FI login retains its completed handoff until wait/cancel.
+                // Generic OAuth keeps its existing finished-task replacement rule.
+                retain_result: callback_parameter == "return_to",
+                focus,
+            },
+        );
+        drop(attempts);
         if open(authorization.as_str()).is_err() {
             self.cancel(&id)?;
             return Err("Could not open the sign-in browser".into());
@@ -152,68 +223,52 @@ impl OAuthCallbackHost {
     }
 
     pub(crate) async fn wait(&self, id: &str) -> CallbackResult {
-        let receiver = {
-            let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
-            current
-                .as_mut()
-                .filter(|attempt| attempt.id == id)
-                .and_then(|attempt| attempt.result.take())
-                .ok_or("Sign-in is no longer available")?
-        };
+        let receiver = self
+            .0
+            .lock()
+            .map_err(|_| "Sign-in unavailable")?
+            .values_mut()
+            .find(|attempt| attempt.id == id)
+            .and_then(|attempt| attempt.result.take())
+            .ok_or("Sign-in is no longer available")?;
         let result = receiver
             .await
             .unwrap_or_else(|_| Err("Sign-in canceled.".into()));
-        self.cancel(id)?;
+        // The listener is finished, but a captured browser return survives
+        // until verification completes or its attempt guard is canceled.
+        let returning = self
+            .0
+            .lock()
+            .map_err(|_| "Sign-in unavailable")?
+            .values()
+            .find(|attempt| attempt.id == id)
+            .is_some_and(|attempt| attempt.focus.deadline(id).is_some());
+        if result.is_err() || !returning {
+            self.cancel(id)?;
+        }
         result
     }
 
-    pub(crate) fn cancel(&self, id: &str) -> Result<(), String> {
-        let mut current = self.0.lock().map_err(|_| "Sign-in unavailable")?;
-        if current.as_ref().is_some_and(|attempt| attempt.id == id) {
-            *current = None;
+    pub(crate) async fn complete<R: tauri::Runtime>(&self, app: tauri::AppHandle<R>, id: String) {
+        let focus = self.0.lock().ok().and_then(|attempts| {
+            attempts
+                .values()
+                .find(|attempt| attempt.id == id)
+                .map(|attempt| attempt.focus.clone())
+        });
+        if let Some(focus) = focus {
+            focus.complete(app, id.clone()).await;
         }
+        let _ = self.cancel(&id);
+    }
+
+    pub(crate) fn cancel(&self, id: &str) -> Result<(), String> {
+        self.0
+            .lock()
+            .map_err(|_| "Sign-in unavailable")?
+            .retain(|_, attempt| attempt.id != id);
         Ok(())
     }
-}
-
-#[tauri::command]
-pub(crate) fn oauth_callback_begin<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    state: tauri::State<'_, OAuthCallbackHost>,
-    authorization_url: String,
-    callback_path: String,
-    use_state: Option<bool>,
-) -> Result<OAuthAttempt, String> {
-    // Register and launch inline so reload cleanup cannot overtake a queued begin.
-    // Enter the runtime for the Tokio listener; startup does not await anything.
-    tauri::async_runtime::block_on(async {
-        state.begin(
-            OAuthRequest {
-                authorization_url,
-                callback_path,
-                use_state,
-            },
-            |url| {
-                app.opener()
-                    .open_url(url, None::<&str>)
-                    .map_err(|_| "Could not open the sign-in browser".into())
-            },
-        )
-    })
-}
-#[tauri::command]
-pub(crate) async fn oauth_callback_wait(
-    state: tauri::State<'_, OAuthCallbackHost>,
-    id: String,
-) -> CallbackResult {
-    state.wait(&id).await
-}
-#[tauri::command]
-pub(crate) fn oauth_callback_cancel(
-    state: tauri::State<'_, OAuthCallbackHost>,
-    id: String,
-) -> Result<(), String> {
-    state.cancel(&id)
 }
 
 async fn receive_callback(
@@ -221,6 +276,7 @@ async fn receive_callback(
     authority: &str,
     path: &str,
     expected_state: Option<&str>,
+    builderlab: bool,
 ) -> CallbackResult {
     loop {
         let (mut stream, _) = listener
@@ -230,7 +286,7 @@ async fn receive_callback(
         // Bound slow/oversize requests; malformed callbacks do not consume the attempt.
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            callback(&mut stream, authority, path, expected_state),
+            callback(&mut stream, authority, path, expected_state, builderlab),
         )
         .await;
         if let Ok(Some(response)) = result {
@@ -246,6 +302,7 @@ async fn callback(
     authority: &str,
     path: &str,
     expected_state: Option<&str>,
+    builderlab: bool,
 ) -> Option<OAuthCallback> {
     let mut bytes = Vec::new();
     let mut chunk = [0; 1024];
@@ -256,12 +313,12 @@ async fn callback(
         }
         bytes.extend_from_slice(&chunk[..count]);
         if bytes.len() > 8192 {
-            reply(stream, 400, "Invalid callback").await;
+            reply(stream, 400, "Invalid callback", builderlab).await;
             return None;
         }
     }
     let (status, message, result) = parse_callback(&bytes, authority, path, expected_state);
-    reply(stream, status, message).await;
+    reply(stream, status, message, builderlab).await;
     result
 }
 
@@ -331,19 +388,74 @@ fn parse_callback(
     }
     (
         200,
-        "Sign-in received. Return to the app to finish verification.",
+        "Return to the app to finish verification.",
         Some(OAuthCallback { parameters: fields }),
     )
 }
 
-async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
-    let body = format!("<!doctype html><title>Sign-in callback</title><p>{message}</p>");
+fn inline_csp_hash(source: &str) -> String {
+    // HTML parsing normalizes CRLF and lone CR before CSP hashes inline text.
+    // include_str! preserves checkout line endings, including Windows CRLF.
+    let source = source.replace("\r\n", "\n").replace('\r', "\n");
+    base64::engine::general_purpose::STANDARD.encode(Sha256::digest(source.as_bytes()))
+}
+
+async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: bool) {
+    // All copy comes from the fixed responses above, never from callback values.
+    let heading = match status {
+        200 if builderlab => "Signing you in…",
+        200 => "Sign-in received",
+        404 => "Page not found",
+        _ => "Sign-in needs attention",
+    };
+    let style = include_str!("page.css").replace(
+        "{{font}}",
+        &base64::engine::general_purpose::STANDARD.encode(include_bytes!("inter-latin.woff2")),
+    );
+    let style_hash = inline_csp_hash(&style);
+    let mut policy = format!("default-src 'none'; img-src data:; font-src data:; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'");
+    let script = include_str!("page.js");
+    let script_hash = inline_csp_hash(script);
+    policy.push_str(&format!("; script-src 'sha256-{script_hash}'"));
+    let script = format!("<script>{script}</script>");
+    let artwork = base64::engine::general_purpose::STANDARD.encode(include_bytes!("cubes.webp"));
+    let artwork = include_str!("artwork.html").replace("{{artwork}}", &artwork);
+    let provider = if builderlab { "Builderlab" } else { "Buzz" };
+    let mark = if builderlab {
+        include_str!("../../../public/builderlab-mark.svg")
+    } else {
+        include_str!("../../../public/buzz-mark.svg")
+    };
+    let label = if builderlab { "" } else { "<span>Buzz</span>" };
+    let brand = include_str!("brand.html")
+        .replace("{{provider}}", provider)
+        .replace("{{mark}}", mark)
+        .replace("{{label}}", label);
+    // Replace whole HTML comments so the template remains valid on its own.
+    let body = include_str!("page.html")
+        .replace("<!-- {{pageBrand}} -->", &brand)
+        .replace("<!-- {{style}} -->", &format!("<style>{style}</style>"))
+        .replace("<!-- {{script}} -->", &script)
+        .replace("<!-- {{artwork}} -->", &artwork)
+        .replace("<!-- {{closeHint}} -->", include_str!("close-hint.html"))
+        .replace("{{provider}}", provider)
+        .replace("{{complete}}", if status == 200 { "true" } else { "false" })
+        .replace("{{closeDelay}}", &READABLE_DELAY.as_secs().to_string())
+        .replace("{{heading}}", heading)
+        .replace(
+            "{{message}}",
+            if builderlab && status == 200 {
+                ""
+            } else {
+                message
+            },
+        );
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
         _ => "Bad Request",
     };
-    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
+    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: {policy}\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
     let _ = stream.write_all(response.as_bytes()).await;
     let _ = stream.shutdown().await;
 }

@@ -1,7 +1,7 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { CircleNotchIcon } from "../icons/index";
 import type { ComponentProps, ReactNode } from "react";
-import { Tooltip } from "./Tooltip";
+import { Tooltip, type HintTiming } from "./Tooltip";
 
 type ButtonVariant =
   | "prominent"
@@ -11,16 +11,21 @@ type ButtonVariant =
   | "ghost"
   | "destructive"
   | "outline"
+  | "outline-subtle"
   | "attention"
   | "glass"
+  | "glass-ghost"
+  | "glass-clear"
   | "inverted"
   | "link"
   | "plain"
   | "primary"
   | "quiet";
 type ButtonSize =
+  | "text"
   | "caption"
   | "inline"
+  | "row"
   | "xs"
   | "sm"
   | "md"
@@ -36,6 +41,10 @@ export type ButtonProps = Omit<
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
+  /** Use disabled colors while retaining the loading spinner and geometry. */
+  loadingAppearance?: "default" | "disabled";
+  /** How long the `title` hint waits; see DESIGN.md "Hover timing". */
+  hint?: HintTiming;
 } & (
     | { shape?: "capsule" | "control" }
     // Icon geometry has no visible label, so it requires an accessible name.
@@ -50,9 +59,11 @@ export function Button({
   shape = "capsule",
   type = "button",
   loading = false,
+  loadingAppearance,
   disabled,
   onClick,
   title,
+  hint,
   ...props
 }: ButtonProps) {
   const control = (
@@ -85,12 +96,16 @@ export function Button({
           ? "prominent"
           : variant === "quiet" || variant === "subtle-muted"
             ? "subtle"
-            : variant
+            : variant === "outline-subtle"
+              ? "outline"
+              : variant
       }
+      data-outline-subtle={variant === "outline-subtle" || undefined}
       data-muted={variant === "subtle-muted" || undefined}
       data-size={size === "compact" ? "sm" : size === "default" ? "md" : size}
       data-button-shape={shape}
       data-loading={loading || undefined}
+      data-loading-appearance={loading ? loadingAppearance : undefined}
     >
       {variant === "attention" && (
         <svg
@@ -114,7 +129,7 @@ export function Button({
   // Keep the native title API at call sites, but share the hint's appearance
   // and dismissal behavior. Content titles on non-controls remain native.
   return title ? (
-    <Tooltip content={title} disableHoverablePopup>
+    <Tooltip content={title} hint={hint} disableHoverablePopup>
       {control}
     </Tooltip>
   ) : (

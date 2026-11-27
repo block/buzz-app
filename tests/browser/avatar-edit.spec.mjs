@@ -1,67 +1,15 @@
 import { test, expect } from "./source-fixture.mjs";
 import { readFile } from "node:fs/promises";
 import { watchPageErrors } from "./page-errors.mjs";
+import { animationsSettled } from "./animations.mjs";
 
-test("avatar image controls retain their hover fill and accessible URL label", async ({
-  page,
-}) => {
-  await page.route("**/api/relay/**", (route) => route.abort());
-  await page.goto("/tests/fixtures/profile-settings.html");
-  await page
-    .getByRole("button", { name: "Edit human profile", exact: true })
-    .click();
-  const editAvatar = page.getByRole("button", {
-    name: "Edit avatar",
-    exact: true,
-  });
-  // The badge owns its outer box; opting into medium preserves the artwork
-  // without replacing that human/agent geometry with the new compact default.
-  await expect(editAvatar).toHaveCSS("width", "32px");
-  await expect(editAvatar).toHaveCSS("height", "32px");
-  await expect(editAvatar.locator("svg")).toHaveCSS("width", "24px");
-  await editAvatar.click();
-  const dropzone = page.getByRole("button", {
-    name: "Drop or browse",
-    exact: true,
-  });
-  const url = page.getByRole("textbox", {
-    name: "Picture URL (optional)",
-    exact: true,
-  });
-  await expect(url).toBeVisible();
-  await expect(url.locator("..")).toHaveClass("buzz-input-group");
-  for (const dark of [false, true]) {
-    await page.evaluate(
-      (dark) => document.documentElement.classList.toggle("dark", dark),
-      dark,
-    );
-    await dropzone.hover();
-    await expect(dropzone).toHaveCSS(
-      "background-color",
-      dark ? "rgb(46, 46, 46)" : "rgb(241, 241, 242)",
-    );
-    await expect(dropzone).toBeVisible();
-    // Opening scale must not leave the animated height clipping the footer.
-    await expect
-      .poll(() =>
-        page
-          .getByRole("button", { name: "Done", exact: true })
-          .evaluate((button) => {
-            const viewport = button.closest("fieldset").parentElement;
-            return (
-              viewport.getBoundingClientRect().bottom -
-              button.getBoundingClientRect().bottom
-            );
-          }),
-      )
-      .toBeGreaterThanOrEqual(0);
-    await page.screenshot({
-      path: test
-        .info()
-        .outputPath(`avatar-image-${dark ? "dark" : "light"}.png`),
-    });
-  }
-});
+const maskedAncestors = (element) => {
+  const masked = [];
+  for (let node = element; node; node = node.parentElement)
+    if (getComputedStyle(node).maskImage !== "none")
+      masked.push(node.className || node.tagName);
+  return masked;
+};
 
 // Browser boundary: nested overlay hit-testing/focus, canvas image preparation,
 // lazy shadow-DOM emoji picker, and narrow viewport geometry in both engines.
@@ -206,7 +154,9 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
     .locator("span")
     .evaluate((el) => getComputedStyle(el).backgroundColor);
   await expect(
-    page.getByRole("img", { name: "Emoji avatar preview" }),
+    page
+      .getByRole("slider", { name: "Emoji position" })
+      .locator("[data-avatar-shape]"),
   ).toHaveCSS("background-color", color);
   await page.screenshot({
     path: test.info().outputPath("avatar-custom-color.png"),
@@ -226,7 +176,9 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
   ).toBeFocused();
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
   await expect(
-    page.getByRole("img", { name: "Emoji avatar preview" }),
+    page
+      .getByRole("slider", { name: "Emoji position" })
+      .locator("[data-avatar-shape]"),
   ).toHaveCSS("background-color", color);
   const viewport = page
     .getByRole("tablist", { name: "Avatar source" })
@@ -288,6 +240,108 @@ test("emoji picker load failure fits above the footer and retries on reopen", as
   await expect(alert).toHaveCount(0);
 });
 
+// Refocus on each poll so the scroll applies once the panel settles.
+const focusedSliderClearsFooter = (done) =>
+  done.evaluate((button) => {
+    const slider = button
+      .closest("fieldset")
+      .querySelector('input[type="range"]');
+    slider.blur();
+    slider.focus();
+    const footer = button.parentElement.parentElement;
+    return (
+      slider.getBoundingClientRect().bottom <=
+      footer.getBoundingClientRect().top
+    );
+  });
+
+test("a short avatar popup keeps Done in view on the Emoji tab", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.route("**/api/relay/**", (route) => route.abort());
+  await page.goto("/tests/fixtures/profile-settings.html");
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji" }),
+  ).toBeVisible();
+  const done = page.getByRole("button", { name: "Done", exact: true });
+  // The popup scrolls beneath its sticky footer instead of hiding Done
+  // below the emoji grid, and the picker's own layers stay under it.
+  await expect
+    .poll(() =>
+      done.evaluate((button) => {
+        const popup = button.closest(".popover-surface");
+        const bounds = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          bounds.left + bounds.width / 2,
+          bounds.top + bounds.height / 2,
+        );
+        return (
+          popup.scrollHeight > popup.clientHeight &&
+          bounds.bottom <= popup.getBoundingClientRect().bottom &&
+          button.contains(hit)
+        );
+      }),
+    )
+    .toBe(true);
+  // The action row, not the grid beneath it, owns the gap between actions.
+  const remove = page.getByRole("button", {
+    name: "Remove avatar",
+    exact: true,
+  });
+  expect(
+    await done.evaluate(
+      (button, removeBox) => {
+        const doneBox = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          (removeBox.x + removeBox.width + doneBox.left) / 2,
+          doneBox.top + doneBox.height / 2,
+        );
+        return button.parentElement.contains(hit);
+      },
+      await remove.boundingBox(),
+    ),
+  ).toBe(true);
+  // Focus scrolling keeps a control clear of the footer that covers the end.
+  await expect.poll(() => focusedSliderClearsFooter(done)).toBe(true);
+});
+
+test("a wrapped avatar footer at enlarged text still clears focused controls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 480, height: 600 });
+  await page.route("**/api/relay/**", (route) => route.abort());
+  await page.goto("/tests/fixtures/profile-settings.html");
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji" }),
+  ).toBeVisible();
+  const done = page.getByRole("button", { name: "Done", exact: true });
+  const remove = page.getByRole("button", {
+    name: "Remove avatar",
+    exact: true,
+  });
+  // The actions wrap onto two rows, so the footer is taller than one control.
+  await expect
+    .poll(
+      async () => (await done.boundingBox()).y > (await remove.boundingBox()).y,
+    )
+    .toBe(true);
+  await expect.poll(() => focusedSliderClearsFooter(done)).toBe(true);
+});
+
 test("custom color and footer resize together without reversing direction", async ({
   page,
 }) => {
@@ -304,15 +358,9 @@ test("custom color and footer resize together without reversing direction", asyn
   });
   await custom.waitFor({ state: "visible" });
   // Finish the initial tab transition before measuring the two custom-color states.
-  await page
-    .locator("[data-buzz-ui].popover-surface")
-    .evaluate(async (popup) => {
-      await Promise.all(
-        popup
-          .getAnimations({ subtree: true })
-          .map((animation) => animation.finished),
-      );
-    });
+  await animationsSettled(page.locator("[data-buzz-ui].popover-surface"), {
+    subtree: true,
+  });
   for (const name of ["Custom background color", "Use color"]) {
     const frames = await page
       .getByRole("button", { name, exact: true })
@@ -390,12 +438,12 @@ test("custom color and footer resize together without reversing direction", asyn
   }
 });
 
-test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", async ({
+test("emoji avatar artwork is centered and sized for faces, symbols, and joined glyphs", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/profile-settings.html");
   const centers = await page.evaluate(async () => {
-    const { paintEmojiAvatar } = await import(
+    const { paintEmojiAvatar, emojiAvatarScale } = await import(
       "/src/features/profiles/avatar-upload.ts"
     );
     return ["😀", "❤️", "🧑🏽‍💻", "🐈", "🇬🇧"].map((emoji) => {
@@ -415,7 +463,13 @@ test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", a
           bottom = Math.max(bottom, y);
         }
       }
-      return { emoji, x: (left + right + 1) / 2, y: (top + bottom + 1) / 2 };
+      return {
+        emoji,
+        x: (left + right + 1) / 2,
+        y: (top + bottom + 1) / 2,
+        size: Math.max(right - left + 1, bottom - top + 1),
+        expected: 512 * emojiAvatarScale,
+      };
     });
   });
   for (const center of centers) {
@@ -427,6 +481,10 @@ test("emoji avatar artwork is centered for faces, symbols, and joined glyphs", a
       Math.abs(center.y - 256),
       `${center.emoji} vertical center`,
     ).toBeLessThanOrEqual(3);
+    expect(
+      Math.abs(center.size - center.expected),
+      `${center.emoji} size`,
+    ).toBeLessThanOrEqual(4);
   }
 });
 
@@ -447,7 +505,7 @@ test("avatar picker previews pointer selections and respects reduced motion", as
   const emoji = page.getByRole("button", { name: "😀", exact: true });
   await emoji.click();
   const artwork = page
-    .getByRole("img", { name: "Emoji avatar preview" })
+    .getByRole("slider", { name: "Emoji position" })
     .locator("canvas");
   await expect(artwork).toHaveAttribute("data-animate", "true");
   await emoji.press("Enter");
@@ -460,11 +518,115 @@ test("avatar picker previews pointer selections and respects reduced motion", as
     .getByRole("button", { name: "Use #63C6F2 background", exact: true })
     .click();
   await expect(
-    page.getByRole("img", { name: "Emoji avatar preview" }),
+    page
+      .getByRole("slider", { name: "Emoji position" })
+      .locator("[data-avatar-shape]"),
   ).toHaveCSS("background-color", "rgb(99, 198, 242)");
+  const position = page.getByRole("slider", { name: "Emoji position" });
+  const box = await position.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height, {
+    steps: 4,
+  });
+  await page.mouse.up();
+  // Dragging the preview moves the emoji down without closing the editor.
+  await expect(position).toHaveAttribute("aria-valuetext", "20% down");
+  // The focus ring sits outside the avatar masks, which clip only the artwork.
+  await position.press("ArrowUp");
+  await expect(position).toHaveCSS("outline-style", "solid");
+  expect(await position.evaluate(maskedAncestors)).toEqual([]);
+  await expect(
+    page.getByRole("tab", { name: "Emoji", exact: true }),
+  ).toBeVisible();
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
   await search.fill("");
   await page.screenshot({
     path: test.info().outputPath("profile-avatar-picker.png"),
   });
+  await position.press("Escape");
+  await expect(
+    page.getByRole("tab", { name: "Emoji", exact: true }),
+  ).toHaveCount(0);
+});
+
+const onboardingAvatar = async (page) => {
+  await page.route("**/api/relay/**", (route) => route.abort());
+  await page.goto("/tests/fixtures/onboarding-profile.html");
+  const add = page.getByRole("button", { name: "Add avatar", exact: true });
+  await add.click();
+  const dialog = page.getByRole("dialog", { name: "Edit avatar", exact: true });
+  await expect(dialog).toBeVisible();
+  return { add, dialog };
+};
+
+// Browser boundary: Base UI outside-press and focus-out dismissal, and return
+// focus to a trigger that is remounted when the draft preview clears.
+test("an unsaved onboarding avatar draft survives an outside press, and closing returns focus", async ({
+  page,
+}) => {
+  const { add, dialog } = await onboardingAvatar(page);
+  const heading = page.getByRole("heading", { name: "Set up your profile" });
+  // An untouched draft still dismisses on an outside press.
+  await heading.click();
+  await expect(dialog).toHaveCount(0);
+  await add.click();
+  const url = page.getByRole("textbox", { name: "Picture URL (optional)" });
+  await url.fill("https://images.example/avatar.png");
+  // The heading is focusable, but the draft keeps focus as well as the popup.
+  await heading.click();
+  await page.mouse.click(4, 4);
+  // A label focuses its control on click, after the press itself.
+  await page
+    .getByText("Display name", { exact: true })
+    .click({ position: { x: 3, y: 5 } });
+  await expect(dialog).toBeVisible();
+  await expect(url).toBeFocused();
+  await expect(url).toHaveValue("https://images.example/avatar.png");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(add).toBeFocused();
+
+  // A picked emoji is a draft too, even before any URL exists.
+  await add.click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji" }),
+  ).toBeVisible();
+  await heading.click();
+  await expect(dialog).toBeVisible();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(add).toBeFocused();
+
+  // Tabbing out still closes, and focus lands on a control, not a hidden guard.
+  await add.click();
+  await url.fill("https://images.example/avatar.png");
+  await page.getByRole("button", { name: "Done", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(dialog).toHaveCount(0);
+  await expect(add).toBeFocused();
+});
+
+// The full validation matrix lives in AvatarEditor.test.tsx; this checks the
+// wiring in a real browser, where Tab moves focus out of the field.
+test("the picture URL error waits for the field to lose focus", async ({
+  page,
+}) => {
+  await onboardingAvatar(page);
+  const url = page.getByRole("textbox", { name: "Picture URL (optional)" });
+  const message = /Use an HTTPS image URL/;
+  await url.pressSequentially("h");
+  await expect(url).not.toHaveAccessibleDescription(message);
+  await url.press("Tab");
+  await expect(url).toHaveAccessibleDescription(message);
+});
+
+test("the onboarding display name keeps nickname autofill without spellcheck", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/onboarding-profile.html");
+  const name = page.getByLabel("Display name", { exact: true });
+  await expect(name).toHaveAttribute("spellcheck", "false");
+  await expect(name).toHaveAttribute("autocomplete", "nickname");
 });

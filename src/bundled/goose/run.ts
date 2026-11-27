@@ -12,12 +12,15 @@ export const gooseRun = (
 ): Pick<
   AgentType<Config>,
   | "sessionControls"
+  | "supportsGuardedWake"
   | "run"
   | "runOnce"
   | "timeoutMs"
   | "syncedSettings"
   | "resumes"
+  | "readFile"
 > => ({
+  supportsGuardedWake: true,
   sessionControls: {
     scope: (agent) => config(agent.config).scope,
     state: (agent, place) => runtime.sessionState(agent, place),
@@ -26,6 +29,11 @@ export const gooseRun = (
   },
   run: (delivery) => runtime.run(delivery),
   runOnce: (turn) => runtime.runOnce(turn),
+  // Its host reader cannot be stopped once started.
+  readFile: (agent, path, signal) => {
+    signal.throwIfAborted();
+    return runtime.workspaceFile(agent, path);
+  },
   timeoutMs: HANDOVER_MS,
   syncedSettings: {
     schema: syncedSettingsSchema,

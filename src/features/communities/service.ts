@@ -4,11 +4,27 @@ import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
-import { provideRelay, type RelayData } from "../relay/service";
+import {
+  provideRelay,
+  type RelayData,
+  type RelaySnapshot,
+} from "../relay/service";
+import type { NavigationScope } from "../navigation/targets";
 import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
-import { communityDestination, isCommunityAlias } from "./destination";
+import {
+  communityDestination,
+  isCommunityAlias,
+  relayAddress,
+} from "./destination";
 import { purgeCommunityDeviceState, type PurgeFailure } from "./device-state";
 import { fetchCommunityPresentation } from "./community-icon";
+import {
+  emptySync,
+  enqueue,
+  parseSync,
+  type PendingOp,
+  type SyncState,
+} from "./known-communities";
 import {
   localCommunityNameKey,
   readLocalCommunityName,
@@ -16,6 +32,13 @@ import {
 } from "./names";
 
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
+/** Native relay sockets the app may hold at once, one per session; mirrors
+ * the admission check in `src-tauri/src/federated_identity/socket.rs`. */
+export const SESSION_LIMIT = 32;
+/** Sessions on the browser development broker. Each holds a live stream on
+ * one same-origin HTTP/1.1 connection, and browsers open about six per
+ * origin, so the rest stay free for ordinary requests. */
+export const BROKER_SESSION_LIMIT = 3;
 export type PersonalProfile = { name: string; picture: string; about?: string };
 export type Membership = {
   id: string;
@@ -31,6 +54,8 @@ type Saved = {
   profile: PersonalProfile;
   memberships: Membership[];
   selected: string | null;
+  // Written with the memberships so a change and its upload intent cannot split.
+  sync: SyncState;
 };
 export type ClientSnapshot = Saved & {
   status: "loading" | "ready" | "unavailable";
@@ -43,16 +68,31 @@ export type ClientSnapshot = Saved & {
 export type CommunityReader = {
   snapshot(): ClientSnapshot;
   subscribe(listener: () => void): () => void;
+  /** The current viewer's joined community's session state, only if a session
+   * is already retained for it. Never connects or promotes one. */
+  retained(scope: NavigationScope): RelaySnapshot | undefined;
+};
+/** Known-community sync for its one upload owner: read the record and the
+ * outbox, write back what the server settled and the memberships a server
+ * list adds. Never joins, selects, forgets or contacts a relay. */
+export type KnownCommunities = Pick<
+  CommunityReader,
+  "snapshot" | "subscribe"
+> & {
+  pending(): PendingOp[];
+  apply(next: SyncState, add?: string[]): Promise<void>;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
     communityReader: CommunityReader;
+    knownCommunities: KnownCommunities;
   }
 }
 const empty = (): Saved => ({
   profile: { name: "", picture: "", about: "" },
   memberships: [],
   selected: null,
+  sync: emptySync(),
 });
 export function createCommunities(
   ctx: Context,
@@ -63,6 +103,8 @@ export function createCommunities(
   identityReady?: Promise<string>,
   nativeConnect?: (id: string, signal: AbortSignal) => Promise<ReadTransport>,
   localAgents?: LocalAgentSource,
+  verifyStored?: ReadTransport["verifyStored"],
+  askAgain?: (relay: string) => Promise<void>,
 ) {
   const connect = live
     ? (id: string, signal: AbortSignal) =>
@@ -87,7 +129,8 @@ export function createCommunities(
   const membershipVersions = new Map<string, number>();
   const listeners = new Set<() => void>();
   const relayListeners = new Set<() => void>();
-  const sessions = new Map<string, RelayData>();
+  const sessions = new Map<string, ReturnType<typeof provideRelay>>();
+  const sessionLimit = live ? BROKER_SESSION_LIMIT : SESSION_LIMIT;
   // Each session owns a scope so leaving can dispose exactly that one.
   const sessionScopes = new Map<string, Context>();
   const scopes: Context[] = [];
@@ -132,6 +175,7 @@ export function createCommunities(
               }),
             ),
             selected: next.selected ?? selection,
+            sync: next.sync,
           }),
         );
     } catch (error) {
@@ -149,27 +193,81 @@ export function createCommunities(
     for (const fn of listeners) fn();
     emitRelay();
   };
-  const acquire = (id: string, viewer = state.viewer) => {
+  // Sessions held only for a switcher badge, oldest first. They give their
+  // socket to a session opened for its own work; a closed one stays closed
+  // until that community is opened for its own work.
+  const badgeOnly = new Set<string>();
+  const closed = new Set<string>();
+  const acquire = (id: string, viewer = state.viewer, badge = false) => {
     if (!connect) return disconnected;
+    // The selected community is always its own work, whichever caller asks
+    // first, so it is never badge-only and never closed for another.
+    badge &&= id !== state.selected;
     let session = sessions.get(id);
+    if (!badge) {
+      badgeOnly.delete(id);
+      closed.delete(id);
+    }
     if (!session) {
+      // A badge leaves the last slot free, so work it is never closed for
+      // does not wait on a socket another session is still releasing.
+      if (badge && (closed.has(id) || sessions.size >= sessionLimit - 1))
+        return undefined;
+      let room: Promise<unknown> = Promise.resolve();
+      const oldest = [...badgeOnly][0];
+      const evicted = sessions.size >= sessionLimit && oldest;
+      if (evicted) {
+        badgeOnly.delete(oldest);
+        closed.add(oldest);
+        // Close before connecting so the native socket is free first.
+        room = dispose(oldest);
+      }
+      if (badge) badgeOnly.add(id);
       const scope = newScope();
       session = provideRelay(
         scope,
-        (signal) => connect(id, signal),
+        (signal) => room.then(() => connect(id, signal)),
         presenceActivity,
         identityNames,
         agentChoices,
         viewer ? { viewer, scope: communityDestination(id).url } : undefined,
         localAgents,
+        verifyStored,
+        askAgain,
       );
       sessions.set(id, session);
       sessionScopes.set(id, scope);
       session.subscribe(() => {
         if (state.selected === id) emitRelay();
       });
+      // Only once the slot is held: listeners open sessions themselves.
+      if (evicted) for (const fn of listeners) fn();
     }
     return session;
+  };
+  /** Disposes a retained session without touching its device state. Reported,
+   * never thrown: only a report can reach the viewer, and it is named for
+   * what it is, a session that would not shut down. */
+  const dispose = async (id: string): Promise<PurgeFailure[]> => {
+    const scope = sessionScopes.get(id);
+    sessions.delete(id);
+    sessionScopes.delete(id);
+    badgeOnly.delete(id);
+    if (!scope) return [];
+    // Every session scope comes from `newScope()`, so this always finds
+    // it; guarding keeps a miss from splicing another community's scope.
+    const index = scopes.indexOf(scope);
+    if (index !== -1) scopes.splice(index, 1);
+    try {
+      await scope.fiber.dispose();
+      return [];
+    } catch (error) {
+      console.warn(
+        `Couldn't dispose the session for ${communityDestination(id).url}`,
+        error,
+      );
+      return [{ store: "session", error }];
+    }
   };
   // Compatibility reader for bundled plugins; captured commands remain bound to their concrete session.
   const relay: RelayData = {
@@ -181,8 +279,11 @@ export function createCommunities(
       };
     },
     retry: () => current().retry(),
+    tryAgain: () => current().tryAgain(),
     disconnect: () => current().disconnect(),
     clearCache: () => current().clearCache(),
+    selected: () =>
+      state.selected ? communityDestination(state.selected).url : undefined,
   };
   ctx.provide("relay", relay);
   const identity =
@@ -263,6 +364,7 @@ export function createCommunities(
                     )
                 : [],
               selected: null,
+              sync: parseSync(raw.sync),
             };
           else if (openRelay && stored === null) {
             // Development opt-in for a viewer with no saved record on this origin.
@@ -400,6 +502,16 @@ export function createCommunities(
   return {
     presence: presenceActivity,
     relay,
+    /** Federated sign-in changed: every joined community retries what the old
+     * session refused, not only the selected one. */
+    reauthorize() {
+      for (const session of sessions.values()) session.reauthorize();
+    },
+    /** Cmd+R: every open community reads everything from its relay again,
+     * keeping the page, its plugins and running agents. */
+    reload() {
+      for (const session of sessions.values()) session.reload();
+    },
     snapshot: () => state,
     subscribe(fn: () => void) {
       listeners.add(fn);
@@ -443,12 +555,31 @@ export function createCommunities(
       if (id) acquire(id);
       update({ selected: id });
     },
+    /** Moves a joined community to the place another holds. The saved
+     * membership order is the switcher's order and its numbered shortcuts'. */
+    reorder(id: string, over: string) {
+      const memberships = [...state.memberships];
+      const from = memberships.findIndex((m) => m.id === id);
+      const to = memberships.findIndex((m) => m.id === over);
+      if (from === -1 || to === -1 || from === to) return;
+      memberships.splice(to, 0, ...memberships.splice(from, 1));
+      update({ memberships });
+    },
+    retained({ viewer, communityOrigin }: NavigationScope) {
+      const { id } = communityDestination(communityOrigin);
+      return viewer === state.viewer &&
+        state.memberships.some((m) => m.id === id)
+        ? sessions.get(id)?.snapshot()
+        : undefined;
+    },
     /** A joined community's session, connected without selecting it, for
-     * background work such as agents; it lives until the community is left. */
-    open(id: string): RelayData | undefined {
+     * background work such as agents; it lives until the community is left.
+     * `badge` asks only for unread: it never takes the last socket, yields it
+     * to other work, and stays closed until opened for its own work. */
+    open(id: string, badge = false): RelayData | undefined {
       id = communityDestination(id).id;
       return state.memberships.some((m) => m.id === id)
-        ? acquire(id)
+        ? acquire(id, state.viewer, badge)
         : undefined;
     },
     saveProfile(profile: PersonalProfile) {
@@ -469,18 +600,23 @@ export function createCommunities(
       );
       update(
         {
-          memberships: [
-            ...state.memberships.filter((m) => m.id !== membership.id),
-            membership,
-          ],
+          // A community already held keeps its place; a new one goes last.
+          memberships: state.memberships.some((m) => m.id === membership.id)
+            ? state.memberships.map((m) =>
+                m.id === membership.id ? membership : m,
+              )
+            : [...state.memberships, membership],
           profile: state.profile.name ? state.profile : profile,
           selected: membership.id,
+          sync: enqueue(state.sync, relayAddress(membership.id), false),
         },
         true,
         !!nativeConnect && !live,
       );
-      if (sessions.has(membership.id)) sessions.get(membership.id)?.retry();
-      else acquire(membership.id);
+      // A session a badge already opened is promoted, then retried.
+      const existing = sessions.has(membership.id);
+      acquire(membership.id);
+      if (existing) sessions.get(membership.id)?.retry();
       emitRelay();
       refreshPresentation();
     },
@@ -511,6 +647,7 @@ export function createCommunities(
         {
           memberships: state.memberships.filter((m) => m.id !== id),
           ...(state.selected === id ? { selected: null } : {}),
+          sync: enqueue(state.sync, relayAddress(id), true),
         },
         true,
         !!nativeConnect && !live,
@@ -519,33 +656,37 @@ export function createCommunities(
       presentations.delete(id);
       membershipVersions.set(id, (membershipVersions.get(id) ?? 0) + 1);
       refreshPresentation();
-      const failures: PurgeFailure[] = [];
-      const scope = sessionScopes.get(id);
-      sessions.delete(id);
-      sessionScopes.delete(id);
-      if (scope) {
-        // Every session scope comes from `newScope()`, so this always finds
-        // it; guarding keeps a miss from splicing another community's scope.
-        const index = scopes.indexOf(scope);
-        if (index !== -1) scopes.splice(index, 1);
-        try {
-          await scope.fiber.dispose();
-        } catch (error) {
-          // Reported alongside the purge failures, since only a report can
-          // reach the viewer now, but named for what it is: a session that
-          // would not shut down, not a store that would not clear.
-          console.warn(
-            `Couldn't dispose the session for ${origin} after leaving it`,
-            error,
-          );
-          failures.push({ store: "session", error });
-        }
-      }
+      closed.delete(id);
+      const failures = await dispose(id);
       // The session is gone (or at least detached), so nothing below can
       // refill the purged stores.
       if (purge && viewer)
         failures.push(...(await purgeCommunityDeviceState(origin, viewer)));
       return failures;
+    },
+    pendingSync: () => state.sync.outbox,
+    /** Writes the sync owner's settled state and, in the same device record,
+     * the memberships a server list adds: destinations saved on another
+     * device appear here under their host name, or the viewer's local name
+     * for them, without a session. Sync never forgets a membership.
+     * Persistence follows `joined`, and that save is the only step that
+     * throws, before anything has changed. */
+    async applySync(next: SyncState, add: string[] = []) {
+      const memberships = [...state.memberships];
+      for (const url of add) {
+        const { id, name } = communityDestination(url);
+        if (memberships.some((m) => m.id === id)) continue;
+        memberships.push({
+          id,
+          name,
+          ...(state.viewer
+            ? { localName: readLocalCommunityName(id, state.viewer) }
+            : {}),
+        });
+      }
+      const added = memberships.length > state.memberships.length;
+      update({ memberships, sync: next }, true, !!nativeConnect && !live);
+      if (added) refreshPresentation();
     },
   };
 }

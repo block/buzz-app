@@ -1,570 +1,201 @@
-// One agent's goose sessions: one ACP session per conversation (a thread, a
-// whole DM, or a channel), in the `goose-acp` process all goose agents share.
-// A quiet conversation's session is closed; its next message opens a new one,
-// shown the conversation again. A one-off turn (a watch or timer wake) gets a
-// session of its own, closed when it ends. Every session holds one of the
-// host's MCP servers, so all goose agents share one pool of them, and the least
-// recently used idle session closes to make room. Sessions live as long as
-// the app does; only when each conversation last used one is saved, so its
-// sessions stay listed after they close.
+// One agent's goose sessions, in that agent's own `goose-acp` process. The
+// sessions themselves live in the shared ACP client.
+import {
+  AgentSessions as AcpAgentSessions,
+  type SessionsOptions as AcpSessionsOptions,
+  savedConversation,
+} from "../../features/agent-harness/acp/agent-sessions";
+import type { AgentProtection } from "../../features/agent-protection/service";
+import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
 import {
   GooseProcess,
   REQUEST_TIMEOUT_MS,
-  type ActivityReceipt,
-  type Choice,
   type GooseHost,
-  type GooseSession,
   type ServeMcp,
-  type Settled,
-  type ToolServer,
 } from "./goose";
-import type { SessionAction } from "../../features/agents/service";
-import { absoluteWorkspace } from "../codex/config";
+import type {
+  SavedConversation,
+  SessionStore,
+} from "../../features/agent-harness/acp/agent-sessions";
 
-/** A conversation's session closes after this long without a message. */
-export const IDLE_MS = 15 * 60_000;
-/** The most MCP servers goose sessions hold at once, below the host's 64 for
- * every plugin, so other plugins keep room. */
-export const POOL_LIMIT = 48;
-const STOPPED: Settled = { ok: false, error: "goose was stopped" };
-const LATE: Settled = {
-  ok: false,
-  error: "goose did not start in time",
-  undelivered: true,
-};
-/** Saved conversations per agent; the least recently used are forgotten. */
-const SAVED_LIMIT = 200;
+export {
+  abortable,
+  absolute,
+  IDLE_MS,
+  POOL_LIMIT,
+  ServerPool,
+  type Launch,
+  type SavedConversation,
+  type SessionStore,
+} from "../../features/agent-harness/acp/agent-sessions";
 
-/** What is saved for one conversation: when its session last took in a
- * message or ended a turn. */
-export type SavedConversation = Readonly<{ at: number }>;
-export type SessionStore = {
-  set(key: string, saved: SavedConversation): void;
-};
-
-/** A session's hold on one MCP server in the pool. */
-type Slot = {
-  /** Whether it can be closed to make room: no turn runs in it. */
-  idle(): boolean;
-  /** Closes the session, and resolves once its server has stopped. */
-  evict(): Promise<unknown>;
-};
-
-/** The MCP servers every goose agent's sessions hold, least recently used
- * first. One runtime shares one. */
-export class ServerPool {
-  private readonly slots = new Set<Slot>();
-  constructor(private readonly limit = POOL_LIMIT) {}
-
-  get size() {
-    return this.slots.size;
-  }
-  /** Holds a server for `slot`, first closing idle sessions to keep below the
-   * limit. Busy ones are never closed, so it can go over. Resolves once the
-   * closed sessions' servers have stopped: the host counts them until then. */
-  take(slot: Slot) {
-    const evicted: Promise<unknown>[] = [];
-    while (this.slots.size >= this.limit) {
-      const stopped = this.evict();
-      if (!stopped) break;
-      evicted.push(stopped);
-    }
-    this.slots.add(slot);
-    return Promise.all(evicted);
-  }
-  /** Marks `slot` as used now. */
-  touch(slot: Slot) {
-    if (this.slots.delete(slot)) this.slots.add(slot);
-  }
-  release(slot: Slot) {
-    this.slots.delete(slot);
-  }
-  /** Closes the least recently used idle session, and resolves once its
-   * server has stopped; undefined when every session is busy. */
-  evict() {
-    for (const slot of this.slots)
-      if (slot.idle()) {
-        this.slots.delete(slot);
-        return slot.evict();
-      }
-    return undefined;
-  }
-}
-
-/** The one `goose-acp` every goose agent's sessions open in, started in the
- * home folder when a session first needs it, and again after it exits. One
- * runtime shares one. */
-export class SharedProcess {
-  private ready: Promise<GooseProcess> | undefined;
+/** The `goose-acp` one agent's sessions open in, started in the home folder
+ * when a session first needs it, and again after it exits. Its own process,
+ * so its environment carries only this agent's Buzz credential. */
+export class AgentProcess {
+  /** The start new sessions use. */
+  private current: Start | undefined;
+  /** Every start whose process has not exited, even when its start failed
+   * or a newer one replaced it, so `shutdown` stops each. */
+  private readonly starts = new Set<Start>();
   constructor(
     private readonly host: GooseHost,
     /** Starts a session's MCP server for its agent's tools. */
     private readonly serve: ServeMcp,
+    private readonly protection?: AgentProtection,
+    /** The agent as its latest delivery named it, once known. */
+    private readonly agent: () =>
+      | Readonly<{ pubkey: string; relay: string }>
+      | undefined = () => undefined,
+    /** The context size, in tokens, its sessions compact at. */
+    private readonly compactAt: () => number | undefined = () => undefined,
   ) {}
 
   /** The running process. One that failed to start is started again on the
-   * next call. */
-  get(): Promise<GooseProcess> {
-    if (this.ready) return this.ready;
-    const ready = (async () =>
-      GooseProcess.start(this.host.spawn, {
-        cwd: await this.host.resolveDirectory("~"),
-        serve: this.serve,
-      }))();
-    const forget = () => {
-      if (this.ready === ready) this.ready = undefined;
+   * next call once it has exited. One started with another compaction limit
+   * is left to its sessions, which stop it once none needs it, or stopped
+   * first when `drained` says none does, so it holds no process slot. */
+  get(
+    drained: (process: GooseProcess) => boolean = () => false,
+  ): Promise<GooseProcess> {
+    this.protection?.assertAvailable();
+    const limit = this.compactAt();
+    if (this.current && limit === this.current.limit) return this.current.ready;
+    const previous = this.current;
+    const old = previous?.process;
+    const stopped =
+      old && drained(old)
+        ? old
+            .kill()
+            .then(() => old.exited)
+            .catch(() => undefined)
+        : undefined;
+    const agent = this.agent();
+    const start: Start = {
+      limit,
+      previous,
+      ready: (async () => {
+        await stopped;
+        const bridge =
+          this.protection &&
+          (await nativeProtectionBridge(this.serve, this.protection));
+        try {
+          const goose = await GooseProcess.start(
+            (id, options) =>
+              this.protection
+                ? this.protection.spawn(options ?? {})
+                : this.host.spawn(id, options),
+            {
+              ...(limit && { compactAt: limit }),
+              cwd: await this.host.resolveDirectory("~"),
+              serve: this.serve,
+              onProcess: (goose) => {
+                start.process = goose;
+              },
+              ...(agent && {
+                agent: { pubkey: agent.pubkey, relay: agent.relay },
+              }),
+              // Only a local agent's unprotected launch gets its variables.
+              ...(agent && !bridge && { secrets: ["agent-env"] }),
+              ...(bridge && {
+                protected: true,
+                env: {
+                  ...bridge.env,
+                  BASH_ENV: null,
+                  ENV: null,
+                  DYLD_INSERT_LIBRARIES: null,
+                  DYLD_LIBRARY_PATH: null,
+                  DYLD_FRAMEWORK_PATH: null,
+                  LD_PRELOAD: null,
+                  LD_LIBRARY_PATH: null,
+                },
+              }),
+            },
+          );
+          void goose.exited.finally(() => bridge?.close());
+          return goose;
+        } catch (error) {
+          await bridge?.close();
+          throw error;
+        }
+      })(),
     };
-    void ready.then((goose) => goose.exited.then(forget), forget);
-    this.ready = ready;
-    return ready;
+    const forget = () => {
+      this.starts.delete(start);
+      if (this.current !== start) return;
+      // One that failed leaves the latest it replaced still running current,
+      // so the next start retires it once drained.
+      let kept = start.previous;
+      while (kept && !this.starts.has(kept)) kept = kept.previous;
+      this.current = kept;
+    };
+    void start.ready.then(
+      (goose) => {
+        delete start.previous;
+        return goose.exited.then(forget);
+      },
+      () => (start.process ? start.process.exited.then(forget) : forget()),
+    );
+    this.starts.add(start);
+    this.current = start;
+    return start.ready;
   }
   /** goose caches secrets per process, so a key saved by another one reaches
    * this one only once an inventory refresh reloads them. Its sessions then
    * rebuild their provider on their next call. Best effort: a goose that
    * fails to answer is killed, and the next one starts with fresh secrets. */
   async refresh(provider: string) {
-    const goose = await this.ready?.catch(() => undefined);
-    await goose
-      ?.request(
-        "_goose/unstable/providers/inventory/refresh",
-        { providerIds: [provider] },
-        REQUEST_TIMEOUT_MS,
-      )
-      .catch(() => undefined);
+    await Promise.all(
+      [...this.starts].map(async (start) => {
+        const goose = await start.ready.catch(() => undefined);
+        await goose
+          ?.request(
+            "_goose/unstable/providers/inventory/refresh",
+            { providerIds: [provider] },
+            REQUEST_TIMEOUT_MS,
+          )
+          .catch(() => undefined);
+      }),
+    );
   }
   /** Stops it, failing every session in it. */
   stop() {
-    const ready = this.ready;
-    this.ready = undefined;
-    void ready?.then((goose) => goose.kill()).catch(() => undefined);
+    void this.shutdown().catch(() => undefined);
+  }
+  /** Stops every process it started and resolves once each has exited,
+   * whether or not its start succeeded. Each stays here until then, so a
+   * failed stop is repeated. */
+  async shutdown() {
+    await Promise.all(
+      [...this.starts].map(async (start) => {
+        await start.ready.catch(() => undefined);
+        await start.process?.kill();
+        await start.process?.exited;
+      }),
+    );
   }
 }
 
-/** What a session is opened with. */
-export type Launch = Readonly<{
-  /** The agent's working directory, absolute or `~/…`. */
-  workspace: string;
-  systemPrompt: string;
-}>;
-
-export type SessionsOptions = Readonly<{
-  /** The host's, for the workspace's absolute path. */
-  resolveDirectory: GooseHost["resolveDirectory"];
-  /** Answers the agent's Buzz tools. */
-  tools: ToolServer;
-  /** The process all goose agents' sessions open in. */
-  process: SharedProcess;
-  /** The servers all goose agents' sessions hold. */
-  pool: ServerPool;
-  /** The agent's current settings, for a new session. */
-  launch(): Promise<Launch>;
-  /** The agent's provider, model and thinking level now, which each new
-   * turn runs on. */
-  choice(): Choice;
-  /** Changes when a setting a session was opened with has changed. */
-  fingerprint(): string;
-  /** Where each conversation's last use is saved. */
-  store?: SessionStore;
-  /** Called when a conversation's session opens, is sent a message, or
-   * closes. */
-  onChange?(): void;
-}>;
-
-type Live = {
-  session: GooseSession;
-  process: GooseProcess;
-  fingerprint: string;
-  slot: Slot;
-  /** When it last took in a message or ended a turn. */
-  at: number;
-  timer?: ReturnType<typeof setTimeout>;
+/** One start of `goose-acp`, the token limit goose read at it, and its
+ * process once spawned. Until it succeeds, it keeps the start it replaced. */
+type Start = {
+  ready: Promise<GooseProcess>;
+  limit: number | undefined;
+  previous?: Start | undefined;
+  process?: GooseProcess;
 };
 
-export class AgentSessions {
-  /** The latest process its sessions opened in, whose exit drops them. */
-  private process: GooseProcess | undefined;
-  private readonly live = new Map<string, Live>();
-  /** One-off turns running or starting, by label. */
-  private readonly once = new Map<string, Live | undefined>();
-  private onceCount = 0;
-  /** Conversations whose session is opening, and the turn it opened for. */
-  private readonly opening = new Map<
-    string,
-    Promise<{ settled?: Promise<Settled> }>
-  >();
-  /** created_at of the newest event each conversation's session was shown. */
-  private readonly shown = new Map<string, number>();
-  /** Conversations that have had a session, whose next new one may have been
-   * prompted for the old one. */
-  private readonly had = new Set<string>();
-  private disposed = false;
+export type SessionsOptions = Omit<AcpSessionsOptions, "label">;
 
-  constructor(private readonly options: SessionsOptions) {}
-
-  /** What this conversation's session has been shown. */
-  seen(key: string) {
-    return this.shown.get(key) ?? 0;
-  }
-  active(key: string) {
-    return this.opening.has(key) || !!this.live.get(key)?.session.working;
-  }
-  /** Conversations with a session, whether each is working, and when each
-   * last took in a message or ended a turn. */
-  snapshot(): {
-    key: string;
-    busy: boolean;
-    sessionId?: string;
-    at?: number;
-  }[] {
-    return [
-      ...[...this.live].map(([key, live]) => ({
-        key,
-        busy: live.session.busy,
-        sessionId: live.session.id,
-        at: live.at,
-      })),
-      ...[...this.once.keys()].map((key) => ({ key, busy: true })),
-    ];
-  }
-
-  /** Sends `text` into the conversation `key`, and resolves when the session
-   * has answered it. `steer` replaces `text` when the session is mid-turn;
-   * `fresh` builds it again when the session it was built for was closed;
-   * `title` names a session opened for it, except that the conversation's
-   * first one is left for goose to name, if it names sessions, when `named`
-   * takes that name;
-   * `model`, one of the agent's
-   * provider's, is what its turn runs on. Once `signal` aborts, it stops
-   * waiting for a session to open, which is then kept for the next message,
-   * and sends nothing. */
-  async deliver(
-    key: string,
-    text: string,
-    seen: number,
-    {
-      steer = text,
-      fresh,
-      title,
-      named,
-      signal,
-      model,
-      ...activity
-    }: Readonly<{
-      steer?: string;
-      fresh?: () => Promise<string>;
-      title?: string;
-      named?: (title: string) => void;
-      signal?: AbortSignal;
-      model?: string;
-    }> &
-      ActivityReceipt = {},
-  ): Promise<Settled> {
-    for (;;) {
-      if (this.disposed) return { ...STOPPED, undelivered: true };
-      // A message that arrives while its conversation's session opens uses it.
-      const opening = this.opening.get(key);
-      if (opening) {
-        // The session stays shared; only this message gives up on it.
-        try {
-          await abortable(
-            opening.catch(() => undefined),
-            signal,
-          );
-        } catch {
-          return LATE;
-        }
-        continue;
-      }
-      const live = this.live.get(key);
-      if (!live) break;
-      if (!live.session.open || (!live.session.busy && this.stale(live))) {
-        this.drop(key, live);
-        break;
-      }
-      this.touch(key, live, seen);
-      return this.answer(
-        key,
-        live,
-        live.session.busy ? steer : text,
-        activity,
-        model,
-      );
-    }
-    // Reserved before anything is awaited, so a message that comes meanwhile
-    // waits for this session instead of opening another.
-    const starting = (async () => {
-      const first = !this.had.has(key);
-      // Perhaps built for a session closed since, which had been shown the rest.
-      if (!first && fresh) text = await fresh();
-      // Naming costs a model call: goose names only the conversation's start.
-      const naming = first ? named : undefined;
-      const live = await this.open(
-        key,
-        title,
-        (live) => this.disposed || this.adopt(key, live),
-        naming,
-      );
-      if (this.disposed) {
-        void this.close(live);
-        throw new Error("goose was stopped");
-      }
-      if (signal?.aborted) return {};
-      this.touch(key, live, seen);
-      return { settled: this.answer(key, live, text, activity, model) };
-    })();
-    this.opening.set(key, starting);
-    const opened = () => {
-      if (this.opening.get(key) === starting) this.opening.delete(key);
-    };
-    starting.then(opened, opened);
-    // Every failure here comes before a turn takes the message in.
-    let started: Awaited<typeof starting>;
-    try {
-      started = await abortable(starting, signal);
-    } catch (error) {
-      if (this.disposed) return { ...STOPPED, undelivered: true };
-      if (signal?.aborted) return LATE;
-      console.warn("goose could not start", error);
-      return {
-        ok: false,
-        error: `goose could not start: ${message(error)}`,
-        undelivered: true,
-      };
-    }
-    return started.settled ?? LATE;
-  }
-
-  /** Stops the turn running in conversation `key`, if any, once a session
-   * opening for it has taken its message. */
-  async interrupt(key: string) {
-    await this.opening.get(key)?.catch(() => undefined);
-    this.live.get(key)?.session.interrupt();
-  }
-  /** Waits for the conversation's session to finish its work, then compacts
-   * it or closes it, so the message opens a new one. Without an open session
-   * there is nothing to do. */
-  async reset(key: string, action: SessionAction): Promise<Settled> {
-    const live = this.live.get(key);
-    if (!live?.session.open) return { ok: true };
-    await live.session.idle();
-    if (this.disposed) return STOPPED;
-    if (this.live.get(key) !== live || !live.session.open) return { ok: true };
-    if (action === "new") {
-      this.drop(key, live);
-      return { ok: true };
-    }
-    const result = await this.answer(key, live, "/compact", {}, undefined);
-    // goose ends the turn either way, and says which in its text.
-    if (!result.ok || result.text === "Compaction complete") return result;
-    return {
-      ok: false,
-      error: result.text || "goose could not compact the session",
-    };
-  }
-
-  /** Runs one turn in a new session, then closes it. `label` names it in the
-   * snapshot. It gives up, and stops the turn, once `signal` aborts.
-   * `prompt` is asked for the turn's text once the session is open, so a turn
-   * that should no longer run by then returns undefined and sends nothing. */
-  async runOnce(
-    label: string,
-    prompt: () => string | undefined | Promise<string | undefined>,
-    {
-      signal,
-      title,
-    }: Readonly<{
-      signal?: AbortSignal;
-      title?: string;
-    }> = {},
-  ): Promise<Settled> {
-    if (this.disposed) return STOPPED;
-    const key = `${label} #${++this.onceCount}`;
-    this.once.set(key, undefined);
-    this.options.onChange?.();
-    const opening = this.open(
-      key,
-      title,
-      (live) => this.once.has(key) && this.once.set(key, live),
-    );
-    let live: Live | undefined;
-    try {
-      live = await abortable(opening, signal);
-      if (this.disposed) return STOPPED;
-      const text = await abortable(Promise.resolve(prompt()), signal);
-      if (text === undefined || this.disposed) return { ok: true };
-      return await abortable(live.session.send(text), signal);
-    } catch (error) {
-      if (signal?.aborted) return { ok: false, error: message(signal.reason) };
-      console.warn("goose could not start a one-off session", error);
-      return { ok: false, error: `goose could not start: ${message(error)}` };
-    } finally {
-      this.once.delete(key);
-      // One that opens after the turn was given up is closed once it has.
-      if (live) await this.close(live);
-      else void opening.then((late) => this.close(late)).catch(() => undefined);
-      this.options.onChange?.();
-    }
-  }
-
-  /** Closes idle sessions opened with old settings; busy ones close when they
-   * next fall idle. */
-  reconfigure() {
-    for (const [key, live] of this.live)
-      if (!live.session.busy && this.stale(live)) this.drop(key, live);
-  }
-
-  /** Closes its sessions, ending their turns; the process keeps serving other
-   * agents. */
-  dispose() {
-    this.disposed = true;
-    for (const [key, live] of this.live) this.drop(key, live);
-    for (const live of this.once.values()) if (live) void this.close(live);
-  }
-
-  /** Opened with old settings, or on a thinking level when goose's own is
-   * chosen now, which only a new session runs on. */
-  private stale(live: Live) {
-    return (
-      live.fingerprint !== this.options.fingerprint() ||
-      Boolean(live.session.effort && !this.options.choice().effort)
-    );
-  }
-
-  /** Opens a session for `key` in the agent's workspace, which `use` records
-   * as its user's. */
-  private async open(
-    key: string,
-    title: string | undefined,
-    use: (live: Live) => unknown,
-    named?: (title: string) => void,
-  ): Promise<Live> {
-    const { pool, resolveDirectory } = this.options;
-    // Read before `launch` reads the settings, so it never describes newer ones.
-    const fingerprint = this.options.fingerprint();
-    const launch = await this.options.launch();
-    // Removed meanwhile: a goose started now would outlive it.
-    if (this.disposed) throw new Error("goose was stopped");
-    const [process, cwd] = await Promise.all([
-      this.options.process.get(),
-      absolute(resolveDirectory, launch.workspace),
-    ]);
-    if (process !== this.process) {
-      this.process = process;
-      void process.exited.then(() => {
-        for (const [key, live] of this.live)
-          if (live.process === process) this.drop(key, live);
-      });
-    }
-    // Busy until it is adopted as a conversation's.
-    const slot: Slot = { idle: () => false, evict: async () => undefined };
-    const room = pool.take(slot);
-    const start = () =>
-      process.open({
-        cwd,
-        systemPrompt: launch.systemPrompt,
-        ...(title ? { title } : {}),
-        ...(named ? { named } : {}),
-        tools: this.options.tools,
-        choice: this.options.choice,
-      });
-    let session: GooseSession;
-    try {
-      await room;
-      session = await start().catch(async (error: unknown) => {
-        // Other plugins hold servers too: make room once, and try again.
-        const room = /too many mcp servers/i.test(message(error))
-          ? pool.evict()
-          : undefined;
-        if (!room) throw error;
-        await room;
-        return start();
-      });
-    } catch (error) {
-      pool.release(slot);
-      throw error;
-    }
-    const released = () => pool.release(slot);
-    void (session.server?.closed ?? Promise.resolve()).then(released, released);
-    session.conversation = key;
-    const live = { session, process, fingerprint, slot, at: Date.now() };
-    if (fingerprint !== this.options.fingerprint() && !this.disposed) {
-      // Settings saved while it opened: it would work with the old ones.
-      void this.close(live);
-      return this.open(key, title, use, named);
-    }
-    use(live);
-    return live;
-  }
-
-  private adopt(key: string, live: Live) {
-    this.had.add(key);
-    this.live.set(key, live);
-    // Not idle while the message it opened for is still on its way to it.
-    live.slot.idle = () =>
-      !live.session.busy &&
-      this.live.get(key) === live &&
-      !this.opening.has(key);
-    live.slot.evict = async () => {
-      this.drop(key, live);
-      await live.session.server?.closed;
-    };
-    // Not saved until a message is handed to it: its own may have given up.
-    this.countdown(key, live);
-    this.options.onChange?.();
-  }
-  private async answer(
-    key: string,
-    live: Live,
-    text: string,
-    activity: ActivityReceipt,
-    model: string | undefined,
-  ) {
-    const sent = live.session.send(text, activity, model);
-    // A final Buzz send can answer before goose finishes its model work.
-    void live.session.idle().then(() => {
-      if (this.live.get(key) === live) this.options.onChange?.();
-    });
-    // Sending made it busy; a snapshot read when it opened is not.
-    this.options.onChange?.();
-    const settled = await sent;
-    if (this.live.get(key) === live) {
-      this.touch(key, live);
-      if (!live.session.busy && this.stale(live)) this.drop(key, live);
-    }
-    return settled;
-  }
-  /** Notes that the session took in a message or ended a turn, and what it
-   * has been shown, and restarts its idle countdown. */
-  private touch(key: string, live: Live, seen?: number) {
-    live.at = Date.now();
-    this.options.store?.set(key, { at: live.at });
-    this.countdown(key, live);
-    if (seen !== undefined)
-      this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));
-  }
-  /** Closes the session after IDLE_MS, or waits again while it is busy: a
-   * long turn is not new use. */
-  private countdown(key: string, live: Live) {
-    this.options.pool.touch(live.slot);
-    clearTimeout(live.timer);
-    live.timer = setTimeout(() => {
-      if (live.session.busy) this.countdown(key, live);
-      else if (this.live.get(key) === live) this.drop(key, live);
-    }, IDLE_MS);
-  }
-  private drop(key: string, live: Live) {
-    clearTimeout(live.timer);
-    if (this.live.get(key) === live) {
-      this.live.delete(key);
-      this.shown.delete(key);
-      this.options.onChange?.();
-    }
-    void this.close(live);
-  }
-  private close(live: Live) {
-    return live.process.close(live.session);
+/** An agent's sessions, in its own process. */
+export class AgentSessions extends AcpAgentSessions {
+  constructor(options: SessionsOptions) {
+    super({ ...options, label: "goose" });
   }
 }
+
+/** Saved conversations per agent; the least recently used are forgotten. */
+const SAVED_LIMIT = 200;
 
 /** Conversations saved in local storage, by agent and then conversation. */
 export function localSessions(
@@ -578,17 +209,31 @@ export function localSessions(
   const readAll = (): Record<string, Record<string, SavedConversation>> => {
     try {
       const value = JSON.parse(storage.getItem(name) ?? "{}");
-      return value && typeof value === "object" ? value : {};
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        return {};
+      // Each agent's damaged conversations are dropped, keeping the rest.
+      return Object.fromEntries(
+        Object.entries(value).map(([agent, saved]) => [
+          agent,
+          Object.fromEntries(
+            Object.entries(
+              saved && typeof saved === "object" ? saved : {},
+            ).flatMap(([key, conversation]) => {
+              const kept = savedConversation(conversation);
+              return kept ? [[key, kept]] : [];
+            }),
+          ),
+        ]),
+      );
     } catch {
       return {};
     }
   };
   const list = (saved: Record<string, SavedConversation> = {}) =>
-    Object.entries(saved)
-      .filter(([, conversation]) => typeof conversation?.at === "number")
-      .sort(([, a], [, b]) => b.at - a.at);
+    Object.entries(saved).sort(([, a], [, b]) => b.at - a.at);
   return {
     list: () => list(readAll()[agent]),
+    get: (key) => readAll()[agent]?.[key],
     set: (key, saved) => {
       const all = readAll();
       const kept = list({ ...all[agent], [key]: saved }).slice(0, SAVED_LIMIT);
@@ -600,33 +245,4 @@ export function localSessions(
       }
     },
   };
-}
-
-/** `workspace` as an absolute path, which ACP sessions need. One already
- * absolute stays as written, as the sessions started in it recorded it. */
-export async function absolute(
-  resolveDirectory: GooseHost["resolveDirectory"],
-  workspace: string,
-) {
-  return absoluteWorkspace(workspace) ? workspace : resolveDirectory(workspace);
-}
-
-/** `work`, or a rejection with `signal`'s reason once it aborts. */
-export function abortable<T>(
-  work: Promise<T>,
-  signal?: AbortSignal,
-): Promise<T> {
-  if (!signal) return work;
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    if (signal.aborted) abort();
-    signal.addEventListener("abort", abort, { once: true });
-    work
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener("abort", abort));
-  });
-}
-
-function message(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }

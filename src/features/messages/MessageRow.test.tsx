@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
+import {
+  createLocalAgentActivity,
+  REPLY_CORRELATION_MS,
+} from "../agents/local-activity";
 import { StrictMode } from "react";
-import { npubEncode } from "nostr-tools/nip19";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -8,26 +13,62 @@ import { expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  createEvent,
   fireEvent,
   render as renderDom,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
-import { profileTarget, profileActivityViewTarget } from "../profiles/target";
+import {
+  SPRING_LOAD_DELAY_MS,
+  SPRING_LOAD_GRACE_MS,
+} from "./spring-loaded-drag";
+import { serializeSelection } from "./selection-copy";
+import { useShowingDraft } from "./draft-places";
+import { clearView, writeView } from "../../shared/view-state";
+import {
+  profileTarget,
+  profileActivityViewTarget,
+  profileTranscriptRequest,
+  claimProfileTranscript,
+  claimTranscriptFocus,
+} from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
-import { keypair, message, signed, summary } from "../relay/testing";
+import { eventDto } from "../relay/events";
+import { createProfileDirectory } from "../relay/profile-directory";
+import {
+  keypair,
+  message,
+  profile as profileEvent,
+  signed,
+  summary,
+} from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { MessageContextMenus } from "./MessageActionBar";
+import { ReplySummary } from "./ReplySummary";
+import { setClockPreference } from "../../shared/clock-preference";
+import { formatFullTimestamp } from "../../shared/datetime";
 import { MessageManagement } from "./MessageManagement";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
+import type { AttachmentRendererProps } from "../conversation/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
-import type { RelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
+import { attestedOwner } from "../agents/owner-attestation";
+
+// Real verification, observed so tests can wait for its verdict.
+vi.mock("../agents/owner-attestation", async (original) => {
+  const actual = await original<typeof import("../agents/owner-attestation")>();
+  return { ...actual, attestedOwner: vi.fn(actual.attestedOwner) };
+});
 
 const row: ChannelMessage = {
   id: "root",
@@ -41,6 +82,93 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 23,
 };
+
+it("discloses an automatic failure reply while keeping its original text available", () => {
+  const content =
+    "Sorry, I couldn’t complete this request. Please try again in a new thread, or try a different model.";
+  const props = {
+    row: { ...row, content, notice: "execution-failure" as const },
+    profile: { name: "Spongebob", isAgent: true as const },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const view = renderDom(<MessageRow {...props} />);
+    const details = screen.getByRole("button", {
+      name: "Show activity history: Spongebob: Couldn’t finish",
+    });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(content)).not.toBeInTheDocument();
+    fireEvent.click(details);
+    expect(screen.getByText(content)).toBeVisible();
+    expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(details).toHaveAccessibleName(
+      "Collapse activity history: Spongebob: Couldn’t finish",
+    );
+    fireEvent.click(details);
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    view.rerender(
+      <MessageRow
+        {...props}
+        row={{
+          ...props.row,
+          edited: true,
+          content: "Here is the useful result.",
+        }}
+      />,
+    );
+    expect(screen.getByText("Here is the useful result.")).toBeVisible();
+    expect(
+      screen.queryByRole("button", {
+        name: /activity history: Spongebob: Couldn’t finish/,
+      }),
+    ).not.toBeInTheDocument();
+    view.rerender(<MessageRow {...props} row={{ ...row, content }} />);
+    expect(screen.getByText(content)).toBeVisible();
+  } finally {
+    cleanup();
+  }
+});
+
+it("keeps automatic failure explanations in the incoming agent frame for every request author", () => {
+  const request = { ...row, id: "request", authorId: "viewer" };
+  const props = {
+    row: { ...row, notice: "execution-failure" as const },
+    stoppedRequest: request,
+    viewer: "viewer",
+    profile: { name: "Spongebob", isAgent: true as const },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const view = renderDom(<MessageRow {...props} />);
+    const caption = () =>
+      screen
+        .getByRole("button", {
+          name: "Show activity history: Spongebob: Couldn’t finish",
+        })
+        .closest("[data-message-notice]");
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+    expect(
+      caption()?.closest("[data-agent-response-preview]"),
+    ).toBeInTheDocument();
+    view.rerender(
+      <MessageRow
+        {...props}
+        stoppedRequest={{ ...request, authorId: "another-human" }}
+      />,
+    );
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+    view.rerender(<MessageRow {...props} stoppedRequest={undefined} />);
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+  } finally {
+    cleanup();
+  }
+});
 
 it.each([false, true])(
   "previews human and agent identities and preserves avatar navigation: %s",
@@ -75,7 +203,8 @@ it.each([false, true])(
         screen.queryByRole("dialog", { name: /profile preview/ }),
       ).toBeNull();
       fireEvent.mouseEnter(avatar);
-      await act(() => vi.advanceTimersByTimeAsync(250));
+      fireEvent.mouseMove(avatar);
+      await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
       const preview = screen.getByRole("dialog", {
         name: `${authorId.slice(0, 10)} profile preview`,
       });
@@ -174,6 +303,107 @@ it("tells link handlers the thread a reply was opened from", () => {
   }
 });
 
+it.each([
+  { agentEnvelope: false, scheme: "nostr:npub1" },
+  { agentEnvelope: true, scheme: "buzz:agent-profile:" },
+])(
+  "opens the author's profile from the byline name: %j",
+  ({ agentEnvelope, scheme }) => {
+    const authorId = "ab".repeat(32);
+    const open = vi.fn(() => true);
+    try {
+      renderMessage({
+        row: {
+          ...row,
+          authorId,
+          ...(agentEnvelope ? { agentEnvelope: true as const } : {}),
+        },
+        profile: { name: "Mic" },
+        onOpenLink: open,
+        canOpenLink: () => true,
+      });
+      const name = screen.getByRole("button", { name: "Mic" });
+      // Text with a role, so a selection can start on it; the avatar stays
+      // the group's only tab stop.
+      expect(name.tagName).toBe("SPAN");
+      expect(name).toHaveAttribute("tabindex", "-1");
+      expect(name).not.toHaveAttribute("data-profile-target");
+      fireEvent.click(name);
+      // Focused first, so closing the profile can return here.
+      expect(name).toHaveFocus();
+      const target = profileTarget(authorId, { agent: agentEnvelope });
+      expect(target?.startsWith(scheme)).toBe(true);
+      expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "root" });
+    } finally {
+      cleanup();
+    }
+  },
+);
+
+it("treats a click that selected the name as a selection, and opens from Enter or Space", () => {
+  const open = vi.fn(() => true);
+  try {
+    renderMessage({
+      row: { ...row, authorId: "ab".repeat(32) },
+      profile: { name: "Mic" },
+      onOpenLink: open,
+      canOpenLink: () => true,
+    });
+    const name = screen.getByRole("button", { name: "Mic" });
+    const selection = document.getSelection();
+    if (!selection) throw new Error("jsdom selection missing");
+    // A double-click or drag leaves the name selected when the click lands.
+    selection.selectAllChildren(name);
+    fireEvent.click(name);
+    expect(open).not.toHaveBeenCalled();
+    selection.removeAllRanges();
+    fireEvent.click(name);
+    expect(open).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(name, { key: "a" });
+    expect(open).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(name, { key: "Enter" });
+    // Space must not also scroll the timeline: the default is cancelled.
+    expect(fireEvent.keyDown(name, { key: " " })).toBe(false);
+    expect(open).toHaveBeenCalledTimes(3);
+  } finally {
+    cleanup();
+  }
+});
+
+it("keeps the byline name plain where profiles cannot open or the byline is screen-reader only", () => {
+  const props = {
+    row: { ...row, authorId: "ab".repeat(32) },
+    profile: { name: "Mic" },
+    canOpenLink: () => true,
+  };
+  try {
+    const { rerender } = renderMessage({
+      ...props,
+      canOpenLink: () => false,
+    });
+    expect(screen.getByText("Mic").closest('[role="button"]')).toBeNull();
+    rerender(
+      <MessageRow
+        {...props}
+        media={() => undefined}
+        onOpenLink={() => true}
+        day={false}
+        retry={undefined}
+        stackPrevious
+      />,
+    );
+    // The continuation still has its avatar, but its byline is text only.
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+    const name = screen.getByText("Mic");
+    expect(name.closest(".sr-only")).toBeInTheDocument();
+    expect(name.closest('[role="button"]')).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
 it("keeps plain agent presence without avatar activity, and omits human presence from messages", () => {
   const agentRow = { ...row, authorId: "a".repeat(64) };
   const subscribe = vi.fn(() => () => {});
@@ -267,7 +497,9 @@ it("keeps plain agent presence without avatar activity, and omits human presence
   ).toHaveAccessibleDescription("Presence: online");
   expect(document.querySelector(".agent-motion-avatar")).toBeNull();
   expect(document.querySelector('[data-status="online"]')).toBeInTheDocument();
-  expect(activityListeners.size).toBe(0);
+  expect(
+    screen.queryByRole("button", { name: /^View activity$/ }),
+  ).not.toBeInTheDocument();
   act(() => {
     working = false;
     for (const listener of activityListeners) listener();
@@ -501,7 +733,7 @@ it("renders exact identity controls only while a target can be opened", () => {
   expect(renderProfile(false)).not.toContain(
     'aria-label="View Author profile"',
   );
-  expect(renderProfile(false)).toContain("@Mic");
+  expect(renderProfile(false)).toContain('data-mention-name="Mic"');
 });
 
 it.each(["~~~js\nconst delimiter = '~~~';\n@Mic\n~~~\nOutside @Mic"])(
@@ -796,8 +1028,11 @@ it.each([undefined, { width: 640, height: 400 }])(
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
       view.rerender(show(false));
-      const unavailable = screen.getByRole("status");
-      expect(unavailable).toHaveTextContent("Image unavailable");
+      // The row's toolbar keeps an empty status of its own.
+      const unavailable = screen
+        .getAllByRole("status")
+        .find((status) => status.textContent === "Image unavailable");
+      expect(unavailable).toBeDefined();
       if (dimensions)
         expect(unavailable).toHaveStyle({
           width: "360px",
@@ -805,7 +1040,11 @@ it.each([undefined, { width: 640, height: 400 }])(
         });
       else expect(unavailable).not.toHaveAttribute("style");
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
-      expect(media).toHaveBeenCalledWith("https://image.test/unavailable.png");
+      expect(media).toHaveBeenCalledWith(
+        "https://image.test/unavailable.png",
+        undefined,
+        "channel",
+      );
     } finally {
       view.unmount();
     }
@@ -833,7 +1072,11 @@ it("does not bypass the session media resolver to paint an inaccessible attachme
       retry={undefined}
     />,
   );
-  expect(media).toHaveBeenCalledWith("https://image.test/original.png");
+  expect(media).toHaveBeenCalledWith(
+    "https://image.test/original.png",
+    undefined,
+    "channel",
+  );
   expect(html).toContain("Image unavailable");
   expect(html).not.toContain("<canvas");
   expect(html).not.toContain("<img");
@@ -858,7 +1101,12 @@ it("requests a small profile image without downsizing message attachments", () =
   );
 
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
-  expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
+  // A message's image is saved with its channel; the avatar with none.
+  expect(media).toHaveBeenCalledWith(
+    "https://image.test/attachment.png",
+    undefined,
+    "channel",
+  );
 });
 
 it("renders proxy audio attachments with an inline player", () => {
@@ -887,6 +1135,189 @@ it("renders proxy audio attachments with an inline player", () => {
   container.innerHTML = html;
   expect(container.querySelector("fieldset")?.textContent).toBe("00:00 00:12");
   expect(html).not.toContain("Download file");
+});
+
+it("lets a plugin draw an image it claims, apart from the gallery", () => {
+  const card = {
+    id: "card",
+    title: "Card",
+    key: "test.plugin/card",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: (attachment: { name?: string }) =>
+      attachment.name === "Ada.agent.png",
+    component: ({ source }: { source: string }) => (
+      <span>card from {source}</span>
+    ),
+  };
+  const cards = [card];
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { url: "https://image.test/one.png", kind: "image" },
+          {
+            url: "https://image.test/ada.png",
+            kind: "image",
+            name: "Ada.agent.png",
+          },
+          { url: "https://image.test/two.png", kind: "image" },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      extensions={{
+        tools: { snapshot: () => [], subscribe: () => () => {} },
+        inline: { snapshot: () => [], subscribe: () => () => {} },
+        attachments: { snapshot: () => cards, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  expect(html).toContain(
+    "card from /api/relay/media?url=https%3A%2F%2Fimage.test%2Fada.png",
+  );
+  // The images around it stay pictures, each in its own group.
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(
+    [...container.querySelectorAll("[data-message-attachments] > *")].map(
+      (group) =>
+        group.querySelector('[role="group"]')?.getAttribute("aria-label") ??
+        group.textContent,
+    ),
+  ).toEqual([
+    "1 image",
+    "card from /api/relay/media?url=https%3A%2F%2Fimage.test%2Fada.png",
+    "1 image",
+  ]);
+});
+
+it("copies each file card in a message on its own line", () => {
+  const external = "https://example.org/two.pdf";
+  try {
+    renderMessage({
+      row: {
+        ...row,
+        attachments: [
+          {
+            url: "https://relay.test/one",
+            kind: "file",
+            name: "one.zip",
+            size: 2516582,
+          },
+          { url: external, kind: "file", name: "two.pdf", size: 1024 },
+        ],
+      },
+      // Community media is proxied; other hosts map to themselves.
+      media: (url) =>
+        url === external
+          ? url
+          : `/api/relay/media?url=${encodeURIComponent(url)}`,
+    });
+    const selection = document.getSelection();
+    if (!selection) throw new Error("jsdom selection missing");
+    // A drag from the caption's start to the end of the last card.
+    const range = document.createRange();
+    range.setStart(screen.getByText("Root"), 0);
+    range.setEndAfter(screen.getByText("1 KB"));
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(
+      (["text", "markdown", "html"] as const).map((format) =>
+        serializeSelection(selection, format),
+      ),
+    ).toEqual([
+      `Root\none.zip\ntwo.pdf (${external})`,
+      `Root\none.zip\n[two.pdf](${external})`,
+      `<p>Root</p><p>one.zip</p><p><a href="${external}">two.pdf</a></p>`,
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
+it("lets a plugin open a file from the host file card, keeping Download", () => {
+  const placements: unknown[] = [];
+  const messages: unknown[] = [];
+  const viewer = {
+    id: "pdf",
+    title: "PDF",
+    key: "test.plugin/pdf",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: (attachment: { name?: string }) =>
+      !!attachment.name?.endsWith(".pdf"),
+    component: ({
+      attachment,
+      source,
+      placement,
+      message,
+      FileCard,
+      open,
+    }: AttachmentRendererProps) => {
+      placements.push(placement);
+      messages.push(message?.id);
+      return FileCard ? (
+        <FileCard
+          attachment={attachment}
+          source={source}
+          onOpenLink={open}
+          typeLabel="PDF"
+          onPreview={() => open(`panel:${attachment.name}`)}
+        />
+      ) : null;
+    },
+  };
+  const viewers = [viewer];
+  const none: never[] = [];
+  const open = vi.fn(() => true);
+  const media = (url: string) =>
+    `/api/relay/media?url=${encodeURIComponent(url)}`;
+  renderDom(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://relay.test/report",
+            kind: "file",
+            name: "report.pdf",
+            size: 2048,
+          },
+          { url: "https://relay.test/notes", kind: "file", name: "notes.zip" },
+        ],
+      }}
+      profile={undefined}
+      media={media}
+      onOpenLink={open}
+      canOpenLink={(target) => target.startsWith("panel:")}
+      day={false}
+      retry={undefined}
+      extensions={{
+        tools: { snapshot: () => none, subscribe: () => () => {} },
+        inline: { snapshot: () => none, subscribe: () => () => {} },
+        attachments: { snapshot: () => viewers, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  expect(placements).toContain("message");
+  expect(messages).toContain(row.id);
+  expect(screen.getByText("PDF · 2 KB")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Preview report.pdf" }));
+  expect(open).toHaveBeenCalledWith("panel:report.pdf", { rootId: "root" });
+  expect(
+    screen.getByRole("link", { name: "Download report.pdf" }),
+  ).toHaveAttribute("href", media("https://relay.test/report"));
+  expect(
+    screen.getByRole("link", { name: "Download notes.zip" }),
+  ).toHaveAttribute("href", media("https://relay.test/notes"));
+  expect(
+    screen.queryByRole("button", { name: "Preview notes.zip" }),
+  ).toBeNull();
 });
 
 it("renders external audio sources as open file cards", () => {
@@ -1187,9 +1618,19 @@ it.each(["peer", "own"] as const)(
     const operations: never[] = [];
     const session = {
       viewer: author === "own" ? row.authorId : "viewer",
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      channels: {
+        list: () => snapshot,
+        subscribeList: () => () => {},
+        window: () => ({ rows: [row] }),
+      },
       messages: { report: vi.fn(async () => {}) },
       profiles: { subscribe: () => () => {}, event: () => undefined },
+      read: async () => [],
+      subscribeLive: () => () => {},
+      live: {
+        snapshot: () => ({ status: "connected", heads: [] }),
+        subscribe: () => () => {},
+      },
       outbox: {
         supports: () => true,
         subscribe: () => () => {},
@@ -1197,6 +1638,8 @@ it.each(["peer", "own"] as const)(
         snapshot: () => operations,
       },
       unread: {
+        revision: () => 0,
+        sync: () => ({ capability: "unsupported" }),
         subscribe: () => () => {},
         subscribeSync: () => () => {},
         snapshot: () => undefined,
@@ -1227,15 +1670,23 @@ it.each(["peer", "own"] as const)(
       ).toEqual(
         author === "own"
           ? [
-              "Mark unread",
+              "Mark as unread",
               "Copy message",
               "Send to channel",
-              "Edit message",
+              "Copy link",
+              "Pin to channel",
               "Delete message",
               "Follow thread",
               "Report",
             ]
-          : ["Mark unread", "Copy message", "Follow thread", "Report"],
+          : [
+              "Mark as unread",
+              "Copy message",
+              "Copy link",
+              "Pin to channel",
+              "Follow thread",
+              "Report",
+            ],
       );
     } finally {
       cleanup();
@@ -1276,7 +1727,7 @@ it.each(["sending", "failed"] as const)(
       await screen.findByRole("menu");
       expect(
         screen.getAllByRole("menuitem").map((item) => item.textContent),
-      ).toEqual(["Copy message"]);
+      ).toEqual(["Copy message", "Copy link"]);
       expect(screen.queryByRole("separator")).toBeNull();
     } finally {
       cleanup();
@@ -1300,6 +1751,32 @@ function renderMessage(
     />,
   );
 }
+
+it.each([
+  { channelType: "solo", visible: false },
+  { channelType: "stream", visible: true },
+] as const)(
+  "Hide in Solo chats keeps only the accessible date in Solo (%o)",
+  ({ channelType, visible }) => {
+    setClockPreference({ messageTimestamps: "hide-solo" });
+    const list = {
+      channels: [{ id: row.channelId, channelType }],
+      status: "ready",
+    };
+    const references = {
+      channels: { list: () => list, subscribeList: () => () => {} },
+    } as unknown as RelaySession;
+    const view = renderMessage({ references });
+    try {
+      const time = view.container.querySelector("time");
+      expect(time?.querySelector(".sr-only")).toHaveTextContent(/19(69|70)/);
+      expect(!!time?.querySelector('[aria-hidden="true"]')).toBe(visible);
+    } finally {
+      view.unmount();
+      setClockPreference({ messageTimestamps: "show" });
+    }
+  },
+);
 
 it.each([true, false])(
   "offers thread starts only where the conversation starts threads (startsThreads=%s)",
@@ -1360,13 +1837,20 @@ it.each([true, false])(
   },
 );
 
-it.each([
-  { startsThreads: true, replyCount: 0, thread: true },
-  { startsThreads: false, replyCount: 0, thread: false },
-  { startsThreads: false, replyCount: 23, thread: true },
-])(
+it.each(
+  [
+    { startsThreads: true, replyCount: 0, thread: true },
+    { startsThreads: false, replyCount: 0, thread: false },
+    { startsThreads: false, replyCount: 23, thread: true },
+  ].flatMap((scenario) =>
+    (["message", "response"] as const).map((placement) => ({
+      ...scenario,
+      placement,
+    })),
+  ),
+)(
   "gives message accessories a thread only where the row has one to open (%o)",
-  ({ startsThreads, replyCount, thread }) => {
+  ({ startsThreads, replyCount, thread, placement }) => {
     const subscribe = () => () => {};
     const channels = { channels: [], status: "ready" };
     const noTyping: never[] = [];
@@ -1391,7 +1875,7 @@ it.each([
         pluginId: "test",
         revision: "1",
         title: "Agent activity",
-        placement: "message" as const,
+        placement,
         decoratesMessageSummary: true,
         component: ({
           renderMessageSummary,
@@ -1413,6 +1897,7 @@ it.each([
       row: { ...row, replyCount },
       session,
       scope: "test",
+      viewer: row.authorId,
       onOpenThread: () => {},
       startsThreads,
       extensions: {
@@ -1424,11 +1909,140 @@ it.each([
       },
     });
     try {
-      expect(seen).toHaveBeenLastCalledWith(thread, thread);
-      expect(screen.getByText("Brain working")).toBeInTheDocument();
-      expect(!!screen.queryByRole("button", { name: /^View thread/ })).toBe(
+      expect(seen).toHaveBeenLastCalledWith(
+        placement === "message" && thread,
         thread,
       );
+      expect(
+        !!screen.getByText("Brain working").closest("[data-viewer-message]"),
+      ).toBe(placement === "message");
+      expect(screen.getByText("Brain working")).toBeInTheDocument();
+      expect(!!screen.queryByRole("button", { name: /^View thread/ })).toBe(
+        placement === "message" ? thread : replyCount > 0,
+      );
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it("forwards replied agents and the stopped request to response accessories", () => {
+  const subscribe = () => () => {};
+  const channels = { channels: [], status: "ready" };
+  const noTyping: never[] = [];
+  const catalog = { entries: [] };
+  const profiles = new Map();
+  const library = { identities: [] };
+  const session = {
+    channels: { list: () => channels, subscribeList: subscribe },
+    messages: {},
+    emoji: { snapshot: () => catalog, subscribe },
+    profiles: { snapshot: () => profiles, subscribe },
+    agentChoices: { snapshot: () => library, subscribe },
+    typing: { snapshot: () => noTyping, subscribe },
+  } as unknown as RelaySession;
+  const seen = vi.fn();
+  const noEntries: never[] = [];
+  const empty = { snapshot: () => noEntries, subscribe };
+  const entries = [
+    {
+      id: "activity",
+      key: "test:activity",
+      pluginId: "test",
+      revision: "1",
+      title: "Agent activity",
+      placement: "response" as const,
+      component: (
+        props: import("../conversation/contracts").ComposerAccessoryProps,
+      ) => {
+        seen(props.repliedAgents, props.stoppedRequest);
+        return null;
+      },
+    },
+  ];
+  const agent = "a".repeat(64);
+  const repliedAgents = [agent];
+  const request = { ...row, id: "request" };
+  const view = renderMessage({
+    session,
+    scope: "test",
+    repliedAgents,
+    stoppedRequest: request,
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => entries, subscribe },
+    },
+  });
+  try {
+    expect(seen).toHaveBeenLastCalledWith(repliedAgents, request);
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each(
+  (["message", "response"] as const).flatMap((placement) => [
+    { placement, threadRootId: undefined, rootId: "root" },
+    { placement, threadRootId: "parent", rootId: "parent" },
+  ]),
+)(
+  "opens message accessory targets in the row's own thread (%o)",
+  ({ placement, threadRootId, rootId }) => {
+    const subscribe = () => () => {};
+    const channels = { channels: [], status: "ready" };
+    const noTyping: never[] = [];
+    const catalog = { entries: [] };
+    const profiles = new Map();
+    const library = { identities: [] };
+    const session = {
+      channels: { list: () => channels, subscribeList: subscribe },
+      messages: {},
+      emoji: { snapshot: () => catalog, subscribe },
+      profiles: { snapshot: () => profiles, subscribe },
+      agentChoices: { snapshot: () => library, subscribe },
+      typing: { snapshot: () => noTyping, subscribe },
+    } as unknown as RelaySession;
+    const noEntries: never[] = [];
+    const empty = { snapshot: () => noEntries, subscribe };
+    const target = `buzz:profile?agent=${"a".repeat(64)}&tab=activity`;
+    const entries = [
+      {
+        id: "activity",
+        key: "test:activity",
+        pluginId: "test",
+        revision: "1",
+        title: "Agent activity",
+        placement,
+        component: ({
+          open,
+        }: import("../conversation/contracts").ComposerAccessoryProps) => (
+          <button type="button" onClick={() => open(target)}>
+            View activity
+          </button>
+        ),
+      },
+    ];
+    const onOpenLink = vi.fn(() => true);
+    const view = renderMessage({
+      row: { ...row, threadRootId },
+      session,
+      scope: "test",
+      onOpenLink,
+      extensions: {
+        inline: empty,
+        links: empty,
+        messages: empty,
+        tools: empty,
+        accessories: { snapshot: () => entries, subscribe },
+      },
+    });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "View activity" }));
+      // The transcript belongs to this message's conversation, not the view's.
+      expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(target, { rootId });
     } finally {
       view.unmount();
     }
@@ -1452,10 +2066,36 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
     const links = screen.getAllByRole("link", {
       name: "Open image attachment",
     });
-    expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
+    expect(media.mock.calls).toEqual([
+      ["https://safe.test/a.png", undefined, "channel"],
+      ["https://safe.test/a.png", "small", "channel"],
+    ]);
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");
     expect(view.container.innerHTML).not.toContain("unsafe.test");
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([
+  ["jpg", "small:.jpg"],
+  ["png", ".thumb.webp"],
+  ["gif", ".thumb.webp"],
+])("passes a %s image attachment its relay thumbnail", (extension, suffix) => {
+  const hash = "a".repeat(64);
+  const url = `https://relay.test/media/${hash}.${extension}`;
+  const view = renderMessage({
+    row: { ...row, attachments: [{ url, kind: "image" }] },
+    media: (value, size) => (size ? `small:${value}` : value),
+  });
+  try {
+    expect(view.container.querySelector("img[data-thumbnail]")).toHaveAttribute(
+      "src",
+      suffix.startsWith("small:")
+        ? `small:${url}`
+        : `https://relay.test/media/${hash}${suffix}`,
+    );
   } finally {
     view.unmount();
   }
@@ -1549,7 +2189,31 @@ it("shows unbadged working-agent avatars and shared dots only while a known agen
     },
   } as unknown as RelaySession;
   const media = vi.fn(() => "https://proxy/brain");
-  let view = renderMessage({ session, media, onOpenThread: () => {} });
+  const emptyEntries: readonly never[] = [];
+  const empty = { snapshot: () => emptyEntries, subscribe: () => () => {} };
+  const accessories = [
+    {
+      key: "activity",
+      pluginId: "activity",
+      revision: "1",
+      id: "activity",
+      title: "Activity",
+      placement: "response" as const,
+      component: () => null,
+    },
+  ];
+  let view = renderMessage({
+    session,
+    media,
+    onOpenThread: () => {},
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => accessories, subscribe: () => () => {} },
+    },
+  });
   try {
     const working = screen.getByRole("button", {
       name: "View thread: 23 replies. Brain working",
@@ -1634,11 +2298,12 @@ it("bounds reply participants and projects artwork with fallback initials", () =
     const trigger = screen.getByRole("button", {
       name: "View thread: 23 replies",
     });
+    // The newest replier (first) renders last, on top of the stack.
     expect(
       [...trigger.querySelectorAll("[title]")].map((e) =>
         e.getAttribute("title"),
       ),
-    ).toEqual(["Alice", "Brain", "p3"]);
+    ).toEqual(["p3", "Brain", "Alice"]);
     expect(trigger.querySelector("img")).toHaveAttribute(
       "src",
       "https://proxy/avatar",
@@ -1866,7 +2531,7 @@ it("keeps audio and video players between their original image runs", () => {
 });
 
 it.each([true, false])(
-  "uses the shared small avatar without shrinking profile controls (clickable=%s)",
+  "keeps timeline-sized thread avatars and one step smaller nested ones (clickable=%s)",
   (clickable) => {
     const props = {
       row: { ...row, authorId: "a".repeat(64) },
@@ -1891,7 +2556,7 @@ it.each([true, false])(
     view.rerender(<MessageRow {...props} />);
     expect(view.container.querySelector(".buzz-avatar")).toHaveAttribute(
       "data-size",
-      clickable ? "fill" : "default",
+      "default",
     );
     view.unmount();
   },
@@ -1990,6 +2655,12 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: { sendToChannel: send },
       outbox: { supports: () => true },
+      read: async () => [],
+      subscribeLive: () => () => {},
+      live: {
+        snapshot: () => ({ status: "connected", heads: [] }),
+        subscribe: () => () => {},
+      },
       unread: {
         subscribe: () => () => {},
         subscribeSync: () => () => {},
@@ -2091,25 +2762,37 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
   }
 });
 
-it("presents automation, links the owner and discloses the separate relay signer", async () => {
-  const ownerId = "ab".repeat(32),
-    signer = "cd".repeat(32);
+function renderWorkflowMessage(open = vi.fn(() => true)) {
+  const ownerId = "ab".repeat(32);
+  renderMessage({
+    row: {
+      ...row,
+      authorId: ownerId,
+      signerId: "cd".repeat(32),
+      workflowOwnerId: ownerId,
+    },
+    viewer: ownerId,
+    profile: { name: "Wes" },
+    participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
+    onOpenLink: open,
+    canOpenLink: () => true,
+  });
+  return {
+    ownerId,
+    trigger: screen.getByRole("button", { name: "Workflow message details" }),
+  };
+}
+
+it("presents automation, links the owner and explains the message without keys", async () => {
   const open = vi.fn(() => true);
+  const user = userEvent.setup();
   try {
-    renderMessage({
-      row: {
-        ...row,
-        authorId: ownerId,
-        signerId: signer,
-        workflowOwnerId: ownerId,
-      },
-      viewer: ownerId,
-      profile: { name: "Wes" },
-      participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
-      onOpenLink: open,
-      canOpenLink: () => true,
-    });
-    expect(screen.getByText("Workflow")).toBeTruthy();
+    const { ownerId, trigger } = renderWorkflowMessage(open);
+    // The automation label stays plain; only the owner opens a profile.
+    expect(
+      screen.getByText("Workflow").closest('button, [role="button"]'),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Wes" })).toBeNull();
     expect(document.querySelector("[data-viewer-message]")).toBeNull();
     expect(document.querySelector("[data-own]")).toBeNull();
     fireEvent.click(
@@ -2118,23 +2801,75 @@ it("presents automation, links the owner and discloses the separate relay signer
     expect(open).toHaveBeenCalledWith(profileTarget(ownerId), {
       rootId: "root",
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Workflow message details" }),
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const card = await screen.findByRole("dialog", {
+      name: "Workflow message",
+    });
+    // The byline beside the trigger already names the owner; the card only
+    // says what a workflow message is, without keys or relay identity.
+    expect(card).toHaveAccessibleDescription(
+      "Sent automatically by a workflow. Its owner set it up but didn’t send this message personally.",
     );
-    expect(
-      await screen.findByText(/the owner did not sign this message/),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("Signed by the relay").nextElementSibling,
-    ).toHaveTextContent(npubEncode(signer));
-    expect(
-      screen.getByText("Owner public key").nextElementSibling,
-    ).toHaveTextContent(npubEncode(ownerId));
+    expect(card).not.toHaveTextContent(/npub1|Wes/);
     expect(
       screen.queryByRole("button", { name: "View Relay profile" }),
     ).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(trigger).toHaveFocus();
+    // fireEvent moves no pointer, so no hover rest timer can open the card.
+    fireEvent.click(trigger);
+    expect(
+      screen.getByRole("dialog", { name: "Workflow message" }),
+    ).toBeInTheDocument();
   } finally {
     cleanup();
+  }
+});
+
+it("opens workflow message details once the pointer rests, without a competing hint", async () => {
+  // Base UI's PATIENT_CLICK_THRESHOLD: a click this soon after a hover open
+  // keeps the popover open.
+  const BASE_UI_PATIENT_CLICK_MS = 500;
+  vi.useFakeTimers();
+  try {
+    const { trigger } = renderWorkflowMessage();
+    const focused = document.activeElement;
+    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseMove(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS - 1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    screen.getByRole("dialog", { name: "Workflow message" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    // A hover heads-up leaves focus where the reader had it.
+    expect(document.activeElement).toBe(focused);
+    // Clicking the trigger that just opened it keeps it open.
+    fireEvent.click(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    expect(
+      screen.getByRole("dialog", { name: "Workflow message" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Past Base UI's patient-click window, a click toggles a hover-opened
+    // card closed, as with every openOnHover="preview" popover.
+    fireEvent.mouseLeave(trigger);
+    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseMove(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    screen.getByRole("dialog", { name: "Workflow message" });
+    await act(() => vi.advanceTimersByTimeAsync(BASE_UI_PATIENT_CLICK_MS));
+    fireEvent.click(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  } finally {
+    cleanup();
+    vi.useRealTimers();
   }
 });
 
@@ -2299,24 +3034,135 @@ it("contains a throwing plugin action icon and opened component", async () => {
   }
 });
 
-it("keeps a plugin action dialog closed when its plugin is reinstalled with the same key", async () => {
-  const listeners = new Set<() => void>();
-  const entry = () => ({
-    id: "remind",
-    title: "Remind",
-    key: "test.plugin/remind",
-    pluginId: "test.plugin",
-    revision: "one",
-    matches: () => true,
-    component: () => <span>action dialog</span>,
-  });
-  let actions = [entry()];
-  const swap = (next: typeof actions) => {
-    actions = next;
-    act(() => {
-      for (const listener of listeners) listener();
+it.each(["menu", "toolbar", "coordination"] as const)(
+  "retires a %s action when its contribution or session ends",
+  async (variant) => {
+    const placement = variant === "menu" ? undefined : "toolbar";
+    const listeners = new Set<() => void>();
+    const entry = () => ({
+      id: "remind",
+      title: "Remind",
+      key: "test.plugin/remind",
+      pluginId: "test.plugin",
+      revision: "one",
+      ...(placement ? { placement: "toolbar" as const } : {}),
+      matches: () => true,
+      component: () => <span>action dialog</span>,
     });
-  };
+    let actions = [entry()];
+    const swap = (next: typeof actions) => {
+      actions = next;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    };
+    const none: never[] = [];
+    const empty = { snapshot: () => none, subscribe: () => () => {} };
+    const channelList = { channels: [], status: "ready" };
+    const session = {
+      viewer: "viewer",
+      presence: {
+        subscribe: () => () => {},
+        status: () => "unknown",
+        limited: () => false,
+      },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        following: () => false,
+      },
+      messages: { report: undefined },
+      channels: { subscribeList: () => () => {}, list: () => channelList },
+    } as unknown as RelaySession;
+    const draw = (currentSession = session) => (
+      <MessageRow
+        row={{
+          ...row,
+          replyCount: 0,
+          ...(variant === "coordination"
+            ? { audience: "agents" as const }
+            : {}),
+        }}
+        session={currentSession}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: {
+            snapshot: () => actions,
+            subscribe(listener: () => void) {
+              listeners.add(listener);
+              return () => void listeners.delete(listener);
+            },
+          },
+        }}
+      />
+    );
+    const activate = async () => {
+      if (variant === "coordination") {
+        fireEvent.contextMenu(screen.getByRole("button", { name: /Root/ }));
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: "Remind" }),
+        );
+      } else if (placement === "toolbar") {
+        const button = screen.getByRole("button", { name: "Remind" });
+        button.focus();
+        await userEvent.setup().keyboard("{Enter}");
+      } else {
+        fireEvent.click(
+          screen.getByRole("button", { name: "More message actions" }),
+        );
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: "Remind" }),
+        );
+      }
+    };
+    try {
+      const view = renderDom(draw());
+      await activate();
+      expect(await screen.findByText("action dialog")).toBeInTheDocument();
+      swap([]);
+      expect(screen.queryByText("action dialog")).toBeNull();
+      swap([entry()]);
+      expect(screen.queryByText("action dialog")).toBeNull();
+      await activate();
+      expect(await screen.findByText("action dialog")).toBeInTheDocument();
+      view.rerender(draw({ ...session }));
+      expect(screen.queryByText("action dialog")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  },
+);
+
+it("lets a menu action in a list's shared menu open targets as its row", async () => {
+  const actions = [
+    {
+      id: "open",
+      title: "Open",
+      key: "test.plugin/open",
+      pluginId: "test.plugin",
+      revision: "one",
+      placement: "menu" as const,
+      matches: () => true,
+      component: ({
+        canOpen,
+        open,
+      }: {
+        canOpen(target: string): boolean;
+        open(target: string): boolean;
+      }) => (
+        <button type="button" onClick={() => open("buzz://target")}>
+          {canOpen("buzz://target") ? "Open target" : "Target unavailable"}
+        </button>
+      ),
+    },
+  ];
   const none: never[] = [];
   const empty = { snapshot: () => none, subscribe: () => () => {} };
   const channelList = { channels: [], status: "ready" };
@@ -2336,38 +3182,34 @@ it("keeps a plugin action dialog closed when its plugin is reinstalled with the 
     messages: { report: undefined },
     channels: { subscribeList: () => () => {}, list: () => channelList },
   } as unknown as RelaySession;
+  const onOpenLink = vi.fn(() => true);
   try {
     renderDom(
-      <MessageRow
-        row={{ ...row, replyCount: 0 }}
-        session={session}
-        profile={undefined}
-        media={() => undefined}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-        extensions={{
-          tools: empty,
-          inline: empty,
-          actions: {
-            snapshot: () => actions,
-            subscribe(listener: () => void) {
-              listeners.add(listener);
-              return () => void listeners.delete(listener);
-            },
-          },
-        }}
-      />,
+      <MessageContextMenus>
+        <div>
+          <MessageRow
+            row={{ ...row, replyCount: 0, threadRootId: "thread" }}
+            session={session}
+            profile={undefined}
+            media={() => undefined}
+            onOpenLink={onOpenLink}
+            canOpenLink={(target) => target === "buzz://target"}
+            day={false}
+            retry={undefined}
+            extensions={{
+              tools: empty,
+              inline: empty,
+              actions: { snapshot: () => actions, subscribe: () => () => {} },
+            }}
+          />
+        </div>
+      </MessageContextMenus>,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "More message actions" }),
-    );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Remind" }));
-    expect(await screen.findByText("action dialog")).toBeInTheDocument();
-    swap([]);
-    expect(screen.queryByText("action dialog")).toBeNull();
-    swap([entry()]);
-    expect(screen.queryByText("action dialog")).toBeNull();
+    fireEvent.contextMenu(screen.getByText("Root"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open target" }));
+    expect(onOpenLink).toHaveBeenCalledWith("buzz://target", {
+      rootId: "thread",
+    });
   } finally {
     cleanup();
   }
@@ -2411,6 +3253,70 @@ it.each(["timeline", "thread", "continuation"] as const)(
       rerender(<MessageRow {...props} viewer={undefined} />);
       expect(container.querySelector("[data-viewer-message]")).toBeNull();
     } finally {
+      cleanup();
+    }
+  },
+);
+
+it.each(["timeline", "thread", "continuation"] as const)(
+  "lists own %s rows unaligned in compact density, with the first grouped avatar",
+  async (layout) => {
+    const props = {
+      layout,
+      compactAvatar: true,
+      row: { ...row, authorId: "ab".repeat(32) },
+      viewer: "ab".repeat(32),
+      profile: { name: "author" },
+      media: () => undefined,
+      onOpenLink: () => true,
+      canOpenLink: () => true,
+      day: false,
+      retry: undefined,
+    };
+    const root = document.documentElement;
+    root.dataset.messageDensity = "compact";
+    try {
+      // The first row of a group, which is the one a flat list gives an avatar.
+      const { container, rerender } = renderDom(
+        <MessageRow {...props} stackPrevious={false} stackNext />,
+      );
+      expect(container.querySelector("[data-own]")).toBeNull();
+      expect(container.querySelector("[data-viewer-message]")).toBeNull();
+      expect(container.querySelector(".buzz-avatar")).toHaveAttribute(
+        "data-size",
+        "default",
+      );
+      expect(
+        screen.getByRole("button", { name: "View author profile" }),
+      ).toBeInTheDocument();
+      rerender(<MessageRow {...props} stackPrevious />);
+      expect(
+        screen.queryByRole("button", { name: "View author profile" }),
+      ).toBeNull();
+      expect(container.querySelectorAll("time")).toHaveLength(1);
+      expect(
+        container.querySelector('time > [aria-hidden="true"]'),
+      ).toHaveTextContent(/\d+:\d+/);
+      // Choosing Default while mounted restores bubbles without a remount.
+      rerender(<MessageRow {...props} stackPrevious={false} />);
+      act(() => {
+        root.dataset.messageDensity = "default";
+      });
+      await waitFor(() =>
+        expect(
+          container.querySelector("[data-viewer-message]"),
+        ).toHaveTextContent("Root"),
+      );
+      expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+      expect(container.querySelector(".buzz-avatar")).toHaveAttribute(
+        "data-size",
+        "small",
+      );
+      expect(
+        screen.getByRole("button", { name: "View author profile" }),
+      ).toBeInTheDocument();
+    } finally {
+      delete root.dataset.messageDensity;
       cleanup();
     }
   },
@@ -2536,10 +3442,11 @@ it.each([true, false])(
   },
 );
 
-it.each(["", "Please review this.\n\n"])(
-  "places session cards outside the caption bubble and keeps message interactions (caption=%s)",
+it.each(["", "Please review "])(
+  "keeps chat links in their authored bubble with normal message interactions (caption=%s)",
   async (caption) => {
-    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)`;
+    const suffix = caption ? " before merge." : "";
+    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)${suffix}`;
     const reply = vi.fn(),
       thread = vi.fn(),
       open = vi.fn(() => true),
@@ -2564,23 +3471,16 @@ it.each(["", "Please review this.\n\n"])(
         />,
       );
       const card = screen.getByRole("link", {
-        name: "Open Chat: PR 45 fixes",
+        name: "Session: PR 45 fixes",
       });
       const bubble = container.querySelector("[class*=messageBubble]");
-      expect(card.closest("[data-solo-cards]")).not.toBeNull();
-      expect(card.closest("[class*=messageBubble]")).toBeNull();
-      if (caption) {
-        if (!bubble) throw new Error("Caption bubble missing");
-        expect(bubble).toHaveTextContent("Please review this.");
-        expect(
-          card.compareDocumentPosition(bubble) &
-            Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBeTruthy();
-      } else {
-        expect(bubble).toBeNull();
-        expect(container.querySelector("[data-bubble]")).toBeNull();
-        expect(container.querySelector("[data-own]")).toBeNull();
-      }
+      expect(card.closest("[data-solo-cards]")).toBeNull();
+      expect(card.closest("[class*=messageBubble]")).toBe(bubble);
+      expect(bubble).toHaveTextContent(
+        `${caption}Session: PR 45 fixes${suffix}`,
+      );
+      expect(container.querySelector("[data-bubble]")).not.toBeNull();
+      expect(container.querySelector("[data-own]")).not.toBeNull();
       expect(container.querySelectorAll("[data-message-id=root]")).toHaveLength(
         1,
       );
@@ -2604,7 +3504,7 @@ it.each(["", "Please review this.\n\n"])(
   },
 );
 
-it("keeps the timestamp seek action beside a detached session card", () => {
+it("keeps the timestamp seek action beside an inline chat link", () => {
   const seek = vi.fn();
   try {
     renderDom(
@@ -2625,13 +3525,117 @@ it("keeps the timestamp seek action beside a detached session card", () => {
     expect(seek).toHaveBeenCalledWith(42);
     expect(
       screen
-        .getByRole("link", { name: "Open Chat: Fix" })
+        .getByRole("link", { name: "Session: Fix" })
         .closest("[class*=messageBubble]"),
-    ).toBeNull();
+    ).not.toBeNull();
   } finally {
     cleanup();
   }
 });
+
+it("marks remote activity steps and animates only while active", () => {
+  const subscribe = () => () => {};
+  const profiles = new Map();
+  const choices = {
+    identities: [{ pubkey: row.authorId, execution: "remote" }],
+  };
+  const session = {
+    viewer: "owner",
+    channels: { list: () => listed, subscribeList: subscribe },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe },
+    agentChoices: { snapshot: () => choices, subscribe },
+  } as unknown as RelaySession;
+  const props = {
+    row: { ...row, audience: "agents" as const, replyCount: 0 },
+    profile: { name: "Agent" },
+    session,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    recordedActivity: {
+      requestId: row.id,
+      active: true,
+      ownsLive: false,
+      container: "standalone" as const,
+    },
+  };
+  const view = renderDom(<MessageRow {...props} />);
+  try {
+    const trigger = screen.getByRole("button", { name: "Agent: Root" });
+    const cloud = () => trigger.querySelector(".tabler-icon-cloud");
+    expect(cloud()).toHaveAttribute("data-active", "true");
+    expect(cloud()).toHaveAttribute("aria-hidden", "true");
+    expect(trigger).not.toHaveTextContent("Remote");
+    view.rerender(
+      <MessageRow
+        {...props}
+        recordedActivity={{ ...props.recordedActivity, active: false }}
+      />,
+    );
+    expect(cloud()).not.toBeNull();
+    expect(cloud()).not.toHaveAttribute("data-active");
+    fireEvent.click(trigger);
+    expect(cloud()).toBeNull();
+    fireEvent.click(trigger);
+    expect(cloud()).not.toBeNull();
+    view.rerender(<MessageRow {...props} viewer="someone-else" />);
+    expect(cloud()).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it("identifies the author on each activity summary in a message group", () => {
+  const props = {
+    row: { ...row, audience: "agents" as const },
+    profile: { name: "Activity author" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const { rerender } = renderDom(<MessageRow {...props} stackNext />);
+    expect(screen.getByTitle("Activity author")).toBeVisible();
+    rerender(<MessageRow {...props} stackPrevious />);
+    expect(screen.getByTitle("Activity author")).toBeVisible();
+  } finally {
+    cleanup();
+  }
+});
+
+it.each([280, 281])(
+  "caps activity previews at 280 characters (%s input)",
+  (length) => {
+    const content = "🙂".repeat(length);
+    try {
+      renderDom(
+        <MessageRow
+          row={{ ...row, audience: "agents", content }}
+          profile={{ name: "author" }}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      const preview = length === 280 ? content : `${"🙂".repeat(279)}…`;
+      const trigger = screen.getByRole("button", {
+        name: `author: ${preview}`,
+      });
+      expect(trigger).toHaveTextContent(preview);
+      fireEvent.click(trigger);
+      expect(screen.getByText(content)).toBeVisible();
+      expect(trigger).not.toHaveTextContent(preview);
+      fireEvent.click(trigger);
+      expect(trigger).toHaveTextContent(preview);
+    } finally {
+      cleanup();
+    }
+  },
+);
 
 it("shows a message for agents as one line from its author to whom it addresses", () => {
   const agent = keypair();
@@ -2676,43 +3680,18 @@ it("shows a message for agents as one line from its author to whom it addresses"
       name: "Morgarita to Rivet: **run** the suite…",
     });
     expect(line).toHaveAttribute("aria-expanded", "false");
-    const timestamp = line.parentElement?.querySelector("time");
-    const timestampSlot = timestamp?.parentElement;
-    expect(timestamp).toBeVisible();
-    expect(
-      screen.getByText(/(?:1969|1970) at /, {
-        selector: 'time > span[aria-hidden="true"]',
-      }),
-    ).toBeVisible();
+    expect(line.parentElement?.querySelector("time")).toBeNull();
     // Reveal focuses the scroll anchor with tabIndex -1; on the button, that
     // would take the only toggle out of the Tab order.
     expect(line).not.toHaveAttribute("data-message-id");
     expect(line.parentElement).toHaveAttribute("data-message-id");
     expect(screen.queryByText(/Then report back/)).toBeNull();
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     fireEvent.pointerEnter(line);
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     fireEvent.click(line);
     expect(line).toHaveAttribute("aria-expanded", "true");
-    // Expanding preserves the timestamp node and its trailing slot, rather
-    // than remounting it above the body and moving it to the opposite edge.
-    expect(
-      line.parentElement?.querySelectorAll("time:not(.sr-only)"),
-    ).toHaveLength(1);
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
-    expect(timestamp?.parentElement).toBe(timestampSlot);
-    expect(line.parentElement?.lastElementChild).toBe(timestampSlot);
-    expect(
-      screen.getByText(/(?:1969|1970) at /, {
-        selector: 'time > span[aria-hidden="true"]',
-      }),
-    ).toBeVisible();
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     expect(
       screen.queryByRole("button", { name: "View Morgarita profile" }),
     ).toBeNull();
@@ -2721,13 +3700,9 @@ it("shows a message for agents as one line from its author to whom it addresses"
     expect(expanded?.querySelector('[class*="messageBubble"]')).toBeNull();
     expect(expanded?.querySelector("[data-own]")).toBeNull();
 
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     fireEvent.pointerEnter(expanded ?? line);
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     // Base UI binds the trigger to its panel. One stable message anchor stays
     // outside the animated content, including while that content is retiring.
     const panelId = line.getAttribute("aria-controls");
@@ -2746,9 +3721,7 @@ it("shows a message for agents as one line from its author to whom it addresses"
     // Anywhere in the open box folds it back.
     fireEvent.click(screen.getByText(/Then report back/));
     expect(line).toHaveAttribute("aria-expanded", "false");
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
   } finally {
     cleanup();
   }
@@ -2883,7 +3856,7 @@ it.each(["available", "human", "profiles disabled", "retired"])(
         retired = mode === "retired";
         fireEvent.click(item);
         if (retired) expect(open).not.toHaveBeenCalled();
-        else expect(open).toHaveBeenCalledWith(target);
+        else expect(open).toHaveBeenCalledWith(target, { rootId: row.id });
       } else
         expect(
           screen.queryByRole("menuitem", { name: "View activity" }),
@@ -2894,18 +3867,201 @@ it.each(["available", "human", "profiles disabled", "retired"])(
   },
 );
 
+it("opens an agent reply's activity at the turn of the message it answers", async () => {
+  const author = "ab".repeat(32);
+  const target = profileActivityViewTarget(author) as string;
+  const open = vi.fn(() => true);
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          id: "reply",
+          authorId: author,
+          agentEnvelope: true,
+          threadRootId: "thread",
+          request: "prompt",
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "View activity" }),
+    );
+    expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "thread" });
+    const opening = claimProfileTranscript(target) as number;
+    expect(claimTranscriptFocus(opening)).toEqual(["reply", "prompt"]);
+  } finally {
+    cleanup();
+  }
+});
+
+it("offers the viewer's own message the activity of each agent it names", async () => {
+  const viewer = "cd".repeat(32);
+  const first = "ab".repeat(32);
+  const second = "ef".repeat(32);
+  const person = "12".repeat(32);
+  const open = vi.fn(() => true);
+  const render = (
+    mentions: string[],
+    authorId = viewer,
+    channel?: { channelType: "dm"; members: string[] },
+  ) => {
+    const list = {
+      channels: channel ? [{ id: row.channelId, ...channel }] : [],
+      status: "ready",
+    };
+    return renderDom(
+      <MessageRow
+        row={{ ...row, id: "prompt", authorId, mentions }}
+        profile={undefined}
+        viewer={viewer}
+        agentPubkeys={new Set([first, second])}
+        participantProfiles={
+          new Map([[first, { name: "Carl", isAgent: true }]])
+        }
+        references={
+          {
+            channels: { list: () => list, subscribeList: () => () => {} },
+          } as unknown as RelaySession
+        }
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => true}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  };
+  const menu = async () => {
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    await screen.findByRole("menu");
+  };
+  const activityItems = () =>
+    screen
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent)
+      .filter((text) => text?.includes("activity"));
+  try {
+    // One agent: the item says whose activity it opens.
+    render([first, person]);
+    await menu();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "View Carl’s activity" }),
+    );
+    const target = profileActivityViewTarget(first) as string;
+    expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "prompt" });
+    expect(
+      claimTranscriptFocus(claimProfileTranscript(target) as number),
+    ).toEqual(["prompt"]);
+    cleanup();
+
+    // An agent without a name is called Agent, not a key fragment.
+    render([second]);
+    await menu();
+    expect(activityItems()).toEqual(["View Agent’s activity"]);
+    cleanup();
+
+    // Several agents share one item, listing them by name in its submenu.
+    open.mockClear();
+    render([first, second]);
+    await menu();
+    expect(activityItems()).toEqual(["View activity"]);
+    const trigger = screen.getByRole("menuitem", { name: "View activity" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "ArrowRight" });
+    const agents = await screen.findByRole("menu", { name: "View activity" });
+    expect(
+      within(agents)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Carl", "Agent"]);
+    fireEvent.click(within(agents).getByRole("menuitem", { name: "Agent" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      profileActivityViewTarget(second),
+      { rootId: "prompt" },
+    );
+    cleanup();
+
+    // A one-to-one DM wakes its agent without a mention.
+    render([], viewer, { channelType: "dm", members: [viewer, first] });
+    await menu();
+    expect(activityItems()).toEqual(["View Carl’s activity"]);
+    cleanup();
+
+    // Someone else's message, or one naming no agent, has no activity; nor
+    // does a group DM's unnamed agent.
+    for (const [mentions, author, channel] of [
+      [[first], person, undefined],
+      [[person], viewer, undefined],
+      [[], viewer, { channelType: "dm", members: [viewer, first, person] }],
+    ] as const) {
+      render(
+        [...mentions],
+        author,
+        channel && { ...channel, members: [...channel.members] },
+      );
+      await menu();
+      expect(
+        screen.queryByRole("menuitem", { name: /activity/ }),
+      ).not.toBeInTheDocument();
+      cleanup();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 it("keeps agent and human emoji reactions ordinary, without treating them as activity", () => {
   const agent = { id: "agent-reaction", authorId: "agent" };
+  const repeatedAgent = { id: "agent-reaction-repeat", authorId: "agent" };
   const human = { id: "human-reaction", authorId: "human" };
+  const firstCustomUrl = "https://emoji.example/party-one.png";
+  const secondCustomUrl = "https://emoji.example/party-two.png";
   const reactions = [
-    { content: "👀", events: [agent, human] },
+    { content: "👀", events: [agent, human, repeatedAgent] },
     { content: "💬", events: [agent] },
     { content: "✅", events: [agent] },
+    {
+      content: ":party:",
+      emoji: { shortcode: "party", url: firstCustomUrl },
+      events: [agent, human],
+    },
+    {
+      content: ":party:",
+      emoji: { shortcode: "party", url: secondCustomUrl },
+      events: [agent],
+    },
+    {
+      content: ":empty:",
+      emoji: { shortcode: "empty", url: "https://emoji.example/empty.png" },
+      events: [],
+    },
   ];
+  const writes = { react: vi.fn(), remove: vi.fn() };
+  const references = {
+    channels: {
+      list: () => ({ status: "ready", channels: [] }),
+      subscribeList: () => () => {},
+    },
+    messages: writes,
+  } as unknown as RelaySession;
   try {
     const view = renderDom(
       <MessageRow
         row={{ ...row, reactions }}
+        references={references}
         profile={undefined}
         media={() => undefined}
         onOpenLink={() => false}
@@ -2917,10 +4073,55 @@ it("keeps agent and human emoji reactions ordinary, without treating them as act
         }
       />,
     );
-    expect(view.getAllByText("👀", { exact: true })).toHaveLength(1);
-    expect(view.getByText("👀", { exact: true }).textContent).toBe("👀2");
-    expect(view.getAllByText("💬", { exact: true })).toHaveLength(1);
-    expect(view.getAllByText("✅", { exact: true })).toHaveLength(1);
+    const reactionGroup = view.getByRole("group", { name: "Reactions" });
+    expect(reactionGroup).toHaveAttribute("role", "group");
+    expect(reactionGroup).toHaveAccessibleName("Reactions");
+    expect(reactionGroup).toHaveAttribute(
+      "data-copy-text",
+      "👀 2, 💬 1, ✅ 1, :party: 2, :party: 1",
+    );
+    const badges = reactionGroup.querySelectorAll<HTMLElement>(
+      ":scope > [data-reaction]",
+    );
+    expect(badges).toHaveLength(5);
+    const firstBadge = badges.item(0);
+    if (!firstBadge) throw new Error("Missing first reaction badge");
+    expect(
+      [...badges].map((badge) => badge.getAttribute("data-reaction")),
+    ).toEqual(["👀", "💬", "✅", ":party:", ":party:"]);
+    expect(
+      [...reactionGroup.querySelectorAll('[data-reaction=":party:"]')].map(
+        (badge) => badge.getAttribute("data-reaction-url"),
+      ),
+    ).toEqual([firstCustomUrl, secondCustomUrl]);
+    expect(
+      within(reactionGroup).getByRole("img", { name: "👀: 2 people" }),
+    ).toBeVisible();
+    expect(firstBadge).toHaveTextContent("2");
+    expect(
+      within(reactionGroup).getByRole("img", { name: "💬: 1 person" }),
+    ).toBeVisible();
+    expect(
+      within(reactionGroup).getAllByRole("img", {
+        name: ":party:: 2 people",
+      }),
+    ).toHaveLength(1);
+    expect(
+      within(reactionGroup).getAllByRole("img", {
+        name: ":party:: 1 person",
+      }),
+    ).toHaveLength(1);
+    expect(
+      reactionGroup.querySelector(':scope > [data-reaction=":empty:"]'),
+    ).toBeNull();
+    expect(
+      reactionGroup.querySelector(
+        "button, a[href], input, select, textarea, [tabindex]",
+      ),
+    ).toBeNull();
+    fireEvent.click(firstBadge);
+    expect(writes.react).not.toHaveBeenCalled();
+    expect(writes.remove).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("img", { name: "Other agent working" }),
     ).toBeNull();
@@ -3170,7 +4371,7 @@ it.each([0, 23])(
       });
       expect(summary).toHaveTextContent("1 failed");
       expect(summary).not.toHaveTextContent("View thread");
-      if (replyCount) expect(summary).toHaveTextContent("23 replies");
+      if (replyCount) expect(summary).not.toHaveTextContent("23 replies");
       expect(
         summary.querySelector('[data-thread-working] [data-state="working"]'),
       ).not.toBeNull();
@@ -3303,8 +4504,8 @@ it.each([
   {
     claim: "shot",
     fails: false,
-    card: false,
-    listed: ["notes.txt", "shot.png"],
+    card: true,
+    listed: ["notes.txt"],
     content: "[Session: PR 45 fixes](buzz://channel/session-id)",
   },
 ])(
@@ -3615,5 +4816,1082 @@ it("keeps a failed card's attachments listed under StrictMode", () => {
   } finally {
     view.unmount();
     error.mockRestore();
+  }
+});
+
+const listed = { channels: [], status: "ready" };
+
+it.each([
+  {
+    case: "signed owner",
+    forged: false,
+    viewer: undefined,
+    label: "Logan’s agent",
+  },
+  // The viewer's own agent omits the owner attribution.
+  { case: "viewer's agent", forged: false, viewer: "owner", label: undefined },
+  { case: "forged owner", forged: true, viewer: undefined, label: undefined },
+])(
+  "names an agent's owner from its signed profile ($case)",
+  async ({ forged, viewer, label }) => {
+    const agent = keypair();
+    const owner = keypair();
+    const signer = forged ? keypair() : owner;
+    const conditions = "";
+    const sig = bytesToHex(
+      schnorr.sign(
+        new Uint8Array(
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(
+              `nostr:agent-auth:${agent.pubkey}:${conditions}`,
+            ),
+          ),
+        ),
+        signer.secret,
+      ),
+    );
+    // Relay-read events carry signature proof; only those get an owner check.
+    const head = eventDto(
+      signed(agent, {
+        kind: 0,
+        content: JSON.stringify({ name: "Quinn" }),
+        tags: [["auth", owner.pubkey, conditions, sig]],
+      }),
+    );
+    const quinn: Profile = { name: "Quinn", isAgent: true };
+    const verifications = vi.mocked(attestedOwner);
+    verifications.mockClear();
+    // The owner's name arrives after verification, as a background load.
+    const read = vi.fn(async () => {
+      // Later than the render that requested it, so only a subscription shows it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return [profileEvent(owner, { name: "Logan" })];
+    });
+    const directory = createProfileDirectory({ read });
+    directory.accept([head]);
+    const subscribe = () => () => {};
+    const session = {
+      channels: { list: () => listed, subscribeList: subscribe },
+      messages: {},
+      profiles: directory.queries,
+    } as unknown as RelaySession;
+    const view = renderMessage({
+      row: { ...row, authorId: agent.pubkey },
+      profile: quinn,
+      // Timelines pass row-selected profiles, which never include the owner.
+      participantProfiles: new Map([[agent.pubkey, quinn]]),
+      session,
+      viewer: viewer === "owner" ? owner.pubkey : row.authorId,
+    });
+    try {
+      const byline = view.container.querySelector("strong")?.parentElement;
+      // The mention-chip agent mark sits beside the name either way.
+      expect(byline?.querySelector("svg")).not.toBeNull();
+      expect(verifications).toHaveBeenCalledWith(head);
+      // Barrier: the real signature check has returned its verdict.
+      await act(async () => {
+        await verifications.mock.results[0]?.value;
+      });
+      const ownerRead = [
+        [{ kinds: [0], authors: [owner.pubkey], limit: 500 }],
+        expect.objectContaining({ priority: "background" }),
+      ];
+      if (label) {
+        await waitFor(() =>
+          expect(view.container).toHaveTextContent(`Quinn· ${label}`),
+        );
+        expect(read).toHaveBeenCalledWith(...ownerRead);
+      } else if (viewer === "owner") {
+        await expect(verifications.mock.results[0]?.value).resolves.toBe(
+          owner.pubkey,
+        );
+        // Barrier: the owner's name has loaded, so a label would show now.
+        await waitFor(() =>
+          expect(directory.queries.snapshot().has(owner.pubkey)).toBe(true),
+        );
+        expect(view.container).not.toHaveTextContent("agent");
+      } else {
+        await expect(verifications.mock.results[0]?.value).resolves.toBe(
+          undefined,
+        );
+        expect(view.container).not.toHaveTextContent("agent");
+        expect(read).not.toHaveBeenCalled();
+      }
+    } finally {
+      view.unmount();
+      directory.dispose();
+    }
+  },
+);
+
+it.each(["timeline", "thread", "continuation"] as const)(
+  "shows a reactive remote byline hint only to the agent's owner in %s",
+  async (layout) => {
+    const authorId = "a".repeat(64);
+    const ownerId = "b".repeat(64);
+    const user = userEvent.setup();
+    const subscribe = () => () => {};
+    const listeners = new Set<() => void>();
+    const profiles = new Map();
+    let choices: {
+      identities: {
+        pubkey: string;
+        execution: "remote" | "local" | undefined;
+        runtime?: string;
+      }[];
+    } = { identities: [] };
+    const session = {
+      viewer: ownerId,
+      channels: { list: () => listed, subscribeList: subscribe },
+      messages: {},
+      profiles: { snapshot: () => profiles, subscribe },
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe(listener: () => void) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    } as unknown as RelaySession;
+    const props = {
+      layout,
+      row: { ...row, authorId, agentEnvelope: true as const, replyCount: 0 },
+      profile: { name: "Quinn" },
+      session,
+      stackPrevious: false,
+    };
+    const view = renderMessage(props);
+    const execution = (value?: "remote" | "local", runtime?: string) => {
+      act(() => {
+        choices = {
+          identities: [
+            {
+              pubkey: authorId,
+              execution: value,
+              ...(runtime ? { runtime } : {}),
+            },
+          ],
+        };
+        for (const listener of listeners) listener();
+      });
+    };
+    const rerender = (
+      patch: Partial<import("./MessageRow").MessageRowProps> = {},
+    ) =>
+      view.rerender(
+        <MessageRow
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+          {...props}
+          {...patch}
+        />,
+      );
+    try {
+      expect(screen.queryByText("Remote")).toBeNull();
+      execution("remote", "block.builderlab/builderlab");
+      const hint = screen.getByText("Remote");
+      expect(hint).toBeVisible();
+      expect(hint.closest("strong")).toBeNull();
+      expect(hint).toHaveAttribute("tabindex", "0");
+      await user.hover(hint);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Runs remotely on Builderlab",
+      );
+      await user.unhover(hint);
+      await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+      act(() => hint.focus());
+      await waitFor(() =>
+        expect(hint).toHaveAccessibleDescription(/Runs remotely on Builderlab/),
+      );
+      execution("remote", "another/provider");
+      expect(screen.getByRole("tooltip")).toHaveTextContent(
+        "Runs on a remote machine",
+      );
+      execution("local");
+      expect(screen.queryByText("Remote")).toBeNull();
+      execution();
+      expect(screen.queryByText("Remote")).toBeNull();
+      execution("remote");
+      rerender({ viewer: "c".repeat(64) });
+      expect(screen.queryByText("Remote")).toBeNull();
+      rerender({ stackPrevious: true });
+      expect(screen.queryByText("Remote")).toBeNull();
+      rerender({ row: { ...props.row, workflowOwnerId: ownerId } });
+      expect(screen.queryByText("Remote")).toBeNull();
+      rerender({ row: { ...row, authorId, replyCount: 0 } });
+      expect(screen.queryByText("Remote")).toBeNull();
+      rerender();
+      expect(screen.getByText("Remote")).toBeVisible();
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it("shows no agent mark or owner for a person", () => {
+  const event = vi.fn();
+  const subscribe = () => () => {};
+  const none = new Map();
+  const session = {
+    channels: { list: () => listed, subscribeList: subscribe },
+    messages: {},
+    profiles: { snapshot: () => none, subscribe, event, ensure: vi.fn() },
+  } as unknown as RelaySession;
+  const view = renderMessage({ session, profile: { name: "Ana" } });
+  try {
+    expect(
+      view.container
+        .querySelector("strong")
+        ?.parentElement?.querySelector("svg"),
+    ).toBeNull();
+    expect(event).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+  }
+});
+
+it("marks an edited body after its last line, and leaves an unedited one unmarked", () => {
+  const render = (content: string, edited: boolean) =>
+    renderDom(
+      <MessageRow
+        row={{ ...row, content, ...(edited ? { edited: true as const } : {}) }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  try {
+    render("First\n\nHi how are ya.", true);
+    const inline = screen.getByText("(edited)");
+    expect(inline.parentElement?.tagName).toBe("P");
+    expect(inline.parentElement).toHaveTextContent("Hi how are ya. (edited)");
+    expect(inline.parentElement?.nextElementSibling).toBeNull();
+    cleanup();
+
+    render("Intro\n\n```\ncode\n```", true);
+    const block = screen.getByText("(edited)");
+    expect(block.previousElementSibling?.tagName).toBe("PRE");
+    expect(block.closest("pre, p")).toBeNull();
+    cleanup();
+
+    render("See the note.[^1]\n\n[^1]: Footnote text.", true);
+    expect(screen.getByText("(edited)").previousElementSibling?.tagName).toBe(
+      "SECTION",
+    );
+    cleanup();
+
+    render("Read [the doc][d].\n\n[d]: https://example.com", true);
+    expect(screen.getByText("(edited)").parentElement?.tagName).toBe("P");
+    cleanup();
+
+    render("- one\n- two", true);
+    const item = screen.getByText("(edited)").parentElement;
+    expect(item?.tagName).toBe("LI");
+    expect(item).toHaveTextContent("two (edited)");
+    cleanup();
+
+    render("> quoted line", true);
+    const quoted = screen.getByText("(edited)").parentElement;
+    expect(quoted?.tagName).toBe("P");
+    expect(quoted?.parentElement?.tagName).toBe("BLOCKQUOTE");
+    cleanup();
+
+    // The unboxed table styling selects `table:first-child + .edited:last-child`.
+    render("| Day | Room |\n| --- | --- |\n| Thu | 4B |", true);
+    const afterTable = screen.getByText("(edited)");
+    expect(afterTable.previousElementSibling?.tagName).toBe("TABLE");
+    expect(afterTable.parentElement?.firstElementChild?.tagName).toBe("TABLE");
+    expect(afterTable.nextElementSibling).toBeNull();
+    cleanup();
+
+    render("🎉", true);
+    expect(screen.getByText("(edited)").parentElement).toHaveAttribute(
+      "data-single-emoji",
+    );
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "",
+          edited: true,
+          attachments: [
+            { url: "https://example.com/notes.txt", kind: "file" as const },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("(edited)").previousElementSibling).toHaveAttribute(
+      "data-message-attachments",
+    );
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "+changed",
+          edited: true,
+          diff: { filePath: "a.ts", truncated: false },
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("(edited)").closest("pre")).toBeNull();
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{ ...row, content: "Done", edited: true, audience: "agents" }}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    const line = screen.getByRole("button", {
+      name: "Morgarita: Done (edited)",
+    });
+    expect(within(line).getByText("(edited)")).toBeInTheDocument();
+    fireEvent.click(line);
+    expect(screen.getAllByText("(edited)")).toHaveLength(1);
+    expect(line).not.toContainElement(screen.getByText("(edited)"));
+    cleanup();
+
+    const none: never[] = [];
+    const cards = [
+      {
+        id: "card",
+        title: "Card",
+        key: "fixture.card:card",
+        pluginId: "fixture.card",
+        revision: "one",
+        matches: () => true,
+        component: () => <p>Plugin card</p>,
+      },
+    ];
+    renderDom(
+      <MessageRow
+        row={{ ...row, content: "Card body", edited: true }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          messages: { snapshot: () => cards, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    // Inside the card's bubble, so above any reactions it holds.
+    expect(screen.getByText("(edited)").parentElement).toBe(
+      screen.getByText("Plugin card").closest("[data-message-action-anchor]"),
+    );
+    cleanup();
+
+    render("Hi how are ya.", false);
+    expect(screen.queryByText("(edited)")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it.each([
+  "agent",
+  "failed",
+  "failed publishing",
+  "stopped",
+  "superseded",
+  "human",
+  "disabled",
+  "retired",
+  "coordination",
+  "working",
+  "waiting",
+  "unknown",
+  "helper working",
+  "publishing",
+  "unlinked",
+])("opens the message conversation transcript from its byline: %s", (mode) => {
+  const author = "ab".repeat(32);
+  const target = profileActivityViewTarget(author);
+  if (!target) throw new Error("Invalid fixture author");
+  const rootId = "cd".repeat(32);
+  const open = vi.fn(() => true);
+  let available = mode !== "disabled";
+  const owner = createRelaySession(null);
+  const listeners = new Set<() => void>();
+  const request = "request";
+  const local = {
+    scope: "test",
+    agent: author,
+    channelId: row.channelId,
+    messageId: request,
+    threadRootId: rootId,
+    startedAt: 1,
+    state: mode === "waiting" ? ("waiting" as const) : ("working" as const),
+    publishedMessageIds: mode === "unlinked" ? [] : [row.id],
+  };
+  let snapshot = {
+    status: "listening",
+    records: [],
+    turns: [],
+    trimmed: 0,
+    typing: [],
+    local: [local],
+  } as ReturnType<RelaySession["agentActivity"]["snapshot"]>;
+  const session = {
+    ...owner.session,
+    agentActivity: {
+      ...owner.session.agentActivity,
+      snapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+  };
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          authorId: author,
+          threadRootId: rootId,
+          ...(mode !== "human" ? { agentEnvelope: true as const } : {}),
+          ...(mode === "coordination" ? { audience: "agents" as const } : {}),
+        }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => available}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /^View activity$/ }),
+    ).not.toBeInTheDocument();
+    act(() => {
+      if (!["working", "waiting"].includes(mode))
+        snapshot = {
+          ...snapshot,
+          local:
+            mode === "unknown"
+              ? []
+              : [
+                  {
+                    ...local,
+                    state: mode.startsWith("failed")
+                      ? "error"
+                      : mode === "stopped" || mode === "superseded"
+                        ? mode
+                        : "done",
+                    ...(mode.includes("publishing") ? { publishing: 1 } : {}),
+                  },
+                  ...(mode === "helper working"
+                    ? [{ ...local, agent: "ef".repeat(32) }]
+                    : []),
+                ],
+        };
+      for (const listener of listeners) listener();
+    });
+    const link = screen.queryByRole("button", {
+      name: /^View activity$/,
+    });
+    if (
+      [
+        "human",
+        "disabled",
+        "coordination",
+        "working",
+        "waiting",
+        "unknown",
+        "helper working",
+        "publishing",
+        "failed publishing",
+        "unlinked",
+      ].includes(mode)
+    ) {
+      expect(link).not.toBeInTheDocument();
+      return;
+    }
+    if (!link) throw new Error("Missing byline activity link");
+    expect(link).toBeVisible();
+    expect(
+      link.parentElement?.parentElement?.querySelector("time"),
+    ).not.toBeNull();
+    available = mode !== "retired";
+    fireEvent.click(link);
+    if (mode === "retired") expect(open).not.toHaveBeenCalled();
+    else {
+      expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId });
+      expect(profileTranscriptRequest(target)).toBeDefined();
+    }
+  } finally {
+    cleanup();
+    claimProfileTranscript(target);
+    owner.dispose();
+  }
+});
+
+it.each([false, true])(
+  "keeps completion evidence after notification expiry (nested=%s)",
+  (nested) => {
+    vi.useFakeTimers();
+    const local = createLocalAgentActivity();
+    const owner = createRelaySession(null);
+    const author = "ab".repeat(32);
+    const rootId = "cd".repeat(32);
+    const input = {
+      scope: "test",
+      agent: author,
+      channelId: row.channelId,
+      threadRootId: rootId,
+    };
+    local.begin({ ...input, messageId: rootId }).finish({ ok: true });
+    const work = local.begin({ ...input, messageId: "actual-request" });
+    work.started();
+    work.reply(row.id);
+    let snapshot = {
+      ...owner.session.agentActivity.snapshot(),
+      local: local.reader.work(),
+    };
+    const unsubscribe = local.reader.subscribeWork(() => {
+      snapshot = { ...snapshot, local: local.reader.work() };
+    });
+    const session = {
+      ...owner.session,
+      agentActivity: {
+        ...owner.session.agentActivity,
+        snapshot: () => snapshot,
+        subscribe: local.reader.subscribeWork,
+      },
+    };
+    try {
+      const show = () => (
+        <MessageRow
+          row={{
+            ...row,
+            authorId: author,
+            agentEnvelope: true,
+            threadRootId: rootId,
+            ...(nested ? { replyParentId: rootId } : {}),
+          }}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => true}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />
+      );
+      renderDom(show());
+      act(() => vi.advanceTimersByTime(REPLY_CORRELATION_MS + 1));
+      expect(
+        screen.queryByRole("button", { name: /^View activity$/ }),
+      ).not.toBeInTheDocument();
+      act(() => work.finish({ ok: true }));
+      expect(
+        screen.getByRole("button", { name: /^View activity$/ }),
+      ).toBeVisible();
+      cleanup();
+      renderDom(show());
+      expect(
+        screen.getByRole("button", { name: /^View activity$/ }),
+      ).toBeVisible();
+      let retry: ReturnType<typeof local.begin>;
+      act(() => {
+        retry = local.begin({ ...input, messageId: "actual-request" });
+      });
+      expect(
+        screen.queryByRole("button", { name: /^View activity$/ }),
+      ).not.toBeInTheDocument();
+      act(() => retry.finish({ ok: true }));
+      expect(
+        screen.getByRole("button", { name: /^View activity$/ }),
+      ).toBeVisible();
+    } finally {
+      cleanup();
+      unsubscribe();
+      owner.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("notes a thread's unsent reply on its summary until the thread's composer shows it", () => {
+  const scope = `https://demo.invalid:${"a".repeat(64)}`;
+  // Drafts are keyed by a real event id.
+  const root = { ...row, id: "d".repeat(64) };
+  const key = `draft:${root.channelId}:thread:${root.id}`;
+  const channels = { channels: [], status: "ready" };
+  const profiles = new Map();
+  const library = { identities: [] };
+  const typing: readonly never[] = [];
+  const session = {
+    scope,
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe: () => () => {} },
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  function Composer({ shown }: { shown: boolean }) {
+    useShowingDraft(scope, key, shown);
+    return null;
+  }
+  let view = renderMessage({
+    session,
+    row: { ...root, replyCount: 0 },
+    onOpenThread: () => {},
+  });
+  try {
+    // A message nobody replied to has no line until a reply is drafted.
+    expect(screen.queryByRole("button", { name: /^View thread/ })).toBeNull();
+    act(() => {
+      writeView(scope, key, { text: "Half a reply", recipients: [] });
+    });
+    const first = screen.getByRole("button", {
+      name: "View thread: Draft reply",
+    });
+    expect(first).toHaveTextContent("Draft reply");
+    expect(first).not.toHaveTextContent("View thread");
+    view.unmount();
+    view = renderMessage({ session, row: root, onOpenThread: () => {} });
+    const summary = screen.getByRole("button", {
+      name: "View thread: 23 replies. Draft reply",
+    });
+    expect(summary.querySelector("[data-thread-draft]")).toHaveTextContent(
+      "·Draft",
+    );
+    // A retained tab's composer is mounted but out of sight.
+    const open = renderDom(<Composer shown={false} />);
+    expect(summary.querySelector("[data-thread-draft]")).not.toBeNull();
+    open.rerender(<Composer shown />);
+    expect(
+      screen.getByRole("button", { name: "View thread: 23 replies" }),
+    ).toBe(summary);
+    expect(summary.querySelector("[data-thread-draft]")).toBeNull();
+    open.unmount();
+    expect(summary.querySelector("[data-thread-draft]")).not.toBeNull();
+    act(() => clearView(scope, key));
+    expect(summary.querySelector("[data-thread-draft]")).toBeNull();
+  } finally {
+    view.unmount();
+    localStorage.clear();
+  }
+});
+
+it("words a thread's draft by its replies even while an activity line hides their count", () => {
+  const summary = (replied: boolean) =>
+    renderDom(
+      <ReplySummary
+        count={0}
+        hideEmptyLabel
+        draft
+        replied={replied}
+        participants={[]}
+        resolveName={(id) => id}
+        media={() => undefined}
+      />,
+    );
+  const busy = summary(true);
+  expect(busy.container.querySelector("[data-thread-draft]")).toHaveTextContent(
+    /^·Draft$/,
+  );
+  busy.unmount();
+  const fresh = summary(false);
+  expect(
+    fresh.container.querySelector("[data-thread-draft]"),
+  ).toHaveTextContent(/^Draft reply$/);
+  fresh.unmount();
+});
+
+it.each(["public", "agents"] as const)(
+  "marks the active thread's %s root as current and clears it on deselection",
+  (audience) => {
+    const props = {
+      row:
+        audience === "agents" ? { ...row, audience: "agents" as const } : row,
+      profile: { name: "Author" },
+      media: () => undefined,
+      onOpenLink: () => false,
+      day: false,
+      retry: undefined,
+    };
+    try {
+      const view = renderDom(<MessageRow {...props} threadOpen />);
+      const root = view.container.querySelector('[data-message-id="root"]');
+      expect(root).toHaveAttribute("aria-current", "true");
+      expect(
+        view.container.querySelectorAll('[aria-current="true"]'),
+      ).toHaveLength(1);
+      const surface = root?.matches("[data-highlight-surface]")
+        ? root
+        : root?.querySelector("[data-highlight-surface]");
+      expect(surface).toHaveAttribute("data-thread-open");
+      if (audience === "agents") {
+        const toggle = screen.getByRole("button", { name: "Author: Root" });
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        fireEvent.click(toggle);
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(root).toHaveAttribute("aria-current", "true");
+        expect(surface).toHaveAttribute("data-thread-open");
+        expect(
+          view.container.querySelectorAll('[aria-current="true"]'),
+        ).toHaveLength(1);
+      }
+      view.rerender(<MessageRow {...props} threadOpen={false} />);
+      expect(root).not.toHaveAttribute("aria-current");
+      expect(surface).not.toHaveAttribute("data-thread-open");
+    } finally {
+      cleanup();
+    }
+  },
+);
+
+it.each([true, false])(
+  "renders one timestamp for a timed forward with seeking=%s",
+  (canSeek) => {
+    const seek = vi.fn();
+    const note = "⏱ 0:21 — **Review** this cut";
+    const snapshot = {
+      id: "a".repeat(64),
+      channelId: "source",
+      authorId: "b".repeat(64),
+      authorName: "Original Author",
+      createdAt: 1,
+      content: "Copied content",
+    };
+    const view = renderMessage({
+      row: {
+        ...row,
+        content:
+          note +
+          "\n\nForwarded message from Original Author\n\n> Copied content",
+        forward: { note, snapshot },
+      },
+      ...(canSeek ? { onMediaTime: seek } : {}),
+    });
+    try {
+      expect(screen.getByText("Review").tagName).toBe("STRONG");
+      expect(view.container).toHaveTextContent("Review this cut");
+      expect(view.container).toHaveTextContent("Copied content");
+      expect(view.container.textContent?.match(/0:21/g)).toHaveLength(1);
+      expect(view.container).not.toHaveTextContent("⏱");
+      if (canSeek) {
+        fireEvent.click(screen.getByRole("button", { name: "0:21" }));
+        expect(seek).toHaveBeenCalledExactlyOnceWith(21);
+      } else {
+        expect(screen.queryByRole("button", { name: "0:21" })).toBeNull();
+        expect(screen.getByText("0:21").tagName).toBe("SPAN");
+      }
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it.each([true, false])(
+  "keeps an emoji forward note in a normal bubble with timestamp=%s",
+  (timed) => {
+    const note = timed ? "⏱ 0:21 — 👍" : "👍";
+    const snapshot = {
+      id: "a".repeat(64),
+      channelId: "source",
+      authorId: "b".repeat(64),
+      authorName: "Original Author",
+      createdAt: 1,
+      content: "Copied content",
+    };
+    const view = renderMessage({
+      row: {
+        ...row,
+        content:
+          note +
+          "\n\nForwarded message from Original Author\n\n> Copied content",
+        forward: { note, snapshot },
+      },
+    });
+    try {
+      expect(
+        view.container.querySelector('[data-emoji-only="true"]'),
+      ).toBeNull();
+      expect(screen.getAllByText("Copied content")).toHaveLength(1);
+      expect(view.container).toHaveTextContent("👍");
+      expect(view.container).not.toHaveTextContent("⏱");
+      if (timed)
+        expect(view.container.textContent?.match(/0:21/g)).toHaveLength(1);
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it("opens the thread when a file drag rests on its summary, unless already open", () => {
+  vi.useFakeTimers();
+  try {
+    const onOpenThread = vi.fn();
+    // jsdom drag events carry no pointer position, and each drag here comes
+    // in at its own point.
+    let clientX = 1;
+    const drag = (
+      kind: "dragEnter" | "dragOver" | "dragLeave",
+      target: HTMLElement,
+    ) => {
+      const event = createEvent[kind](target, {
+        dataTransfer: { types: ["Files"] },
+      });
+      Object.defineProperty(event, "clientX", { value: clientX });
+      fireEvent(target, event);
+    };
+    // The delay ends, and the target opens on the drag's next dragover.
+    const rest = (summary: HTMLElement) => {
+      vi.advanceTimersByTime(SPRING_LOAD_DELAY_MS);
+      drag("dragOver", summary);
+    };
+    const props = {
+      row,
+      profile: undefined,
+      media: () => undefined,
+      onOpenLink: () => false,
+      day: false,
+      retry: undefined,
+      onOpenThread,
+    };
+    const view = renderDom(<MessageRow {...props} />);
+    const summary = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    drag("dragEnter", summary);
+    vi.advanceTimersByTime(SPRING_LOAD_GRACE_MS);
+    expect(summary).toHaveAttribute("data-spring-loaded", "on");
+    rest(summary);
+    expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("root", "root");
+    drag("dragLeave", summary);
+    clientX = 2;
+    view.rerender(<MessageRow {...props} threadOpen />);
+    const opened = screen.getByRole("button", {
+      name: "View thread: 23 replies",
+    });
+    drag("dragEnter", opened);
+    expect(opened).not.toHaveAttribute("data-spring-loaded");
+    rest(opened);
+    expect(onOpenThread).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
+
+it("renames a mounted relayed line's date when the time zone changes", async () => {
+  const NativeFormat = Intl.DateTimeFormat;
+  let timeZone = "Europe/London";
+  function dateTimeFormat(
+    locale?: Intl.LocalesArgument,
+    options?: Intl.DateTimeFormatOptions,
+  ) {
+    return new NativeFormat(locale ?? "en-US", { timeZone, ...options });
+  }
+  vi.spyOn(Intl, "DateTimeFormat").mockImplementation(dateTimeFormat);
+  const subscribe = () => () => {};
+  const profiles = new Map([["zerk", { name: "Zerk", isAgent: true }]]);
+  const session = {
+    viewer: "owner",
+    channels: {
+      list: () => ({ status: "ready", channels: [] }),
+      subscribeList: subscribe,
+    },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe },
+  } as unknown as RelaySession;
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          authorId: "owner",
+          replyCount: 0,
+          content: "Rebase on main",
+          relayedFrom: { agent: "zerk", verified: true },
+        }}
+        profile={{ name: "Gil" }}
+        session={session}
+        viewer="owner"
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    const name = () =>
+      screen
+        .getByRole("button", { name: /^Zerk: Rebase on main/ })
+        .getAttribute("aria-label");
+    expect(name()).toMatch(/GMT|BST/);
+    await Promise.resolve();
+    timeZone = "America/Los_Angeles";
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(name()).toMatch(/PDT|PST/);
+  } finally {
+    cleanup();
+    vi.restoreAllMocks();
+  }
+});
+
+it("draws a verified relayed message as its agent's quiet line, never the signer's", () => {
+  const subscribe = () => () => {};
+  const profiles = new Map([
+    ["zerk", { name: "Zerk", isAgent: true }],
+    ["juno", { name: "Juno", isAgent: true }],
+  ]);
+  const session = {
+    viewer: "owner",
+    channels: {
+      list: () => ({
+        status: "ready",
+        channels: [{ id: "source", name: "rebase", channelType: "stream" }],
+      }),
+      subscribeList: subscribe,
+    },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe },
+  } as unknown as RelaySession;
+  const relayed = (verified: boolean, channelId?: string) => ({
+    ...row,
+    authorId: "owner",
+    replyCount: 0,
+    reactions: [{ content: "👍", events: [{ id: "r1", authorId: "juno" }] }],
+    mentions: ["juno"],
+    content: "@Juno Relayed for Zerk\n\nRebase on main",
+    relayedFrom: {
+      agent: "zerk",
+      notice: "@Juno Relayed for Zerk",
+      verified,
+      ...(channelId ? { channelId } : {}),
+    },
+  });
+  const props = {
+    profile: { name: "Gil" },
+    session,
+    viewer: "owner",
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  const when = formatFullTimestamp(row.createdAt);
+  try {
+    const view = renderDom(
+      <MessageRow {...props} row={relayed(true, "source")} />,
+    );
+    const trigger = screen.getByRole("button", {
+      name: `Zerk from #rebase: Rebase on main, ${when}`,
+    });
+    expect(screen.queryByText(/Relayed for/)).toBeNull();
+    // The source chat stays a link on the line, above its button.
+    expect(screen.getByRole("link", { name: /rebase/ })).toBeVisible();
+    expect(view.container.querySelector("[data-viewer-message]")).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByText("Sent as you · to Juno")).toBeVisible();
+    expect(screen.getByText("Rebase on main")).toBeVisible();
+    expect(screen.queryByText(/Relayed for/)).toBeNull();
+    // The line carries no reactions row.
+    expect(view.container.querySelector("[data-message-reactions]")).toBeNull();
+    // A thread on the line stays in view while it is collapsed.
+    fireEvent.click(trigger);
+    view.rerender(
+      <MessageRow
+        {...props}
+        row={{ ...relayed(true, "source"), replyCount: 2 }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: `Zerk from #rebase: Rebase on main, 2 replies, ${when}`,
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("2 replies")).toBeVisible();
+    // A chat the reader is not in stays unnamed.
+    view.rerender(<MessageRow {...props} row={relayed(true, "elsewhere")} />);
+    expect(
+      screen.getByRole("button", { name: `Zerk: Rebase on main, ${when}` }),
+    ).toBeVisible();
+    // Unverified, it is the signer's ordinary message with its notice.
+    view.rerender(<MessageRow {...props} row={relayed(false, "source")} />);
+    expect(screen.getByText(/Relayed for Zerk/)).toBeVisible();
+    expect(
+      view.container.querySelector("[data-message-reactions]"),
+    ).not.toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it("reads a relayed line's date when Message timestamps hides its clock", () => {
+  setClockPreference({ messageTimestamps: "hide" });
+  const subscribe = () => () => {};
+  const profiles = new Map([["zerk", { name: "Zerk", isAgent: true }]]);
+  const list = { status: "ready", channels: [] };
+  const session = {
+    viewer: "owner",
+    channels: { list: () => list, subscribeList: subscribe },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe },
+  } as unknown as RelaySession;
+  const view = renderDom(
+    <MessageRow
+      row={{
+        ...row,
+        authorId: "owner",
+        replyCount: 0,
+        content: "Rebase on main",
+        relayedFrom: { agent: "zerk", verified: true },
+      }}
+      profile={{ name: "Gil" }}
+      session={session}
+      viewer="owner"
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  try {
+    expect(
+      screen.getByRole("button", {
+        name: `Zerk: Rebase on main, ${formatFullTimestamp(row.createdAt)}`,
+      }),
+    ).toBeVisible();
+    // No clock shows on the line.
+    expect(view.container.querySelector("time [aria-hidden]")).toBeNull();
+  } finally {
+    cleanup();
+    setClockPreference({ messageTimestamps: "show" });
   }
 });

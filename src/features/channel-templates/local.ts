@@ -2,7 +2,7 @@
 // teams a new channel starts with, and its starting Canvas. Creating a channel
 // from one sends ordinary channel setup, so the session owns applying it.
 import { useSyncExternalStore } from "react";
-import { CANVAS_BYTES } from "./model";
+import { TEMPLATE_CANVAS_BYTES } from "./model";
 
 export type ChannelTemplate = Readonly<{
   id: string;
@@ -85,8 +85,10 @@ export const channelTemplates = {
     canvas,
   }: ChannelTemplateChange): ChannelTemplate {
     if (!name.trim()) throw new Error("Name the template");
-    if (new TextEncoder().encode(canvas).length > CANVAS_BYTES)
-      throw new Error("Canvas is too large (24 KiB maximum)");
+    if (new TextEncoder().encode(canvas).length > TEMPLATE_CANVAS_BYTES)
+      throw new Error(
+        `Canvas is too large (${TEMPLATE_CANVAS_BYTES / 1024} KiB maximum)`,
+      );
     const saved = channelTemplates.snapshot();
     if (id && !saved.some((item) => item.id === id))
       throw new Error("No such template");
@@ -103,6 +105,21 @@ export const channelTemplates = {
         : [...saved, template],
     );
     return template;
+  },
+  /** Points every template on team `from` at team `to` instead. */
+  replaceTeam(from: string, to: string) {
+    const saved = channelTemplates.snapshot();
+    if (saved.some((item) => item.teams.includes(from)))
+      write(
+        saved.map((item) =>
+          Object.freeze({
+            ...item,
+            teams: Object.freeze([
+              ...new Set(item.teams.map((id) => (id === from ? to : id))),
+            ]),
+          }),
+        ),
+      );
   },
   remove(id: string) {
     write(channelTemplates.snapshot().filter((item) => item.id !== id));

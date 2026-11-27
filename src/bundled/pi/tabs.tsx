@@ -1,18 +1,32 @@
+import { sessionScope } from "../../features/agent-harness/session-scope";
 // Pi's New agent choices and agent settings. Providers, their keys and their
 // models are Pi's own: listed from it, and keys saved with its login.
 import {
   useEffect,
   useId,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { errorText } from "../../buzz-mcp/rpc";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
+import { PiStopped } from "./pi";
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
+import {
+  TranscriptPanel,
+  whenShown,
+} from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
-import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import { CompactionField } from "../../features/agents/Compaction";
+import { withCompactAt } from "../../features/agents/compact-at";
+import {
+  AgentSaveButton,
+  ClearModelOverrides,
+} from "../../features/agents/AgentSaveButton";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
+  ConversationName,
   OpenedConversation,
   useOpenedSession,
   useOpenTranscript,
@@ -33,6 +47,9 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { effortLabel } from "../claude-code/runtime";
 import {
@@ -59,6 +76,7 @@ const SCOPES = [
     options: [
       { value: "thread", label: "One conversation per thread" },
       { value: "channel", label: "One conversation per channel" },
+      { value: "community", label: "One conversation per community" },
     ],
   },
 ];
@@ -76,8 +94,10 @@ const providerIcon = (id: string | undefined) => {
   return Icon && <Icon size={18} aria-hidden="true" />;
 };
 const CONVERSATION_LIMIT = 30;
-const label = ({ channelId, name, root }: Place) =>
-  `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+const label = ({ channelId, name, root, community }: Place) =>
+  community
+    ? "Community session"
+    : `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 type Read<T> = (
   | { status: "loading"; value?: T }
   | { status: "ready"; value: T }
@@ -110,7 +130,12 @@ function useRead<T>(
         ? {}
         : { value: prior.value, scope };
     setState((prior) => ({ status: "loading", ...kept(prior) }));
-    read(abort.signal).then(
+    retryRead(
+      read,
+      abort.signal,
+      // The next request starts another host.
+      (error) => error instanceof PiStopped || isRetryableRead(error),
+    ).then(
       (value) => {
         if (!abort.signal.aborted) setState({ status: "ready", value, scope });
       },
@@ -144,7 +169,7 @@ const modelless = (
   defaults: Providers["defaults"] | undefined,
 ) => Boolean(defaults && !choice.model && !defaultModel(choice, defaults));
 /** The provider a choice runs on, once Pi's providers are known, when Buzz's
- * Pi doesn't have it: one a Pi package adds, which Buzz doesn't load. */
+ * Pi doesn't have it: not built in, and added by no Pi package Buzz loaded. */
 const unknownProvider = (choice: Choice, providers: Providers | undefined) => {
   const id = choice.provider || providers?.defaults.provider;
   return id && providers && !providers.providers.some((item) => item.id === id)
@@ -183,7 +208,16 @@ export function createTabs({
   runtime,
 }: Readonly<{
   setup: PiSetup;
-  runtime: Pick<PiRuntime, "places" | "working" | "transcript" | "subscribe">;
+  runtime: Pick<
+    PiRuntime,
+    | "places"
+    | "working"
+    | "transcript"
+    | "subscribe"
+    | "channelLabel"
+    | "readablePlaces"
+    | "subscribeChannels"
+  >;
 }>) {
   /** The provider, its key and its model, and a test that they answer. As
    * `rows` of the agent's settings, only the provider and model: the rest is
@@ -230,7 +264,7 @@ export function createTabs({
             ? { error: listing.error }
             : unknown
               ? {
-                  error: `Buzz can use only Pi's built-in providers, and ${unknown} isn't one. It may come from a Pi package. Choose another.`,
+                  error: `${unknown} isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it. Choose another.`,
                 }
               : listing.status === "loading" && !providers
                 ? { description: "Loading Pi's providers…" }
@@ -276,9 +310,8 @@ export function createTabs({
           models={models.value ?? []}
           loading={models.status === "loading"}
           value={value.model}
-          defaultLabel={
-            modelDefault ? `Pi default (${modelDefault})` : "Pi default"
-          }
+          defaultModel={modelDefault}
+          defaultLabel={modelDefault || "Pi default"}
           {...(models.status === "error"
             ? { description: `Could not list models: ${models.error}` }
             : missing && id && !unknown
@@ -523,6 +556,7 @@ export function createTabs({
   function CreateModel({
     config,
     onChange,
+    onReadyChange,
     disabled,
     modelAppearance,
   }: AgentCreateProps<Config>) {
@@ -543,6 +577,12 @@ export function createTabs({
     );
     const unknown = unknownProvider(current, providers);
     const fallback = defaultModel(current, providers?.defaults);
+    const ready =
+      listing.status === "ready" &&
+      !unknown &&
+      !!id.trim() &&
+      !!(current.model || fallback)?.trim();
+    useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const named = (model: string) =>
       models.value?.find((item) => item.id === model)?.label ?? model;
     const provider =
@@ -560,14 +600,14 @@ export function createTabs({
     const error =
       listing.status === "error"
         ? listing.error
-        : unknown && `${unknown} isn't built into Pi, so Buzz can't use it`;
+        : unknown && `Pi has no provider ${unknown}`;
     return (
       <>
         {/* The compact select recipe ellipsizes long model names in cards. */}
         <div className="buzz-select" data-variant="compact">
           <Button
             size="sm"
-            variant={modelAppearance === "subtle" ? "subtle" : "outline"}
+            variant={modelAppearance ?? "outline"}
             disabled={disabled}
             aria-label={`Model: ${label}`}
             aria-haspopup="dialog"
@@ -623,8 +663,7 @@ export function createTabs({
     );
   }
 
-  /** One conversation's turns, read on open, on Refresh, and when a turn
-   * there ends. A refresh keeps the last result until the new one arrives. */
+  /** One conversation's turns, kept current while Pi works. */
   function TranscriptView({
     agent,
     place,
@@ -634,49 +673,35 @@ export function createTabs({
     place: Place;
     working: boolean;
   }) {
-    const [read, refresh] = useRead(
-      (signal) => runtime.transcript(agent.pubkey, place, working, signal),
-      `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}\u0000${working}`,
-      `${agent.pubkey}\u0000${place.key}\u0000${place.conversation}`,
-    );
     return (
-      <div className="grid gap-4">
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            loading={read.status === "loading"}
-            onClick={refresh}
-          >
-            Refresh
-          </Button>
-        </div>
-        {read.status === "error" && (
-          <p role="alert" className="m-0">
-            Could not read the Pi conversation: {read.error}
-          </p>
-        )}
-        {read.value ? (
-          <ActivityTranscript
-            transcript={read.value}
-            agentName={agent.name}
-            state={() => (working ? "working" : undefined)}
-            before={
-              read.value.more && (
-                <p className="m-0 text-body-sm text-subtle">
-                  Showing the latest {TURN_LIMIT} turns.
-                </p>
-              )
-            }
-          />
-        ) : (
-          read.status !== "error" && (
-            <p role="status" className="m-0">
-              Reading the Pi conversation…
+      <TranscriptPanel
+        agent={agent}
+        read={(signal) => {
+          let tries = 0;
+          return retryRead(
+            // A retry waits for a hidden window to show.
+            async (signal) => {
+              if (tries++) await whenShown(signal);
+              return runtime.transcript(agent.key, place, working, signal);
+            },
+            signal,
+            // The next request starts another host.
+            (error) => error instanceof PiStopped || isRetryableRead(error),
+          );
+        }}
+        readKey={`${agent.key}\u0000${place.key}\u0000${place.conversation}`}
+        working={working}
+        reading="Reading the Pi conversation…"
+        failed="Could not read the Pi conversation"
+        missing={null}
+        notes={(transcript) =>
+          transcript.more && (
+            <p className="m-0 text-body-sm text-subtle">
+              Showing the latest {TURN_LIMIT} turns.
             </p>
           )
-        )}
-      </div>
+        }
+      />
     );
   }
 
@@ -686,21 +711,39 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
-      () => runtime.working(agent.pubkey),
+      () => runtime.working(agent.key),
     );
     // Read again as turns start and end, which can add a conversation.
     const [listing, reload] = useRead(
-      () => runtime.places(agent.pubkey),
-      `${agent.pubkey}\u0000${working.join()}`,
-      agent.pubkey,
+      () => runtime.places(agent.key),
+      `${agent.key}\u0000${working.join()}`,
+      agent.key,
     );
-    const places = listing.value;
+    // The channels' names and kinds are the community's now, not Pi's
+    // history's: a channel made private shows its lock here as it does in
+    // the sidebar, without reading Pi again.
+    const [, relabel] = useReducer((count: number) => count + 1, 0);
+    useEffect(() => runtime.subscribeChannels(agent.key, relabel), [agent.key]);
+    const places =
+      listing.value &&
+      runtime.readablePlaces(agent.key, listing.value).map((place) => ({
+        ...place,
+        ...runtime.channelLabel(agent.key, place.channelId),
+      }));
+    // Pi lists its conversations only after the tab shows, so its transcript
+    // would open late, under whatever the reader turned to meanwhile. The
+    // request is settled without opening it.
+    const opening = initialTranscript?.opening;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+    useEffect(() => initialTranscript?.done(), [opening]);
     if (!places)
       return listing.status === "error" ? (
         <div className="grid gap-2">
@@ -739,10 +782,13 @@ export function createTabs({
     places: readonly Place[];
     working: readonly number[];
   }) {
+    useClockFormat();
     const { session: here } = useOpenedSession(
       places,
       conversation,
       async () => undefined,
+      undefined,
+      readConfig(agent.config).scope,
     );
     const status = (place: Place) =>
       working.includes(place.conversation) ? "Working" : undefined;
@@ -751,7 +797,7 @@ export function createTabs({
       .filter((place) => place.key !== here?.key)
       .slice(0, CONVERSATION_LIMIT);
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -761,33 +807,48 @@ export function createTabs({
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
-          <h3 className="m-0 text-body">Recent conversations</h3>
+        <section className={activityStyles.section}>
+          <InlineHeader title="Recent conversations" />
           {recent.length ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {recent.map((place) => (
-                <li
-                  key={place.key}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{label(place)}</span>
-                    <span className="block text-body-sm text-subtle">
-                      {[status(place), new Date(place.at).toLocaleString()]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => show(place)}
-                  >
-                    View transcript
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <SettingsGroup layout="form">
+              <ul className={activityStyles.list}>
+                {recent.map((place) => (
+                  <li key={place.key} className={activityStyles.entry}>
+                    <div className={activityStyles.row}>
+                      <span className={activityStyles.copy}>
+                        <ConversationName
+                          session={place}
+                          title={label(place)}
+                          className="text-label-sm"
+                        />
+                        <span className="block text-body-sm text-subtle">
+                          {[
+                            place.root
+                              ? `Thread ${place.root.slice(0, 8)}`
+                              : "Channel",
+                            status(place),
+                            formatItemTimestamp(place.at / 1000, {
+                              withTime: true,
+                            }),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        aria-label={`View transcript: ${label(place)}`}
+                        onClick={() => show(place)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </SettingsGroup>
           ) : (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation starts when the agent is mentioned.
@@ -801,6 +862,7 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               place={open}
               working={working.includes(open.conversation)}
@@ -846,6 +908,22 @@ export function createTabs({
       setSaving(true);
       setError("");
       try {
+        if (
+          settingsHost?.proposedModelOrEffort &&
+          (draft.model || draft.effort)
+        ) {
+          const model = models.value?.find(
+            ({ id }) => id === (draft.model || defaultModel(draft, defaults)),
+          );
+          if (!model)
+            throw new Error(
+              "Choose an available Pi model or clear the model and thinking overrides.",
+            );
+          if (draft.effort && !model.thinking.includes(draft.effort))
+            throw new Error(
+              "Choose a thinking level this Pi model supports or use Default.",
+            );
+        }
         await save({
           ...draft,
           workspace: draft.workspace.trim() || DEFAULT_CONFIG.workspace,
@@ -919,6 +997,11 @@ export function createTabs({
                 groups={[{ label: "", options: efforts }]}
                 onValueChange={(effort) => setDraft({ ...draft, effort })}
               />
+              <CompactionField
+                value={draft.compactAt}
+                disabled={saving}
+                onChange={(value) => setDraft(withCompactAt(draft, value))}
+              />
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}
@@ -947,16 +1030,24 @@ export function createTabs({
               onValueChange={(value) =>
                 setDraft({
                   ...draft,
-                  scope: value === "channel" ? "channel" : "thread",
+                  scope: sessionScope(value),
                 })
               }
             />
           </>
         )}
+        {settingsHost?.proposedModelOrEffort &&
+          (draft.model || draft.effort) && (
+            <ClearModelOverrides
+              disabled={saving}
+              onClick={() => setDraft({ ...draft, model: "", effort: "" })}
+            />
+          )}
         <AgentSaveButton
           form={form}
           saving={saving}
           disabled={!changed || unusable(draft, listing.value)}
+          dirty={changed}
         />
         {settingsSection !== "identity" && settingsContent}
       </form>

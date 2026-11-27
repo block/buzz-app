@@ -1,20 +1,55 @@
+import {
+  isTextSource,
+  snapshotJSON,
+  writeJSON,
+} from "../../features/agent-protection/json-stream";
+import { CLAUDE_HOOK_EVENTS, type ClaudeHook } from "./hooks";
+import {
+  type Attribution,
+  customHeaders,
+  ineligible,
+  FOREIGN,
+  HEADERS,
+  MASKED,
+  readSettings,
+  SHARED,
+  STALE,
+  UNAPPLIED,
+  UNREADABLE,
+} from "./attribution";
 // One `claude` process driven over its stream-json protocol: the protocol the
 // Claude Agent SDK speaks to the same binary, so no Node runtime is needed. The
 // process stays alive between turns; messages sent while it works are folded
 // into the running turn at its next tool call. Buzz tools are served over the
 // same pipe, as the SDK serves an in-process MCP server, so the process holds
 // no Buzz key.
+import { MESSAGE_TOOLS } from "../../buzz-mcp/session-tools";
+import { ContextMeter } from "../../features/agent-harness/context-meter";
+import { limited } from "../../features/agents/session-usage";
 import type {
   HostProcess,
   HostProcessOptions,
 } from "../../features/host/service";
+import {
+  PROTECTED_CLAUDE_ROOT,
+  protectedRuntime,
+  protectionSources,
+  retainProtectionHistory,
+  type ClaudeProtection,
+} from "./security";
 
 export type ActivityReceipt = Readonly<{
+  /** The harness acknowledged this input, whether or not it has message activity. */
+  delivered?: () => void;
   /** Presentation destination; channel-shared sessions may handle several threads. */
   activityScope?: string;
-  step?: (tool: string, target?: string) => void;
-  acknowledged?: () => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
+  acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
+  accepted?: () => void;
   superseded?: () => void;
+  /** Told the message's id once Claude has taken it: the id its transcript
+   * gives the prompt. A message Claude never took has none. */
+  submitted?: (uuid: string) => void;
 }>;
 
 export type Spawn = (
@@ -23,33 +58,61 @@ export type Spawn = (
 ) => Promise<HostProcess>;
 
 export type ClaudeLaunch = Readonly<{
+  protection?: ClaudeProtection;
   cwd: string;
   /** Folders besides `cwd` that the session may work in and stay in. */
   directories?: readonly string[];
   /** Read-only catalog probe, without workspace customizations or tools. */
   discovery?: boolean;
+  /** Runs the protected release, as the host verified it, without protection
+   * hooks: a temporary review. A protected launch always does. */
+  pinned?: boolean;
+  /** Native validation for a temporary review's structured result. */
+  outputSchema?: Readonly<Record<string, unknown>>;
+  /** A security review's own Claude folder (absolute), in place of
+   * `~/.claude`, which contained agents can write, and the environment it
+   * authenticates with (`ClaudeAuth.review`). */
+  review?: Readonly<{
+    home: string;
+    env: Readonly<Record<string, string | null>>;
+  }>;
   /** Appended to Claude's own system prompt. */
   systemPrompt: string;
   model?: string;
   /** The session's own effort level; absent is Claude's default. */
   effort?: string;
+  /** The context size, in tokens, it compacts at; absent is Claude's
+   * default. A protected session never compacts. */
+  compactAt?: number;
   /** A saved session to continue. */
   resume?: string;
   /** The id a new session takes, so it is known before its first turn. */
   sessionId?: string;
   /** The in-process MCP server's tools. */
   tools?: ToolServer;
+  hook?: ClaudeHook;
+  /** The agent it works for: the `buzz` it runs acts as that agent. */
+  agent?: Readonly<{ pubkey: string; relay: string }>;
 }>;
 
 /** Answers the in-process server's JSON-RPC for the conversation a process
- * serves. A call of `send` with `final: true` ends the turn when it succeeds. */
+ * serves. A `send` or `reply_in_subthread` with `final: true` ends the turn when it succeeds. */
 export type ToolServer = (
   conversation: string | undefined,
   message: unknown,
+  /** Aborts when the process stops, so a stopped turn's tool does not act. */
+  signal: AbortSignal,
+  /** Checks the exact active work that issued a native tool request. */
+  check?: () => void,
+  /** The session's context size when it called: the tokens of its last
+   * model call; undefined when unknown. */
+  contextTokens?: number,
 ) => Promise<unknown>;
 /** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
-const FINAL_TOOL = `mcp__${TOOL_SERVER}__send`;
+/** The tools that take `final`, as a hook matcher pattern. */
+const FINAL_TOOL = `mcp__${TOOL_SERVER}__(${MESSAGE_TOOLS.join("|")})`;
+const FINAL_NAME = new RegExp(`^${FINAL_TOOL}$`);
 
 type Message = Record<string, unknown> & { type?: string; subtype?: string };
 
@@ -74,19 +137,21 @@ export type Settled = Readonly<{
   error?: string;
   /** The message failed before any turn took it in. */
   undelivered?: true;
+  /** The owner's interrupt ended the turn. */
+  stopped?: true;
 }>;
 
 const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
- * idle, signed in as `claude auth login` left it, and never as part of a
- * Claude session that started the app. */
+ * idle, and never as part of a Claude session that started the app. Its
+ * credentials come from `ClaudeAuth`. */
 export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
   CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
   // Buzz keeps its own copy current; Claude must not install itself elsewhere.
   DISABLE_AUTOUPDATER: "1",
-  // A key in the shell that launched the app would outrank the sign-in; the
-  // interactive CLI asks before using one, but stream-json mode uses it silently.
+  // Only `ClaudeAuth` gives a key: one in the shell that launched the app
+  // would outrank it, and stream-json mode uses it without asking.
   ANTHROPIC_API_KEY: null,
   CLAUDECODE: null,
   CLAUDE_CODE_SESSION_ID: null,
@@ -98,7 +163,61 @@ export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_PID: null,
 };
 
+/** How long `claude.sh`'s inherited-headers check may take. */
+const INHERITED_CHECK_MS = 15_000;
+/** How long a turn or compaction waits on one attribution control call
+ * before going on unattributed. */
+const ATTRIBUTION_CALL_MS = 5_000;
+
+/** Whether the env `spawn` starts Claude with sets its custom headers, from
+ * `claude.sh`'s presence-only check; undefined when the check fails. */
+async function setsInheritedHeaders(spawn: Spawn) {
+  let answer = "";
+  try {
+    const check = await spawn("inherited-headers", {
+      env: ENV,
+      onStdout: (data) => {
+        answer += data;
+      },
+    });
+    const timer = setTimeout(() => void check.kill(), INHERITED_CHECK_MS);
+    const code = await check.exited;
+    clearTimeout(timer);
+    if (code !== 0) return undefined;
+  } catch {
+    return undefined;
+  }
+  const presence = answer.trim();
+  return presence === "set" ? true : presence === "unset" ? false : undefined;
+}
+
 export class ClaudeProcess {
+  private protection: ClaudeProtection | undefined;
+  private protectionLifetime = new AbortController();
+  private protectedInstructions = "";
+  private protectedHistory: unknown = [];
+  private readonly protectedEvents: Message[] = [];
+  private resuming = false;
+  private reviewText = "";
+  private reviewOutput: unknown;
+  get result() {
+    return this.reviewText;
+  }
+  get structuredResult() {
+    if (this.reviewOutput === undefined)
+      throw new Error("The security model returned no structured result");
+    return JSON.stringify(this.reviewOutput);
+  }
+  captureProtectionContext() {
+    const release = retainProtectionHistory(this.protectedHistory);
+    return {
+      value: snapshotJSON({
+        transcript: this.protectedHistory,
+        events: this.protectedEvents,
+      }),
+      release,
+    };
+  }
   /** Its session, known once the first turn starts (or at once when resuming). */
   sessionId: string | undefined;
   /** The conversation it serves, set when a spare is put to use. */
@@ -119,15 +238,31 @@ export class ClaudeProcess {
   private alive = true;
   /** The owner stopped the running turn, so how it ends is not a failure. */
   private stopping = false;
+  /** Claude ended a turn aborted while the owner was stopping it. */
+  private stopped = false;
+  /** Aborts when the owner stops the work. The next turn, sent or its own,
+   * starts anew, so a stopped turn's tool calls stay stopped. */
+  private workLifetime = new AbortController();
+  private callEpoch = 0;
+  private turnLifetime = new AbortController();
+  /** The owner's Stop awaiting Claude's answer, for the work it stopped;
+   * another Stop of that work shares it. */
+  private stopRequest:
+    | Readonly<{ work: AbortController; done: Promise<void> }>
+    | undefined;
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
   /** It runs a turn of its own, such as one a finished background task starts. */
   private working = false;
   /** Its live background tasks that are activity, as Claude last listed them. */
   private tasks = 0;
+  private taskIds = new Set<string>();
+  /** A completion notification queues its own turn after the task disappears. */
+  private continuation: "waiting" | "running" | undefined;
   /** Called when it was active and is no longer. */
   onActivity: (() => void) | undefined;
   onQuiet?: () => void;
+  private readonly idleWaiters = new Set<() => void>();
   private requests = 0;
   /** Control requests awaiting Claude's answer, by request id. */
   private calls = new Map<string, (response: Message) => void>();
@@ -140,6 +275,17 @@ export class ClaudeProcess {
   /** The session's own effort, read before the first change to restore it. */
   private ownEffort: string | undefined;
   private readingEffort: Promise<void> | undefined;
+  /** Whether its inherited env sets custom headers; undefined if unknown. */
+  private inherited: () => Promise<boolean | undefined> = async () => undefined;
+  /** The provider `initialize` reported, such as "firstParty". */
+  private provider: Promise<string | undefined> = Promise.resolve(undefined);
+  /** The custom headers Buzz last applied; undefined while none of its
+   * are in effect, null when a change may or may not have taken. */
+  private attributed: string | null | undefined;
+  /** Buzz has written its headers to this process at least once. */
+  private wrote = false;
+  /** Its flag env held something before Buzz's first write. */
+  private foreign = false;
   readonly exited: Promise<number | null>;
 
   private constructor(
@@ -148,9 +294,11 @@ export class ClaudeProcess {
     private tools: ToolServer | undefined,
     /** The session's own model, as launched; undefined is Claude's default. */
     private readonly ownModel: string | undefined,
+    private hook?: ClaudeHook,
   ) {
     this.sessionId = resume;
     this.exited = process.exited.then((code) => {
+      this.protectionLifetime.abort();
       this.alive = false;
       for (const resolve of this.calls.values())
         resolve({ subtype: "error", error: "Claude exited" });
@@ -159,7 +307,11 @@ export class ClaudeProcess {
         this.lastError ??
         (this.stderr.trim().split("\n").at(-1) ||
           `Claude exited (${code ?? "signal"})`);
-      this.settle({ ok: false, error });
+      this.settle(
+        this.stopped && !this.lastError
+          ? { ok: true, stopped: true }
+          : { ok: false, error },
+      );
       return code;
     });
   }
@@ -173,11 +325,18 @@ export class ClaudeProcess {
   /** Starts `claude` without its prompt. This is most of what a start costs,
    * and fixes nothing about the agent it serves but its folder, model and
    * effort. */
-  static async spawn(spawn: Spawn, launch: Omit<ClaudeLaunch, "systemPrompt">) {
+  static async spawn(
+    spawn: Spawn,
+    launch: Omit<ClaudeLaunch, "systemPrompt"> & { systemPrompt?: string },
+  ) {
+    launch.protection?.gate.assertAvailable();
+    const security = launch.protection;
+    const pinned =
+      security || launch.pinned ? await protectedRuntime(spawn) : undefined;
     let claude: ClaudeProcess | undefined;
     const early: string[] = [];
     const earlyErrors: string[] = [];
-    const process = await spawn("claude", {
+    const process = await spawn(pinned ?? "claude", {
       args: [
         "--output-format",
         "stream-json",
@@ -185,9 +344,26 @@ export class ClaudeProcess {
         "stream-json",
         "--verbose",
         "--replay-user-messages",
+        // A resumed session takes the system prompt it is launched with, not
+        // the one its session file saved when it began.
+        "--system-prompt-snapshot",
+        "off",
         // Recent models return empty thinking unless asked for summaries.
         "--thinking-display",
         "summarized",
+        // Settings files can set env, hooks and apiKeyHelper, and a contained
+        // worker can write them: no pinned launch reads them. Claude still
+        // reads its folder's sign-in and cached managed settings: a review's
+        // own folder (`review`), and `~/.claude` for protected runs.
+        ...(pinned ? ["--setting-sources", ""] : []),
+        ...(security
+          ? [
+              "--system-prompt",
+              launch.systemPrompt ?? "",
+              "--strict-mcp-config",
+              "--disable-slash-commands",
+            ]
+          : []),
         ...(launch.discovery
           ? [
               "--safe-mode",
@@ -202,6 +378,9 @@ export class ClaudeProcess {
           folder,
         ]),
         ...(launch.model ? ["--model", launch.model] : []),
+        ...(launch.outputSchema
+          ? ["--json-schema", JSON.stringify(launch.outputSchema)]
+          : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
         ...(!launch.resume && launch.sessionId
@@ -221,7 +400,81 @@ export class ClaudeProcess {
           : []),
       ],
       cwd: launch.cwd,
-      env: ENV,
+      // A spare is started before the agent it serves is known.
+      agentCredential: !launch.discovery,
+      env: {
+        ...ENV,
+        ...(launch.discovery
+          ? {
+              CLAUDE_CODE_DISABLE_FILE_MENTIONS: "1",
+              CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+              CLAUDE_CODE_DISABLE_ATTACHMENTS: "1",
+              CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+            }
+          : {}),
+        ...(launch.compactAt && !security
+          ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(launch.compactAt) }
+          : {}),
+        ...(security
+          ? {
+              CLAUDE_CODE_EAGER_FLUSH: "1",
+              DISABLE_COMPACT: "1",
+              CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
+              ANTHROPIC_BETAS: null,
+              CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK: "1",
+              CLAUDE_CODE_DISABLE_REFUSAL_RETRY: "1",
+              CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1",
+              CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+              CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+              CLAUDE_CODE_DISABLE_FILE_MENTIONS: "1",
+              CLAUDE_CODE_DISABLE_ATTACHMENTS: "1",
+              CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+              CLAUDE_CODE_DISABLE_CRON: "1",
+              BASH_ENV: null,
+              ENV: null,
+              DYLD_INSERT_LIBRARIES: null,
+              DYLD_LIBRARY_PATH: null,
+              DYLD_FRAMEWORK_PATH: null,
+              LD_PRELOAD: null,
+              LD_LIBRARY_PATH: null,
+            }
+          : {}),
+        ...(launch.review
+          ? {
+              CLAUDE_CONFIG_DIR: launch.review.home,
+              // What would pick other credentials or an endpoint over them:
+              // the pinned release's variables as read from 2.1.312's
+              // strings, as hygiene for the person's own environment. Never
+              // set CLAUDE_CODE_SIMPLE, which ignores an OAuth token.
+              ANTHROPIC_AUTH_TOKEN: null,
+              ANTHROPIC_BASE_URL: null,
+              CLAUDE_CODE_API_BASE_URL: null,
+              CLAUDE_CODE_SIMPLE: null,
+              ANTHROPIC_UNIX_SOCKET: null,
+              CLAUDE_CODE_REMOTE_SESSION_ID: null,
+              CLAUDE_CODE_USE_BEDROCK: null,
+              CLAUDE_CODE_USE_VERTEX: null,
+              CLAUDE_CODE_USE_FOUNDRY: null,
+              CLAUDE_CODE_USE_GATEWAY: null,
+              CLAUDE_CODE_USE_MANTLE: null,
+              CLAUDE_CODE_USE_ANTHROPIC_AWS: null,
+              CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD: null,
+              ...launch.review.env,
+            }
+          : {}),
+      },
+      // Contained, so the host runs its verified copy, never the folder's.
+      ...(pinned
+        ? {
+            protection: {
+              readOnlyPaths: [
+                ...(security?.gate.processProtection.readOnlyPaths ?? []),
+                PROTECTED_CLAUDE_ROOT,
+              ],
+              hiddenPaths: security?.gate.processProtection.hiddenPaths ?? [],
+            },
+          }
+        : {}),
       onStdout: (data) => (claude ? claude.read(data) : early.push(data)),
       onStderr: (data) =>
         claude ? claude.readError(data) : earlyErrors.push(data),
@@ -231,7 +484,14 @@ export class ClaudeProcess {
       launch.resume ?? launch.sessionId,
       launch.tools,
       launch.model,
+      launch.hook,
     );
+    claude.protection = launch.protection;
+    // Checked once, only when Buzz first attributes this process.
+    let inherited: Promise<boolean | undefined> | undefined;
+    claude.inherited = () => (inherited ??= setsInheritedHeaders(spawn));
+    claude.resuming = !!launch.resume;
+    claude.protectedInstructions = launch.systemPrompt ?? "";
     for (const data of earlyErrors) claude.readError(data);
     for (const data of early) claude.read(data);
     return claude;
@@ -239,31 +499,120 @@ export class ClaudeProcess {
 
   /** Gives a started process its prompt, and its tools to whoever it now
    * works for. Loads settings and tools now rather than on the first message. */
-  async initialize(launch: Pick<ClaudeLaunch, "systemPrompt" | "tools">) {
-    if (launch.tools) this.tools = launch.tools;
-    const { written, answer } = this.request({
-      subtype: "initialize",
-      appendSystemPrompt: launch.systemPrompt,
-      ...(launch.tools
-        ? {
-            sdkMcpServers: [TOOL_SERVER],
-            hooks: {
-              PostToolUse: [
-                { matcher: FINAL_TOOL, hookCallbackIds: ["final"] },
-              ],
-            },
-          }
-        : {}),
-    });
-    await written;
-    this.listed = answer.then((response) => {
-      const models = (response.response as Message | undefined)?.models;
-      return Array.isArray(models)
-        ? models.filter(
-            (model): model is ClaudeModel => typeof model?.value === "string",
-          )
-        : [];
-    });
+  async initialize(
+    launch: Pick<
+      ClaudeLaunch,
+      "systemPrompt" | "tools" | "protection" | "hook" | "agent"
+    >,
+  ) {
+    if (launch.agent)
+      // An inherited token that acts for nobody fails every `buzz` call, so a
+      // process that cannot act as its agent is stopped, as other harnesses do.
+      await this.process.actAs?.(launch.agent).catch((error: unknown) => {
+        void this.kill();
+        throw error;
+      });
+    try {
+      if (launch.tools) this.tools = launch.tools;
+      this.hook = launch.protection ? undefined : launch.hook;
+      const { written, answer } = this.request({
+        subtype: "initialize",
+        ...(!launch.protection
+          ? { appendSystemPrompt: launch.systemPrompt }
+          : {}),
+        ...(launch.tools || launch.protection
+          ? {
+              ...(launch.tools ? { sdkMcpServers: [TOOL_SERVER] } : {}),
+              hooks: {
+                ...(launch.protection
+                  ? {
+                      PreToolUse: [
+                        { hookCallbackIds: ["security-tool"], timeout: 600 },
+                      ],
+                      PreCompact: [
+                        {
+                          hookCallbackIds: ["security-incomplete"],
+                          timeout: 600,
+                        },
+                      ],
+                      SessionStart: [
+                        { hookCallbackIds: ["security-session"], timeout: 600 },
+                      ],
+                      UserPromptSubmit: [
+                        {
+                          hookCallbackIds: ["security-incoming"],
+                          timeout: 600,
+                        },
+                      ],
+                      PostToolBatch: [
+                        {
+                          hookCallbackIds: ["security-incoming"],
+                          timeout: 600,
+                        },
+                      ],
+                      PostToolUseFailure: [
+                        {
+                          hookCallbackIds: ["security-incoming"],
+                          timeout: 600,
+                        },
+                      ],
+                    }
+                  : Object.fromEntries(
+                      CLAUDE_HOOK_EVENTS.map((event) => [
+                        event,
+                        [{ hookCallbackIds: [`buzz:${event}`] }],
+                      ]),
+                    )),
+                PostToolUse: [
+                  ...(launch.protection
+                    ? [{ hookCallbackIds: ["security-incoming"], timeout: 600 }]
+                    : [{ hookCallbackIds: ["buzz:PostToolUse"] }]),
+                  ...(launch.tools
+                    ? [{ matcher: FINAL_TOOL, hookCallbackIds: ["final"] }]
+                    : []),
+                ],
+              },
+            }
+          : {}),
+      });
+      await written;
+      if (launch.protection) {
+        const timer = setTimeout(() => void this.kill(), 15_000);
+        try {
+          const response = await answer;
+          if (response.subtype !== "success")
+            throw new Error(
+              `Claude did not register protection hooks: ${String(response.error)}`,
+            );
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      this.listed = answer.then((response) => {
+        const models = (response.response as Message | undefined)?.models;
+        return Array.isArray(models)
+          ? models.filter(
+              (model): model is ClaudeModel => typeof model?.value === "string",
+            )
+          : [];
+      });
+      // Claude's resolved provider, which its process env can pick too.
+      this.provider = answer.then(
+        (response) => {
+          const account = (response.response as Message | undefined)?.account as
+            | Message
+            | undefined;
+          return typeof account?.apiProvider === "string"
+            ? account.apiProvider
+            : undefined;
+        },
+        () => undefined,
+      );
+    } catch (error) {
+      await this.kill();
+      await this.exited;
+      throw error;
+    }
   }
 
   get running() {
@@ -274,7 +623,30 @@ export class ClaudeProcess {
   }
   /** Busy, in a turn of its own, or running background work that may call back. */
   get active() {
-    return this.busy || this.working || this.tasks > 0;
+    return (
+      this.busy ||
+      this.working ||
+      this.tasks > 0 ||
+      this.continuation !== undefined
+    );
+  }
+  /** Includes background tasks that can start tool-using continuations. */
+  idle(): Promise<void> {
+    if (!this.alive || !this.active) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.add(resolve));
+  }
+  /** Reports the activity change since `active`, its earlier state. */
+  private edge(active: boolean) {
+    if (!this.active) this.stopping = false;
+    if (active !== this.active) this.onActivity?.();
+    if (active && !this.active) {
+      this.onQuiet?.();
+      this.releaseIdle();
+    }
+  }
+  private releaseIdle() {
+    for (const resolve of this.idleWaiters) resolve();
+    this.idleWaiters.clear();
   }
   get started() {
     return this.began;
@@ -303,12 +675,112 @@ export class ClaudeProcess {
     return this.reported;
   }
 
+  /** Sets the custom headers the turns sent after it carry: `attribution`'s
+   * over the person's current own when Claude's current endpoint is the
+   * gateway's, else removes Buzz's. A steer into a running turn keeps the turn's. Resolves with
+   * why the turn isn't attributed, as a notice; never throws, so a failure
+   * never stops the turn. */
+  async attribute(
+    attribution: Attribution | undefined,
+  ): Promise<string | undefined> {
+    if (!attribution && this.attributed === undefined) return;
+    // Read fresh each time: Claude reloads its settings files while it runs.
+    const [read, inherited] = await Promise.all([
+      this.attributionCall({ subtype: "get_settings" }).then(readSettings),
+      this.inherited(),
+    ]);
+    if (!read) return this.attributed === undefined ? UNREADABLE : STALE;
+    // Before Buzz's first write the flag env isn't Buzz's; after it, any
+    // other key there would be erased by Buzz's next write.
+    if (!this.wrote && read.flag.any) this.foreign = true;
+    if (this.wrote && read.flag.others)
+      return this.attributed === undefined ? FOREIGN : SHARED;
+    const reason =
+      attribution &&
+      (this.foreign
+        ? FOREIGN
+        : ineligible(
+            { ...read, inherited },
+            attribution.origin,
+            await this.provider,
+          ));
+    const headers =
+      attribution && !reason
+        ? customHeaders(attribution.profile, read.headers, attribution.headers)
+        : undefined;
+    // Settings can't show what Claude still sends, so Buzz's own record
+    // decides; unknown (null) is always written again.
+    if (headers === this.attributed) return reason;
+    if (headers !== undefined) {
+      this.wrote = true;
+      const ok = await this.applyEnv({ [HEADERS]: headers });
+      this.attributed = ok ? headers : null;
+      return ok ? reason : UNAPPLIED;
+    }
+    // Removal first sets the person's current headers, or none: with no
+    // settings value to fall back on, Claude would keep sending Buzz's.
+    // Then it clears the flag env, so later settings changes take effect.
+    if (!(await this.applyEnv({ [HEADERS]: read.headers ?? "" }))) {
+      this.attributed = null;
+      return UNAPPLIED;
+    }
+    if (!(await this.applyEnv({}))) {
+      this.attributed = null;
+      return MASKED;
+    }
+    this.attributed = undefined;
+    return reason;
+  }
+
+  /** Replaces the flag layer's env (Claude replaces `env` whole, though it
+   * merges top-level flag keys such as effort one by one); whether Claude
+   * confirmed it. A late answer leaves Buzz's record unknown, since it may
+   * undo a newer write. */
+  private async applyEnv(env: Record<string, string>) {
+    const answer = await this.attributionCall(
+      { subtype: "apply_flag_settings", settings: { env } },
+      () => {
+        this.attributed = null;
+      },
+    );
+    return answer.subtype === "success";
+  }
+
+  /** A control call attribution makes, answered as an error when it fails or
+   * Claude takes longer than `ATTRIBUTION_CALL_MS`, so it never holds up the
+   * turn or compaction waiting on it. A late answer is dropped, after
+   * `late` runs. */
+  private attributionCall(
+    request: Message,
+    late?: () => void,
+  ): Promise<Message> {
+    const { id, written, answer } = this.request(request);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<Message>((resolve) => {
+      timer = setTimeout(() => {
+        if (late) this.calls.set(id, late);
+        else this.calls.delete(id);
+        resolve({ subtype: "error", error: "timed out" });
+      }, ATTRIBUTION_CALL_MS);
+    });
+    return Promise.race([
+      written.then(
+        () => answer,
+        (): Message => {
+          this.calls.delete(id);
+          return { subtype: "error" };
+        },
+      ),
+      expired,
+    ]).finally(() => clearTimeout(timer));
+  }
+
   /** Sends one user message. Resolves when it, and anything sent after it, has
    * been answered and the session is idle again. A new turn runs with the
    * picked model and effort, or the session's own without them; a message
    * folded into a running turn changes only what it asks for. */
   send(
-    text: string,
+    text: import("../../features/agent-protection/json-stream").ReviewText,
     { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
   ): Promise<Settled> {
     if (!this.alive)
@@ -319,6 +791,8 @@ export class ClaudeProcess {
     // The model first: effort applies to whichever model runs.
     this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
     this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
+    // A message folded into a running turn shares its lifetime.
+    if (!this.busy && !this.working) this.renew();
     const uuid = crypto.randomUUID();
     this.receipts.set(uuid, activity);
     this.pending++;
@@ -326,39 +800,73 @@ export class ClaudeProcess {
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
     );
+    activity.accepted?.();
     this.write({
       type: "user",
       uuid,
       message: { role: "user", content: text },
       parent_tool_use_id: null,
       session_id: "",
-    }).catch((error) =>
-      this.settle({
-        ok: false,
-        error: `Claude did not take the message: ${error}`,
-      }),
+    }).then(
+      () => activity.submitted?.(uuid),
+      (error) =>
+        this.settle({
+          ok: false,
+          error: `Claude did not take the message: ${error}`,
+        }),
     );
     return settled;
   }
 
   /** Stops the running turn, as the SDK's `interrupt` does; messages folded
    * into it end with it. The turn then settles as Claude ends it. */
-  async interrupt() {
+  interrupt() {
+    // One answer for every Stop of the same work, so one's failure cannot
+    // revive work another stopped; newer work is stopped anew.
+    const work = this.workLifetime;
+    if (this.stopRequest?.work === work) return this.stopRequest.done;
+    const done: Promise<void> = this.stop().finally(() => {
+      if (this.stopRequest?.done === done) this.stopRequest = undefined;
+    });
+    this.stopRequest = { work, done };
+    return done;
+  }
+  private async stop() {
     if (!this.alive || !this.active) return;
     this.stopping = true;
+    const work = this.workLifetime;
+    const fresh = !work.signal.aborted;
+    work.abort(new Error("The owner stopped the turn"));
+    if (this.protection) {
+      this.protectionLifetime.abort();
+      this.stopped = true;
+      await this.process.kill();
+      await this.exited;
+      return;
+    }
     const answer = await this.call({ subtype: "interrupt" });
+    // The turn goes on, and so do its calls, unless an earlier Stop stopped it.
     if (answer.subtype === "error" && this.alive) {
-      this.stopping = false;
+      if (fresh && this.workLifetime === work) {
+        this.stopping = false;
+        this.workLifetime = new AbortController();
+      }
       throw new Error(`Claude did not stop: ${String(answer.error)}`);
     }
   }
 
+  private renew() {
+    if (this.workLifetime.signal.aborted)
+      this.workLifetime = new AbortController();
+  }
+
   kill() {
+    this.protectionLifetime.abort();
     return this.process.kill();
   }
 
   private write(message: Message) {
-    return this.process.write(`${JSON.stringify(message)}\n`);
+    return writeJSON(this.process, message);
   }
   /** Writes a control request: `written` settles with the write, `answer`
    * with Claude's response. */
@@ -372,7 +880,7 @@ export class ClaudeProcess {
       request_id: id,
       request,
     });
-    return { written, answer };
+    return { id, written, answer };
   }
   /** Sends a control request and resolves with Claude's response. */
   private call(request: Message): Promise<Message> {
@@ -435,8 +943,16 @@ export class ClaudeProcess {
     this.activeReceipts.clear();
     this.lastError = undefined;
     this.stopping = false;
+    this.stopped = false;
     this.compacting = false;
+    this.endTurn();
     for (const resolve of this.waiters.splice(0)) resolve(settled);
+    if (!this.alive) this.releaseIdle();
+  }
+  private endTurn() {
+    this.callEpoch++;
+    this.turnLifetime.abort(new Error("The Claude turn has ended"));
+    this.turnLifetime = new AbortController();
   }
 
   private readError(data: string) {
@@ -463,10 +979,24 @@ export class ClaudeProcess {
   // prompt text or tool-result user messages. Only the latest acknowledged
   // request gets steps; settling ends all requests, not just the latest one.
   private readonly receipts = new Map<string, ActivityReceipt>();
+  /** The session's context size, from its model calls' usage. */
+  private context = new ContextMeter();
   private readonly activeReceipts = new Map<string, ActivityReceipt>();
   private handle(message: Message) {
-    if (typeof message.session_id === "string" && message.session_id)
+    // The CLI may emit a tool callback before its asynchronous transcript write.
+    // Keep native protocol evidence alongside persisted history, without replacing it.
+    if (this.protection && ["user", "assistant"].includes(String(message.type)))
+      this.protectedEvents.push(structuredClone(message));
+    if (message.type === "result") {
+      this.reviewOutput = message.structured_output;
+      if (typeof message.result === "string") this.reviewText = message.result;
+    }
+    if (typeof message.session_id === "string" && message.session_id) {
+      // Another session's calls say nothing of this one's size.
+      if (this.sessionId && message.session_id !== this.sessionId)
+        this.context = new ContextMeter();
       this.sessionId = message.session_id;
+    }
     if (message.type === "system" && message.subtype === "init") {
       this.began = true;
       // A picked model is not the session's own.
@@ -490,11 +1020,24 @@ export class ClaudeProcess {
     ) {
       this.reportsState = true;
       const active = this.active;
+      const starts = !this.working && !this.busy && message.state !== "idle";
       this.working = message.state !== "idle";
-      if (!this.working && this.pending) this.done();
-      if (!this.active) this.stopping = false;
-      if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) this.onQuiet?.();
+      if (this.working && this.continuation === "waiting")
+        this.continuation = "running";
+      if (!this.working && (this.continuation === "running" || this.stopping))
+        this.continuation = undefined;
+      // A turn of its own, such as a background task's, is new work.
+      if (starts) this.renew();
+      if (!this.working) this.done();
+      this.edge(active);
+      return;
+    }
+    if (
+      message.type === "system" &&
+      message.subtype === "task_notification" &&
+      this.taskIds.has(String(message.task_id))
+    ) {
+      this.continuation = this.working ? "running" : "waiting";
       return;
     }
     // The whole set each time; ambient tasks, such as watchers, are not activity.
@@ -504,12 +1047,18 @@ export class ClaudeProcess {
       Array.isArray(message.tasks)
     ) {
       const active = this.active;
-      this.tasks = message.tasks.filter(
+      const tasks = message.tasks.filter(
         (task) => !(task as Message | null)?.ambient,
-      ).length;
-      if (!this.active) this.stopping = false;
-      if (active !== this.active) this.onActivity?.();
-      if (active && !this.active) this.onQuiet?.();
+      );
+      this.tasks = tasks.length;
+      this.taskIds = new Set(
+        tasks.flatMap((task) => {
+          const id =
+            (task as Message | null)?.task_id ?? (task as Message | null)?.id;
+          return typeof id === "string" ? [id] : [];
+        }),
+      );
+      this.edge(active);
       return;
     }
     // `/compact` ends in a successful result even when compacting failed.
@@ -533,24 +1082,37 @@ export class ClaudeProcess {
       const receipt = this.receipts.get(message.uuid);
       if (receipt) {
         this.receipts.delete(message.uuid);
+        receipt.delivered?.();
+        const steering = this.activeReceipts.size > 0;
         // Watches/timers have no message activity: they must not hide a mention.
         if (receipt.step) {
           const scope = receipt.activityScope ?? "conversation";
           this.activeReceipts.get(scope)?.superseded?.();
           this.activeReceipts.set(scope, receipt);
-          receipt.acknowledged?.();
+          receipt.acknowledged?.(steering ? { steering: true } : undefined);
         }
       }
       return;
     }
     if (message.type === "assistant") {
+      // Each model call's usage, repeated on each of its content blocks. A
+      // subagent's calls have their own context.
+      if (!message.parent_tool_use_id) this.context.report(callSize(message));
       const step = stepLabel(message);
       if (step)
         for (const receipt of this.activeReceipts.values())
-          receipt.step?.(step.tool, step.target);
+          receipt.step?.(step.tool, step.target, step.origin);
       return;
     }
     if (message.type !== "result") return;
+    // A turn that finished before the interrupt took effect is not stopped,
+    // and a stopped turn of its own has no message to settle.
+    if (
+      this.pending &&
+      this.stopping &&
+      (message.is_error || message.terminal_reason === "aborted_streaming")
+    )
+      this.stopped = true;
     // An interrupt is not a failure to report: Claude ends a turn stopped
     // mid-tool as `error_during_execution`.
     if (
@@ -562,11 +1124,23 @@ export class ClaudeProcess {
         typeof message.result === "string" && message.result
           ? message.result
           : `Claude stopped (${String(message.subtype)})`;
-    if (!this.reportsState && this.pending) this.done();
+    if (!this.reportsState) {
+      const active = this.active;
+      this.continuation = undefined;
+      this.done();
+      this.edge(active);
+    }
   }
   private done() {
+    if (!this.pending) return this.endTurn();
     const error = this.lastError;
-    this.settle(error ? { ok: false, error } : { ok: true });
+    this.settle(
+      error
+        ? { ok: false, error }
+        : this.stopped
+          ? { ok: true, stopped: true }
+          : { ok: true },
+    );
   }
   /** Answers what Claude asks its host: calls to the Buzz tools, the
    * hook after `send`, and, since permissions are bypassed, anything else only
@@ -580,25 +1154,231 @@ export class ClaudeProcess {
       response,
     });
     let response: Message;
-    if (request.subtype === "mcp_message" && this.tools)
+    if (request.subtype === "mcp_message" && this.tools) {
+      const work = this.workLifetime;
+      const epoch = this.callEpoch;
       response = success({
         mcp_response: await this.tools(
           this.conversation,
           request.message,
+          AbortSignal.any([
+            this.protectionLifetime.signal,
+            work.signal,
+            this.turnLifetime.signal,
+          ]),
+          () => {
+            work.signal.throwIfAborted();
+            if (
+              !this.alive ||
+              !this.active ||
+              this.workLifetime !== work ||
+              this.callEpoch !== epoch
+            )
+              throw new Error("The Claude turn has ended");
+          },
+          this.context.tokens,
         ).catch((error) => ({
           jsonrpc: "2.0",
           id: (request.message as Message | undefined)?.id ?? 0,
           error: { code: -32603, message: String(error?.message ?? error) },
         })),
       });
-    else if (request.subtype === "can_use_tool")
+    } else if (
+      request.subtype === "hook_callback" &&
+      this.protection &&
+      [
+        "security-tool",
+        "security-incoming",
+        "security-incomplete",
+        "security-session",
+      ].includes(String(request.callback_id))
+    ) {
+      let releaseHistory = () => {};
+      try {
+        const input = request.input as Message;
+        if (
+          request.callback_id === "security-incomplete" ||
+          (request.callback_id === "security-session" &&
+            !["startup", "resume"].includes(String(input.source)))
+        )
+          throw new Error(
+            "Protected Claude cannot rewrite its reviewed conversation; start a new conversation",
+          );
+        if (
+          request.callback_id === "security-session" &&
+          input.source === "startup" &&
+          !this.resuming
+        )
+          return this.write({
+            type: "control_response",
+            response: success({}),
+          });
+        const tool = request.callback_id === "security-tool";
+        const kind = tool
+          ? "tool"
+          : ["UserPromptSubmit", "SessionStart"].includes(
+                String(input.hook_event_name),
+              )
+            ? "context"
+            : "tool-result";
+        if (tool && ["Agent", "Task"].includes(String(input.tool_name)))
+          throw new Error(
+            "Protected Claude does not delegate outside its reviewed conversation",
+          );
+        if (this.protection.gate.phases?.[kind] === false) {
+          this.protectionLifetime.signal.throwIfAborted();
+          this.protection.gate.assertAvailable();
+          return this.write({
+            type: "control_response",
+            response: success(
+              tool
+                ? {
+                    hookSpecificOutput: {
+                      hookEventName: "PreToolUse",
+                      permissionDecision: "allow",
+                    },
+                  }
+                : {},
+            ),
+          });
+        }
+        if (typeof input.transcript_path !== "string")
+          throw new Error("Claude omitted the protected conversation");
+        const history = await this.protection
+          .history(input.transcript_path, this.protectionLifetime.signal)
+          .catch((error) => {
+            if (
+              input.hook_event_name === "UserPromptSubmit" &&
+              !this.resuming &&
+              !this.began &&
+              /no such file/i.test(String(error))
+            )
+              return [];
+            throw error;
+          });
+        releaseHistory = retainProtectionHistory(history);
+        if (isTextSource(this.protectedHistory))
+          (this.protectedHistory as { dispose?: () => void }).dispose?.();
+        this.protectedHistory = isTextSource(history)
+          ? history
+          : structuredClone(history);
+        const content = {
+          ...(tool
+            ? { title: input.tool_name, arguments: input.tool_input }
+            : {}),
+          instructions: this.protectedInstructions,
+          conversation: history,
+          events: structuredClone(this.protectedEvents),
+          input,
+        };
+        // Tool authority needs the combined conversation. Injection detection
+        // inspects native sources individually, without duplicating the envelope.
+        const incoming = { ...input };
+        for (const key of [
+          "session_id",
+          "transcript_path",
+          "cwd",
+          "permission_mode",
+          "hook_event_name",
+        ])
+          delete incoming[key]; // Native transport metadata is not model content.
+        const sources = tool
+          ? [{ kind: "tool" as const, content }]
+          : [
+              {
+                kind: "context" as const,
+                content: {
+                  source: "instructions",
+                  value: this.protectedInstructions,
+                },
+              },
+              ...(Array.isArray(history)
+                ? history.flatMap((value) => protectionSources(value))
+                : (["context", "tool-result"] as const).map((phase) => ({
+                    kind: phase,
+                    content: { source: "message", value: history.phase(phase) },
+                  }))),
+              ...this.protectedEvents.flatMap((value) =>
+                protectionSources(value),
+              ),
+              ...protectionSources(
+                incoming,
+                "hook",
+                kind === "tool-result" ? "tool-result" : "context",
+              ),
+            ];
+        // One hook must answer within the native watchdog, so check sources
+        // together, below the provider's limit of 16 in-flight checks. The
+        // first denial cancels the rest before another can start.
+        const session = this.sessionId ?? "initial";
+        const denied = new AbortController();
+        const signal = AbortSignal.any([
+          this.protectionLifetime.signal,
+          denied.signal,
+        ]);
+        const { gate } = this.protection;
+        const slot = limited(4);
+        await Promise.all(
+          sources.map((source) =>
+            slot(async () => {
+              signal.throwIfAborted();
+              try {
+                await gate.check({ ...source, session }, signal);
+              } catch (error) {
+                denied.abort();
+                throw error;
+              }
+            }),
+          ),
+        );
+        this.protectionLifetime.signal.throwIfAborted();
+        response = success(
+          tool
+            ? {
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse",
+                  permissionDecision: "allow",
+                },
+              }
+            : {},
+        );
+      } catch (error) {
+        this.protectionLifetime.abort();
+        this.lastError =
+          error instanceof Error ? error.message : "Security review failed";
+        await this.process.kill();
+        await this.exited;
+        return;
+      } finally {
+        releaseHistory();
+      }
+    } else if (request.subtype === "can_use_tool")
       response = success({
-        behavior: "allow",
+        behavior: this.protection ? "deny" : "allow",
         updatedInput: request.input ?? {},
       });
-    else if (request.subtype === "hook_callback")
-      response = success(this.final(request.input) ? { continue: false } : {});
-    else
+    else if (request.subtype === "hook_callback") {
+      const event =
+        typeof request.callback_id === "string" &&
+        request.callback_id.startsWith("buzz:")
+          ? request.callback_id.slice(5)
+          : undefined;
+      try {
+        response = success(
+          event && CLAUDE_HOOK_EVENTS.includes(event as never)
+            ? ((await this.hook?.(
+                this.sessionId ?? "",
+                event,
+                request.input,
+              )) ?? {})
+            : request.callback_id === "final" && this.final(request.input)
+              ? { continue: false }
+              : {},
+        );
+      } catch (error) {
+        response = { subtype: "error", request_id: id, error: String(error) };
+      }
+    } else
       response = {
         subtype: "error",
         request_id: id,
@@ -608,23 +1388,44 @@ export class ClaudeProcess {
       () => undefined,
     );
   }
-  /** A `send` marked final succeeded (a failed call runs no PostToolUse
+  /** A message marked final succeeded (a failed call runs no PostToolUse
    * hook), so the turn can end without a closing model call. Not when another
    * message came in meanwhile: that one still needs an answer. */
   private final(input: unknown) {
     const { tool_name, tool_input } = (input ?? {}) as Message;
     return (
-      tool_name === FINAL_TOOL &&
+      FINAL_NAME.test(String(tool_name)) &&
       (tool_input as Message | undefined)?.final === true &&
       this.pending === 1
     );
   }
 }
 
-/** The last content block of an assistant message as the tool it names and its target. */
+/** A model call's size, from an assistant message's usage: everything it
+ * read, cached or not, and what it wrote. */
+export function callSize(message: Message) {
+  const usage = (message.message as { usage?: Record<string, unknown> })?.usage;
+  if (!usage) return undefined;
+  let total = 0;
+  for (const field of [
+    "input_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "output_tokens",
+  ]) {
+    const value = usage[field];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+      total += value;
+  }
+  return total;
+}
+
+/** The last content block of an assistant message as the tool it names and
+ * its target. `origin` marks a call to the `buzz` MCP server, the only place
+ * the server in `mcp__<server>__<tool>` survives. */
 export function stepLabel(
   message: Message,
-): { tool: string; target?: string } | undefined {
+): { tool: string; target?: string; origin?: "buzz" } | undefined {
   const content = (message.message as { content?: unknown } | undefined)
     ?.content;
   if (!Array.isArray(content)) return undefined;
@@ -636,6 +1437,9 @@ export function stepLabel(
   if (block?.type === "tool_use" && typeof block.name === "string") {
     const tool = block.name.split("__").at(-1);
     if (!tool) return undefined;
+    const origin = block.name.startsWith("mcp__buzz__")
+      ? { origin: "buzz" as const }
+      : {};
     const input = block.input ?? {};
     const target = [
       "description",
@@ -648,7 +1452,9 @@ export function stepLabel(
     ]
       .map((key) => input[key])
       .find((value): value is string => typeof value === "string" && !!value);
-    return target ? { tool, target: shortTarget(target) } : { tool };
+    return target
+      ? { tool, target: shortTarget(target), ...origin }
+      : { tool, ...origin };
   }
   if (block?.type === "thinking") return { tool: "Thinking" };
   if (block?.type === "text") return { tool: "Writing reply" };

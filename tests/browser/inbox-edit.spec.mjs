@@ -1,6 +1,7 @@
 import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
+import { frames } from "./timeline.mjs";
 
 // Browser boundary: Inbox plugin routing and portalled message-menu dismissal
 // must focus the same native decorated editor and preserve its reply draft.
@@ -18,8 +19,8 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await openPage(page, "Inbox");
-  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  await openPage(page, "Activity");
+  const inbox = page.getByRole("region", { name: "Activity", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   // The preview can settle on either reply as thread inputs arrive; the
   // conversation's accessible identity is the stable target for this test.
@@ -44,6 +45,10 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   const own = app.reply(root.id, true);
   const row = detail.locator(`[data-message-id="${own.id}"]`);
   await expect(row).toBeVisible();
+  // Opening the thread focuses its composer; let that and its next-frame
+  // acknowledgement land before typing.
+  await expect(reply).toBeFocused();
+  await frames(page);
   await reply.fill("Unsent Inbox reply");
   const originalNode = await reply.elementHandle();
   const edit = async () => {
@@ -52,6 +57,11 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
     await page
       .getByRole("menuitem", { name: "Edit message", exact: true })
       .click();
+    // Both opens must complete the menu's focus handoff before fill selects
+    // the content: focusing ProseMirror restores its saved caret.
+    await expect(
+      detail.getByRole("textbox", { name: "Edit message", exact: true }),
+    ).toBeFocused();
   };
   await edit();
   const editor = detail.getByRole("textbox", {
@@ -76,6 +86,7 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   ).toEqual([]);
 
   await edit();
+  await expect(editor).toHaveJSProperty("value", "My reply");
   await editor.fill("Corrected from Inbox");
   await detail.getByRole("button", { name: "Save changes" }).click();
   await expect(row).toContainText("Corrected from Inbox");
@@ -100,7 +111,7 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   await hoverMessage(peer);
   await peer.getByRole("button", { name: "More message actions" }).click();
   await expect(
-    page.getByRole("menuitem", { name: /^Mark (read|unread)$/ }),
+    page.getByRole("menuitem", { name: /^Mark as (read|unread)$/ }),
   ).toBeVisible();
   await expect(
     page.getByRole("menuitem", { name: "Edit message", exact: true }),

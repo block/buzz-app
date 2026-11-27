@@ -1,15 +1,19 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { Context } from "@deepseek-ai/cordis";
 import { createPortal } from "react-dom";
 import { createRef } from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { SettingsCardsService } from "../../features/settings/service";
 import type { AppServices } from "../services";
 import { SearchChoices, type SearchGroup } from "./SearchChoices";
 import { useSearchSettings } from "./SearchSettings";
@@ -31,9 +35,9 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
-function fixture() {
+function fixture({ enabled = true } = {}) {
   const state = {
-    preferences: { enabled: true, sound: true, notifyWhileViewing: false },
+    preferences: { enabled, sound: true, notifyWhileViewing: false },
     developmentPaused: false,
   };
   const updatePreferences = vi.fn();
@@ -51,6 +55,7 @@ function fixture() {
       notifications,
       navigation,
       close,
+      openSection: vi.fn(),
     });
     return (
       <SearchChoices
@@ -62,7 +67,7 @@ function fixture() {
       />
     );
   }
-  return { Palette, open, close, updatePreferences };
+  return { Palette, open, close, updatePreferences, notifications };
 }
 
 it("changes the trailing switch inline but opens and highlights the setting from its row", async () => {
@@ -93,6 +98,28 @@ it("changes the trailing switch inline but opens and highlights the setting from
   } finally {
     target.remove();
   }
+});
+
+it("disables only the switch while Desktop alerts are off, so the row still opens Settings", () => {
+  const { Palette, open, close } = fixture({ enabled: false });
+  render(<Palette />);
+  const row = screen.getByRole("row", { name: "Sound — Notifications" });
+  expect(row.querySelector(".buzz-preference-row")).not.toHaveAttribute(
+    "data-disabled",
+  );
+  expect(screen.getByRole("switch", { name: "Sound" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  const input = screen.getByRole("combobox", { name: "Search Buzz" });
+  expect(input).toHaveAttribute("aria-activedescendant", row.id);
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "settings",
+    section: "notifications",
+  });
+  expect(close).toHaveBeenCalledOnce();
 });
 
 it("retains inline matches and keyboard selection when conversation results arrive", () => {
@@ -211,6 +238,7 @@ it.each(["Enter", "shortcut", "title"])(
         plugins,
         navigation: {} as AppServices["navigation"],
         close: vi.fn(),
+        openSection: vi.fn(),
       });
       return (
         <SearchChoices
@@ -261,7 +289,7 @@ it("announces selected rows and lets arrows leave inline switches", () => {
       (child) => child.getAttribute("role") === "rowgroup",
     ),
   ).toBe(true);
-  const row = screen.getByRole("row", { name: "Notifications — Sound" });
+  const row = screen.getByRole("row", { name: "Sound — Notifications" });
   expect(row).toHaveAttribute("aria-selected", "true");
   const input = screen.getByRole("combobox", { name: "Search Buzz" });
   expect(input).toHaveAttribute("aria-activedescendant", row.id);
@@ -312,6 +340,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
         adminAccess,
         navigation: {} as AppServices["navigation"],
         close: vi.fn(),
+        openSection: vi.fn(),
       });
       return (
         <SearchChoices
@@ -350,8 +379,8 @@ it("ignores portaled control clicks while retaining row navigation", () => {
           destinations: [
             {
               key: "color",
-              label: "Appearance",
-              detail: "Color mode",
+              label: "Color mode",
+              detail: "Appearance",
               icon: GearIcon,
               run,
               content: (
@@ -382,4 +411,330 @@ it("ignores portaled control clicks while retaining row navigation", () => {
   expect(run).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText("Color mode"));
   expect(run).toHaveBeenCalledOnce();
+});
+
+const noCards: ReturnType<AppServices["settingsCards"]["snapshot"]> = [];
+
+function sections({
+  selected = "primary",
+  cards = {
+    subscribe: () => () => {},
+    snapshot: () => noCards,
+    retainVisibility: () => () => {},
+  } as unknown as AppServices["settingsCards"],
+  plugins,
+  notifications,
+}: {
+  selected?: string | null;
+  cards?: AppServices["settingsCards"];
+  plugins?: AppServices["plugins"];
+  notifications?: AppServices["notifications"];
+} = {}) {
+  const client = {
+    selected,
+    memberships: [{ id: "primary", name: "Primary" }],
+  };
+  const communities = {
+    subscribe: () => () => {},
+    snapshot: () => client,
+  } as unknown as AppServices["communities"];
+  const openSection = vi.fn();
+  function Palette({ query }: { query: string }) {
+    const inlineSettings = useSearchSettings({
+      query,
+      settingsCards: cards,
+      communities,
+      plugins,
+      notifications,
+      navigation: {} as AppServices["navigation"],
+      close: vi.fn(),
+      openSection,
+    });
+    return (
+      <SearchChoices
+        query={query}
+        onQueryChange={() => {}}
+        input={createRef()}
+        groups={[]}
+        inlineSettings={inlineSettings}
+      />
+    );
+  }
+  return { Palette, openSection };
+}
+
+it.each([
+  ["shortcuts", "Shortcuts", "Buzz", "shortcuts"],
+  ["identity", "Identity", "Buzz", "identity"],
+  ["profile", "Profile", "Community", "profile"],
+  ["agent setup", "Agent setup", "Buzz", "agents"],
+  ["software updates", "Software updates", "Buzz", "updates"],
+])(
+  "lists the %s section under Settings and opens it on Enter or click",
+  (query, label, group, id) => {
+    const { Palette, openSection } = sections();
+    render(<Palette query={query} />);
+    const row = within(
+      screen.getByRole("group", { name: "Settings" }),
+    ).getByRole("option");
+    expect(row.textContent).toBe(label + group);
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(input).toHaveAttribute("aria-activedescendant", row.id);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(openSection).toHaveBeenCalledExactlyOnceWith(id);
+    fireEvent.click(row);
+    expect(openSection).toHaveBeenCalledTimes(2);
+    expect(openSection).toHaveBeenLastCalledWith(id);
+  },
+);
+
+it("leads plugin switches with Manage plugins and notification switches with their section", () => {
+  const change = vi.fn();
+  const state = {
+    configuration: {
+      status: "ready",
+      catalog: {
+        plugins: [
+          {
+            manifest: {
+              id: "buzz.profiles",
+              name: "Profiles",
+              description: "Profile cards",
+            },
+            enabled: true,
+          },
+        ],
+      },
+    },
+    activation: {},
+    busy: false,
+  };
+  const plugins = {
+    subscribe: () => () => {},
+    snapshot: () => state,
+    change,
+  } as unknown as AppServices["plugins"];
+  const { notifications } = fixture();
+  const { Palette, openSection } = sections({ plugins, notifications });
+  const rows = (group: string) =>
+    within(screen.getByRole("rowgroup", { name: group }))
+      .getAllByRole("row")
+      .map((row) => row.getAttribute("aria-label"));
+  const view = render(<Palette query="plugins" />);
+  expect(
+    screen
+      .getAllByRole("rowgroup")
+      .map((group) => group.getAttribute("aria-label")),
+  ).toEqual(["Settings", "Plugins"]);
+  expect(rows("Settings")).toEqual(["Manage plugins — Plugins"]);
+  expect(rows("Plugins")[0]).toBe("Profiles — Other");
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+    key: "Enter",
+  });
+  expect(openSection).toHaveBeenCalledExactlyOnceWith("plugins");
+  expect(change).not.toHaveBeenCalled();
+  view.rerender(<Palette query="notifications" />);
+  expect(rows("Settings")).toEqual([
+    "Notifications — Buzz",
+    "Sound — Notifications",
+    "Notify while viewing — Notifications",
+  ]);
+});
+
+it("lists only Personal space and app sections without a selected community", () => {
+  const cards = [
+    { key: "buzz.emoji/custom-emoji", title: "Custom emoji" },
+    { key: "buzz.pairing/mobile", title: "Pair mobile", personal: true },
+  ].map((card) => ({
+    ...card,
+    id: card.key.split("/")[1] ?? "",
+    pluginId: card.key.split("/")[0] ?? "",
+    revision: "one",
+    component: () => null,
+  }));
+  const settingsCards = {
+    subscribe: () => () => {},
+    snapshot: () => cards,
+    retainVisibility: () => () => {},
+  } as unknown as AppServices["settingsCards"];
+  // Plain rows read as the section label followed by its group.
+  const rows = ({ Palette }: ReturnType<typeof sections>, query: string) => {
+    const view = render(<Palette query={query} />);
+    const names = screen
+      .queryAllByRole("option")
+      .map((option) => option.textContent);
+    view.unmount();
+    return names;
+  };
+  const community = sections({ cards: settingsCards });
+  expect(rows(community, "local settings")).toEqual([
+    "Local settingsCommunity",
+  ]);
+  expect(rows(community, "custom emoji")).toEqual(["Custom emojiCommunity"]);
+  expect(rows(community, "leave")).toEqual(["Leave or removeCommunity"]);
+  const personal = sections({ selected: null, cards: settingsCards });
+  expect(rows(personal, "profile")).toEqual(["ProfilePersonal space"]);
+  expect(rows(personal, "pair mobile")).toEqual(["Pair mobilePersonal space"]);
+  expect(rows(personal, "shortcuts")).toEqual(["ShortcutsBuzz"]);
+  for (const query of ["local settings", "custom emoji", "leave"])
+    expect(rows(personal, query)).toEqual([]);
+});
+
+it("lists a gated admin card only once visible, retaining visibility while open", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const cards = new SettingsCardsService(root);
+  let visible = false;
+  const listeners = new Set<() => void>();
+  const release = vi.fn();
+  const ensure = vi.fn(() => release);
+  const fiber = root
+    .extend({ pluginOwner: { id: "moderation", revision: "one" } })
+    .plugin((ctx) => {
+      ctx.settingsCards.register({
+        id: "membership",
+        title: "Membership",
+        section: "administration",
+        visibility: {
+          snapshot: () => visible,
+          subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          ensure,
+        },
+        component: () => null,
+      });
+    });
+  await fiber.await();
+  try {
+    const { Palette } = sections({ cards });
+    const view = render(<Palette query="membership" />);
+    expect(ensure).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("option")).toBeNull();
+    visible = true;
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+    expect(screen.getByRole("option").textContent).toBe(
+      "MembershipCommunity admin",
+    );
+    view.unmount();
+    expect(release).toHaveBeenCalledOnce();
+  } finally {
+    await fiber.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+/** The rendered title and subtitle of a ⌘K row, apart from its accessible
+ * name, which is stated separately and can drift from what is shown. */
+function shown(row: HTMLElement) {
+  return [
+    row.querySelector(".buzz-preference-row-label")?.textContent,
+    row.querySelector(".buzz-preference-row-description")?.textContent,
+  ];
+}
+
+function namedRows({ developmentPaused = false } = {}) {
+  const pluginState = {
+    configuration: {
+      status: "ready",
+      catalog: {
+        plugins: [
+          {
+            manifest: {
+              id: "example.reminders",
+              name: "Reminders",
+              description: "Reminder messages",
+              discovery: { category: "productivity" },
+            },
+            enabled: true,
+          },
+          {
+            manifest: {
+              id: "buzz.channels",
+              name: "Channels",
+              description: "Channel conversations",
+              discovery: { category: "communication" },
+            },
+            enabled: true,
+          },
+        ],
+      },
+    },
+    activation: {},
+    busy: false,
+  };
+  const plugins = {
+    subscribe: () => () => {},
+    snapshot: () => pluginState,
+    change: vi.fn(),
+  } as unknown as AppServices["plugins"];
+  const appearanceState = { preference: "system" };
+  const appearance = {
+    subscribe: () => () => {},
+    snapshot: () => appearanceState,
+    setMode: vi.fn(),
+  } as unknown as AppServices["appearance"];
+  const notificationState = {
+    preferences: { enabled: true, sound: true, notifyWhileViewing: false },
+    developmentPaused,
+  };
+  const notifications = {
+    subscribe: () => () => {},
+    snapshot: () => notificationState,
+    updatePreferences: vi.fn(),
+  } as unknown as AppServices["notifications"];
+  return function Palette({ query }: { query: string }) {
+    const inlineSettings = useSearchSettings({
+      query,
+      plugins,
+      appearance,
+      notifications,
+      navigation: {} as AppServices["navigation"],
+      close: vi.fn(),
+      openSection: vi.fn(),
+    });
+    return (
+      <SearchChoices
+        query={query}
+        onQueryChange={() => {}}
+        input={createRef()}
+        groups={[]}
+        inlineSettings={inlineSettings}
+      />
+    );
+  };
+}
+
+it.each([
+  ["reminders", "Reminders — Productivity", "Reminders", "Productivity"],
+  ["channels", "Channels — Communication", "Channels", "Communication"],
+  ["color mode", "Color mode — Appearance", "Color mode", "Appearance"],
+  ["sound", "Sound — Notifications", "Sound", "Notifications"],
+  [
+    "notify while viewing",
+    "Notify while viewing — Notifications",
+    "Notify while viewing",
+    "Notifications",
+  ],
+])(
+  "titles the %s row with its name and subtitles it with its category",
+  (query, name, title, subtitle) => {
+    const Palette = namedRows();
+    render(<Palette query={query} />);
+    expect(shown(screen.getByRole("row", { name }))).toEqual([title, subtitle]);
+  },
+);
+
+it("keeps the name as the title of a notification row paused in a development build", () => {
+  const Palette = namedRows({ developmentPaused: true });
+  render(<Palette query="sound" />);
+  expect(
+    shown(screen.getByRole("row", { name: "Sound — Notifications" })),
+  ).toEqual(["Sound", "Notifications · Paused in this development build"]);
 });

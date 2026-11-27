@@ -7,7 +7,10 @@ import { mkdtemp, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { watchPageErrors } from "./page-errors.mjs";
-import { createServer } from "./vite-server.mjs";
+import { createServer, warmUp } from "./vite-server.mjs";
+import { expectMessageActionsHidden } from "./message-actions.mjs";
+import { hoverRow, settle } from "./timeline.mjs";
+import { signPackage } from "../fixtures/plugin-release.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", async ({
@@ -18,17 +21,14 @@ test("independent packed author consumer and native-installed contribution survi
   let server;
   try {
     const author = join(temp, "author");
+    const archive = join(temp, "buzz-author.tgz");
     run("pnpm", ["author:build", author]);
-    run("pnpm", ["pack", "--pack-destination", temp], author);
+    run("pnpm", ["pack", "--out", archive], author);
     const source = join(temp, "consumer");
     await cp(join(root, "tests/fixtures/conversation-consumer"), source, {
       recursive: true,
     });
-    run(
-      "pnpm",
-      ["add", "-D", join(temp, "buzz-author-0.0.0-preview.1.tgz")],
-      source,
-    );
+    run("pnpm", ["add", "-D", archive], source);
     run("pnpm", ["build"], source);
     // The global producer is a separate test-only artifact, never part of the consumer.
     const toolSource = join(temp, "timestamp-tool");
@@ -56,6 +56,8 @@ test("independent packed author consumer and native-installed contribution survi
     const home = join(temp, "home");
     const native = (op, ...args) =>
       JSON.parse(run(binary, [home, op, ...args]));
+    await signPackage(join(source, "dist"));
+    await signPackage(join(toolSource, "dist"));
     const installed = native("install", join(source, "dist"));
     expect(
       installed.catalog.plugins.find(
@@ -106,6 +108,7 @@ test("independent packed author consumer and native-installed contribution survi
                         "Insert updated timestamp",
                       ),
                     );
+                    await signPackage(join(toolSource, "dist"));
                     result = native("install", join(toolSource, "dist"));
                     break;
                   default:
@@ -125,6 +128,9 @@ test("independent packed author consumer and native-installed contribution survi
       server: { host: "127.0.0.1", port: 0, strictPort: false },
     });
     await server.listen();
+    // The fixture loads every bundled plugin; compile it outside the
+    // navigation budget, which parallel CI builds can otherwise exhaust.
+    await warmUp(server, "/tests/fixtures/conversation.tsx");
     const errors = watchPageErrors(page);
     await page.route("**/proof-media/**", (route) =>
       route.fulfill({
@@ -137,6 +143,75 @@ test("independent packed author consumer and native-installed contribution survi
     );
     const draft = page.getByRole("textbox", { name: /Message #General/ });
     await expect(draft).toBeVisible();
+    // Browser-only: host toolbar paint, focus, and panel integration must keep
+    // the conversation's real editor and scroll position.
+    const row = page
+      .locator("[data-channel-timeline] [data-message-id]")
+      .filter({ hasText: "History" })
+      .first();
+    const actions = row.getByRole("group", {
+      name: "Message actions",
+      includeHidden: true,
+    });
+    await draft.fill("Panel draft");
+    const scroll = page.locator("[data-channel-timeline]");
+    for (const mode of ["light", "dark"]) {
+      await page.setViewportSize({
+        width: mode === "light" ? 1440 : 800,
+        height: 950,
+      });
+      await page.locator("html").evaluate((node, mode) => {
+        node.style.fontSize = mode === "dark" ? "20px" : "";
+      }, mode);
+      await page.locator("html").evaluate((node, mode) => {
+        node.dataset.colorMode = mode;
+      }, mode);
+      await scroll.hover();
+      await page.mouse.wheel(0, -500);
+      await settle(page, scroll);
+      await row.evaluate((node) => node.scrollIntoView({ block: "center" }));
+      await settle(page, scroll);
+      await draft.focus();
+      // Hover must not scroll the reading position on a hit-test retry.
+      await hoverRow(
+        page,
+        row.locator("[data-message-action-anchor] p").first(),
+        scroll,
+      );
+      const inspect = row.getByRole("button", { name: "Inspect message" });
+      await expect(inspect).toBeVisible();
+      await page.mouse.move(0, 0);
+      await expectMessageActionsHidden(actions);
+      await inspect.focus();
+      await expect(inspect).toBeVisible();
+      await settle(page, scroll);
+      const before = await scroll.evaluate((node) => node.scrollTop);
+      expect(before).toBeGreaterThan(0);
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByText("Consumer message panel", { exact: true }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: test.info().outputPath(`plugin-panel-${mode}.png`),
+      });
+      await page.keyboard.press("Escape");
+      await expect(
+        page.getByText("Consumer message panel", { exact: true }),
+      ).toHaveCount(0);
+      await settle(page, scroll);
+      await expect(draft).toHaveJSProperty("value", "Panel draft");
+      expect(await scroll.evaluate((node) => node.scrollTop)).toBe(before);
+      await row.getByRole("link", { name: "Inspect fixture" }).click();
+      await expect(
+        page.getByText("Consumer message panel", { exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+    }
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.locator("html").evaluate((node) => {
+      node.style.fontSize = "";
+    });
+    await draft.fill("");
     await expect(
       page
         .getByRole("navigation", { name: "Proof pages" })
@@ -266,29 +341,74 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
     await expect(draft).toHaveJSProperty("value", "Channels draft");
+    // The packed external consumer must reach native grouping and focus behavior,
+    // not just compile declarations. Editor checks are composition smoke coverage.
+    const groupingEditor = await draft.elementHandle();
+    const replySummary = page.getByRole("button", {
+      name: "View 1 reply",
+    });
+    await expect(replySummary).toHaveText("1 reply");
+    await replySummary.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByText("Example reply", { exact: true }),
+    ).toBeFocused();
+    expect(await groupingEditor.evaluate((el) => el.isConnected)).toBe(true);
+    await page.getByRole("button", { name: "Collapse example reply" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(replySummary).toBeFocused();
+    await expect(page.getByText("Example reply", { exact: true })).toBeHidden();
+    await expect(draft).toHaveJSProperty("value", "Channels draft");
+    expect(await groupingEditor.evaluate((el) => el.isConnected)).toBe(true);
     // The independently built page uses the host's date labels.
     await expect(
       page.getByText("Consumer dates Today, Yesterday, 5 minutes ago", {
         exact: true,
       }),
     ).toBeVisible();
+    // The installed blob uses host sharing components without source imports;
+    // browser focus/portal ownership cannot be established by type tests.
+    const share = page.getByRole("button", {
+      name: "Share consumer record",
+      exact: true,
+    });
+    await share.click();
+    const memberPicker = page.getByRole("dialog", {
+      name: "Record access",
+      exact: true,
+    });
+    await expect(memberPicker).toBeVisible();
+    await expect(
+      memberPicker.getByRole("region", { name: "General access" }),
+    ).toContainText("Only record members can read.");
+    await expect(
+      memberPicker.getByRole("button", { name: "Copy link", exact: true }),
+    ).toBeVisible();
+    await memberPicker
+      .getByRole("button", { name: "Done", exact: true })
+      .click();
+    await expect(memberPicker).toBeHidden();
+    await expect(share).toBeFocused();
     // The independently built page consumes the host's registered Mentions tool.
     await page
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
     await page
-      .getByRole("button", { name: `Member ${member}`, exact: true })
+      .getByRole("button")
+      .and(page.locator(`[data-mention-choice="${member}"]`))
       .click();
     const recipients = draft.locator(".inline-chip");
     await expect(recipients).toHaveCount(1);
     const withMention = await draft.evaluate((element) => element.value);
     const textarea = await draft.elementHandle();
-    await page.evaluate(() =>
-      window.conversationFixture.change("disable", "buzz.mentions"),
-    );
+    expect(
+      await page.evaluate(() =>
+        window.conversationFixture.change("disable", "buzz.mentions"),
+      ),
+    ).toBe(false);
     await expect(
       page.getByRole("button", { name: "Mention a member", exact: true }),
-    ).toHaveCount(0);
+    ).toHaveCount(1);
     await expect(draft).toHaveJSProperty("value", withMention);
     await expect(recipients).toHaveCount(1);
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
@@ -303,12 +423,6 @@ test("independent packed author consumer and native-installed contribution survi
       "value",
       withMention.replace("@Member", ""),
     );
-    await page.evaluate(() =>
-      window.conversationFixture.change("enable", "buzz.mentions"),
-    );
-    await expect(
-      page.getByRole("button", { name: "Mention a member", exact: true }),
-    ).toHaveCount(1);
     await draft.fill("Channels draft");
     await draft.focus();
     await draft.evaluate((el) => el.setSelectionRange(2, 5));
@@ -342,34 +456,24 @@ test("independent packed author consumer and native-installed contribution survi
     const historic = page.locator('img[src*="history.png"]');
     await expect(historic).toHaveCount(1);
     await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
-    await page.evaluate(() =>
-      window.conversationFixture.change("disable", "buzz.emoji"),
-    );
+    expect(
+      await page.evaluate(() =>
+        window.conversationFixture.change("disable", "buzz.emoji"),
+      ),
+    ).toBe(false);
     await expect(
       page.getByRole("button", { name: "Emoji and GIFS", exact: true }),
-    ).toHaveCount(0);
-    await expect(page.locator("em-emoji-picker")).toHaveCount(0);
-    await expect(historic).toHaveCount(0);
-    await expect(
-      page.getByText("History :party:", { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(1);
+    await expect(page.locator("em-emoji-picker")).toHaveCount(1);
+    await expect(historic).toHaveCount(1);
+    await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
+    await page.keyboard.press("Escape");
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
     await expect(draft).toHaveJSProperty("value", "Channels draft");
-    // Plugin-independent recovery when the catalog is unavailable.
+    // A failed refresh keeps the loaded catalog; plugin-independent sends
+    // still resolve its tags without asking for message preparation retry.
     await page.evaluate(() => window.conversationFixture.fail(true));
     await draft.fill(":party:");
-    await draft.press("Enter");
-    await expect(
-      page.getByRole("button", { name: "Retry message preparation" }),
-    ).toBeVisible();
-    await page.evaluate(() => window.conversationFixture.fail(false));
-    await page
-      .getByRole("button", { name: "Retry message preparation" })
-      .click();
-    await expect(
-      page.getByRole("button", { name: "Retry message preparation" }),
-    ).toHaveCount(0);
-    await expect(draft).toHaveJSProperty("value", ":party:");
     await draft.press("Enter");
     await expect
       .poll(() =>
@@ -381,9 +485,10 @@ test("independent packed author consumer and native-installed contribution survi
         () => window.conversationFixture.report.signed[0].tags,
       ),
     ).toContainEqual(["emoji", "party", "https://a.test/media/current.png"]);
-    await page.evaluate(() =>
-      window.conversationFixture.change("enable", "buzz.emoji"),
-    );
+    await expect(
+      page.getByRole("button", { name: "Retry message preparation" }),
+    ).toHaveCount(0);
+    await page.evaluate(() => window.conversationFixture.fail(false));
     await expect(
       page.getByRole("button", { name: "Emoji and GIFS", exact: true }),
     ).toHaveCount(1);
@@ -391,11 +496,13 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.fill("reject :party:");
     await draft.press("Enter");
     // Delivery feedback intentionally waits 10 seconds; leave time for the UI timer.
-    await expect(page.getByRole("button", { name: /Retry/ })).toBeVisible({
-      timeout: 15_000,
+    const retryDelivery = page.getByRole("button", {
+      name: "Retry",
+      exact: true,
     });
+    await expect(retryDelivery).toBeVisible({ timeout: 15_000 });
     await page.evaluate(() => window.conversationFixture.replace());
-    await page.getByRole("button", { name: /Retry/ }).click();
+    await retryDelivery.click();
     await expect
       .poll(() =>
         page.evaluate(() => window.conversationFixture.report.published.length),

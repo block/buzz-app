@@ -5,6 +5,7 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions.ts";
+import { isBundledOwner } from "../../plugins/provenance";
 
 export type PageProps = {
   companion?: ReactNode | undefined;
@@ -20,12 +21,20 @@ export type PageSidebarProps = {
   children?: ReactNode | undefined;
 };
 
+/** Props for a primary page's navigation hover preview. */
+export type PagePreviewProps = {
+  /** Close the preview, for example after its content opened something. */
+  close(): void;
+};
+
 export type Page = Readonly<{
   id: string;
   title: string;
   component: ComponentType<PageProps>;
   /** Replace the conversation sidebar while this page is selected. */
   sidebar?: ComponentType<PageSidebarProps>;
+  /** Keep the Messages sidebar and dock selection while this page is open. */
+  conversationNavigation?: boolean;
   layout?: "document" | "workspace";
   // Opt in only when every page state places the supplied companion card.
   companion?: boolean;
@@ -41,10 +50,11 @@ export type Page = Readonly<{
    * listed in search and reachable by deep link or from another page.
    */
   primary?: boolean;
-  /** Preferred navigation location for a primary page; omitted means sidebar.
-   * The host may move header entries into an overflow menu when space is tight.
+  /** Preferred navigation location for a primary page: a row in the Messages
+   * sidebar (the default) or an app in the dock. `topbar` and `toolbar` are
+   * pre-dock aliases for `dock`, still accepted.
    */
-  placement?: "sidebar" | "topbar" | "toolbar";
+  placement?: "sidebar" | "dock" | "topbar" | "toolbar";
   /**
    * A `data:image/<subtype>[;params],<payload>` URL shown beside the page in
    * search and primary navigation. Any other value is dropped with a warning,
@@ -56,13 +66,32 @@ export type Page = Readonly<{
    * compact corner badge; prefer a short count or dot there.
    */
   badge?: ComponentType;
+  /**
+   * Supplemental content the shell shows while a pointer rests on this page's
+   * sidebar or app-dock entry. It is never shown without hover or while the
+   * page is selected, so the page must stay complete without it.
+   */
+  preview?: ComponentType<PagePreviewProps>;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
   snapshot: () => readonly RegisteredPage[];
   subscribe: (listener: () => void) => () => void;
 };
-export type Pages = PagesReader & { register(page: Page): void };
+/** A bundled plugin's component the app shell mounts once while the plugin
+ * is on, such as a notice or a dialog, which places itself. The design
+ * system's toasts and dialogs work in it. */
+export type AppOverlay = Readonly<{ id: string; component: ComponentType }>;
+export type RegisteredOverlay = Contribution<AppOverlay>;
+export type Pages = PagesReader & {
+  register(page: Page): void;
+  /** Bundled plugins only. */
+  registerOverlay(overlay: AppOverlay): void;
+  readonly overlays: Readonly<{
+    snapshot: () => readonly RegisteredOverlay[];
+    subscribe: (listener: () => void) => () => void;
+  }>;
+};
 declare module "@deepseek-ai/cordis" {
   interface Context {
     pages: Pages;
@@ -73,9 +102,27 @@ const dataImageUrl = /^data:image\/[\w.+-]+(?:;[^,]*)?,/i;
 
 export class PagesService extends Service implements Pages {
   private readonly contributions;
+  private readonly overlayContributions;
   constructor(ctx: Context) {
     super(ctx, "pages");
     this.contributions = createContributions<Page>(ctx);
+    this.overlayContributions = createContributions<AppOverlay>(ctx);
+    // Read-only: registering goes through `registerOverlay`'s check.
+    const { snapshot, subscribe } = this.overlayContributions;
+    this.overlays = Object.freeze({ snapshot, subscribe });
+  }
+  readonly overlays;
+  registerOverlay(overlay: AppOverlay) {
+    if (!this.ctx.pluginOwner || !isBundledOwner(this.ctx.pluginOwner))
+      throw new Error("App overlays are available only to bundled plugins");
+    if (
+      !overlay ||
+      typeof overlay.id !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(overlay.id) ||
+      typeof overlay.component !== "function"
+    )
+      throw new Error("An app overlay needs an id and a React component");
+    this.overlayContributions.register(this.ctx, overlay);
   }
   snapshot = () => this.contributions.snapshot();
   subscribe = (listener: () => void) => this.contributions.subscribe(listener);
@@ -88,12 +135,15 @@ export class PagesService extends Service implements Pages {
       !page.title.trim() ||
       typeof page.component !== "function" ||
       (page.sidebar !== undefined && typeof page.sidebar !== "function") ||
+      (page.conversationNavigation !== undefined &&
+        typeof page.conversationNavigation !== "boolean") ||
       (page.layout !== undefined &&
         page.layout !== "document" &&
         page.layout !== "workspace") ||
       (page.companion !== undefined && typeof page.companion !== "boolean") ||
       (page.primary !== undefined && typeof page.primary !== "boolean") ||
-      (page.badge !== undefined && typeof page.badge !== "function")
+      (page.badge !== undefined && typeof page.badge !== "function") ||
+      (page.preview !== undefined && typeof page.preview !== "function")
     ) {
       throw new Error(
         "A page needs an id, a title, and a React component function",
@@ -116,12 +166,13 @@ export class PagesService extends Service implements Pages {
     if (
       placement === undefined ||
       placement === "sidebar" ||
+      placement === "dock" ||
       placement === "topbar" ||
       placement === "toolbar"
     )
       return page;
     console.warn(
-      `Ignoring page placement for ${this.ctx.pluginOwner?.id}/${page.id}: expected sidebar, topbar, or toolbar`,
+      `Ignoring page placement for ${this.ctx.pluginOwner?.id}/${page.id}: expected sidebar or dock`,
     );
     return rest;
   }

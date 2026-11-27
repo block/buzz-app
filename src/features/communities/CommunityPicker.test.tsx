@@ -10,11 +10,12 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { SettingsCardsService } from "../settings/service";
 import type { RelayData, RelaySnapshot } from "../relay/service";
+import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { CommunityPicker } from "./CommunityPicker";
@@ -81,6 +82,7 @@ function harness({
     status: "ready",
     relayAvailable: true,
     profile: { name: "", picture: "" },
+    sync: { known: [], outbox: [] },
     viewer,
     selected,
     memberships: [
@@ -109,6 +111,15 @@ function harness({
     };
     notify();
     return leaveResidue;
+  });
+  // Mirrors the service: the community takes the place the other holds.
+  const reorder = vi.fn((id: string, over: string) => {
+    const memberships = [...snapshot.memberships];
+    const from = memberships.findIndex((m) => m.id === id);
+    const to = memberships.findIndex((m) => m.id === over);
+    memberships.splice(to, 0, ...memberships.splice(from, 1));
+    snapshot = { ...snapshot, memberships };
+    notify();
   });
   const read = vi.fn(async () => [
     {
@@ -153,6 +164,7 @@ function harness({
     },
     select,
     leave,
+    reorder,
     relay,
   } as unknown as Communities;
   // The broker's session contract is deliberately unanswered: the picker holds
@@ -171,6 +183,7 @@ function harness({
     communities,
     select,
     leave,
+    reorder,
     read,
     fetch,
     markAllChannelsRead,
@@ -258,11 +271,13 @@ it("offers the original's actions on the selected community and only reads its r
   await within(menu).findByRole("menuitem", { name: "Invite to community" });
   expect(items(menu)).toEqual([
     "Mark all as read",
+    "Move up",
+    "Move down",
     "Copy community URL",
     "Invite to community",
     "Leave community",
   ]);
-  expect(within(menu).getAllByRole("separator")).toHaveLength(2);
+  expect(within(menu).getAllByRole("separator")).toHaveLength(3);
   expect(
     within(menu).getByRole("menuitem", { name: "Mark all as read" }),
   ).not.toHaveAttribute("aria-disabled");
@@ -283,16 +298,18 @@ it("offers the original's actions on the selected community and only reads its r
   const inactive = await openMenu("Secondary");
   expect(items(inactive)).toEqual([
     "Mark all as read",
+    "Move up",
+    "Move down",
     "Copy community URL",
     "Leave community",
   ]);
-  expect(within(inactive).getAllByRole("separator")).toHaveLength(2);
+  expect(within(inactive).getAllByRole("separator")).toHaveLength(3);
   const markAll = within(inactive).getByRole("menuitem", {
     name: "Mark all as read",
   });
   expect(markAll).toHaveAttribute("aria-disabled", "true");
   expect(markAll).toHaveAccessibleDescription(
-    "Only the selected community can be marked as read.",
+    "Open Secondary to mark it as read.",
   );
   fireEvent.click(markAll);
   expect(h.markAllChannelsRead).not.toHaveBeenCalled();
@@ -314,6 +331,8 @@ it("offers no Invite and reads nothing while the session carries no relay author
   await act(async () => {});
   expect(items(menu)).toEqual([
     "Mark all as read",
+    "Move up",
+    "Move down",
     "Copy community URL",
     "Leave community",
   ]);
@@ -430,7 +449,7 @@ it("returns focus after a pointer open to the field the right-click interrupted,
   composer.focus();
   const menu = await rightClick();
   expect(menu).toHaveAttribute("data-side", "bottom");
-  expect(target).toHaveFocus();
+  await waitFor(() => expect(menu).toHaveFocus());
   await user.click(
     within(menu).getByRole("menuitem", { name: "Copy community URL" }),
   );
@@ -452,6 +471,51 @@ it("returns focus after a pointer open to the field the right-click interrupted,
   fireEvent.keyDown(document.activeElement ?? reopened, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await waitFor(() => expect(target).toHaveFocus());
+});
+
+it("moves a community up and down from its menu, keeping the selection and the keyboard's place", async () => {
+  const user = userEvent.setup();
+  const h = harness();
+  render(<CommunityPicker communities={h.communities} />);
+  const rows = () =>
+    screen
+      .getAllByRole("button", { name: /^Switch to / })
+      .map((row) => row.getAttribute("aria-label"));
+  expect(rows()).toEqual(["Switch to Primary", "Switch to Secondary"]);
+  // The keyboard path: the row's own menu, opened from the row.
+  button("Secondary").focus();
+  fireEvent.keyDown(button("Secondary"), { key: "F10", shiftKey: true });
+  let menu = await screen.findByRole("menu", {
+    name: "Actions for Secondary",
+  });
+  // The last community has nowhere further down to go.
+  const down = within(menu).getByRole("menuitem", { name: "Move down" });
+  expect(down).toHaveAttribute("aria-disabled", "true");
+  await user.click(down);
+  expect(h.reorder).not.toHaveBeenCalled();
+  await user.click(within(menu).getByRole("menuitem", { name: "Move up" }));
+  expect(h.reorder).toHaveBeenLastCalledWith(secondary, primary);
+  expect(rows()).toEqual(["Switch to Secondary", "Switch to Primary"]);
+  await waitFor(() => expect(button("Secondary")).toHaveFocus());
+  // A move is not a switch: the selected community stays selected.
+  expect(h.select).not.toHaveBeenCalled();
+  expect(button("Primary")).toHaveAttribute("aria-current", "true");
+  expect(switcher()).toHaveAccessibleName("Community switcher: Primary");
+  // Now first, it can only go down.
+  menu = await openMenu("Secondary");
+  expect(
+    within(menu).getByRole("menuitem", { name: "Move up" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(within(menu).getByRole("menuitem", { name: "Move down" }));
+  expect(h.reorder).toHaveBeenLastCalledWith(secondary, primary);
+  expect(rows()).toEqual(["Switch to Primary", "Switch to Secondary"]);
+  // A single community has nothing to reorder.
+  h.update({ memberships: [{ id: primary, name: "Primary" }] });
+  expect(items(await openMenu("Primary"))).toEqual([
+    "Mark all as read",
+    "Copy community URL",
+    "Leave community",
+  ]);
 });
 
 it("copies the canonical community origin and reports the outcome", async () => {
@@ -503,6 +567,37 @@ it("marks every channel read through the selected session and reports failures",
   );
   await screen.findByText("Couldn’t mark everything as read.");
   expect(h.select).not.toHaveBeenCalled();
+});
+
+it("marks an inactive community read through its own session without selecting it", async () => {
+  const user = userEvent.setup();
+  const h = harness();
+  const markAllChannelsRead = vi.fn(async () => []);
+  const background = {
+    unread: {
+      sync: () => ({ capability: "frontier-sync" as const }),
+      subscribeSync: () => () => {},
+      markAllChannelsRead,
+    },
+  };
+  // Known unread, even when all read, is what exposes the session.
+  const states = new Map([[secondary, { unread: false, attention: 0 }]]);
+  const unreads = {
+    snapshot: () => states,
+    subscribe: () => () => {},
+    session: (id: string) =>
+      id === secondary ? (background as unknown as RelaySession) : undefined,
+  };
+  render(<CommunityPicker communities={h.communities} unreads={unreads} />);
+  const menu = await openMenu("Secondary");
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Mark all as read" }),
+  );
+  await screen.findByText("Marked all as read.");
+  expect(markAllChannelsRead).toHaveBeenCalledTimes(1);
+  expect(h.markAllChannelsRead).not.toHaveBeenCalled();
+  expect(h.select).not.toHaveBeenCalled();
+  expect(button("Primary")).toHaveAttribute("aria-current", "true");
 });
 
 it.each([
@@ -715,12 +810,49 @@ it("cancelling the confirmation keeps the membership and returns focus to the co
   expect(h.select).not.toHaveBeenCalled();
 });
 
+it("reports the relay owner's refusal without offering device removal", async () => {
+  const user = userEvent.setup();
+  const h = harness({
+    leaveResponse: () =>
+      Response.json(
+        { error: "invalid: relay owner cannot leave" },
+        { status: 400 },
+      ),
+  });
+  render(<CommunityPicker communities={h.communities} />);
+  const dialog = await askToLeave(user, "Secondary");
+  await user.click(confirmLeave(dialog));
+  await screen.findByText(
+    "The relay owner can’t leave Secondary — https://secondary.example.",
+  );
+  expect(h.leave).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(button("Secondary")).toBeInTheDocument();
+  await waitFor(() => expect(switcher()).toHaveFocus());
+});
+
+/** Leaves through a relay that never settles the request and waits for the
+ * dialog to offer device removal instead. */
+async function failLeave(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+) {
+  await user.click(confirmLeave(await askToLeave(user, name)));
+  return await screen.findByRole("alertdialog", {
+    name: `Couldn’t leave ${name}`,
+  });
+}
+const confirmRemove = (dialog: HTMLElement) =>
+  within(dialog).getByRole("button", { name: "Remove from this device" });
+
 it.each([
+  {
+    name: "the domain no longer resolves",
+    response: () => Promise.reject(new TypeError("Failed to fetch")),
+  },
   {
     name: "the relay is unreachable",
     response: () => Response.json({ error: "upstream" }, { status: 503 }),
-    toast:
-      "Couldn’t leave Secondary — https://secondary.example. Check your connection and try again.",
   },
   {
     name: "the relay rejects the request for an unknown reason",
@@ -729,37 +861,33 @@ it.each([
         { error: "invalid: database error: secret" },
         { status: 400 },
       ),
-    toast:
-      "Couldn’t leave Secondary — https://secondary.example. Check your connection and try again.",
-  },
-  {
-    name: "the viewer owns the relay",
-    response: () =>
-      Response.json(
-        { error: "invalid: relay owner cannot leave" },
-        { status: 400 },
-      ),
-    toast: "The relay owner can’t leave Secondary — https://secondary.example.",
   },
   {
     name: "the request times out",
     response: () =>
       Promise.reject(new DOMException("timed out", "TimeoutError")),
-    toast:
-      "Couldn’t leave Secondary — https://secondary.example. Check your connection and try again.",
   },
 ])(
-  "keeps the membership when $name and leaves the item usable",
-  async ({ response, toast }) => {
+  "offers device removal when $name, and Cancel keeps the membership",
+  async ({ response }) => {
     const user = userEvent.setup();
     const h = harness({ leaveResponse: response });
     render(<CommunityPicker communities={h.communities} />);
-    const dialog = await askToLeave(user, "Secondary");
-    await user.click(confirmLeave(dialog));
-    await screen.findByText(toast);
+    const dialog = await failLeave(user, "Secondary");
+    expect(dialog).toHaveTextContent(
+      "Its relay didn’t confirm the leave, so you may still be a member.",
+    );
+    expect(dialog).toHaveTextContent("This doesn’t change your membership.");
+    // The confirm button held focus through the leave; a repeated Enter must
+    // not remove the community without a fresh choice.
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    expect(screen.queryByText(/Check your connection/)).toBeNull();
     expect(h.leaveRequests()).toHaveLength(1);
     expect(h.leave).not.toHaveBeenCalled();
+    await user.click(cancel);
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(h.leave).not.toHaveBeenCalled();
     expect(button("Secondary")).toBeInTheDocument();
     await waitFor(() => expect(switcher()).toHaveFocus());
     // The item is back to its resting label for a retry.
@@ -771,6 +899,85 @@ it.each([
     expect(sessionRequests(h.fetch)).toEqual([]);
   },
 );
+
+it("removes a community whose relay cannot be reached from this device without contacting it again", async () => {
+  const user = userEvent.setup();
+  const h = harness({
+    leaveResponse: () => Promise.reject(new TypeError("Failed to fetch")),
+  });
+  render(<CommunityPicker communities={h.communities} onSelect={h.onSelect} />);
+  const dialog = await failLeave(user, "Secondary");
+  await user.click(confirmRemove(dialog));
+  const notice = await screen.findByText(
+    "Secondary — https://secondary.example was removed from this device. Its relay didn’t confirm the leave, so you may still be a member.",
+  );
+  expect(notice.closest(".buzz-toast")).toHaveAttribute("data-type", "success");
+  // Only the failed leave reached for the relay.
+  expect(h.leaveRequests()).toHaveLength(1);
+  expect(h.leave).toHaveBeenCalledExactlyOnceWith(secondary, { purge: true });
+  expect(h.onSelect).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(
+    screen.queryByRole("button", { name: "Switch to Secondary" }),
+  ).toBeNull();
+  expect(sessionRequests(h.fetch)).toEqual([]);
+  await waitFor(() => expect(switcher()).toHaveFocus());
+});
+
+it("keeps the membership uncertain when the relay may have applied a leave whose answer was lost", async () => {
+  const user = userEvent.setup();
+  // The request reached the relay, which may have applied it; only its answer
+  // was lost to the timeout.
+  const h = harness({
+    leaveResponse: () =>
+      Promise.reject(new DOMException("timed out", "TimeoutError")),
+    leaveResidue: [{ store: "outbox", error: new Error("blocked") }],
+  });
+  render(<CommunityPicker communities={h.communities} />);
+  await user.click(confirmRemove(await failLeave(user, "Secondary")));
+  await screen.findByText(
+    "Secondary — https://secondary.example was removed from this device. Its relay didn’t confirm the leave, so you may still be a member. Some saved data couldn’t be cleared.",
+  );
+  expect(h.leaveRequests()).toHaveLength(1);
+  expect(screen.queryByText(/membership wasn’t changed/)).toBeNull();
+});
+
+it("removing the selected community from this device tells the host to select Personal space", async () => {
+  const user = userEvent.setup();
+  const h = harness({
+    leaveResponse: () => Promise.reject(new TypeError("Failed to fetch")),
+  });
+  render(<CommunityPicker communities={h.communities} onSelect={h.onSelect} />);
+  await user.click(confirmRemove(await failLeave(user, "Primary")));
+  await screen.findByText(
+    "Primary — https://primary.example was removed from this device. Its relay didn’t confirm the leave, so you may still be a member.",
+  );
+  expect(h.leave).toHaveBeenCalledWith(primary, { purge: true });
+  expect(h.onSelect).toHaveBeenCalledExactlyOnceWith(null);
+  await waitFor(() => expect(switcher()).toHaveFocus());
+  expect(switcher()).toHaveAccessibleName("Community switcher: Personal space");
+});
+
+it("keeps the community when this device cannot save its removal", async () => {
+  const user = userEvent.setup();
+  const h = harness({
+    leaveResponse: () => Promise.reject(new TypeError("Failed to fetch")),
+    leaveError: new Error(
+      "Could not save this community on this device. Try again.",
+      { cause: new Error("Setting the value exceeded the quota.") },
+    ),
+  });
+  render(<CommunityPicker communities={h.communities} onSelect={h.onSelect} />);
+  await user.click(confirmRemove(await failLeave(user, "Secondary")));
+  const notice = await screen.findByText(
+    "Couldn’t remove Secondary — https://secondary.example from this device (Setting the value exceeded the quota). Try again.",
+  );
+  expect(notice.closest(".buzz-toast")).toHaveAttribute("data-type", "error");
+  expect(h.onSelect).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(button("Secondary")).toBeInTheDocument();
+  await waitFor(() => expect(switcher()).toHaveFocus());
+});
 
 const absent =
   "You were no longer a member of Secondary — https://secondary.example, so it was removed from this device.";
@@ -882,7 +1089,7 @@ it("still reports a successful leave when the host's selection callback throws",
   expect(screen.queryByText(/couldn’t finish cleaning up/)).toBeNull();
   expect(onSelect).toHaveBeenCalledWith(null);
   expect(error).toHaveBeenCalledWith(
-    "Couldn't select Personal space after leaving Primary",
+    "Couldn't select Personal space after removing Primary",
     hostError,
   );
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
@@ -1065,7 +1272,7 @@ it("opens a deep-link invite on Personal space without claiming until the user c
       invite={{
         community: "https://invited.example",
         code: "v2.invite",
-        requestId: 1,
+        requestId: "1",
       }}
       onInviteClose={onInviteClose}
       onSelect={t.onSelect}
@@ -1079,7 +1286,32 @@ it("opens a deep-link invite on Personal space without claiming until the user c
   ).toBe(false);
   expect(t.select).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Back" }));
-  expect(onInviteClose).toHaveBeenCalledWith(1);
+  expect(onInviteClose).toHaveBeenCalledWith("1");
+  expect(t.select).not.toHaveBeenCalled();
+});
+
+it("connects at once to a community the person asked to join from the app", async () => {
+  const t = harness();
+  render(
+    <CommunityPicker
+      communities={t.communities}
+      invite={{
+        community: "https://created.example",
+        code: "",
+        submitted: true,
+        requestId: "2",
+      }}
+      onInviteClose={vi.fn()}
+      onSelect={t.onSelect}
+    />,
+  );
+  // No Continue: the dialog looks the community up as soon as it opens.
+  await waitFor(() =>
+    expect(t.fetch).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent("https://created.example")}/info`,
+      expect.anything(),
+    ),
+  );
   expect(t.select).not.toHaveBeenCalled();
 });
 
@@ -1091,7 +1323,6 @@ it("labels the existing picker Communities only while no community is saved", as
   });
   const user = userEvent.setup();
   const picker = switcher();
-  expect(picker).toHaveTextContent("Communities");
   expect(picker).toHaveAccessibleName("Community switcher: Communities");
   expect(
     within(
@@ -1107,12 +1338,11 @@ it("labels the existing picker Communities only while no community is saved", as
   await waitFor(() => expect(picker).toHaveFocus());
 
   h.update({ memberships: [{ id: primary, name: "Primary" }] });
-  expect(switcher()).not.toHaveTextContent("Communities");
   expect(switcher()).toHaveAccessibleName("Community switcher: Personal space");
   h.update({ selected: primary });
   expect(switcher()).toHaveAccessibleName("Community switcher: Primary");
   h.update({ selected: null, memberships: [] });
-  expect(switcher()).toHaveTextContent("Communities");
+  expect(switcher()).toHaveAccessibleName("Community switcher: Communities");
 });
 
 it("shows only the active community until opened and routes creation through Hosted communities", async () => {
@@ -1124,7 +1354,7 @@ it("shows only the active community until opened and routes creation through Hos
       onOpenTarget={onOpenTarget}
       settingsCards={{
         subscribe: () => () => {},
-        has: (key) => key === "block.hosted-communities/hosted",
+        has: (key) => key === "block.builderlab/login",
       }}
     />,
     { wrapper: ToastProvider },
@@ -1152,7 +1382,8 @@ it("shows only the active community until opened and routes creation through Hos
   expect(onOpenTarget).toHaveBeenCalledWith({
     version: 1,
     kind: "settings",
-    section: "block.hosted-communities/hosted",
+    section: "block.builderlab/login",
+    route: { version: 1, params: "create-community" },
   });
   expect(h.select).not.toHaveBeenCalled();
   await waitFor(() =>
@@ -1160,6 +1391,59 @@ it("shows only the active community until opened and routes creation through Hos
       screen.queryByRole("dialog", { name: "Switch community" }),
     ).toBeNull(),
   );
+});
+
+it("returns focus to the trigger when the host reopens the switcher after a choice navigated", async () => {
+  const h = harness();
+  function Host() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        {/* The shell's content, which focus follows after a choice navigates. */}
+        <main id="main-content" tabIndex={-1} />
+        <button type="button" onClick={() => setOpen(true)}>
+          Choose a community
+        </button>
+        <CommunityPicker
+          communities={h.communities}
+          onOpenTarget={h.onOpenTarget}
+          settingsCards={{
+            subscribe: () => () => {},
+            has: (key) => key === "block.builderlab/login",
+          }}
+          open={open}
+          onOpenChange={setOpen}
+        />
+      </>
+    );
+  }
+  rtlRender(<Host />, { wrapper: ToastProvider });
+  const user = userEvent.setup();
+  await user.click(switcher());
+  await user.click(
+    await screen.findByRole("button", { name: "Create community" }),
+  );
+  expect(h.onOpenTarget).toHaveBeenCalledWith({
+    version: 1,
+    kind: "settings",
+    section: "block.builderlab/login",
+    route: { version: 1, params: "create-community" },
+  });
+  await waitFor(() =>
+    expect(document.getElementById("main-content")).toHaveFocus(),
+  );
+
+  // The host opens the switcher without its trigger; a dismissal without a
+  // choice still returns focus to the trigger, not to the earlier destination.
+  await user.click(screen.getByRole("button", { name: "Choose a community" }));
+  await screen.findByRole("dialog", { name: "Switch community" });
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Switch community" }),
+    ).toBeNull(),
+  );
+  await waitFor(() => expect(switcher()).toHaveFocus());
 });
 
 it("shares discovered community artwork with an already-open Settings address without another read", async () => {
@@ -1228,4 +1512,52 @@ it("shares discovered community artwork with an already-open Settings address wi
     cleanup();
     await root.fiber.dispose();
   }
+});
+
+it("badges other communities' unread on their rows and the closed switcher", () => {
+  const h = harness();
+  const listeners = new Set<() => void>();
+  let states = new Map([
+    [primary, { unread: true, attention: 4 }],
+    [secondary, { unread: true, attention: 0 }],
+  ]);
+  const unreads = {
+    snapshot: () => states,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    session: () => undefined,
+  };
+  const change = (next: typeof states) =>
+    act(() => {
+      states = next;
+      for (const listener of listeners) listener();
+    });
+  render(<CommunityPicker communities={h.communities} unreads={unreads} />);
+  const row = (name: string) => {
+    openSwitcher();
+    return screen.getByRole("button", {
+      name: new RegExp(`^Switch to ${name}`),
+    });
+  };
+  // The selected community is never badged; the other shows a dot.
+  expect(row("Primary")).toHaveAccessibleName("Switch to Primary");
+  expect(row("Secondary")).toHaveAccessibleName("Switch to Secondary, unread");
+  expect(switcher()).toHaveAccessibleName(
+    "Community switcher: Primary, unread in other communities",
+  );
+  change(new Map([[secondary, { unread: true, attention: 3 }]]));
+  expect(row("Secondary")).toHaveAccessibleName(
+    "Switch to Secondary, 3 items need you",
+  );
+  expect(within(row("Secondary")).getByText("3")).toBeInTheDocument();
+  // Read, or not yet known: no badge and no false all-read.
+  change(new Map([[secondary, { unread: false, attention: 0 }]]));
+  expect(row("Secondary")).toHaveAccessibleName("Switch to Secondary");
+  expect(switcher()).toHaveAccessibleName("Community switcher: Primary");
+  change(new Map());
+  expect(row("Secondary")).toHaveAccessibleName("Switch to Secondary");
 });

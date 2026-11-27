@@ -319,10 +319,73 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-categorical-blue",
+        variable: "--surface-categorical-blue",
+        pointsAt: "blue-3 light / blue-3 dark",
+        use: "Categorical blue fill under icon-categorical-blue.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-categorical-blue-hover",
+        variable: "--surface-categorical-blue-hover",
+        pointsAt: "blue-4 light / blue-4 dark",
+        use: "Hover on a surface-categorical-blue control.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-categorical-green",
+        variable: "--surface-categorical-green",
+        pointsAt: "green-3 light / green-3 dark",
+        use: "Categorical green fill under icon-categorical-green.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-categorical-green-hover",
+        variable: "--surface-categorical-green-hover",
+        pointsAt: "green-4 light / green-4 dark",
+        use: "Hover on a surface-categorical-green control.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-categorical-amber",
+        variable: "--surface-categorical-amber",
+        pointsAt: "amber-3 light / amber-3 dark",
+        use: "Categorical amber fill under icon-categorical-amber.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-categorical-orange",
+        variable: "--surface-categorical-orange",
+        pointsAt: "orange-3 light / orange-3 dark",
+        use: "Categorical orange fill under icon-categorical-orange.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-categorical-amber-hover",
+        variable: "--surface-categorical-amber-hover",
+        pointsAt: "amber-4 light / amber-4 dark",
+        use: "Hover on a surface-categorical-amber control.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-search-match",
+        variable: "--surface-search-match",
+        pointsAt: "amber-4 light / amber-4 dark",
+        use: "Matched characters in search results, paired with text-search-match.",
+        status: "core",
+      },
+      {
         token: "bg-surface-panel",
         variable: "--surface-panel",
         pointsAt: "neutral-1 light / neutral-3 dark",
         use: "A content panel or card.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-composer",
+        variable: "--surface-composer",
+        pointsAt: "surface-panel light / neutral-4 dark",
+        use: "Message drafting surface, raised above the panel in dark mode.",
         status: "core",
       },
       {
@@ -354,10 +417,95 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-message-hover",
+        variable: "--surface-message-hover",
+        pointsAt:
+          "surface-message mixed 5% toward black in light mode / white in dark mode",
+        use: "Received bubble fill while its actions show; text and media are unchanged.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-raised",
+        variable: "--surface-message-raised",
+        pointsAt:
+          "bubble-received-raised: bubble-received light / #383838 dark",
+        use: "Received bubbles inside an Inline sheet, which sits on neutral-raised; the sheet sets it as its surface-message.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-raised-hover",
+        variable: "--surface-message-raised-hover",
+        pointsAt:
+          "surface-message-raised mixed 5% toward black in light mode / white in dark mode",
+        use: "Received bubble fill inside an Inline sheet while its actions show.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-own-hover",
+        variable: "--surface-message-own-hover",
+        pointsAt:
+          "surface-message-own mixed 5% toward black in light mode / white in dark mode",
+        use: "Own bubble fill while its actions show; text and media are unchanged.",
+        status: "core",
+      },
+      {
+        token: "--affordance-message-own-hover",
+        variable: "--affordance-message-own-hover",
+        pointsAt:
+          "black 4% on light bubbles / white 8% on dark ones; at Buzzin’, black 4% on the accent fill (white 8% on Mono in light mode)",
+        use: "Overlay across your own bubble while its actions show. It follows the bubble's lightness, as its chips do.",
+        status: "core",
+      },
+      {
+        token: "--affordance-message-highlight",
+        variable: "--affordance-message-highlight",
+        pointsAt: "black 10% light / white 16% dark",
+        use: "Temporary arrival cue across a received bubble; replaces hover while it shows.",
+        status: "core",
+      },
+      {
+        token: "--affordance-message-own-highlight",
+        variable: "--affordance-message-own-highlight",
+        pointsAt:
+          "affordance-message-highlight; at Buzzin’, the accent's regular overlay step on its fill (black 10%, white 16% on Mono in light mode)",
+        use: "Temporary arrival cue across your own bubble. It follows the bubble's lightness, as its chips do.",
+        status: "core",
+      },
+      {
+        token: "--affordance-reaction",
+        variable: "--affordance-reaction",
+        pointsAt: "black 6% light / white 10% dark",
+        use: "Reaction strip on received bubbles and the panel; the add-reaction hover lays it again on top.",
+        status: "core",
+      },
+      {
+        token: "--affordance-reaction-own",
+        variable: "--affordance-reaction-own",
+        pointsAt:
+          "affordance-reaction; at Buzzin’, black 6% on the accent fill (white 10% on Mono in light mode)",
+        use: "Reaction strip inside your own bubble. It follows the bubble's lightness, as its chips do.",
+        status: "core",
+      },
+      {
+        token: "--affordance-reaction-self",
+        variable: "--affordance-reaction-self",
+        pointsAt: "surface-message-own at Buzzin’; accent-9 at Chillin’",
+        use: "A reaction you made, on received bubbles and the panel: your own bubble's fill, paired with text-reaction-self.",
+        status: "core",
+      },
+      {
+        token: "--affordance-reaction-self-own",
+        variable: "--affordance-reaction-self-own",
+        pointsAt:
+          "surface-message at Buzzin’; neutral-1 at Chillin’ (neutral-7 in dark mode)",
+        use: "A reaction you made inside your own bubble: the received bubble's fill, paired with text-reaction-self-own.",
+        status: "core",
+      },
+      {
         token: "bg-surface-message-highlight",
         variable: "--surface-message-highlight",
         pointsAt: "accent step 3",
-        use: "Temporary return-to-message cue; follows the accent color.",
+        use: "Temporary arrival cue on a message without a filled bubble; follows the accent color.",
         status: "core",
       },
       {
@@ -365,6 +513,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--surface-inset",
         pointsAt: "neutral-2 light / neutral-2 dark",
         use: "A recessed region inside a panel.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-inset-subtle",
+        variable: "--surface-inset-subtle",
+        pointsAt: "50% surface-panel / 50% surface-inset in both modes",
+        use: "Quiet recessed reading panes, including global search previews.",
         status: "core",
       },
     ],
@@ -436,6 +591,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "proposed",
       },
       {
+        token: "bg-surface-dock-count",
+        variable: "--surface-dock-count",
+        pointsAt: "dark mono 2 in both modes",
+        use: "Dark corner count capsules on dock tiles; pair with text-dock-count.",
+        status: "core",
+      },
+      {
+        token: "text-dock-count",
+        variable: "--text-dock-count",
+        pointsAt: "dark-mode accent link ink in both modes",
+        use: "Readable accent numerals on surface-dock-count.",
+        status: "core",
+      },
+      {
         token: "bg-surface-row-selected-detail",
         variable: "--surface-row-selected-detail",
         pointsAt: "neutral-2 light / neutral-6 dark",
@@ -492,6 +661,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "--text-on-find-match",
+        variable: "--text-on-find-match",
+        pointsAt: "neutral-12 light / neutral-1 dark",
+        use: "Text over find-on-screen match fills: dark in both modes.",
+        status: "core",
+      },
+      {
         token: "text-on-prominent",
         variable: "--text-on-prominent",
         pointsAt: "text-inverse (neutral prominent controls)",
@@ -508,7 +684,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-danger",
         variable: "--text-danger",
-        pointsAt: "red-12 light / red-12 dark",
+        pointsAt: "red-text light / red-12 dark",
         use: "Error text and destructive action labels.",
         status: "core",
       },
@@ -530,7 +706,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-success",
         variable: "--text-success",
-        pointsAt: "green-12 light / green-12 dark",
+        pointsAt: "green-text light / green-12 dark",
         use: "Success text.",
         status: "core",
       },
@@ -546,6 +722,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--icon-status-complete",
         pointsAt: "green-10 light / green-10 dark",
         use: "Completed task icons, paired with a checkmark and accessible status label. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-subtle",
+        variable: "--icon-subtle",
+        pointsAt: "text-subtle",
+        use: "Neutral / inactive state icons, including inside message bubbles. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-subtle-own",
+        variable: "--icon-subtle-own",
+        pointsAt: "icon-subtle; the own bubble's link ink at Buzzin’",
+        use: "Neutral state icons inside your own bubble, where the solid fill clears no grey.",
+        status: "core",
+      },
+      {
+        token: "icon-success",
+        variable: "--icon-success",
+        pointsAt: "green-11 light / green-11 dark",
+        use: "Success / positive state icons, including inside message bubbles. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-success-own",
+        variable: "--icon-success-own",
+        pointsAt: "icon-success; the own bubble's link ink at Buzzin’",
+        use: "Success state icons inside your own bubble, where the solid fill clears no green.",
         status: "core",
       },
       {
@@ -571,6 +775,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "text-reaction-self",
+        variable: "--text-reaction-self",
+        pointsAt: "text-message-own at Buzzin’; accent ink at Chillin’",
+        use: "Count of a reaction you made on received bubbles and the panel, paired with bg-affordance-reaction-self.",
+        status: "core",
+      },
+      {
+        token: "text-reaction-self-own",
+        variable: "--text-reaction-self-own",
+        pointsAt: "text-standard",
+        use: "Count of a reaction you made inside your own bubble, paired with bg-affordance-reaction-self-own.",
+        status: "core",
+      },
+      {
         token: "text-mention",
         variable: "--text-mention",
         pointsAt: "text-standard",
@@ -580,15 +798,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-mention-own",
         variable: "--text-mention-own",
-        pointsAt:
-          "text-mention; the own bubble's ink at Buzzin’ (tone-on-tone chip)",
+        pointsAt: "text-mention; the own bubble's ink at Buzzin’",
         use: "Mention labels inside your own bubble, paired with bg-affordance-mention-own.",
         status: "core",
       },
       {
         token: "text-mention-self",
         variable: "--text-mention-self",
-        pointsAt: "text-on-accent light / accent 11 dark",
+        pointsAt: "text-on-accent",
         use: "A mention of you, paired with bg-affordance-mention-self. It asks for your attention, so it joins the strong group.",
         status: "core",
       },
@@ -597,6 +814,77 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-categorical-purple",
         pointsAt: "purple-12 light / purple-12 dark",
         use: "Accent-independent categorical text, paired with surface-categorical-purple.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-purple",
+        variable: "--icon-categorical-purple",
+        pointsAt: "purple-11 light / purple-11 dark",
+        use: "Accent-independent categorical state icons, the icon tier of text-categorical-purple. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-purple-own",
+        variable: "--icon-categorical-purple-own",
+        pointsAt:
+          "icon-categorical-purple; the own bubble's link ink at Buzzin’",
+        use: "Categorical state icons inside your own bubble, where the solid fill clears no purple.",
+        status: "core",
+      },
+      {
+        token: "text-categorical-blue",
+        variable: "--text-categorical-blue",
+        pointsAt: "blue-12 light / blue-12 dark",
+        use: "Categorical blue text, paired with surface-categorical-blue.",
+        status: "core",
+      },
+      {
+        token: "text-categorical-green",
+        variable: "--text-categorical-green",
+        pointsAt: "green-12 light / green-12 dark",
+        use: "Categorical green text, paired with surface-categorical-green.",
+        status: "core",
+      },
+      {
+        token: "text-categorical-amber",
+        variable: "--text-categorical-amber",
+        pointsAt: "amber-12 light / amber-12 dark",
+        use: "Categorical amber text, paired with surface-categorical-amber.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-blue",
+        variable: "--icon-categorical-blue",
+        pointsAt: "blue-11 light / blue-11 dark",
+        use: "Categorical blue glyphs and dots. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-green",
+        variable: "--icon-categorical-green",
+        pointsAt: "green-11 light / green-11 dark",
+        use: "Categorical green glyphs and dots. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-amber",
+        variable: "--icon-categorical-amber",
+        pointsAt: "amber-11 light / amber-11 dark",
+        use: "Categorical amber glyphs and dots. Not text.",
+        status: "core",
+      },
+      {
+        token: "icon-categorical-orange",
+        variable: "--icon-categorical-orange",
+        pointsAt: "orange-11 light / orange-11 dark",
+        use: "Categorical orange glyphs and dots. Not text.",
+        status: "core",
+      },
+      {
+        token: "text-search-match",
+        variable: "--text-search-match",
+        pointsAt: "amber-12 light / amber-12 dark",
+        use: "Matched characters in search results, on surface-search-match.",
         status: "core",
       },
       {
@@ -650,7 +938,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "status-availability-online",
         variable: "--status-availability-online",
         pointsAt: "green-10 light / green-10 dark",
-        use: "Online availability label. Accepted contrast exception: below AA in light mode and APCA in both modes; see docs/presence.md.",
+        use: "Online availability label. Accepted contrast exception: below AA in light mode and APCA in both modes.",
         status: "core",
       },
       {
@@ -731,7 +1019,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "border-standard",
         variable: "--border-standard",
-        pointsAt: "neutral-3 light / neutral-4 dark",
+        pointsAt: "neutral-3 light / neutral-5 dark",
         use: "A quiet separator or panel edge.",
         status: "core",
       },
@@ -823,7 +1111,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "affordance-sidebar-hover",
         variable: "--affordance-sidebar-hover",
         pointsAt: "accent 2 light / accent 3 dark",
-        use: "Sidebar row hover, quieter than selection.",
+        use: "Sidebar row hover and Solo card drop destinations, quieter than selection.",
         status: "core",
       },
       {
@@ -893,14 +1181,16 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-subtle",
         variable: "--affordance-subtle",
-        pointsAt: "neutral-2 light / neutral-4 dark",
+        pointsAt:
+          "neutral-2 light / neutral-4 dark; neutral-5 in dark composers",
         use: "A secondary action fill.",
         status: "core",
       },
       {
         token: "bg-affordance-subtle-hover",
         variable: "--affordance-subtle-hover",
-        pointsAt: "neutral-quiet-hover in both modes",
+        pointsAt:
+          "neutral-quiet-hover in both modes; neutral-6 in dark composers",
         use: "A secondary action under a pointer.",
         status: "core",
       },
@@ -921,7 +1211,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-subtle-pressed",
         variable: "--affordance-subtle-pressed",
-        pointsAt: "neutral-4 light / neutral-5 dark",
+        pointsAt:
+          "neutral-4 light / neutral-5 dark; neutral-7 in dark composers",
         use: "A secondary action while pressed.",
         status: "core",
       },
@@ -992,21 +1283,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-floating-control",
         variable: "--affordance-floating-control",
-        pointsAt: "affordance-subtle light / neutral-6 dark",
+        pointsAt: "neutral-3 light / neutral-6 dark",
         use: "Secondary action at rest on floating surfaces.",
         status: "proposed",
       },
       {
         token: "bg-affordance-floating-control-hover",
         variable: "--affordance-floating-control-hover",
-        pointsAt: "affordance-subtle-hover light / neutral-7 dark",
+        pointsAt: "neutral-4 light / neutral-7 dark",
         use: "Secondary action hover on floating surfaces; pair with standard text.",
         status: "proposed",
       },
       {
         token: "bg-affordance-floating-control-pressed",
         variable: "--affordance-floating-control-pressed",
-        pointsAt: "affordance-subtle-pressed light / neutral-8 dark",
+        pointsAt: "neutral-5 light / neutral-8 dark",
         use: "Pressed action on floating surfaces; pair with standard text.",
         status: "proposed",
       },
@@ -1057,6 +1348,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-warning",
         pointsAt: "amber-3 light / amber-3 dark",
         use: "A warning fill.",
+        status: "core",
+      },
+      {
+        token: "surface-status-success",
+        variable: "--surface-status-success",
+        pointsAt: "citrus step 9",
+        use: "Completed task fill, paired with text-on-status-success.",
+        status: "core",
+      },
+      {
+        token: "surface-status-danger",
+        variable: "--surface-status-danger",
+        pointsAt: "red light step 11",
+        use: "Failed task fill, paired with text-on-status.",
+        status: "core",
+      },
+      {
+        token: "text-on-status-success",
+        variable: "--text-on-status-success",
+        pointsAt: "citrus ink",
+        use: "Foreground on solid Citrus completed task status.",
+        status: "core",
+      },
+      {
+        token: "text-on-status",
+        variable: "--text-on-status",
+        pointsAt: "white",
+        use: "Foreground on solid failed task status.",
         status: "core",
       },
       {
@@ -1134,6 +1453,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "--surface-find-match",
+        variable: "--surface-find-match",
+        pointsAt: "amber-5 light / amber-9 dark",
+        use: "Find on screen: a match other than the active one; pair with text-on-find-match.",
+        status: "core",
+      },
+      {
+        token: "--surface-find-match-active",
+        variable: "--surface-find-match-active",
+        pointsAt: "orange-7 light / orange-11 dark",
+        use: "Find on screen: the active match; pair with text-on-find-match.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-accent",
         variable: "--affordance-accent",
         pointsAt: "affordance-subtle (neutral compatibility role)",
@@ -1143,42 +1476,44 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-mention",
         variable: "--affordance-mention",
-        pointsAt: "neutral-4 light / neutral-6 dark",
-        use: "Ordinary mention chip fill, paired with text-mention. Frequent, so it stays neutral at every level.",
+        pointsAt: "black 10% light / white 16% dark",
+        use: "Ordinary mention chip fill, paired with text-mention. Frequent, so it stays a neutral overlay that shows the bubble through.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-hover",
         variable: "--affordance-mention-hover",
-        pointsAt: "neutral-5 light / neutral-5 dark",
+        pointsAt: "black 14% light / white 20% dark",
         use: "Mention chip under the pointer.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-own",
         variable: "--affordance-mention-own",
-        pointsAt: "affordance-mention; accent 10 at Buzzin’",
+        pointsAt:
+          "affordance-mention; at Buzzin’, black 10% on the accent fill (16% on Magenta, Iris and Cobalt; white 16% on Mono in light mode)",
         use: "Mention chip fill inside your own bubble, paired with text-mention-own.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-own-hover",
         variable: "--affordance-mention-own-hover",
-        pointsAt: "affordance-mention-hover; accent pressed at Buzzin’",
+        pointsAt:
+          "affordance-mention-hover; at Buzzin’, black 14% on the accent fill (22% on Magenta, Iris and Cobalt; white 20% on Mono in light mode)",
         use: "Own-bubble mention chip under the pointer.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-self",
         variable: "--affordance-mention-self",
-        pointsAt: "affordance-accent-prominent light / neutral-6 dark",
+        pointsAt: "affordance-accent-prominent",
         use: "Chip fill for a mention of you, paired with text-mention-self.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-self-hover",
         variable: "--affordance-mention-self-hover",
-        pointsAt: "affordance-accent-prominent-hover light / neutral-5 dark",
+        pointsAt: "affordance-accent-prominent-hover",
         use: "A mention of you under the pointer.",
         status: "core",
       },
@@ -1199,7 +1534,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-accent-prominent-hover",
         variable: "--affordance-accent-prominent-hover",
-        pointsAt: "accent step 10",
+        pointsAt: "accent step 10, each accent's hover",
         use: "An identity accent fill under a pointer.",
         status: "core",
       },
@@ -1523,10 +1858,10 @@ export const TYPE_ROLES: TypeRole[] = [
     token: "text-message",
     pointsAt: "body/message",
     size: "14px",
-    lineHeight: "1.625 (22.75px at default)",
-    tracking: "-0.0025em",
+    lineHeight: "1.5357142857142858 (21.5px at default)",
+    tracking: "-0.01em",
     weight: "400",
-    use: "Sent and received message prose, with relaxed line spacing.",
+    use: "Sent and received message prose and composer text, with compact line spacing.",
     status: "core",
   },
   {
@@ -1607,10 +1942,6 @@ export const TYPE_FAMILIES = [
     use: "Code, keys and identifiers, set in the xsmall detail role at 12/16.",
   },
 ];
-
-/** Source for the primitive ladder and resolved roles displayed below. */
-export const TYPE_SOURCE =
-  "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json";
 
 /** Active size primitives, with xsmall sharing the 12px step. */
 export const TYPE_RAMPS = [
@@ -1896,7 +2227,7 @@ export const ELEVATION = [
   {
     token: "shadow-panel",
     variable: "--shadow-panel",
-    use: "Workspace panels: translucent contour and subtle lift; a quiet light rim in dark mode.",
+    use: "Workspace panels and floating surfaces: translucent contour and subtle lift; a quiet light rim in dark mode.",
   },
   {
     token: "shadow-xs",
@@ -1906,7 +2237,7 @@ export const ELEVATION = [
   {
     token: "shadow-sm",
     variable: "--shadow-sm",
-    use: "A floating surface: menus, dialogs, popovers.",
+    use: "Ordinary elevation for bordered dialogs, tooltips, and raised controls.",
   },
 ];
 

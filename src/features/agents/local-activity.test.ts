@@ -15,6 +15,186 @@ const scope = "https://relay.test:viewer",
   agent = "a".repeat(64),
   root = "b".repeat(64),
   reply = "c".repeat(64);
+it.each([false, true])(
+  "keeps source history across initial and threaded input (flat: %s)",
+  (flat) => {
+    const local = createLocalAgentActivity();
+    const input = {
+      scope,
+      agent,
+      channelId: "channel",
+      ...(flat ? { sourceRootId: null } : {}),
+    };
+    const a = local.begin(
+      { ...input, messageId: root, threadRootId: root },
+      undefined,
+      { author: "owner", text: "Request A" },
+    );
+    a.acknowledged();
+    a.sending("Reply A")(true);
+    a.finish({ ok: true });
+    const b = local.begin(
+      { ...input, messageId: reply, threadRootId: reply },
+      undefined,
+      { author: "owner", text: "Request B" },
+    );
+    b.acknowledged();
+    expect(
+      local.reader.work()[1]?.evidence?.messages.map(({ text }) => text),
+    ).toEqual(flat ? ["Request A", "Reply A", "Request B"] : ["Request B"]);
+    const followUp = local.begin(
+      { ...input, messageId: "d".repeat(64), threadRootId: root, thread: true },
+      undefined,
+      { author: "owner", text: "Follow up A" },
+    );
+    followUp.acknowledged();
+    expect(
+      local.reader.work()[2]?.evidence?.messages.map(({ text }) => text),
+    ).toEqual(
+      flat
+        ? ["Request A", "Reply A", "Request B", "Follow up A"]
+        : ["Request A", "Reply A", "Follow up A"],
+    );
+  },
+);
+
+it("captures accepted boundaries independently of steps and publication, rejecting stale callbacks", () => {
+  const local = createLocalAgentActivity();
+  const input = {
+    scope,
+    agent,
+    channelId: "channel",
+    threadRootId: root,
+    messageId: root,
+  };
+  const first = local.begin(input, undefined, {
+    author: "owner",
+    text: "Can you test it?",
+  });
+  first.started();
+  expect(local.reader.work()[0]?.evidence).toBeNull();
+  first.acknowledged();
+  const wake = local.reader.work()[0]?.evidence;
+  expect(wake?.lifecycle.phase).toBe("wake");
+  first.acknowledged({ steering: true });
+  first.step("Read", "private-path");
+  const sent = first.sending("Please choose a scope");
+  expect(local.reader.work()[0]?.evidence).toBe(wake);
+  first.finish({ ok: true });
+  const handoff = local.reader.work()[0]?.evidence;
+  expect(local.reader.work()[0]?.publishing).toBe(1);
+  expect(handoff?.lifecycle.phase).toBe("handoff");
+  expect(handoff?.lifecycle.revision).toBeGreaterThan(
+    wake?.lifecycle.revision ?? 0,
+  );
+  expect(
+    handoff?.messages.map(({ role, text, delivery }) => ({
+      role,
+      text,
+      delivery,
+    })),
+  ).toEqual([
+    { role: "user", text: "Can you test it?", delivery: undefined },
+    { role: "assistant", text: "Please choose a scope", delivery: "pending" },
+  ]);
+  sent(true);
+  first.finish({ ok: true });
+  expect(local.reader.work()[0]?.evidence).toBe(handoff);
+  const next = local.begin({ ...input, messageId: reply }, undefined, {
+    author: "owner",
+    text: "Use staging",
+  });
+  next.acknowledged({ steering: true });
+  const steer = local.reader.work()[1]?.evidence;
+  expect(steer?.lifecycle.phase).toBe("steer");
+  expect(steer?.messages.map(({ text }) => text)).toEqual([
+    "Can you test it?",
+    "Please choose a scope",
+    "Use staging",
+  ]);
+  expect(steer?.messages[1]?.delivery).toBe("published");
+  next.started();
+  const failed = next.sending("An undelivered answer");
+  failed(false);
+  expect(local.reader.work()[1]?.evidence).toBe(steer);
+  expect(local.reader.work()[1]?.state).toBe("working");
+  next.finish({ ok: false, error: "Publication failed" });
+  expect(local.reader.work()[1]?.state).toBe("error");
+  expect(local.reader.work()[1]?.evidence?.messages.at(-1)).toMatchObject({
+    text: "An undelivered answer",
+    delivery: "failed",
+  });
+  const replaced = local.begin({ ...input, messageId: reply });
+  next.finish({ ok: true });
+  expect(local.reader.work()[1]?.evidence).toBeNull();
+  replaced.acknowledged();
+  expect(local.reader.work()[1]?.evidence?.lifecycle.id).not.toBe(
+    steer?.lifecycle.id,
+  );
+  local.clear();
+  replaced.acknowledged();
+  replaced.finish({ ok: true });
+  expect(local.reader.work()).toEqual([]);
+});
+
+it("bounds visible history, marks synthetic input, and isolates logical sessions and sources", () => {
+  const local = createLocalAgentActivity();
+  const input = {
+    scope,
+    agent,
+    channelId: "channel",
+    threadRootId: root,
+    messageId: root,
+    syntheticMessage: true as const,
+    requestText: "Wake now",
+  };
+  const first = local.begin(input);
+  first.associate({ sessionKey: "one", router: "router", association: null });
+  first.acknowledged();
+  expect(local.reader.work()[0]?.evidence?.messages[0]).toMatchObject({
+    author: "host",
+    text: "Wake now",
+    synthetic: true,
+  });
+  for (let i = 0; i < 65; i++) first.sending(String(i))(true);
+  first.finish({ ok: true });
+  const bounded = local.reader.work()[0]?.evidence;
+  expect(bounded?.messages).toHaveLength(64);
+  expect(bounded?.messages[0]?.text).toBe("1");
+  expect(bounded?.omitted.messages).toBe(2);
+  for (const [messageId, patch, sessionKey] of [
+    ["new-session", {}, "two"],
+    ["other-thread", { thread: true as const }, "one"],
+    ["other-agent", { agent: "other" }, "one"],
+    ["other-scope", { scope: "other" }, "one"],
+  ] as const) {
+    const work = local.begin({
+      ...input,
+      messageId,
+      ...patch,
+      requestText: messageId,
+    });
+    work.associate({ sessionKey, router: "router", association: null });
+    work.acknowledged();
+    expect(
+      local.reader
+        .work()
+        .at(-1)
+        ?.evidence?.messages.map(({ text }) => text),
+    ).toEqual([messageId]);
+  }
+  const large = local.begin({
+    ...input,
+    messageId: "large",
+    requestText: "x".repeat(65_540),
+  });
+  large.acknowledged();
+  expect(local.reader.work().at(-1)?.evidence?.messages[0]?.text).toHaveLength(
+    65_536,
+  );
+  expect(local.reader.work().at(-1)?.evidence?.omitted.characters).toBe(4);
+});
+
 it("projects one local source into channel, exact thread and message without needing observer telemetry", () => {
   const local = createLocalAgentActivity();
   let allowed = true;
@@ -125,6 +305,43 @@ it("keeps storage bounded and prevents evicted or removed callbacks from recreat
   expect(local.reader.work()).toEqual([]);
 });
 
+it("expires reply correlations after the notification freshness window", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_780_000_000_000);
+  try {
+    const activity = createLocalAgentActivity();
+    const work = activity.begin(request());
+    work.reply(reply, true);
+    expect(activity.reader.work()[0]?.replyMessages).toHaveLength(1);
+    vi.advanceTimersByTime(120_001);
+    expect(activity.reader.work()[0]).not.toHaveProperty("replyMessages");
+    expect(activity.reader.work()[0]?.hasUserVisibleReply).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps fresh reply correlations when retry replaces the failed attempt", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_780_000_000_000);
+  try {
+    const activity = createLocalAgentActivity();
+    const first = activity.begin(request(), () => {});
+    first.reply(reply, true);
+    first.finish({ ok: false, error: "Provider unavailable" });
+    vi.advanceTimersByTime(1);
+    activity.begin(request(), () => {});
+    expect(activity.reader.work()[0]).not.toHaveProperty("hasUserVisibleReply");
+    expect(activity.reader.work()[0]?.replyMessages).toEqual([
+      expect.objectContaining({ id: reply }),
+    ]);
+    vi.advanceTimersByTime(120_000);
+    expect(activity.reader.work()[0]).not.toHaveProperty("replyMessages");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("shows the latest live step while working and drops it once settled", () => {
   const activity = createLocalAgentActivity();
   const work = activity.begin({
@@ -145,6 +362,12 @@ it("shows the latest live step while working and drops it once settled", () => {
     step: { tool: "Read", target: "notes.txt" },
   });
   expect(localWorkLabel(row())).toBe("Reading notes.txt");
+  // The same name and target is another step when only one is Buzz's.
+  work.step("search", "release notes", "buzz");
+  expect(localWorkLabel(row())).toBe("Search messages · release notes");
+  work.step("search", "release notes");
+  expect(localWorkLabel(row())).toBe("search · release notes");
+  work.step("Read", "notes.txt");
   work.step("   ");
   expect(row()?.step?.tool).toBe("Read");
   work.finish({ ok: true });
@@ -168,6 +391,39 @@ it("words readable steps from the harness's own tool names and targets", () => {
   expect(text("Bash")).toBe("Running a command");
   expect(text("custom_tool", "x")).toBe("custom_tool · x");
   expect(text("custom_tool")).toBe("custom_tool");
+});
+
+it("titles only a step its harness identified as a Buzz tool", () => {
+  const buzz = (tool: string, target?: string) =>
+    stepText({ tool, origin: "buzz", ...(target ? { target } : {}) });
+  const text = (tool: string, target?: string) =>
+    stepText(target ? { tool, target } : { tool });
+  expect(buzz("channel_list")).toBe("List channels");
+  expect(buzz("search", "release notes")).toBe(
+    "Search messages · release notes",
+  );
+  expect(buzz("edit")).toBe("Edit message");
+  // A fixed phrase wins over a title, with or without a target.
+  expect(buzz("send")).toBe("Sending a message");
+  expect(buzz("read", "notes.md")).toBe("Reading the conversation");
+  // Identified as Buzz but not one of its tools: shown as reported.
+  expect(buzz("channel_lists")).toBe("channel_lists");
+  // Without the origin the same name is another server's `search` or the
+  // harness's own file `edit`, and is shown as reported.
+  for (const tool of [
+    "search",
+    "edit",
+    "channel_list",
+    "buzz.channel_list",
+    "mcp__buzz__channel_list",
+    "shell",
+  ]) {
+    expect(text(tool), tool).toBe(tool);
+    expect(text(tool, "x"), tool).toBe(`${tool} · x`);
+  }
+  // A harness's own tool keeps its wording.
+  expect(text("Read", "a.ts")).toBe("Reading a.ts");
+  expect(text("Edit")).toBe("Editing a file");
 });
 
 const request = (messageId = "m") => ({
@@ -208,6 +464,18 @@ it("stops a stoppable request through its harness and shows it stopped", async (
   expect(row().error).toBeUndefined();
   await activity.reader.interrupt?.(target);
   expect(stop).toHaveBeenCalledTimes(1);
+});
+
+it("shows a request stopped when its harness reports the stop ended the turn", () => {
+  const activity = createLocalAgentActivity();
+  const work = activity.begin(request());
+  work.step("Read", "notes.txt");
+  work.interruptible(async () => {});
+  work.finish({ ok: true, stopped: true });
+  const row = activity.reader.work()[0];
+  expect(row).toMatchObject({ state: "stopped" });
+  expect(row?.step).toBeUndefined();
+  expect(row?.stoppable).toBeUndefined();
 });
 
 it("ranks stopped work as settled, below any live request of the same agent", async () => {
@@ -411,4 +679,126 @@ it("cannot stop work from a source that has no way to interrupt", async () => {
   } finally {
     bare.dispose();
   }
+});
+
+it("retries only the exact failed request, once replaced asking again of its new row", () => {
+  const activity = createLocalAgentActivity();
+  const retry = vi.fn(() => {
+    activity.begin(request(), again);
+  });
+  const again = vi.fn();
+  const work = activity.begin(request(), retry);
+  expect(activity.reader.work()[0]).toMatchObject({
+    state: "waiting",
+    retryable: true,
+  });
+  // Only a failure is asked again.
+  expect(() => activity.reader.retry?.(target)).toThrow(
+    "This request can't be retried",
+  );
+  work.finish({ ok: false, error: "Provider unavailable" });
+  for (const other of [
+    { ...target, scope: "other" },
+    { ...target, agent: "b" },
+    { ...target, messageId: "n" },
+  ])
+    expect(() => activity.reader.retry?.(other)).toThrow();
+  expect(retry).not.toHaveBeenCalled();
+  activity.reader.retry?.(target);
+  expect(retry).toHaveBeenCalledTimes(1);
+  expect(activity.reader.work()).toEqual([
+    expect.objectContaining({ state: "waiting", retryable: true }),
+  ]);
+  // A late outcome of the replaced request changes nothing.
+  work.finish({ ok: false, error: "Late" });
+  expect(() => activity.reader.retry?.(target)).toThrow();
+  expect(again).not.toHaveBeenCalled();
+
+  const plain = createLocalAgentActivity();
+  plain.begin(request()).finish({ ok: false });
+  expect(plain.reader.work()[0]?.retryable).toBeUndefined();
+  expect(() => plain.reader.retry?.(target)).toThrow();
+
+  const cleared = createLocalAgentActivity();
+  const dropped = vi.fn();
+  cleared.begin(request(), dropped).finish({ ok: false });
+  cleared.clear("s", "a");
+  expect(() => cleared.reader.retry?.(target)).toThrow();
+  expect(dropped).not.toHaveBeenCalled();
+});
+
+it("retries through the session only for this scope and accessible channels", () => {
+  const local = createLocalAgentActivity();
+  let allowed = true;
+  const activity = createAgentActivity(
+    false,
+    () => {},
+    (channel) => allowed && channel === "channel",
+    undefined,
+    undefined,
+    { source: local.reader, scope },
+  );
+  const retry = vi.fn();
+  try {
+    local
+      .begin(
+        {
+          scope,
+          agent,
+          channelId: "channel",
+          threadRootId: root,
+          messageId: reply,
+        },
+        retry,
+      )
+      .finish({ ok: false, error: "Provider unavailable" });
+    expect(
+      messageActivity(activity.queries.snapshot(), "channel", reply)[0],
+    ).toMatchObject({ state: "error", retryable: true });
+    allowed = false;
+    expect(() => activity.queries.retry(agent, "channel", reply)).toThrow(
+      "This request can't be retried here",
+    );
+    expect(retry).not.toHaveBeenCalled();
+    allowed = true;
+    activity.queries.retry(agent, "channel", reply);
+    expect(retry).toHaveBeenCalledTimes(1);
+  } finally {
+    activity.dispose();
+  }
+  expect(() => activity.queries.retry(agent, "channel", reply)).toThrow(
+    "This request can't be retried here",
+  );
+});
+
+it("keeps a turn's notice through its steps and outcome, and drops it on a new attempt", () => {
+  const activity = createLocalAgentActivity();
+  const work = activity.begin(request());
+  work.notice("  Ran without the gateway.  ");
+  work.notice("");
+  work.started();
+  work.step("Read", "notes.txt");
+  work.finish({ ok: true });
+  expect(activity.reader.work()[0]).toMatchObject({
+    state: "done",
+    notice: "Ran without the gateway.",
+  });
+  activity.begin(request());
+  expect(activity.reader.work()[0]?.notice).toBeUndefined();
+});
+
+it("labels a failed turn with its error and then its notice", () => {
+  expect(
+    localWorkLabel({
+      state: "error",
+      error: "Broke",
+      notice: "Ran without it.",
+    }),
+  ).toBe("Broke · Ran without it.");
+  expect(localWorkLabel({ state: "error", notice: "Ran without it." })).toBe(
+    "Could not finish this request · Ran without it.",
+  );
+  expect(localWorkLabel({ state: "done", notice: "Ran without it." })).toBe(
+    "Finished",
+  );
 });

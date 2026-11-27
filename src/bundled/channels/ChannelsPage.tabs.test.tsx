@@ -1,9 +1,12 @@
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import closeRequest from "../../../src-tauri/src/close-request.js?raw";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   renderHook,
   screen,
@@ -11,11 +14,23 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
-import { createRelaySession } from "../../features/relay/session";
+import type {
+  Panels,
+  PanelOpenRequest,
+  RegisteredPanel,
+} from "../../features/panels/service";
+import type { PageNavigation } from "../../features/navigation/service";
+import type { OpenTarget } from "../../features/navigation/targets";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { matchesEvent } from "../../features/relay/projection";
+import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import {
+  bounds,
   keypair,
   metadata,
   roster,
@@ -28,10 +43,57 @@ import { setThreadPlacementPreference } from "../../features/messages/thread-pre
 import { SOLO_LABEL } from "../../features/solo/labels";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelsPage } from "./ChannelsPage";
+import type { CommunityMembership } from "../moderation/membership";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { BrowserHostView } from "../../features/browser/BrowserHostView";
+import { UploadError } from "../../features/relay/attachments";
+import { BrowserSessions } from "../../features/browser/sessions";
+import type { BrowserPlatform } from "../../features/browser/platform";
+
+const highlighted = vi.hoisted(() => ({
+  root: undefined as string | undefined,
+}));
+// Observe the page → timeline boundary; jsdom does not lay out virtual rows.
+vi.mock("./ChannelBody", async (original) => {
+  const actual = await original<typeof import("./ChannelBody")>();
+  return {
+    ...actual,
+    ChannelBody(
+      props: import("react").ComponentProps<typeof actual.ChannelBody>,
+    ) {
+      highlighted.root = props.openThreadRootId;
+      return <actual.ChannelBody {...props} />;
+    },
+  };
+});
 
 composerDOMFixture();
 
+/** The relay's answer: matching events, and each history page's bounds. */
+function relayQuery(
+  authority: ReturnType<typeof keypair>,
+  events: readonly RelayEvent[],
+  filters: readonly ReadFilter[],
+) {
+  return [
+    ...events.filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    ),
+    ...filters.flatMap((filter) =>
+      filter.top_level
+        ? (filter["#h"] ?? []).map((channel) =>
+            bounds(authority, channel, "head", {
+              has_more: false,
+              next_cursor: null,
+            }),
+          )
+        : [],
+    ),
+  ];
+}
 const owners: ReturnType<typeof createRelaySession>[] = [];
+const visitSnapshot = { entry: { id: "visit" }, attempt: {} };
+const threadVisitSnapshot = { entry: { id: "thread-visit" }, attempt: {} };
 beforeEach(() => {
   // jsdom has no layout/ResizeObserver. Only geometry is substituted; the page,
   // composer, session, tab store and menu interaction are production owners.
@@ -59,6 +121,12 @@ afterEach(() => {
 async function page(
   type: "stream" | "solo" = "stream",
   navigator?: Navigation,
+  routed = false,
+  appComponent?: RegisteredPanel["component"],
+  sidebarPreferences?: RelaySession["sidebarPreferences"],
+  uploadAttachment?: (file: File) => Promise<never>,
+  linkedPanel?: Partial<RegisteredPanel>,
+  menuPanel = false,
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -76,16 +144,20 @@ async function page(
     ),
     roster(authority, "beta", [viewer.pubkey]),
     metadata(authority, "beta", "Beta", undefined, [["t", "stream"]]),
+    roster(authority, "gamma", [viewer.pubkey]),
+    metadata(authority, "gamma", "Gamma", undefined, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
   ];
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
-      query: async (filters) =>
-        events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
-        ),
+      ...(uploadAttachment && { uploadAttachment }),
+      query: async (filters) => relayQuery(authority, events, filters),
       writer: {
         sign: async (template) => signed(viewer, template),
         publish: async () => {},
@@ -95,22 +167,51 @@ async function page(
   );
   owners.push(owner);
   const scope = `https://relay.test:${viewer.pubkey}`;
+  const root = routed
+    ? signed(viewer, {
+        kind: 9,
+        tags: [["h", channelId]],
+        content: "Initiating thread",
+      })
+    : undefined;
+  if (root) events.push(root);
   writeView(scope, "selected-channel", channelId);
   owner.session.channels.ensureList();
   await vi.waitFor(() =>
     expect(owner.session.channels.list().status).toBe("ready"),
   );
+  let channelListOverride:
+    | ReturnType<RelaySession["channels"]["list"]>
+    | undefined;
+  const menuSession = menuPanel
+    ? (Object.defineProperty(Object.create(owner.session), "channels", {
+        value: {
+          ...owner.session.channels,
+          list: () => channelListOverride ?? owner.session.channels.list(),
+        },
+      }) as RelaySession)
+    : undefined;
   const snapshot = {
     status: "ready" as const,
     generation: 1,
     scope,
     viewer: viewer.pubkey,
-    session: owner.session,
+    // The real session and its stores are frozen; a test may replace one.
+    session: sidebarPreferences
+      ? (Object.defineProperty(
+          Object.create(owner.session),
+          "sidebarPreferences",
+          {
+            value: sidebarPreferences,
+          },
+        ) as typeof owner.session)
+      : (menuSession ?? owner.session),
   };
   const relay: RelayData = {
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -122,6 +223,9 @@ async function page(
     title: "Notes",
     matches: () => false,
     channelPlacement: "tab",
+    ...(menuPanel && {
+      channelMenu: { label: "View notes", eligible: () => true },
+    }),
     channelLauncher: ({ context, toggle }) => (
       <button type="button" onClick={() => toggle(context.channelId)}>
         Open notes
@@ -129,17 +233,76 @@ async function page(
     ),
     component: () => <input aria-label="Notes draft" />,
   };
-  const available = [panel];
+  const app: RegisteredPanel = {
+    id: "app",
+    key: "fixture:app",
+    pluginId: "fixture",
+    revision: "1",
+    title: "App",
+    keepOpen: true,
+    matches: (target) => target === "https://app.example/",
+    component: appComponent ?? (() => <p>App content</p>),
+    ...linkedPanel,
+  };
+  const available = [panel, app];
+  let handleOpen: ((request: PanelOpenRequest) => boolean) | undefined;
   const panels: Panels = {
+    ui: { Workspace: () => null, useSplit: vi.fn() },
     snapshot: () => available,
     subscribe: () => () => {},
-    resolve: () => undefined,
+    resolve: (target) => available.find((entry) => entry.matches(target)),
     register() {},
+    requestOpen: (request) => handleOpen?.(request) ?? false,
+    handleOpenRequests: (handler) => {
+      handleOpen = handler;
+      return () => {
+        handleOpen = undefined;
+      };
+    },
   };
-  render(<ChannelsPage relay={relay} panels={panels} navigator={navigator} />);
+  const navigation: PageNavigation | undefined = root
+    ? {
+        entryId: "thread-visit",
+        target: {
+          version: 1,
+          kind: "conversation",
+          scope: {
+            viewer: viewer.pubkey,
+            communityOrigin: "https://relay.test",
+          },
+          channelId,
+          messageId: root.id,
+          threadRootId: root.id,
+        },
+        signal: new AbortController().signal,
+        position: () => undefined,
+        savePosition() {},
+        forSession() {
+          return this;
+        },
+        resolve: () => true,
+        complete: () => true,
+        passThrough: () => () => {},
+      }
+    : undefined;
+  const view = (navigation: PageNavigation | undefined) => (
+    <ToastProvider>
+      <ChannelsPage
+        relay={relay}
+        panels={panels}
+        navigator={
+          navigator ??
+          createNavigationController(createMemoryHistory()).navigation
+        }
+        navigation={navigation}
+      />
+    </ToastProvider>
+  );
+  const mounted = render(view(navigation));
   const user = userEvent.setup();
   const composer = await screen.findByRole("textbox", {
     name: type === "solo" ? "Message your agents" : "Message #Alpha",
+    hidden: routed,
   });
   const open = () =>
     user.click(screen.getByRole("button", { name: "Open notes" }));
@@ -147,11 +310,681 @@ async function page(
     user,
     composer,
     open,
-    session: owner.session,
+    session: snapshot.session,
     scope,
     viewer: viewer.pubkey,
+    panels,
+    root: root?.id,
+    navigation,
+    events,
+    setChannelList: (list: ReturnType<RelaySession["channels"]["list"]>) => {
+      channelListOverride = list;
+    },
+    present: (request: PageNavigation) => mounted.rerender(view(request)),
   };
 }
+
+it.each([
+  "legacy roster",
+  "joined without peers",
+  "denied with retained peers",
+])(
+  "opens Channels menu panels using live viewer authority: %s",
+  async (membership) => {
+    const h = await page(
+      "stream",
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    await h.user.click(screen.getByRole("button", { name: "Channel actions" }));
+    const action = await screen.findByRole("menuitem", { name: "View notes" });
+    const list = h.session.channels.list();
+    const channel = list.channels.find((item) => item.id === "alpha");
+    if (!channel) throw new Error("Fixture needs Alpha");
+    if (membership !== "legacy roster") {
+      const { members: _peers, ...withoutPeers } = channel;
+      const updated = {
+        ...(membership === "joined without peers" ? withoutPeers : channel),
+        viewerMembership: {
+          pubkey: h.viewer,
+          joined: membership === "joined without peers",
+        },
+      };
+      h.setChannelList({
+        ...list,
+        channels: list.channels.map((item) =>
+          item.id !== channel.id ? item : updated,
+        ),
+      });
+    }
+    await h.user.click(action);
+    if (membership === "denied with retained peers")
+      expect(screen.queryByRole("textbox", { name: "Notes draft" })).toBeNull();
+    else
+      expect(
+        await screen.findByRole("textbox", { name: "Notes draft" }),
+      ).toBeVisible();
+  },
+);
+
+it("passes only the visible side thread's root to the timeline and clears it when hidden or moved", async () => {
+  // A routed thread opens inline under the default; this is about its tab.
+  setThreadPlacementPreference("side");
+  const h = await page("stream", undefined, true);
+  await screen.findByRole("tab", { name: "Initiating thread" });
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  expect(highlighted.root).toBe(h.root);
+  const id = tabs.result.current.tabs.find((tab) => tab.kind === "thread")?.id;
+  if (!id || !h.root) throw new Error("Missing thread tab");
+  const root = h.root;
+
+  act(() => tabs.result.current.setPaneOpen(false));
+  expect(highlighted.root).toBeUndefined();
+  act(() => tabs.result.current.setPaneOpen(true));
+  expect(highlighted.root).toBe(h.root);
+
+  await h.open();
+  expect(highlighted.root).toBeUndefined();
+  act(() => tabs.result.current.select(id));
+  expect(highlighted.root).toBe(h.root);
+
+  act(() => tabs.result.current.moveTab(id, "main", 0));
+  expect(highlighted.root).toBeUndefined();
+  act(() => tabs.result.current.moveTab(id, "side", 0));
+  expect(highlighted.root).toBe(h.root);
+
+  // Retained tabs belonging to another conversation never mark this one.
+  act(() => tabs.result.current.openThreadTab("beta", root, root));
+  expect(highlighted.root).toBeUndefined();
+  act(() => tabs.result.current.select(id));
+  expect(highlighted.root).toBe(h.root);
+  act(() => tabs.result.current.setTabs(() => []));
+  expect(highlighted.root).toBeUndefined();
+});
+
+it.each([
+  { owner: "example.documents", addressable: true, panel: true },
+  { owner: "example.documents", addressable: undefined, panel: false },
+  { owner: "another.plugin", addressable: true, panel: false },
+])(
+  "keeps a plugin page beside the conversation only for its addressable owner: %o",
+  async ({ owner, addressable, panel }) => {
+    const host = createNavigationController(createMemoryHistory());
+    const url =
+      "buzz://plugin?id=example.documents&page=documents&route.id=plan";
+    const open = vi.fn(host.navigation.open);
+    const h = await page(
+      "stream",
+      { ...host.navigation, open },
+      false,
+      undefined,
+      undefined,
+      undefined,
+      {
+        pluginId: owner,
+        ...(addressable ? { addressable: true as const } : {}),
+        matches: (target) => target === url,
+      },
+    );
+    act(() => {
+      expect(h.panels.requestOpen({ channelId: "alpha", target: url })).toBe(
+        true,
+      );
+    });
+    if (panel) {
+      expect(screen.getByText("App content")).toBeVisible();
+      expect(open).not.toHaveBeenCalled();
+    } else {
+      expect(open.mock.calls.at(-1)?.[0]).toMatchObject({
+        kind: "plugin",
+        pluginId: "example.documents",
+        pageId: "documents",
+      });
+      expect(screen.queryByText("App content")).not.toBeInTheDocument();
+    }
+  },
+);
+
+it.each([
+  { link: "channel", direction: "Back" },
+  { link: "message", direction: "Back" },
+  { link: "channel", direction: "Forward" },
+  { link: "message", direction: "Forward" },
+])(
+  "$direction preserves the selected thread after following a $link link to another channel",
+  async ({ link, direction }) => {
+    setThreadPlacementPreference("side");
+    const host = createNavigationController(createMemoryHistory());
+    const h = await page("stream", host.navigation, true);
+    if (!h.navigation || !h.root) throw new Error("Thread visit unavailable");
+    const initial = h.navigation;
+    const target = (channelId: string, messageId?: string): OpenTarget => ({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer: h.viewer, communityOrigin: "https://relay.test" },
+      channelId,
+      ...(messageId && { messageId, threadRootId: messageId }),
+    });
+    const present = () => {
+      const { attempt } = host.navigation.snapshot();
+      h.present({
+        ...initial,
+        entryId: attempt.entry.id,
+        target: attempt.entry.target,
+        signal: attempt.signal,
+        ...(attempt.traversal && { traversal: attempt.traversal }),
+        complete: (result) => host.complete(attempt, result),
+        resolve: (target) => host.resolve(attempt, target),
+      });
+    };
+    const second = signed(keypair(), {
+      kind: 9,
+      tags: [["h", "alpha"]],
+      content: "Second thread",
+    });
+    const destination = signed(keypair(), {
+      kind: 9,
+      tags: [["h", "beta"]],
+      content: "Destination thread",
+    });
+    h.events.push(second, destination);
+    act(() => void host.navigation.open(target("beta")));
+    present();
+    act(
+      () =>
+        void host.navigation.open(
+          target("alpha", direction === "Back" ? h.root : undefined),
+        ),
+    );
+    present();
+    await screen.findByRole("tab", { name: "Initiating thread" });
+    const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+    act(() => {
+      if (direction === "Back") tabs.result.current.leaveVisit();
+      tabs.result.current.openThreadTab("alpha", second.id, second.id);
+      if (direction === "Back")
+        void host.navigation.open(target("alpha", second.id));
+    });
+    present();
+    const selected = `thread:alpha:${second.id}`;
+    expect(tabs.result.current.selected).toBe(selected);
+    act(() => {
+      expect(
+        h.panels.requestOpen({
+          channelId: "alpha",
+          target:
+            link === "channel"
+              ? "buzz://channel/beta"
+              : `buzz://message?channel=beta&id=${destination.id}&thread=${destination.id}`,
+        }),
+      ).toBe(true);
+    });
+    present();
+    await screen.findByRole("textbox", { name: "Message #Beta" });
+    for (let visit = 0; visit < 2; visit++) {
+      act(() => host.navigation.back());
+      present();
+      if (direction === "Forward") {
+        act(() => host.navigation.back());
+        present();
+        act(() => host.navigation.forward());
+        present();
+      }
+      expect(tabs.result.current.selected).toBe(selected);
+      expect(
+        document.querySelector(`[role="tab"][data-tab-value="${selected}"]`),
+      ).toHaveAttribute("aria-selected", "true");
+      expect(tabs.result.current.tabs).toHaveLength(2);
+      act(() => host.navigation.forward());
+      present();
+      expect(host.navigation.snapshot().entry.target).toEqual(
+        target("beta", link === "message" ? destination.id : undefined),
+      );
+    }
+    host.dispose();
+  },
+);
+
+it("X on a thread tab retires its visits from before a reload", async () => {
+  setThreadPlacementPreference("side");
+  const host = createNavigationController(createMemoryHistory());
+  const h = await page("stream", host.navigation, true);
+  if (!h.navigation || !h.root) throw new Error("Thread visit unavailable");
+  const initial = h.navigation;
+  const target = (channelId: string, messageId?: string): OpenTarget => ({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: h.viewer, communityOrigin: "https://relay.test" },
+    channelId,
+    ...(messageId && { messageId, threadRootId: messageId }),
+  });
+  // History restores visits this page never entered, as after a reload: the
+  // thread, Beta and Alpha. The page enters only the thread's latest visit.
+  for (const visit of [
+    target("alpha", h.root),
+    target("beta"),
+    target("alpha"),
+    target("alpha", h.root),
+  ])
+    act(() => void host.navigation.open(visit));
+  const { attempt } = host.navigation.snapshot();
+  h.present({
+    ...initial,
+    entryId: attempt.entry.id,
+    target: attempt.entry.target,
+    signal: attempt.signal,
+    complete: (result) => host.complete(attempt, result),
+    resolve: (target) => host.resolve(attempt, target),
+  });
+  await h.user.click(
+    await screen.findByRole("button", { name: "Close Initiating thread tab" }),
+  );
+  const walk = [host.navigation.snapshot().entry.target];
+  while (host.navigation.snapshot().canGoBack) {
+    act(() => host.navigation.back());
+    walk.push(host.navigation.snapshot().entry.target);
+  }
+  expect(walk).toEqual([
+    target("alpha"),
+    target("beta"),
+    { version: 1, kind: "home" },
+  ]);
+  host.dispose();
+});
+
+it.each(["side", "main"] as const)(
+  "agent-opened apps preserve their routed %s thread",
+  async (pane) => {
+    setThreadPlacementPreference(pane);
+    const open = vi.fn(async () => ({ status: "opened" as const }));
+    const h = await page(
+      "stream",
+      {
+        open,
+        snapshot: () => threadVisitSnapshot,
+        subscribe: () => () => {},
+      } as unknown as Navigation,
+      true,
+    );
+    const root = h.root;
+    if (!root) throw new Error("Routed thread root unavailable");
+    const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+    await screen.findByRole("tab", { name: "Initiating thread" });
+    act(() =>
+      expect(
+        h.panels.requestOpen({
+          channelId: "alpha",
+          rootId: root,
+          target: "https://app.example/",
+        }),
+      ).toBe(true),
+    );
+    expect(screen.getByRole("tab", { name: "App" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(tabs.result.current.tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "thread", messageId: root }),
+      ]),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Close App tab" }));
+    const thread = screen.getByRole("tab", { name: "Initiating thread" });
+    expect(thread).toHaveAttribute("aria-selected", "true");
+    expect(open).not.toHaveBeenCalled();
+  },
+);
+
+/** A page over `events` with no saved selection and no registered panels. */
+function workspace(
+  events: RelayEvent[],
+  viewer = keypair(),
+  authority = keypair(),
+  {
+    membership,
+    lifecycle,
+  }: {
+    membership?: CommunityMembership;
+    lifecycle?: (event: RelayEvent) => Promise<void>;
+  } = {},
+) {
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: authority.pubkey,
+      media: () => undefined,
+      query: async (filters) => relayQuery(authority, events, filters),
+      writer: {
+        sign: async (template) => signed(viewer, template),
+        publish: async () => {},
+      },
+      ...(lifecycle && {
+        channelLifecycle: {
+          sign: async (template) => signed(viewer, template),
+          publish: lifecycle,
+        },
+      }),
+    },
+    { outboxStorage: { load: () => [], save: () => {} } },
+  );
+  owners.push(owner);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    scope: `https://relay.test:${viewer.pubkey}`,
+    viewer: viewer.pubkey,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    tryAgain() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  const none: RegisteredPanel[] = [];
+  const panels: Panels = {
+    ui: { Workspace: () => null, useSplit: vi.fn() },
+    snapshot: () => none,
+    subscribe: () => () => {},
+    resolve: () => undefined,
+    register() {},
+    requestOpen: () => false,
+    handleOpenRequests: () => () => {},
+  };
+  const navigator = createNavigationController(
+    createMemoryHistory(),
+  ).navigation;
+  const page = (navigation?: PageNavigation) => (
+    <ToastProvider>
+      <ChannelsPage
+        relay={relay}
+        panels={panels}
+        navigator={navigator}
+        navigation={navigation}
+        membership={membership}
+      />
+    </ToastProvider>
+  );
+  const { rerender } = render(page());
+  /** Re-route the mounted page; `undefined` returns to the unrouted workspace. */
+  const visit = (target?: OpenTarget) =>
+    rerender(
+      page(
+        target && {
+          entryId: "visit",
+          target,
+          signal: new AbortController().signal,
+          position: () => undefined,
+          savePosition() {},
+          passThrough: () => () => {},
+          forSession() {
+            return this;
+          },
+          resolve: () => true,
+          complete: () => true,
+        },
+      ),
+    );
+  return { owner, viewer, authority, scope: snapshot.scope, visit };
+}
+
+it("opens the community's auto-join channel first when nothing is saved", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  workspace(
+    [
+      roster(authority, "alpha", [viewer.pubkey]),
+      metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["auto_join"],
+      ]),
+    ],
+    viewer,
+    authority,
+  );
+  await screen.findByRole("textbox", { name: "Message #Beta" });
+});
+
+it("hands the community roster to Channel settings and follows the republished flag", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const id = "11111111-1111-4111-8111-111111111111";
+  const open = (at: number, extra: string[][] = []) =>
+    metadata(authority, id, "Alpha", at, [
+      ["t", "stream"],
+      ["public"],
+      ...extra,
+    ]);
+  const events = [roster(authority, id, [viewer.pubkey]), open(1_700_000_000)];
+  const ensure = vi.fn(() => () => {});
+  workspace(events, viewer, authority, {
+    membership: {
+      snapshot: () => ({
+        status: "ready",
+        members: [],
+        role: "owner",
+        refreshing: false,
+      }),
+      subscribe: () => () => true,
+      ensure,
+      refresh: async () => {},
+      dispose: () => {},
+    },
+    // The relay applies the accepted 9002 and republishes its metadata.
+    lifecycle: async (event) => {
+      if (event.kind === 9002)
+        events.push(open(1_700_000_100, [["auto_join"]]));
+    },
+  });
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View channel details" }),
+  );
+  const control = await screen.findByRole("switch", {
+    name: "Starter channel for new members",
+  });
+  expect(ensure).toHaveBeenCalledOnce();
+  expect(control).not.toBeChecked();
+  await user.click(control);
+  await vi.waitFor(() => expect(control).toBeChecked());
+  expect(control).not.toHaveAttribute("aria-busy");
+  expect(control.closest("dd")?.querySelector("[role=alert]")).toBeNull();
+});
+
+it("selects a default channel the relay adds after the page opened", async () => {
+  const events: RelayEvent[] = [];
+  const { owner, viewer, authority } = workspace(events);
+  await vi.waitFor(() =>
+    expect(owner.session.channels.list().status).toBe("ready"),
+  );
+  expect(screen.queryByRole("textbox")).toBeNull();
+  // A 44100 membership hint resolves the channel through the same store entry.
+  events.push(
+    roster(authority, "beta", [viewer.pubkey]),
+    metadata(authority, "beta", "Beta", undefined, [
+      ["t", "stream"],
+      ["auto_join"],
+    ]),
+  );
+  await act(() => owner.session.channels.resolve?.(["beta"]));
+  await screen.findByRole("textbox", { name: "Message #Beta" });
+});
+
+it("keeps the channel being read when a default channel arrives later", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const events: RelayEvent[] = [
+    roster(authority, "alpha", [viewer.pubkey]),
+    metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+  ];
+  const { owner } = workspace(events, viewer, authority);
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  events.push(
+    roster(authority, "beta", [viewer.pubkey]),
+    metadata(authority, "beta", "Beta", undefined, [
+      ["t", "stream"],
+      ["auto_join"],
+    ]),
+  );
+  await act(() => owner.session.channels.resolve?.(["beta"]));
+  await vi.waitFor(() =>
+    expect(
+      owner.session.channels.list().channels.map(({ id }) => id),
+    ).toContain("beta"),
+  );
+  expect(screen.getByRole("textbox", { name: "Message #Alpha" })).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Message #Beta" })).toBeNull();
+});
+
+it("keeps the computed channel across a New chat draft opened and closed meanwhile", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const events: RelayEvent[] = [
+    roster(authority, "alpha", [viewer.pubkey]),
+    metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+  ];
+  const { owner, scope, visit } = workspace(events, viewer, authority);
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  visit(soloDraftTarget(scope));
+  await screen.findByRole("region", { name: "New chat" });
+  events.push(
+    roster(authority, "beta", [viewer.pubkey]),
+    metadata(authority, "beta", "Beta", undefined, [
+      ["t", "stream"],
+      ["auto_join"],
+    ]),
+  );
+  await act(() => owner.session.channels.resolve?.(["beta"]));
+  await vi.waitFor(() =>
+    expect(
+      owner.session.channels.list().channels.map(({ id }) => id),
+    ).toContain("beta"),
+  );
+  visit();
+  expect(
+    await screen.findByRole("textbox", { name: "Message #Alpha" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Message #Beta" })).toBeNull();
+});
+
+it("moving the last side app adopts its guest before the dock exit finishes", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 800, 500),
+  );
+  let finishExit = () => {};
+  const finished = new Promise<void>((resolve) => {
+    finishExit = resolve;
+  });
+  const originalAnimations = HTMLElement.prototype.getAnimations;
+  const getAnimations = vi.fn(() => [{ finished }]);
+  Object.defineProperty(HTMLElement.prototype, "getAnimations", {
+    configurable: true,
+    value: getAnimations,
+  });
+  const pages = new Map<string, string>();
+  const attached = vi.fn(async (url: string) => {
+    const id = `guest-${pages.size + 1}`;
+    pages.set(id, url);
+    return id;
+  });
+  const detached = vi.fn(async (id: string) => {
+    pages.delete(id);
+  });
+  const observed: string[] = [];
+  const platform: BrowserPlatform = {
+    available: true,
+    attach: attached,
+    detach: detached,
+    openExternal: vi.fn(async () => {}),
+    setBounds: async () => {},
+    setMediaSuspended: async () => {},
+    navigate: async (id, url) => {
+      pages.set(id, url);
+    },
+    action: async () => {},
+    status: async (id) => {
+      const url = pages.get(id) ?? "";
+      observed.push(url);
+      return { url, title: "App", loading: false, error: null };
+    },
+  };
+  const sessions = new BrowserSessions(platform);
+  const App = () => (
+    <BrowserHostView
+      url="https://app.example/"
+      storage="builderlab-apps"
+      platform={platform}
+      sessions={sessions}
+    />
+  );
+  try {
+    const h = await page("stream", undefined, false, App);
+    act(() =>
+      expect(
+        h.panels.requestOpen({
+          channelId: "alpha",
+          target: "https://app.example/",
+        }),
+      ).toBe(true),
+    );
+    await vi.waitFor(() => expect(attached).toHaveBeenCalledTimes(1));
+    const address = screen.getByRole("textbox", { name: "Address" });
+    await h.user.clear(address);
+    await h.user.type(address, "https://app.example/second.html{Enter}");
+    await vi.waitFor(() =>
+      expect(observed).toContain("https://app.example/second.html"),
+    );
+    const source = document.querySelector("[data-panel-dock]");
+    const sourceGuest = source
+      ?.querySelector("[data-browser-session]")
+      ?.getAttribute("data-browser-session");
+    expect(sourceGuest).toBe("guest-1");
+    screen.getByRole("tab", { name: "App" }).focus();
+    await h.user.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
+    const main = document.querySelector<HTMLElement>("[data-main-workspace]");
+    if (!main) throw new Error("Main workspace unavailable");
+    fireEvent.animationEnd(within(main).getByRole("tabpanel", { name: "App" }));
+    await vi.waitFor(() =>
+      expect(main.querySelector("[data-browser-session]")).not.toBeNull(),
+    );
+    expect(getAnimations).toHaveBeenCalled();
+    expect(source).toHaveAttribute("data-closing");
+    expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
+      "data-browser-session",
+      sourceGuest,
+    );
+    expect(attached).toHaveBeenCalledTimes(1);
+    expect(detached).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(
+        within(main).getByRole("textbox", { name: "Address" }),
+      ).toHaveValue("https://app.example/second.html"),
+    );
+    await act(async () => finishExit());
+    expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
+      "data-browser-session",
+      sourceGuest,
+    );
+    expect(attached).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => finishExit());
+    if (originalAnimations)
+      HTMLElement.prototype.getAnimations = originalAnimations;
+    else Reflect.deleteProperty(HTMLElement.prototype, "getAnimations");
+  }
+});
 
 const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   let handled = false;
@@ -167,6 +1000,13 @@ const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   });
   return handled;
 };
+
+it("solo conversation bounds its hover surfaces inside its pane", async () => {
+  const h = await page("solo");
+  expect(h.composer.closest("[data-overlay-boundary]")).toBe(
+    screen.getByRole("article", { name: "Conversation" }),
+  );
+});
 
 it("solo composer retains side-tab cycling and close focus", async () => {
   const h = await page("solo");
@@ -194,6 +1034,25 @@ it("solo composer retains side-tab cycling and close focus", async () => {
   expect(closeTabs("buzz:close-active-tab")).toBe(true);
   expect(notes).not.toBeInTheDocument();
   expect(thread).toHaveFocus();
+});
+
+it("leaves Shift+Escape (Mark all as read) to a side thread, closing it on Escape", async () => {
+  const h = await page();
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "c".repeat(64);
+  act(() =>
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side"),
+  );
+  const thread = await screen.findByRole("tab", { name: "Thread · Alpha" });
+  expect(thread).toHaveAttribute("aria-selected", "true");
+  const content = document.querySelector(
+    `[id="${thread.getAttribute("aria-controls")}"] *`,
+  );
+  if (!content) throw new Error("The side thread has no content");
+  fireEvent.keyDown(content, { key: "Escape", shiftKey: true });
+  expect(thread).toBeInTheDocument();
+  fireEvent.keyDown(content, { key: "Escape" });
+  expect(thread).not.toBeInTheDocument();
 });
 
 it.each(["stream", "solo"] as const)(
@@ -250,17 +1109,19 @@ it.each(["stream", "solo"] as const)(
       }),
     ).not.toBeInTheDocument();
     if (type === "stream")
-      expect(screen.getByRole("tab", { name: "Alpha" })).toHaveFocus();
+      expect(
+        screen.getByRole("button", { name: "Manage members of Alpha" }),
+      ).toHaveFocus();
     else
       expect(screen.getByRole("region", { name: "Chat Alpha" })).toHaveFocus();
   },
 );
 
-it("an empty tab menu returns keyboard focus to its surviving tab", async () => {
+it("an empty tab menu returns keyboard focus to the conversation identity", async () => {
   const h = await page();
-  const channel = within(
-    screen.getByRole("tablist", { name: "Channel tabs" }),
-  ).getByRole("tab", { name: "Alpha" });
+  const channel = screen.getByRole("button", {
+    name: "Manage members of Alpha",
+  });
   channel.focus();
   await h.user.keyboard("{Shift>}{F10}{/Shift}");
   const action = await screen.findByRole("menuitem", {
@@ -268,22 +1129,75 @@ it("an empty tab menu returns keyboard focus to its surviving tab", async () => 
   });
   action.focus();
   await h.user.keyboard("{Enter}");
-  expect(await screen.findByRole("tab", { name: "Alpha" })).toHaveFocus();
-  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(
+    await screen.findByRole("button", { name: "Manage members of Alpha" }),
+  ).toHaveFocus();
+  expect(screen.queryAllByRole("tab")).toHaveLength(0);
 });
 
-it("the main tab's menu clears the real page's side tabs too", async () => {
+it("the conversation identity menu clears the page's side tabs too", async () => {
   const h = await page();
   await h.open();
-  const channel = within(
-    screen.getByRole("tablist", { name: "Channel tabs" }),
-  ).getByRole("tab", { name: "Alpha" });
+  const channel = screen.getByRole("button", {
+    name: "Manage members of Alpha",
+  });
   await h.user.pointer({ target: channel, keys: "[MouseRight]" });
   await h.user.click(
     await screen.findByRole("menuitem", { name: "Close all tabs" }),
   );
   expect(screen.queryByRole("tab", { name: "Notes" })).not.toBeInTheDocument();
   expect(channel).toHaveFocus();
+});
+
+it("holds the notice for a type the relay refuses while another main tab covers the channel composer", async () => {
+  let refuse = (_reason: Error) => {};
+  const upload = vi.fn(
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        refuse = reject;
+      }),
+  );
+  const h = await page(
+    "stream",
+    undefined,
+    false,
+    undefined,
+    undefined,
+    upload,
+  );
+  fireEvent.paste(h.composer, {
+    clipboardData: {
+      items: [{ kind: "file", getAsFile: () => new File(["MZ"], "setup.exe") }],
+      getData: () => "",
+    },
+  });
+  await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  // The channel's composer stays mounted, uploading, under the thread's tab.
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() =>
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "main"),
+  );
+  const [conversation, thread] = within(
+    screen.getByRole("tablist", { name: "Channel tabs" }),
+  ).getAllByRole("tab");
+  if (!conversation || !thread) throw new Error("missing main-pane tabs");
+  expect(thread).toHaveAttribute("aria-selected", "true");
+  await act(async () => refuse(new UploadError("type")));
+  // The covered chip has the refusal, so the notice could have been raised.
+  await vi.waitFor(() =>
+    expect(
+      screen.getByText(/This file type isn’t supported/),
+    ).toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("dialog", { name: "Could not attach file" })).toBe(
+    null,
+  );
+  await h.user.click(conversation);
+  expect(conversation).toHaveAttribute("aria-selected", "true");
+  expect(
+    await screen.findByRole("dialog", { name: "Could not attach file" }),
+  ).toHaveAccessibleDescription("setup.exe isn’t a supported file type.");
 });
 
 it("close-all works while a main-pane thread covers the channel conversation", async () => {
@@ -299,8 +1213,10 @@ it("close-all works while a main-pane thread covers the channel conversation", a
     ),
   ).toHaveLength(2);
   expect(closeTabs()).toBe(true);
-  expect(screen.getAllByRole("tab")).toHaveLength(1);
-  expect(screen.getByRole("tab", { name: "Alpha" })).toHaveFocus();
+  expect(screen.queryAllByRole("tab")).toHaveLength(0);
+  expect(
+    screen.getByRole("button", { name: "Manage members of Alpha" }),
+  ).toHaveFocus();
 });
 
 it.each([false, true])(
@@ -358,18 +1274,292 @@ it.each(["side", "main"] as const)(
     await h.user.click(
       await screen.findByRole("menuitem", { name: "Close other tabs" }),
     );
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.getAllByRole("tab")).toHaveLength(kept === "side" ? 1 : 2);
     expect(target).toBeInTheDocument();
     expect(target).toHaveAttribute("aria-selected", "true");
     expect(target).toHaveFocus();
   },
 );
 
+it("gives a Solo chat's side tab its own header actions, opening it in the main view", async () => {
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const h = await page("stream", {
+    open,
+    snapshot: () => visitSnapshot,
+    subscribe: () => () => {},
+  } as unknown as Navigation);
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  act(() =>
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+      { id: "conversation:gamma", kind: "conversation", channelId: "gamma" },
+    ]),
+  );
+  await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
+  expect(
+    await screen.findByRole("button", { name: "Share access" }),
+  ).toBeInTheDocument();
+  await h.user.click(screen.getByRole("button", { name: "Chat actions" }));
+  const menu = within(
+    await screen.findByRole("menu", { name: "Chat actions" }),
+  );
+  expect(menu.getAllByRole("menuitem")[0]).toHaveTextContent(
+    "Open in main view",
+  );
+  // No host beside another conversation can finish a conversion.
+  expect(
+    menu.queryByRole("menuitem", { name: "Convert to channel" }),
+  ).toBeNull();
+  await h.user.click(menu.getByRole("menuitem", { name: "Open in main view" }));
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: h.viewer,
+        communityOrigin: h.scope.slice(0, -(h.viewer.length + 1)),
+      },
+      channelId: "gamma",
+    }),
+  );
+  // A team channel's tab keeps the panel's own header.
+  await h.user.click(screen.getByRole("tab", { name: "Beta" }));
+  expect(screen.queryByRole("button", { name: "Chat actions" })).toBeNull();
+});
+
+it("keeps a side tab's failed move recoverable after switching tabs", async () => {
+  const base = {
+    status: "ready",
+    data: {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: {},
+      starred: [],
+      muted: [],
+    },
+  } as unknown as ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>;
+  let current = base;
+  const listeners = new Set<() => void>();
+  const publish = (next: typeof current) => {
+    current = next;
+    for (const listener of listeners) listener();
+  };
+  const failed = {
+    ...base,
+    moves: [
+      {
+        id: 1,
+        channelId: "gamma",
+        destination: { sectionId: "work" },
+        pending: false,
+        error: "Relay unavailable",
+      },
+    ],
+  } as unknown as typeof current;
+  const retryMove = vi.fn(() => new Promise<never>(() => {}));
+  const h = await page(
+    "stream",
+    {
+      open: vi.fn(async () => ({ status: "opened" as const })),
+      snapshot: () => visitSnapshot,
+      subscribe: () => () => {},
+    } as unknown as Navigation,
+    false,
+    undefined,
+    {
+      writable: true,
+      snapshot: () => current,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      assign: vi.fn(async () => {
+        publish(failed);
+        throw new Error("Relay unavailable");
+      }),
+      retryMove,
+    } as unknown as RelaySession["sidebarPreferences"],
+  );
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  act(() =>
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+      { id: "conversation:gamma", kind: "conversation", channelId: "gamma" },
+    ]),
+  );
+  await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
+  await h.user.click(
+    await screen.findByRole("button", { name: "Chat actions" }),
+  );
+  (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+  await h.user.keyboard("{ArrowRight}");
+  await h.user.click(await screen.findByRole("menuitem", { name: "Work" }));
+  expect(await screen.findByText("Chat wasn’t moved")).toBeVisible();
+  // Gamma's toolbar unmounts, but the page still owns its recovery.
+  await h.user.click(screen.getByRole("tab", { name: "Beta" }));
+  expect(screen.queryByRole("button", { name: "Chat actions" })).toBeNull();
+  expect(screen.getByText("Chat wasn’t moved")).toBeVisible();
+  // Toasts own swipe gestures, so press their buttons without a pointer.
+  fireEvent.click(screen.getByRole("button", { name: "Retry move" }));
+  expect(retryMove).toHaveBeenCalledExactlyOnceWith("gamma");
+  // Settled elsewhere, as by the sidebar's Dismiss, the move is no longer the
+  // header's: a later failure it did not start raises no toast.
+  act(() => publish(base));
+  await vi.waitFor(() =>
+    expect(screen.queryByText("Chat wasn’t moved")).toBeNull(),
+  );
+  act(() => publish(failed));
+  expect(screen.queryByText("Chat wasn’t moved")).toBeNull();
+});
+
+it("keeps a newer header move recoverable after an earlier one succeeds", async () => {
+  const base = {
+    status: "ready",
+    data: {
+      sections: [
+        { id: "work", name: "Work", order: 0 },
+        { id: "home", name: "Home", order: 1 },
+      ],
+      assignments: {},
+      starred: [],
+      muted: [],
+    },
+  } as unknown as ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>;
+  let current = base;
+  const listeners = new Set<() => void>();
+  const publish = (next: typeof current) => {
+    current = next;
+    for (const listener of listeners) listener();
+  };
+  const move = (
+    id: number,
+    sectionId: string,
+    state: { pending: true } | { pending: false; error: string },
+  ) => ({ id, channelId: "gamma", destination: { sectionId }, ...state });
+  const withMoves = (...moves: ReturnType<typeof move>[]) =>
+    ({ ...base, moves }) as unknown as typeof current;
+  // The store queues both writes; each settles only when the test says so.
+  const settle: {
+    resolve(): void;
+    reject(error: Error): void;
+  }[] = [];
+  const queued: ReturnType<typeof move>[] = [];
+  const assign = vi.fn(
+    (_channelId: string, sectionId = "") =>
+      new Promise<void>((resolve, reject) => {
+        settle.push({ resolve, reject });
+        queued.push(move(settle.length, sectionId, { pending: true }));
+        publish(withMoves(...queued));
+      }),
+  );
+  const h = await page(
+    "stream",
+    {
+      open: vi.fn(async () => ({ status: "opened" as const })),
+      snapshot: () => visitSnapshot,
+      subscribe: () => () => {},
+    } as unknown as Navigation,
+    false,
+    undefined,
+    {
+      writable: true,
+      snapshot: () => current,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      assign,
+      retryMove: vi.fn(() => new Promise<never>(() => {})),
+    } as unknown as RelaySession["sidebarPreferences"],
+  );
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  act(() =>
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:gamma", kind: "conversation", channelId: "gamma" },
+    ]),
+  );
+  await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
+  const moveTo = async (name: string) => {
+    await h.user.click(
+      await screen.findByRole("button", { name: "Chat actions" }),
+    );
+    (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+    await h.user.keyboard("{ArrowRight}");
+    await h.user.click(await screen.findByRole("menuitem", { name }));
+  };
+  await moveTo("Work");
+  await moveTo("Home");
+  expect(settle).toHaveLength(2);
+  // The earlier move succeeds while the newer one is still queued.
+  await act(async () => {
+    publish(withMoves(move(2, "home", { pending: true })));
+    settle[0]?.resolve();
+  });
+  await act(async () => {
+    publish(
+      withMoves(
+        move(2, "home", { pending: false, error: "Relay unavailable" }),
+      ),
+    );
+    settle[1]?.reject(new Error("Relay unavailable"));
+  });
+  expect(await screen.findByText("Chat wasn’t moved")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Retry move" })).toBeVisible();
+});
+
+// Sidebar visibility is not access: an archived channel leaves the sidebar
+// but stays joined, so the tabs opened for it still resolve it.
+it("keeps another channel's tabs resolved after that channel is archived", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const beta = (at: number, extra: string[][] = []) =>
+    metadata(authority, "beta", "Beta", at, [["t", "stream"], ...extra]);
+  const events = [
+    roster(authority, "alpha", [viewer.pubkey]),
+    metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+    roster(authority, "beta", [viewer.pubkey]),
+    beta(1_700_000_000),
+  ];
+  const { owner } = workspace(events, viewer, authority);
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  const tabs = renderHook(() => useChannelTabState(owner.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() => {
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+    ]);
+    tabs.result.current.openThreadTab("beta", root, root, undefined, "side");
+  });
+  await screen.findByRole("tab", { name: "Thread · Beta" });
+  await screen.findByRole("tab", { name: "Beta" });
+
+  events.push(beta(1_700_000_100, [["archived", "true"]]));
+  act(() => owner.session.channels.refreshList?.());
+  // Its composer cannot post there now, and the tab says why.
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByRole("tab", { name: "Unavailable conversation" }),
+    );
+  expect(
+    await screen.findByText("This conversation is archived."),
+  ).toBeVisible();
+  // The thread is still read, under its channel's name.
+  expect(screen.getByRole("tab", { name: "Thread · Beta" })).toBeVisible();
+  expect(
+    screen.queryByText("This conversation is no longer available."),
+  ).not.toBeInTheDocument();
+});
+
 it("opens another conversation's tab in its channel, but not the current channel's threads", async () => {
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const h = await page("stream", {
     open,
-    snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+    snapshot: () => visitSnapshot,
+    subscribe: () => () => {},
   } as unknown as Navigation);
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "d".repeat(64);
@@ -434,6 +1624,7 @@ it("opens another conversation's tab in its channel, but not the current channel
       channelId: "beta",
       messageId: other,
       threadRootId: other,
+      context: "channel",
     }),
   );
 });

@@ -1,27 +1,13 @@
 import { watchPageErrors } from "./page-errors.mjs";
 import { test, expect } from "./playwright-test.mjs";
-import { createServer } from "./vite-server.mjs";
-import react from "@vitejs/plugin-react";
-import { fileURLToPath } from "node:url";
-let server, origin;
+import { previewFixtures } from "./vite-server.mjs";
+let fixtures;
+// A dev server serves this fixture as about 800 modules, and WebKit's first
+// navigation outlasted the navigation timeout on a busy runner.
 test.beforeAll(async () => {
-  server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envDir: false,
-    plugins: [react()],
-    server: { host: "127.0.0.1", port: 0 },
-  });
-  await server.listen();
-  origin = server.resolvedUrls.local[0];
+  fixtures = await previewFixtures(["tests/fixtures/voice-notes.html"]);
 });
-test.afterAll(async () => {
-  await server?.close();
-});
-test.afterEach(async ({ page }) => {
-  // Media routes read fixture blobs from the page; finish them before it closes.
-  await page.unrouteAll({ behavior: "wait" });
-});
+test.afterAll(() => fixtures?.close());
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/relay/media?*", async (route) => {
     const url = new URL(route.request().url()).searchParams.get("url");
@@ -37,7 +23,7 @@ test.beforeEach(async ({ page }) => {
       body: Buffer.from(bytes),
     });
   });
-  await page.goto(`${origin}tests/fixtures/voice-notes.html`);
+  await page.goto(`${fixtures.origin}/tests/fixtures/voice-notes.html`);
   await page.evaluate(() => {
     const mic = {
       mode: "allow",
@@ -108,7 +94,7 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
 });
 
-async function record(page) {
+async function record(page, { stopWith = "keyboard" } = {}) {
   await page
     .getByRole("button", { name: "Record voice note", exact: true })
     .click();
@@ -122,9 +108,14 @@ async function record(page) {
   await page.screenshot({
     path: test.info().outputPath("voice-recording.png"),
   });
-  await page
-    .getByRole("button", { name: "Stop recording", exact: true })
-    .click();
+  await expect(
+    page.getByRole("button", { name: "Stop recording", exact: true }),
+  ).toBeFocused();
+  if (stopWith === "pointer")
+    await page
+      .getByRole("button", { name: "Stop recording", exact: true })
+      .click();
+  else await page.keyboard.press("Enter");
   await expect(
     page.getByRole("button", { name: "Remove voice note", exact: true }),
   ).toBeVisible();
@@ -266,7 +257,7 @@ test("failed upload survives disabling the plugin and switching conversations", 
   await page.evaluate(() => {
     window.voiceFixture.report.failUpload = true;
   });
-  await record(page);
+  await record(page, { stopWith: "pointer" });
   await expect(
     page.getByRole("button", { name: "Retry voice note upload", exact: true }),
   ).toBeVisible();
@@ -370,18 +361,12 @@ test("rejects a full attachment draft before opening the microphone", async ({
   await expect(
     page.getByRole("status").filter({ hasText: /file-\d+\.txt:.*Ready/ }),
   ).toHaveCount(10);
-  const uploaded = await page.evaluate(async () => {
-    const { attachmentDraft } = await import(
-      "/src/features/messages/attachment-draft.ts"
-    );
-    return attachmentDraft(
-      window.voiceFixture.session,
-      "voice-fixture:draft:general",
-      "general",
-    )
+  const uploaded = await page.evaluate(() =>
+    window.voiceFixture
+      .attachmentDraft("voice-fixture:draft:general", "general")
       .snapshot()
-      .map((item) => item.uploaded);
-  });
+      .map((item) => item.uploaded),
+  );
   expect(uploaded.map((item) => item.type)).toEqual(
     Array(10).fill("text/plain"),
   );

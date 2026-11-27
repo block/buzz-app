@@ -1,21 +1,27 @@
+import { piHookOutput } from "../hook-output";
+import { usageOn } from "../../features/agents/standalone-sessions";
 // Pi agents: an agent type whose agents run on Pi durable on this computer,
 // with any provider Pi supports. One Pi host runs them all, each with its own
 // storage; each conversation the agent is in is one continuing, durable Pi
 // conversation. Pi answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
-import { ownerReads } from "../../features/agents/reads";
+import { pubkeyOf } from "../../features/agents/membership";
+import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { repositoriesContext } from "../../features/communities/repositories";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
 import { createTabs } from "./tabs";
+import { upstreamFor } from "../../features/agents/gateway/route";
+import { readModelSettings } from "../../features/agents/model-settings";
+import { GATEWAY_SEAM, HARNESS } from "./gateway";
 
 export const TYPE_ID = "pi";
 /** A turn's run returns once Pi has it, so this bounds only the hand-over,
  * which includes the first install of Pi's packages. */
 const HANDOVER_MS = 2 * 60_000;
 
-export const inject = ["agents", "host"];
+export const inject = ["agents", "host", "agentProtection", "settingsCards"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start the Pi host; no unusable type elsewhere.
   if (!isTauri()) return;
@@ -23,12 +29,66 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.pi"}/${TYPE_ID}`;
   const runtime = new PiRuntime(
     host,
-    (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
-    (pubkey, signal) => agents.core(pubkey, signal),
+    (key) =>
+      agents.conversationReads?.(key) ??
+      ownerReads(agents.relay(key), pubkeyOf(key)),
+    (key, signal) => agents.core(key, signal),
     () => agents.tools(),
     repositoriesContext,
-    (pubkey) => agents.handle(pubkey),
+    (key) => agents.handle(key),
+    async (agent, session, event, input) => {
+      return (
+        (await agents.dispatchHook(
+          typeKey,
+          event,
+          input,
+          { agent, session },
+          {
+            accepts: (output) => output != null,
+            milliseconds: 25000,
+            compose: (output, pluginId) =>
+              piHookOutput(output, pluginId, input),
+          },
+        )) ?? null
+      );
+    },
+    (key, listener) => agents.relay(key)?.subscribe(listener) ?? (() => {}),
+    agents.storage,
+    // Without a Pi upstream in this build, every agent keeps its own
+    // providers, as the runner sends every turn without the gateway.
+    upstreamFor(HARNESS) ? GATEWAY_SEAM : undefined,
+    (agent, signal, channelId, what) =>
+      readyOwnerReads(
+        agents.relay(agent.key),
+        agent,
+        signal,
+        channelId,
+        what,
+        () => agents.conversationReads?.(agent.key),
+      ),
+    (key) => agents.relay(key)?.snapshot().scope,
   );
+  runtime.usageOn = usageOn(ctx.settingsCards);
+  ctx.agentProtection.registerModels({
+    label: "Pi",
+    models: async () => {
+      const { providers } = await runtime.setup.providers();
+      const choices = await Promise.all(
+        providers
+          .filter((provider) => provider.configured)
+          .map(async (provider) =>
+            (await runtime.setup.models(provider.id)).map((model) => ({
+              provider: provider.id,
+              id: model.id,
+              label: `${provider.name} · ${model.label}`,
+            })),
+          ),
+      );
+      return choices.flat();
+    },
+    complete: (model, prompt, signal) =>
+      runtime.setup.review(model, prompt, signal),
+  });
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,
     runtime,
@@ -48,24 +108,50 @@ export const apply: PluginModule["apply"] = (ctx) => {
   }
 
   agents.register<Config>({
+    supportsGuardedWake: true,
     id: TYPE_ID,
+    hooks: { events: ["beforeTool", "afterTool"] },
+    retire: (pubkey) => runtime.retire(pubkey),
+    protection: true,
+    conversationFolders: true,
+    conversationSections: true,
+    skillFolders: ["~/.agents/skills"],
+    notes: true,
     title: "Pi",
     icon: PiLogoIcon,
     description:
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    settingsProposal: { compactAt: true },
+    readModelSettings: (saved) =>
+      readModelSettings(config(saved), { provider: true }),
     Create,
     CreateModel,
+    createModelReportsReadiness: true,
+    importShared: (source) =>
+      source.runtime === "pi"
+        ? {
+            ...DEFAULT_CONFIG,
+            model: source.model,
+            provider: source.provider ?? "",
+          }
+        : undefined,
+    exportShared: (saved) => {
+      const { provider, model } = config(saved);
+      return { runtime: "pi", ...(provider && { provider }), model };
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
+      scope: carry.sessionScope ?? saved.scope,
       workspace: carry.workspace ?? saved.workspace,
     }),
     carry: (saved) => {
-      const { instructions, workspace } = config(saved);
+      const { instructions, workspace, scope } = config(saved);
       return {
         ...(instructions.trim() && { instructions }),
         ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+        ...(scope !== DEFAULT_CONFIG.scope && { sessionScope: scope }),
       };
     },
     summary: (agent) => {
@@ -74,10 +160,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     ...(host.spawn && {
       usage: (agent, { since, signal }) =>
-        runtime.usage(agent.pubkey, since, signal),
+        runtime.usage(agent.key, since, signal),
     }),
     sessions: {
-      list: (pubkey) => runtime.sessions(pubkey),
+      list: (key) => runtime.sessions(key),
+      ready: (key, conversation) => runtime.listed(key, conversation),
       subscribe: (listener) => runtime.subscribe(listener),
     },
     tabs: [
@@ -104,6 +191,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     models: (agent) => runtime.models(agent),
     run: (delivery) => runtime.run(delivery),
     runOnce: (turn) => runtime.runOnce(turn),
+    // Its host reader cannot be stopped once started.
+    readFile: (agent, path, signal) => {
+      signal.throwIfAborted();
+      return runtime.workspaceFile(agent, path);
+    },
     timeoutMs: HANDOVER_MS,
+    // Memberships whose gateway enables Pi route through it; none do while
+    // this build has no gateway descriptor.
+    gateway: { harness: HARNESS },
   });
 };

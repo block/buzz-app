@@ -4,7 +4,7 @@ stubAvatarBrowserApis();
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createRef } from "react";
+import { createRef, useSyncExternalStore } from "react";
 import { Context } from "@deepseek-ai/cordis";
 import userEvent from "@testing-library/user-event";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -31,7 +31,9 @@ import type { ChannelMessage } from "../relay/contracts";
 import { TypingIndicator } from "../messages/TypingIndicator";
 
 const a = "a".repeat(64),
-  b = "b".repeat(64);
+  b = "b".repeat(64),
+  person = "c".repeat(64);
+const noInbox = { status: "ready", items: [], freshness: "observed" };
 const stops: (() => void)[] = [];
 // jsdom lacks scrollIntoView; mention and search highlights reveal their rows.
 beforeEach(() => {
@@ -51,6 +53,7 @@ function fixture() {
   const profiles = new Map([
     [a, { name: "Larry", isAgent: true as const }],
     [b, { name: "Larry", isAgent: true as const }],
+    [person, { name: "Pat" }],
   ]);
   let channel = {
     id: "c",
@@ -133,6 +136,17 @@ function fixture() {
     agentActivity: { snapshot: () => activity, subscribe },
     directMessages: { people: async () => ({ people: [] }) },
     channelLifecycle: { snapshot: () => visibility, subscribe },
+    unread: {
+      snapshot: () => ({ manual: "none", observedCount: 0 }),
+      activity: () => ({ items: [] }),
+      subscribe: (_target: unknown, listener: () => void) =>
+        subscribe(listener),
+      subscribeActivity: (_id: string, listener: () => void) =>
+        subscribe(listener),
+      inbox: () => noInbox,
+      subscribeInbox: subscribe,
+    },
+    sidebarPreferences: { snapshot: () => ({ status: "ready" }), subscribe },
     typing: { snapshot: () => publicTyping, subscribe },
     thread: () => ({
       snapshot: () => thread,
@@ -167,8 +181,8 @@ function fixture() {
       presenceStatus = status;
       for (const listener of listeners) listener();
     },
-    join() {
-      channel = { ...channel, members: [a, b], participants: [a, b] };
+    join(members = [a, b]) {
+      channel = { ...channel, members, participants: members };
       list = { ...list, channels: [channel] };
       for (const listener of listeners) listener();
     },
@@ -332,7 +346,7 @@ it.each(["live", "reconnect", "clear-cache"] as const)(
         screen.getByRole("button", { name: "Mention a member" }),
       );
       expect(
-        await screen.findByRole("button", { name: `GLM ${agent.pubkey}` }),
+        await screen.findByRole("button", { name: /^GLM\s*Agent/ }),
       ).toBeVisible();
 
       const oldRosterReads = rosterReads;
@@ -369,11 +383,11 @@ it.each(["live", "reconnect", "clear-cache"] as const)(
           view.container.querySelector('[data-message-id="message"]'),
         ).toHaveTextContent("Luna");
         expect(
-          screen.getByRole("button", { name: `Luna ${agent.pubkey}` }),
+          screen.getByRole("button", { name: /^Luna\s*Agent/ }),
         ).toBeVisible();
       });
       expect(
-        screen.queryByRole("button", { name: `GLM ${agent.pubkey}` }),
+        screen.queryByRole("button", { name: /^GLM\s*Agent/ }),
       ).not.toBeInTheDocument();
     } finally {
       owner.dispose();
@@ -385,8 +399,12 @@ it.each(["live", "reconnect", "clear-cache"] as const)(
 it("uses channel scope in link previews and activity, and participant scope in sidebar DMs", async () => {
   const f = fixture();
   function Sidebar() {
+    const list = useSyncExternalStore(
+      f.session.channels.subscribeList,
+      f.session.channels.list,
+    );
     const labels = useChannelLabels(
-      f.session.channels.list().channels,
+      list.channels,
       f.session.profiles,
       f.session.names,
     );
@@ -425,7 +443,7 @@ it("uses channel scope in link previews and activity, and participant scope in s
     "Larry · rcaj",
   );
   expect(screen.getByLabelText("DM label")).toHaveTextContent(
-    "Larry · rcaj, Larry · 04hu",
+    "Larry · 04hu, Larry · rcaj",
   );
   expect(
     screen.getByRole("button", {
@@ -442,6 +460,7 @@ it("scopes search DM labels and message authors to their own conversation", asyn
       onQueryChange={() => {}}
       input={createRef()}
       pages={[]}
+      openNewMessage={() => {}}
       openConversation={() => {}}
     />,
   );
@@ -451,7 +470,43 @@ it("scopes search DM labels and message authors to their own conversation", asyn
   act(() => f.join());
   expect(
     screen.getByRole("option", {
-      name: /hello.*Larry · rcaj, Larry · 04hu · Larry · rcaj/,
+      name: /hello.*Larry · 04hu, Larry · rcaj · Larry · rcaj/,
     }),
   ).toBeVisible();
+});
+it("names a DM by its people, not its agents, in each consumer", async () => {
+  const f = fixture();
+  f.join([a, person]);
+  function Sidebar() {
+    const list = useSyncExternalStore(
+      f.session.channels.subscribeList,
+      f.session.channels.list,
+    );
+    const labels = useChannelLabels(
+      list.channels,
+      f.session.profiles,
+      f.session.names,
+    );
+    return <output aria-label="DM label">{labels.channels[0]?.name}</output>;
+  }
+  render(
+    <>
+      <Sidebar />
+      <BuzzLinkPreview session={f.session} channelId="c" messageId="m" />
+      <SearchResults
+        session={f.session}
+        query="hello"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openNewMessage={() => {}}
+        openConversation={() => {}}
+      />
+    </>,
+  );
+  expect(screen.getByLabelText("DM label")).toHaveTextContent(/^Pat$/);
+  const result = await screen.findByRole("option", { name: /hello/ });
+  expect(result).toHaveAccessibleName(/Pat · Larry/);
+  expect(result).not.toHaveAccessibleName(/Larry, Pat/);
+  expect(await screen.findByText(/^Pat$/, { selector: "span" })).toBeVisible();
 });

@@ -4,21 +4,23 @@ import {
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/channel-writes";
-import { useEffect, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import type { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
-import styles from "./WorkspaceSettings.module.css";
-import { WorkspaceFields } from "./WorkspaceFields";
 import {
   emptyWorkspace,
   loadChatSetup,
   readWorkspace,
   workspaceCanvas,
 } from "./workspace";
+import {
+  ChatInstructions,
+  ChatSettingsDialog,
+  instructionsCanvas,
+} from "./ChatSettingsDialog";
 
 /** Edits only the local draft; first-send owns remote setup and its retry receipt. */
 export function DraftSettings({
@@ -40,7 +42,9 @@ export function DraftSettings({
   save(canvas: string, ttlSeconds?: number, name?: string): void;
   close(): void;
 }) {
-  const [value, setValue] = useState(typeof name === "string" ? name : "");
+  // A persisted name arrives unchecked; a malformed one opens blank.
+  const openedName = typeof name === "string" ? name : "";
+  const [value, setValue] = useState(openedName);
   const normalized = canonicalDetailsName(value);
   const nameError = normalized
     ? detailsDraftErrors({
@@ -63,7 +67,10 @@ export function DraftSettings({
   }).lifetime;
   const [workspace, setWorkspace] = useState(emptyWorkspace);
   const [raw, setRaw] = useState<string>();
-  const [loaded, setLoaded] = useState(false);
+  // The Canvas the dialog opened with; undefined until it has loaded.
+  const [opened, setOpened] = useState<string>();
+  const historical = useRef<{ canvas: string; workspace: string }>(undefined);
+  const loaded = opened !== undefined;
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed settings read.
@@ -77,11 +84,18 @@ export function DraftSettings({
           (projectId ? (await loadChatSetup(session, projectId)).canvas : "");
         if (!active) return;
         try {
-          setWorkspace(readWorkspace(content));
+          const workspace = readWorkspace(content);
+          setWorkspace(workspace);
+          const normalized = instructionsCanvas(workspace, undefined);
+          historical.current =
+            normalized === undefined
+              ? { canvas: content, workspace: JSON.stringify(workspace) }
+              : undefined;
+          setOpened(normalized ?? JSON.stringify(workspace));
         } catch {
           setRaw(content);
+          setOpened(content);
         }
-        setLoaded(true);
       } catch (reason) {
         if (active)
           setError(reason instanceof Error ? reason.message : String(reason));
@@ -91,84 +105,74 @@ export function DraftSettings({
       active = false;
     };
   }, [session, projectId, canvas, attempt]);
+  // Preserve an unchanged historical header when its replacement would not fit.
+  const rawCanvas =
+    raw ??
+    (JSON.stringify(workspace) === historical.current?.workspace
+      ? historical.current.canvas
+      : undefined);
   return (
-    <Dialog
-      open
+    <ChatSettingsDialog
       dismissOnOutsideClick={false}
-      finalFocus={finalFocus}
-      title="Chat settings"
-      onOpenChange={(open) => {
-        if (!open) close();
-      }}
-      actions={
-        <>
-          <Button onClick={close}>Cancel</Button>
-          <Button
-            variant="prominent"
-            disabled={!loaded || !!nameError || !!lifetimeError}
-            onClick={() => {
-              try {
-                save(
-                  raw === undefined
-                    ? workspaceCanvas(workspace)
-                    : workspaceCanvas({ folders: [], canvas: raw }),
-                  ttl,
-                  normalized,
-                );
-                close();
-              } catch (reason) {
-                setError(
-                  reason instanceof Error ? reason.message : String(reason),
-                );
-              }
-            }}
-          >
-            Save changes
-          </Button>
-        </>
+      dirty={
+        canonicalDetailsName(value) !== canonicalDetailsName(openedName) ||
+        ttl !== ttlSeconds ||
+        (loaded &&
+          (instructionsCanvas(workspace, raw) ?? JSON.stringify(workspace)) !==
+            opened)
       }
+      finalFocus={finalFocus}
+      close={close}
+      saveDisabled={!loaded || !!nameError || !!lifetimeError}
+      onSave={() => {
+        try {
+          save(
+            rawCanvas === undefined
+              ? workspaceCanvas(workspace)
+              : workspaceCanvas({ folders: [], canvas: rawCanvas }),
+            ttl,
+            normalized,
+          );
+          close();
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      }}
     >
-      <div className={styles.sections}>
-        <Field label="Chat name (optional)" error={nameError}>
-          <Input
-            value={value}
-            disabled={!loaded}
-            onChange={(event) => setValue(event.target.value)}
-          />
-        </Field>
-        {loaded ? (
-          raw === undefined ? (
-            <WorkspaceFields value={workspace} onChange={setWorkspace} />
-          ) : (
-            <Field label="Instructions">
-              <Textarea
-                rows={12}
-                value={raw}
-                onChange={(event) => setRaw(event.target.value)}
-              />
-            </Field>
-          )
-        ) : (
-          !error && <p role="status">Loading settings…</p>
-        )}
-        <ChannelDurationField
-          label="Lifetime"
-          temporary={ttl !== undefined}
-          ttlSeconds={temporaryTtl}
+      <Field label="Chat name" optional error={nameError}>
+        <Input
+          value={value}
           disabled={!loaded}
-          error={lifetimeError}
-          onChange={(next) => {
-            setTtl(next);
-            if (next !== undefined) setTemporaryTtl(next);
-          }}
+          onChange={(event) => setValue(event.target.value)}
         />
-        {error && <p role="alert">{error}</p>}
-        {!loaded && error && (
-          <Button onClick={() => setAttempt((value) => value + 1)}>
-            Retry settings
-          </Button>
-        )}
-      </div>
-    </Dialog>
+      </Field>
+      {loaded ? (
+        <ChatInstructions
+          workspace={workspace}
+          onWorkspaceChange={setWorkspace}
+          raw={raw}
+          onRawChange={setRaw}
+        />
+      ) : (
+        !error && <p role="status">Loading settings…</p>
+      )}
+      <ChannelDurationField
+        label="Lifetime"
+        temporary={ttl !== undefined}
+        ttlSeconds={temporaryTtl}
+        disabled={!loaded}
+        error={lifetimeError}
+        onChange={(next) => {
+          setTtl(next);
+          if (next !== undefined) setTemporaryTtl(next);
+        }}
+      />
+      {error && <p role="alert">{error}</p>}
+      {!loaded && error && (
+        <Button onClick={() => setAttempt((value) => value + 1)}>
+          Retry settings
+        </Button>
+      )}
+    </ChatSettingsDialog>
   );
 }

@@ -16,7 +16,7 @@
 .workflow-state-card p {
   margin: var(--space-2) 0 0;
 }
-.workflow-page-filter,
+.workflow-filter-toolbar,
 .workflow-page-status,
 .workflow-page-footnote,
 .workflow-page-state,
@@ -27,11 +27,43 @@
   max-width: 72rem;
   margin-inline: auto;
 }
-.workflow-page-filter {
+.workflow-filter-toolbar {
+  min-width: 0;
+  padding: var(--space-2) 0;
+  border: 0;
+  margin-top: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.workflow-filter-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
+  gap: var(--space-2);
+}
+.workflow-filter-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+.workflow-filter-control > .buzz-button:first-child {
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 1;
+}
+.workflow-list-transition {
+  min-width: 0;
+}
+.workflow-filter-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workflow-page-status {
   display: flex;
@@ -49,6 +81,7 @@
   padding-block: var(--space-8);
 }
 .workflow-collection {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-6);
@@ -74,13 +107,18 @@
 }
 .workflow-card-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
 }
 .workflow-card-row > .navigation-item {
-  flex: 1;
+  flex: 1 1 16rem;
+  flex-wrap: wrap;
   min-width: 0;
+}
+.workflow-card-row > .navigation-item > .navigation-item-label {
+  flex-basis: 12rem;
 }
 .workflow-row-copy {
   display: flex;
@@ -101,10 +139,35 @@
   min-width: 0;
   gap: var(--space-2);
 }
+/* Avatar, name, then date on one line, separated by the gap alone: a separator
+   item would be stranded at a row's edge when the line wraps. Too narrow, the
+   date moves whole to a second line before the name is squeezed, and a long
+   name wraps beside its avatar. */
+.workflow-card-owner,
+.workflow-detail-owner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.workflow-detail-owner {
+  justify-content: center;
+}
+.workflow-card-owner > time,
+.workflow-detail-owner > time {
+  white-space: nowrap;
+}
+.workflow-owner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
 .workflow-card-meta > .workflow-card-name {
   min-width: 0;
 }
-.workflow-card-meta > time,
 .workflow-card-meta > [aria-hidden] {
   flex-shrink: 0;
 }
@@ -145,6 +208,7 @@
 }
 .workflow-card-switch {
   flex: 0 0 auto;
+  margin-inline-start: auto;
 }
 .workflow-state-card {
   padding: var(--space-3) var(--space-4);
@@ -529,6 +593,18 @@ html[data-keyboard-navigation]
   padding: 0;
   text-align: start;
 }
+/* The "Review step" link carries a full validation message; wrap it in the
+   sequence column instead of running under the inspector. */
+.workflow-builder .workflow-canvas > .buzz-button {
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+  text-align: start;
+}
+.workflow-builder .workflow-canvas > .buzz-button .buzz-button-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .workflow-flow {
   margin: 0;
   max-width: 28rem;
@@ -633,4 +709,98 @@ html[data-keyboard-navigation]
   .workflows-side {
     border-inline-start: 0;
   }
+}
+
+.workflow-filter-channel-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.workflow-filter-channel-icon {
+  flex-shrink: 0;
+}
+.workflow-filter-channels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+.workflow-filter-options,
+.workflow-filter-channels {
+  padding: var(--space-1) var(--space-2);
+  row-gap: 0;
+  max-height: min(18rem, 40dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.workflow-filter-options {
+  display: grid;
+  gap: 0;
+}
+
+/* The composer's inline mention rows (conversation/Completions.module.css). */
+.workflow-mention-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+  max-height: 17.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.workflow-mention-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--floating-inner-radius);
+  cursor: pointer;
+}
+
+.workflow-mention-option[aria-selected="true"] {
+  background: var(--affordance-popover-selected);
+}
+
+.workflow-mention-preview {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+}
+
+.workflow-mention-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.workflow-mention-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-mention-label small {
+  flex: 0 0 12ch;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text-metadata);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+
+.workflow-mention-status {
+  margin: var(--space-1) var(--space-2) 0;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }

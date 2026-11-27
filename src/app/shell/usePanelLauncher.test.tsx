@@ -42,10 +42,13 @@ test("a fresh opening retires a closed plugin draft even before its exit finishe
   };
   const available = [panel];
   const panels: Panels = {
+    ui: { Workspace: () => null, useSplit: vi.fn() },
     register: vi.fn(),
     resolve: () => panel,
     snapshot: () => available,
     subscribe: () => () => {},
+    requestOpen: () => false,
+    handleOpenRequests: () => () => {},
   };
   function Host() {
     const launcher = usePanelLauncher(panels, true);

@@ -4,6 +4,8 @@ import {
   hoverMessage,
 } from "./message-actions.mjs";
 import { open, settle, virtuaIdle, wheel } from "./timeline.mjs";
+import { animationsSettled } from "./animations.mjs";
+import { chooseDefaultSkinTone } from "./skin-tone.mjs";
 
 test.use({
   productionBroker: true,
@@ -103,15 +105,22 @@ for (const own of [true, false]) {
         await row.evaluate((node, direction) => {
           node.dir = direction;
         }, direction);
+        await page.mouse.move(0, 0);
+        await hidden(actions);
+        await expect(row.locator("[data-layout]")).not.toHaveAttribute(
+          "data-actions-revealed",
+          "",
+        );
+        const bubble = row.locator("[data-message-action-anchor]");
+        const restingFill = await bubble.evaluate(
+          (node) => getComputedStyle(node).backgroundColor,
+        );
         await row.getByText("Hi", { exact: true }).hover();
         await above(actions);
-        await actions.evaluate((bar) =>
-          Promise.all(
-            bar.getAnimations().map((animation) => animation.finished),
-          ),
-        );
+        await expect(bubble).not.toHaveCSS("background-color", restingFill);
+        await animationsSettled(actions);
         // A slow diagonal from a short bubble must reach both toolbar ends.
-        for (const label of ["React with 👍", "More message actions"]) {
+        for (const label of ["Add reaction", "More message actions"]) {
           await hoverMessage(row);
           const button = await actions
             .getByRole("button", { name: label, exact: true })
@@ -181,6 +190,7 @@ for (const own of [true, false]) {
     await row.getByText("Hi", { exact: true }).hover();
     await above(actions);
     await expect(actions).not.toHaveCSS("box-shadow", "none");
+    await expect(actions).not.toHaveCSS("backdrop-filter", "none");
     // Park the pointer first: after the resize, its narrow-pane position can
     // land on a sidebar activity badge whose hover popover covers the row.
     await page.mouse.move(0, 0);
@@ -210,6 +220,62 @@ for (const own of [true, false]) {
 
 // Browser-only: caption and attachment content share one raised action position
 // while retaining native hit testing and an uninterrupted pointer path.
+// A first-of-group received message's name opens the sender's profile, so the
+// bar moves off it. Browser-only: whether a bar beside the bubble still meets
+// a slow diagonal, and whether the name beneath takes the click, are top-layer
+// hit tests on measured geometry.
+test("actions clear a short received message's name and stay reachable beside it", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  // An own message first, so the received "ok" starts a group with a byline.
+  app.append("primary", "alpha", "Mine", true, true);
+  const event = app.append("primary", "alpha", "ok", true, false);
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  const actions = actionsFor(row);
+  const name = row.locator("strong > [role='button']");
+  await expect(name).toBeVisible();
+  await settle(page);
+  await hoverMessage(row);
+  await shown(actions);
+  await animationsSettled(actions);
+  const [nameBox, bar] = await Promise.all([
+    name.boundingBox(),
+    actions.boundingBox(),
+  ]);
+  // The bar is at the name's height but entirely beside it.
+  expect(bar.y + bar.height).toBeGreaterThan(nameBox.y);
+  expect(bar.x).toBeGreaterThan(nameBox.x + nameBox.width);
+  // A slow diagonal from the bubble crosses the byline to either end.
+  for (const label of ["Add reaction", "More message actions"]) {
+    await hoverMessage(row);
+    const button = await actions
+      .getByRole("button", { name: label, exact: true })
+      .boundingBox();
+    await page.mouse.move(
+      button.x + button.width / 2,
+      button.y + button.height / 2,
+      { steps: 30 },
+    );
+    await shown(actions);
+  }
+  // The byline keeps the hover only: with the bar shown, the name itself
+  // still takes the click and opens the profile.
+  await hoverMessage(row);
+  await name.hover();
+  await shown(actions);
+  const author = await name.innerText();
+  await name.click();
+  await expect(
+    page
+      .getByRole("complementary", { name: "Profile", exact: true })
+      .getByRole("heading", { name: author, exact: true }),
+  ).toBeVisible();
+});
+
 for (const own of [false, true]) {
   test(`captioned ${own ? "own" : "received"} attachments keep their actions reachable`, async ({
     page,
@@ -244,9 +310,7 @@ for (const own of [false, true]) {
     await attachment.hover();
     await shown(actions);
     await above(actions);
-    await actions.evaluate((bar) =>
-      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-    );
+    await animationsSettled(actions);
     const target = actions.getByRole("button", {
       name: "More message actions",
     });
@@ -258,14 +322,18 @@ for (const own of [false, true]) {
       { steps: 30 },
     );
     await shown(actions);
-    await target.click();
-    await expect(page.getByRole("menu")).toBeVisible();
-    await actions.evaluate((bar) =>
-      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-    );
     const anchored = await actions.evaluate((bar) =>
       bar.getBoundingClientRect().toJSON(),
     );
+    await target.click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    // Opening the menu replays the bar's entry animation, which animates its
+    // gap; the bar returns to its resting width and place a frame after it.
+    await expect
+      .poll(() =>
+        actions.evaluate((bar) => bar.getBoundingClientRect().toJSON()),
+      )
+      .toEqual(anchored);
     // The open menu's backdrop owns this point; use real pointer travel rather
     // than asking Playwright to hover the intentionally covered caption.
     const coveredCaption = await caption.boundingBox();
@@ -289,14 +357,12 @@ for (const own of [false, true]) {
     await attachment.hover();
     await shown(actions);
     await above(actions);
-    await actions.evaluate((bar) =>
-      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-    );
+    await animationsSettled(actions);
     const reference = row.getByRole("link", { name: "Caption reference" });
     // The hovered media's toolbar must not take hits from the caption above it.
     expect(
       await reference.evaluate((node) => {
-        const rect = node.getBoundingClientRect();
+        const rect = node.getClientRects()[0];
         return node.contains(
           document.elementFromPoint(
             rect.x + rect.width / 2,
@@ -479,9 +545,7 @@ test("thread actions and growing reactions paint beyond the scroller without mov
     .toEqual({ anchored: true, crosses: true, hit: true });
   expect((await row.boundingBox()).height).toBe(restingHeight);
   // Wait for the entrance transform before choosing a pointer hit coordinate.
-  await actions.evaluate((bar) =>
-    Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-  );
+  await animationsSettled(actions);
   const toolbarBounds = await actions.boundingBox();
   // A real padding click switches to pointer input without invoking an action.
   const padding = {
@@ -493,7 +557,7 @@ test("thread actions and growing reactions paint beyond the scroller without mov
   await shown(actions);
   // Moving onto the escaped controls must keep the row's reveal state alive.
   const quick = actions.getByRole("button", {
-    name: "React with 👍",
+    name: "Add reaction",
     exact: true,
   });
   const quickBox = await quick.boundingBox();
@@ -502,34 +566,6 @@ test("thread actions and growing reactions paint beyond the scroller without mov
     Math.min(quickBox.y + quickBox.height - 1, bounds.y + bounds.height + 1),
   );
   await shown(actions);
-  const glyph = quick.locator('[class*="quickReactionGlyph"]');
-  await expect
-    .poll(() =>
-      glyph.evaluate((node) => {
-        const matrix = new DOMMatrix(getComputedStyle(node).transform);
-        return Math.round(Math.hypot(matrix.a, matrix.b) * 1000) / 1000;
-      }),
-    )
-    .toBe(1.12);
-  expect(
-    await glyph.evaluate((node) => {
-      const rect = node.getBoundingClientRect();
-      const edge = node
-        .closest("[data-message-scroller]")
-        .getBoundingClientRect().bottom;
-      // Decorative glyphs intentionally ignore input; enable hit testing only for
-      // this paint probe, then restore their production pointer behavior.
-      node.style.pointerEvents = "auto";
-      const matrix = new DOMMatrix(getComputedStyle(node).transform);
-      const offset = node.offsetHeight * 0.4;
-      const hit = document.elementFromPoint(
-        rect.x + rect.width / 2 + matrix.c * offset,
-        rect.y + rect.height / 2 + matrix.d * offset,
-      );
-      node.style.pointerEvents = "";
-      return rect.bottom > edge && (hit === node || node.contains(hit));
-    }),
-  ).toBe(true);
   await page.screenshot({
     path: test.info().outputPath("thread-floating-actions.png"),
   });
@@ -541,6 +577,150 @@ test("thread actions and growing reactions paint beyond the scroller without mov
     .toBeLessThan(beforeWheel);
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
+  // Closed bars stay laid out in every row; only open ones carry the glass.
+  await expect(actions).toHaveCSS("backdrop-filter", "none");
+});
+
+// Browser-only: the sticky thread header, native top-layer toolbar and emoji
+// picker share viewport geometry that a DOM test cannot exercise. Before this
+// regression, the first thread message hid its actions above that header.
+test("thread-root actions nest from the message top edge", async ({
+  page,
+  app,
+}) => {
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  app.append(
+    "primary",
+    "alpha",
+    `First visible reply\n\n${"More reply content.\n\n".repeat(30)}`,
+    false,
+    false,
+    root.id,
+  );
+  await open(page, app);
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const scroller = panel.getByRole("region", { name: "Thread messages" });
+  const row = panel.locator(`[data-message-id="${root.id}"]`);
+  const actions = actionsFor(row);
+  await expect(row).toBeVisible();
+  await settle(page, scroller);
+  for (const density of ["default", "compact"]) {
+    await page.evaluate((density) => {
+      document.documentElement.dataset.messageDensity = density;
+    }, density);
+    await hoverMessage(row);
+    await shown(actions);
+    const overlap = await actions.evaluate((bar) =>
+      Number.parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
+    );
+    await expect
+      .poll(() =>
+        actions.evaluate((bar, overlap) => {
+          const row = bar.closest("[data-layout]");
+          const toolbar = bar.getBoundingClientRect();
+          const viewport = bar
+            .closest("[data-message-scroller]")
+            .getBoundingClientRect();
+          return {
+            nested:
+              Math.abs(
+                toolbar.top - row.getBoundingClientRect().top - overlap,
+              ) < 1,
+            visible:
+              toolbar.top >= viewport.top && toolbar.bottom <= viewport.bottom,
+          };
+        }, overlap),
+      )
+      .toEqual({ nested: true, visible: true });
+    if (density !== "compact") continue;
+    await actions.getByRole("button").first().focus();
+    await page.mouse.move(0, 0);
+    await page.keyboard.press("Tab");
+    const height = await actions.evaluate((bar) => bar.offsetHeight);
+    // Leave room above the root to scroll across the placement threshold.
+    await row.evaluate((node) => {
+      node.style.marginBlockStart = "80px";
+    });
+    // Cross the clipping threshold in both directions while the root stays visible.
+    for (const offset of [
+      height - overlap - 1,
+      height - overlap + 1,
+      height - overlap - 1,
+      -10,
+    ]) {
+      await row.evaluate((node, offset) => {
+        const row = node.querySelector("[data-layout]");
+        const scroller = node.closest("[data-message-scroller]");
+        scroller.scrollTop +=
+          row.getBoundingClientRect().top -
+          scroller.getBoundingClientRect().top -
+          offset;
+      }, offset);
+      await settle(page, scroller);
+      await shown(actions);
+      await expect
+        .poll(() =>
+          row.evaluate((node) => {
+            const row = node
+              .querySelector("[data-layout]")
+              .getBoundingClientRect();
+            const viewport = node
+              .closest("[data-message-scroller]")
+              .getBoundingClientRect();
+            return Math.round(row.top - viewport.top);
+          }),
+        )
+        .toBe(offset);
+      await expect
+        .poll(() =>
+          actions.evaluate((bar, overlap) => {
+            const row = bar.closest("[data-layout]").getBoundingClientRect();
+            const viewport = bar
+              .closest("[data-message-scroller]")
+              .getBoundingClientRect();
+            return (
+              Math.abs(
+                bar.getBoundingClientRect().top -
+                  Math.max(row.top + overlap, viewport.top + overlap),
+              ) < 1
+            );
+          }, overlap),
+        )
+        .toBe(true);
+    }
+  }
+  await actions.getByRole("button", { name: "Add reaction" }).click();
+  await expect(page.locator("em-emoji-picker")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await actions.getByRole("button").first().focus();
+  await page.mouse.move(0, 0);
+  await row.evaluate((node) => {
+    const scroller = node.closest("[data-message-scroller]");
+    scroller.scrollTop +=
+      node.getBoundingClientRect().bottom -
+      scroller.getBoundingClientRect().top +
+      8;
+  });
+  await settle(page, scroller);
+  await expect
+    .poll(() =>
+      row.evaluate(
+        (node) =>
+          node.getBoundingClientRect().bottom <=
+          node.closest("[data-message-scroller]").getBoundingClientRect().top,
+      ),
+    )
+    .toBe(true);
+  await hidden(actions);
 });
 
 test("compact timeline actions slide under the top edge, track scrolling and preserve keyboard order", async ({
@@ -733,7 +913,7 @@ test("keyboard search covers a toolbar under the pointer and restores its action
   ).toBeVisible();
 });
 
-test("menus and pickers retain their anchor but cover actions", async ({
+test("menus keep their actions showing; pickers and dialogs cover them", async ({
   page,
   app,
 }) => {
@@ -749,13 +929,32 @@ test("menus and pickers retain their anchor but cover actions", async ({
     `[data-channel-timeline] [data-message-id="${event.id}"]`,
   );
   const actions = actionsFor(row);
+  await page.mouse.move(0, 0);
+  const bubble = row.locator("[data-message-action-anchor]");
+  const restingFill = await bubble.evaluate(
+    (node) => getComputedStyle(node).backgroundColor,
+  );
   await hoverMessage(row);
   const trigger = actions.getByRole("button", { name: "More message actions" });
   await trigger.click();
   const menu = page.getByRole("menu");
   await menu.hover();
+  await expect(bubble).not.toHaveCSS("background-color", restingFill);
   await shown(actions);
+  // The bar's own menu opens beside it and leaves it showing.
+  await expect(actions).toHaveCSS("visibility", "visible");
+  // A modal opened over that menu still covers the bar.
+  await page.keyboard.press("ControlOrMeta+k");
+  const searchDialog = page.getByRole("dialog", {
+    name: "Search Buzz",
+    exact: true,
+  });
+  await expect(searchDialog).toBeVisible();
+  // The modal hides the menu from the accessibility tree, not the page.
+  await expect(page.locator('[role="menu"]')).toBeVisible();
   await hidden(actions);
+  await page.keyboard.press("Escape");
+  await expect(searchDialog).toBeHidden();
   await expect(row.locator("[data-layout]")).toHaveAttribute(
     "data-actions-revealed",
     "",
@@ -766,7 +965,11 @@ test("menus and pickers retain their anchor but cover actions", async ({
   });
   const composerBox = await composer.boundingBox();
   // The menu's modal overlay receives the outside click before the editor does.
-  await page.mouse.click(composerBox.x + 20, composerBox.y + 10);
+  // The composer's far end is clear of the menu, which opens over its start.
+  await page.mouse.click(
+    composerBox.x + composerBox.width - 80,
+    composerBox.y + 10,
+  );
   await expect(menu).toBeHidden();
   await composer.click();
   await expect(actions).toHaveCSS("opacity", "0");
@@ -777,6 +980,7 @@ test("menus and pickers retain their anchor but cover actions", async ({
   const search = page.locator('em-emoji-picker input[type="search"]');
   await expect(search).toBeVisible();
   await search.hover();
+  await expect(bubble).not.toHaveCSS("background-color", restingFill);
   await shown(actions);
   await hidden(actions);
   await expect(row.locator("[data-layout]")).toHaveAttribute(
@@ -854,6 +1058,7 @@ test("profile menus and composer pickers keep message hover actions out of the w
   page,
   app,
 }) => {
+  await chooseDefaultSkinTone(page);
   await open(page, app);
   const event = app.append("primary", "alpha", "Background hover target");
   const row = page.locator(
@@ -933,7 +1138,7 @@ test("profile menus and composer pickers keep message hover actions out of the w
 });
 
 // Both speakers must leave the opposite avatar column clear at real pane widths.
-test("long bubbles stay inside the opposite speaker's starting edge", async ({
+test("long bubbles expand to 32px before the opposite avatar", async ({
   page,
   app,
 }) => {
@@ -965,14 +1170,111 @@ test("long bubbles stay inside the opposite speaker's starting edge", async ({
       .poll(async () => {
         const left = await bubble(received).boundingBox();
         const right = await bubble(sent).boundingBox();
+        const receivedAvatar = await page
+          .locator(
+            `[data-message-id="${received.id}"] [class*="messageAvatar"]`,
+          )
+          .boundingBox();
+        const sentAvatar = await page
+          .locator(`[data-message-id="${sent.id}"] [class*="messageAvatar"]`)
+          .boundingBox();
         return (
           left !== null &&
           right !== null &&
-          right.x >= left.x - 1 &&
-          left.x + left.width <= right.x + right.width + 1 &&
-          right.x > left.x + 8
+          receivedAvatar !== null &&
+          sentAvatar !== null &&
+          Math.abs(sentAvatar.x - (left.x + left.width) - 32) < 1 &&
+          Math.abs(right.x - (receivedAvatar.x + receivedAvatar.width) - 32) < 1
         );
       })
       .toBe(true);
+    await page.screenshot({
+      path: test.info().outputPath(`message-width-${width}.png`),
+    });
   }
+});
+
+// Browser-only: row-wide hit testing, top-layer placement, and avatar alignment
+// need real layout. The existing cases above retain Default's content-only hover.
+test("Compact reveals actions from row whitespace and pins them to the trailing edge", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-message-density.v1", "compact"),
+  );
+  await open(page, app);
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-message-density",
+    "compact",
+  );
+  app.append("primary", "alpha", "Separate author", true, false);
+  const event = app.append("primary", "alpha", "One line", true, true);
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  await expect(row).toBeVisible();
+  await settle(page);
+  // The primary byline is stable metadata; only continuation timestamps wait
+  // for hover in Compact.
+  await expect(row.locator("[class*='byline'] time")).toHaveCSS("opacity", "1");
+  const whitespace = await row.evaluate((node) => {
+    const box = node.querySelector("[data-layout]").getBoundingClientRect();
+    const text = node
+      .querySelector("[data-message-action-anchor] p")
+      .getBoundingClientRect();
+    return { x: box.right - 2, y: text.top + text.height / 2 };
+  });
+  await page.mouse.move(whitespace.x, whitespace.y);
+  const actions = actionsFor(row);
+  await shown(actions);
+  await expect
+    .poll(() =>
+      row.evaluate((node) => {
+        const box = node.querySelector("[data-layout]").getBoundingClientRect();
+        const scroller = node
+          .closest("[data-message-scroller]")
+          .getBoundingClientRect();
+        const bar = node
+          .querySelector("[data-message-actions]")
+          .getBoundingClientRect();
+        return bar.right >= box.right - 1 && bar.right <= scroller.right + 1;
+      }),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      row.evaluate((node) => {
+        const message = node.querySelector("[data-layout]");
+        const fill = getComputedStyle(message, "::before");
+        const avatar = node
+          .querySelector('[class*="messageAvatar"]')
+          .getBoundingClientRect();
+        const byline = node
+          .querySelector('[class*="byline"]')
+          .getBoundingClientRect();
+        const text = node
+          .querySelector("[data-message-action-anchor] p")
+          .getBoundingClientRect();
+        return (
+          fill.content !== "none" &&
+          fill.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+          Math.abs(
+            avatar.top + avatar.height / 2 - (byline.top + text.bottom) / 2,
+          ) < 1
+        );
+      }),
+    )
+    .toBe(true);
+  const more = row.getByRole("button", { name: "More message actions" });
+  await more.click();
+  await expect(
+    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(more).toBeFocused();
+  // Escape retains keyboard access; pointer dismissal releases that focus.
+  await page.mouse.click(0, 0);
+  await hidden(actions);
 });

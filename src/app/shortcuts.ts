@@ -1,7 +1,25 @@
+import { isPlainCommandArrow } from "../shared/keyboard-key";
 import { isTauri } from "@tauri-apps/api/core";
 import { isApplePlatform } from "../features/shortcuts/format";
-import type { ShortcutsService } from "../features/shortcuts/service";
+import { inEditable } from "../features/shortcuts/bindings";
+import type { ComposerInputElement } from "../features/messages/composer-dom";
+import type {
+  BindingOverrides,
+  ShortcutsService,
+} from "../features/shortcuts/service";
 import type { Appearance } from "../shared/theme/service";
+import { statusShortcut } from "../features/user-status/status-shortcut";
+import {
+  activeMessageList,
+  reactionTrigger,
+  replyTrigger,
+  selectedMessage,
+  selectNewestMessage,
+} from "../features/messages/message-selection";
+import {
+  quotableSelection,
+  quoteSelection,
+} from "../features/messages/selection-quote";
 import {
   composerFocusTarget,
   focusKeyboardTarget,
@@ -20,11 +38,21 @@ export const HOST_SHORTCUT_ORDER = {
   textSizeReset: 60,
   search: 70,
   settings: 80,
+  shortcutsHelp: 81,
+  status: 83,
   nextTab: 82,
   previousTab: 84,
   close: 85,
   focus: 86,
-  reload: 90,
+  editMessage: 87,
+  reactToMessage: 88,
+  reactToLatest: 89,
+  replyToMessage: 91,
+  markMessageUnread: 92,
+  deleteMessage: 93,
+  quoteSelection: 94,
+  reload: 95,
+  restart: 96,
 } as const;
 
 export function registerAppShortcuts(
@@ -32,8 +60,15 @@ export function registerAppShortcuts(
   appearance: Appearance,
   openSettings: () => void,
   ready: boolean,
+  /** Reloads every community in place, keeping running agents. */
+  reload: () => void,
+  overrides?: BindingOverrides,
 ) {
   const apple = isApplePlatform(navigator.platform);
+  // macOS Buzz → Settings… owns ⌘, as Close owns ⌘W, so the page leaves the
+  // default chord to the menu and handles only a rebound one.
+  const menuSettings = isTauri() && apple;
+  let fromMenu = false;
   const remove = [
     shortcuts.registerHost({
       id: "focus-composer",
@@ -63,12 +98,26 @@ export function registerAppShortcuts(
       }),
     ),
     shortcuts.registerHost({
+      id: "set-status",
+      title: "Set a status",
+      binding: { key: "y", mod: true, shift: true },
+      order: HOST_SHORTCUT_ORDER.status,
+      // The message editor keeps this chord as Redo; elsewhere it opens status.
+      allowInEditable: true,
+      when: () => ready && !!statusShortcut.current,
+      run: () => {
+        statusShortcut.current?.();
+      },
+    }),
+    shortcuts.registerHost({
       id: "settings",
       title: "Open Settings",
       binding: { key: ",", mod: true },
       order: HOST_SHORTCUT_ORDER.settings,
       allowInEditable: true,
-      when: () => ready,
+      when: () =>
+        ready &&
+        (fromMenu || !menuSettings || !!overrides?.resolve("settings")),
       run: openSettings,
     }),
     ...(
@@ -113,12 +162,23 @@ export function registerAppShortcuts(
       }),
     ),
   ];
+  remove.push(...registerMessageShortcuts(shortcuts));
   remove.push(
     shortcuts.registerHost({
       id: "app-reload",
       title: "Reload Buzz",
       binding: { key: "r", mod: true },
       order: HOST_SHORTCUT_ORDER.reload,
+      allowInEditable: true,
+      allowInModal: true,
+      run: reload,
+    }),
+    // The whole page loads again, which restarts running agents.
+    shortcuts.registerHost({
+      id: "app-restart",
+      title: "Reload Buzz and restart agents",
+      binding: { key: "r", mod: true, shift: true },
+      order: HOST_SHORTCUT_ORDER.restart,
       allowInEditable: true,
       allowInModal: true,
       run: () => window.location.reload(),
@@ -169,45 +229,231 @@ export function registerAppShortcuts(
       ),
     );
   }
+  // macOS Buzz → Settings… runs the Open Settings shortcut, with its own
+  // eligibility.
+  const settings = () => {
+    fromMenu = true;
+    try {
+      shortcuts.runHost("settings");
+    } finally {
+      fromMenu = false;
+    }
+  };
+  window.addEventListener("buzz:open-settings", settings);
+  remove.push(() => window.removeEventListener("buzz:open-settings", settings));
   return () => {
     for (const dispose of remove) dispose();
   };
+}
+
+const nextFrame = () =>
+  new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+/** Selecting a message mounts its action bar; give the picker a few frames. */
+async function openReactionPicker() {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const selected = selectedMessage();
+    if (!selected) return;
+    const trigger = reactionTrigger(selected.element);
+    if (trigger) {
+      trigger.click();
+      return;
+    }
+    await nextFrame();
+  }
+}
+
+/** Slack's message keys: Up from an empty composer selects, these act on it. */
+function registerMessageShortcuts(shortcuts: ShortcutsService) {
+  return [
+    shortcuts.registerHost({
+      id: "edit-message",
+      title: "Edit selected message",
+      binding: { key: "e" },
+      order: HOST_SHORTCUT_ORDER.editMessage,
+      when: () => {
+        const selected = selectedMessage();
+        return !!selected && selected.list.canEdit(selected.row);
+      },
+      run: () => {
+        const selected = selectedMessage();
+        if (selected?.list.canEdit(selected.row))
+          selected.list.edit(selected.row);
+      },
+    }),
+    shortcuts.registerHost({
+      id: "react-to-message",
+      title: "React to selected message",
+      binding: { key: "r" },
+      order: HOST_SHORTCUT_ORDER.reactToMessage,
+      when: () => {
+        const selected = selectedMessage();
+        return !!selected && !!reactionTrigger(selected.element);
+      },
+      run: openReactionPicker,
+    }),
+    shortcuts.registerHost({
+      id: "reply-to-message",
+      title: "Reply in thread to selected message",
+      binding: [{ key: "t" }, { key: "ArrowRight" }],
+      order: HOST_SHORTCUT_ORDER.replyToMessage,
+      when: () => {
+        const selected = selectedMessage();
+        return !!selected && !!replyTrigger(selected.element);
+      },
+      run: () => {
+        const selected = selectedMessage();
+        if (selected) replyTrigger(selected.element)?.click();
+      },
+    }),
+    shortcuts.registerHost({
+      id: "mark-message-unread",
+      title: "Mark as unread from selected message",
+      binding: { key: "u" },
+      order: HOST_SHORTCUT_ORDER.markMessageUnread,
+      when: () => {
+        const selected = selectedMessage();
+        return !!selected && selected.list.canMarkUnread(selected.row);
+      },
+      run: () => {
+        const selected = selectedMessage();
+        if (selected?.list.canMarkUnread(selected.row))
+          selected.list.markUnread(selected.row);
+      },
+    }),
+    shortcuts.registerHost({
+      id: "delete-message",
+      title: "Delete selected message",
+      // Mac keyboards' Delete key reports Backspace.
+      binding: [{ key: "Delete" }, { key: "Backspace" }],
+      order: HOST_SHORTCUT_ORDER.deleteMessage,
+      when: () => {
+        const selected = selectedMessage();
+        return !!selected && selected.list.canDelete(selected.row);
+      },
+      run: () => {
+        const selected = selectedMessage();
+        if (selected?.list.canDelete(selected.row))
+          selected.list.remove(selected.row);
+      },
+    }),
+    shortcuts.registerHost({
+      id: "quote-selection",
+      title: "Quote selected text",
+      binding: { key: "q" },
+      order: HOST_SHORTCUT_ORDER.quoteSelection,
+      when: () => !!quotableSelection(),
+      run: () => {
+        quoteSelection();
+      },
+    }),
+    shortcuts.registerHost({
+      id: "react-to-latest",
+      title: "React to latest message",
+      // Shift turns Backslash into a bar on common layouts.
+      binding: [
+        { key: "\\", mod: true, shift: true },
+        { key: "|", mod: true, shift: true },
+      ],
+      order: HOST_SHORTCUT_ORDER.reactToLatest,
+      allowInEditable: true,
+      when: () => !!activeMessageList(),
+      run: async () => {
+        // Always the latest, even from another selected message; R reacts to that.
+        if (!selectNewestMessage(activeMessageList())) return;
+        await openReactionPicker();
+      },
+    }),
+  ];
 }
 
 export function registerNavigationShortcuts(
   shortcuts: ShortcutsService,
   navigation: import("../features/navigation/controller").Navigation,
 ) {
+  const apple = isApplePlatform(navigator.platform);
+  const canNavigate = (event: KeyboardEvent) => {
+    if (!apple || !isPlainCommandArrow(event) || !inEditable(event))
+      return true;
+    // Command arrows keep their editing meaning except in an empty composer.
+    return event.composedPath().some((target) => {
+      const input = target as ComposerInputElement;
+      return (
+        input.matches?.("[data-composer-input]") &&
+        input.isEmptyForShortcuts?.()
+      );
+    });
+  };
   const remove = [
     shortcuts.registerHost({
       id: "home",
       title: "Home",
       order: HOST_SHORTCUT_ORDER.home,
-      binding: { key: "a", mod: true, shift: true },
+      // Placeholder chord: Slack's ⌘⇧A belongs to Inbox's unread view.
+      binding: { key: "o", mod: true, shift: true },
       allowInEditable: true,
       run: () =>
         navigation.open({ version: 1, kind: "home" }).then(() => undefined),
     }),
     shortcuts.registerHost({
+      id: "shortcuts-help",
+      title: "Show keyboard shortcuts",
+      order: HOST_SHORTCUT_ORDER.shortcutsHelp,
+      // Not Mod+Shift+? too: macOS reserves it for Help menu search.
+      binding: { key: "/", mod: true },
+      allowInEditable: true,
+      run: () =>
+        navigation
+          .open({ version: 1, kind: "settings", section: "shortcuts" })
+          .then(() => undefined),
+    }),
+    shortcuts.registerHost({
       id: "navigation-back",
       title: "Go back",
       order: HOST_SHORTCUT_ORDER.navigationBack,
-      binding: { key: "[", mod: true },
+      binding: apple
+        ? [
+            { key: "[", mod: true },
+            { key: "ArrowLeft", mod: true },
+          ]
+        : { key: "[", mod: true },
       allowInEditable: true,
+      // Back closes a dialog that is its own visit.
+      allowInVisit: true,
       when: () => navigation.snapshot().canGoBack,
+      whenKeyboard: canNavigate,
       run: navigation.back,
     }),
     shortcuts.registerHost({
       id: "navigation-forward",
       title: "Go forward",
       order: HOST_SHORTCUT_ORDER.navigationForward,
-      binding: { key: "]", mod: true },
+      binding: apple
+        ? [
+            { key: "]", mod: true },
+            { key: "ArrowRight", mod: true },
+          ]
+        : { key: "]", mod: true },
       allowInEditable: true,
+      allowInVisit: true,
       when: () => navigation.snapshot().canGoForward,
+      whenKeyboard: canNavigate,
       run: navigation.forward,
     }),
   ];
+  // macOS mouse back/forward a focused browser page left unhandled runs the
+  // Back/Forward shortcut, with its own eligibility.
+  const history = (id: string) => (event: Event) => {
+    if (!event.defaultPrevented && shortcuts.runHost(id))
+      event.preventDefault();
+  };
+  const historyBack = history("navigation-back");
+  const historyForward = history("navigation-forward");
+  window.addEventListener("buzz:history-back", historyBack);
+  window.addEventListener("buzz:history-forward", historyForward);
   return () => {
+    window.removeEventListener("buzz:history-back", historyBack);
+    window.removeEventListener("buzz:history-forward", historyForward);
     for (const dispose of remove) dispose();
   };
 }

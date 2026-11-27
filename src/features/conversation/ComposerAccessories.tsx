@@ -1,4 +1,11 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  memo,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerAccessory,
@@ -9,9 +16,11 @@ import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 
 export function ComposerAccessories({
   registry,
+  placement,
   ...props
 }: ComposerAccessoryProps & {
   registry: ContributionReader<ComposerAccessory>;
+  placement?: ComposerAccessory["placement"];
 }) {
   const entries = useSyncExternalStore(
     registry.subscribe,
@@ -21,7 +30,11 @@ export function ComposerAccessories({
   const order = (entry: ComposerAccessory) =>
     Number.isFinite(entry.order) ? (entry.order ?? 0) : 0;
   const ordered = entries
-    .filter((entry) => (entry.placement === "message") === !!props.message)
+    .filter(
+      (entry) =>
+        (entry.placement ?? "composer") ===
+        (placement ?? (props.message ? "message" : "composer")),
+    )
     .sort(
       (a, b) =>
         order(a) - order(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
@@ -55,7 +68,7 @@ export function ComposerAccessories({
     </>
   );
 }
-function OwnedAccessory({
+const OwnedAccessory = memo(function OwnedAccessory({
   entry,
   registry,
   ...props
@@ -70,10 +83,7 @@ function OwnedAccessory({
   const canOpenThread = !!props.openThread;
   const [commands, setCommands] =
     useState<
-      Pick<
-        ComposerAccessoryProps,
-        "canOpen" | "open" | "openThread" | "onFocusedRemoval"
-      >
+      Pick<ComposerAccessoryProps, "open" | "openThread" | "onFocusedRemoval">
     >();
   useLayoutEffect(() => {
     let live = true;
@@ -83,7 +93,6 @@ function OwnedAccessory({
       registry.snapshot().includes(entry) &&
       current.current.session === session;
     setCommands({
-      canOpen: (target) => active() && current.current.canOpen(target),
       open: (target) => active() && current.current.open(target),
       onFocusedRemoval: () => {
         if (active()) current.current.onFocusedRemoval?.();
@@ -96,10 +105,27 @@ function OwnedAccessory({
       live = false;
     };
   }, [entry, registry, props.session, canOpenThread]);
+  // Availability is read during render, so it follows this render's host;
+  // dispatch goes through the committed one. Both end when this mount retires.
+  const retired = useRef(false);
+  useLayoutEffect(() => {
+    retired.current = false;
+    return () => {
+      retired.current = true;
+    };
+  }, []);
+  const hostCanOpen = props.canOpen;
+  const canOpen = useMemo(
+    () => (target: string) =>
+      !retired.current &&
+      registry.snapshot().includes(entry) &&
+      hostCanOpen(target),
+    [registry, entry, hostCanOpen],
+  );
   const Accessory = entry.component;
   return commands ? (
-    <Accessory {...props} {...commands} />
+    <Accessory {...props} {...commands} canOpen={canOpen} />
   ) : (
     (props.renderMessageSummary?.() ?? null)
   );
-}
+});

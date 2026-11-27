@@ -1,3 +1,4 @@
+import { pauseClock } from "./clock.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { end, open, settle } from "./timeline.mjs";
@@ -75,13 +76,18 @@ async function ready(page, app) {
 function liveMessage(
   app,
   content,
-  { age = 0, replyTo, mentioned = true } = {},
+  {
+    age = 0,
+    createdAt = Math.floor(Date.now() / 1000) - age,
+    replyTo,
+    mentioned = true,
+  } = {},
 ) {
   const event = finalizeEvent(
     {
       kind: 9,
       content,
-      created_at: Math.floor(Date.now() / 1000) - age,
+      created_at: createdAt,
       tags: [
         ["h", "beta"],
         ...(mentioned ? [["p", app.viewer]] : []),
@@ -253,7 +259,7 @@ test("keyboard permission check keeps focus and geometry while busy", async ({
     window.Notification.permission = "denied";
   });
   await button.focus();
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  await pauseClock(page, 1_000);
   await page.keyboard.press("Enter");
   await expect(button).toHaveAttribute("aria-busy", "true");
   await page.clock.runFor(100);
@@ -274,6 +280,8 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
   page,
   app,
 }) => {
+  // Own the reader's timers from startup so pausing also holds existing dwell.
+  await page.clock.install();
   const following = finalizeEvent(
     {
       kind: 9,
@@ -318,10 +326,12 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
     .toBe(true);
   // Controlled policy/dwell ordering, not evidence about native frame scheduling.
   // Exact-row navigation and reflow journeys below retain native rAF.
-  const base = Date.now();
-  await page.clock.install({ time: base });
-  await page.clock.pauseAt(base + 30_000);
-  const row = liveMessage(app, "Visible mention");
+  await pauseClock(page, 30_000);
+  // The earlier row can finish its dwell as the clock advances. Publish
+  // after its read frontier so this live mention starts unread.
+  const row = liveMessage(app, "Visible mention", {
+    createdAt: following.created_at + 1,
+  });
   await expect
     .poll(() =>
       page.evaluate(
@@ -386,7 +396,9 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
   );
   await settle(page);
   await history.focus();
-  liveMessage(app, "Allowed visible mention");
+  liveMessage(app, "Allowed visible mention", {
+    createdAt: row.created_at + 1,
+  });
   await expect.poll(() => systemCount(page)).toBe(1);
 });
 

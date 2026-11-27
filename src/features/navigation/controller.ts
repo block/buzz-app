@@ -1,5 +1,16 @@
-import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
-import type { NavigationEntry, NavigationHistory } from "./history";
+import {
+  coversWorkspace,
+  joinBeneath,
+  parseOpenTarget,
+  targetKey,
+  withoutJoin,
+  type OpenTarget,
+} from "./targets";
+import type {
+  DismissedVisits,
+  NavigationEntry,
+  NavigationHistory,
+} from "./history";
 
 /**
  * Shared abort reason. A reason-less abort() makes Blink mint a DOMException per
@@ -23,28 +34,51 @@ export type OpenFailure =
 export type OpenResult = Readonly<
   | { status: "opened" }
   | { status: "cancelled" | "superseded" }
-  | { status: "failed"; reason: OpenFailure }
+  | {
+      status: "failed";
+      reason: OpenFailure;
+      /** The page shows this failure in place, next to what failed; the host
+       * keeps the page on screen instead of replacing it. */
+      presented?: true;
+      /** Reopen this visit once, while it is still the one shown: called
+       * with that reopen, returns its cancel (see reauthorizedOnce). */
+      reauthorize?: (reopen: () => void) => () => void;
+    }
 >;
 /** Focus is per opening, never part of a saved address or history entry. */
 export type NavigationFocus = "content" | "preserve";
 export type NavigationOpenOptions = {
   replace?: boolean;
+  /** @deprecated For explicit Close use Navigation.dismiss, which retires visits.
+   * Legacy return/replace behavior: this option does not retire restoration visits.
+   * Return to the visit behind this one when it matches, otherwise replace it.
+   * When the host traverses asynchronously, the return lands after open()
+   * resolves, so the resolved result describes the visit being left. */
+  dismiss?: boolean;
   focus?: NavigationFocus;
+  /** Keep sidebar scope, scroll and disclosure state. The caller owns row selection. */
+  sidebar?: "preserve";
 };
 export type OpenAttempt = Readonly<{
   id: string;
   entry: NavigationEntry;
   signal: AbortSignal;
   focus?: NavigationFocus;
+  sidebar?: "preserve";
+  /** History traversal returned to a visit it already held; not opened again. */
+  traversal?: true;
 }>;
 export type NavigationSnapshot = Readonly<{
   entry: NavigationEntry;
   attempt: OpenAttempt;
   status: "opening" | OpenResult["status"];
   reason?: OpenFailure;
+  /** The failed page presents its own failure in place. */
+  presented?: true;
   /** An incoming URL failed before it could create a history destination. */
   ingress?: boolean;
   retryable?: boolean;
+  retainedVisits?: readonly string[] | undefined;
   canGoBack: boolean;
   canGoForward: boolean;
 }>;
@@ -57,6 +91,8 @@ export type Navigation = Readonly<{
   ): Promise<OpenResult>;
   back(): void;
   forward(): void;
+  /** Explicit dismissal retires content visits; passive traversal retains them. */
+  dismiss(visits: DismissedVisits, fallback: OpenTarget): void;
   retry(): Promise<OpenResult>;
 }>;
 
@@ -73,12 +109,34 @@ export function createNavigationController(
     promise: Promise<OpenResult>;
     resolve: (result: OpenResult) => void;
     pending: boolean;
-    timer?: ReturnType<typeof setTimeout>;
+    timer?: ReturnType<typeof setTimeout> | undefined;
+    /** Cancels a failed visit's reopen after sign-in. */
+    reauthorizing?: () => void;
+    /** Timed out on the shown page, which stayed: it may still answer. */
+    late?: boolean;
   };
   let disposed = false;
   let active: Operation;
   let snapshot: NavigationSnapshot;
+  // The deadline measures a presenter. None may exist yet (the identity and
+  // key-setup gate, IdentitySetup, hides the app for minutes), so it runs only
+  // while one is attached.
+  let presenters = 0;
+  // The visit whose page is on screen. A later attempt on it (a retry, a
+  // same-target open, a reopen after sign-in) that times out leaves that page
+  // up: background work never replaces content already shown.
+  let shown: string | undefined;
   let ingressRetry: (() => Promise<OpenResult>) | undefined;
+  // Visits whose page currently reports nothing worth returning to.
+  const passing = new Map<string, () => boolean>();
+  // A page that cannot answer keeps its visit, never the opening.
+  const passes = (entryId: string) => {
+    try {
+      return passing.get(entryId)?.() === true;
+    } catch {
+      return false;
+    }
+  };
   const listeners = new Set<() => void>();
   // Commit state and capture each caller's result before invoking external code.
   // Reentrant opens run against committed state and own their own result; deferred
@@ -118,33 +176,107 @@ export function createNavigationController(
     clearTimeout(operation.timer);
     operation.resolve(result);
   }
-  function finish(operation: Operation, result: OpenResult) {
-    if (operation !== active || !operation.pending) return;
+  function arm(operation: Operation) {
+    if (!presenters || !operation.pending || operation.timer) return;
+    operation.timer = setTimeout(
+      () =>
+        transaction(() => {
+          finish(
+            operation,
+            { status: "failed", reason: "timeout" },
+            "deadline",
+          );
+        }),
+      timeoutMs,
+    );
+  }
+  /**
+   * `source`: "deadline" when this controller's own deadline passed; "answer"
+   * when the page or host answered, which a kept attempt may still do late;
+   * "host" when the host ends the attempt itself, which keeps no page.
+   */
+  function finish(
+    operation: Operation,
+    outcome: OpenResult,
+    source: "deadline" | "answer" | "host",
+  ) {
+    if (
+      operation !== active ||
+      !(operation.pending || (source === "answer" && operation.late))
+    )
+      return;
+    operation.late = false;
+    // A page that stays silent past the deadline keeps showing what it showed.
+    // Any failure that is answered, a timeout included, still replaces it with
+    // the host's explanation and Retry, as does a rejected incoming link. That
+    // covers the host's own report that it was not drawing the kept page.
+    const result: OpenResult =
+      source === "deadline" &&
+      outcome.status === "failed" &&
+      !snapshot.ingress &&
+      operation.attempt.entry.id === shown
+        ? { ...outcome, presented: true }
+        : outcome;
+    if (result !== outcome) operation.late = true;
+    if (result.status === "opened") shown = operation.attempt.entry.id;
+    // The host's failure now covers the page.
+    else if (result.status === "failed" && !result.presented) shown = undefined;
+    // A late answer resolves no caller: settle already ran at the deadline.
     settle(operation, result);
+    const { reason: _reason, presented: _presented, ...current } = snapshot;
     snapshot = Object.freeze({
-      ...snapshot,
+      ...current,
       status: result.status,
-      ...(result.status === "failed" ? { reason: result.reason } : {}),
+      ...(result.status === "failed"
+        ? {
+            reason: result.reason,
+            ...(result.presented ? { presented: true as const } : {}),
+          }
+        : {}),
     });
-    if (result.status !== "opened")
+    // A failure presented in place keeps its page's authority until the visit
+    // is left or replaced, as an opened visit does.
+    if (
+      result.status !== "opened" &&
+      !(result.status === "failed" && result.presented)
+    )
       effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
+    const reauthorize = result.status === "failed" && result.reauthorize;
+    if (reauthorize)
+      effects.push(() => {
+        if (active !== operation || disposed) return;
+        operation.reauthorizing = reauthorize(() =>
+          transaction(() => {
+            if (active === operation && !disposed)
+              start(operation.attempt.focus, false, operation.attempt.sidebar);
+          }),
+        );
+      });
     emit();
   }
-  function start(focus: NavigationFocus = "content"): Promise<OpenResult> {
+  function start(
+    focus: NavigationFocus = "content",
+    traversal = false,
+    sidebar?: "preserve",
+  ): Promise<OpenResult> {
     if (disposed) return Promise.resolve({ status: "cancelled" });
     ingressRetry = undefined;
     const old = active;
+    old?.reauthorizing?.();
     if (old) {
       settle(old, { status: "superseded" });
       effects.push(() => old.controller.abort(NAVIGATION_ABORTED));
     }
     const controller = new AbortController();
     const state = history.snapshot();
+    if (state.current.id !== shown) shown = undefined;
     const attempt: OpenAttempt = Object.freeze({
       id: crypto.randomUUID(),
       entry: state.current,
       signal: controller.signal,
       focus,
+      ...(sidebar && { sidebar }),
+      ...(traversal && { traversal }),
     });
     let resolve: (result: OpenResult) => void = () => {};
     const promise = new Promise<OpenResult>((settle) => {
@@ -162,26 +294,41 @@ export function createNavigationController(
       entry: state.current,
       attempt,
       status: "opening",
+      retainedVisits: state.retainedVisits,
       canGoBack: state.canGoBack,
       canGoForward: state.canGoForward,
     });
     if (state.invalidAddress) {
-      finish(operation, { status: "failed", reason: "invalid-target" });
+      finish(operation, { status: "failed", reason: "invalid-target" }, "host");
       return promise;
     }
-    operation.timer = setTimeout(
-      () =>
-        transaction(() => {
-          finish(operation, { status: "failed", reason: "timeout" });
-        }),
-      timeoutMs,
-    );
+    arm(operation);
     emit();
     return promise;
   }
+  let departureGuard:
+    | ((next: OpenTarget, decide: (proceed: boolean) => void) => boolean)
+    | undefined;
+  let departure: { from: string; to: string; proceed: boolean } | undefined;
+  function resumeDeparture(pending: NonNullable<typeof departure>) {
+    if (history.returnTo(pending.to)) return;
+    const previous = history.snapshot().previous;
+    if (previous) {
+      pending.to = previous.id;
+      if (history.returnTo(previous.id)) return;
+    }
+    departure = undefined;
+  }
+  let admittingOpen = false;
+  let opening = false;
+  let openingDecision: { settle: (result: OpenResult) => void } | undefined;
   let resolving: Operation | undefined;
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
+  let openingSidebar: "preserve" | undefined;
+  // A dismissal's traversal may publish after open() returns; it keeps its focus.
+  let returningFocus: NavigationFocus | undefined;
+  let returningSidebar: "preserve" | undefined;
   const unsubscribe = history.attach(() => {
     transaction(() => {
       if (resolving && active === resolving) {
@@ -194,6 +341,7 @@ export function createNavigationController(
         });
         snapshot = Object.freeze({
           ...snapshot,
+          retainedVisits: state.retainedVisits,
           entry: state.current,
           attempt: active.attempt,
           canGoBack: state.canGoBack,
@@ -201,9 +349,64 @@ export function createNavigationController(
         });
         emit();
       } else {
-        const focus = openingFocus;
-        openingFocus = undefined;
-        start(focus);
+        const state = history.snapshot();
+        if (departure?.from === state.current.id) {
+          if (departure.proceed) resumeDeparture(departure);
+          return;
+        }
+        const admitted =
+          departure?.proceed && departure.to === state.current.id;
+        if (admitted) departure = undefined;
+        if (
+          !admitted &&
+          !opening &&
+          state.current.id !== active.attempt.entry.id &&
+          departureGuard
+        ) {
+          const pending = {
+            from: active.attempt.entry.id,
+            to: state.current.id,
+            proceed: false,
+          };
+          departure = pending;
+          const blocked = departureGuard(state.current.target, (proceed) => {
+            if (departure !== pending) return;
+            if (!proceed) {
+              departure = undefined;
+              return;
+            }
+            pending.proceed = true;
+            if (history.snapshot().current.id === pending.from)
+              resumeDeparture(pending);
+          });
+          if (blocked) {
+            history.returnTo(pending.from);
+            return;
+          }
+          departure = undefined;
+        }
+        if (state.current === active.attempt.entry) {
+          snapshot = Object.freeze({
+            ...snapshot,
+            retainedVisits: state.retainedVisits,
+            canGoBack: state.canGoBack,
+            canGoForward: state.canGoForward,
+          });
+          emit();
+          return;
+        }
+        const focus = openingFocus ?? returningFocus;
+        const sidebar = openingSidebar ?? returningSidebar;
+        openingFocus = returningFocus = undefined;
+        openingSidebar = returningSidebar = undefined;
+        // A return lands on a visit history already held. open() publishes
+        // while opening, and a driver mints a new visit for an edited address
+        // or a dismissal's fallback; none of those returns.
+        start(
+          focus,
+          !opening && !!snapshot.retainedVisits?.includes(state.current.id),
+          sidebar,
+        );
       }
     });
   });
@@ -230,15 +433,110 @@ export function createNavigationController(
             reason: "invalid-target",
           });
         }
+        if (
+          !admittingOpen &&
+          departureGuard &&
+          targetKey(target) !== targetKey(snapshot.entry.target)
+        ) {
+          openingDecision?.settle({ status: "superseded" });
+          let settle: (result: OpenResult) => void = () => {};
+          const result = new Promise<OpenResult>((resolve) => {
+            settle = resolve;
+          });
+          const pending = { settle };
+          openingDecision = pending;
+          const blocked = departureGuard(target, (proceed) => {
+            if (openingDecision !== pending) return;
+            openingDecision = undefined;
+            if (!proceed) {
+              settle({ status: "cancelled" });
+              return;
+            }
+            admittingOpen = true;
+            try {
+              void navigation.open(target, options).then(settle);
+            } finally {
+              admittingOpen = false;
+            }
+          });
+          if (blocked) return result;
+          openingDecision = undefined;
+        }
         try {
           if (
             !history.snapshot().invalidAddress &&
             targetKey(target) === targetKey(history.snapshot().current.target)
           )
-            return start(options?.focus);
+            return start(options?.focus, false, options?.sidebar);
+          opening = true;
           openingFocus = options?.focus;
-          if (options?.replace) history.replace(target);
-          else history.push(target);
+          openingSidebar = options?.sidebar;
+          returningFocus = undefined;
+          returningSidebar = undefined;
+          // A passing visit leaves as a dismissal does: back to its opener when
+          // that is the page opening, else replaced by it. Settings and the
+          // join dialog return to that visit, so they never replace it. Any
+          // forward entries stay.
+          const dismiss =
+            options?.dismiss ||
+            (!coversWorkspace(target) && passes(history.snapshot().current.id));
+          const previous = history.snapshot().previous;
+          if (
+            dismiss &&
+            previous &&
+            targetKey(previous.target) === targetKey(target) &&
+            history.returnTo(previous.id)
+          ) {
+            if (openingFocus) returningFocus = openingFocus;
+            if (openingSidebar) returningSidebar = openingSidebar;
+            return active.promise;
+          }
+          if (options?.replace || dismiss) history.replace(target);
+          else {
+            const { current, previous } = history.snapshot();
+            // Members hands off to what opens from it, but the join dialog
+            // presents over Members, which stays beneath it.
+            if (
+              !history.snapshot().invalidAddress &&
+              !target.join &&
+              current.target.kind === "conversation" &&
+              current.target.panel === "members"
+            ) {
+              const { panel: _panel, ...channel } = current.target;
+              if (previous && targetKey(previous.target) === targetKey(channel))
+                history.replace(target);
+              else {
+                // A cold Members link still needs its channel beneath a handoff.
+                resolving = active;
+                try {
+                  history.resolve(channel);
+                } finally {
+                  resolving = undefined;
+                }
+                history.push(target);
+              }
+            } else {
+              // A join dialog keeps only the view beneath it. The visit it
+              // opens over drops one-shot data (a Settings card's route), so
+              // Close, Back and reload return to that view, never replay it.
+              const beneath = joinBeneath(current.target);
+              if (
+                target.join &&
+                !current.target.join &&
+                !history.snapshot().invalidAddress &&
+                targetKey(beneath) !== targetKey(current.target) &&
+                targetKey(beneath) === targetKey(withoutJoin(target))
+              ) {
+                resolving = active;
+                try {
+                  history.resolve(beneath);
+                } finally {
+                  resolving = undefined;
+                }
+              }
+              history.push(target);
+            }
+          }
           return active.promise;
         } catch {
           // Drivers commit atomically and notify only their exclusive controller.
@@ -247,7 +545,9 @@ export function createNavigationController(
             reason: "host-error",
           });
         } finally {
+          opening = false;
           openingFocus = undefined;
+          openingSidebar = undefined;
         }
       });
     },
@@ -261,6 +561,11 @@ export function createNavigationController(
         if (!disposed) history.forward();
       });
     },
+    dismiss(visits, fallback) {
+      transaction(() => {
+        if (!disposed) history.dismiss(visits, fallback);
+      });
+    },
     retry() {
       if (snapshot.ingress) {
         if (disposed) return Promise.resolve({ status: "cancelled" as const });
@@ -272,11 +577,43 @@ export function createNavigationController(
           })
         );
       }
-      return transaction(() => start(snapshot.attempt.focus));
+      return transaction(() =>
+        start(snapshot.attempt.focus, false, snapshot.attempt.sidebar),
+      );
     },
   });
   return {
     navigation,
+    /** Shell-owned draft guard; native traversal bounces before presentation unmounts. */
+    guardDeparture(guard: NonNullable<typeof departureGuard>) {
+      departureGuard = guard;
+      return () => {
+        if (departureGuard === guard) {
+          departureGuard = undefined;
+          openingDecision?.settle({ status: "cancelled" });
+          openingDecision = undefined;
+          departure = undefined;
+        }
+      };
+    },
+    /**
+     * Host-only: a presenter now exists. The pending visit's deadline starts (or
+     * restarts) here and stops when the last presenter detaches, so an attempt
+     * nobody could present never times out, while one a presenter stalls on does.
+     */
+    attach() {
+      presenters++;
+      arm(active);
+      let attached = true;
+      return () => {
+        if (!attached) return;
+        attached = false;
+        presenters--;
+        if (presenters) return;
+        clearTimeout(active.timer);
+        active.timer = undefined;
+      };
+    },
     /** Normalize a pending presentation, not a new intent; never reset its deadline. */
     resolve(attempt: OpenAttempt, input: OpenTarget) {
       return transaction(() => {
@@ -284,11 +621,18 @@ export function createNavigationController(
           disposed ||
           attempt !== active.attempt ||
           attempt.signal.aborted ||
-          !active.pending
+          // A kept page may still normalize before its late answer.
+          (!active.pending && !active.late)
         )
           return false;
         try {
-          const target = parseOpenTarget(input);
+          // A join dialog over the visit stays over the one it resolves to.
+          const join = snapshot.entry.target.join;
+          const parsed = parseOpenTarget(input);
+          const target =
+            join && !parsed.join
+              ? parseOpenTarget({ ...parsed, join })
+              : parsed;
           if (targetKey(target) === targetKey(snapshot.entry.target))
             return true;
           resolving = active;
@@ -311,14 +655,24 @@ export function createNavigationController(
           disposed ||
           attempt !== active.attempt ||
           attempt.signal.aborted ||
-          !active.pending
+          (!active.pending && !active.late)
         )
           return false;
-        finish(active, result);
+        // A kept page may still answer after its deadline, either way.
+        finish(active, result, "answer");
         return true;
       });
     },
-    /** Host-only return from a modal destination to its retained workspace visit. */
+    /** While registered, the page presenting visit `entryId` reports through
+     * `passes` whether it holds anything to come back to. When it holds
+     * nothing, the next page opened from it replaces it in history. */
+    passThrough(entryId: string, passes: () => boolean) {
+      passing.set(entryId, passes);
+      return () => {
+        if (passing.get(entryId) === passes) passing.delete(entryId);
+      };
+    },
+    /** Host-only traversal to a retained visit; does not retire dismissed content. */
     returnTo(entryId: string) {
       return transaction(() => !disposed && history.returnTo(entryId));
     },
@@ -326,7 +680,7 @@ export function createNavigationController(
       transaction(() => {
         ingressRetry = undefined;
         const operation = active;
-        finish(operation, { status: "cancelled" });
+        finish(operation, { status: "cancelled" }, "host");
         effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
       });
     },
@@ -341,19 +695,24 @@ export function createNavigationController(
           ingress: true,
           retryable: !!retry,
         });
-        finish(active, { status: "failed", reason });
+        finish(active, { status: "failed", reason }, "host");
       });
     },
     dispose() {
       transaction(() => {
         if (disposed) return;
         disposed = true;
+        openingDecision?.settle({ status: "cancelled" });
+        openingDecision = undefined;
+        departure = undefined;
         ingressRetry = undefined;
+        active.reauthorizing?.();
         unsubscribe();
-        finish(active, { status: "cancelled" });
+        finish(active, { status: "cancelled" }, "host");
         const operation = active;
         effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
         listeners.clear();
+        passing.clear();
         history.dispose();
       });
     },

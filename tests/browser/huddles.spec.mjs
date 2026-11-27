@@ -1,8 +1,10 @@
+import { pauseClock } from "./clock.mjs";
 import { chromium } from "@playwright/test";
 import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
+import { animationsSettled } from "./animations.mjs";
 
 let server, origin;
 test.beforeAll(async () => {
@@ -56,6 +58,7 @@ test("the header cancels a pending Huddle and ignores late connection events", a
     header.getByRole("button", { name: "Start or join a huddle" }),
   ).toBeVisible();
   await header.getByRole("button", { name: "Start or join a huddle" }).click();
+  await page.getByRole("button", { name: "Start huddle" }).click();
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
     .toBe(2);
@@ -226,20 +229,20 @@ test("connected Huddles keep compact controls beside the default window", async 
   expect(
     await page.evaluate(() => window.huddleFixture.stats.audioClosed),
   ).toBe(1);
-  await header
-    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
-    .click();
+  await header.getByRole("button", { name: "Start or join a huddle" }).click();
+  await page.getByRole("button", { name: "Start huddle" }).click();
   await page.evaluate(() => window.huddleFixture.disconnect());
   const notifications = page.getByRole("region", { name: "App notifications" });
   await expect(notifications).toContainText("Huddle disconnected");
   await expect(capsule).toHaveCount(0);
+  // The dismiss control is revealed by hovering the notification.
+  await notifications.getByRole("dialog").hover();
   await notifications
     .getByRole("button", { name: "Dismiss Huddle error" })
     .click();
   await expect(notifications.getByRole("dialog")).toHaveCount(0);
-  await header
-    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
-    .click();
+  await header.getByRole("button", { name: "Start or join a huddle" }).click();
+  await page.getByRole("button", { name: "Start huddle" }).click();
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
     .toBe(3);
@@ -259,6 +262,8 @@ test("connected Huddles keep compact controls beside the default window", async 
   ).toHaveCount(0);
   await expect(notifications).toContainText("Huddle audio unavailable");
   await expect(capsule).toHaveCount(0);
+  // The dismiss control is revealed by hovering the notification.
+  await notifications.getByRole("dialog").hover();
   await notifications
     .getByRole("button", { name: "Dismiss Huddle error" })
     .click();
@@ -410,59 +415,147 @@ test("capsule and companion presentation share mute and leave", async ({
   const keys = ["ab", "cd", "de", "ef", "fa", "bc"].map((key) =>
     key.repeat(32),
   );
-  for (const count of [1, 2, 3, 6]) {
+  // Resolve layout before inspecting motion: style changes can create CSS
+  // transitions only when the browser flushes them. Readiness and bounds must
+  // belong to the same sample, including outer portrait width/translation.
+  const settledGeometry = (el) => {
+    el.getBoundingClientRect();
+    if (
+      el.getAnimations({ subtree: true }).some((animation) => {
+        const end = animation.effect?.getComputedTiming().endTime;
+        return (
+          end !== undefined &&
+          end !== Infinity &&
+          (animation.pending ||
+            (animation.playState !== "finished" &&
+              animation.playState !== "idle"))
+        );
+      }) ||
+      [...el.querySelectorAll("[data-huddle-avatar]")].some(
+        (avatar) => getComputedStyle(avatar).transform !== "none",
+      )
+    )
+      return null;
+    const area = el.getBoundingClientRect();
+    const bounds = (node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        left: rect.left - area.left,
+        top: rect.top - area.top,
+        right: rect.right - area.left,
+        bottom: rect.bottom - area.top,
+        center: rect.left + rect.width / 2 - area.left,
+      };
+    };
+    return {
+      width: area.width,
+      height: area.height,
+      self: bounds(el.querySelector("[data-self]")),
+      portraitGaps: [
+        ...el.querySelectorAll("[data-self], [data-participant]"),
+      ].map((person) =>
+        Math.abs(
+          person.getBoundingClientRect().height -
+            person.querySelector("[data-huddle-avatar]").getBoundingClientRect()
+              .height,
+        ),
+      ),
+      peers: [...el.querySelectorAll("[data-participant]")].map(bounds),
+    };
+  };
+  const expectSettledGeometry = async () => {
+    let geometry;
+    await expect
+      .poll(
+        async () => {
+          geometry = await roster.evaluate(settledGeometry);
+          return geometry !== null;
+        },
+        { message: "huddle layout and inner avatars finish finite motion" },
+      )
+      .toBe(true);
+    return geometry;
+  };
+
+  // Establish the connected two-person layout before observing the first
+  // two-to-solo change. Hold its real outer CSS transition, not a timer or
+  // a replacement animation: the old inner-only guard must accept this state.
+  await expect(roster.locator("[data-participant]")).toHaveCount(1);
+  await expectSettledGeometry();
+  await roster.evaluate((el) => {
+    el.holdSoloTransition = (event) => {
+      if (
+        !event.target.matches("[data-self]") ||
+        event.propertyName !== "transform"
+      )
+        return;
+      const animation = event.target
+        .getAnimations()
+        .find((animation) => animation.transitionProperty === "transform");
+      if (!animation || el.heldSoloTransition) return;
+      animation.pause();
+      animation.currentTime = animation.effect.getComputedTiming().duration / 2;
+      el.heldSoloTransition = animation;
+    };
+    el.addEventListener("transitionrun", el.holdSoloTransition);
+  });
+  try {
+    await page.evaluate(
+      (keys) => window.huddleFixture.participants(keys),
+      keys.slice(0, 1),
+    );
+    await expect(roster.locator("[data-participant]")).toHaveCount(0);
+    await expect
+      .poll(() => roster.evaluate((el) => !!el.heldSoloTransition))
+      .toBe(true);
+    let premature;
+    await expect
+      .poll(async () => {
+        premature = await roster.evaluate((el) => {
+          if (
+            [...el.querySelectorAll("[data-huddle-avatar]")].some(
+              (avatar) => getComputedStyle(avatar).transform !== "none",
+            )
+          )
+            return null;
+          const area = el.getBoundingClientRect();
+          const self = el.querySelector("[data-self]").getBoundingClientRect();
+          return {
+            center: self.left + self.width / 2 - area.left,
+            expectedCenter: area.width / 2,
+            outerTransform: getComputedStyle(el.querySelector("[data-self]"))
+              .transform,
+            playState: el.heldSoloTransition.playState,
+          };
+        });
+        return premature !== null;
+      })
+      .toBe(true);
+    expect(premature.playState).toBe("paused");
+    expect(
+      Math.abs(premature.center - premature.expectedCenter),
+    ).toBeGreaterThan(0.5);
+    expect(await roster.evaluate(settledGeometry)).toBeNull();
+    await test.info().attach("held-outer-transition", {
+      body: JSON.stringify(premature, null, 2),
+      contentType: "application/json",
+    });
+  } finally {
+    await roster.evaluate((el) => {
+      el.removeEventListener("transitionrun", el.holdSoloTransition);
+      el.heldSoloTransition?.play();
+      delete el.holdSoloTransition;
+      delete el.heldSoloTransition;
+    });
+  }
+  // Include a return to solo, then restore six for the hover/name assertions.
+  for (const count of [1, 2, 3, 6, 1, 6]) {
     await page.evaluate(
       (keys) => window.huddleFixture.participants(keys),
       keys.slice(0, count),
     );
     await expect(roster.locator("[data-participant]")).toHaveCount(count - 1);
-    await roster.evaluate(async (el) => {
-      await Promise.all(
-        el
-          .getAnimations({ subtree: true })
-          .map((animation) => animation.finished),
-      );
-    });
-    // A spring can briefly cross its final size before overshooting. Wait for
-    // Motion to remove the arrival/layout transform, not that transient crossing.
-    await expect
-      .poll(() =>
-        roster.evaluate((el) =>
-          [...el.querySelectorAll("[data-huddle-avatar]")].every(
-            (avatar) => getComputedStyle(avatar).transform === "none",
-          ),
-        ),
-      )
-      .toBe(true);
-    const geometry = await roster.evaluate((el) => {
-      const area = el.getBoundingClientRect();
-      const bounds = (node) => {
-        const rect = node.getBoundingClientRect();
-        return {
-          left: rect.left - area.left,
-          top: rect.top - area.top,
-          right: rect.right - area.left,
-          bottom: rect.bottom - area.top,
-          center: rect.left + rect.width / 2 - area.left,
-        };
-      };
-      return {
-        width: area.width,
-        height: area.height,
-        self: bounds(el.querySelector("[data-self]")),
-        portraitGaps: [
-          ...el.querySelectorAll("[data-self], [data-participant]"),
-        ].map((person) =>
-          Math.abs(
-            person.getBoundingClientRect().height -
-              person
-                .querySelector("[data-huddle-avatar]")
-                .getBoundingClientRect().height,
-          ),
-        ),
-        peers: [...el.querySelectorAll("[data-participant]")].map(bounds),
-      };
-    });
+    const geometry = await expectSettledGeometry();
     const portraits = [geometry.self, ...geometry.peers];
     if (portraits.length > 3) {
       expect(geometry.self.center).toBeCloseTo(geometry.width / 2, 0);
@@ -534,7 +627,7 @@ test("capsule and companion presentation share mute and leave", async ({
     roster.getByRole("img", { name: /^1 more participants:/ }),
   ).toBeVisible();
   // Hold the 220ms speaking lifetime while checking its rendered contract.
-  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await pauseClock(page, 1000);
   await page.evaluate(() => window.huddleFixture.speak("cd".repeat(32)));
   const speaker = roster.locator(`[data-participant="${"cd".repeat(32)}"]`);
   const speakerHalo = roster.locator(`[data-speaker="${"cd".repeat(32)}"]`);
@@ -683,13 +776,7 @@ test("live participant avatars enter on top and reflow without growing the shell
   const avatars = updated.locator("[data-participant]");
   await expect(avatars).toHaveCount(3);
   // Wait for the actual transition lifecycle, not an arbitrary sleep.
-  await updated.evaluate((el) =>
-    Promise.all(
-      el
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    ),
-  );
+  await animationsSettled(updated, { subtree: true });
   const positions = await avatars.evaluateAll((elements) =>
     elements.map((el) => ({
       left: el.getBoundingClientRect().left,
@@ -788,7 +875,7 @@ test("active chat has a split Huddle menu for members and a join-path link", asy
   await expect(
     page.getByRole("dialog", { name: "Huddle members" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Close channel members" }).click();
+  await page.getByRole("button", { name: "Close" }).click();
   await page.getByRole("button", { name: "Switch conversation" }).click();
   await expect(
     page.getByRole("heading", { name: "Alex", exact: true }),
@@ -838,9 +925,8 @@ test("active chat has a split Huddle menu for members and a join-path link", asy
   ).toBe(1);
   // A DM call opens the room picker, leaving DM membership unchanged.
   await page.getByRole("button", { name: "Switch conversation" }).click();
-  await page
-    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
-    .click();
+  await page.getByRole("button", { name: "Start or join a huddle" }).click();
+  await page.getByRole("button", { name: "Start huddle" }).click();
   await page.getByRole("button", { name: "Close Huddle window" }).click();
   await active.getByRole("button", { name: "Huddle options" }).click();
   await page.getByRole("menuitem", { name: "Add someone" }).click();
@@ -1190,7 +1276,8 @@ test("detached regular composer keeps failed drafts, uploads real file bytes and
     }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: `Alex ${"cd".repeat(32)}`, exact: true })
+    .getByRole("button")
+    .and(page.locator(`[data-mention-choice="${"cd".repeat(32)}"]`))
     .click();
   // The host picker delivers the selection to the companion asynchronously.
   await expect(
@@ -1588,7 +1675,7 @@ test("accepting preserves both request avatars until connected, then moves them 
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
     .toBe(1);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await pauseClock(page, 1000);
   await page.evaluate(() => {
     window.huddleMotionFrames = [];
     window.huddleFixture.connect();
@@ -1696,7 +1783,16 @@ test("audio settings mirror device choices between compact and window controls",
     page.getByRole("combobox", { name: "Microphone", exact: true }),
   ).toContainText("USB microphone");
   await page.getByRole("combobox", { name: "Speakers", exact: true }).click();
-  await page.getByRole("option", { name: "Headphones", exact: true }).click();
+  // The popup can flip between a pointer pick's press and release, and Base UI
+  // ignores that split click. The microphone pick above covers the pointer.
+  await expect(
+    page.getByRole("option", { name: "System default", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(
+    page.getByRole("option", { name: "Headphones", exact: true }),
+  ).toHaveAttribute("data-highlighted", "");
+  await page.keyboard.press("Enter");
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("dialog", { name: "Audio settings", exact: true }),
@@ -1872,7 +1968,7 @@ test("an inactive call error does not suppress the next incoming call", async ({
   ).toContainText("Previous call failed");
   // The real clip may finish while WebKit renders the request. Freeze the
   // repeat timer so the first-play assertion cannot race the next ring.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await pauseClock(page, 1000);
   await page.evaluate(() =>
     window.huddleFixture.request("00000000-0000-4000-8000-000000000099"),
   );
@@ -1985,7 +2081,7 @@ test("portraits can be tossed within the stage and return home, with reduced mot
   // Measure the circular layout, not the rotated artwork's rectangular bounding box.
   const portrait = stage.locator("[data-huddle-avatar]");
   await expect(portrait).toBeVisible();
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await pauseClock(page, 1000);
   await expect
     .poll(async () => {
       await page.clock.runFor(16);
@@ -1994,14 +2090,10 @@ test("portraits can be tossed within the stage and return home, with reduced mot
       );
     })
     .toBe("none");
-  await portrait.evaluate(async (element) => {
-    await Promise.all(
-      element
-        .closest("[data-self]")
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(
+    portrait.locator("xpath=ancestor-or-self::*[@data-self][1]"),
+    { subtree: true },
+  );
   const home = await portrait.boundingBox();
   const area = await stage.boundingBox();
   const start = { x: home.x + home.width / 2, y: home.y + home.height / 2 };

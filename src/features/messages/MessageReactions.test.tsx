@@ -10,11 +10,9 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
-import {
-  MessageReactionControls,
-  MessageReactions,
-  REACTION_PREVIEW_DELAY_MS,
-} from "./MessageReactions";
+import { ReactionDelivery } from "../conversation/ReactionTool";
+import { MessageReactionControls, MessageReactions } from "./MessageReactions";
+import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { createRelaySession } from "../relay/session";
 import {
   flush,
@@ -22,11 +20,12 @@ import {
   message,
   profile,
   roster,
+  completeHeads,
   scriptedTransport,
   signed,
 } from "../relay/testing";
 import type { LiveCallbacks } from "../relay/live";
-import type { RelayEvent } from "../relay/events";
+import type { ReadFilter, RelayEvent } from "../relay/events";
 import type {
   ComposerTool,
   ContributionReader,
@@ -60,7 +59,21 @@ const registry = <T,>(
   subscribe: () => () => {},
 });
 const inline = registry<InlineRenderer>([]);
-const tools = registry<ComposerTool>([]);
+const tools = registry<ComposerTool>([
+  {
+    key: "picker",
+    pluginId: "picker",
+    revision: "one",
+    id: "picker",
+    title: "Picker",
+    component: () => null,
+    reactionComponent: ({ select, disabled }: ReactionToolProps) => (
+      <button type="button" disabled={disabled} onClick={() => select("👍")}>
+        Choose reaction
+      </button>
+    ),
+  },
+]);
 const root = message(other, "c", "Message", 1);
 const react = (key = viewer, time = 2) =>
   signed(key, {
@@ -83,7 +96,7 @@ const customReaction = (key: typeof viewer, code: string, url: string) =>
       ["emoji", code, url],
     ],
   });
-function harness(
+async function harness(
   events: RelayEvent[] = [],
   publish = vi.fn(async (_event: RelayEvent) => {}),
   pickerTools = tools,
@@ -91,9 +104,23 @@ function harness(
 ) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
+  /** The events the relay has when asked for one by ID. */
+  const check = { has: [] as RelayEvent[], asked: [] as ReadFilter[] };
   const owner = createRelaySession(
     {
       ...wire.transport,
+      query(filters, signal) {
+        const strong = filters.filter(
+          (filter) => filter.consistency === "strong" && filter.ids,
+        );
+        if (!strong.length) return wire.transport.query(filters, signal);
+        check.asked.push(...strong);
+        return Promise.resolve(
+          check.has.filter((event) =>
+            strong.some((filter) => filter.ids?.includes(event.id)),
+          ),
+        );
+      },
       ...(media ? { media } : {}),
       writer: { sign: async (template) => signed(viewer, template), publish },
       subscribe(callbacks) {
@@ -106,6 +133,8 @@ function harness(
   owners.push(owner);
   owner.session.channels.ensure("c");
   live.receive([roster(relay, "c", [viewer.pubkey], 1), root, ...events]);
+  completeHeads(wire, relay, [root, ...events]);
+  await flush();
   function Controls({
     disabled = false,
     onFocusedRemoval,
@@ -123,14 +152,16 @@ function harness(
     return (
       row && (
         <>
-          <MessageReactionControls
-            row={audience ? { ...row, audience } : row}
-            session={owner.session}
-            scope="test"
-            disabled={disabled}
-            tools={pickerTools}
-            inline={inline}
-          />
+          <div data-testid="reaction-controls">
+            <MessageReactionControls
+              row={audience ? { ...row, audience } : row}
+              session={owner.session}
+              scope="test"
+              disabled={disabled}
+              tools={pickerTools}
+              inline={inline}
+            />
+          </div>
           <MessageReactions
             {...(onFocusedRemoval ? { onFocusedRemoval } : {})}
             row={audience ? { ...row, audience } : row}
@@ -144,57 +175,290 @@ function harness(
       )
     );
   }
-  return { ...owner, live, wire, publish, Controls };
+  /** The session runs three reads at a time. Answers the scripted ones still
+   * open, so a read that follows is not queued behind them. */
+  const idle = () => {
+    for (const open of wire.pending.splice(0)) open.respond([]);
+  };
+  return { ...owner, live, wire, publish, check, idle, Controls };
 }
-it("groups matching emoji by unique people and removes all my duplicate events", async () => {
+it("shows one bubble per emoji, counts unique people, and removes all my duplicate events", async () => {
   const mine = react(),
     duplicate = react(viewer, 3),
     theirs = react(other);
-  const h = harness([mine, duplicate, theirs]);
+  const h = await harness([mine, duplicate, theirs]);
   render(<h.Controls />);
   expect(
-    screen.getAllByRole("button", { name: /React with|Remove/ }),
-  ).toHaveLength(3);
+    screen.queryAllByRole("button", { name: /React with|Remove/ }),
+  ).toHaveLength(0);
   expect(
     screen.getByTestId("reaction-row").querySelectorAll("[data-reaction]"),
   ).toHaveLength(1);
   const own = screen.getByRole("button", {
-    name: "👍: You",
+    name: "👍: 2 people",
   });
   expect(own.getAttribute("aria-pressed")).toBe("true");
+  // The pill's highlight follows whether I am among its reactors.
+  expect(own.closest("[data-mine]")).not.toBeNull();
   expect(own.textContent).toBe("👍2");
-  expect(own.getAttribute("aria-description")).toContain("2 reactions");
   fireEvent.mouseEnter(own);
+  fireEvent.mouseMove(own);
   const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
   expect(preview.textContent).toContain("You");
   expect(preview.textContent).toContain(other.pubkey.slice(0, 10));
   fireEvent.click(own);
-  const operation = h.session.outbox?.snapshot()[0];
-  expect(operation?.event).toMatchObject({
-    kind: 5,
-    tags: expect.arrayContaining([
-      ["e", mine.id],
-      ["e", duplicate.id],
-    ]),
-  });
-  expect(operation?.event.tags).not.toContainEqual(["e", theirs.id]);
+  const deletions = h.session.outbox?.snapshot().map((item) => item.event);
+  expect(deletions?.every((event) => event.kind === 5)).toBe(true);
   expect(
-    screen
-      .getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` })
-      .getAttribute("aria-pressed"),
-  ).toBe("false");
+    deletions?.map((event) => event.tags.filter(([name]) => name === "e")),
+  ).toEqual([[["e", mine.id]], [["e", duplicate.id]]]);
+  const remaining = screen.getByRole("button", {
+    name: `👍: ${other.pubkey.slice(0, 10)}`,
+  });
+  expect(remaining.getAttribute("aria-pressed")).toBe("false");
+  expect(remaining.closest("[data-mine]")).toBeNull();
   await act(async () => {
     await flush();
     await flush();
   });
 });
+it("keeps one bubble and focus when the count crosses the former grouping threshold", async () => {
+  const others = Array.from({ length: 8 }, () => keypair());
+  const h = await harness(others.map((person) => react(person)));
+  const onFocusedRemoval = vi.fn();
+  render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
+  const pills = () =>
+    screen.getByTestId("reaction-row").querySelectorAll("[data-reaction]");
+  expect(pills()).toHaveLength(1);
+  // A second event from one person must not increase the count.
+  act(() => h.live.receive([react(others[0], 3)]));
+  expect(pills()).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "👍: 8 people" }).textContent).toBe(
+    "👍8",
+  );
+  act(() => h.live.receive([react()]));
+  expect(pills()).toHaveLength(1);
+  const group = screen.getByRole("button", { name: "👍: 9 people" });
+  expect(group.textContent).toBe("👍9");
+  expect(group.getAttribute("aria-pressed")).toBe("true");
+  act(() => group.focus());
+  const preview = await screen.findByRole("tooltip");
+  expect(preview.textContent).toContain("You");
+  for (const person of others)
+    expect(preview.textContent).toContain(person.pubkey.slice(0, 10));
+  expect(preview.textContent).not.toContain("others");
+  fireEvent.click(group);
+  expect(pills()).toHaveLength(1);
+  expect(document.activeElement).toBe(group);
+  expect(onFocusedRemoval).not.toHaveBeenCalled();
+  expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(5);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+});
+
+it.each([3, 4, 5])("shows all %i reactors in the preview", async (count) => {
+  const people = Array.from({ length: count }, () => keypair());
+  const h = await harness(people.map((person) => react(person)));
+  render(<h.Controls />);
+  act(() =>
+    screen.getByRole("button", { name: `👍: ${count} people` }).focus(),
+  );
+  const preview = await screen.findByRole("tooltip");
+  for (const person of people)
+    expect(preview.textContent).toContain(person.pubkey.slice(0, 10));
+  expect(
+    within(preview).getByRole("region", { name: "Everyone who reacted" })
+      .tabIndex,
+  ).toBe(-1);
+});
+
+it("opening a large preview preserves unrelated cached profiles", async () => {
+  const h = await harness([react(other)]);
+  const unrelated = profile(other, { name: "Existing colleague" });
+  act(() =>
+    h.live.receive([
+      unrelated,
+      ...Array.from({ length: 63 }, (_, index) =>
+        profile(keypair(), { name: `Cached colleague ${index}` }),
+      ),
+    ]),
+  );
+  const people = Array.from({ length: 1025 }, () => keypair());
+  const events = new Map(
+    people.map((person, index) => [
+      person.pubkey,
+      profile(person, { name: `Reactor ${index}` }),
+    ]),
+  );
+  const row = h.session.channels.window("c").rows[0];
+  const first = people[0],
+    last = people.at(-1);
+  if (!row || !first || !last) throw new Error("Missing fixture data");
+  const completed = new Set();
+  const settleReads = async () => {
+    await flush();
+    let pending = h.wire.pending.find((entry) => !completed.has(entry));
+    while (pending) {
+      completed.add(pending);
+      pending.respond(
+        pending.filters.flatMap((filter) =>
+          filter.kinds?.includes(0)
+            ? (filter.authors ?? []).flatMap((id) =>
+                events.get(id) ? [events.get(id) as RelayEvent] : [],
+              )
+            : [],
+        ),
+      );
+      await flush();
+      pending = h.wire.pending.find((entry) => !completed.has(entry));
+    }
+  };
+  await act(settleReads);
+  render(
+    <MessageReactions
+      row={{
+        ...row,
+        reactions: [
+          {
+            content: "👍",
+            events: people.map((person, index) => ({
+              id: String(index),
+              authorId: person.pubkey,
+            })),
+          },
+        ],
+      }}
+      session={h.session}
+      scope="test"
+      disabled={false}
+      tools={tools}
+      inline={inline}
+    />,
+  );
+  const pill = screen.getByRole("button", { name: "👍: 1025 people" });
+  fireEvent.mouseEnter(pill);
+  // Pointer transit must not start profile enrichment before opening.
+  expect(h.session.profiles.snapshot().get(first.pubkey)).toBeUndefined();
+  act(() => pill.focus());
+  const preview = await screen.findByRole("tooltip");
+  await act(settleReads);
+  expect(preview.textContent).toContain("Reactor 0");
+  expect(h.session.profiles.snapshot().get(other.pubkey)?.name).toBe(
+    "Existing colleague",
+  );
+  // Names outside the first visible page remain readable as identity fallbacks.
+  expect(preview.textContent).toContain(last.pubkey.slice(0, 10));
+  expect(h.session.profiles.snapshot().has(last.pubkey)).toBe(false);
+});
+
+it("keeps custom emoji URLs separate and updates a grouped count when I join", async () => {
+  const people = Array.from({ length: 9 }, () => keypair());
+  const first = "https://a.test/first.gif";
+  const second = "https://a.test/second.gif";
+  const h = await harness([
+    ...people.map((person) => customReaction(person, "party", first)),
+    customReaction(other, "party", second),
+  ]);
+  const onFocusedRemoval = vi.fn();
+  render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
+  const group = screen.getByRole("button", { name: ":party:: 9 people" });
+  expect(group.getAttribute("aria-pressed")).toBe("false");
+  expect(group.querySelector("img")?.getAttribute("src")).toBe(first);
+  expect(
+    screen
+      .getByRole("button", { name: `:party:: ${other.pubkey.slice(0, 10)}` })
+      .querySelector("img")
+      ?.getAttribute("src"),
+  ).toBe(second);
+  fireEvent.click(group);
+  const joined = screen.getByRole("button", { name: ":party:: 10 people" });
+  expect(joined).toBe(group);
+  expect(joined.textContent).toBe("10");
+  expect(joined.getAttribute("aria-pressed")).toBe("true");
+  expect(h.session.outbox?.snapshot()[0]?.event.tags).toContainEqual([
+    "emoji",
+    "party",
+    first,
+  ]);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  act(() => joined.focus());
+  fireEvent.click(joined);
+  expect(screen.getByRole("button", { name: ":party:: 9 people" })).toBe(
+    joined,
+  );
+  expect(document.activeElement).toBe(joined);
+  expect(onFocusedRemoval).not.toHaveBeenCalled();
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+});
+
+it("keeps the same bubble and focus through single and multiple reactor transitions", async () => {
+  const others = [other];
+  const h = await harness([react(other)]);
+  render(
+    <>
+      <button type="button">Elsewhere</button>
+      <h.Controls />
+    </>,
+  );
+  const individual = screen.getByRole("button", { name: /^👍:/ });
+  if (!individual) throw new Error("Expected an individual reaction");
+  act(() => individual.focus());
+  fireEvent.click(individual);
+  const group = screen.getByRole("button", { name: "👍: 2 people" });
+  expect(group).toBe(individual);
+  expect(document.activeElement).toBe(group);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  // A live removal takes the count back to one without replacing the control.
+  const removedPerson = others[0];
+  if (!removedPerson) throw new Error("Expected another reactor");
+  const removed = react(removedPerson);
+  act(() =>
+    h.live.receive([
+      signed(removedPerson, {
+        kind: 5,
+        content: "",
+        created_at: 3,
+        tags: [["e", removed.id]],
+      }),
+    ]),
+  );
+  expect(document.activeElement).toBe(
+    screen.getAllByRole("button", { name: /^👍:/ })[0],
+  );
+  // A live second reactor updates the same focused control.
+  act(() => h.live.receive([react(keypair(), 4)]));
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "👍: 2 people" }),
+  );
+  act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
+  act(() => h.live.receive([react(keypair(), 5)]));
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Elsewhere" }),
+  );
+});
+
 it("keeps failed first-reaction delivery visible and retries the same event", async () => {
   const publish = vi.fn(async (_event: RelayEvent) => {
     throw new PublishRejected("Nope");
   });
-  const h = harness([], publish);
+  const h = await harness([], publish);
   render(<h.Controls />);
-  fireEvent.click(screen.getByRole("button", { name: "React with ❤️" }));
+  fireEvent.click(
+    within(screen.getByTestId("reaction-controls")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  );
   await act(async () => {
     await flush();
     await flush();
@@ -209,13 +473,233 @@ it("keeps failed first-reaction delivery visible and retries the same event", as
   });
   expect(publish.mock.calls[1]?.[0]).toEqual(original);
 });
+/** Past 15 minutes the relay refuses the old signed event, so Retry signs a new one. */
+it.each([
+  ["a failed reaction", false],
+  ["an unconfirmed removal of a reaction", true],
+] as const)(
+  "retries %s as a new event once the relay no longer takes the old one",
+  async (_name, removal) => {
+    let outcome: "refuse" | "lose" | "accept" = removal ? "lose" : "refuse";
+    const publish = vi.fn(async (event: RelayEvent) => {
+      if (event.created_at < Math.floor(Date.now() / 1000) - 15 * 60)
+        throw new PublishRejected("Too old");
+      if (outcome === "refuse") throw new PublishRejected("Nope");
+      if (outcome === "lose") throw new Error("Connection lost");
+    });
+    const mine = react();
+    const h = await harness(removal ? [mine] : [], publish);
+    render(<h.Controls />);
+    fireEvent.click(
+      removal
+        ? screen.getByRole("button", { name: "👍: You" })
+        : within(screen.getByTestId("reaction-controls")).getByRole("button", {
+            name: "Choose reaction",
+          }),
+    );
+    await act(async () => {
+      await flush();
+      await flush();
+    });
+    const [stuck] = h.session.outbox?.snapshot() ?? [];
+    expect(stuck?.delivery).toBe(removal ? "unknown" : "failed");
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 16 * 60_000);
+    outcome = "accept";
+    h.idle();
+    fireEvent.click(screen.getByRole("button", { name: "Retry reaction" }));
+    await act(async () => {
+      await flush();
+      await flush();
+    });
+    const sent = publish.mock.calls.at(-1)?.[0];
+    expect(sent?.id).not.toBe(stuck?.event.id);
+    expect(sent?.kind).toBe(stuck?.event.kind);
+    expect(sent?.content).toBe(stuck?.event.content);
+    expect(sent?.tags.filter(([name]) => name === "client-id")).toHaveLength(1);
+    expect(h.session.outbox?.snapshot().map((item) => item.event.id)).toEqual([
+      sent?.id,
+    ]);
+    expect(screen.queryByRole("button", { name: "Retry reaction" })).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    vi.restoreAllMocks();
+  },
+);
+it.each([
+  ["a double click", "double"],
+  ["a send that throws", "send"],
+  ["a dismissal that fails", "dismiss"],
+] as const)(
+  "retries an expired reaction once and reports a problem: %s",
+  async (_name, mode) => {
+    let open = false;
+    const publish = vi.fn(async (event: RelayEvent) => {
+      if (event.created_at < Math.floor(Date.now() / 1000) - 15 * 60)
+        throw new PublishRejected("Too old");
+      if (!open) throw new PublishRejected("Nope");
+    });
+    const h = await harness([], publish);
+    const view = render(<h.Controls />);
+    fireEvent.click(
+      within(screen.getByTestId("reaction-controls")).getByRole("button", {
+        name: "Choose reaction",
+      }),
+    );
+    await act(async () => {
+      await flush();
+      await flush();
+    });
+    const [stuck] = h.session.outbox?.snapshot() ?? [];
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
+    open = true;
+    const real = h.session.outbox;
+    if (!real) throw new Error("No outbox");
+    // The session's outbox is frozen, so the failing calls go through a copy.
+    if (mode !== "double") {
+      view.unmount();
+      const outbox = {
+        ...real,
+        send: (...args: Parameters<typeof real.send>) => {
+          if (mode === "send") throw new Error("Outbox is closed");
+          return real.send(...args);
+        },
+        dismiss: (...args: Parameters<typeof real.dismiss>) =>
+          mode === "dismiss"
+            ? Promise.reject(new Error("Could not clear the old update"))
+            : real.dismiss(...args),
+      };
+      render(
+        <ReactionDelivery
+          session={{ ...h.session, outbox }}
+          messageId={root.id}
+        />,
+      );
+    }
+    const button = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Retry reaction",
+    });
+    fireEvent.click(button);
+    if (mode === "double") {
+      fireEvent.click(button);
+      expect(button.disabled).toBe(true);
+    }
+    await act(async () => {
+      await flush();
+      await flush();
+    });
+    const sent = publish.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.id !== stuck?.event.id);
+    if (mode === "send") {
+      expect(sent).toHaveLength(0);
+      expect((await screen.findByRole("alert")).textContent).toBe(
+        "Outbox is closed",
+      );
+      expect(button.disabled).toBe(false);
+    } else if (mode === "dismiss") {
+      expect(sent).toHaveLength(1);
+      expect((await screen.findByRole("alert")).textContent).toBe(
+        "Could not clear the old update",
+      );
+    } else {
+      expect(sent).toHaveLength(1);
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+    vi.restoreAllMocks();
+  },
+);
+/** Past 15 minutes, with the relay's answers to the old and the new event. */
+async function expiredUnconfirmedReaction(
+  relayHas: boolean,
+  fresh: () => Promise<void>,
+) {
+  const publish = vi.fn(async (event: RelayEvent) => {
+    if (event.created_at < Math.floor(Date.now() / 1000) - 15 * 60)
+      throw new PublishRejected("Too old");
+    await fresh();
+  });
+  publish.mockImplementationOnce(async () => {
+    throw new Error("Connection lost");
+  });
+  const h = await harness([], publish);
+  render(<h.Controls />);
+  fireEvent.click(
+    within(screen.getByTestId("reaction-controls")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  );
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  const [original] = h.session.outbox?.snapshot() ?? [];
+  expect(original?.delivery).toBe("unknown");
+  const sent = publish.mock.calls[0]?.[0];
+  if (relayHas && sent) h.check.has.push(sent);
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
+  h.idle();
+  fireEvent.click(screen.getByRole("button", { name: "Retry reaction" }));
+  await act(async () => {
+    await flush();
+    await flush();
+    await flush();
+  });
+  return { h, publish, original };
+}
+it("does not send a new reaction when the relay already has the unconfirmed one", async () => {
+  const { h, publish, original } = await expiredUnconfirmedReaction(
+    true,
+    async () => {},
+  );
+  expect(h.check.asked).toEqual([
+    {
+      kinds: [7],
+      ids: [original?.event.id],
+      authors: [viewer.pubkey],
+      limit: 1,
+      consistency: "strong",
+    },
+  ]);
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button", { name: "Retry reaction" })).toBeNull();
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(
+    h.session.outbox
+      ?.snapshot()
+      .some((item) => ["failed", "unknown"].includes(item.delivery)),
+  ).toBe(false);
+  vi.restoreAllMocks();
+});
+it("treats a duplicate answer to the new reaction as delivered, not failed", async () => {
+  const { h, publish, original } = await expiredUnconfirmedReaction(
+    false,
+    async () => {
+      throw new PublishRejected("duplicate: reaction already exists");
+    },
+  );
+  expect(h.check.asked).toHaveLength(1);
+  expect(publish).toHaveBeenCalledTimes(2);
+  expect(publish.mock.calls.at(-1)?.[0].id).not.toBe(original?.event.id);
+  expect(screen.queryByRole("button", { name: "Retry reaction" })).toBeNull();
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+  vi.restoreAllMocks();
+});
 it("prevents duplicate submissions and unavailable-message actions", async () => {
-  const h = harness();
+  const h = await harness();
   const view = render(<h.Controls disabled />);
-  fireEvent.click(screen.getByRole("button", { name: "React with 👍" }));
+  fireEvent.click(
+    within(screen.getByTestId("reaction-controls")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  );
   expect(h.session.outbox?.snapshot()).toHaveLength(0);
   view.rerender(<h.Controls />);
-  const button = screen.getByRole("button", { name: "React with 👍" });
+  const button = within(screen.getByTestId("reaction-controls")).getByRole(
+    "button",
+    { name: "Choose reaction" },
+  );
   fireEvent.click(button);
   fireEvent.click(button);
   expect(h.session.outbox?.snapshot()).toHaveLength(1);
@@ -223,6 +707,61 @@ it("prevents duplicate submissions and unavailable-message actions", async () =>
     await flush();
     await flush();
   });
+});
+
+it.each(["hover", "focus"] as const)(
+  "shows who reacted on %s to someone who cannot react",
+  async (reveal) => {
+    const h = await harness([react(other)]);
+    render(<h.Controls disabled />);
+    const pill = screen.getByRole("button", {
+      name: `👍: ${other.pubkey.slice(0, 10)}`,
+    });
+    // A disabled button drops hover, focus and keys, and the preview with them.
+    expect(pill.hasAttribute("disabled")).toBe(false);
+    expect(pill.hasAttribute("data-disabled")).toBe(false);
+    expect(pill.getAttribute("aria-disabled")).toBe("true");
+    if (reveal === "hover") {
+      fireEvent.mouseEnter(pill);
+      fireEvent.mouseMove(pill);
+    } else act(() => pill.focus());
+    const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
+    expect(preview.textContent).toContain(other.pubkey.slice(0, 10));
+  },
+);
+
+it("does not let someone who cannot react toggle, and leaves keys to ancestors", async () => {
+  const h = await harness([react(other)]);
+  const keys: string[] = [];
+  render(
+    // Thread Escape, the message menu and timeline scrolling skip prevented keys.
+    // biome-ignore lint/a11y/noStaticElementInteractions: Observes bubbling keys.
+    <div
+      onKeyDown={(event) => {
+        if (!event.defaultPrevented) keys.push(event.key);
+      }}
+    >
+      <h.Controls disabled />
+    </div>,
+  );
+  const pill = screen.getByRole("button", {
+    name: `👍: ${other.pubkey.slice(0, 10)}`,
+  });
+  act(() => pill.focus());
+  await screen.findByRole("tooltip");
+  // Enter and Space activate a native button by dispatching this click.
+  fireEvent.click(pill);
+  expect(screen.getByRole("tooltip")).toBeTruthy();
+  expect(h.session.outbox?.snapshot()).toHaveLength(0);
+  expect(pill.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  for (const key of ["F10", "ContextMenu", "ArrowUp", "PageUp"])
+    fireEvent.keyDown(pill, { key, shiftKey: key === "F10" });
+  // The open preview is a nested surface: Escape dismisses only it first.
+  fireEvent.keyDown(pill, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  fireEvent.keyDown(pill, { key: "Escape" });
+  expect(keys).toEqual(["F10", "ContextMenu", "ArrowUp", "PageUp", "Escape"]);
 });
 
 it("keeps emojis visually active but rejects another click while delivery is pending or failed", async () => {
@@ -233,27 +772,39 @@ it("keeps emojis visually active but rejects another click while delivery is pen
         release = resolve;
       }),
   );
-  const h = harness([react(other)], publish);
+  const h = await harness([react(other)], publish);
   render(<h.Controls />);
   fireEvent.click(
     screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
   );
   await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
   const pill = screen.getByRole("button", {
-    name: "👍: You",
+    name: "👍: 2 people",
   });
   expect(pill.getAttribute("aria-disabled")).toBe("true");
   expect(pill.hasAttribute("disabled")).toBe(false);
   fireEvent.click(pill);
   expect(h.session.outbox?.snapshot()).toHaveLength(1);
+  // Fresh hover still keeps the preview off delivery recovery controls.
+  vi.useFakeTimers();
+  try {
+    fireEvent.mouseEnter(pill);
+    fireEvent.mouseMove(pill);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
   await act(async () => {
     release();
     await flush();
     await flush();
   });
   expect(pill.getAttribute("aria-disabled")).toBe("false");
+  // Only delivery held back the preview that the hover opened.
+  expect(screen.getByRole("tooltip").textContent).toContain("You");
 
-  const failed = harness(
+  const failed = await harness(
     [react(other)],
     vi.fn(async () => {
       throw new PublishRejected("Nope");
@@ -296,7 +847,7 @@ it("uses the picker catalog URL even when an old URL has my reaction", async () 
       ),
     },
   ]);
-  const h = harness(
+  const h = await harness(
     [customReaction(viewer, "party", oldUrl)],
     undefined,
     pickerTools,
@@ -338,7 +889,7 @@ it("uses the original animated emoji in reaction emojis and previews", async () 
   const media = vi.fn((source: string, size?: "small") =>
     size === "small" ? source.replace(/\.gif$/, ".thumb.jpg") : source,
   );
-  const h = harness(
+  const h = await harness(
     [customReaction(other, "eyes-intensifies", url)],
     undefined,
     tools,
@@ -350,75 +901,203 @@ it("uses the original animated emoji in reaction emojis and previews", async () 
   });
   expect(pill.querySelector("img")?.getAttribute("src")).toBe(url);
   fireEvent.mouseEnter(pill);
+  fireEvent.mouseMove(pill);
   const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
   expect(preview.querySelector("img")?.getAttribute("src")).toBe(url);
   expect(media).not.toHaveBeenCalledWith(url, "small");
 });
 
 it("loads names for people who only reacted after a preview opens", async () => {
-  const h = harness([react(other)]);
+  const people = Array.from({ length: 5 }, () => keypair());
+  const h = await harness(people.map((person) => react(person)));
   render(<h.Controls />);
+  // Complete startup reads so the scheduler can admit background reactor names.
+  await act(async () => {
+    const completed = new Set();
+    await flush();
+    let pending = h.wire.pending.find((entry) => !completed.has(entry));
+    while (pending) {
+      completed.add(pending);
+      pending.respond([]);
+      await flush();
+      pending = h.wire.pending.find((entry) => !completed.has(entry));
+    }
+  });
   const pill = screen.getByRole("button", {
-    name: `👍: ${other.pubkey.slice(0, 10)}`,
+    name: "👍: 5 people",
   });
   fireEvent.mouseEnter(pill);
-  await screen.findByText(other.pubkey.slice(0, 10), {}, { timeout: 2500 });
-  await waitFor(() =>
-    expect(
-      h.wire.pending.some((entry) => entry.filters[0]?.kinds?.includes(0)),
-    ).toBe(true),
-  );
-  const pending = h.wire.pending.find((entry) =>
-    entry.filters[0]?.kinds?.includes(0),
-  );
-  expect(pending?.filters).toEqual([
-    { kinds: [0], authors: [other.pubkey], limit: 500 },
-  ]);
+  fireEvent.mouseMove(pill);
+  const preview = await screen.findByRole("tooltip");
+  const profileReads = () =>
+    h.wire.pending.filter((entry) =>
+      entry.filters.some((filter) => filter.kinds?.includes(0)),
+    );
+  await waitFor(() => {
+    const requested = profileReads().flatMap((entry) =>
+      entry.filters.flatMap((filter) => filter.authors ?? []),
+    );
+    for (const person of people) expect(requested).toContain(person.pubkey);
+  });
   await act(async () => {
-    pending?.respond([profile(other, { name: "Fresh Reactor" })]);
+    for (const entry of profileReads()) {
+      const requested = entry.filters.flatMap((filter) => filter.authors ?? []);
+      entry.respond(
+        people.flatMap((person, index) =>
+          requested.includes(person.pubkey)
+            ? [profile(person, { name: `Fresh Reactor ${index + 1}` })]
+            : [],
+        ),
+      );
+    }
     await flush();
   });
-  await waitFor(() => expect(screen.getByText("Fresh Reactor")).toBeTruthy(), {
-    timeout: 2500,
+  await waitFor(() => {
+    for (let index = 1; index <= people.length; index++)
+      expect(preview.textContent).toContain(`Fresh Reactor ${index}`);
   });
 });
 
-it("shows custom shortcodes in emojis and previews when media is refused or fails", async () => {
-  const h = harness(
+const tagless = (key: typeof viewer, code: string) =>
+  signed(key, {
+    kind: 7,
+    content: `:${code}:`,
+    created_at: 2,
+    tags: [
+      ["h", "c"],
+      ["e", root.id],
+    ],
+  });
+const palette = (code: string, url: string) =>
+  signed(other, {
+    kind: 30030,
+    content: "",
+    created_at: 3,
+    tags: [
+      ["d", "buzz:custom-emoji"],
+      ["emoji", code, url],
+    ],
+  });
+const glyph = (pill: HTMLElement) => {
+  const slot = pill.querySelector("[data-reaction-glyph]");
+  if (!slot) throw new Error("Reaction glyph missing");
+  return slot;
+};
+const showsPlaceholder = (slot: Element, shortcode: string) => {
+  expect(slot.querySelector("svg")).not.toBeNull();
+  expect(slot.querySelector("img")).toBeNull();
+  expect(slot.textContent).not.toContain(shortcode);
+};
+
+it("draws a tagless shortcode from the community palette, once the palette arrives", async () => {
+  const url = "https://a.test/approve.png";
+  const h = await harness([tagless(other, "approve")]);
+  render(<h.Controls />);
+  const pill = screen.getByRole("button", {
+    name: `:approve:: ${other.pubkey.slice(0, 10)}`,
+  });
+  showsPlaceholder(glyph(pill), ":approve:");
+  act(() => h.live.receive([palette("approve", url)]));
+  await waitFor(() =>
+    expect(pill.querySelector("img")?.getAttribute("src")).toBe(url),
+  );
+  expect(glyph(pill).textContent).toBe("");
+  fireEvent.mouseEnter(pill);
+  fireEvent.mouseMove(pill);
+  const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
+  expect(preview.querySelector("img")?.getAttribute("src")).toBe(url);
+});
+
+it("shows a neutral glyph for an unknown shortcode, keeping it as the name", async () => {
+  const h = await harness([tagless(other, "mystery")]);
+  render(<h.Controls />);
+  const pill = screen.getByRole("button", {
+    name: `:mystery:: ${other.pubkey.slice(0, 10)}`,
+  });
+  showsPlaceholder(glyph(pill), ":mystery:");
+  fireEvent.mouseEnter(pill);
+  fireEvent.mouseMove(pill);
+  const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
+  expect(preview.querySelector("svg")).not.toBeNull();
+  expect(preview.querySelector("img")).toBeNull();
+});
+
+it("shows a neutral glyph in pills and previews when media is refused or fails", async () => {
+  const h = await harness(
     [
       customReaction(other, "denied", "https://a.test/denied.png"),
       customReaction(other, "broken", "https://a.test/broken.png"),
+      tagless(other, "refused"),
     ],
     undefined,
     tools,
-    (url) => (url.includes("denied") ? undefined : url),
+    (url) =>
+      url.includes("denied") || url.includes("refused") ? undefined : url,
   );
+  h.live.receive([palette("refused", "https://a.test/refused.png")]);
   render(<h.Controls />);
-  const denied = screen.getByRole("button", {
-    name: `:denied:: ${other.pubkey.slice(0, 10)}`,
-  });
-  const broken = screen.getByRole("button", {
-    name: `:broken:: ${other.pubkey.slice(0, 10)}`,
-  });
-  expect(denied.textContent).toContain(":denied:");
+  const pillFor = (code: string) =>
+    screen.getByRole("button", {
+      name: `:${code}:: ${other.pubkey.slice(0, 10)}`,
+    });
+  const denied = pillFor("denied");
+  const broken = pillFor("broken");
+  showsPlaceholder(glyph(denied), ":denied:");
+  showsPlaceholder(glyph(pillFor("refused")), ":refused:");
   const image = broken.querySelector("img");
   if (!image) throw new Error("Custom reaction image missing");
   fireEvent.error(image);
-  expect(broken.textContent).toContain(":broken:");
+  showsPlaceholder(glyph(broken), ":broken:");
   fireEvent.mouseEnter(denied);
+  fireEvent.mouseMove(denied);
   const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
-  expect(preview.textContent).toContain(":denied:");
-  fireEvent.mouseLeave(denied);
-  fireEvent.mouseEnter(broken);
-  await waitFor(
-    () =>
-      expect(
-        screen
-          .queryAllByRole("tooltip")
-          .some((item) => item.textContent?.includes(":broken:")),
-      ).toBe(true),
-    { timeout: 2500 },
+  expect(preview.querySelector("svg")).not.toBeNull();
+  fireEvent.mouseLeave(denied, { relatedTarget: broken });
+  fireEvent.mouseEnter(broken, { relatedTarget: denied });
+  fireEvent.mouseMove(broken);
+  const brokenPreview = () =>
+    screen
+      .queryAllByRole("tooltip")
+      .find((item) => item.textContent?.includes(":broken:"));
+  await waitFor(() => expect(brokenPreview()).toBeDefined(), {
+    timeout: 2500,
+  });
+  const previewImage = brokenPreview()?.querySelector("img");
+  if (!previewImage) throw new Error("Preview image missing");
+  fireEvent.error(previewImage);
+  expect(brokenPreview()?.querySelector("svg")).not.toBeNull();
+  expect(brokenPreview()?.querySelector("img")).toBeNull();
+});
+
+it("keeps a failed custom reaction's placeholder while its image retries", async () => {
+  const h = await harness([
+    customReaction(other, "flaky", "https://a.test/flaky.png"),
+  ]);
+  render(<h.Controls />);
+  const slot = glyph(
+    screen.getByRole("button", {
+      name: `:flaky:: ${other.pubkey.slice(0, 10)}`,
+    }),
   );
+  const image = () => {
+    const found = slot.querySelector("img");
+    if (!found) throw new Error("Custom reaction image missing");
+    return found;
+  };
+  vi.useFakeTimers();
+  try {
+    fireEvent.error(image());
+    showsPlaceholder(slot, ":flaky:");
+    act(() => vi.advanceTimersByTime(2_000));
+    // The retry loads hidden behind the placeholder instead of blanking.
+    expect(slot.querySelector("svg")).not.toBeNull();
+    expect(image().hidden).toBe(true);
+    fireEvent.load(image());
+    expect(slot.querySelector("svg")).toBeNull();
+    expect(image().hidden).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("forwards the contributed picker into true toggles and releases confirmed writes without an echo", async () => {
@@ -437,7 +1116,7 @@ it("forwards the contributed picker into true toggles and releases confirmed wri
       ),
     },
   ]);
-  const h = harness([react()], undefined, pickerTools);
+  const h = await harness([react()], undefined, pickerTools);
   render(<h.Controls />);
   const picker = screen.getAllByRole("button", {
     name: "Choose from picker",
@@ -465,7 +1144,7 @@ it("rolls back a failed last-reaction removal and retries it after remount", asy
   const publish = vi.fn(async (_event: RelayEvent) => {
     throw new PublishRejected("Nope");
   });
-  const h = harness([react()], publish);
+  const h = await harness([react()], publish);
   const view = render(<h.Controls />);
   fireEvent.click(screen.getByRole("button", { name: "👍: You" }));
   expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
@@ -491,7 +1170,7 @@ it("rolls back a failed last-reaction removal and retries it after remount", asy
 });
 
 it("retires reaction previews while retaining the reaction delivery owner", async () => {
-  const h = harness([react(other)]);
+  const h = await harness([react(other)]);
   vi.useFakeTimers();
   try {
     const tree = (active: boolean) => (
@@ -502,10 +1181,12 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
       </ConversationPresentation>
     );
     const view = render(tree(true));
-    fireEvent.mouseEnter(
-      screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
-    );
-    await act(() => vi.advanceTimersByTimeAsync(REACTION_PREVIEW_DELAY_MS - 1));
+    const pill = screen.getByRole("button", {
+      name: `👍: ${other.pubkey.slice(0, 10)}`,
+    });
+    fireEvent.mouseEnter(pill);
+    fireEvent.mouseMove(pill);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS - 1));
     expect(screen.queryByRole("tooltip")).toBeNull();
     await act(() => vi.advanceTimersByTimeAsync(1));
     expect(screen.getByRole("tooltip")).toBeTruthy();
@@ -522,16 +1203,15 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
   }
 });
 
-it("keeps focus on the counted chip while another person's reaction remains", async () => {
-  const h = harness([react(), react(other)]);
+it("keeps focus on the bubble when my reaction is removed and another person remains", async () => {
+  const h = await harness([react(), react(other)]);
   const onFocusedRemoval = vi.fn();
   render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
-  const own = screen.getByRole("button", { name: "👍: You" });
+  const own = screen.getByRole("button", { name: "👍: 2 people" });
   act(() => own.focus());
   fireEvent.click(own);
   expect(onFocusedRemoval).not.toHaveBeenCalled();
   expect(document.activeElement).toBe(own);
-  expect(own.textContent).toBe("👍1");
   expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
   expect(
     screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
@@ -541,8 +1221,8 @@ it("keeps focus on the counted chip while another person's reaction remains", as
     await flush();
   });
 });
-it("hands focus back when the last counted reaction is removed", async () => {
-  const h = harness([react()]);
+it("hands focus back when the last reaction is removed", async () => {
+  const h = await harness([react()]);
   const onFocusedRemoval = vi.fn();
   render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
   const own = screen.getByRole("button", { name: "👍: You" });
@@ -557,7 +1237,7 @@ it("hands focus back when the last counted reaction is removed", async () => {
 });
 it.each([false, true])(
   "hides inline add on coordination while retaining existing reactions (%s)",
-  (populated) => {
+  async (populated) => {
     const pickerTools = registry<ComposerTool>([
       {
         key: "picker",
@@ -573,7 +1253,11 @@ it.each([false, true])(
         ),
       },
     ]);
-    const h = harness(populated ? [react(other)] : [], undefined, pickerTools);
+    const h = await harness(
+      populated ? [react(other)] : [],
+      undefined,
+      pickerTools,
+    );
     const view = render(<h.Controls audience="agents" />);
     expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
     if (populated)
@@ -594,3 +1278,39 @@ it.each([false, true])(
     else expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
   },
 );
+it("keeps the raw emoji when the name table fails to load, and the next reveal retries", async () => {
+  const h = await harness([react(other)]);
+  render(<h.Controls />);
+  const pill = screen.getByRole("button", {
+    name: `👍: ${other.pubkey.slice(0, 10)}`,
+  });
+  // A navigation cancels the chunk in flight, so the import rejects.
+  vi.doMock("./reaction-name", () =>
+    Promise.reject(new TypeError("Importing a module script failed.")),
+  );
+  const unhandled = vi.fn();
+  process.on("unhandledRejection", unhandled);
+  const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    fireEvent.mouseEnter(pill);
+    fireEvent.mouseMove(pill);
+    const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
+    // The mocked import rejects after one tick or several; wait for its handler.
+    await waitFor(() =>
+      expect(warned).toHaveBeenCalledWith(
+        "The reaction name table didn't load",
+        expect.any(Error),
+      ),
+    );
+    await act(flush);
+    expect(preview.textContent).not.toContain(":+1:");
+    expect(unhandled).not.toHaveBeenCalled();
+    vi.doUnmock("./reaction-name");
+    act(() => pill.focus());
+    await waitFor(() => expect(preview.textContent).toContain(":+1:"));
+  } finally {
+    vi.doUnmock("./reaction-name");
+    process.off("unhandledRejection", unhandled);
+    warned.mockRestore();
+  }
+});

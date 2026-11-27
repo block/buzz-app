@@ -1,8 +1,15 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import type { RelaySession } from "../../features/relay/session";
 import type {
   ConversationExtensions,
+  ConversationWorkspaceProps,
   PageTabOptions,
   PageTabsProps,
   PageTabTarget,
@@ -19,7 +26,16 @@ import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { SidebarRightIcon } from "../../shared/design-system/icons";
+import {
+  DotsThreeIcon,
+  SidebarRightIcon,
+} from "../../shared/design-system/icons";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { useChannelLabels } from "./useChannelLabels";
 import {
@@ -29,12 +45,33 @@ import {
   type ConversationTab,
 } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
+import { openFromTab } from "../../features/panels/opening-pane";
+import { ConversationTab as ConversationReader } from "./ConversationTab";
+import { panelOpening } from "../../features/panels/service";
+import { coveringDock, useCoveredByDock } from "./useCoveredByDock";
 import styles from "./Channels.module.css";
+import { BOARD_MAIN_MIN_REM } from "./panel-split";
+import { WorkspaceRow } from "./WorkspaceRow";
 
 export type { PageTabOptions, PageTabsProps, PageTabTarget };
 
 // The tab each page's next plain open replaces, for as long as its tabs last.
 const previews = new WeakMap<RelaySession, Map<string, string>>();
+
+type HostProps = {
+  host: ConversationHostServices;
+  extensions?: ConversationExtensions | undefined;
+};
+
+export function ConversationWorkspace(
+  props: ConversationWorkspaceProps & HostProps,
+) {
+  return (
+    <PageTabs {...props} workspace={props}>
+      {() => null}
+    </PageTabs>
+  );
+}
 
 /** A page's content as the first tab, with conversations it opens beside it. */
 export function PageTabs({
@@ -47,13 +84,15 @@ export function PageTabs({
   host,
   extensions,
   visits,
-}: PageTabsProps & {
-  host: ConversationHostServices;
-  extensions?: ConversationExtensions | undefined;
-}) {
+  workspace,
+}: PageTabsProps &
+  HostProps & {
+    workspace?: ConversationWorkspaceProps;
+  }) {
   const tabState = useChannelTabState(session, undefined, `page:${id}`);
   const list = useChannelList(session.channels);
-  const { channels } = useChannelLabels(
+  // Every joined row, as in Channels: sidebar visibility is not access.
+  const { joined: channels, profiles } = useChannelLabels(
     // As in Channels, a Huddle room's tabs show the unavailable placeholder.
     list.channels.filter(
       (channel) => !channel.huddle && !channel.metadataPending,
@@ -78,11 +117,12 @@ export function PageTabs({
     current: undefined,
     scope,
     channels,
+    profiles,
     extensions,
     leadingIds: [],
     continuingVisit: continuing.current,
     isLive: () => true,
-    openLink(url) {
+    openLink(url, pane) {
       const viewer = session.viewer;
       const target =
         viewer &&
@@ -92,7 +132,7 @@ export function PageTabs({
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
         });
       if (!target) return false;
-      void host.navigation.open(target);
+      openFromTab(host.navigation, target, pane);
       return true;
     },
     fallbackFocus,
@@ -107,6 +147,62 @@ export function PageTabs({
       return <Icon size="1rem" />;
     },
   });
+  const enteredDetail = useRef<
+    | {
+        session: RelaySession;
+        key: string;
+      }
+    | undefined
+  >(undefined);
+  const detailKey =
+    workspace?.detail &&
+    JSON.stringify([
+      scope,
+      id,
+      workspace.target.channelId,
+      workspace.target.threadId,
+      workspace.target.messageId,
+      workspace.detail.target,
+      workspace.detail.rootId,
+    ]);
+  useLayoutEffect(() => {
+    if (!workspace?.detail || !detailKey) {
+      enteredDetail.current = undefined;
+      return;
+    }
+    if (
+      enteredDetail.current?.session === session &&
+      enteredDetail.current.key === detailKey
+    )
+      return;
+    const entry = panelOpening(
+      host.panels,
+      workspace.target.channelId,
+      workspace.detail.target,
+      workspace.detail.rootId,
+    );
+    if (!entry) return;
+    enteredDetail.current = { session, key: detailKey };
+    secondary.open(entry, true);
+  });
+  const primaryChannelId = workspace?.target.channelId;
+  useLayoutEffect(() => {
+    if (!primaryChannelId) return;
+    return host.panels.handleOpenRequests(({ target, channelId, rootId }) => {
+      const connection = host.relay.snapshot();
+      if (
+        !mounted.current ||
+        channelId !== primaryChannelId ||
+        connection.status !== "ready" ||
+        connection.session !== session
+      )
+        return false;
+      const entry = panelOpening(host.panels, channelId, target, rootId);
+      if (!entry) return false;
+      secondary.open(entry, true);
+      return true;
+    });
+  }, [host.panels, host.relay, primaryChannelId, secondary.open, session]);
   // One stable opener, so a page's effects can depend on it; it reads the
   // live workspace when called.
   const opening = useRef<
@@ -141,10 +237,17 @@ export function PageTabs({
       return true;
     };
     opening.current = (
-      { channelId, threadId, messageId },
+      { channelId, threadId, messageId, unreadSince },
       { keep, markRead } = {},
     ) => {
-      if (!mounted.current || !secondary.canOpenConversation(channelId))
+      // A thread tab shows a channel the viewer can only read; a
+      // conversation tab needs one they can post in.
+      if (
+        !mounted.current ||
+        !(threadId
+          ? secondary.canOpenThread(channelId)
+          : secondary.canOpenConversation(channelId))
+      )
         return false;
       setCloses(committedCloses.current);
       const known = new Set(tabState.tabs.map((tab) => tab.id));
@@ -159,6 +262,7 @@ export function PageTabs({
           messageId ?? threadId,
           (existing?.kind === "thread" && existing.rootId) || threadId,
           messageId ? "reveal" : "focus",
+          messageId ? undefined : unreadSince,
         );
       else {
         const tab = `conversation:${channelId}`;
@@ -214,10 +318,11 @@ export function PageTabs({
     focusPage.current = true;
     return true;
   };
-  // The page owns the close-all command while its workspace is shown.
+  // The page owns the close-all command while its workspace is shown, even
+  // while a floating pane covers the page.
   useLayoutEffect(() => {
     const close = (event: Event) => {
-      const workspace = fallbackFocus.current;
+      const workspace = split.ref.current;
       if (
         event.defaultPrevented ||
         !workspace?.isConnected ||
@@ -271,9 +376,70 @@ export function PageTabs({
       fallbackFocus.current
     )?.focus({ preventScroll: true });
   });
-  const split = usePanelSplit();
+  const split = usePanelSplit(
+    scope,
+    `page:${id}`,
+    undefined,
+    undefined,
+    undefined,
+    BOARD_MAIN_MIN_REM,
+  );
   const hasTabs = secondary.items.length > 0;
   const showingPanel = tabState.paneOpen && hasTabs;
+  const covered = useCoveredByDock(split.ref, fallbackFocus, showingPanel);
+  const [primaryFocus] = useState(() =>
+    document.activeElement?.closest('input, textarea, [contenteditable="true"]')
+      ? undefined
+      : 1,
+  );
+  const primaryTarget = workspace?.target;
+  const latestRequest = primaryTarget?.messageId
+    ? undefined
+    : workspace?.latestRequest;
+  const revealLatest = useEffectEvent(() => {
+    tabState.selectMain(undefined);
+    // The coverage observer may still be measuring a newly mounted workspace.
+    const dock = showingPanel ? coveringDock(split.ref.current) : undefined;
+    if (!dock) return;
+    if (dock.contains(document.activeElement)) secondary.closePane();
+    else tabState.setPaneOpen(false);
+  });
+  useLayoutEffect(() => {
+    if (latestRequest && !latestRequest.aborted) revealLatest();
+  }, [latestRequest]);
+  const primaryChannel =
+    primaryTarget &&
+    channels.find((channel) => channel.id === primaryTarget.channelId);
+  const primaryTab: ConversationTab | undefined = primaryTarget && {
+    id: "conversation",
+    channelId: primaryTarget.channelId,
+    ...(primaryTarget.threadId
+      ? {
+          kind: "thread" as const,
+          messageId:
+            primaryTarget.messageId ??
+            primaryTarget.subthreadId ??
+            primaryTarget.threadId,
+          rootId: primaryTarget.threadId,
+        }
+      : {
+          kind: "conversation" as const,
+          ...(primaryTarget.messageId && {
+            messageId: primaryTarget.messageId,
+          }),
+        }),
+    // A delayed workspace mount must not take focus from a sidebar name edit.
+    ...(primaryTarget.messageId
+      ? { revealRequest: 1 }
+      : { focusRequest: primaryFocus }),
+  };
+  // As in a plain channel visit, the page reads its visible selected side tab
+  // while focus stays anywhere on the page, such as the row that opened it.
+  // A conversation moved to the main pane still reads only by its own focus.
+  const readingTab =
+    showingPanel &&
+    secondary.selectedMain === "conversation" &&
+    !!secondary.selectedTab;
   const tabMenu = {
     key: JSON.stringify([scope, id]),
     closeAll,
@@ -283,6 +449,7 @@ export function PageTabs({
     ref?: typeof secondary.splitTrigger,
   ) => (
     <IconButton
+      hint="familiar"
       ref={ref}
       data-tab-pane-toggle=""
       size="toolbar"
@@ -310,11 +477,18 @@ export function PageTabs({
           };
         }}
       >
-        <div ref={split.ref} style={split.style} className={styles.board}>
+        <div
+          ref={split.ref}
+          style={split.style}
+          data-reading-thread={readingTab ? "" : undefined}
+          className={`${styles.board} ${panelStyles.splitMotion}`}
+        >
           <div
             ref={fallbackFocus}
             tabIndex={-1}
             className={styles.conversation}
+            inert={covered}
+            aria-hidden={covered || undefined}
           >
             <PanelWorkspace
               main
@@ -343,7 +517,98 @@ export function PageTabs({
                   id: "conversation",
                   label,
                   icon,
-                  content: children(open, close, isOpen),
+                  toolbar: (workspace?.headerActions ||
+                    !!workspace?.actions?.length) && (
+                    <>
+                      {workspace?.headerActions}
+                      {!!workspace?.actions?.length && (
+                        <MenuRoot>
+                          <MenuTrigger
+                            render={
+                              <IconButton
+                                hint="familiar"
+                                size="sm"
+                                aria-label="Conversation actions"
+                                title="Conversation actions"
+                                icon={
+                                  <DotsThreeIcon
+                                    size="1rem"
+                                    aria-hidden="true"
+                                  />
+                                }
+                              />
+                            }
+                          />
+                          <MenuPopup align="end">
+                            {workspace.actions.map((action) => (
+                              <MenuItem
+                                key={action.label}
+                                onClick={() => action.run()}
+                              >
+                                {action.label}
+                              </MenuItem>
+                            ))}
+                          </MenuPopup>
+                        </MenuRoot>
+                      )}
+                    </>
+                  ),
+                  actions: workspace?.actions,
+                  content: workspace ? (
+                    <WorkspaceRow
+                      aside={workspace.aside}
+                      width={workspace.asideWidth}
+                      open={workspace.asideOpen}
+                      onOpenChange={workspace.onAsideOpenChange}
+                      onFloatingChange={workspace.onAsideFloatingChange}
+                    >
+                      {primaryTab &&
+                      primaryChannel &&
+                      secondary.canOpenConversation(primaryChannel.id) ? (
+                        <ConversationReader
+                          key={JSON.stringify(primaryTarget)}
+                          tab={primaryTab}
+                          intro={workspace.intro}
+                          trailing={workspace.trailing}
+                          subthreadId={primaryTarget?.subthreadId}
+                          latestRequest={latestRequest}
+                          active={
+                            secondary.selectedMain === "conversation" &&
+                            !covered
+                          }
+                          channel={primaryChannel}
+                          session={session}
+                          scope={scope}
+                          extensions={extensions}
+                          openLink={(url, origin) =>
+                            secondary.openConversationLink(
+                              primaryChannel.id,
+                              url,
+                              origin,
+                            )
+                          }
+                          canOpenLink={(target) =>
+                            !!host.panels.resolve(target)
+                          }
+                          openThread={(messageId, rootId, intent) =>
+                            secondary.openConversationThread(
+                              primaryChannel.id,
+                              messageId,
+                              rootId,
+                              intent,
+                            )
+                          }
+                          close={() => {}}
+                        />
+                      ) : (
+                        <p role="status" className={styles.empty}>
+                          This conversation is no longer available.
+                        </p>
+                      )}
+                    </WorkspaceRow>
+                  ) : (
+                    children(open, close, isOpen)
+                  ),
                 },
                 ...secondary.mainItems,
               ]}
@@ -356,7 +621,9 @@ export function PageTabs({
           </p>
           <PanelDock
             open={showingPanel}
-            keepMounted={hasTabs && !tabState.paneOpen}
+            keepMounted={
+              tabState.entries.length > 0 || (hasTabs && !tabState.paneOpen)
+            }
             className={styles.panelStack}
             resizeHandle={split.handle}
           >

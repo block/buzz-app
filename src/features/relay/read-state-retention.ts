@@ -1,4 +1,5 @@
 import {
+  channelContext,
   mergeReadStates,
   READ_STATE_KEYS,
   type ReadState,
@@ -11,8 +12,10 @@ export type CoveredFrontier = (
   frontier: (key: string) => number | undefined,
 ) => string | undefined;
 /** The message a mark is about. Message, thread and thread catch-up marks
- * each name one message (a thread names its root); other marks name none. */
+ * each name one message (a thread names its root), as does a row receipt
+ * (`seen:msg:`); other marks name none. */
 export function markMessage(key: string): string | undefined {
+  if (key.startsWith("seen:msg:")) return key.slice(9) || undefined;
   const separator = key.indexOf(":");
   const kind = key.slice(0, separator);
   return separator > 0 &&
@@ -23,7 +26,8 @@ export function markMessage(key: string): string | undefined {
 /** Broader marks first: a channel or thread mark covers many messages, so
  * losing one makes old history unread again. Catch-up marks (`activity:`,
  * `thread-activity:`) come next: only this app reads them, so recent catch-up
- * must never push out a quiet channel's mark. Message marks only cover one. */
+ * must never push out a quiet channel's mark. Message marks only cover one.
+ * Row marks (`seen:`) read nothing, so losing one only relights a row. */
 const scope = (key: string) =>
   !key.includes(":")
     ? 0
@@ -31,7 +35,9 @@ const scope = (key: string) =>
       ? 1
       : key.startsWith("activity:") || key.startsWith("thread-activity:")
         ? 2
-        : 3;
+        : key.startsWith("seen:")
+          ? 4
+          : 3;
 /** Share of the budget that broad marks may fill before recent use decides.
  * The rest always goes to the most recently used marks, so a new read is never
  * dropped just because old channel or thread marks fill the budget. */
@@ -41,6 +47,9 @@ const SCOPED_SHARE = 0.75;
  * catch-up marks, then message marks. The rest goes by local interaction order,
  * which wins over event time so reading old history still synchronizes.
  * Every override group and its direct frontier is protected; pressure can never lose a floor.
+ * A whole-channel override reads only its own channel's frontier. Only a
+ * message or thread override, which an older journal may still hold, can
+ * inherit another frontier, so only then is all possible ancestry protected.
  *
  * Marks that `covered` proves redundant are dropped only after the budget has
  * chosen what to keep, and only when their covering mark was kept. The freed
@@ -65,10 +74,9 @@ export function retainRead(
       overrides: state.overrides,
     });
   }
-  // Overrides make inherited ancestry load-bearing (see below); keep everything then.
-  const coveredBy = Object.keys(protectedState.overrides).length
-    ? undefined
-    : covered;
+  const overrides = Object.keys(protectedState.overrides);
+  // Inherited ancestry is load-bearing (see below); keep everything then.
+  const coveredBy = inheritsAncestry(overrides) ? undefined : covered;
   const encoder = new TextEncoder();
   let used = encoder.encode(
     JSON.stringify({ v: 1, client_id: clientId, contexts: {} }),
@@ -108,11 +116,17 @@ export function retainRead(
     }
   }
   // Encrypted registers do not carry trustworthy ancestry. Preserve every possible
-  // inherited channel/thread frontier while any override exists: pruning a parent
-  // could otherwise reactivate a child register. Only frontier-only msg hints are free.
-  if (Object.keys(protectedState.overrides).length) {
+  // inherited channel/thread frontier while a message or thread override exists:
+  // pruning a parent could otherwise reactivate a child register. Only
+  // frontier-only msg hints, and row marks, which no register inherits, are free.
+  if (inheritsAncestry(overrides)) {
     for (const [key, value] of frontiers) {
-      if (retained.has(key) || key.startsWith("msg:")) continue;
+      if (
+        retained.has(key) ||
+        key.startsWith("msg:") ||
+        key.startsWith("seen:")
+      )
+        continue;
       if (!take(frontierKey(key), value))
         throw new Error(
           "Read override ancestry capacity reached; saved floors retained",
@@ -122,6 +136,7 @@ export function retainRead(
   }
   const nextRecent: Record<string, number> = { ...recent };
   const byUse = ([a, av]: [string, number], [b, bv]: [string, number]) =>
+    Number(a.startsWith("seen:")) - Number(b.startsWith("seen:")) ||
     (nextRecent[b] ?? 0) - (nextRecent[a] ?? 0) ||
     bv - av ||
     a.localeCompare(b);
@@ -190,6 +205,7 @@ export function retainRead(
     // after it has already replaced another mark.
     const covers = new Map<string, string>();
     for (const [key, value] of retained) {
+      if (key in protectedState.overrides) continue;
       const cover = keptCover(key, value);
       if (cover !== undefined) covers.set(key, cover);
     }
@@ -227,6 +243,9 @@ export function retainRead(
     ),
   };
 }
+/** Whether an override can inherit a frontier other than its own. */
+const inheritsAncestry = (overrides: Iterable<string>) =>
+  [...overrides].some((key) => !channelContext(key));
 /** `retainRead` when the caller keeps no recency, such as a publication. */
 export function retainReadState(
   states: readonly ReadState[],
@@ -241,24 +260,46 @@ export function retainReadState(
 /** Local-only receipts evicted from the sync journal. Never passed to publication. */
 export const READ_RESERVE_KEYS = 5000;
 export const READ_RESERVE_BYTES = 512 * 1024;
+/**
+ * The local read set: the journal (`retainRead`) plus the reserve, with a
+ * read-through `floor`. Every message at or before the floor counts as read
+ * on this installation, so a mark that capacity drops raises the floor to its
+ * own time rather than making what it read unread again. The reserve keeps
+ * the newest marks, so the floor rises as little as it can. A mark at or
+ * below the floor reads nothing more and is dropped, unless it is an
+ * override's own mark or a message or thread override makes inherited marks
+ * load-bearing.
+ */
 export function retainLocalRead(
   states: readonly ReadState[],
   recent: Readonly<Record<string, number>>,
   clientId: string,
   reserve: Readonly<Record<string, number>> = {},
   covered?: CoveredFrontier,
+  floor = 0,
 ) {
-  const frontiers = new Map(Object.entries(reserve));
   const overrides = new Set(
     states.flatMap((state) => Object.keys(state.overrides)),
   );
+  const inherits = inheritsAncestry(overrides);
+  const below = (key: string, value: number) =>
+    !inherits && !overrides.has(key) && value <= floor;
+  const frontiers = new Map(
+    Object.entries(reserve).filter(([key, value]) => !below(key, value)),
+  );
   const returning: Record<string, number> = {};
-  for (const state of states)
+  const current: ReadState[] = [];
+  for (const state of states) {
+    const kept: Record<string, number> = {};
     for (const [key, value] of Object.entries(state.frontiers)) {
+      if (below(key, value)) continue;
+      kept[key] = value;
       const previous = frontiers.get(key);
       if (previous !== undefined) returning[key] = previous;
       frontiers.set(key, Math.max(previous ?? 0, value));
     }
+    current.push({ frontiers: kept, overrides: state.overrides });
+  }
   // Direct override floors belong in the journal. Possible inherited floors
   // stay protected in the reserve instead of overflowing the smaller journal.
   for (const key of overrides) {
@@ -266,7 +307,7 @@ export function retainLocalRead(
     if (value !== undefined) returning[key] = value;
   }
   const kept = retainRead(
-    [...states, { frontiers: returning, overrides: {} }],
+    [...current, { frontiers: returning, overrides: {} }],
     recent,
     clientId,
     undefined,
@@ -278,10 +319,11 @@ export function retainLocalRead(
   const entries: [string, number][] = [];
   const accepted = new Map<string, number>();
   // A mark that a kept broader mark already reads is redundant here too, as
-  // in the journal: keep it and it only takes room from real reads. Covers
-  // always have a broader scope, so they are accepted before what they cover.
-  // Overrides make inherited ancestry load-bearing; keep everything then.
-  const coveredBy = overrides.size ? undefined : covered;
+  // in the journal: keep it and it only takes room from real reads. A cover
+  // reads through at least the time of what it covers, so newest first,
+  // then broader scope at equal times, accepts it before what it covers.
+  // Inherited ancestry is load-bearing; keep everything then.
+  const coveredBy = inherits ? undefined : covered;
   const redundant = (key: string, value: number) => {
     const cover = coveredBy?.(key, (other) =>
       other === key
@@ -295,17 +337,26 @@ export function retainLocalRead(
     );
   };
   const protectedKey = (key: string) =>
-    overrides.size > 0 && !key.startsWith("msg:");
+    inherits && !key.startsWith("msg:") && !key.startsWith("seen:");
   // Keep inherited floors first (a subset of the already bounded reserve), then
-  // broad receipts before messages. Event age breaks ties within each scope.
-  // Journal recency still controls newly read old history and sync.
+  // the newest read marks, so a drop raises the floor as little as it can.
+  // Row hints read nothing: keep them last and never raise the floor for them.
+  // Journal recency still controls newly read old history.
+  let raised = floor;
+  let full = false;
   for (const [key, value] of [...frontiers].sort(
     ([a, av], [b, bv]) =>
       Number(protectedKey(b)) - Number(protectedKey(a)) ||
-      scope(a) - scope(b) ||
+      Number(a.startsWith("seen:")) - Number(b.startsWith("seen:")) ||
       bv - av ||
+      scope(a) - scope(b) ||
       a.localeCompare(b),
   )) {
+    // Once one mark does not fit, every later one is dropped too.
+    if (full) {
+      if (!key.startsWith("seen:")) raised = Math.max(raised, value);
+      continue;
+    }
     if (redundant(key, value)) continue;
     const cost =
       encoder.encode(JSON.stringify(key)).byteLength +
@@ -315,11 +366,27 @@ export function retainLocalRead(
     if (
       entries.length >= READ_RESERVE_KEYS ||
       bytes + cost > READ_RESERVE_BYTES
-    )
-      break;
+    ) {
+      // Protected-first ordering is not newest-first: a dropped message can
+      // be newer than every retained ancestor. Never raise the floor then.
+      if (inherits) {
+        if (protectedKey(key))
+          throw new Error(
+            "Read override ancestry capacity reached; saved floors retained",
+          );
+        break;
+      }
+      full = true;
+      if (!key.startsWith("seen:")) raised = Math.max(raised, value);
+      continue;
+    }
     entries.push([key, value]);
     accepted.set(key, value);
     bytes += cost;
   }
-  return { ...kept, reserve: Object.freeze(Object.fromEntries(entries)) };
+  return {
+    ...kept,
+    reserve: Object.freeze(Object.fromEntries(entries)),
+    floor: raised,
+  };
 }

@@ -1,35 +1,37 @@
-import { profileDefault } from "./profile-default";
-import { useEffect, useId, useRef, useState } from "react";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { communityName } from "./community-name";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Button } from "../../shared/design-system/ui/Button";
-import { ArrowUpRightIcon } from "../../shared/design-system/icons";
-import {
-  communityRequest,
-  inspectProfile,
-  publishProfile,
-  type CommunityInfo,
-} from "./api";
+import { communityRequest, inspectProfile, type CommunityInfo } from "./api";
 import type { Communities, PersonalProfile } from "./service";
 import { canSaveProfile, ProfileFields, profilesEqual } from "./ProfileFields";
-import { communityDestination, relayOrigin } from "./destination";
+import { communityDestination } from "./destination";
+import { parsePastedInvite, pastedInviteError } from "./invite-link";
+import type { JoinForm } from "./invite-intent";
 import { nativeIdentityEnabled } from "../identity/service";
-import { readErrorKind } from "../relay/errors";
+import { isTransientFailure, readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
+import { admitCommunity, completeJoin, type Current } from "./join";
+import { consentAsked, type JoinPolicy } from "./join-policy";
+import { ACCOUNT_CONSENT, accountConsents } from "./account-consent";
+import {
+  CommunitySignIn,
+  useExplainedRefusal,
+} from "../federated-identity/CommunitySignIn";
+import type { FederatedIdentity } from "../federated-identity/service";
+import { OnboardingBack } from "../identity/OnboardingBack";
+import { OnboardingScreen } from "../identity/OnboardingScreen";
 import styles from "./Communities.module.css";
 
-// Exact relay claim refusal codes, forwarded unchanged by the broker.
-const CLAIM_REFUSALS = {
-  invite_expired: "This invite code has expired — ask for a new one.",
-  invite_exhausted:
-    "This invite has reached its use limit. Ask for a new invite.",
-  invite_invalid: "This invite code is not valid for this community.",
-  join_policy_required:
-    "This community requires current policy acceptance. Go back and reopen the relay to review it.",
-  join_policy_not_accepted:
-    "The community policy changed. Go back and reopen the relay to review it.",
+/** What the join dialog reports to the app that owns its visit. */
+export type JoinReports = {
+  onWritingChange?: ((writing: boolean) => void) | undefined;
+  onFormChange?: ((form: JoinForm) => void) | undefined;
 };
 
 export function CommunityDialog({
@@ -39,21 +41,44 @@ export function CommunityDialog({
   onJoined,
   invite,
   connectionFrom,
+  submittedDestination = false,
+  onboarding = false,
+  federatedIdentity,
+  onWritingChange,
+  onFormChange,
 }: {
   communities: Communities;
+  /** Offers protected-community sign-in when admission refuses for it. */
+  federatedIdentity?: FederatedIdentity | undefined;
   mode: "join" | "profile";
   close(): void;
   onJoined?: (id: string) => void;
   /** A deliberate connection edit uses the same admission flow, never rekeys existing data. */
   connectionFrom?: string;
+  /** The landing form already submitted this destination. */
+  submittedDestination?: boolean;
+  onboarding?: boolean;
+  /** True from before an admission or profile write is sent until it settles;
+   * Close is disabled meanwhile. */
+  onWritingChange?: ((writing: boolean) => void) | undefined;
+  /** The form as edited, to restore when the dialog returns. */
+  onFormChange?: ((form: JoinForm) => void) | undefined;
   invite?:
     | Readonly<{
         community: string;
         code: string;
+        /** Profile edits restored for the destination they were made for. */
+        profile?: JoinForm["profile"];
       }>
     | undefined;
 }) {
+  const BackControl = onboarding ? OnboardingBack : Button;
   const formId = useId();
+  const destinationInput = useRef<HTMLInputElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const touchOpening = useRef(false);
+  const focusFrom = useRef<Element | null>(null);
+  const focusProfile = useRef(false);
   const client = communities.snapshot();
   const unavailable =
     client.status !== "ready" || (mode === "join" && !client.relayAvailable);
@@ -87,151 +112,279 @@ export function CommunityDialog({
   const [original, setOriginal] =
     useState<Awaited<ReturnType<typeof inspectProfile>>>();
   const [code, setCode] = useState(invite?.code ?? "");
+  const [needsInvite, setNeedsInvite] = useState(!!invite?.code);
+  const [profileDraft, setProfileDraft] = useState(invite?.profile);
+  // Report edits, not the form the dialog opened with.
+  const reportForm = useRef(onFormChange);
+  reportForm.current = onFormChange;
+  const formShown = useRef({ url, code, profileDraft });
+  useEffect(() => {
+    const shown = formShown.current;
+    if (
+      shown.url === url &&
+      shown.code === code &&
+      shown.profileDraft === profileDraft
+    )
+      return;
+    formShown.current = { url, code, profileDraft };
+    reportForm.current?.({
+      address: url,
+      code,
+      ...(profileDraft ? { profile: profileDraft } : {}),
+    });
+  }, [url, code, profileDraft]);
   const [agreed, setAgreed] = useState(false);
   const [adult, setAdult] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The opening's instruction to connect at once is read at mount only.
+  const [submitted] = useState(submittedDestination);
+  // Writes are tracked by what was sent, not by the step on screen: an
+  // account's consent admits from the destination step.
+  const [writing, setWriting] = useState(false);
+  const writes = useRef(false);
+  const reportWriting = useRef(onWritingChange);
+  reportWriting.current = onWritingChange;
+  function beginWrite() {
+    if (writes.current) return;
+    writes.current = true;
+    reportWriting.current?.(true);
+    setWriting(true);
+  }
+  function endWrite() {
+    if (!writes.current) return;
+    writes.current = false;
+    reportWriting.current?.(false);
+    if (mounted.current) setWriting(false);
+  }
+  useEffect(
+    () => () => {
+      if (writes.current) reportWriting.current?.(false);
+    },
+    [],
+  );
   const [error, setError] = useState(recovery.error);
   const mounted = useRef(true);
+  const attempt = useRef<AbortController>(undefined);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
-  async function work(action: () => Promise<void>) {
+  async function work(action: (signal: AbortSignal) => Promise<void>) {
+    const controller = new AbortController();
+    attempt.current = controller;
+    const { signal } = controller;
+    focusFrom.current = document.activeElement;
     setBusy(true);
     setError("");
     try {
-      await action();
+      await action(signal);
     } catch (reason) {
-      if (mounted.current)
+      // A step that was left settles without changing anything.
+      if (mounted.current && !signal.aborted) {
+        if (
+          step === "access" &&
+          info?.membershipRequired === true &&
+          readErrorKind(reason) === "denied"
+        )
+          setNeedsInvite(true);
         setError(reason instanceof Error ? reason.message : String(reason));
+      }
     } finally {
-      if (mounted.current) setBusy(false);
+      endWrite();
+      if (mounted.current && !signal.aborted) setBusy(false);
     }
   }
+  function abandon() {
+    attempt.current?.abort();
+    setBusy(false);
+  }
+  function leave() {
+    abandon();
+    close();
+  }
+  useLayoutEffect(() => {
+    if (busy || step !== "profile" || !focusProfile.current) return;
+    focusProfile.current = false;
+    // The submitted step owns this handoff only while focus has not moved elsewhere.
+    if (
+      !touchOpening.current &&
+      (document.activeElement === focusFrom.current ||
+        document.activeElement === document.body)
+    )
+      nameInput.current?.focus();
+  }, [busy, step]);
+  const startedDestination = useRef(false);
+  useEffect(() => {
+    if (!submitted || startedDestination.current || unavailable) return;
+    startedDestination.current = true;
+    void submit();
+  });
   const policy = info?.policy;
-  const allowed =
-    (!policy?.age_attestation_required || adult) &&
-    (!(policy?.terms_markdown || policy?.privacy_markdown) || agreed);
-  const current = (entry?: PendingJoin) =>
-    mounted.current && (!entry || journal?.current(entry));
+  // The signed-in account's consent covers a community its server hosts, so
+  // the access step asks for none.
+  const consentGiven =
+    !!destination && accountConsents(federatedIdentity, destination.url);
+  const asked = consentAsked(policy, consentGiven);
+  const allowed = (!asked.age || adult) && (!asked.agreement || agreed);
+  const current: Current = (entry) =>
+    mounted.current && (!entry || journal?.current(entry) === true);
   function showProfile(
+    url: string,
     found: Awaited<ReturnType<typeof inspectProfile>>,
     pending?: PendingJoin,
   ) {
     setOriginal(found);
+    // An edit restored for this destination wins unless the journal recorded
+    // a profile since (a later publish attempt, here or in another opening).
+    const edited =
+      profileDraft?.destination === url &&
+      (!pending || pending.id === profileDraft.after)
+        ? profileDraft.profile
+        : undefined;
     setProfile(
-      pending?.profile ?? (found.exists ? found.profile : client.profile),
+      edited ??
+        pending?.profile ??
+        (found.exists ? found.profile : client.profile),
     );
+    focusProfile.current = true;
     setStep("profile");
+  }
+  /**
+   * The access step's admission, with the account's consent when it covers
+   * `url`. `inviteCode` is given when it is newer than the rendered `code`.
+   */
+  async function admit(
+    community: string,
+    url: string,
+    joinPolicy: JoinPolicy | null | undefined,
+    inviteCode = code,
+  ) {
+    beginWrite();
+    const admission = await admitCommunity({
+      community,
+      journal,
+      code: inviteCode,
+      policy: joinPolicy,
+      consent: accountConsents(federatedIdentity, url)
+        ? ACCOUNT_CONSENT
+        : { adult, agreed },
+      current,
+    });
+    if (admission) showProfile(url, admission.found, admission.entry);
   }
   async function submit() {
     if (uploading || unavailable) return;
+    // Continue is a person's action, so it asks the community's issuer
+    // again instead of repeating a refusal cached this session (even one an
+    // edit has since cleared from view). A community native can't route
+    // (not a secure origin) has none cached.
+    const askAgain = async (url: string) => {
+      await federatedIdentity?.askAgain?.(url)?.catch(() => {});
+    };
     if (step === "destination") {
-      await work(async () => {
-        const next = communityDestination(relayOrigin(url));
+      await work(async (signal) => {
+        const entered = parsePastedInvite(url);
+        if (!entered)
+          throw new Error(
+            pastedInviteError(url, "Enter a community address or invite link."),
+          );
+        const next = communityDestination(entered.community);
+        // A pasted invite link carries its code the way an opened invite does.
+        // This submission uses it directly; the state serves later retries.
+        const inviteCode = entered.code || code;
+        if (entered.code) {
+          // The code moves to Invite code, where it can be edited; leaving it
+          // in the address would bring it back on the next Continue.
+          setUrl(next.url);
+          setCode(entered.code);
+          setNeedsInvite(true);
+        }
         setDestination(next);
-        const value = await communityRequest<CommunityInfo>(next.id, "info");
-        if (!mounted.current) return;
+        await askAgain(next.url);
+        // Transport text names neither the host nor a next step, and differs by engine.
+        const explained = (reason: unknown) =>
+          isTransientFailure(reason)
+            ? new Error(
+                `Couldn’t reach ${next.name}. Check the address, or try again.`,
+              )
+            : reason;
+        const value = await communityRequest<CommunityInfo>(
+          next.id,
+          "info",
+          undefined,
+          signal,
+        ).catch((reason: unknown) => {
+          throw explained(reason);
+        });
+        // A host that was left gets no signed profile read, even from a late answer.
+        if (!mounted.current || signal.aborted) return;
         const pending = journal?.get(next.id);
         // Restoring an existing admitted profile is not a new join or policy acceptance.
         const found = await inspectProfile(next.id).catch((reason: unknown) => {
-          if (pending && readErrorKind(reason) !== "denied") throw reason;
+          if (pending && readErrorKind(reason) !== "denied")
+            throw explained(reason);
+          if (
+            mounted.current &&
+            !signal.aborted &&
+            value.membershipRequired === true &&
+            readErrorKind(reason) === "denied"
+          )
+            setNeedsInvite(true);
           return undefined;
         });
-        if (current(pending)) {
+        if (!signal.aborted && current(pending)) {
           setInfo(value);
-          if (found && (found.exists || pending)) showProfile(found, pending);
-          else setStep("access");
+          if (found && (found.exists || pending))
+            showProfile(next.url, found, pending);
+          else if (
+            !accountConsents(federatedIdentity, next.url) ||
+            (!found && !inviteCode.trim())
+          )
+            setStep("access");
+          else {
+            // The account's consent leaves the access step nothing to ask
+            // (no code is needed, or one is given), so Continue goes on to its
+            // admission. A refusal is shown there, where a code can be entered.
+            await admit(next.id, next.url, value.policy, inviteCode).catch(
+              (reason: unknown) => {
+                if (current()) {
+                  setStep("access");
+                  if (
+                    value.membershipRequired === true &&
+                    readErrorKind(reason) === "denied"
+                  )
+                    setNeedsInvite(true);
+                }
+                throw reason;
+              },
+            );
+          }
         }
       });
     } else if (step === "access") {
-      if (!allowed) return;
+      if (!allowed || !destination) return;
       await work(async () => {
-        const pending = journal?.get(id);
-        if (pending) {
-          // A lost claim response may already have admitted this identity, even
-          // when its invite has since expired. Read before attempting another claim.
-          const found = await inspectProfile(id).catch((reason: unknown) => {
-            if (readErrorKind(reason) !== "denied") throw reason;
-            return undefined;
-          });
-          if (!current(pending)) return;
-          if (found) {
-            showProfile(found, pending);
-            return;
-          }
-        }
-        const transaction = journal?.begin(id);
-        if (code.trim()) {
-          const receipt = policy
-            ? (
-                await communityRequest<{ receipt: string }>(
-                  id,
-                  "accept-policy",
-                  {
-                    code: code.trim(),
-                    policy_version: policy.version,
-                    age_confirmed: adult,
-                  },
-                )
-              ).receipt
-            : undefined;
-          if (!current(transaction)) return;
-          const claim = await communityRequest<{ status: string }>(
-            id,
-            "claim",
-            { code: code.trim(), policy_receipt: receipt },
-          ).catch((reason: unknown) => {
-            const known =
-              reason instanceof Error &&
-              Object.hasOwn(CLAIM_REFUSALS, reason.message)
-                ? CLAIM_REFUSALS[reason.message as keyof typeof CLAIM_REFUSALS]
-                : undefined;
-            throw known ? new Error(known) : reason;
-          });
-          if (!["joined", "already_member"].includes(claim.status))
-            throw new Error("Membership was not confirmed");
-        }
-        if (!current(transaction)) return;
-        const found = await inspectProfile(id);
-        if (!current(transaction)) return;
-        showProfile(found, transaction);
+        // The admission follows the issuer reset, so Close waits from here.
+        beginWrite();
+        await askAgain(destination.url);
+        await admit(id, destination.url, policy);
       });
     } else {
       if (!profile.name.trim()) return;
       await work(async () => {
+        beginWrite();
         if (mode === "profile")
           communities.saveProfile({ ...profile, name: profile.name.trim() });
         else {
-          if (!destination) throw new Error("Choose a community first");
-          const transaction = journal?.begin(id, profile);
-          const found = journal ? await inspectProfile(id) : original;
-          if (!current(transaction)) return;
-          const next =
-            found?.exists && profilesEqual(profile, found.profile)
-              ? profile
-              : {
-                  ...profile,
-                  name: profile.name.trim(),
-                  about: profile.about?.trim() ?? "",
-                };
-          if (!found?.exists || !profilesEqual(next, found.profile)) {
-            await publishProfile(id, next, found?.existing ?? {});
-            if (!current(transaction)) return;
-            // An accepted replaceable event may already be superseded.
-            const confirmed = await inspectProfile(id);
-            if (!current(transaction)) return;
-            if (!confirmed.exists || !profilesEqual(confirmed.profile, next))
-              throw new Error(
-                "Your profile change is not current. Your edits are retained; try again.",
-              );
-          }
-          if (!current(transaction)) return;
-          communities.joined(
-            {
+          if (!destination || !original)
+            throw new Error("Choose a community first");
+          await askAgain(destination.url);
+          const done = await completeJoin({
+            community: id,
+            membership: {
               id,
               name:
                 info?.name && info.name !== "Buzz Relay"
@@ -241,9 +394,13 @@ export function CommunityDialog({
                 ? { icon: info.icon }
                 : {}),
             },
-            profileDefault(next, communities.snapshot().profile, id),
-          );
-          if (transaction) journal?.finish(transaction);
+            found: original,
+            journal,
+            publish: profile,
+            communities,
+            current,
+          });
+          if (!done) return;
           onJoined?.(id);
         }
         close();
@@ -255,14 +412,50 @@ export function CommunityDialog({
     mode === "join" &&
     !!original?.exists &&
     profilesEqual(profile, original.profile);
+  const refusalIdentity =
+    (destination && federatedIdentity?.forCommunity?.(destination.url)) ||
+    federatedIdentity;
+  // An explained refusal replaces the raw error, so it shows once.
+  const explained = useExplainedRefusal(refusalIdentity, error);
+  // A lookup only reads, so it can be cancelled; an admission it led to cannot.
+  const looking = busy && step === "destination" && !writing;
+  // While busy, the primary action names the operation its step started.
+  const [action, actionPending] =
+    step === "destination"
+      ? ["Continue", "Connecting…"]
+      : step === "access"
+        ? ["Continue", "Joining…"]
+        : mode === "profile"
+          ? ["Save profile", "Saving…"]
+          : keepsProfile
+            ? ["Continue", "Joining…"]
+            : ["Publish profile & open", "Publishing…"];
+
   return (
-    <Dialog
+    <JoinSurface
+      onboarding={onboarding}
       open
       dismissOnOutsideClick={false}
       onOpenChange={(next) => {
-        if (!next) close();
+        if (!next) leave();
       }}
-      preventClose={busy}
+      // A lookup only reads, so it can be left; an admission or publish cannot.
+      preventClose={writing}
+      initialFocus={(type) => {
+        // Controlled entry has no Base UI trigger to report touch modality.
+        touchOpening.current =
+          type === "touch" ||
+          !!window.matchMedia?.("(pointer: coarse)").matches;
+        const field =
+          step === "destination"
+            ? destinationInput.current
+            : step === "profile"
+              ? nameInput.current
+              : null;
+        return touchOpening.current
+          ? (field?.closest<HTMLElement>('[role="dialog"]') ?? null)
+          : field;
+      }}
       description={
         unavailable
           ? undefined
@@ -271,20 +464,49 @@ export function CommunityDialog({
               ? "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community."
               : "Use your identity across communities. Your profile and conversations stay separate in each one."
             : step === "access"
-              ? `Connect to ${destination?.name} with your Buzz identity.`
+              ? destination && (
+                  <span className="flex items-center gap-3 rounded-[var(--radius-row)] bg-surface-inset p-4">
+                    {info?.icon && (
+                      <Avatar
+                        alt=""
+                        src={info.icon}
+                        fallback={communityName(info.name, destination.name)}
+                        shape="squircle"
+                        size="large"
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 break-words text-body text-standard">
+                      <span>{communityName(info?.name, destination.name)}</span>
+                      <span className="block break-all text-body-sm text-subtle">
+                        {destination.url}
+                      </span>
+                    </span>
+                  </span>
+                )
               : mode === "profile"
                 ? "Your local default. Use it when joining communities; saving here does not publish changes to them."
                 : original?.exists
-                  ? "Your existing community profile is loaded. Keep it or update it here."
+                  ? undefined
                   : "Start with your local profile, or choose how you appear in this community."
       }
       leadingActions={
         !unavailable && (
-          <Button
+          <BackControl
             type="button"
-            disabled={busy || uploading}
+            disabled={(busy && !looking) || uploading}
             onClick={() => {
-              if (step === "destination" || mode === "profile") close();
+              if (looking && !onboarding) {
+                // Cancel keeps the address to correct or retry. The field is
+                // disabled while busy, so the busy=false render must commit
+                // before focus() can land on it.
+                flushSync(abandon);
+                destinationInput.current?.focus();
+              } else if (
+                step === "destination" ||
+                mode === "profile" ||
+                (submitted && step === "access")
+              )
+                leave();
               else {
                 setError("");
                 setStep(step === "profile" ? "access" : "destination");
@@ -293,14 +515,15 @@ export function CommunityDialog({
               }
             }}
           >
-            Back
-          </Button>
+            {onboarding ? undefined : looking ? "Cancel" : "Back"}
+          </BackControl>
         )
       }
       actions={
         !unavailable && (
           <Button
             variant="prominent"
+            {...(onboarding ? { size: "lg" as const } : {})}
             type="submit"
             form={formId}
             disabled={
@@ -313,15 +536,7 @@ export function CommunityDialog({
                   : !canSaveProfile(profile)))
             }
           >
-            {busy
-              ? "Working…"
-              : step === "profile"
-                ? mode === "profile"
-                  ? "Save profile"
-                  : keepsProfile
-                    ? "Open community"
-                    : "Publish profile & open"
-                : "Continue"}
+            {busy ? actionPending : action}
           </Button>
         )
       }
@@ -329,7 +544,7 @@ export function CommunityDialog({
         mode === "profile"
           ? "Your profile"
           : step === "profile"
-            ? `Your profile in ${info?.name && info.name !== "Buzz Relay" ? info.name : destination?.name}`
+            ? "Your profile"
             : connectionFrom
               ? "Edit connection"
               : "Join a community"
@@ -338,99 +553,111 @@ export function CommunityDialog({
       <form
         id={formId}
         noValidate
-        className="space-y-6"
+        className="w-full space-y-6 text-left"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
       >
-        {mode === "join" && step !== "destination" && destination && (
-          <p className={styles.note}>Community URL: {destination.url}</p>
-        )}
         {unavailable ? (
           <p>
             {client.status === "loading"
               ? "Opening your local identity…"
               : client.status === "ready"
                 ? "Your identity is ready, but connecting to communities is not available in this build yet. You can manage your local profile and identity in Settings."
-                : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See docs/contributing.md for requirements."}
+                : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See CONTRIBUTING.md for requirements."}
           </p>
         ) : (
           <>
-            {step === "destination" && (
-              <Field
-                label="Community URL"
-                error={error || undefined}
-                description={
-                  connectionFrom
-                    ? undefined
-                    : "Paste your community link. Continue shares your Buzz identity with the community so you can preview it before joining."
-                }
-              >
-                <Input
-                  type="url"
-                  required
-                  autoComplete="url"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  placeholder="wss://community.example.com"
-                  maxLength={2048}
-                  disabled={busy}
-                  value={url}
-                  onChange={(e) => {
-                    setUrl(e.target.value);
-                    setDestination(undefined);
-                    setCode("");
-                    setAgreed(false);
-                    setAdult(false);
-                    setInfo(undefined);
-                    setOriginal(undefined);
-                    setProfile(client.profile);
-                    setError("");
-                  }}
-                />
-              </Field>
+            {step === "destination" && submitted && busy ? (
+              <p role="status">Finding your community…</p>
+            ) : (
+              step === "destination" && (
+                <Field
+                  label="Community URL"
+                  error={(!explained && error) || undefined}
+                  description={
+                    connectionFrom
+                      ? undefined
+                      : "Paste your community link. Continue shares your Buzz identity with the community so you can preview it before joining."
+                  }
+                >
+                  <Input
+                    ref={destinationInput}
+                    type="url"
+                    required
+                    autoComplete="url"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    placeholder="wss://communities.buzz.xyz"
+                    maxLength={2048}
+                    disabled={busy}
+                    value={url}
+                    onChange={(e) => {
+                      setUrl(e.target.value);
+                      setProfileDraft(undefined);
+                      setDestination(undefined);
+                      setCode("");
+                      setNeedsInvite(false);
+                      setAgreed(false);
+                      setAdult(false);
+                      setInfo(undefined);
+                      setOriginal(undefined);
+                      setProfile(client.profile);
+                      setError("");
+                    }}
+                  />
+                </Field>
+              )
             )}
             {step === "access" && (
               <>
-                <Field label="Invite code (if required)">
-                  <Input
-                    disabled={busy}
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    placeholder="Existing members can leave this blank"
-                    maxLength={256}
-                  />
-                </Field>
-                {policy && (
+                {needsInvite && (
+                  <Field label="Invite code">
+                    <Input
+                      disabled={busy}
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      maxLength={256}
+                    />
+                  </Field>
+                )}
+                {policy && !consentGiven && (
                   <div className={styles.policy}>
-                    {policy.terms_markdown && (
-                      <a
-                        className="inline-flex items-center gap-1 self-start"
-                        href={`${destination?.url}/api/join-policy/terms`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Terms of Service
-                        <ArrowUpRightIcon size={16} aria-hidden="true" />
-                      </a>
-                    )}
-                    {policy.privacy_markdown && (
-                      <a
-                        className="inline-flex items-center gap-1 self-start"
-                        href={`${destination?.url}/api/join-policy/privacy`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Privacy Notice
-                        <ArrowUpRightIcon size={16} aria-hidden="true" />
-                      </a>
-                    )}
                     {(policy.terms_markdown || policy.privacy_markdown) && (
                       <Checkbox
                         checked={agreed}
+                        aria-label={`I agree to this community’s ${[policy.terms_markdown && "Terms of Service", policy.privacy_markdown && "Privacy Notice"].filter(Boolean).join(" and ")}.`}
                         onCheckedChange={setAgreed}
-                        label="I agree to this community’s Terms of Service and Privacy Notice."
+                        label={
+                          <>
+                            I agree to this community’s{" "}
+                            {policy.terms_markdown && (
+                              <a
+                                className="underline"
+                                href={`${destination?.url}/api/join-policy/terms`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Terms of Service
+                              </a>
+                            )}
+                            {policy.terms_markdown &&
+                              policy.privacy_markdown &&
+                              " and "}
+                            {policy.privacy_markdown && (
+                              <a
+                                className="underline"
+                                href={`${destination?.url}/api/join-policy/privacy`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Privacy Notice
+                              </a>
+                            )}
+                            .
+                          </>
+                        }
                       />
                     )}
                     {policy.age_attestation_required && (
@@ -442,29 +669,86 @@ export function CommunityDialog({
                     )}
                   </div>
                 )}
-                <p className={styles.note}>
-                  If access is denied, ask a community administrator for an
-                  invite code.
-                </p>
               </>
             )}
             {step === "profile" && (
               <ProfileFields
+                showAbout={!onboarding}
+                {...(onboarding
+                  ? { emptyAvatarStyle: "dotted-circle" as const }
+                  : {})}
+                nameRef={nameInput}
                 community={mode === "profile" ? undefined : id}
                 onBusyChange={setUploading}
                 profile={profile}
-                onChange={setProfile}
+                onChange={(next) => {
+                  setProfile(next);
+                  if (!destination) return;
+                  const after = journal?.get(destination.id)?.id;
+                  setProfileDraft({
+                    destination: destination.url,
+                    profile: next,
+                    ...(after ? { after } : {}),
+                  });
+                }}
                 disabled={busy}
               />
             )}
-            {error && step !== "destination" && (
+            {error && step !== "destination" && !explained && (
               <p role="alert" className={styles.error}>
                 {error}
               </p>
             )}
+            {error && (
+              <CommunitySignIn
+                identity={refusalIdentity}
+                error={error}
+                relay={destination?.url}
+                memberships={client.memberships}
+                // Continue asks the issuer again (`askAgain` in submit).
+                asksAgain={!!federatedIdentity?.askAgain}
+                // Sign-in only clears the refusal: Continue then runs the current
+                // step with current input, never one captured before the login.
+                retry={() => setError("")}
+              />
+            )}
           </>
         )}
       </form>
-    </Dialog>
+    </JoinSurface>
+  );
+}
+
+/** First-run joins share the admission form with Add community, without a modal. */
+function JoinSurface({
+  onboarding,
+  ...props
+}: DialogProps & { onboarding: boolean }) {
+  const titleId = useId();
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (onboarding && props.title) heading.current?.focus();
+  }, [onboarding, props.title]);
+  if (!onboarding) return <Dialog {...props} />;
+  return (
+    <OnboardingScreen
+      labelledBy={titleId}
+      intro={
+        <>
+          <h1 ref={heading} tabIndex={-1} id={titleId} className="text-heading">
+            {props.title}
+          </h1>
+          {props.description && (
+            <p className="text-body text-subtle">{props.description}</p>
+          )}
+        </>
+      }
+    >
+      {props.children}
+      <div data-onboarding-actions="" className="w-full">
+        {props.leadingActions}
+        {props.actions}
+      </div>
+    </OnboardingScreen>
   );
 }

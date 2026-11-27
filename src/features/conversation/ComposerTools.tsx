@@ -1,4 +1,5 @@
 import {
+  memo,
   useLayoutEffect,
   useRef,
   useState,
@@ -54,7 +55,8 @@ export function ComposerTools({
     </>
   );
 }
-function OwnedTool({
+// Props are stable across keystrokes when the host passes stable commands.
+const OwnedTool = memo(function OwnedTool({
   tool,
   registry,
   ...props
@@ -74,6 +76,7 @@ function OwnedTool({
         | "insertMention"
         | "insertMentions"
         | "replaceRecipients"
+        | "replaceRecipientsIfEmpty"
         | "insertResource"
         | "focus"
         | "capture"
@@ -108,6 +111,10 @@ function OwnedTool({
         active() ? current.current.insertMentions(recipients) : false,
       replaceRecipients: (recipients) =>
         active() ? current.current.replaceRecipients(recipients) : false,
+      replaceRecipientsIfEmpty: (recipients) =>
+        active()
+          ? (current.current.replaceRecipientsIfEmpty?.(recipients) ?? false)
+          : false,
       insertResource: (resource) =>
         active()
           ? current.current.insertResource(resource)
@@ -134,4 +141,4 @@ function OwnedTool({
       {...opener}
     />
   );
-}
+});

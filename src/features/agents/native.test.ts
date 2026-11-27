@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { hasEventProof } from "../relay/events";
-import { keypair, signed } from "../relay/testing";
-import { nativeAgents } from "./native";
+import { keypair, nativeSignatureChecks, signed } from "../relay/testing";
+import { nativeAgents, unconfirmedAgentEvent } from "./native";
+import { importedEmojiPicture } from "./import-picture";
+
+vi.mock("./import-picture", () => ({ importedEmojiPicture: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
@@ -12,20 +15,187 @@ vi.mock("@tauri-apps/api/core", () => ({
 const native = nativeAgents();
 if (!native) throw new Error("expected native agents under Tauri");
 const agent = keypair();
+const member = { pubkey: agent.pubkey, relay: "https://relay.example.test" };
 const message = signed(agent, { kind: 9, content: "hi", tags: [["h", "c"]] });
 const query = (response: unknown) => {
   vi.mocked(invoke).mockResolvedValueOnce(response);
-  return native.query(agent.pubkey, [{ kinds: [9] }]);
+  return native.query(member, [{ kinds: [9] }]);
 };
 
-it("admits the community's events through the relay verifier", async () => {
-  const events = await query([JSON.parse(JSON.stringify(message))]);
-  expect(events).toMatchObject([{ id: message.id, content: "hi" }]);
+beforeEach(() => {
+  vi.mocked(invoke)
+    .mockReset()
+    .mockImplementation(async (command, args) => {
+      if (command === "relay_verify_signatures")
+        return nativeSignatureChecks(args);
+      throw new Error(`Unexpected native command: ${command}`);
+    });
+});
+
+it("prepares the selected source's emoji before importing and passes back native upload notes", async () => {
+  const converted = {
+    source: "legacy-svg",
+    png: "data:image/png;base64,iVBORw0KGgo=",
+  };
+  vi.mocked(invoke)
+    .mockResolvedValueOnce({
+      agents: [
+        { source: "development", pubkey: agent.pubkey, picture: "other" },
+        { source: "installed", pubkey: agent.pubkey, picture: "legacy-svg" },
+      ],
+    })
+    .mockResolvedValueOnce({
+      agent: { pubkey: agent.pubkey },
+      carry: {},
+      notes: [],
+    });
+  vi.mocked(importedEmojiPicture).mockResolvedValueOnce(converted);
+  expect(
+    await native.port("installed", agent.pubkey, member.relay, "owner", "type"),
+  ).toMatchObject({ agent: { pubkey: agent.pubkey }, notes: [] });
+  expect(importedEmojiPicture).toHaveBeenLastCalledWith("legacy-svg");
+  expect(invoke).toHaveBeenLastCalledWith("app_agent_port", {
+    source: "installed",
+    pubkey: agent.pubkey,
+    destination: member.relay,
+    owner: "owner",
+    agentType: "type",
+    convertedPicture: converted,
+  });
+});
+
+it.each(["read", "render"])(
+  "still imports with native's warning after a %s failure",
+  async (failure) => {
+    if (failure === "read")
+      vi.mocked(invoke).mockRejectedValueOnce(new Error("Unreadable"));
+    else {
+      vi.mocked(invoke).mockResolvedValueOnce({
+        agents: [
+          { source: "installed", pubkey: agent.pubkey, picture: "legacy-svg" },
+        ],
+      });
+      vi.mocked(importedEmojiPicture).mockRejectedValueOnce(
+        new Error("No canvas"),
+      );
+    }
+    const result = {
+      agent: { pubkey: agent.pubkey },
+      carry: {},
+      notes: ["Picture was skipped"],
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(result);
+    expect(
+      await native.port(
+        "installed",
+        agent.pubkey,
+        member.relay,
+        "owner",
+        "type",
+      ),
+    ).toEqual(result);
+    expect(invoke).toHaveBeenLastCalledWith(
+      "app_agent_port",
+      expect.objectContaining({ convertedPicture: undefined }),
+    );
+  },
+);
+
+it("reads the signed id from an uncertain native publish outcome", () => {
+  const id = "a".repeat(64);
+  const uncertain = `Agent event ${id} unconfirmed; it may or may not have been accepted`;
+  expect(unconfirmedAgentEvent(new Error(uncertain))).toBe(id);
+  expect(unconfirmedAgentEvent(uncertain)).toBe(id);
+  expect(
+    unconfirmedAgentEvent(
+      new Error("The community refused the agent event: blocked"),
+    ),
+  ).toBeUndefined();
+});
+
+it("admits the query in relay order using native signature checks", async () => {
+  const reply = signed(agent, { kind: 9, content: "reply", tags: [] });
+  const response = JSON.parse(JSON.stringify([reply, message]));
+  const events = await query(response);
+  expect(events.map((event) => event.id)).toEqual([reply.id, message.id]);
   expect(events.every(hasEventProof)).toBe(true);
   expect(invoke).toHaveBeenCalledWith("app_agent_query", {
-    pubkey: agent.pubkey,
+    ...member,
     filters: [{ kinds: [9] }],
   });
+  expect(invoke).toHaveBeenCalledWith("relay_verify_signatures", {
+    claims: [reply, message].map(({ id, pubkey, sig }) => ({
+      id,
+      pubkey,
+      sig,
+    })),
+  });
+
+  vi.mocked(invoke).mockClear();
+  expect((await query(response)).map((event) => event.id)).toEqual([
+    reply.id,
+    message.id,
+  ]);
+  expect(invoke).toHaveBeenCalledTimes(1);
+
+  // A proof for this id cannot admit a different signature for the same body.
+  await expect(
+    query([reply, { ...message, sig: "0".repeat(128) }]),
+  ).rejects.toThrow(/malformed or invalidly signed/);
+});
+
+it("reads effective edit state through the agent-authenticated native query", async () => {
+  const edit = signed(agent, {
+    kind: 40003,
+    content: "no files",
+    tags: [
+      ["h", "c"],
+      ["e", message.id.toUpperCase()],
+    ],
+  });
+  vi.mocked(invoke).mockResolvedValueOnce({
+    effective_edit: 1,
+    original: message,
+    edit,
+  });
+  const current = await native.effectiveEdit(member, message.id, "c");
+  expect(current.id).toBe(edit.id);
+  expect(hasEventProof(current)).toBe(true);
+  expect(current.tags.filter((t) => t[0] === "imeta")).toEqual([]);
+  expect(invoke).toHaveBeenLastCalledWith("app_agent_query", {
+    ...member,
+    filters: [
+      {
+        kinds: [9, 40002, 40008, 45001, 45003],
+        ids: [message.id],
+        "#h": ["c"],
+        effective_edit: 1,
+        consistency: "strong",
+      },
+    ],
+  });
+});
+
+it.each([
+  ["old relay", [message]],
+  [
+    "unsigned original",
+    {
+      effective_edit: 1,
+      original: { ...message, sig: "0".repeat(128) },
+      edit: null,
+    },
+  ],
+  ["wrong channel", { effective_edit: 1, original: message, edit: null }],
+])("rejects effective state from %s", async (fault, response) => {
+  vi.mocked(invoke).mockResolvedValueOnce(response);
+  await expect(
+    native.effectiveEdit(
+      member,
+      message.id,
+      fault === "wrong channel" ? "other" : "c",
+    ),
+  ).rejects.toThrow();
 });
 
 it.each([
@@ -49,40 +219,47 @@ it("searches profile names natively and reports a community without the search",
   vi.mocked(invoke).mockResolvedValueOnce([
     JSON.parse(JSON.stringify(profile)),
   ]);
-  const found = await native.searchProfiles(agent.pubkey, "wes", 100);
+  const found = await native.searchProfiles(member, "wes", 100);
   expect(found).toMatchObject([{ id: profile.id }]);
   expect(found?.every(hasEventProof)).toBe(true);
-  expect(invoke).toHaveBeenLastCalledWith("app_agent_search_profiles", {
-    pubkey: agent.pubkey,
+  expect(invoke).toHaveBeenCalledWith("app_agent_search_profiles", {
+    ...member,
     query: "wes",
     limit: 100,
   });
+  expect(invoke).toHaveBeenCalledWith("relay_verify_signatures", {
+    claims: [{ id: profile.id, pubkey: profile.pubkey, sig: profile.sig }],
+  });
   vi.mocked(invoke).mockResolvedValueOnce(null);
-  expect(await native.searchProfiles(agent.pubkey, "wes", 100)).toBeUndefined();
+  expect(await native.searchProfiles(member, "wes", 100)).toBeUndefined();
   vi.mocked(invoke).mockResolvedValueOnce([
     { ...profile, sig: "0".repeat(128) },
   ]);
-  await expect(native.searchProfiles(agent.pubkey, "wes", 100)).rejects.toThrow(
+  await expect(native.searchProfiles(member, "wes", 100)).rejects.toThrow(
     /malformed or invalidly signed/,
   );
 });
 
-it("forwards the typed current-audience query without treating its envelope as events", async () => {
-  const destination = "22222222-2222-4222-8222-222222222222";
-  const source = "33333333-3333-4333-8333-333333333333";
-  const envelope = { audience_authority: 1 };
-  vi.mocked(invoke).mockResolvedValueOnce(envelope);
-  expect(
-    await native.audienceAuthority?.(agent.pubkey, destination, [source]),
-  ).toBe(envelope);
-  expect(invoke).toHaveBeenLastCalledWith("app_agent_query", {
-    pubkey: agent.pubkey,
-    filters: [
-      {
-        kinds: [39000, 39002],
-        consistency: "strong",
-        audience_authority: { version: 1, destination, sources: [source] },
-      },
-    ],
+it("keeps managed attachment hints out of the signed event and preserves absent-context IPC", async () => {
+  vi.mocked(invoke).mockReset().mockResolvedValue(message);
+  const template = { kind: 9, content: "attachment", tags: [["h", "c"]] };
+  const managedAttachments = [
+    {
+      path: "/saved/file",
+      sha256: "a".repeat(64),
+      size: 5,
+      url: "https://example.test/media",
+    },
+  ];
+  await native.publish(member, template, { managedAttachments });
+  expect(invoke).toHaveBeenLastCalledWith("app_agent_publish", {
+    ...member,
+    event: template,
+    managedAttachments,
+  });
+  await native.publish(member, template);
+  expect(invoke).toHaveBeenLastCalledWith("app_agent_publish", {
+    ...member,
+    event: template,
   });
 });

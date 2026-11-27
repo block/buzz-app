@@ -1,3 +1,4 @@
+import { activityRow } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, settle, virtuaIdle } from "./timeline.mjs";
 import {
@@ -30,10 +31,10 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
       }),
     )
     .toEqual({ status: "reconciled", completeness: "snapshot" });
-  await page.getByRole("button", { name: "Inbox", exact: true }).click();
-  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  await activityRow(page).click();
+  const inbox = page.getByRole("region", { name: "Activity", exact: true });
   const dm = inbox
-    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("list", { name: "Activity", exact: true })
     .getByRole("listitem")
     .filter({ hasText: "Inbox DM fixture reply" });
   await expect(dm.getByRole("img", { name: "Unread" })).toBeVisible();
@@ -80,8 +81,7 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   await expect(dm.getByRole("img", { name: "Unread" })).toHaveCount(0);
 
   const filter = inbox.getByRole("button", {
-    name: "Inbox filters",
-    exact: true,
+    name: /^From /,
   });
   await filter.focus();
   await page.clock.install({ time: base });
@@ -106,7 +106,7 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
   await settle(page, history);
   await expect(composer).toBeFocused();
   const dmRow = inbox
-    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("list", { name: "Activity", exact: true })
     .getByRole("listitem")
     .filter({ hasText: incoming.content });
   await expect(dmRow.getByRole("img", { name: "Unread" })).toBeVisible();

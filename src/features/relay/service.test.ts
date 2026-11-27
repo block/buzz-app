@@ -1,6 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { provideRelay } from "./service";
+import { ReadError } from "./errors";
+import { matchesEvent } from "./projection";
+import { sendWithOwnerMentions } from "./owner-mentions";
 import type { ReadTransport } from "./transport";
 import {
   flush,
@@ -9,7 +12,13 @@ import {
   roster,
   bounds,
   scriptedTransport,
+  signed,
 } from "./testing";
+
+vi.mock("./outbox-storage", async (original) => ({
+  ...(await original<typeof import("./outbox-storage")>()),
+  browserOutboxStorage: () => ({ load: () => [], save: () => {} }),
+}));
 
 const roots: Context[] = [];
 function root() {
@@ -53,6 +62,32 @@ it("shares a session above plugin lifetimes, rather than one store per consumer"
   expect(data.snapshot().status).toBe("ready");
   expect(connect).toHaveBeenCalledTimes(1);
   expect(source.query).toHaveBeenCalledTimes(1);
+});
+it("publishes the community ID its transport read, and reads it again for a new session", async () => {
+  const ctx = root();
+  const reads = (communityId?: string): ReadTransport => ({
+    ...transport("viewer"),
+    readState: {
+      ...(communityId ? { communityId } : {}),
+      decode: async () => [],
+    },
+  });
+  const connect = vi
+    .fn()
+    .mockResolvedValueOnce(reads("22222222-2222-4222-8222-222222222222"))
+    .mockResolvedValueOnce(reads());
+  const data = provideRelay(ctx, connect);
+  await flush();
+  expect(data.snapshot()).toMatchObject({
+    status: "ready",
+    communityId: "22222222-2222-4222-8222-222222222222",
+  });
+  const first = data.snapshot().session;
+  data.retry();
+  await flush();
+  await vi.waitFor(() => expect(data.snapshot().session).not.toBe(first));
+  expect(data.snapshot().status).toBe("ready");
+  expect(data.snapshot().communityId).toBeUndefined();
 });
 it("keeps app startup demand-driven while retaining hover preparation and cached opening", async () => {
   const viewer = keypair();
@@ -125,4 +160,228 @@ it("times out a stalled connection and releases timers on app disposal", async (
   expect(vi.getTimerCount()).toBe(2);
   await ctx.fiber.dispose();
   expect(vi.getTimerCount()).toBe(0);
+});
+it("reconnects a connection the federated session refused once it is signed in", async () => {
+  const ctx = root();
+  const connect = vi
+    .fn<() => Promise<ReadTransport>>()
+    .mockRejectedValueOnce(new Error("Federated sign-in is required"))
+    .mockResolvedValue(transport("viewer"));
+  const data = provideRelay(ctx, connect);
+  await flush();
+  expect(data.snapshot().status).toBe("error");
+  data.reauthorize();
+  await flush();
+  expect(connect).toHaveBeenCalledTimes(2);
+  expect(data.snapshot().status).toBe("ready");
+});
+it("makes Try again ask the issuer again for a refused connection before reconnecting", async () => {
+  const ctx = root();
+  const order: string[] = [];
+  const listeners = new Set<(kind: "sign-in" | "access") => void>();
+  const connect = vi.fn(async (): Promise<ReadTransport> => {
+    order.push("connect");
+    return {
+      ...transport("viewer"),
+      scope: "https://relay.example",
+      observeRefusal(listener) {
+        listeners.add(listener);
+        return () => void listeners.delete(listener);
+      },
+    };
+  });
+  const askAgain = vi.fn(async (relay: string) => {
+    order.push(`ask again ${relay}`);
+  });
+  const data = provideRelay(
+    ctx,
+    connect,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    askAgain,
+  );
+  await flush();
+  for (const listener of [...listeners]) listener("access");
+  await flush();
+  expect(data.snapshot()).toMatchObject({ status: "error", denied: true });
+  // An automatic reconnect does not ask.
+  data.retry();
+  await flush();
+  expect(askAgain).not.toHaveBeenCalled();
+  for (const listener of [...listeners]) listener("access");
+  await flush();
+  data.tryAgain();
+  // The attempt starts at once, so a route retried next sees it under way.
+  expect(data.snapshot().status).toBe("connecting");
+  // A second press while it runs joins it, but still asks, so an attempt
+  // already past its own ask can't repeat a cached refusal.
+  data.tryAgain();
+  await flush();
+  const ask = `ask again ${data.snapshot().origin}`;
+  expect(order).toEqual(["connect", "connect", ask, ask, "connect"]);
+  expect(data.snapshot().origin).toMatch(/relay\.example/);
+  expect(data.snapshot().status).toBe("ready");
+});
+it("makes Try again on a ready connection retry what failed, without reconnecting", async () => {
+  const ctx = root();
+  const connect = vi.fn(async () => transport("viewer"));
+  const askAgain = vi.fn(async () => {
+    throw new Error("unavailable");
+  });
+  const data = provideRelay(
+    ctx,
+    connect,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    askAgain,
+  );
+  await flush();
+  const recovery = data.snapshot().session.recovery;
+  expect(recovery?.snapshot().reauthorized ?? 0).toBe(0);
+  data.tryAgain();
+  await flush();
+  // A failed ask still retries: every failed read and the live socket.
+  expect(askAgain).toHaveBeenCalledOnce();
+  expect(recovery?.snapshot().reauthorized).toBe(1);
+  expect(connect).toHaveBeenCalledTimes(1);
+});
+it("asks a live socket that may have died during sleep to answer", async () => {
+  vi.useFakeTimers();
+  const check = vi.fn();
+  const source: ReadTransport = {
+    ...transport("viewer"),
+    subscribe: () => ({ update() {}, retry() {}, check, dispose() {} }),
+  };
+  const data = provideRelay(root(), async () => source);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(data.snapshot().status).toBe("ready");
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(check).not.toHaveBeenCalled();
+  // Timers stop while the machine sleeps, so the clock jumps between ticks.
+  vi.setSystemTime(Date.now() + 60_000);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(check).toHaveBeenCalledTimes(1);
+});
+
+it("turns a community refusal heard after connecting into one denied connection", async () => {
+  const ctx = root();
+  const listeners = new Set<(kind: "sign-in" | "access") => void>();
+  const refusing = (): ReadTransport => ({
+    ...transport("viewer"),
+    scope: "https://relay.example",
+    observeRefusal(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  });
+  const connect = vi.fn(async () => refusing());
+  const data = provideRelay(ctx, connect);
+  await flush();
+  expect(data.snapshot().status).toBe("ready");
+  const ready = data.snapshot().session;
+  for (const listener of [...listeners]) listener("sign-in");
+  // A second refusal from the same connection changes nothing.
+  for (const listener of [...listeners]) listener("access");
+  await flush();
+  expect(data.snapshot()).toMatchObject({
+    status: "error",
+    denied: true,
+    refusal: "sign-in",
+    viewer: "viewer",
+    error: "Federated sign-in is required",
+  });
+  expect(data.snapshot().retrying).toBeUndefined();
+  expect(data.snapshot().session).not.toBe(ready);
+  // Nothing reconnects by itself; signing in does, and the old connection's
+  // listener is gone.
+  expect(connect).toHaveBeenCalledTimes(1);
+  data.reauthorize();
+  await flush();
+  expect(connect).toHaveBeenCalledTimes(2);
+  expect(data.snapshot().status).toBe("ready");
+  expect(listeners.size).toBe(1);
+});
+
+it("retains owner proof through a transient reconnect and forgets it after an access refusal during reconnect", async () => {
+  const viewer = keypair();
+  const relay = keypair();
+  const peer = keypair();
+  const discovery = [
+    roster(relay, "c", [viewer.pubkey, peer.pubkey]),
+    metadata(relay, "c", "General"),
+  ];
+  const connection: ReadTransport = {
+    ...transport(viewer.pubkey),
+    relayAuthor: relay.pubkey,
+    scope: "https://relay.example",
+    query: async (filters) =>
+      discovery.filter((event) =>
+        filters.some((filter) => matchesEvent(event, filter)),
+      ),
+    writer: {
+      sign: async (event) => signed(viewer, event),
+      publish: async () => {},
+    },
+  };
+  const connect = vi
+    .fn<() => Promise<ReadTransport>>()
+    .mockResolvedValueOnce(connection)
+    .mockRejectedValueOnce(new ReadError("unavailable", "Network unavailable"))
+    .mockResolvedValueOnce(connection)
+    .mockRejectedValueOnce(
+      new ReadError("denied", "restricted: authorization denied", 403),
+    )
+    .mockResolvedValue(connection);
+  const data = provideRelay(root(), connect);
+  const source = { channelId: "c", rootId: null };
+  const ready = async () => {
+    await vi.waitFor(() => {
+      const snapshot = data.snapshot();
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.session.channels.get?.("c")?.members).toContain(
+        viewer.pubkey,
+      );
+    });
+    return data.snapshot().session;
+  };
+  const first = await ready();
+  const id = sendWithOwnerMentions(first, [peer.pubkey], () =>
+    first.messages.send("c", "@Peer hello", [peer.pubkey]),
+  );
+  await vi.waitFor(() =>
+    expect(first.ownerMentions?.latest(source)?.eventId).toBe(id),
+  );
+
+  data.retry();
+  await vi.waitFor(() =>
+    expect(data.snapshot()).toMatchObject({ status: "error", retrying: true }),
+  );
+  data.retry();
+  const recovered = await ready();
+  expect(recovered).not.toBe(first);
+  expect(recovered.ownerMentions?.latest(source)?.eventId).toBe(id);
+  expect(recovered.ownerMentions?.confirmedOwnerSends(source, [id])).toEqual([
+    id,
+  ]);
+
+  data.retry();
+  await vi.waitFor(() =>
+    expect(data.snapshot()).toMatchObject({
+      status: "error",
+      denied: true,
+      refusal: "access",
+    }),
+  );
+  data.tryAgain();
+  const restored = await ready();
+  expect(restored.ownerMentions?.latest(source)).toBeNull();
+  expect(restored.ownerMentions?.confirmedOwnerSends(source, [id])).toEqual([]);
 });

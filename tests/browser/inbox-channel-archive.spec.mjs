@@ -19,10 +19,10 @@ test("excludes a channel-archived conversation across reload without clearing lo
   app,
 }) => {
   await page.goto(app.origin);
-  await openPage(page, "Inbox");
-  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  await openPage(page, "Activity");
+  const inbox = page.getByRole("region", { name: "Activity", exact: true });
   const rows = inbox
-    .getByRole("list", { name: "Inbox conversations" })
+    .getByRole("list", { name: "Activity", exact: true })
     .getByRole("listitem");
   await expect(rows).toHaveCount(1);
   await rows.getByRole("button", { name: /^Open / }).click();
@@ -32,7 +32,7 @@ test("excludes a channel-archived conversation across reload without clearing lo
   ).toBeVisible();
   await expect(rows.getByRole("img", { name: "Unread" })).toHaveCount(0);
   await rows.getByRole("button", { name: /^Open / }).click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Mark unread" }).click();
+  await page.getByRole("menuitem", { name: "Mark as unread" }).click();
   await expect(rows.getByRole("img", { name: "Unread" })).toBeVisible();
 
   // Navigate to ordinary Channels without earning another Inbox read.
@@ -58,14 +58,14 @@ test("excludes a channel-archived conversation across reload without clearing lo
       exact: true,
     }),
   ).toHaveCount(0);
-  await openPage(page, "Inbox");
+  await openPage(page, "Activity");
   await expect(
     inbox.getByText("No recent activity in this view", { exact: true }),
   ).toBeVisible();
   await expect(rows).toHaveCount(0);
   await expect(detail).toHaveCount(0);
   await page.reload();
-  await openPage(page, "Inbox");
+  await openPage(page, "Activity");
   await expect(
     inbox.getByText("No recent activity in this view", { exact: true }),
   ).toBeVisible();
@@ -77,16 +77,21 @@ test("excludes a channel-archived conversation across reload without clearing lo
   await search.getByRole("combobox").fill("Lifecycle channel");
   await search
     .getByRole("option", {
-      name: "Lifecycle channel Archived channel",
+      name: "Lifecycle channel Archived channel · 1 member",
       exact: true,
     })
     .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Archived channel", exact: true })
+      .getByText(/^This channel is archived\b/),
+  ).toBeVisible();
   await expect(
     page.getByRole("textbox", {
       name: "Message #Lifecycle channel",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await expect(
     page.locator(`[data-message-id="${app.inboxWindow.root.id}"]`),
   ).toBeVisible();
@@ -107,7 +112,7 @@ test("excludes a channel-archived conversation across reload without clearing lo
       exact: true,
     }),
   ).toHaveCount(0);
-  await openPage(page, "Inbox");
+  await openPage(page, "Activity");
   await expect(rows).toHaveCount(1);
   await expect(rows.getByRole("img", { name: "Unread" })).toBeVisible();
   await expect(detail).toHaveCount(0);

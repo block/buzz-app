@@ -1,6 +1,8 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle, wheel } from "./timeline.mjs";
+import { frames, open, settle, wheel } from "./timeline.mjs";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools";
+import { animationsSettled } from "./animations.mjs";
+import { markAllRead } from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -19,9 +21,12 @@ test("thread stays beside the channel whenever both panes fit", async ({
 }, testInfo) => {
   await open(page, app);
   await page.getByRole("separator", { name: "Resize sidebar" }).press("Home");
+  // A narrow thread covers the channel, removing it from the accessibility
+  // tree; its geometry still applies.
   const channel = page.getByRole("article", {
     name: "Conversation",
     exact: true,
+    includeHidden: true,
   });
   const input = channel.getByRole("textbox", { name: "Message #Alpha" });
   const draft =
@@ -39,12 +44,21 @@ test("thread stays beside the channel whenever both panes fit", async ({
     exact: true,
   });
   await expect(thread).toBeVisible();
+  const resize = page.getByRole("separator", {
+    name: "Resize main and secondary panels",
+  });
+  await resize.focus();
+  await resize.press("End");
+  await thread
+    .getByRole("textbox", { name: "Reply to thread", exact: true })
+    .fill("A thread draft");
 
   for (const [width, scale, mode] of [
     [1000, 1, "light"],
     [900, 0.8, "dark"],
     [1440, 1.5, "light"],
   ]) {
+    const layout = `${width}px, scale ${scale}, ${mode} mode`;
     await page.evaluate(
       ({ scale, mode }) => {
         localStorage.setItem("buzz-font-scale.v1", String(scale));
@@ -60,9 +74,21 @@ test("thread stays beside the channel whenever both panes fit", async ({
       "font-size",
       `${16 * scale}px`,
     );
+    await frames(page);
+    await animationsSettled(page.locator(":has(> [data-panel-dock])"));
     const bounds = await channel.boundingBox();
     const pane = await thread.boundingBox();
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(pane.x);
+    expect(
+      bounds.x + bounds.width,
+      `Channel and thread separation at ${layout}`,
+    ).toBeLessThanOrEqual(pane.x);
+    expect(
+      pane.x + pane.width,
+      `Thread right edge at ${layout}`,
+    ).toBeLessThanOrEqual(width);
+    await thread
+      .getByRole("button", { name: "Send message", exact: true })
+      .click({ trial: true });
     await expect(input).toHaveText(draft.trimEnd());
     await channel
       .getByRole("button", { name: "Send message", exact: true })
@@ -94,6 +120,163 @@ test("thread stays beside the channel whenever both panes fit", async ({
   ).toBeHidden();
 });
 
+test("thread splitter tracks the conversation reserve as interface size changes", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, app);
+  await page.getByRole("separator", { name: "Resize sidebar" }).press("Home");
+  const conversation = page.getByRole("article", {
+    name: "Conversation",
+    exact: true,
+  });
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  await conversation
+    .locator(`[data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  const resize = page.getByRole("separator", {
+    name: "Resize main and secondary panels",
+  });
+  await expect(resize).toBeVisible();
+  const surface = page.getByRole("region", { name: "Channels", exact: true });
+  await surface.evaluate((element) => {
+    element.style.inlineSize = `${element.clientWidth}px`;
+  });
+  const board = page.locator(":has(> [data-panel-dock])");
+  const measure = async (step) => {
+    await frames(page);
+    await animationsSettled(board);
+    await frames(page);
+    const geometry = await resize.evaluate((handle) => {
+      const dock = handle.parentElement;
+      const workspace = dock.parentElement;
+      const { x, right, width } = dock.getBoundingClientRect();
+      return {
+        available: workspace.clientWidth,
+        min: Number(handle.getAttribute("aria-valuemin")),
+        max: Number(handle.getAttribute("aria-valuemax")),
+        now: Number(handle.getAttribute("aria-valuenow")),
+        pane: { x, right, width },
+        main: workspace
+          .querySelector('[aria-label="Conversation"]')
+          .getBoundingClientRect().width,
+      };
+    });
+    console.log(`Thread splitter ${step}: ${JSON.stringify(geometry)}`);
+    return geometry;
+  };
+
+  await expect(page.locator("html")).toHaveCSS("font-size", "16px");
+  await resize.press("ArrowLeft");
+  const normal = await measure("100% submax");
+  expect(normal.max).toBe(normal.available - 320);
+  expect(normal.now).toBeLessThan(normal.max);
+
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty("--buzz-text-scale", "1.5");
+  });
+  await expect(page.locator("html")).toHaveCSS("font-size", "24px");
+  const scaled = await measure("150% submax (root change only)");
+  expect.soft(scaled.available).toBe(normal.available);
+  expect.soft(scaled.now).toBe(normal.now);
+  expect.soft(scaled.max).toBe(scaled.available - 480);
+
+  await surface.evaluate((element) => {
+    element.style.removeProperty("inline-size");
+  });
+  await measure("150% unpinned submax");
+  await resize.press("End");
+  const end = await measure("150% End");
+  expect.soft(end.now).toBe(Math.round(end.pane.width));
+  expect.soft(end.max).toBe(end.now);
+  expect.soft(end.pane.right).toBeLessThanOrEqual(1440);
+  expect.soft(end.main).toBeCloseTo(480);
+
+  await resize.press("Home");
+  await measure("150% Home");
+
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await thread
+    .getByRole("textbox", { name: "Reply to thread", exact: true })
+    .fill("A thread draft");
+  for (const [viewport, scale] of [
+    [808, 0.8],
+    [872, 0.9],
+    [808, 12.825 / 16],
+  ]) {
+    await page.evaluate((scale) => {
+      document.documentElement.style.setProperty("--buzz-text-scale", scale);
+    }, String(scale));
+    await page.setViewportSize({ width: viewport, height: 900 });
+    await expect(page.locator("html")).toHaveCSS(
+      "font-size",
+      `${16 * scale}px`,
+    );
+    const sidebar = page.getByRole("separator", { name: "Resize sidebar" });
+    await sidebar.press("Home");
+    await expect(sidebar).toHaveAttribute(
+      "aria-valuenow",
+      await sidebar.getAttribute("aria-valuemin"),
+    );
+    await expect(resize).toBeVisible();
+    await resize.press("End");
+    const narrow = await measure(`${scale * 100}% ${viewport}px End`);
+    if (scale === 12.825 / 16) {
+      const precision = await board.evaluate((workspace) => {
+        const container = workspace.closest('[aria-label="Channels"]');
+        const insets = (element) => {
+          const style = getComputedStyle(element);
+          return [
+            style.paddingLeft,
+            style.paddingRight,
+            style.borderLeftWidth,
+            style.borderRightWidth,
+          ].map(Number.parseFloat);
+        };
+        const probe = document.createElement("div");
+        probe.style.cssText = "position:absolute;width:100cqw;height:0";
+        workspace.append(probe);
+        const cqw = probe.getBoundingClientRect().width;
+        probe.remove();
+        return {
+          fontSize: getComputedStyle(document.documentElement).fontSize,
+          queryContainer: getComputedStyle(container).containerType,
+          containerWidth: container.getBoundingClientRect().width,
+          containerInsets: insets(container),
+          boardWidth: workspace.getBoundingClientRect().width,
+          boardInsets: insets(workspace),
+          clientWidth: workspace.clientWidth,
+          cqw,
+        };
+      });
+      console.log(`Thread fractional workspace: ${JSON.stringify(precision)}`);
+      expect(precision.fontSize).toBe("12.825px");
+      expect(precision.queryContainer).toBe("inline-size");
+      expect(precision.containerInsets).toEqual([0, 0, 0, 0]);
+      expect(precision.boardInsets).toEqual([0, 0, 0, 0]);
+      expect(precision.containerWidth).toBe(539.546875);
+      expect(precision.boardWidth).toBe(precision.cqw);
+      expect(precision.boardWidth).toBe(precision.containerWidth);
+      expect(precision.clientWidth).toBe(540);
+    }
+    expect.soft(narrow.min).toBeLessThanOrEqual(narrow.now);
+    expect.soft(narrow.now).toBe(narrow.max);
+    expect.soft(narrow.max).toBe(Math.round(narrow.pane.width));
+    expect.soft(narrow.pane.right).toBeLessThanOrEqual(viewport);
+    await thread
+      .getByRole("button", { name: "Send message", exact: true })
+      .click({ trial: true });
+    await expect(resize).toBeVisible();
+  }
+});
+
 // Browser-only: child-only activity layout and composer resizing must preserve
 // bottom/reading intent, including intermediate rendering opportunities.
 test("thread preserves bottom and reading position through activity and composer resizing", async ({
@@ -114,6 +297,7 @@ test("thread preserves bottom and reading position through activity and composer
     .find((row) => row.content.startsWith("Thread root"));
   for (let i = 0; i < 30; i++) app.reply(root.id, false, false);
   await open(page, app);
+  await markAllRead(page);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.serveProfile(key, { name: "Diagnostic Agent", is_agent: true });
   const rootRow = page.locator(
@@ -132,9 +316,23 @@ test("thread preserves bottom and reading position through activity and composer
   });
   const gap = () =>
     history.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
+  // The thread corrects each resize in its ResizeObserver, which runs only in
+  // a rendering update. Those can be sparse (Linux WebKit under load), so
+  // geometry can rest with a correction still pending; render before settling.
+  const settled = async () => {
+    await frames(page);
+    await settle(page, history);
+  };
+  // Activity grows in and leaves over several rendering updates. Leaving hides
+  // its region at once, but it stays mounted until its animation ends; its
+  // removal is the last resize.
+  const arrived = (row) =>
+    animationsSettled(row.locator("[data-message-activity]"));
+  const left = (row) =>
+    expect(row.locator("[data-message-activity]")).toHaveCount(0);
   await expect(history.locator("[data-message-id]")).toHaveCount(33);
   await expect.poll(gap).toBeLessThan(4);
-  await settle(page, history);
+  await settled();
 
   // Observe layout delivery after the app's observer, before paint. Sampling
   // in a task can instead catch a newer DOM mutation awaiting its next layout.
@@ -185,11 +383,11 @@ test("thread preserves bottom and reading position through activity and composer
     await expect(
       history.getByText("Short send", { exact: true }),
     ).toBeVisible();
-    await settle(page, history);
+    await settled();
     await input.fill(
       `Multiline send\n${"Another line of the draft\n".repeat(8)}`,
     );
-    await settle(page, history);
+    await settled();
     expect(await gap()).toBeLessThan(4);
     await input.press("Enter");
     await expect(input).toHaveText("");
@@ -203,13 +401,12 @@ test("thread preserves bottom and reading position through activity and composer
     await expect(
       sent.getByRole("region", { name: "Agent activity on this message" }),
     ).toBeVisible();
-    await settle(page, history);
+    await arrived(sent);
+    await settled();
     expect(await gap()).toBeLessThan(4);
     stop("bottom");
-    await expect(
-      sent.getByRole("region", { name: "Agent activity on this message" }),
-    ).toHaveCount(0);
-    await settle(page, history);
+    await left(sent);
+    await settled();
     expect(await gap()).toBeLessThan(4);
     const samples = await sampling.evaluate((state) => {
       state.stop();
@@ -259,7 +456,7 @@ test("thread preserves bottom and reading position through activity and composer
     };
   });
   const unchanged = async () => {
-    await settle(page, history);
+    await settled();
     expect(
       await history.evaluate((el, anchor) => {
         const row = el.querySelector(`[data-message-id="${anchor.id}"]`);
@@ -272,23 +469,19 @@ test("thread preserves bottom and reading position through activity and composer
     ).toBeLessThan(4);
   };
   // Activity above the reader is a child-only reflow, not a thread snapshot.
+  const threadRoot = history.locator(`[data-message-id="${root.id}"]`);
   start(root.id, "reading");
   await expect(
-    history
-      .locator(`[data-message-id="${root.id}"]`)
-      .getByRole("region", { name: "Agent activity on this message" }),
+    threadRoot.getByRole("region", { name: "Agent activity on this message" }),
   ).toHaveCount(1);
+  await arrived(threadRoot);
   await unchanged();
   await input.fill("Growing draft\n".repeat(8));
   await unchanged();
   await input.fill("");
   await unchanged();
   stop("reading");
-  await expect(
-    history
-      .locator(`[data-message-id="${root.id}"]`)
-      .getByRole("region", { name: "Agent activity on this message" }),
-  ).toHaveCount(0);
+  await left(threadRoot);
   await unchanged();
 });
 
@@ -336,7 +529,7 @@ test.describe("exact history resize ownership", () => {
     const held = new Promise((r) => (release = r)),
       seen = new Promise((r) => (intercepted = r));
     let first = true;
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       if (
         !first ||
         !route
@@ -423,9 +616,11 @@ test.describe("exact history resize ownership", () => {
       );
       await seen;
       await expect(target).toBeFocused();
-      for (let i = 0; i < 15; i++) reply();
+      // Enough replies to fill the history well past its viewport, so the
+      // target at its top is not also at the latest reply.
+      for (let i = 0; i < 30; i++) reply();
       await expect(
-        history.getByText("Review live reply 14", { exact: true }),
+        history.getByText("Review live reply 29", { exact: true }),
       ).toHaveCount(1);
       await page.evaluate(() => window.releaseExactReveal());
       await settle(page, history);
@@ -483,7 +678,7 @@ test.describe("exact history resize ownership", () => {
           for (const [name, original] of Object.entries(originals))
             Node.prototype[name] = function (node, ...rest) {
               const result = original.call(this, node, ...rest);
-              if (node?.textContent?.includes("Review live reply 15")) {
+              if (node?.textContent?.includes("Review live reply 30")) {
                 Object.assign(Node.prototype, originals);
                 if (contract) {
                   const scroller = el.closest('[aria-label="Thread messages"]');
@@ -503,7 +698,7 @@ test.describe("exact history resize ownership", () => {
       }
       reply();
       await expect(
-        history.getByText("Review live reply 15", { exact: true }),
+        history.getByText("Review live reply 30", { exact: true }),
       ).toHaveCount(1);
       await settle(page, history);
       if (shift === "contraction after reading")

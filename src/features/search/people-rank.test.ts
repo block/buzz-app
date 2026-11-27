@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import { noSearchUsage, type SearchUsage } from "./usage";
 import { personKey, rankPeople, type PersonCandidate } from "./people-rank";
 
@@ -37,6 +38,28 @@ it("matches display names and usernames with the shared name rule", () => {
   expect(order(people, "hel")).toEqual([]);
 });
 
+const sam = "a".repeat(64);
+it.each([
+  ["hex key", sam],
+  ["uppercase hex key", sam.toUpperCase()],
+  ["npub", npubEncode(sam)],
+  ["nostr: npub", `nostr:${npubEncode(sam)}`],
+])(
+  "keeps only the person a typed %s names, as an exact match",
+  (_case, key) => {
+    const people = [
+      person("b".repeat(64), "Alex Stone", { relationship: 0 }),
+      person(sam, "Sam Rivera"),
+    ];
+    // Score -2 is an exact match (rank 0), ahead of every other row.
+    expect(
+      rankPeople(people, key, noSearchUsage, undefined).map(
+        ({ person, score }) => [person.label, score],
+      ),
+    ).toEqual([["Sam Rivera", -2]]);
+  },
+);
+
 it("ranks an exact name first, then relationship bands, as New message does", () => {
   const people = [
     person("dm", "Sam Ortiz", { relationship: 0 }),
@@ -61,6 +84,36 @@ it("puts the earlier choice for this text and usage ahead, within the order", ()
   expect(order(people, "dana", usage)).toEqual(["Dana Two", "Dana One"]);
 });
 
+it.each(["", " \t "])(
+  "orders idle suggestions by relationship and usage for %j",
+  (needle) => {
+    const people = [
+      person("stranger", "Stranger"),
+      person("managed", "Managed", { agent: true, relationship: 2 }),
+      person("visited", "Visited", { agent: true, relationship: 2 }),
+      person("other-dm", "Other DM", { relationship: 0 }),
+      person("dm", "Direct", {
+        relationship: 0,
+        usageKeys: [personKey("dm"), "channel:dm"],
+      }),
+    ];
+    const usage: SearchUsage = {
+      boost: (...keys) =>
+        keys.includes(personKey("visited")) || keys.includes("channel:dm")
+          ? 1
+          : 0,
+      pick: () => undefined,
+    };
+    expect(order(people, needle, usage)).toEqual([
+      "Direct",
+      "Other DM",
+      "Visited",
+      "Managed",
+      "Stranger",
+    ]);
+  },
+);
+
 it("ranks a hidden agent name after shown names, as mentions do", () => {
   const people = [
     person("agent", "Helper Bot", {
@@ -82,4 +135,15 @@ it("keeps the given order for ties, as New message keeps the directory's", () =>
   expect(order(people, "kim")).toEqual(["Kim Park", "Kim Lee"]);
   expect(order(people, "z")).toEqual(["Zed Agent"]);
   expect(order([...people].reverse(), "kim")).toEqual(["Kim Lee", "Kim Park"]);
+});
+
+it("matches a verified full name like the label", () => {
+  const people = [
+    person("a", "fname", { fullName: "Fake Name" }),
+    person("b", "Fake"),
+  ];
+  expect(order(people, "name")).toEqual(["fname"]);
+  expect(order(people, "fake n")).toEqual(["fname"]);
+  // An exact shown name still comes first.
+  expect(order(people, "fake")).toEqual(["Fake", "fname"]);
 });

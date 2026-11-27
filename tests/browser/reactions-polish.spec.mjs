@@ -1,22 +1,213 @@
 import { expect } from "@playwright/test";
 import { test } from "./source-fixture.mjs";
 
+test("grouped reaction counts fit and preview in both themes and text sizes", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&grouped=8&narrow");
+  const individual = page.getByRole("button", { name: "👍: 8 people" });
+  await individual.focus();
+  await page.keyboard.press("Enter");
+  const group = page.getByRole("button", { name: "👍: 9 people" });
+  await expect(group).toBeFocused();
+  await expect(
+    page.locator("[data-message-id]").first().getByTestId("reaction-row"),
+  ).toHaveText("👍9");
+  for (const theme of ["light", "dark"]) {
+    for (const scale of [1, 2]) {
+      await page.evaluate(
+        ({ theme, scale }) => {
+          document.documentElement.dataset.colorMode = theme;
+          document.documentElement.style.setProperty(
+            "--buzz-text-scale",
+            String(scale),
+          );
+        },
+        { theme, scale },
+      );
+      await expect(group).toBeVisible();
+      await expect(group).toContainText("9");
+      await expect
+        .poll(() =>
+          group.evaluate((button) => {
+            const control = button.getBoundingClientRect();
+            const glyph = button
+              .querySelector("[data-reaction-glyph]")
+              .getBoundingClientRect();
+            return (
+              glyph.left >= control.left &&
+              glyph.right <= control.right &&
+              glyph.top >= control.top &&
+              glyph.bottom <= control.bottom
+            );
+          }),
+        )
+        .toBe(true);
+    }
+  }
+  // Activation dismisses the preview; keyboard re-entry opens it again.
+  await group.press("Tab");
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+  );
+  await group.focus();
+  const preview = page.locator('.buzz-preview-card[role="tooltip"]');
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveCSS("opacity", "1");
+  await preview.screenshot({
+    path: test.info().outputPath("grouped-reactions.png"),
+  });
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+});
+
+// Browser-only: real wrapping, bounded scrolling, and portal focus/dismissal.
+test("all reactor names wrap and remain reachable with pointer and keyboard", async ({
+  page,
+}, testInfo) => {
+  for (const { count, width, height, scale, longNames } of [
+    { count: 40, width: 1440, height: 700, scale: 2, longNames: false },
+    { count: 40, width: 520, height: 400, scale: 1, longNames: false },
+    { count: 150, width: 1440, height: 950, scale: 1, longNames: true },
+    { count: 40, width: 520, height: 950, scale: 2, longNames: true },
+    { count: 40, width: 390, height: 360, scale: 2, longNames: true },
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.goto(
+      `/tests/fixtures/emoji.html?reactions&grouped=${count}${longNames ? "&long-names" : ""}`,
+    );
+    await page.evaluate(
+      (scale) =>
+        document.documentElement.style.setProperty(
+          "--buzz-text-scale",
+          String(scale),
+        ),
+      scale,
+    );
+    const group = page.getByRole("button", { name: `👍: ${count} people` });
+    await group.hover();
+    const preview = page.locator(".buzz-preview-card[data-open]");
+    const people = preview.getByRole("region", {
+      name: "Everyone who reacted",
+    });
+    await expect(people).toBeVisible();
+    for (let index = 1; index <= count; index++)
+      await expect(people).toContainText(
+        new RegExp(`Teammate ${index}(?:\\s|,|$)`),
+      );
+    await expect(preview).not.toContainText("others");
+    // Long-name fixtures overflow; normal names fit when the popup can use the viewport.
+    await expect(preview).toHaveAttribute(
+      "role",
+      longNames ? "dialog" : "tooltip",
+    );
+    if (longNames) {
+      // The pointer must be able to leave the reaction row and enter its portal.
+      await people.hover();
+      await page.mouse.wheel(0, 400);
+      await expect
+        .poll(() => people.evaluate((el) => el.scrollTop))
+        .toBeGreaterThan(0);
+      await expect(preview).toBeVisible();
+      await group.focus();
+      await page.keyboard.press("Tab");
+      await expect(people).toBeFocused();
+      await page.keyboard.press("ControlOrMeta+End");
+      // End is the native scrollport command; no app handler substitutes for it.
+      await page.keyboard.press("End");
+      await expect
+        .poll(() =>
+          people.evaluate((el) =>
+            Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop),
+          ),
+        )
+        .toBeLessThanOrEqual(1);
+    } else {
+      await expect(people).not.toHaveAttribute("tabindex", "0");
+      // A tooltip can overlap its trigger in a short viewport without taking
+      // its pointer. Otherwise unmounting it manufactures a fresh hover entry.
+      await expect
+        .poll(() =>
+          group.evaluate((button) => {
+            const box = button.getBoundingClientRect();
+            return button.contains(
+              document.elementFromPoint(
+                box.x + box.width / 2,
+                box.y + box.height / 2,
+              ),
+            );
+          }),
+        )
+        .toBe(true);
+      await group.focus();
+    }
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(
+        (theme) => (document.documentElement.dataset.colorMode = theme),
+        theme,
+      );
+      const card = await preview.boundingBox();
+      expect(card.x).toBeGreaterThanOrEqual(0);
+      expect(card.x + card.width).toBeLessThanOrEqual(width);
+      expect(card.y).toBeGreaterThanOrEqual(0);
+      expect(card.y + card.height).toBeLessThanOrEqual(height);
+      await expect
+        .poll(() => preview.evaluate((el) => el.scrollHeight - el.clientHeight))
+        .toBe(0);
+      // A wrapped name may be taller than the scrollport; its final line must
+      // remain reachable when scrolled to the end.
+      const lastName = await people
+        .locator("[data-author]")
+        .last()
+        .evaluate((element) =>
+          Array.from(element.getClientRects()).at(-1).toJSON(),
+        );
+      const list = await people.boundingBox();
+      expect(lastName.y).toBeGreaterThanOrEqual(list.y);
+      expect(lastName.y + lastName.height).toBeLessThanOrEqual(
+        list.y + list.height + 1,
+      );
+      const label = await preview.locator("span").last().boundingBox();
+      expect(label.y + label.height).toBeLessThanOrEqual(card.y + card.height);
+      await page.screenshot({
+        path: testInfo.outputPath(
+          `all-reactors-${count}-${width}x${height}-${theme}.png`,
+        ),
+      });
+    }
+    await page.keyboard.press("Escape");
+    await expect(preview).toHaveCount(0);
+    await expect(group).toBeFocused();
+  }
+});
+
 // Browser-only: actual rem geometry and the line-height clipping boundary need
 // the production stylesheet and layout engine, not a DOM emulator.
 test("reaction emojis and hit areas grow together without clipping", async ({
   page,
 }) => {
+  // Keep failed-image retries from changing the hovered message's layout.
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="7" fill="purple"/></svg>',
+    }),
+  );
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap");
   const message = page
     .locator("[data-message-id]")
     .filter({ hasText: "Historic" });
+  await expect(
+    message.locator('button[data-reaction=":party:"] img'),
+  ).toHaveJSProperty("naturalWidth", 16);
   const pill = message.locator('button[data-reaction="👍"]');
   const glyph = pill.locator("[data-reaction-glyph] > span");
   await expect(glyph).toBeVisible();
   const capsule = message.getByTestId("reaction-row");
   await expect(capsule).toHaveCSS("column-gap", "4px");
   await expect(capsule).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(pill.locator("..")).not.toHaveCSS(
+  const reactionCapsule = pill.locator("..");
+  await expect(reactionCapsule).not.toHaveCSS(
     "background-color",
     "rgba(0, 0, 0, 0)",
   );
@@ -24,7 +215,7 @@ test("reaction emojis and hit areas grow together without clipping", async ({
     name: "Add reaction",
     exact: true,
   });
-  await expect(addReaction.locator("..")).toHaveCSS(
+  await expect(capsule.getByTestId("inline-add-reaction")).toHaveCSS(
     "background-color",
     await pill
       .locator("..")
@@ -62,13 +253,9 @@ test("reaction emojis and hit areas grow together without clipping", async ({
     );
     await expect
       .poll(async () => (await pill.boundingBox()).width)
-      .toBeGreaterThanOrEqual(32 * scale);
-    await expect(pill.locator("[data-reaction-label]")).toHaveCSS(
-      "column-gap",
-      `${2 * scale}px`,
-    );
-    await expect(pill).toHaveCSS("height", `${28 * scale}px`);
-    await expect(addReaction).toHaveCSS("height", `${28 * scale}px`);
+      .toBeGreaterThanOrEqual(26 * scale);
+    await expect(pill).toHaveCSS("height", `${26 * scale}px`);
+    await expect(addReaction).toHaveCSS("height", `${26 * scale}px`);
     await expect(glyph).toHaveCSS("font-size", `${12 * scale}px`);
     await expect(glyph).toHaveCSS("height", `${16 * scale}px`);
     const bounds = await pill.evaluate((el) => {
@@ -93,32 +280,115 @@ test("reaction emojis and hit areas grow together without clipping", async ({
   await expect(page.locator("html")).toHaveAttribute("data-keyboard-input", "");
   await pill.hover();
   await expect(pill).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(pill).toHaveCSS("text-decoration-line", "none");
   await expect
     .poll(() =>
-      pill.locator("[data-reaction-glyph]").evaluate((el) => {
+      glyph.evaluate((el) => {
         const matrix = new DOMMatrix(getComputedStyle(el).transform);
         const angle = (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI;
         return {
           scale: Number(Math.hypot(matrix.a, matrix.b).toFixed(2)),
-          inRange: angle >= -10 && angle <= 10,
+          inRange: angle >= -8.01 && angle <= 8.01,
         };
       }),
     )
-    .toEqual({ scale: 1.1, inRange: true });
+    .toEqual({ scale: 1.5, inRange: true });
   expect(await pill.boundingBox()).toEqual(hitArea);
   await page.mouse.move(0, 0);
-  await expect(pill.locator("[data-reaction-glyph]")).toHaveCSS(
-    "transform",
-    "none",
-  );
+  await expect(glyph).toHaveCSS("transform", "none");
+  await page.keyboard.press("Tab");
   await pill.focus();
-  await expect(pill.locator("[data-reaction-glyph]")).toHaveCSS(
-    "transform",
-    "none",
-  );
+  await expect(glyph).toHaveCSS("transform", "none");
+  await page.mouse.click(0, 0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pill.hover();
+  await expect(glyph).toHaveCSS("transform", "none");
 });
 
-test("counted reaction chips wrap, preview, toggle, and add from the inline control", async ({
+// Browser-only: hover transforms paint the emoji, without moving its count or hit area.
+test("counted reaction hover leaves the count and capsule stationary", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&grouped=8");
+  const pill = page.getByRole("button", { name: "👍: 8 people" });
+  const count = pill.getByText("8", { exact: true });
+  await expect(count).toBeVisible();
+  const capsuleBounds = await pill.boundingBox();
+  const countBounds = await count.boundingBox();
+  const emoji = pill.locator("[data-reaction-glyph] > span").first();
+  await pill.hover();
+  await expect
+    .poll(() =>
+      emoji.evaluate((el) => {
+        const matrix = new DOMMatrix(getComputedStyle(el).transform);
+        return Number(Math.hypot(matrix.a, matrix.b).toFixed(2));
+      }),
+    )
+    .toBe(1.5);
+  expect(await count.boundingBox()).toEqual(countBounds);
+  expect(await pill.boundingBox()).toEqual(capsuleBounds);
+});
+
+// Browser-only: real intersection within the scrollport must fetch missing later names.
+test("scrolling a reaction preview loads previously uncached names", async ({
+  page,
+}) => {
+  let releaseLast;
+  const lastGate = new Promise((resolve) => {
+    releaseLast = resolve;
+  });
+  let lastRequested = false;
+  await page.route("**/fixture-reactor-profiles?*", async (route) => {
+    const names = new URL(route.request().url()).searchParams
+      .get("names")
+      .split(",");
+    if (names.includes("Teammate 150")) {
+      lastRequested = true;
+      await lastGate;
+    }
+    await route.fulfill({ body: "ok" });
+  });
+  try {
+    await page.goto(
+      "/tests/fixtures/emoji.html?reactions&grouped=150&cold-profiles",
+    );
+    await page.getByRole("button", { name: "👍: 150 people" }).focus();
+    const people = page.getByRole("region", { name: "Everyone who reacted" });
+    await expect(people).toContainText("Teammate 1");
+    const last = people.locator("[data-author]").last();
+    await expect(last).toHaveText(/, [a-f0-9]{10}$/);
+    // Wait for initial intersection delivery before asserting no offscreen read.
+    expect(
+      await last.evaluate(
+        (el) =>
+          new Promise((resolve) => {
+            const observer = new IntersectionObserver(
+              ([entry]) => {
+                observer.disconnect();
+                resolve(entry.isIntersecting);
+              },
+              { root: el.closest("section") },
+            );
+            observer.observe(el);
+          }),
+      ),
+    ).toBe(false);
+    expect(lastRequested).toBe(false);
+    await people.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await expect.poll(() => lastRequested).toBe(true);
+    await expect(last).toHaveText(/, [a-f0-9]{10}$/);
+    releaseLast();
+    await expect(last).toHaveText(", Teammate 150");
+    await page.keyboard.press("Escape");
+    await expect(people).toHaveCount(0);
+  } finally {
+    releaseLast();
+  }
+});
+
+test("reaction bubbles wrap, preview, toggle, and add from the inline control", async ({
   page,
 }, testInfo) => {
   await page.route("**/emoji-media/**", (route) =>
@@ -149,10 +419,10 @@ test("counted reaction chips wrap, preview, toggle, and add from the inline cont
     "font-size",
     "12px",
   );
-  await expect(custom).toHaveCSS("height", "28px");
+  await expect(custom).toHaveCSS("height", "26px");
   const plus = row.getByRole("button", { name: "Add reaction" });
-  await expect(plus).toHaveCSS("width", "40px");
-  await expect(plus).toHaveCSS("height", "28px");
+  await expect(plus).toHaveCSS("width", "26px");
+  await expect(plus).toHaveCSS("height", "26px");
   await message.screenshot({ path: testInfo.outputPath("reaction-row.png") });
 
   await custom.hover();
@@ -201,9 +471,8 @@ test("counted reaction chips wrap, preview, toggle, and add from the inline cont
       .toBe(true);
     await expect(custom).toHaveAttribute("aria-pressed", "true");
     await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(1);
-    await expect(custom).toContainText("2");
     await expect(
-      row.getByRole("button", { name: ":party:: You", exact: true }),
+      row.getByRole("button", { name: ":party:: 2 people", exact: true }),
     ).toBeVisible();
     await expect(native).toHaveAttribute("aria-disabled", "true");
     await expect(custom).toHaveCSS("opacity", "1");
@@ -224,7 +493,6 @@ test("counted reaction chips wrap, preview, toggle, and add from the inline cont
   await expect(pills).toHaveCount(12);
   await custom.click();
   await expect(custom).toHaveAttribute("aria-pressed", "false");
-  await expect(custom).toContainText("1");
   await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(1);
   expect(await order()).toEqual(initialOrder);
   await row.locator('button[data-reaction="✅"]').click();
@@ -300,20 +568,40 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
       })
       .toEqual({ sameLine: true, contained: true });
     await reaction.click();
-    await expect(reaction).toContainText("2");
+    await expect(message.locator('button[data-reaction="👍"]')).toHaveCount(1);
+    await expect(reaction).toHaveAccessibleName("👍: 2 people");
+    await expect
+      .poll(async () => {
+        const boxes = await message
+          .locator('button[data-reaction="👍"]')
+          .evaluateAll((buttons) =>
+            buttons.map((button) => button.getBoundingClientRect().y),
+          );
+        const plus = await add.boundingBox();
+        return boxes.every((y) => y === plus.y);
+      })
+      .toBe(true);
     await expect(reaction).toHaveAttribute("aria-disabled", "false");
     await reaction.click();
-    await expect(reaction).toContainText("1");
+    await expect(message.locator('button[data-reaction="👍"]')).toHaveCount(1);
   }
 });
 
-// Actual popup geometry must follow the glyph rather than the count or chip.
-test("reaction previews center above the emoji with a count beside it", async ({
-  page,
-}) => {
+// Actual popup geometry must follow each emoji bubble.
+test("reaction previews center above each emoji bubble", async ({ page }) => {
+  // Keep failed-image retries from changing the hovered message's layout.
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="7" fill="purple"/></svg>',
+    }),
+  );
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated");
   const row = page.locator("[data-message-id]").first();
-  const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
+  await expect(
+    row.locator('button[data-reaction=":party:"] img'),
+  ).toHaveJSProperty("naturalWidth", 16);
+  const preview = page.locator(".buzz-preview-card[data-open]");
   for (const [theme, width, scale] of [
     ["light", 1440, 1],
     ["dark", 900, 2],
@@ -369,19 +657,24 @@ test("reaction previews use the delayed first open, immediate warm switch, and r
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T00:00:10Z"));
   try {
+    // Previews wait for the pointer to rest 0.3s (DESIGN.md "Hover timing").
     await custom.hover();
     await expect(tooltip).toHaveCount(0);
-    await page.clock.runFor(99);
+    await page.clock.runFor(299);
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(1);
     await expect(tooltip).toBeVisible();
     await heart.hover();
     await expect(tooltip).toContainText("heart");
     await page.mouse.move(0, 0);
+    // Shared preview grace lets the pointer cross into the scrollable list.
+    await page.clock.runFor(75);
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(151);
+    // Re-entering through another control must not revive the old warm preview.
+    await row.getByTestId("inline-add-reaction").getByRole("button").hover();
     await custom.hover();
-    await page.clock.runFor(99);
+    await page.clock.runFor(299);
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(1);
     await expect(tooltip).toBeVisible();
@@ -398,37 +691,39 @@ test("long native reactions and unavailable shortcode artwork stay inside the hi
     .locator("[data-message-id]")
     .first()
     .getByTestId("reaction-row");
-  for (const content of ["f".repeat(64), `:${"a".repeat(64)}:`]) {
+  const native = "f".repeat(64);
+  const shortcode = `:${"a".repeat(64)}:`;
+  for (const content of [native, shortcode]) {
     const pill = row.locator(`button[data-reaction="${content}"]`);
     await expect(pill).toHaveCount(1);
     await expect(pill).toHaveAttribute(
       "aria-label",
       `${content}: Fixture Member`,
     );
-    const bounds = await pill.evaluate((button) => {
-      const glyph = button.querySelector("[data-reaction-glyph] > span");
+    const bounds = await pill.evaluate((button, isShortcode) => {
+      const glyph = button.querySelector(
+        isShortcode
+          ? "[data-reaction-glyph] svg"
+          : "[data-reaction-glyph] > span",
+      );
+      const rect = glyph.getBoundingClientRect();
       const chip = button.getBoundingClientRect();
       return {
-        glyphWidth: glyph.getBoundingClientRect().width,
-        countLeft: button
-          .querySelector("[data-reaction-glyph]")
-          .nextElementSibling.getBoundingClientRect().left,
-        countRight: button
-          .querySelector("[data-reaction-glyph]")
-          .nextElementSibling.getBoundingClientRect().right,
-        glyphLeft: glyph.getBoundingClientRect().left,
-        glyphRight: glyph.getBoundingClientRect().right,
+        glyphWidth: rect.width,
+        glyphLeft: rect.left,
+        glyphRight: rect.right,
         chipLeft: chip.left,
         chipRight: chip.right,
         truncated: glyph.scrollWidth > glyph.clientWidth,
+        text: button.querySelector("[data-reaction-glyph]").textContent,
       };
-    });
-    expect(bounds.glyphWidth).toBeLessThanOrEqual(32);
-    expect(bounds.truncated).toBe(true);
+    }, content === shortcode);
+    expect(bounds.glyphWidth).toBeLessThanOrEqual(26);
+    if (content === native) expect(bounds.truncated).toBe(true);
+    // Unavailable shortcode artwork draws the placeholder icon, never its text.
+    else expect(bounds.text).toBe("");
     expect(bounds.glyphLeft).toBeGreaterThanOrEqual(bounds.chipLeft);
     expect(bounds.glyphRight).toBeLessThanOrEqual(bounds.chipRight);
-    expect(bounds.glyphRight).toBeLessThanOrEqual(bounds.countLeft);
-    expect(bounds.countRight).toBeLessThanOrEqual(bounds.chipRight);
   }
 });
 
@@ -440,6 +735,13 @@ test.describe("reaction control rendering", () => {
   test("add-reaction icon stays still while neighboring emojis animate", async ({
     page,
   }) => {
+    // Failed-image retries reflow the message and interrupt a resting hover.
+    await page.route("**/emoji-media/**", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="7" fill="purple"/></svg>',
+      }),
+    );
     await page.goto("/tests/fixtures/emoji.html?reactions&wrap");
     const message = page
       .locator("[data-message-id]")
@@ -448,6 +750,9 @@ test.describe("reaction control rendering", () => {
     const row = message.getByTestId("reaction-row");
     const plus = row.getByRole("button", { name: "Add reaction" });
     const emoji = row.locator('button[data-reaction="👍"]');
+    await expect(
+      row.locator('button[data-reaction=":party:"] img'),
+    ).toHaveJSProperty("naturalWidth", 16);
     await expect(plus).toBeVisible();
     // Fractional placement exposes repaint shifts that integer-aligned rows hide.
     await row.evaluate((el) => {
@@ -463,44 +768,42 @@ test.describe("reaction control rendering", () => {
       .toBe(false);
     const bounds = await plus.boundingBox();
     const original = await plus.screenshot();
-    await emoji.locator("[data-reaction-glyph]").evaluate((el) => {
-      el.addEventListener(
-        "transitionrun",
-        () => {
-          for (const animation of el.getAnimations()) {
-            animation.pause();
-            animation.currentTime =
-              Number(animation.effect.getTiming().duration) / 2;
-          }
-        },
-        { once: true },
-      );
-    });
+    const glyph = emoji.locator("[data-reaction-glyph] > :first-child");
+    // Hold the actual hover lift at its midpoint instead of racing its
+    // duration. Pause from the poll, not a one-shot transitionrun listener:
+    // on CI's slow renderer that listener paused nothing and the 150ms lift
+    // ran out. The poll pauses whichever transform transition exists, and
+    // the lift is stretched first so it cannot end before the first poll.
+    await glyph.evaluate((el) =>
+      el.style.setProperty("--duration-state", "60s"),
+    );
     try {
       await emoji.hover();
       await expect
         .poll(() =>
-          emoji
-            .locator("[data-reaction-glyph]")
-            .evaluate((el) =>
-              el
-                .getAnimations()
-                .some((animation) => animation.playState === "paused"),
-            ),
+          glyph.evaluate((el) => {
+            const lift = el
+              .getAnimations()
+              .find(
+                (animation) => animation.transitionProperty === "transform",
+              );
+            if (!lift) return false;
+            lift.pause();
+            lift.currentTime = Number(lift.effect.getTiming().duration) / 2;
+            return lift.playState === "paused";
+          }),
         )
         .toBe(true);
       expect(await plus.boundingBox()).toEqual(bounds);
       expect((await plus.screenshot()).equals(original)).toBe(true);
     } finally {
-      await emoji.locator("[data-reaction-glyph]").evaluate((el) => {
+      await glyph.evaluate((el) => {
         for (const animation of el.getAnimations()) animation.finish();
+        el.style.removeProperty("--duration-state");
       });
     }
     await row.hover({ position: rest });
-    await expect(emoji.locator("[data-reaction-glyph]")).toHaveCSS(
-      "transform",
-      "none",
-    );
+    await expect(glyph).toHaveCSS("transform", "none");
     expect(await plus.boundingBox()).toEqual(bounds);
     expect((await plus.screenshot()).equals(original)).toBe(true);
     await plus.hover();
@@ -509,4 +812,54 @@ test.describe("reaction control rendering", () => {
     ).toBeVisible();
     expect(await plus.boundingBox()).toEqual(bounds);
   });
+});
+
+// Browser-only: actual overflow decides whether the portal belongs in Tab order.
+test("short reactor lists do not add a keyboard stop", async ({ page }) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&grouped=8");
+  const group = page.getByRole("button", { name: "👍: 8 people" });
+  await group.focus();
+  const preview = page.getByRole("tooltip").filter({
+    has: page.getByRole("region", { name: "Everyone who reacted" }),
+  });
+  await expect(preview).toBeVisible();
+  const people = preview.getByRole("region", { name: "Everyone who reacted" });
+  await expect(people).not.toHaveAttribute("tabindex", "0");
+  await page.keyboard.press("Tab");
+  await expect(
+    page
+      .getByTestId("reaction-row")
+      .filter({ has: group })
+      .getByRole("button", { name: "Add reaction", exact: true }),
+  ).toBeFocused();
+  await expect(preview).toHaveCount(0);
+});
+
+// Browser-only: real overflow and anchor geometry decide the Tab handoff, and
+// native Enter and Space activation is what the pill must reject.
+test("people who cannot react can read every reactor without toggling", async ({
+  page,
+}) => {
+  await page.goto(
+    "/tests/fixtures/emoji.html?reactions&grouped=150&long-names",
+  );
+  await page.evaluate(() => window.emojiFixture.archive(true));
+  const group = page.getByRole("button", { name: "👍: 150 people" });
+  await expect(group).toHaveAttribute("aria-disabled", "true");
+  await group.focus();
+  const people = page
+    .getByRole("dialog")
+    .getByRole("region", { name: "Everyone who reacted" });
+  await expect(people).toHaveAttribute("tabindex", "0");
+  await group.press("Enter");
+  await group.press(" ");
+  // Playwright will not click an aria-disabled control unless forced.
+  await group.click({ force: true });
+  // Activation enqueues synchronously, so the outbox is a complete barrier.
+  expect(await page.evaluate(() => window.emojiFixture.operations())).toBe(0);
+  await expect(group).toHaveAttribute("aria-pressed", "false");
+  await group.focus();
+  await expect(people).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(people).toBeFocused();
 });

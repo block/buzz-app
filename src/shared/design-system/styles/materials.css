@@ -72,10 +72,15 @@
     0px,
     calc(var(--floating-radius) - var(--floating-inset) - 1px)
   );
-  border: 1px solid var(--border-standard);
+  /* Keep inset geometry; the elevation recipe paints the contour. */
+  border: 1px solid transparent;
   border-radius: var(--floating-radius);
   @apply elevated-material;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-panel);
+
+  @media (forced-colors: active) {
+    border-color: CanvasText;
+  }
 }
 
 /*
@@ -171,9 +176,13 @@
 }
 @layer base {
   /* Theme owners rebind aliases before inheritance. Explicit surface recipes
-     live in later layers, so a scoped dark popup still owns floating controls. */
+     live in later layers, so a scoped dark popup still owns floating controls.
+     Scoped light owners count too: a light surface inside dark mode would
+     otherwise inherit hover and pressed fills already resolved as dark. */
   :root,
-  .dark {
+  .dark,
+  .light,
+  [data-color-mode="light"] {
     @apply interaction-panel;
   }
 }

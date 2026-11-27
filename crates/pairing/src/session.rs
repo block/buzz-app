@@ -27,19 +27,13 @@
 //! handle_complete(&event)              → complete_event
 //! ```
 
-//! # Code-entry confirmation extension
-//!
-//! A target advertises `"confirmation":"desktop-code-v1"` in its encrypted
-//! offer. The source generates a separate random six-digit code, never included
-//! in the QR or challenge. The target submits user input through NIP-44. Only a
-//! matching code releases the source proof and payload; five guesses abort the
-//! entire session. Legacy offers still require explicit source-side approval.
-
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+use nostr::event::{Event, EventBuilder, FinalizeEvent, Kind, Tag};
+use nostr::key::{Keys, PublicKey};
 use nostr::nips::nip44;
-use nostr::{Event, EventBuilder, Keys, Kind, PublicKey, Tag};
+use nostr::types::Timestamp;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::crypto::{ct_eq, derive_sas, derive_session_id, derive_transcript_hash, format_sas};
@@ -113,9 +107,6 @@ pub struct PairingSession {
     created_at: Instant,
     /// Maximum session lifetime.
     timeout: Duration,
-    desktop_code_requested: bool,
-    desktop_code: Option<Zeroizing<String>>,
-    code_attempts: u8,
 }
 
 impl PairingSession {
@@ -148,9 +139,6 @@ impl PairingSession {
             processed_ids: HashSet::new(),
             created_at: Instant::now(),
             timeout: DEFAULT_TIMEOUT,
-            desktop_code_requested: false,
-            desktop_code: None,
-            code_attempts: 0,
         };
 
         (session, qr)
@@ -162,33 +150,17 @@ impl PairingSession {
     /// formatted SAS code to display. After this call the session is in
     /// [`SessionState::Confirming`].
     pub fn handle_offer(&mut self, event: &Event) -> Result<String, PairingError> {
-        self.handle_offer_with_confirmation(event)
-            .map(|(code, _)| code)
-    }
-
-    /// Validate an offer and return its SAS and whether the target requests
-    /// code-entry confirmation. The capability is encrypted so strict relays
-    /// still receive only the required recipient tag.
-    pub fn handle_offer_with_confirmation(
-        &mut self,
-        event: &Event,
-    ) -> Result<(String, bool), PairingError> {
         self.check_expired()?;
         self.expect_state(SessionState::Waiting)?;
         self.expect_role(Role::Source)?;
         self.validate_event_basics(event)?;
 
         let msg = self.decrypt_message(event)?;
-        let (session_id_hex, version, code_entry) = match &msg {
+        let (session_id_hex, version) = match &msg {
             PairingMessage::Offer {
                 session_id,
                 version,
-                confirmation,
-            } => (
-                session_id.clone(),
-                *version,
-                confirmation.as_deref() == Some("desktop-code-v1"),
-            ),
+            } => (session_id.clone(), *version),
             other => return Err(unexpected("offer", other)),
         };
 
@@ -214,7 +186,7 @@ impl PairingSession {
         self.peer_pubkey = Some(peer);
 
         // Compute ECDH and SAS. Zero the ECDH shared secret after derivation.
-        let mut ecdh = nostr::util::generate_shared_key(self.keys.secret_key(), &peer)
+        let mut ecdh = crate::crypto::ecdh_shared_x(self.keys.secret_key(), &peer)
             .map_err(|e| PairingError::SigningError(e.to_string()))?;
         let (code, sas_input) = derive_sas(&ecdh, &self.session_secret);
         ecdh.zeroize();
@@ -223,8 +195,7 @@ impl PairingSession {
         self.state = SessionState::Confirming;
         self.record_event(event);
 
-        self.desktop_code_requested = code_entry;
-        Ok((format_sas(code), code_entry))
+        Ok(format_sas(code))
     }
 
     /// (Source) User confirmed the SAS codes match. Build the `sas-confirm`
@@ -363,7 +334,7 @@ impl PairingSession {
 
         // Compute ECDH and SAS immediately (target knows source pubkey from QR).
         // Zero the ECDH shared secret after derivation.
-        let mut ecdh = nostr::util::generate_shared_key(keys.secret_key(), &qr.source_pubkey)
+        let mut ecdh = crate::crypto::ecdh_shared_x(keys.secret_key(), &qr.source_pubkey)
             .map_err(|e| PairingError::SigningError(e.to_string()))?;
         let (code, sas_input) = derive_sas(&ecdh, &qr.session_secret);
         ecdh.zeroize();
@@ -381,16 +352,12 @@ impl PairingSession {
             processed_ids: HashSet::new(),
             created_at: Instant::now(),
             timeout: DEFAULT_TIMEOUT,
-            desktop_code_requested: false,
-            desktop_code: None,
-            code_attempts: 0,
         };
 
         // Build and return the offer event.
         let msg = PairingMessage::Offer {
             session_id: hex::encode(session_id),
             version: 1,
-            confirmation: None,
         };
         let event = session.build_event(&msg)?;
         session.state = SessionState::Confirming;
@@ -602,7 +569,7 @@ impl PairingSession {
     /// authenticated the connection.
     pub fn sign_event(&self, builder: EventBuilder) -> Result<Event, PairingError> {
         builder
-            .sign_with_keys(&self.keys)
+            .finalize(&self.keys)
             .map_err(|e| PairingError::SigningError(e.to_string()))
     }
 
@@ -667,14 +634,14 @@ impl PairingSession {
 
         // NIP-AB §: Implementations SHOULD set created_at to the current time
         // minus a random value between 0 and 30 seconds for metadata privacy.
-        let now = nostr::Timestamp::now().as_secs();
+        let now = Timestamp::now().as_secs();
         let jitter = rand::random::<u64>() % 31; // 0-30s jitter per NIP-AB §Metadata Privacy
-        let ts = nostr::Timestamp::from(now.saturating_sub(jitter));
+        let ts = Timestamp::from(now.saturating_sub(jitter));
 
         EventBuilder::new(Kind::Custom(PAIRING_KIND), &encrypted)
             .tags([Tag::public_key(peer)])
             .custom_created_at(ts)
-            .sign_with_keys(&self.keys)
+            .finalize(&self.keys)
             .map_err(|e| PairingError::SigningError(e.to_string()))
     }
 
@@ -835,9 +802,6 @@ impl Drop for PairingSession {
 fn unexpected(expected: &str, got: &PairingMessage) -> PairingError {
     let got_name = match got {
         PairingMessage::Offer { .. } => "offer",
-        PairingMessage::DesktopCode {} => "desktop-code",
-        PairingMessage::CodeSubmit { .. } => "code-submit",
-        PairingMessage::CodeRejected { .. } => "code-rejected",
         PairingMessage::SasConfirm { .. } => "sas-confirm",
         PairingMessage::Payload { .. } => "payload",
         PairingMessage::Complete { .. } => "complete",
@@ -1078,7 +1042,7 @@ mod tests {
         .unwrap();
         let fake_abort = EventBuilder::new(Kind::Custom(KIND_PAIRING), &encrypted)
             .tags([Tag::public_key(source.pubkey())])
-            .sign_with_keys(&rogue)
+            .finalize(&rogue)
             .unwrap();
 
         // Source has no peer yet — must reject.
@@ -1130,7 +1094,7 @@ mod tests {
             .unwrap();
             EventBuilder::new(Kind::Custom(KIND_PAIRING), &encrypted)
                 .tags([Tag::public_key(source.pubkey())])
-                .sign_with_keys(&keys)
+                .finalize(&keys)
                 .unwrap()
         };
 
@@ -1187,7 +1151,7 @@ mod tests {
         .unwrap();
         let fake_event = EventBuilder::new(Kind::Custom(PAIRING_KIND), &encrypted)
             .tags([Tag::public_key(target.pubkey())])
-            .sign_with_keys(&rogue_keys)
+            .finalize(&rogue_keys)
             .unwrap();
 
         // Target should reject (wrong author).
@@ -1405,7 +1369,7 @@ mod tests {
         .unwrap();
         let wrong_event = EventBuilder::new(Kind::Custom(PAIRING_KIND), &wrong_encrypted)
             .tags([Tag::public_key(target.pubkey())])
-            .sign_with_keys(&source.keys)
+            .finalize(&source.keys)
             .unwrap();
 
         // Target tries to handle as payload — fails (wrong type).
@@ -1457,7 +1421,7 @@ mod tests {
         .unwrap();
         let fail_event = EventBuilder::new(Kind::Custom(PAIRING_KIND), &fail_encrypted)
             .tags([Tag::public_key(source.pubkey())])
-            .sign_with_keys(&target.keys)
+            .finalize(&target.keys)
             .unwrap();
 
         // Source handles complete(false) — should error and abort.
@@ -1476,13 +1440,6 @@ mod tests {
         );
     }
 }
-
-#[cfg(test)]
-#[path = "session_code_entry_tests.rs"]
-mod code_entry_tests;
-
-#[path = "session_desktop_code.rs"]
-mod desktop_code;
 
 #[cfg(test)]
 mod display_lifetime_tests {

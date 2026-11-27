@@ -7,7 +7,7 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
-test.use({ pluginFixtures: true });
+test.use({ enabledPlugins: ["buzz.workflows"], pluginFixtures: true });
 
 const home = { version: 1, kind: "home" };
 const settings = { version: 1, kind: "settings" };
@@ -38,7 +38,7 @@ test("launch opens Messages without exposing Home across responsive navigation, 
     releaseMetadata = resolve;
   });
   let metadataHeld = false;
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     if (
       route
         .request()
@@ -89,17 +89,17 @@ test("launch opens Messages without exposing Home across responsive navigation, 
       .toBe(true);
   }
   await page
-    .getByRole("button", { name: "Channel members", exact: true })
+    .getByRole("button", { name: /^Manage members of /, exact: true })
     .click();
   await expect(
-    page.getByRole("dialog", { name: "Channel members", exact: true }),
+    page.getByRole("dialog", { name: "Manage members", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: testInfo.outputPath("launch-messages.png") });
   await page.getByRole("button", { name: "Search Buzz" }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
   await expect(
-    dialog.getByRole("group", { name: "This conversation" }),
+    dialog.locator(".search-peek-keys").getByText("This conversation"),
   ).toBeVisible();
   await dialog
     .getByRole("combobox", { name: "Search Buzz", exact: true })
@@ -149,7 +149,7 @@ test("default navigation retries failed metadata and accepts a completed empty l
   });
   let held = false;
   let failMetadata = true;
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     if (
       route
         .request()
@@ -172,12 +172,10 @@ test("default navigation retries failed metadata and accepts a completed empty l
   ).toBe("opening");
   releaseMetadata();
   await expect(
-    page.getByRole("button", { name: "Retry navigation", exact: true }),
+    page.getByRole("button", { name: "Try again", exact: true }),
   ).toBeVisible();
   failMetadata = false;
-  await page
-    .getByRole("button", { name: "Retry navigation", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
     .toBe("opened");
@@ -191,15 +189,18 @@ test("default navigation retries failed metadata and accepts a completed empty l
     page.getByRole("button", { name: "alpha", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Channel members", exact: true })
+    .getByRole("button", { name: /^Manage members of /, exact: true })
     .click();
   await expect(
-    page.getByRole("dialog", { name: "Channel members", exact: true }),
+    page.getByRole("dialog", { name: "Manage members", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Search Buzz" }).click();
   await expect(
-    page.getByRole("group", { name: "This conversation" }),
+    page
+      .getByRole("dialog", { name: "Search Buzz" })
+      .locator(".search-peek-keys")
+      .getByText("This conversation"),
   ).toBeVisible();
 });
 
@@ -278,9 +279,7 @@ test("launch retains plugin-configuration recovery without Home", async ({
   const recoveredChoices = await pageChoices(page, "Messages");
   await expect(pageChoice(recoveredChoices, "Messages")).toBeVisible();
   await page.keyboard.press("Escape");
-  await page
-    .getByRole("button", { name: "Retry navigation", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(messages(page)).toBeVisible();
 });
 
@@ -296,7 +295,7 @@ for (const huddle of [false, true]) {
     let held = false;
     let failMetadata = !huddle;
     const reads = [];
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       const filters = route.request().postDataJSON();
       reads.push(
         ...filters.filter(
@@ -351,14 +350,17 @@ for (const huddle of [false, true]) {
     expect(
       await page.evaluate(() => window.fixtureNavigation.snapshot().status),
     ).toBe("opening");
-    await expect(page.getByRole("textbox", { name: /^Message #/ })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("textbox", { name: /^Message #?Alpha$/ }),
+    ).toHaveCount(0);
     expect(reads).toHaveLength(0);
     release();
     if (huddle) {
-      // Mutable metadata without a creation receipt remains an ordinary channel.
-      await expect(messages(page)).toBeVisible();
+      // Mutable metadata without a creation receipt remains an ordinary
+      // (private) channel.
+      await expect(
+        page.getByRole("textbox", { name: "Message Alpha", exact: true }),
+      ).toBeVisible();
       await expect
         .poll(() =>
           page.evaluate(() => window.fixtureNavigation.snapshot().status),
@@ -366,18 +368,18 @@ for (const huddle of [false, true]) {
         .toBe("opened");
     } else {
       await expect(
-        page.getByRole("button", { name: "Retry navigation", exact: true }),
+        page.getByRole("button", { name: "Try again", exact: true }),
       ).toBeVisible();
       expect(
         await page.evaluate(() => window.fixtureNavigation.snapshot().status),
       ).toBe("failed");
       await expect(
-        page.getByRole("textbox", { name: /^Message #/ }),
+        page.getByRole("textbox", { name: /^Message #?Alpha$/ }),
       ).toHaveCount(0);
       expect(reads).toHaveLength(0);
       failMetadata = false;
       await page
-        .getByRole("button", { name: "Retry navigation", exact: true })
+        .getByRole("button", { name: "Try again", exact: true })
         .click();
       await expect(messages(page)).toBeVisible();
       await expect

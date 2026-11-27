@@ -1,7 +1,11 @@
-import { localActivity, localWorkLabel } from "./local-activity";
+import { localActivity, localWorkLabel, localWorkRoot } from "./local-activity";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
-import { activityTranscript, type ToolItem } from "./activity-transcript";
+import {
+  activityTranscript,
+  buzzToolTitle,
+  type ToolItem,
+} from "./activity-transcript";
 
 type Snapshot = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
 const verbs: Record<string, string> = {
@@ -31,7 +35,10 @@ function toolLabel(tool: ToolItem): string {
     : undefined;
   const kind = local ?? tool.kind;
   const verb =
-    (Object.hasOwn(verbs, kind) ? verbs[kind] : undefined) ?? "Running a tool";
+    (Object.hasOwn(verbs, kind) ? verbs[kind] : undefined) ??
+    // A Buzz tool is the one kind=other tool with a label of its own.
+    buzzToolTitle(tool) ??
+    "Running a tool";
   // Compact UI never displays raw arguments, commands, or full local paths.
   let path = tool.paths[0];
   if (!path && local && kind !== "execute") {
@@ -61,6 +68,7 @@ function toolLabel(tool: ToolItem): string {
 
 export type CurrentActivity = {
   label: string;
+  detailAvailability: "available" | "no-current-step" | "typing-only";
   /** Null is the channel conversation; undefined is genuinely unknown. */
   roots: (string | null | undefined)[];
 };
@@ -69,14 +77,17 @@ export type CurrentActivity = {
 export function currentActivity(
   snapshot: Snapshot | undefined,
   entries: readonly TypingEntry[],
-  ownedAgents: ReadonlySet<string>,
+  knownAgents: ReadonlySet<string>,
   channelId: string,
   threadRootId?: string,
+  includeThreads = true,
+  channelThreadRoots?: ReadonlySet<string>,
 ): ReadonlyMap<string, CurrentActivity> {
   const agents = new Map<string, CurrentActivity>();
   const add = (agent: string, root: string | null | undefined) => {
     const activity: CurrentActivity = agents.get(agent) ?? {
       label: "Working",
+      detailAvailability: "typing-only",
       roots: [],
     };
     if (!activity.roots.includes(root)) activity.roots.push(root);
@@ -84,7 +95,8 @@ export function currentActivity(
     return activity;
   };
   const matches = (channel: string | null, root?: string) =>
-    channel === channelId && (!threadRootId || root === threadRootId);
+    channel === channelId &&
+    (threadRootId ? root === threadRootId : includeThreads || !root);
   const listening = snapshot?.status === "listening";
   const working = listening
     ? snapshot.turns.filter(
@@ -101,7 +113,7 @@ export function currentActivity(
   for (const entry of entries) {
     if (
       matches(entry.channelId, entry.threadRootId) &&
-      (ownedAgents.has(entry.pubkey) ||
+      (knownAgents.has(entry.pubkey) ||
         ownerTyping.some((owner) => owner.agent === entry.pubkey) ||
         working.some((turn) => turn.agent === entry.pubkey))
     )
@@ -115,10 +127,13 @@ export function currentActivity(
       const turn = transcript.find((turn) => turn.turnId === evidence.turnId);
       if (
         turn?.endedAt ||
-        (threadRootId && turn?.threadRootId !== threadRootId)
+        (threadRootId
+          ? turn?.threadRootId !== threadRootId
+          : !includeThreads && !!turn?.threadRootId)
       )
         continue;
-      add(agent, turn?.threadRootId);
+      const detail = add(agent, turn?.threadRootId);
+      detail.detailAvailability = "no-current-step";
       tools.push(
         ...(turn?.items.filter(
           (item): item is ToolItem =>
@@ -130,19 +145,29 @@ export function currentActivity(
     }
     const activity = agents.get(agent);
     const firstTool = tools[0];
-    if (activity && firstTool)
+    if (activity && firstTool) {
+      activity.detailAvailability = "available";
       activity.label =
         tools.length > 1
           ? `Running ${tools.length} tools`
           : toolLabel(firstTool);
+    }
   }
-  const local = localActivity(snapshot, channelId, threadRootId);
+  const localSnapshot =
+    !threadRootId && !includeThreads
+      ? {
+          local: (snapshot?.local ?? []).filter(
+            (row) => !row.thread && !channelThreadRoots?.has(row.threadRootId),
+          ),
+        }
+      : snapshot;
+  const local = localActivity(localSnapshot, channelId, threadRootId);
   for (const [agent, work] of local) {
     agents.delete(agent);
     if (work.state !== "working" && work.state !== "waiting") continue;
     const roots = [
       ...new Set(
-        (snapshot?.local ?? [])
+        (localSnapshot?.local ?? [])
           .filter(
             (row) =>
               row.agent === agent &&
@@ -150,10 +175,50 @@ export function currentActivity(
               (!threadRootId || row.threadRootId === threadRootId) &&
               (row.state === "working" || row.state === "waiting"),
           )
-          .map((row) => row.threadRootId),
+          .map((row) => localWorkRoot(row) ?? null),
       ),
     ];
-    agents.set(agent, { label: localWorkLabel(work), roots });
+    agents.set(agent, {
+      label: localWorkLabel(work),
+      detailAvailability: "available",
+      roots,
+    });
   }
   return agents;
+}
+
+/** Each request an agent is working on in one conversation, as its exact
+ * trigger IDs. As in currentActivity, the agent's local requests here
+ * supersede its remote turns. */
+export function workingRequests(
+  snapshot: Snapshot | undefined,
+  agent: string,
+  channelId: string,
+  threadRootId?: string,
+  includeThreads = true,
+): string[][] {
+  const local = (snapshot?.local ?? []).filter(
+    (row) =>
+      row.agent === agent &&
+      row.channelId === channelId &&
+      (threadRootId
+        ? row.threadRootId === threadRootId
+        : includeThreads || !row.thread),
+  );
+  if (local.length)
+    return local
+      .filter((row) => row.state === "working" || row.state === "waiting")
+      .map((row) => [row.messageId]);
+  if (snapshot?.status !== "listening") return [];
+  return snapshot.turns
+    .filter(
+      (turn) =>
+        turn.agent === agent &&
+        turn.state === "working" &&
+        turn.channelId === channelId &&
+        (threadRootId
+          ? turn.threadRootId === threadRootId
+          : includeThreads || !turn.threadRootId),
+    )
+    .map((turn) => [...(turn.triggeringEventIds ?? [])]);
 }

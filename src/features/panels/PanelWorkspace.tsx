@@ -14,12 +14,17 @@ import {
   BrowserIcon,
   TerminalWindowIcon,
 } from "../../shared/design-system/icons";
-import { Tabs, type TabAction } from "../../shared/design-system/ui/Tabs";
+import {
+  Tabs,
+  TabMenu,
+  type TabAction,
+} from "../../shared/design-system/ui/Tabs";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Panels.module.css";
 import type { TabDragHost } from "./useTabDrag";
 
-type Item = {
+/** One retained tab, with content and lifecycle owned by the hosting page. */
+export type PanelWorkspaceItem = {
   id: string;
   label: string;
   icon?: ReactNode;
@@ -28,16 +33,26 @@ type Item = {
   attentionRequest?: number | undefined;
   /** Stable for one opening, including retained exit content. */
   instance?: object;
-  /** Omit for a permanent tab such as a channel's own conversation. */
-  close?: (() => void) | undefined;
+  /** Omit for a permanent tab such as a channel's own conversation. Returns
+   * false when it keeps the tab, as when asking about unsaved edits first. */
+  // biome-ignore lint/suspicious/noConfusingVoidType: Closers that return nothing stay valid; only false keeps the tab.
+  close?: (() => boolean | void) | undefined;
   /** Keyboard placement: one position left or right, across panes at an edge. */
   move?: ((delta: -1 | 1) => void) | undefined;
   /** A blank name restores the tab's own title. */
   rename?: ((name: string) => void) | undefined;
   actions?: readonly TabAction[] | undefined;
+  /** Header icon actions for this tab's content, shown while it is selected. */
+  toolbar?: ReactNode;
 };
-type Identity = { label: string; icon?: ReactNode };
-type Local = { id: string; label: string; owner: string; close(): void };
+type Identity = {
+  label: string;
+  icon?: ReactNode;
+  actions?: readonly TabAction[] | undefined;
+};
+/** `keepOwner`: the owner stays open; only its detail tabs are cleared. */
+type Close = (options?: { keepOwner?: boolean }) => void;
+type Local = { id: string; label: string; owner: string; close: Close };
 const TabHost = createContext<{
   owner: string;
   register(tab: Local): () => void;
@@ -49,15 +64,19 @@ export function usePanelTabHost() {
   return useContext(TabHost);
 }
 
-export function usePanelTabTitle(label: string, icon?: ReactNode) {
+export function usePanelTabTitle(
+  label: string,
+  icon?: ReactNode,
+  actions?: readonly TabAction[],
+) {
   const host = usePanelTabHost();
   const title = host?.title;
   const owner = host?.owner;
   useLayoutEffect(() => {
     if (!title || !owner) return;
-    title(owner, { label, icon });
+    title(owner, { label, icon, actions });
     return () => title(owner, undefined);
-  }, [title, owner, label, icon]);
+  }, [title, owner, label, icon, actions]);
 }
 
 // Keyboard opens and reduced motion skip the push. Deciding here, rather than
@@ -94,19 +113,8 @@ function focusWhenReady(panel: HTMLElement, tab: HTMLElement) {
   return stop;
 }
 
-/** The channel owns target tabs; private details retain their feature's lifetime. */
-export function PanelWorkspace({
-  items,
-  value,
-  select,
-  actions,
-  main = false,
-  label = "Panel tabs",
-  focusOnMount = true,
-  adoptSelection,
-  tabMenu,
-  drag,
-}: {
+/** Presentation options for the host tab workspace; navigation stays page-owned. */
+export type PanelWorkspaceProps = {
   /** The channel owner closes tabs across both panes, including hidden tabs. */
   tabMenu?:
     | {
@@ -116,11 +124,13 @@ export function PanelWorkspace({
       }
     | undefined;
   drag?: TabDragHost | undefined;
-  items: Item[];
+  items: PanelWorkspaceItem[];
   value: string;
   select(id: string): void;
   /** Header icon actions owned by the hosting page. */
   actions?: ReactNode;
+  /** Interactive conversation identity; a lone permanent tab needs no tab strip. */
+  identity?: ReactNode;
   /**
    * The page's main pane: a lone permanent tab reads as a title, and native
    * Close acts here only while focus is inside (the side pane is the default).
@@ -131,7 +141,22 @@ export function PanelWorkspace({
   focusOnMount?: boolean;
   /** A new value adopts the current selection without moving focus. */
   adoptSelection?: unknown;
-}) {
+};
+
+/** The channel owns target tabs; private details retain their feature's lifetime. */
+export function PanelWorkspace({
+  items,
+  value,
+  select,
+  actions,
+  identity,
+  main = false,
+  label = "Panel tabs",
+  focusOnMount = true,
+  adoptSelection,
+  tabMenu,
+  drag,
+}: PanelWorkspaceProps) {
   const prefix = useId();
   const panelId = (id: string) => `${prefix}-${id}`;
   const [titles, setTitles] = useState<Record<string, Identity | undefined>>(
@@ -197,16 +222,22 @@ export function PanelWorkspace({
     (tab) => tab.id === localSelection && tab.owner === value,
   );
   const selected = selectedLocal?.id ?? value;
-  const tabs = items.flatMap((item) => [
-    {
-      ...item,
-      ...titles[item.id],
-      icon: titles[item.id]?.icon ?? item.icon ?? <BrowserIcon size="1rem" />,
-    },
-    ...owned
-      .filter((tab) => tab.owner === item.id)
-      .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
-  ]);
+  const tabs = items.flatMap((item) => {
+    const title = titles[item.id];
+    return [
+      {
+        ...item,
+        ...title,
+        icon: title?.icon ?? item.icon ?? <BrowserIcon size="1rem" />,
+        actions: title?.actions
+          ? [...title.actions, ...(item.actions ?? [])]
+          : item.actions,
+      },
+      ...owned
+        .filter((tab) => tab.owner === item.id)
+        .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
+    ];
+  });
   const active = tabs.find((tab) => tab.id === selected);
   const choose = (id: string) => {
     const local = owned.find((tab) => tab.id === id);
@@ -224,41 +255,53 @@ export function PanelWorkspace({
     };
     // Tab switching stays focus-owned; Close can fall back from the permanent
     // main conversation to the selected visible side tab.
-    const owns = () => {
+    const source = (event: Event) =>
+      event.target instanceof Element ? event.target : document.activeElement;
+    const owns = (event: Event) => {
       const element = root.current;
       return (
         visible() &&
-        (document.activeElement?.closest(
+        (source(event)?.closest(
           "[data-panel-workspace], [data-main-workspace]",
-        ) ?? (main ? null : element)) === element
+        ) ?? (main || event.target instanceof Element ? null : element)) ===
+          element
       );
     };
     const close = (event: Event) => {
-      const focusedMain = document.activeElement?.closest(
-        "[data-main-workspace]",
-      );
+      const focusedMain = source(event)?.closest("[data-main-workspace]");
       const fallback =
         !main &&
         visible() &&
         focusedMain &&
         !focusedMain.hasAttribute("data-active-tab-closable");
-      if (event.defaultPrevented || !active?.close || (!owns() && !fallback))
+      if (
+        event.defaultPrevented ||
+        !active?.close ||
+        (!owns(event) && !fallback)
+      )
         return;
       event.preventDefault();
       const keptFocus = fallback ? document.activeElement : null;
       // Match the X button, including local detail tabs and focus recovery.
       // Commit before another native menu request can reuse this selection.
-      flushSync(() => {
+      const declined = flushSync(() => {
         closingTab.current = active.id;
-        active.close?.();
+        if (active.close?.() !== false) return false;
+        closingTab.current = undefined;
+        return true;
       });
       // Fallback closes another pane, not the editor the person is still using.
-      if (keptFocus instanceof HTMLElement && keptFocus.isConnected)
+      // A declined close may be asking first; its prompt keeps focus.
+      if (
+        !declined &&
+        keptFocus instanceof HTMLElement &&
+        keptFocus.isConnected
+      )
         keptFocus.focus({ preventScroll: true });
     };
     // Ctrl+Tab and Ctrl+Shift+Tab, from the native menu or desktop shortcut.
     const step = (delta: -1 | 1) => (event: Event) => {
-      if (event.defaultPrevented || tabs.length < 2 || !owns()) return;
+      if (event.defaultPrevented || tabs.length < 2 || !owns(event)) return;
       event.preventDefault();
       const index = tabs.findIndex((tab) => tab.id === selected);
       const target = tabs[(index + delta + tabs.length) % tabs.length];
@@ -298,9 +341,13 @@ export function PanelWorkspace({
       focusTab.current ||
       (closingTab.current && !tabs.some((tab) => tab.id === closingTab.current))
     ) {
-      const tab = root.current?.querySelector<HTMLElement>(
-        '[role="tab"][aria-selected="true"]',
-      );
+      const tab =
+        root.current?.querySelector<HTMLElement>(
+          '[role="tab"][aria-selected="true"]',
+        ) ??
+        root.current?.querySelector<HTMLElement>(
+          "[data-workspace-identity] button",
+        );
       awaitContent.current?.();
       awaitContent.current = undefined;
       const panel =
@@ -335,6 +382,26 @@ export function PanelWorkspace({
       closingTab.current = undefined;
     }
   });
+  const identityOnly = !!identity && tabs.length === 1 && !tabs[0]?.close;
+  const heading = identity ? (
+    <div data-workspace-identity="" className={styles.workspaceIdentity}>
+      {identityOnly && tabMenu ? (
+        <TabMenu
+          key={tabMenu.key}
+          label={tabs[0]?.label ?? label}
+          actions={undefined}
+          onClose={undefined}
+          onRename={undefined}
+          closeAll={tabMenu.closeAll}
+          closeOthers={undefined}
+        >
+          {identity}
+        </TabMenu>
+      ) : (
+        identity
+      )}
+    </div>
+  ) : undefined;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: Escape from descendant controls closes their active tab.
     <div
@@ -342,6 +409,7 @@ export function PanelWorkspace({
         ? { "data-main-workspace": "" }
         : { "data-panel-workspace": "" })}
       data-active-tab-closable={!!active?.close || undefined}
+      data-overlay-boundary=""
       className={styles.workspace}
       ref={(element) => {
         root.current = element;
@@ -362,8 +430,18 @@ export function PanelWorkspace({
         pointerTab.current = false;
       }}
       onKeyDown={(event) => {
+        // A hovered preview can open while focus stays elsewhere in this pane.
+        // Let Base UI's document handler dismiss it before closing its owner.
         if (
           event.key === "Escape" &&
+          event.currentTarget.querySelector(
+            "[data-preview-card-trigger][data-popup-open]",
+          )
+        )
+          return;
+        if (
+          event.key === "Escape" &&
+          !event.shiftKey &&
           !event.nativeEvent.isComposing &&
           event.nativeEvent.keyCode !== 229 &&
           !event.defaultPrevented &&
@@ -376,63 +454,78 @@ export function PanelWorkspace({
       }}
     >
       <PanelHeader
-        actions={actions}
+        navigation={!identityOnly ? heading : undefined}
+        actions={
+          active && "toolbar" in active && active.toolbar ? (
+            <>
+              {active.toolbar}
+              {actions}
+            </>
+          ) : (
+            actions
+          )
+        }
         title={
-          <Tabs
-            label={label}
-            variant="navigation"
-            showSelection={!main || tabs.length > 1}
-            value={selected}
-            items={tabs.map((tab) => ({
-              value: tab.id,
-              label: tab.label,
-              icon: tab.icon,
-              panelId: panelId(tab.id),
-              attentionRequest:
-                "attentionRequest" in tab ? tab.attentionRequest : undefined,
-              onMove: "move" in tab ? tab.move : undefined,
-              onRename: "rename" in tab ? tab.rename : undefined,
-              actions: "actions" in tab ? tab.actions : undefined,
-              draggable: !!drag && "move" in tab && !!tab.move,
-              onClose: tab.close
-                ? () => {
-                    // Recover focus only when removing its current owner.
-                    closingTab.current = document
-                      .getElementById(`${panelId(tab.id)}-tab`)
-                      ?.parentElement?.contains(document.activeElement)
-                      ? tab.id
-                      : undefined;
-                    tab.close?.();
-                  }
-                : undefined,
-            }))}
-            tabMenu={
-              tabMenu && {
-                ...tabMenu,
-                // A detail tab cannot outlive its owner, so the owner is kept.
-                // Details live only here: close the kept owner's ones too,
-                // even when the channel has no other tab to close.
-                closeOthers:
-                  tabMenu.closeOthers &&
-                  ((id) => {
-                    const local = owned.find((tab) => tab.id === id);
-                    const keep = local?.owner ?? id;
-                    const details = owned.filter((tab) => tab.owner === keep);
-                    const closed = tabMenu.closeOthers?.(keep) ?? false;
-                    if (!closed && !details.length) return false;
-                    // Focus follows the chosen detail's removal to its owner.
-                    if (local) closingTab.current = local.id;
-                    for (const tab of details) tab.close();
-                    return true;
-                  }),
+          identityOnly ? (
+            heading
+          ) : (
+            <Tabs
+              label={label}
+              variant="navigation"
+              showSelection={!main || tabs.length > 1}
+              value={selected}
+              items={tabs.map((tab) => ({
+                value: tab.id,
+                label: tab.label,
+                icon: tab.icon,
+                panelId: panelId(tab.id),
+                attentionRequest:
+                  "attentionRequest" in tab ? tab.attentionRequest : undefined,
+                onMove: "move" in tab ? tab.move : undefined,
+                onRename: "rename" in tab ? tab.rename : undefined,
+                actions: "actions" in tab ? tab.actions : undefined,
+                draggable: !!drag && "move" in tab && !!tab.move,
+                onClose: tab.close
+                  ? () => {
+                      // Recover focus only when removing its current owner.
+                      closingTab.current = document
+                        .getElementById(`${panelId(tab.id)}-tab`)
+                        ?.parentElement?.contains(document.activeElement)
+                        ? tab.id
+                        : undefined;
+                      if (tab.close?.() === false)
+                        closingTab.current = undefined;
+                    }
+                  : undefined,
+              }))}
+              tabMenu={
+                tabMenu && {
+                  ...tabMenu,
+                  // A detail tab cannot outlive its owner, so the owner is kept.
+                  // Details live only here: close the kept owner's ones too,
+                  // even when the channel has no other tab to close.
+                  closeOthers:
+                    tabMenu.closeOthers &&
+                    ((id) => {
+                      const local = owned.find((tab) => tab.id === id);
+                      const keep = local?.owner ?? id;
+                      const details = owned.filter((tab) => tab.owner === keep);
+                      const closed = tabMenu.closeOthers?.(keep) ?? false;
+                      if (!closed && !details.length) return false;
+                      // Focus follows the chosen detail's removal to its owner.
+                      if (local) closingTab.current = local.id;
+                      for (const tab of details) tab.close({ keepOwner: true });
+                      return true;
+                    }),
+                }
               }
-            }
-            onValueChange={(id) => {
-              focusContent.current = pointerTab.current;
-              pointerTab.current = false;
-              choose(id);
-            }}
-          />
+              onValueChange={(id) => {
+                focusContent.current = pointerTab.current;
+                pointerTab.current = false;
+                choose(id);
+              }}
+            />
+          )
         }
       />
       <div className={styles.workspaceBody}>
@@ -446,9 +539,13 @@ export function PanelWorkspace({
             slots={slots}
           >
             <div
-              role="tabpanel"
+              {...(identityOnly
+                ? { role: "region", "aria-label": item.label }
+                : {
+                    role: "tabpanel",
+                    "aria-labelledby": `${panelId(item.id)}-tab`,
+                  })}
               id={panelId(item.id)}
-              aria-labelledby={`${panelId(item.id)}-tab`}
               className={styles.workspacePane}
               data-covered={selected !== item.id || undefined}
               data-entering={motion?.enter === item.id || undefined}
@@ -528,7 +625,7 @@ export function PanelLocalTab({
   children,
 }: {
   title: string;
-  close(): void;
+  close: Close;
   children: ReactNode;
 }) {
   const host = usePanelTabHost();
@@ -543,7 +640,7 @@ export function PanelLocalTab({
       id,
       label: title,
       owner,
-      close: () => onClose.current(),
+      close: (options) => onClose.current(options),
     });
   }, [register, owner, id, title]);
   const slot = host?.slots.get(id);

@@ -72,7 +72,7 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   } finally {
     await page.evaluate(() => window.mentionFixture.releaseProfiles());
   }
-  const choice = page.getByRole("option", { name: /^Mary Jane / });
+  const choice = page.getByRole("option", { name: "Mary Jane", exact: true });
   await expect(choice).toBeVisible();
   await expect.poll(async () => (await reads()).pending).toBe(0);
   await choice.click();
@@ -242,6 +242,28 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
     await expect(listbox).toHaveCount(0);
   }
 
+  await input.fill("");
+  await page.evaluate(() => window.mentionFixture.holdSearches());
+  try {
+    // An uncached query, so a directory read is in flight when dismissed. It
+    // goes first: once a complete page for a prefix of `Hone` is cached, the
+    // chooser answers the query from it and reads nothing.
+    await input.pressSequentially("@Hone");
+    await expect(options).toHaveCount(2);
+    await expect.poll(held).toContain("Hone");
+    await input.press("Escape");
+    await expect(listbox).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.mentionFixture.releaseSearches());
+  }
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.mentionFixture.reads())).pending,
+    )
+    .toBe(0);
+  await expect(listbox).toHaveCount(0);
+
   await input.fill("@Hon");
   await expect(options).toHaveCount(2);
   await input.press("Tab");
@@ -277,26 +299,6 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
     .toBe(0);
   await expect(listbox).toHaveCount(0);
 
-  await input.fill("");
-  await page.evaluate(() => window.mentionFixture.holdSearches());
-  try {
-    // An uncached query, so a directory read is in flight when dismissed.
-    await input.pressSequentially("@Hone");
-    await expect(options).toHaveCount(2);
-    await expect.poll(held).toContain("Hone");
-    await input.press("Escape");
-    await expect(listbox).toHaveCount(0);
-  } finally {
-    await page.evaluate(() => window.mentionFixture.releaseSearches());
-  }
-  await expect
-    .poll(
-      async () =>
-        (await page.evaluate(() => window.mentionFixture.reads())).pending,
-    )
-    .toBe(0);
-  await expect(listbox).toHaveCount(0);
-
   await input.fill("@Zed");
   await expect.poll(searches).toContain("Zed");
   await expect
@@ -312,3 +314,105 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
   await freshSearch(before);
   expect(await searches()).not.toContainEqual(expect.stringContaining("Zed "));
 });
+
+for (const row of ["people", "supplement"]) {
+  test(`a ${row} row proves the owner's mention only from a person's pick`, async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+    });
+    await page.goto("/tests/fixtures/mentions.html?supplement");
+    const input = page.getByRole("textbox", { name: "Message #General" });
+    await expect
+      .poll(() => page.evaluate(() => window.mentionFixture.list().status))
+      .toBe("ready");
+    const crew = page.getByRole("option", { name: "Honey crew" });
+    const pick =
+      row === "people"
+        ? page.getByRole("option").filter({ hasNotText: "Honey crew" }).first()
+        : crew;
+    const proof = () =>
+      page.evaluate(() => window.mentionFixture.ownerMention(null));
+    for (const trusted of [false, true]) {
+      await input.fill("@Hon");
+      await expect(crew).toBeVisible();
+      if (trusted) await pick.click();
+      else await pick.dispatchEvent("click");
+      await expect(input.locator(".inline-chip")).toHaveCount(
+        row === "people" ? 1 : 2,
+      );
+      const count = await page.evaluate(
+        () => window.mentionFixture.publications.length,
+      );
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .click();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.mentionFixture.publications.length),
+        )
+        .toBe(count + 1);
+      const sent = await page.evaluate(() =>
+        window.mentionFixture.publications.at(-1),
+      );
+      const tagged = sent.tags
+        .filter(([tag]) => tag === "p")
+        .map(([, key]) => key);
+      expect(tagged).toHaveLength(row === "people" ? 1 : 2);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (id) => window.mentionFixture.confirmedOwnerSends(null, [id]),
+            sent.id,
+          ),
+        )
+        .toEqual([sent.id]);
+      if (!trusted) {
+        expect(await proof()).toBeNull();
+        continue;
+      }
+      const latest = await proof();
+      expect(latest?.eventId).toBe(sent.id);
+      expect([...latest.recipientIds].sort()).toEqual(tagged.sort());
+    }
+  });
+}
+
+for (const mode of ["hold", "silent"]) {
+  test(`Space picks an exact person unless a supplement published a hold (${mode})`, async ({
+    page,
+  }) => {
+    await page.goto(
+      `/tests/fixtures/mentions.html?delayed-profiles&supplement=${mode}`,
+    );
+    await page.evaluate(() => window.mentionFixture.releaseProfiles());
+    const input = page.getByRole("textbox", { name: "Message #General" });
+    await expect
+      .poll(() => page.evaluate(() => window.mentionFixture.list().status))
+      .toBe("ready");
+    await input.pressSequentially("@Mary Jane ");
+    if (mode === "silent") {
+      await expect(input.locator(".inline-chip")).toHaveText("@Mary Jane");
+      return;
+    }
+    await expect(input).toHaveJSProperty("value", "@Mary Jane ");
+    await expect(input.locator(".inline-chip")).toHaveCount(0);
+  });
+}
+
+for (const key of ["Enter", "Tab"]) {
+  test(`${key} takes a supplement row ordered first`, async ({ page }) => {
+    await page.goto("/tests/fixtures/mentions.html?supplement=hold");
+    const input = page.getByRole("textbox", { name: "Message #General" });
+    await expect
+      .poll(() => page.evaluate(() => window.mentionFixture.list().status))
+      .toBe("ready");
+    await input.fill("@Hon");
+    await expect(
+      page.getByRole("option", { name: "Honey crew", selected: true }),
+    ).toBeVisible();
+    await input.press(key);
+    await expect(input.locator(".inline-chip")).toHaveCount(2);
+  });
+}

@@ -1,12 +1,13 @@
 import { templateAgentChoices } from "../agents/choices";
 import type { KitEntry, Lineup, Template } from "../channel-templates/model";
 import {
-  CANVAS_BYTES,
+  LIVE_CANVAS_BYTES,
+  LIVE_CANVAS_LIMIT,
   parseKitRecord,
   parseLineup,
-  resolveLineup,
 } from "../channel-templates/model";
 import { splitPartition } from "../relay/partition";
+import { readView, writeView } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 
 export type Workspace = {
@@ -16,6 +17,17 @@ export type Workspace = {
 };
 const prefix = "<!-- buzz-session-workspace:v1 ";
 const end = "<!-- /buzz-session-workspace -->";
+/** In both workspace block delimiters. */
+const marker = "buzz-session-workspace";
+const worktreeRule =
+  "- Make code changes in that new worktree. A task that only reads code, or does not use a repository, usually does not need one.";
+// What earlier versions wrote instead, which Canvases saved then still hold.
+const earlierWorktreeRule = "- Make all changes in that new worktree.";
+// What an agent reads with the block, which no Canvas holds.
+const ownerRule =
+  "The owner wrote the worktree rules of this block. They replace this conversation's working-location rule.";
+const followUpRule = (location: string) =>
+  `- These steps are for new work. For follow-up work on an existing branch or pull request, keep using that branch: reuse its linked worktree, or add one under \`${location}\` if it has none.`;
 export const emptyWorkspace = (): Workspace => ({ folders: [], canvas: "" });
 
 export function validateWorkspace(value: Workspace): Workspace {
@@ -47,19 +59,9 @@ export function validateWorkspace(value: Workspace): Workspace {
   return { folders, ...(worktree ? { worktree } : {}), canvas: value.canvas };
 }
 
-/** Workspace preferences remain ordinary Canvas instructions, as in the reference workflow. */
-export function workspaceCanvas(input: Workspace): string {
-  const value = validateWorkspace(input);
-  if (new TextEncoder().encode(value.canvas).length > CANVAS_BYTES)
-    throw new Error("Keep Canvas below 24 KiB.");
-  if (!value.folders.length) return value.canvas;
-  const metadata = JSON.stringify({
-    folders: value.folders,
-    worktree: value.worktree,
-  })
-    .replaceAll("<", "\\u003c")
-    .replaceAll(">", "\\u003e");
-  const instructions = value.worktree
+/** What the workspace block tells an agent about its folders. */
+function instructions(value: Workspace) {
+  return value.worktree
     ? [
         "## Workspace instructions",
         "",
@@ -69,34 +71,126 @@ export function workspaceCanvas(input: Workspace): string {
         ),
         `- Before starting new work, fetch the latest \`${value.worktree.baseBranch}\` branch from origin.`,
         `- For each repository that needs changes, create a new worktree under \`${value.worktree.location}\` from \`origin/${value.worktree.baseBranch}\`.`,
-        "- Make all changes in that new worktree.",
+        worktreeRule,
       ]
     : [
         "## Project folders",
         "",
         ...value.folders.map((folder) => `- \`${folder}\``),
       ];
+}
+
+/** Workspace preferences remain ordinary Canvas instructions, as in the reference workflow. */
+export function workspaceCanvas(input: Workspace): string {
+  const value = validateWorkspace(input);
+  if (new TextEncoder().encode(value.canvas).length > LIVE_CANVAS_BYTES)
+    throw new Error(`Keep Canvas below ${LIVE_CANVAS_LIMIT}.`);
+  if (!value.folders.length) return value.canvas;
+  const metadata = JSON.stringify({
+    folders: value.folders,
+    worktree: value.worktree,
+  })
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e");
   const canvas = [
     `${prefix}${metadata} -->`,
-    ...instructions,
+    ...instructions(value),
     end,
     "",
     value.canvas,
   ].join("\n");
-  if (new TextEncoder().encode(canvas).length > CANVAS_BYTES)
-    throw new Error("Keep Canvas and workspace instructions below 24 KiB.");
+  if (new TextEncoder().encode(canvas).length > LIVE_CANVAS_BYTES)
+    throw new Error(
+      `Keep Canvas and workspace instructions below ${LIVE_CANVAS_LIMIT}.`,
+    );
   return canvas;
 }
 
 export function readWorkspace(content: string): Workspace {
   if (!content.startsWith(prefix)) return { folders: [], canvas: content };
   const value = parseWorkspace(content);
+  // Saved content can fit even when the current managed header is longer.
+  // Check its exact format here; the writer enforces the current size budget.
+  const canvas = workspaceCanvas({ ...value, canvas: "" }) + value.canvas;
   // Never silently discard manually edited instructions inside the managed block.
-  if (workspaceCanvas(value) !== content)
+  if (
+    canvas !== content &&
+    canvas.replace(worktreeRule, earlierWorktreeRule) !== content
+  )
     throw new Error(
       "Workspace instructions were edited in Canvas. Use the raw Canvas editor to preserve those changes.",
     );
   return value;
+}
+
+/** A workspace Canvas's instructions, safe to copy to a shared Canvas: empty
+ * when any workspace metadata remains (misplaced, nested or malformed), since
+ * it names local folders. */
+export function shareableInstructions(content: string): string {
+  try {
+    const { canvas } = readWorkspace(content);
+    return canvas.includes(marker) ? "" : canvas;
+  } catch {
+    return "";
+  }
+}
+
+/** A Canvas's workspace block: its settings, and whether its text is other
+ * than what Buzz generates from them, so its owner edited it by hand.
+ * Undefined when the Canvas has no block or it cannot be read. */
+function workspaceBlock(content: string) {
+  if (!content.startsWith(prefix)) return undefined;
+  try {
+    const value = parseWorkspace(content);
+    const generated = workspaceCanvas({ ...value, canvas: "" });
+    if (!generated) return undefined;
+    return {
+      value,
+      edited:
+        !content.startsWith(generated) &&
+        !content.startsWith(
+          generated.replace(worktreeRule, earlierWorktreeRule),
+        ),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether the Canvas's workspace block has worktree rules that its owner
+ * edited by hand. They are the owner's rule for the chat, also when the
+ * conversation works in a folder of its own. */
+export function ownerWorktreeRules(content: string) {
+  const block = workspaceBlock(content);
+  return !!block?.edited && !!block.value.worktree;
+}
+
+/** A Canvas as its agent reads it. A workspace block that Buzz generated is
+ * printed again from its settings, so what an agent is told can change
+ * without changing what Canvases hold. `elsewhere`: the conversation works in
+ * a folder of its own, or where the plugin that manages it says, so the block
+ * only lists the folders. A block edited by hand stays as written, as does
+ * one that cannot be read. When the owner wrote the Canvas, its worktree
+ * rules are then the owner's rule for this chat, which the text says. */
+export function agentCanvas(
+  content: string,
+  elsewhere = false,
+  ownerWrote = true,
+): string {
+  const block = workspaceBlock(content);
+  if (!block) return content;
+  const { value } = block;
+  if (block.edited) {
+    if (!elsewhere || !value.worktree || !ownerWrote) return content;
+    const at = content.length - value.canvas.length;
+    return `${content.slice(0, at)}${ownerRule}\n\n${content.slice(at)}`;
+  }
+  const lines = instructions(
+    elsewhere ? { ...value, worktree: undefined } : value,
+  );
+  if (!elsewhere && value.worktree)
+    lines.push(followUpRule(value.worktree.location));
+  return `${lines.join("\n")}\n\n${value.canvas}`;
 }
 
 /** The folders a Canvas's workspace block lets an agent work in: its project
@@ -156,6 +250,18 @@ function parseWorkspace(content: string): Workspace {
   });
 }
 
+// Channel templates are on this device, so which one a workspace last applied
+// is too; its settings reopen showing it.
+const appliedTemplateKey = (projectId: string) =>
+  `solo:workspace-template:${projectId}`;
+export const appliedTemplate = {
+  read: (scope: string, projectId: string) =>
+    readView(scope, appliedTemplateKey(projectId), ""),
+  /** Custom settings (`""`) forgets it. */
+  write: (scope: string, projectId: string, templateId: string) =>
+    writeView(scope, appliedTemplateKey(projectId), templateId || null),
+};
+
 /** One existing encrypted template record per project. */
 export async function projectTemplateId(projectId: string) {
   const hash = await crypto.subtle.digest(
@@ -203,19 +309,12 @@ export function templateEntry(entries: readonly KitEntry[], id: string) {
 }
 export function projectDefault(
   entries: readonly KitEntry[],
-  projectId: string,
   overrideId: string,
+  defaultId?: string,
   requireDefault = false,
 ) {
   const override = templateEntry(entries, overrideId);
   if (override?.record.value.type === "template") return override.record.value;
-  const groups = entries.find(
-    (entry) => !entry.record.deleted && entry.record.value.type === "groups",
-  )?.record.value;
-  const defaultId =
-    groups?.type === "groups"
-      ? groups.groups.find((group) => group.id === projectId)?.defaultTemplateId
-      : undefined;
   const fallback = defaultId
     ? templateEntry(entries, defaultId)?.record.value
     : undefined;
@@ -255,11 +354,13 @@ export function parseChatSetup(raw: unknown): ChatSetup {
 export function defaultsRevision(kit: { entries: readonly KitEntry[] }) {
   return kit.entries.map((entry) => entry.eventId).join();
 }
-export async function loadChatSetup(
+/** A workspace's saved default template, as New chat and New channel find
+ * it, with the kit it was read from. */
+export async function loadWorkspaceDefaults(
   session: RelaySession,
   projectId: string,
-): Promise<ChatSetup & { revision: string }> {
-  const store = session.soloPreferences;
+) {
+  const store = session.sidebarPreferences;
   await store.refresh();
   const preferences = store.snapshot();
   if (
@@ -276,51 +377,118 @@ export async function loadChatSetup(
       kit.error ??
         "Workspace defaults couldn’t load. Retry before starting the chat.",
     );
-  const revision = defaultsRevision(kit);
   const template = projectDefault(
     kit.entries,
-    projectId,
     await projectTemplateId(projectId),
+    preferences.data.legacyTemplates?.[projectId],
     true,
   );
-  if (!template) return { projectId, canvas: "", agents: [], revision };
-  if (template.agents.length || template.teamIds.length) {
-    await session.agentChoices.refresh("templates");
-    const choices = session.agentChoices.snapshot();
-    if (
-      choices.templates.status !== "ready" ||
-      !choices.templates.complete ||
-      choices.archives.status !== "ready"
-    )
-      throw new Error(
-        "Available agents couldn’t load. Retry before starting the chat.",
-      );
-    const roster = session.channels.list();
-    const candidates = resolveLineup(
-      template,
-      kit.entries,
-      choices.templates.identities,
+  return { template, entries: kit.entries, revision: defaultsRevision(kit) };
+}
+/** New channel's reading of a workspace's defaults: the agents it and its
+ * teams name, not yet checked against those available, and only the part of
+ * its Canvas safe to share. */
+export function channelDefaults(
+  template: Template,
+  entries: readonly KitEntry[],
+) {
+  const teamAgents = template.teamIds.flatMap((id) => {
+    const team = entries.find(
+      ({ record }) =>
+        !record.deleted &&
+        record.value.type === "team" &&
+        record.value.id === id,
+    )?.record.value;
+    if (team?.type !== "team")
+      throw new Error("A team in the workspace defaults could not load.");
+    return team.agents;
+  });
+  return {
+    id: template.id,
+    agents: [...new Set([...template.agents, ...teamAgents])],
+    // Only standalone instructions are eligible to share; local paths stay.
+    canvas: shareableInstructions(template.canvas),
+  };
+}
+/** The default agents a new conversation can add, under one rule for New
+ * chat, New channel and the agent tools: an agent not available here
+ * (archived, being deleted, or outside this community) is skipped and the
+ * create goes on. One not yet checked is neither added nor skipped: the
+ * create waits for a complete read. */
+async function availableDefaults(
+  session: RelaySession,
+  agents: readonly string[],
+  starting: string,
+) {
+  if (!agents.length) return { agents: [], skipped: [] };
+  if (agents.length > 200)
+    throw new Error("Workspace defaults name more than 200 agents.");
+  await session.agentChoices.refresh("templates");
+  const choices = session.agentChoices.snapshot();
+  if (
+    choices.templates.status !== "ready" ||
+    !choices.templates.complete ||
+    choices.archives.status !== "ready"
+  )
+    throw new Error(
+      `Available agents couldn’t load. Retry before ${starting}.`,
     );
-    if (
-      candidates.some(
-        (agent) =>
-          !choices.templates.identities.find(
-            (choice) => choice.pubkey === agent.pubkey,
-          )?.managed,
-      ) &&
-      (roster.status !== "ready" || roster.coverage === "partial")
-    ) {
-      session.channels.refreshList?.();
-      throw new Error(
-        "Community membership couldn’t load completely. Refresh and retry before starting the chat.",
-      );
-    }
-    const agents = resolveLineup(
-      template,
-      kit.entries,
-      templateAgentChoices(choices, roster),
-    ).map((agent) => agent.pubkey);
-    return { projectId, canvas: template.canvas, agents, revision };
+  // An agent you don't manage is available only if it is in a channel here.
+  const roster = session.channels.list();
+  if (
+    choices.templates.identities.some(
+      (agent) => agents.includes(agent.pubkey) && !agent.managed,
+    ) &&
+    (roster.status !== "ready" || roster.coverage === "partial")
+  ) {
+    session.channels.refreshList?.();
+    throw new Error(
+      `Community membership couldn’t load completely. Refresh and retry before ${starting}.`,
+    );
   }
-  return { projectId, canvas: template.canvas, agents: [], revision };
+  const available = new Set(
+    templateAgentChoices(choices, roster).map((agent) => agent.pubkey),
+  );
+  return {
+    agents: agents.filter((key) => available.has(key)),
+    skipped: agents.filter((key) => !available.has(key)),
+  };
+}
+/** A workspace's defaults for a new Solo chat: its full Canvas, and the
+ * default agents available here, with those skipped. */
+export async function loadChatSetup(
+  session: RelaySession,
+  projectId: string,
+): Promise<ChatSetup & { revision: string; skipped: string[] }> {
+  const { template, entries, revision } = await loadWorkspaceDefaults(
+    session,
+    projectId,
+  );
+  if (!template)
+    return { projectId, canvas: "", agents: [], skipped: [], revision };
+  const { agents, skipped } = await availableDefaults(
+    session,
+    channelDefaults(template, entries).agents,
+    "starting the chat",
+  );
+  return { projectId, canvas: template.canvas, agents, skipped, revision };
+}
+/** A workspace's defaults for a new team channel: only the shareable part
+ * of its Canvas, and the default agents available here, with those
+ * skipped. */
+export async function loadChannelSetup(
+  session: RelaySession,
+  projectId: string,
+): Promise<{ canvas: string; agents: string[]; skipped: string[] }> {
+  const { template, entries } = await loadWorkspaceDefaults(session, projectId);
+  if (!template) return { canvas: "", agents: [], skipped: [] };
+  const defaults = channelDefaults(template, entries);
+  return {
+    canvas: defaults.canvas,
+    ...(await availableDefaults(
+      session,
+      defaults.agents,
+      "creating the channel",
+    )),
+  };
 }

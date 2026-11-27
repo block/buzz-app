@@ -1,3 +1,6 @@
+import { forwardClipboard } from "./forward-clipboard";
+import { splitPartition } from "../relay/partition";
+import { forwardBody, forwardTag } from "../relay/forwarded-message";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
@@ -37,6 +40,8 @@ afterEach(() => {
 type MediaKind = "image" | "video";
 type ReviewFixtureOptions = {
   kind: MediaKind;
+  forwardSource?: boolean;
+  typingAgent?: ReturnType<typeof keypair>;
   openComments?: boolean;
   replies?: (
     viewer: ReturnType<typeof keypair>,
@@ -55,6 +60,8 @@ function mime(kind: MediaKind) {
 
 async function setupReview({
   kind,
+  forwardSource = false,
+  typingAgent,
   openComments = true,
   replies: buildReplies = () => [],
   extraRootTags = [],
@@ -66,16 +73,14 @@ async function setupReview({
   // The DOM emulator has no playback engine; keep native playback calls observable.
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
-  if (fromThread) {
-    // jsdom has no layout observer; the real thread still owns its read lifecycle.
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-  }
+  // jsdom has no layout observer; threads and forwarded cards use one.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   const viewer = keypair();
   const relay = keypair();
   const attachment = {
@@ -102,7 +107,22 @@ async function setupReview({
     signed(viewer, template),
   );
   const publish = vi.fn(async () => {});
-  const events = [root, ...replies];
+  const source = message(viewer, "private-source", "Private forward source", 1);
+  const events = [
+    ...(forwardSource ? [source] : []),
+    root,
+    ...replies,
+    ...(typingAgent
+      ? [
+          signed(typingAgent, {
+            kind: 0,
+            content: JSON.stringify({ name: "Comment agent", is_agent: true }),
+            tags: [],
+            created_at: 1,
+          }),
+        ]
+      : []),
+  ];
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -111,10 +131,24 @@ async function setupReview({
       writer: { sign, publish },
       async query(filters) {
         return filters.flatMap((filter) => {
+          if (filter.kinds?.includes(0))
+            return events.filter((event) => event.kind === 0);
           if (filter.kinds?.includes(39002) || filter.kinds?.includes(39000))
             return [
               roster(relay, "one", [viewer.pubkey]),
               metadata(relay, "one", "One"),
+              ...(forwardSource
+                ? [
+                    roster(relay, "private-source", [viewer.pubkey]),
+                    metadata(
+                      relay,
+                      "private-source",
+                      "Private source",
+                      1_700_000_000,
+                      [["private"]],
+                    ),
+                  ]
+                : []),
             ];
           if (filter.ids)
             return events.filter((event) => filter.ids?.includes(event.id));
@@ -178,7 +212,7 @@ async function setupReview({
   );
   if (openComments && !fromThread)
     fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
-  return { owner, root, sign, user, attachmentOwner, openReview };
+  return { owner, root, sign, user, attachmentOwner, openReview, source };
 }
 
 function deferredRead() {
@@ -396,6 +430,71 @@ it("navigates every mixed attachment even after a video fails", async () => {
   await screen.findByText("4 / 5");
 });
 
+it("keeps timed reactions on the exact video while moving through a gallery", async () => {
+  const firstUrl = "https://fixture.test/video.mp4";
+  const secondUrl = "https://fixture.test/second.mp4";
+  const { root, sign, user } = await setupReview({
+    kind: "video",
+    extraRootTags: [["imeta", `url ${secondUrl}`, "m video/mp4"]],
+    replies: (viewer, root) => [
+      message(viewer, "one", "⏱ 0:11 — first cut", 2, [
+        ["e", root.id, "", "reply"],
+        ["buzz:media", firstUrl],
+      ]),
+      message(viewer, "one", "⏱ 0:21 — 😍", 3, [
+        ["e", root.id, "", "reply"],
+        ["buzz:media", secondUrl],
+      ]),
+    ],
+  });
+  const dialog = await screen.findByRole("dialog", { name: "Video review" });
+  const firstVideo = dialog.querySelector("video");
+  assert.exists(firstVideo);
+  Object.defineProperty(firstVideo, "duration", {
+    configurable: true,
+    value: 60,
+  });
+  fireEvent.durationChange(firstVideo);
+  expect(
+    within(dialog).getByRole("button", { name: /^Seek to 0:11,/ }),
+  ).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", { name: /^Seek to 0:21,/ }),
+  ).toBeNull();
+  expect(within(dialog).getByRole("button", { name: "0:11" })).toBeVisible();
+  expect(within(dialog).queryByRole("button", { name: "0:21" })).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Next media" }));
+  const secondVideo = dialog.querySelector("video");
+  assert.exists(secondVideo);
+  Object.defineProperty(secondVideo, "duration", {
+    configurable: true,
+    value: 60,
+  });
+  fireEvent.durationChange(secondVideo);
+
+  expect(
+    within(dialog).queryByRole("button", { name: /^Seek to 0:11,/ }),
+  ).toBeNull();
+  expect(
+    within(dialog).getByRole("button", { name: /^Seek to 0:21,/ }),
+  ).toBeVisible();
+  expect(within(dialog).queryByRole("button", { name: "0:11" })).toBeNull();
+  expect(within(dialog).getByRole("button", { name: "0:21" })).toBeVisible();
+  secondVideo.currentTime = 21;
+  await user.click(
+    screen.getByRole("button", { name: "React 😍 at current frame" }),
+  );
+  const event = await signedTemplate(sign);
+  expect(event.content).toBe("⏱ 0:21 — 😍");
+  expect(event.tags).toEqual(
+    expect.arrayContaining([
+      ["e", root.id, "", "reply"],
+      ["buzz:media", secondUrl],
+    ]),
+  );
+});
+
 async function signedTemplate(sign: ReturnType<typeof vi.fn>) {
   await waitFor(() => expect(sign).toHaveBeenCalled());
   return sign.mock.calls.at(-1)?.[0] as EventTemplate;
@@ -428,6 +527,7 @@ it("publishes checked video review comments as time-prefixed kind 9 replies to t
     expect.arrayContaining([
       ["h", "one"],
       ["e", root.id, "", "reply"],
+      ["buzz:media", "https://fixture.test/video.mp4"],
     ]),
   );
 });
@@ -580,6 +680,40 @@ it("keeps thread timestamps noninteractive when a reply video conflicts with a r
   expect(openReview).not.toHaveBeenCalled();
 });
 
+it("keeps root-parented legacy timecodes visible across a reply-video gallery", async () => {
+  const { user } = await setupReview({
+    kind: "video",
+    attachmentInReply: true,
+    extraRootTags: [
+      ["imeta", "url https://fixture.test/other.mp4", "m video/mp4"],
+    ],
+    replies: (viewer, root) => [
+      message(viewer, "one", "⏱ 0:42 — legacy comment", 3, [
+        ["e", root.id, "", "reply"],
+      ]),
+    ],
+  });
+  const dialog = await screen.findByRole("dialog", { name: "Video review" });
+  const firstVideo = dialog.querySelector("video");
+  assert.exists(firstVideo);
+  Object.defineProperty(firstVideo, "duration", {
+    configurable: true,
+    value: 60,
+  });
+  fireEvent.durationChange(firstVideo);
+  expect(within(dialog).getByRole("button", { name: "0:42" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Next media" }));
+  const secondVideo = dialog.querySelector("video");
+  assert.exists(secondVideo);
+  Object.defineProperty(secondVideo, "duration", {
+    configurable: true,
+    value: 60,
+  });
+  fireEvent.durationChange(secondVideo);
+  expect(within(dialog).getByRole("button", { name: "0:42" })).toBeVisible();
+});
+
 it.each([false, true])(
   "seeks the selected full-viewer video with multiple videos (thread entry: %s)",
   async (fromThread) => {
@@ -673,12 +807,17 @@ it.each([
     await user.click(screen.getByRole("button", { name: "00:42.5" }));
     expect(dialog.querySelector("video")?.currentTime).toBe(42.5);
     await typeAndSend(user, "Same conversation");
-    expect((await signedTemplate(sign)).tags).toContainEqual([
-      "e",
-      root.id,
-      "",
-      "reply",
-    ]);
+    const event = await signedTemplate(sign);
+    if (entry.attachmentInReply) {
+      expect(event.tags).toEqual(
+        expect.arrayContaining([
+          ["e", root.id, "", "root"],
+          ["e", attachmentOwner.id, "", "reply"],
+        ]),
+      );
+    } else {
+      expect(event.tags).toContainEqual(["e", root.id, "", "reply"]);
+    }
   },
 );
 
@@ -790,4 +929,113 @@ it("opens image comments by default when the thread contains replies", async () 
   expect(
     screen.getByRole("button", { name: "Hide comments" }),
   ).toBeInTheDocument();
+});
+
+it.each(["image", "video"] as const)(
+  "shows incoming agent typing in %s comments before any reply arrives",
+  async (kind) => {
+    const typingAgent = keypair();
+    const { owner, root } = await setupReview({ kind, typingAgent });
+    const agent = typingAgent.pubkey;
+    await owner.session.profiles.ensure([agent], "background");
+    const typing = [{ pubkey: agent, channelId: "one", threadRootId: root.id }];
+    vi.spyOn(owner.session.typing, "snapshot").mockReturnValue(typing);
+    // Closing and reopening the comments mounts the real host with the new signal.
+    fireEvent.click(screen.getByRole("button", { name: "Hide comments" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
+    const comments = await screen.findByRole("region", {
+      name: "Media comments",
+    });
+    expect(
+      within(comments).getByRole("button", { name: /Activity:.*working/ }),
+    ).toBeVisible();
+  },
+);
+
+it("uses only the stripped sender note in a timed forward marker", async () => {
+  const note = "⏱ 0:21 — Review this cut";
+  await setupReview({
+    kind: "video",
+    replies: (viewer, root) => {
+      const snapshot = {
+        id: "a".repeat(64),
+        channelId: "source",
+        authorId: "b".repeat(64),
+        authorName: "Original Author",
+        createdAt: 1,
+        content: "Copied content",
+      };
+      return [
+        message(viewer, "one", forwardBody(snapshot, note), 2, [
+          ["e", root.id, "", "reply"],
+          forwardTag(snapshot),
+        ]),
+      ];
+    },
+  });
+  await screen.findByText("Review this cut");
+  const video = document.querySelector("video");
+  assert.exists(video);
+  Object.defineProperty(video, "duration", { configurable: true, value: 60 });
+  fireEvent.durationChange(video);
+  const marker = await screen.findByRole("button", { name: /^Seek to 0:21,/ });
+  fireEvent.focus(marker);
+  const tooltip = await screen.findByRole("tooltip");
+  expect(tooltip.textContent).toMatch(/^0:21 · .*: Review this cut$/);
+  expect(tooltip.textContent).not.toMatch(
+    /Forwarded message|Original Author|Copied content|⏱/,
+  );
+});
+
+it("keeps the comment composer forward announcer inside the media-review modal", async () => {
+  const { owner, source } = await setupReview({
+    kind: "image",
+    forwardSource: true,
+  });
+  const input = await screen.findByRole("textbox", { name: "Reply to thread" });
+  const dialog = input.closest('[role="dialog"][aria-modal="true"]');
+  expect(dialog).not.toBeNull();
+  const announcement = document.getElementById(
+    `${input.id}-forward-announcement`,
+  );
+  expect(announcement).not.toBeNull();
+  expect(announcement?.parentElement).toBe(dialog);
+  expect(announcement).toHaveAttribute("aria-live", "polite");
+  const partition = splitPartition(owner.session.scope);
+  assert.exists(partition);
+  const payload = forwardClipboard(
+    {
+      version: 1,
+      origin: partition.communityOrigin,
+      channelId: "private-source",
+      id: source.id,
+    },
+    "Private forward source",
+  );
+  fireEvent.paste(input, {
+    clipboardData: {
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+      items: [],
+    },
+  });
+  await waitFor(() =>
+    expect(announcement).toHaveTextContent(
+      /Everyone in #One will be able to read/,
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Hide comments" }));
+  expect(announcement).toBeEmptyDOMElement();
+  expect(document.getElementById(`${input.id}-forward-announcement`)).toBe(
+    announcement,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
+  await waitFor(() =>
+    expect(announcement).toHaveTextContent(
+      /Everyone in #One will be able to read/,
+    ),
+  );
+  expect(document.getElementById(`${input.id}-forward-announcement`)).toBe(
+    announcement,
+  );
 });

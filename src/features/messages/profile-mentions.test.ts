@@ -1,7 +1,10 @@
 import { expect, it } from "vitest";
-import { profileMentionParts } from "./profile-mentions";
+import {
+  profileMentionParts,
+  renderedProfileMentionParts,
+} from "./profile-mentions";
 import { profileTarget } from "../profiles/target";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 const alice = "a".repeat(64),
   mic = "b".repeat(64),
   other = "c".repeat(64);
@@ -121,5 +124,95 @@ it("binds signed references without making them notification recipients", () => 
   ]);
   expect(parts("@Mic", { ...reference, edited: true })).toEqual([
     { text: "@Mic" },
+  ]);
+});
+it("binds a verified person's prose written under either name preference", () => {
+  const reader = "d".repeat(64);
+  const verified = {
+    displayName: "reader",
+    username: "reader",
+    fullName: "Reader Full",
+  } as NonNullable<Profile["verified"]>;
+  const content = "@reader and @Reader Full";
+  for (const name of ["reader", "Reader Full"]) {
+    const result = profileMentionParts(
+      { ...row, content, mentions: [reader] },
+      new Map([[reader, { name, username: "reader", verified }]]),
+    );
+    expect(result.filter((part) => part.target)).toEqual([
+      { text: "@reader", target: profileTarget(reader) },
+      { text: "@Reader Full", target: profileTarget(reader) },
+    ]);
+  }
+});
+it("does not bind by an unverified kind-0 handle", () => {
+  const sam = "e".repeat(64);
+  const handle = "f".repeat(64);
+  const result = profileMentionParts(
+    { ...row, content: "hi @sam", mentions: [sam, handle] },
+    new Map([
+      [sam, { name: "Sam Lee", username: "sam" }],
+      [handle, { name: "sam" }],
+    ]),
+  );
+  expect(result.filter((part) => part.target)).toEqual([
+    { text: "@sam", target: profileTarget(handle) },
+  ]);
+});
+
+it("binds a full-key-qualified namesake span to the key it names, ignoring case", () => {
+  const twin = "d".repeat(64);
+  const twins = new Map([
+    [mic, { name: "Mic" }],
+    [twin, { name: "Mic" }],
+  ]);
+  const content = `@MIC (${mic}) and @mic (${twin.toUpperCase()}), not @Mic`;
+  const result = profileMentionParts(
+    { ...row, content, mentions: [mic, twin] },
+    twins,
+  );
+  expect(result.filter((part) => part.target)).toEqual([
+    { text: `@MIC (${mic})`, target: profileTarget(mic) },
+    { text: `@mic (${twin.toUpperCase()})`, target: profileTarget(twin) },
+  ]);
+  expect(result.map((part) => part.text).join("")).toBe(content);
+});
+it("keeps a qualified span literal when its key is unsigned, lacks the name or the span crosses a seam", () => {
+  const twin = "d".repeat(64);
+  const twins = new Map([
+    [mic, { name: "Mic" }],
+    [twin, { name: "Mic" }],
+    [other, { name: "Other" }],
+  ]);
+  const literal = (content: string, patch: Partial<ChannelMessage> = {}) =>
+    expect(
+      profileMentionParts(
+        { ...row, content, mentions: [mic, twin, other], ...patch },
+        twins,
+      ),
+    ).toEqual([{ text: content }]);
+  literal(`@Mic (${"e".repeat(64)})`);
+  literal(`@Mic (${other})`);
+  literal(`@Mic (${twin})`, { mentions: [mic, other] });
+  const content = `@Mic (${twin})`;
+  literal(content, { attachmentSeams: [content.indexOf("(") + 3] });
+});
+it("uses normalized Markdown offsets and suppresses bindings across stale seams", () => {
+  const content = "[Link]\\(https://example.org\\) @Mic";
+  const normalized = renderedProfileMentionParts({ ...row, content }, profiles);
+  expect(normalized.filter((part) => part.target)).toEqual([
+    { text: "@Mic", target: profileTarget(mic) },
+  ]);
+  expect(
+    renderedProfileMentionParts(
+      { ...row, content, attachmentSeams: [1] },
+      profiles,
+    ).some((part) => part.target),
+  ).toBe(false);
+});
+it("does not freeze bindings when Markdown falls back to plain text", () => {
+  const content = "> ".repeat(20000) + "@Mic";
+  expect(renderedProfileMentionParts({ ...row, content }, profiles)).toEqual([
+    { text: content },
   ]);
 });

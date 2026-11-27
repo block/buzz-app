@@ -3,10 +3,253 @@ import {
   openSettings,
   selectSettingsSection,
   settingsDialog,
+  settingsSections,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
+import { npubEncode } from "nostr-tools/nip19";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
+
+test("editable instructions open formatted and scroll independently of the save footer", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 320, height: 850 });
+  await page.emulateMedia({
+    colorScheme: "light",
+    reducedMotion: "no-preference",
+  });
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Agent setup");
+  const title = "Agent Memory";
+  const instructions = settingsDialog(page).getByRole("region", {
+    name: "Base instructions",
+  });
+  await instructions.getByRole("button", { name: /^Show all/ }).click();
+  const row = instructions
+    .locator('.buzz-accordion[data-variant="popout"]')
+    .getByRole("button", { name: title, exact: true });
+  const rowLabel = row
+    .locator('span[aria-hidden="true"]')
+    .filter({ hasText: title });
+  const fill = (property) =>
+    row.evaluate(
+      (node, name) =>
+        getComputedStyle(
+          node.closest(".buzz-accordion-item"),
+          "::before",
+        ).getPropertyValue(name),
+      property,
+    );
+  await expect(rowLabel).toHaveCSS("opacity", "1");
+  expect(await fill("opacity")).toBe("0");
+  const collapsedFillLeft = parseFloat(await fill("left"));
+  await row.click();
+  const panel = instructions.getByRole("region", { name: title, exact: true });
+  const heading = panel.getByRole("heading", { name: title, exact: true });
+  const editor = panel.getByRole("textbox", { name: `Your text for ${title}` });
+  await expect(rowLabel).toHaveCSS("transition-property", "opacity");
+  await expect(rowLabel).toHaveCSS("opacity", "0");
+  expect(await fill("transition-property")).toContain("opacity");
+  await expect.poll(() => fill("opacity")).toBe("1");
+  expect(parseFloat(await fill("left"))).toBeLessThan(collapsedFillLeft);
+  const fontSize = (locator) =>
+    locator.evaluate((node) => parseFloat(getComputedStyle(node).fontSize));
+  expect(await fontSize(heading)).toBeGreaterThan(await fontSize(rowLabel));
+  expect((await heading.boundingBox()).y).toBeLessThan(
+    (await editor.boundingBox()).y,
+  );
+  await row.click();
+  await expect(rowLabel).toHaveCSS("opacity", "1");
+  await expect(heading).toHaveCount(0);
+  await row.press("Enter");
+  await expect(row).toBeFocused();
+  await expect(rowLabel).toHaveCSS("transition-duration", "0s");
+  await expect(rowLabel).toHaveCSS("opacity", "0");
+  expect(await fill("transition-duration")).toBe("0s");
+  expect(await fill("opacity")).toBe("1");
+  await expect(heading).toBeVisible();
+  const save = panel.getByRole("button", { name: "Save", exact: true });
+  const cancel = panel.getByRole("button", { name: "Cancel", exact: true });
+  const actions = panel.getByRole("button", {
+    name: `Options for ${title}`,
+  });
+  await cancel.click();
+  await expect(row).toBeFocused();
+  await row.press("Enter");
+  const actionsBounds = await actions.boundingBox();
+  const cancelBounds = await cancel.boundingBox();
+  expect(actionsBounds.x + actionsBounds.width).toBeLessThan(cancelBounds.x);
+  expect(actionsBounds.y).toBe(cancelBounds.y);
+  const expectScrollChaining = async (body, settingsScroll) => {
+    const innerMax = await body.evaluate((node) => {
+      const max = node.scrollHeight - node.clientHeight;
+      node.scrollTop = max - 60;
+      return max;
+    });
+    expect(innerMax).toBeGreaterThan(1);
+    await body.hover();
+    // Reach the edge with real input so the browser resolves pixel rounding
+    // before the next wheel event tests chaining.
+    await page.mouse.wheel(0, 120);
+    await expect
+      .poll(() => body.evaluate((node) => node.scrollTop))
+      .toBeGreaterThanOrEqual(innerMax - 1);
+    const outer = await settingsScroll.evaluate((node) => ({
+      top: node.scrollTop,
+      max: node.scrollHeight - node.clientHeight,
+    }));
+    expect(outer.top).toBeLessThan(outer.max);
+    await expect
+      .poll(async () => {
+        // Continue the gesture after the inner scroller reaches its edge.
+        await page.mouse.wheel(0, 120);
+        return settingsScroll.evaluate((node) => node.scrollTop);
+      })
+      .toBeGreaterThan(outer.top);
+  };
+  await expect(save).toHaveAttribute("data-variant", "prominent");
+  await expect(cancel).toHaveAttribute("data-variant", "subtle");
+  await expect(actions).toHaveText("Options");
+  const editableHint = panel.getByText("This instruction can be changed.");
+  expect((await editableHint.boundingBox()).x).toBeLessThan(
+    (await cancel.boundingBox()).x,
+  );
+  await save.scrollIntoViewIfNeeded();
+  const footerTop = (await save.boundingBox()).y;
+  await editor.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect
+    .poll(() => editor.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(0);
+  expect((await save.boundingBox()).y).toBe(footerTop);
+  await expectScrollChaining(
+    editor,
+    settingsDialog(page).locator(".buzz-dialog-navigation-layout"),
+  );
+
+  await actions.press("Enter");
+  const reset = page.getByRole("menuitem", {
+    name: "Set to default instruction",
+    exact: true,
+  });
+  await reset.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("Already set");
+  await page.keyboard.press("Escape");
+  await cancel.press("Enter");
+  await expect(row).toBeFocused();
+  await row.press("Enter");
+
+  await editor.fill("Report milestones.");
+  await editor.press("ControlOrMeta+a");
+  await editor.press("ControlOrMeta+b");
+  await expect(editor.locator("strong")).toHaveText("Report milestones.");
+  await save.click();
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("Instruction saved.")).toBeVisible();
+  await expect(row).toBeFocused();
+  await row.press("Enter");
+  await expect(
+    panel.getByRole("heading", { name: `${title} (Modified)` }),
+  ).toBeVisible();
+  await expect(editor.locator("strong")).toHaveText("Report milestones.");
+
+  await actions.click();
+  await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("Instruction disabled.")).toBeVisible();
+  await expect(row).toBeFocused();
+  await row.press("Enter");
+  await expect(
+    panel.getByRole("heading", { name: `${title} (Disabled)` }),
+  ).toBeVisible();
+  const disabledText = panel.locator("[data-instruction-reading-area]");
+  await row.press("Tab");
+  await expect(disabledText).toBeFocused();
+  await disabledText.press("End");
+  await expect
+    .poll(() => disabledText.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(0);
+  await expect(save).toBeDisabled();
+  await expect(cancel).toBeVisible();
+  await actions.press("Space");
+  await page
+    .getByRole("menuitem", { name: "Enable", exact: true })
+    .press("Enter");
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("Instruction enabled.")).toBeVisible();
+  await expect(row).toBeFocused();
+  await row.press("Enter");
+  await expect(editor).toBeEditable();
+  await expect(save).toBeDisabled();
+
+  const pasted = "Report milestones.\nMention blockers.";
+  await editor.press("ControlOrMeta+a");
+  await editor.evaluate((node, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    node.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+  }, pasted);
+  await save.click();
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await row.press("Enter");
+  await expect(editor).toHaveValue(pasted);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await selectSettingsSection(page, "Appearance");
+  await chooseColorMode(page, "Dark");
+  await page.getByRole("button", { name: "Increase interface size" }).click();
+  await selectSettingsSection(page, "Agent setup");
+  const readOnly = instructions.getByRole("button", {
+    name: "Trust",
+    exact: true,
+  });
+  const readOnlyLabel = readOnly
+    .locator('span[aria-hidden="true"]')
+    .filter({ hasText: "Trust" });
+  await readOnly.click();
+  await expect(readOnlyLabel).toHaveCSS("transition-duration", "0s");
+  await expect(readOnlyLabel).toHaveCSS("opacity", "0");
+  const readingPanel = instructions.getByRole("region", {
+    name: "Trust",
+    exact: true,
+  });
+  const readingHeading = readingPanel.getByRole("heading", {
+    name: "Trust",
+    exact: true,
+  });
+  const readingBody = readingPanel.locator("[data-instruction-reading-area]");
+  expect(await fontSize(readingHeading)).toBeGreaterThan(
+    await fontSize(readOnlyLabel),
+  );
+  expect((await readingHeading.boundingBox()).y).toBeLessThan(
+    (await readingBody.boundingBox()).y,
+  );
+  await expect(
+    readingPanel.getByRole("button", { name: "Options for Trust" }),
+  ).toHaveCount(0);
+  await readOnly.press("Tab");
+  await expect(readingBody).toBeFocused();
+  await expect(readingBody).toHaveCSS("outline-style", "solid");
+  await expect(readingBody).toHaveCSS("mask-image", "none");
+  await readingBody.press("End");
+  await expect
+    .poll(() => readingBody.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(0);
+  await expectScrollChaining(
+    readingBody,
+    settingsDialog(page).locator(".buzz-dialog-navigation-detail"),
+  );
+});
 
 // Column sizing and control containment depend on browser layout/font metrics.
 // Service persistence, errors, and draft transitions stay in the component tests.
@@ -28,13 +271,15 @@ test("settings share a centered, bounded column and keep controls contained acro
   await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   await selectSettingsSection(page, "Identity");
   // Copy failure must leave the entire value selectable as ordinary text.
-  const profile = page.getByRole("region", {
+  const identity = page.getByRole("region", {
     name: "Identity",
     exact: true,
   });
-  await expect(
-    profile.getByRole("button", { name: "Copy public key" }),
-  ).toBeVisible();
+  const copyId = identity.getByRole("button", {
+    name: "Copy Buzz ID",
+    exact: true,
+  });
+  await expect(copyId).toBeVisible();
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -45,19 +290,22 @@ test("settings share a centered, bounded column and keep controls contained acro
       },
     });
   });
-  await profile.getByRole("button", { name: "Copy public key" }).click();
+  await copyId.click();
   await expect(page.getByText(/Select it and copy manually/)).toBeVisible();
-  const publicKey = profile.locator("code").first();
-  const key = await publicKey.textContent();
+  // The card abbreviates the ID; clipboard failure exposes the full value below it.
+  const publicKey = identity.getByText(/^Full Buzz ID:/).locator("code");
+  const key = npubEncode(app.viewer);
+  await expect(publicKey).toHaveText(key);
   await publicKey.click();
   await expect
     .poll(() => page.evaluate(() => window.getSelection()?.toString()))
     .toBe(key);
-  await profile.getByRole("button", { name: "Copy public key" }).focus();
-  await page.keyboard.press("Tab");
+  await copyId.focus();
+  await page.keyboard.press("Shift+Tab");
   await expect(
-    profile.getByRole("button", { name: "Copy nostr address" }),
+    identity.getByRole("button", { name: "More options", exact: true }),
   ).toBeFocused();
+  await page.getByRole("dialog", { name: "Identity wasn’t copied" }).hover();
   await page
     .getByRole("dialog", { name: "Identity wasn’t copied" })
     .getByRole("button", { name: "Dismiss notification" })
@@ -241,6 +489,63 @@ test("settings share a centered, bounded column and keep controls contained acro
   }
 });
 
+// Once the section list scrolls, a classic scrollbar takes its width from the
+// labels. Only a browser with scrollbars that take space can show that.
+test("settings section labels fit beside a classic scrollbar", {
+  tag: "@classic-scrollbars",
+}, async ({ page, app }) => {
+  test.skip(
+    process.platform !== "linux" && !process.env.BUZZ_CLASSIC_SCROLLBARS,
+    "Set BUZZ_CLASSIC_SCROLLBARS=1 on a Mac whose scrollbars take space",
+  );
+  // A short window makes the fixture's section list scroll.
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await page.goto(app.origin);
+  await openSettings(page);
+  await page.evaluate(() => document.fonts.ready);
+  const sections = settingsSections(page);
+  await expect
+    .poll(
+      () =>
+        sections.evaluate((nav) => {
+          const style = getComputedStyle(nav);
+          return (
+            nav.offsetWidth -
+            nav.clientWidth -
+            parseFloat(style.borderLeftWidth) -
+            parseFloat(style.borderRightWidth)
+          );
+        }),
+      {
+        message: "the section list scrolls beside a scrollbar that takes space",
+      },
+    )
+    .toBeGreaterThan(0);
+  const labels = await sections.evaluate((nav) =>
+    // The community address row truncates long hosts by design.
+    [
+      ...nav.querySelectorAll(
+        ".navigation-item:not([aria-label]) .navigation-item-label",
+      ),
+    ].map((label) => {
+      const text = document.createRange();
+      text.selectNodeContents(label);
+      return {
+        name: label.textContent,
+        overflows:
+          text.getBoundingClientRect().width >
+          label.getBoundingClientRect().width,
+      };
+    }),
+  );
+  expect(labels.map(({ name }) => name)).toEqual(
+    expect.arrayContaining(["Channel templates", "Software updates"]),
+  );
+  expect(
+    labels.filter(({ overflows }) => overflows).map(({ name }) => name),
+  ).toEqual([]);
+});
+
 // Real layout metrics and Base UI focus handoff need a browser; empty/loading
 // conditions are covered by component tests.
 test.describe("settings empty collections", () => {
@@ -283,6 +588,19 @@ test.describe("settings empty collections", () => {
         await expect(search).toBeFocused();
         await expect(search).toHaveValue("");
         await page.evaluate(() => document.fonts.ready);
+        // Search shares the title/tab content inset rather than the border edge.
+        await expect
+          .poll(() =>
+            community.evaluate((root) => {
+              const section = root.closest("section");
+              const title = section.querySelector(".buzz-content-header-title");
+              const search = root.querySelector(".buzz-input-group");
+              if (!title || !search) return false;
+              const left = title.getBoundingClientRect().left;
+              return Math.abs(search.getBoundingClientRect().left - left) < 1;
+            }),
+          )
+          .toBe(true);
         await expect
           .poll(() =>
             community.evaluate(
@@ -380,84 +698,107 @@ test.describe("settings empty collections", () => {
   });
 });
 
+// The Builderlab section applies only in FI builds. With no native host its
+// session stays signed out, and hosted communities use the fixture broker.
+const fiBuild = test.extend({ federatedIdentity: true });
+
 // Hosted setup states use the real settings page with isolated account replies;
 // account operations and failures are covered by the owning component tests.
-test("hosted settings empty and setup cards fit without covering their actions", async ({
-  page,
-  app,
-}, info) => {
-  let signedIn = false;
-  await page.route("**/api/builderlab/**", async (route) => {
-    const action = new URL(route.request().url()).pathname.split("/").pop();
-    const replies = {
-      auth: {
-        auth: signedIn
-          ? { email: "test@example.com", expiresAt: "2030" }
-          : null,
-      },
-      identity: { identity: { pubkey_hex: app.viewer } },
-      list: { communities: [] },
-    };
-    if (!(action in replies))
-      throw new Error(`Unexpected account action: ${action}`);
-    await route.fulfill({ json: replies[action] });
-  });
-  for (const state of ["setup", "empty"]) {
-    signedIn = state === "empty";
-    await page.goto(app.origin);
-    await page
-      .getByRole("button", { name: "Your profile", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    for (const mode of ["light", "dark"]) {
-      await selectSettingsSection(page, "Appearance");
-      await chooseColorMode(page, mode === "light" ? "Light" : "Dark");
-      for (const width of [1440, 800, 390]) {
-        await page.setViewportSize({ width, height: 1000 });
-        await selectSettingsSection(page, "Builderlab hosting");
-        const card = page.locator(".buzz-empty-state").filter({
-          has: page.getByRole("heading", {
-            name: signedIn
-              ? "No hosted communities yet"
-              : "Sign in to manage hosted communities",
-          }),
-        });
-        await expect(card).toBeVisible();
-        for (const scale of ["100%", "200%"]) {
-          await page.evaluate((value) => {
-            document.documentElement.style.fontSize = value;
-          }, scale);
-          await expect
-            .poll(
-              () =>
-                card.evaluate((root) => {
-                  const box = root.getBoundingClientRect();
-                  return (
-                    [...root.querySelectorAll("*")].every((node) => {
-                      const child = node.getBoundingClientRect();
-                      return child.left >= box.left && child.right <= box.right;
-                    }) && root.scrollWidth <= root.clientWidth
-                  );
+fiBuild(
+  "hosted settings empty and setup cards fit without covering their actions",
+  async ({ page, app }, info) => {
+    let signedIn = false;
+    await page.route("**/api/builderlab/**", async (route) => {
+      const action = new URL(route.request().url()).pathname.split("/").pop();
+      const replies = {
+        auth: {
+          auth: signedIn
+            ? { email: "test@example.com", expiresAt: "2030" }
+            : null,
+        },
+        identity: { identity: { pubkey_hex: app.viewer } },
+        list: { communities: [] },
+      };
+      if (!(action in replies))
+        throw new Error(`Unexpected account action: ${action}`);
+      await route.fulfill({ json: replies[action] });
+    });
+    for (const state of ["setup", "empty"]) {
+      signedIn = state === "empty";
+      await page.goto(app.origin);
+      await page
+        .getByRole("button", { name: "Your profile", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Settings", exact: true })
+        .click();
+      for (const mode of ["light", "dark"]) {
+        await selectSettingsSection(page, "Appearance");
+        await chooseColorMode(page, mode === "light" ? "Light" : "Dark");
+        for (const width of [1440, 800, 390]) {
+          await page.setViewportSize({ width, height: 1000 });
+          await selectSettingsSection(page, "Builderlab");
+          await expect(
+            page.getByRole("region", { name: "Builderlab", exact: true }),
+          ).toBeVisible();
+          const back = page.getByRole("button", { name: "Back to Builderlab" });
+          if (await back.isVisible()) await back.click();
+          const open = page.getByRole("button", { name: "Open Communities" });
+          await open.click();
+          const card = signedIn
+            ? page.getByRole("region", { name: "Communities", exact: true })
+            : page.locator(".buzz-empty-state").filter({
+                has: page.getByRole("heading", {
+                  name: "Sign in to manage hosted communities",
                 }),
-              { message: `${state}, ${mode}, ${width}px, ${scale}` },
-            )
-            .toBe(true);
-          if (!signedIn) {
-            const action = card.getByRole("button", {
-              name: "Sign in with Builderlab",
+              });
+          if (signedIn) {
+            const create = card.getByRole("button", {
+              name: "Create community",
+              exact: true,
             });
-            await action.scrollIntoViewIfNeeded();
-            await expect(action).toBeInViewport({ ratio: 1 });
+            await expect(create).toBeEnabled();
           }
-          if (width === 390 && scale === "200%")
-            await page.screenshot({
-              path: info.outputPath(`hosted-${state}-${mode}-200.png`),
-            });
+          await expect(card).toBeVisible();
+          for (const scale of ["100%", "200%"]) {
+            await page.evaluate((value) => {
+              document.documentElement.style.fontSize = value;
+            }, scale);
+            await expect
+              .poll(
+                () =>
+                  card.evaluate((root) => {
+                    const box = root.getBoundingClientRect();
+                    return (
+                      [...root.querySelectorAll("*")].every((node) => {
+                        if (!node.getClientRects().length) return true;
+                        const child = node.getBoundingClientRect();
+                        return (
+                          child.left >= box.left && child.right <= box.right
+                        );
+                      }) && root.scrollWidth <= root.clientWidth
+                    );
+                  }),
+                { message: `${state}, ${mode}, ${width}px, ${scale}` },
+              )
+              .toBe(true);
+            if (!signedIn) {
+              const action = card.getByRole("button", {
+                name: "Sign in with Builderlab",
+              });
+              await action.scrollIntoViewIfNeeded();
+              await expect(action).toBeInViewport({ ratio: 1 });
+            }
+            if (width === 390 && scale === "200%")
+              await page.screenshot({
+                path: info.outputPath(`hosted-${state}-${mode}-200.png`),
+              });
+          }
+          await page.evaluate(() => {
+            document.documentElement.style.fontSize = "";
+          });
         }
-        await page.evaluate(() => {
-          document.documentElement.style.fontSize = "";
-        });
       }
     }
-  }
-});
+  },
+);

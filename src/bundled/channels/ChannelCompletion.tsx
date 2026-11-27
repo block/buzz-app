@@ -1,12 +1,18 @@
-import { useLayoutEffect, useSyncExternalStore } from "react";
+import { viewerMember } from "../../features/relay/membership";
+import { useContext, useLayoutEffect, useSyncExternalStore } from "react";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import type {
   CompletionSuggestion,
   ComposerCompletionProps,
 } from "../../features/conversation/contracts";
+import {
+  WorkspaceCompletion,
+  workspaceEdit,
+} from "../../features/conversation/workspace-completion";
+import { Cube3dSphereIcon } from "../../shared/design-system/icons";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import { matchName } from "../../features/search/match";
+import { MatchRank, matchName } from "../../features/search/match";
 
 const LIMIT = 20;
 /** Rows kept for open channels when joined matches would fill the list. */
@@ -32,25 +38,32 @@ function joined(channel: ChannelSummary, viewer: string | undefined) {
   return (
     !!viewer &&
     referable(channel) &&
-    (!channel.readOnly || !!channel.cached) &&
-    !!channel.members?.includes(viewer)
+    (!channel.readOnly || channel.viewerRole === "guest" || !!channel.cached) &&
+    viewerMember(channel, viewer)
   );
 }
 
 /** An open channel the viewer can preview but hasn't joined. */
 function open(channel: ChannelSummary) {
-  return !!channel.readOnly && !channel.private && referable(channel);
+  return (
+    !!channel.readOnly &&
+    channel.viewerRole !== "guest" &&
+    !channel.private &&
+    referable(channel)
+  );
 }
 
 /** The channel name rule the other channel pickers use (`matchName`), without
- * its fuzzy ranks: Enter and Tab pick the first row while the viewer is
- * writing prose, so a scattered-letter match must not capture a `#word`. A
- * query with a space matches only from the start of a name, as person names
- * do, so ordinary prose after `#name` closes the popup. */
+ * its last, scattered-letter rank: Enter and Tab pick the first row while the
+ * viewer is writing prose, so letters merely in order must not capture a
+ * `#word`. Letter runs that each begin a word (`team-pl`, `tlp`) still
+ * match, as in Command-K. A query with a space matches only from the start
+ * of a name, as person names do, so ordinary prose after `#name` closes the
+ * popup. */
 function rank(name: string, needle: string) {
   const found = matchName(name, needle)?.rank;
-  if (found === undefined || found > 3) return undefined;
-  if (/\s/u.test(needle) && found > 1) return undefined;
+  if (found === undefined || found > MatchRank.wordRuns) return undefined;
+  if (/\s/u.test(needle) && found > MatchRank.prefix) return undefined;
   return found;
 }
 
@@ -60,6 +73,8 @@ export function ChannelCompletion({
   publish,
 }: ComposerCompletionProps) {
   const needle = query.query.toLowerCase();
+  // A new chat's workspaces come first; choosing one leaves no link.
+  const preferences = useContext(WorkspaceCompletion)?.preferences;
   const listReady = useSyncExternalStore(
     session.channels.subscribeList,
     () => session.channels.list().status === "ready",
@@ -75,6 +90,19 @@ export function ChannelCompletion({
       // Withdraw at the data boundary, not after a later React render.
       if (withdraw) withdraw();
       const list = session.channels.list();
+      const places = (preferences?.snapshot().data?.sections ?? [])
+        .flatMap((section) => {
+          const found = rank(section.name, needle);
+          return found === undefined ? [] : [{ section, rank: found }];
+        })
+        .sort(
+          (a, b) =>
+            a.rank - b.rank ||
+            a.section.name.localeCompare(b.section.name) ||
+            a.section.id.localeCompare(b.section.id),
+        )
+        .slice(0, LIMIT);
+      const room = LIMIT - places.length;
       const names = new Map<string, number>();
       const ranked = (channel: ChannelSummary) => {
         const name = channel.name.toLowerCase();
@@ -109,12 +137,12 @@ export function ChannelCompletion({
       // them when joined matches alone would fill the list.
       const shownMine = mine.slice(
         0,
-        LIMIT - Math.min(others.length, OPEN_SLOTS),
+        Math.max(0, room - Math.min(others.length, OPEN_SLOTS)),
       );
       const shown = [
         ...shownMine.map(({ channel }) => ({ channel, member: true })),
         ...others
-          .slice(0, LIMIT - shownMine.length)
+          .slice(0, room - shownMine.length)
           .map(({ channel }) => ({ channel, member: false })),
       ];
       const settling = list.status === "loading" || list.status === "idle";
@@ -164,7 +192,7 @@ export function ChannelCompletion({
             ? "Searching open channels…"
             : error
               ? "Could not search open channels."
-              : mine.length + others.length > LIMIT
+              : mine.length + others.length > room
                 ? "Keep typing to narrow the list."
                 : // Prose stays silent: the note joins rows already shown.
                   partial && shown.length && !others.length
@@ -177,19 +205,38 @@ export function ChannelCompletion({
           ? retrySearch
           : undefined;
       withdraw = publish({
-        items: shown.map(({ channel, member }) => item(channel, member)),
+        items: [
+          ...places.map(
+            ({ section }): CompletionSuggestion => ({
+              id: `workspace:${section.id}`,
+              label: section.name,
+              detail: "Workspace",
+              preview: <Cube3dSphereIcon size={22} />,
+              edit: workspaceEdit(section.id),
+              canSelect: () =>
+                !!preferences
+                  ?.snapshot()
+                  .data?.sections.some((entry) => entry.id === section.id),
+            }),
+          ),
+          ...shown.map(({ channel, member }) => item(channel, member)),
+        ],
         ...(status ? { status } : {}),
         ...(retry ? { retry } : {}),
       });
     };
     const unsubscribe = session.channels.subscribeList(update);
+    // Workspaces can load after `#` opens.
+    const unsubscribeWorkspaces = preferences?.subscribe(update);
     update();
     return () => {
       unsubscribe();
+      unsubscribeWorkspaces?.();
       if (withdraw) withdraw();
     };
   }, [
     session,
+    preferences,
     needle,
     publish,
     discovered,

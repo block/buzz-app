@@ -12,11 +12,13 @@ import {
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { ComposerAttachments } from "./ComposerAttachments";
 import type { RelaySession } from "../relay/session";
-import type { UploadedAttachment } from "../relay/attachments";
+import { UploadError, type UploadedAttachment } from "../relay/attachments";
 import {
   useAttachmentDraft,
   attachmentDraft,
   transferAttachmentDraft,
+  subscribeAttachmentDraftCounts,
+  unsupportedTypes,
 } from "./attachment-draft";
 
 function deferred<T>() {
@@ -336,6 +338,154 @@ it("accepts the 500 MiB source and 1,000 MiB shared retention boundaries, not ca
   expect(a.result.current.items).toHaveLength(10);
 });
 
+it("admits a batch's files that fit in pick order and names the rest by reason", () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  const names = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => `${from + i}.txt`);
+  act(() => draft.result.current.store.add(names(1, 3).map((n) => file(n))));
+  let left: readonly string[] = [];
+  act(() => {
+    left = draft.result.current.store.add([
+      file("4.txt"),
+      file("empty.txt", 0),
+      file("big.bin", 500 * 1024 * 1024 + 1),
+      ...names(5, 12).map((n) => file(n)),
+    ]);
+  });
+  // The ten-file limit counts attached chips and admitted files, not refused ones.
+  expect(draft.result.current.items.map((item) => item.file.name)).toEqual(
+    names(1, 10),
+  );
+  expect(left).toEqual([
+    "empty.txt is empty.",
+    "big.bin: File exceeds the supported limit: images 50 MiB, GIFs 10 MiB, documents 100 MiB, videos 500 MiB. The relay may enforce a lower limit.",
+    "11.txt, 12.txt: Attach at most 10 files per message.",
+  ]);
+  act(() => {
+    left = draft.result.current.store.add([file("13.txt"), file("14.txt")]);
+  });
+  expect(left).toEqual([
+    "13.txt, 14.txt: Attach at most 10 files per message.",
+  ]);
+  expect(draft.result.current.items).toHaveLength(10);
+});
+
+it("names three files per reason, counts the rest and gives empty files one sentence", () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  let left: readonly string[] = [];
+  act(() => {
+    left = draft.result.current.store.add([
+      file("a.png", 0),
+      ...Array.from({ length: 15 }, (_, i) => file(`${i + 1}.txt`)),
+      file("b.png", 0),
+      file("c.png", 0),
+    ]);
+  });
+  expect(draft.result.current.items).toHaveLength(10);
+  expect(left).toEqual([
+    "a.png, b.png, c.png are empty.",
+    "11.txt, 12.txt, 13.txt and 2 more: Attach at most 10 files per message.",
+  ]);
+});
+
+it("refuses a folder as a folder, alone or in a batch, and a zero-byte file still as empty", () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  const folder = file("top-recipes", 0);
+  const add = (files: globalThis.File[], folders: globalThis.File[]) =>
+    draft.result.current.store.add(files, undefined, new Set(folders));
+  expect(() => add([folder], [folder])).toThrow(
+    /^top-recipes is a folder\. Folders can’t be attached\.$/,
+  );
+  expect(() => add([file("empty.txt", 0)], [folder])).toThrow(
+    /^empty\.txt is empty\.$/,
+  );
+  // A folder's reported size varies by platform; its size never admits it.
+  const more = ["photos", "drafts", "notes"].map((name) => file(name, 4096));
+  let left: readonly string[] = [];
+  act(() => {
+    left = add(
+      [folder, file("notes.txt"), file("empty.txt", 0), ...more],
+      [folder, ...more],
+    );
+  });
+  expect(draft.result.current.items.map((item) => item.file.name)).toEqual([
+    "notes.txt",
+  ]);
+  expect(left).toEqual([
+    "top-recipes, photos, drafts and 1 more are folders. Folders can’t be attached.",
+    "empty.txt is empty.",
+  ]);
+  act(() => {
+    left = add([folder, file("more.txt")], [folder]);
+  });
+  expect(left).toEqual(["top-recipes is a folder. Folders can’t be attached."]);
+  expect(draft.result.current.items.map((item) => item.file.name)).toEqual([
+    "notes.txt",
+    "more.txt",
+  ]);
+});
+
+it("marks only the file whose type the relay refused, until it is retried", async () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  act(() => draft.result.current.store.add([file("setup.exe"), file()]));
+  const marks = () =>
+    draft.result.current.items.map((item) => [item.status, item.unsupported]);
+  await waitFor(() => expect(h.calls).toHaveLength(1));
+  await act(async () => h.calls[0]?.result.reject(new UploadError("type")));
+  await waitFor(() => expect(h.calls).toHaveLength(2));
+  // Any other refusal, even of the file's content, leaves the type unjudged.
+  await act(async () => h.calls[1]?.result.reject(new UploadError("rejected")));
+  expect(marks()).toEqual([
+    ["error", true],
+    ["error", undefined],
+  ]);
+  expect(draft.result.current.blocked).toBe(true);
+  const refused = draft.result.current.items[0];
+  assert(refused);
+  act(() => draft.result.current.store.retry(refused.id));
+  await waitFor(() => expect(h.calls).toHaveLength(3));
+  expect(marks()).toEqual([
+    ["uploading", undefined],
+    ["error", undefined],
+  ]);
+});
+
+it("names three files the relay refused for their type and counts the rest", () => {
+  expect(unsupportedTypes(["setup.exe"])).toBe(
+    "setup.exe isn’t a supported file type.",
+  );
+  expect(unsupportedTypes(["a.exe", "b.exe", "c.exe", "d.exe", "e.exe"])).toBe(
+    "a.exe, b.exe, c.exe and 2 more aren’t supported file types.",
+  );
+});
+
+it("charges a batch's admitted files, not its refused ones, to the shared retention budget", () => {
+  const h = fixture();
+  const a = renderHook(() => useAttachmentDraft(h.session, "a", "a"));
+  const b = renderHook(() => useAttachmentDraft(h.session, "b", "b"));
+  const cap = 500 * 1024 * 1024;
+  act(() => b.result.current.store.add([file("b.bin", cap)]));
+  let left: readonly string[] = [];
+  act(() => {
+    left = a.result.current.store.add([
+      file("a.bin", cap - 5),
+      file("over.bin", 6),
+      file("last.txt", 5),
+    ]);
+  });
+  expect(a.result.current.items.map((item) => item.file.name)).toEqual([
+    "a.bin",
+    "last.txt",
+  ]);
+  expect(left).toEqual([
+    "over.bin: Attachment drafts are full (1,000 MiB). Send or remove some files first.",
+  ]);
+});
+
 it("confirmed scoped cleanup aborts pending uploads and removes only that destination's files", async () => {
   const h = fixture();
   const key = "scope:draft:one";
@@ -428,6 +578,48 @@ it("adds a copied snapshot without reupload, deduplicates and permits removal", 
   assert.exists(item);
   act(() => draft.result.current.store.remove(item.id));
   expect(draft.result.current.items).toHaveLength(0);
+});
+
+it("keeps uploaded files across a reload, but not a file still uploading", async () => {
+  const saved = ["reload", "draft:one:files"] as const;
+  const open = () => {
+    const h = fixture();
+    return {
+      ...h,
+      draft: renderHook(() =>
+        useAttachmentDraft(h.session, "reload:draft:one", "one", false, saved),
+      ),
+    };
+  };
+  const before = open();
+  act(() =>
+    before.draft.result.current.store.add([file("done.png"), file("big.mov")]),
+  );
+  await waitFor(() => expect(before.calls).toHaveLength(1));
+  const descriptor = { ...uploaded("done.png"), type: "image/png" };
+  await act(async () => before.calls[0]?.result.resolve(descriptor));
+  await waitFor(() => expect(before.calls).toHaveLength(2));
+  before.draft.unmount();
+
+  const after = open();
+  expect(after.draft.result.current.items).toMatchObject([
+    { status: "ready", uploaded: descriptor },
+  ]);
+  expect(
+    await after.draft.result.current.store.prepareForSend(
+      new AbortController().signal,
+    ),
+  ).toEqual([descriptor]);
+  expect(after.upload).not.toHaveBeenCalled();
+  const item = after.draft.result.current.items[0];
+  assert.exists(item);
+  const counted = vi.fn();
+  subscribeAttachmentDraftCounts(after.session, counted);
+  act(() => after.draft.result.current.store.remove(item.id));
+  expect(counted).toHaveBeenCalled();
+  after.draft.unmount();
+  expect(open().draft.result.current.items).toEqual([]);
+  localStorage.clear();
 });
 
 it("Send transfers the eager queue once and cancellation freezes active and queued attachments", async () => {

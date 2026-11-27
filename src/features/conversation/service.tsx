@@ -1,6 +1,11 @@
 // FOUNDATION: Shared conversation UI and plugin-owned tools/renderers; never another data owner.
 import type { ComponentType, ReactNode } from "react";
-import { EmbeddedThread, type EmbeddedThreadProps } from "./EmbeddedThread";
+import {
+  EmbeddedConversation,
+  EmbeddedThread,
+  type EmbeddedConversationProps,
+  type EmbeddedThreadProps,
+} from "./EmbeddedThread";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
 import {
@@ -8,6 +13,8 @@ import {
   type MessageComposerProps,
 } from "../messages/MessageComposer";
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
+import { ReplyBranch } from "../messages/ReplyBranch";
+import { ReplySummary } from "../messages/ReplySummary";
 import {
   formatDayGroupLabel,
   formatFullTimestamp,
@@ -20,14 +27,42 @@ import type {
   ComposerTool,
   ComposerAccessory,
   ComposerCompletion,
+  ComposerAnnotator,
   InlineRenderer,
   LinkRenderer,
+  LinkPreviewRenderer,
+  LinkPreviewSettings,
   MessageRenderer,
+  IdentityMark,
   MessageAction,
   ContributionReader,
   PageTabsProps,
+  ConversationWorkspaceProps,
+  SendGate,
+  WorkspaceSlots,
 } from "./contracts";
+import { PluginMarkdown, type MarkdownProps } from "../messages/PluginMarkdown";
+import {
+  publishOutgoing,
+  type OutgoingMessage,
+} from "../messages/outgoing-message";
+import {
+  RelayImageViewer,
+  type ImageViewerProps,
+} from "../messages/ImageViewer";
 import type { RelaySession } from "../relay/session";
+import {
+  ChannelMembersDialog,
+  type ChannelMembersDialogProps,
+} from "../../bundled/channels/ChannelMembersDialog";
+import {
+  ChannelGeneralAccess,
+  type ChannelGeneralAccessProps,
+} from "../../bundled/channels/ChannelGeneralAccess";
+import {
+  DocumentEditor,
+  type DocumentEditorProps,
+} from "../messages/DocumentEditor";
 
 /** A Solo chat's sidebar icon: what the plugin knows about the chat, or
  * `fallback` when it has nothing to show. */
@@ -41,7 +76,18 @@ export type ChatIcon = Readonly<{
   component: ComponentType<ChatIconProps>;
 }>;
 
+export type ChatMenuProps = Readonly<{
+  session: RelaySession;
+  channelId: string;
+}>;
+export type ChatMenu = Readonly<{
+  id: string;
+  component: ComponentType<ChatMenuProps>;
+}>;
+
 export type Conversation = {
+  chatMenus: ContributionReader<ChatMenu>;
+  registerChatMenu(component: ComponentType<ChatMenuProps>): void;
   attachments: ContributionReader<AttachmentRenderer>;
   registerAttachment(renderer: AttachmentRenderer): void;
   messages: ContributionReader<MessageRenderer>;
@@ -52,24 +98,72 @@ export type Conversation = {
   registerTool(tool: ComposerTool): void;
   completions: ContributionReader<ComposerCompletion>;
   registerCompletion(provider: ComposerCompletion): void;
+  /** Registers `provider` with `supplement: true`. Hosts without supplements
+   * lack this method, so plugins call it as `registerCompletionSupplement?.()`. */
+  registerCompletionSupplement(provider: ComposerCompletion): void;
+  annotators: ContributionReader<ComposerAnnotator>;
+  /** Marks on the focused composer's prose; see `ComposerAnnotator`. */
+  registerAnnotator(annotator: ComposerAnnotator): void;
   inline: ContributionReader<InlineRenderer>;
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
   registerLink(renderer: LinkRenderer): void;
+  /** Cards below messages for their links; see `LinkPreviewRenderer`. */
+  linkPreviews: ContributionReader<LinkPreviewRenderer>;
+  registerLinkPreview(renderer: LinkPreviewRenderer): void;
   codeBlocks: ContributionReader<CodeBlockRenderer>;
   registerCodeBlock(renderer: CodeBlockRenderer): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
+  identityMarks: ContributionReader<IdentityMark>;
+  registerIdentityMark(mark: IdentityMark): void;
+  /** Lets a plugin keep messages a composer is about to publish; see `SendGate`. */
+  registerSendGate(gate: SendGate): void;
+  /** Publishes a message a send gate kept, as the same event the composer
+   * would have sent, and resolves to its event id. It doesn't repeat the
+   * composer's checks. Rejects when the session can't send it. */
+  publish(session: RelaySession, message: OutgoingMessage): Promise<string>;
   ui: {
+    /** Host member picker, with optional plugin-owned actions, settings and link. */
+    MembersDialog: ComponentType<ChannelMembersDialogProps>;
+    /** Signed General access editor with optional resource wording and policy. */
+    GeneralAccess: ComponentType<ChannelGeneralAccessProps>;
+    /** Controlled document editing with the host engine, formatting and link policy. */
+    DocumentEditor: ComponentType<DocumentEditorProps>;
+    /** Bounded document Markdown with host-owned link and image trust rules. */
+    Markdown: (props: MarkdownProps) => ReactNode;
+    /** Controlled fullscreen viewer for an https image that is not a message attachment. */
+    ImageViewer: (props: ImageViewerProps) => ReactNode;
     Thread: (props: EmbeddedThreadProps) => ReactNode;
+    /** One channel's message management, edit target and overlays for a page's
+     * own `Message` rows and `Composer`, without visiting the channel. */
+    Conversation: (props: EmbeddedConversationProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
+    /** Controlled native reply grouping for caller-owned retained readers. */
+    ReplyBranch: typeof ReplyBranch;
+    /** Native reply summary from the caller's count and participant facts. */
+    ReplySummary: typeof ReplySummary;
     /** The page's content as the first tab, beside conversations it opens;
      * absent until a plugin provides the tab workspace, as Channels does. */
     readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
+    /** A permanent conversation with a side pane; supplied by Channels. */
+    readonly Workspace?:
+      | ((props: ConversationWorkspaceProps) => ReactNode)
+      | undefined;
   };
   /** Provides `ui.Tabs` while the providing plugin runs; the first one wins. */
   registerTabs(component: ComponentType<PageTabsProps>): void;
+  /** Provides `ui.Workspace` while the plugin runs; the first one wins.
+   * `slots` names the optional props the component renders. */
+  registerWorkspace(
+    component: ComponentType<ConversationWorkspaceProps>,
+    options?: Readonly<{ slots?: WorkspaceSlots }>,
+  ): void;
+  /** The optional props the active `ui.Workspace` provider renders. Absent
+   * when the provider declares none or the host predates slots; a caller
+   * then keeps the controls in its own page. */
+  readonly workspaceSlots?: WorkspaceSlots | undefined;
   /** Solo chat icons; the sidebar shows the first one. */
   chatIcons: ContributionReader<ChatIcon>;
   /** Shows `component` as each Solo chat's sidebar icon while the providing
@@ -100,11 +194,14 @@ function validate(
     | ComposerTool
     | InlineRenderer
     | ComposerCompletion
+    | ComposerAnnotator
     | ComposerAccessory
     | LinkRenderer
+    | LinkPreviewRenderer
     | CodeBlockRenderer
     | MessageRenderer
-    | MessageAction,
+    | MessageAction
+    | IdentityMark,
 ) {
   if (
     !value ||
@@ -117,6 +214,9 @@ function validate(
       "A conversation contribution needs an id, title and component",
     );
 }
+// The navigation target grammar for the card half of a `plugin/card` section.
+const settingsCardId = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+
 export class ConversationService extends Service implements Conversation {
   readonly attachments;
   private readonly attachmentEntries;
@@ -127,16 +227,27 @@ export class ConversationService extends Service implements Conversation {
   private readonly accessoryEntries;
   readonly completions;
   private readonly completionEntries;
+  readonly annotators;
+  private readonly annotatorEntries;
   readonly inline;
   private readonly toolEntries;
   private readonly inlineEntries;
   readonly links;
   private readonly linkEntries;
+  readonly linkPreviews;
+  private readonly linkPreviewEntries;
   readonly codeBlocks;
   private readonly codeBlockEntries;
   readonly actions;
   private readonly actionEntries;
+  readonly identityMarks;
+  private readonly identityMarkEntries;
+  readonly sendGates;
+  private readonly sendGateEntries;
   private readonly tabEntries;
+  private readonly workspaceEntries;
+  readonly chatMenus;
+  private readonly chatMenuEntries;
   readonly chatIcons;
   private readonly chatIconEntries;
   readonly ui: Conversation["ui"];
@@ -167,6 +278,12 @@ export class ConversationService extends Service implements Conversation {
       snapshot: completions.snapshot,
       subscribe: completions.subscribe,
     };
+    const annotators = createContributions<ComposerAnnotator>(ctx);
+    this.annotatorEntries = annotators;
+    this.annotators = {
+      snapshot: annotators.snapshot,
+      subscribe: annotators.subscribe,
+    };
     const inline = createContributions<InlineRenderer>(ctx);
     this.toolEntries = tools;
     this.inlineEntries = inline;
@@ -175,6 +292,12 @@ export class ConversationService extends Service implements Conversation {
     const links = createContributions<LinkRenderer>(ctx);
     this.linkEntries = links;
     this.links = { snapshot: links.snapshot, subscribe: links.subscribe };
+    const linkPreviews = createContributions<LinkPreviewRenderer>(ctx);
+    this.linkPreviewEntries = linkPreviews;
+    this.linkPreviews = {
+      snapshot: linkPreviews.snapshot,
+      subscribe: linkPreviews.subscribe,
+    };
     const codeBlocks = createContributions<CodeBlockRenderer>(ctx);
     this.codeBlockEntries = codeBlocks;
     this.codeBlocks = {
@@ -184,11 +307,35 @@ export class ConversationService extends Service implements Conversation {
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+    const identityMarks = createContributions<IdentityMark>(ctx);
+    this.identityMarkEntries = identityMarks;
+    this.identityMarks = {
+      snapshot: identityMarks.snapshot,
+      subscribe: identityMarks.subscribe,
+    };
+    const sendGates = createContributions<SendGate>(ctx);
+    this.sendGateEntries = sendGates;
+    this.sendGates = {
+      snapshot: sendGates.snapshot,
+      subscribe: sendGates.subscribe,
+    };
     const tabs = createContributions<{
       id: string;
       component: ComponentType<PageTabsProps>;
     }>(ctx);
     this.tabEntries = tabs;
+    const workspaces = createContributions<{
+      id: string;
+      component: ComponentType<ConversationWorkspaceProps>;
+      slots?: WorkspaceSlots | undefined;
+    }>(ctx);
+    this.workspaceEntries = workspaces;
+    const chatMenus = createContributions<ChatMenu>(ctx);
+    this.chatMenuEntries = chatMenus;
+    this.chatMenus = {
+      snapshot: chatMenus.snapshot,
+      subscribe: chatMenus.subscribe,
+    };
     const chatIcons = createContributions<ChatIcon>(ctx);
     this.chatIconEntries = chatIcons;
     this.chatIcons = {
@@ -199,9 +346,28 @@ export class ConversationService extends Service implements Conversation {
       const Provided = tabs.snapshot()[0]?.component;
       return Provided ? <Provided {...props} /> : null;
     };
+    const Workspace = (props: ConversationWorkspaceProps) => {
+      const Provided = workspaces.snapshot()[0]?.component;
+      return Provided ? <Provided {...props} /> : null;
+    };
     this.ui = {
+      MembersDialog: ChannelMembersDialog,
+      GeneralAccess: ChannelGeneralAccess,
+      DocumentEditor,
+      ImageViewer: (props: ImageViewerProps) => (
+        <RelayImageViewer {...props} relay={this.ctx.reflect.get("relay")} />
+      ),
+      Markdown: (props: MarkdownProps) => (
+        <PluginMarkdown
+          {...props}
+          navigation={this.ctx.reflect.get("navigation")}
+        />
+      ),
       Thread: (props: EmbeddedThreadProps) => (
         <EmbeddedThread {...props} host={this.ctx} extensions={this} />
+      ),
+      Conversation: (props: EmbeddedConversationProps) => (
+        <EmbeddedConversation {...props} host={this.ctx} extensions={this} />
       ),
       Composer: (props: Omit<MessageComposerProps, "extensions">) => (
         <MessageComposer {...props} extensions={this} />
@@ -209,8 +375,13 @@ export class ConversationService extends Service implements Conversation {
       Message: (props: Omit<MessageRowProps, "extensions">) => (
         <MessageRow {...props} extensions={this} />
       ),
+      ReplyBranch,
+      ReplySummary,
       get Tabs() {
         return tabs.snapshot().length ? Tabs : undefined;
+      },
+      get Workspace() {
+        return workspaces.snapshot().length ? Workspace : undefined;
       },
     };
   }
@@ -218,6 +389,27 @@ export class ConversationService extends Service implements Conversation {
     if (typeof component !== "function")
       throw new Error("Page tabs need a component");
     this.tabEntries.register(this.ctx, { id: "tabs", component });
+  }
+  registerWorkspace(
+    component: ComponentType<ConversationWorkspaceProps>,
+    options?: Readonly<{ slots?: WorkspaceSlots }>,
+  ) {
+    if (typeof component !== "function")
+      throw new Error("A conversation workspace needs a component");
+    const slots = options?.slots && Object.freeze({ ...options.slots });
+    this.workspaceEntries.register(this.ctx, {
+      id: "workspace",
+      component,
+      slots,
+    });
+  }
+  get workspaceSlots() {
+    return this.workspaceEntries.snapshot()[0]?.slots;
+  }
+  registerChatMenu(component: ComponentType<ChatMenuProps>) {
+    if (typeof component !== "function")
+      throw new Error("A chat menu needs a component");
+    this.chatMenuEntries.register(this.ctx, { id: "chat-menu", component });
   }
   registerChatIcon(component: ComponentType<ChatIconProps>) {
     if (typeof component !== "function")
@@ -234,10 +426,34 @@ export class ConversationService extends Service implements Conversation {
       throw new Error("A message action needs a matcher");
     this.actionEntries.register(this.ctx, value);
   }
+  registerIdentityMark(value: IdentityMark) {
+    validate(value);
+    this.identityMarkEntries.register(this.ctx, value);
+  }
+  registerSendGate(value: SendGate) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.hold !== "function"
+    )
+      throw new Error("A send gate needs an id and hold function");
+    this.sendGateEntries.register(this.ctx, value);
+  }
+  publish(session: RelaySession, message: OutgoingMessage) {
+    return publishOutgoing(session, message);
+  }
   registerAttachment(value: AttachmentRenderer) {
     validate(value);
     if (typeof value.matches !== "function")
       throw new Error("An attachment renderer needs a matcher");
+    if (
+      value.order !== undefined &&
+      typeof value.order !== "number" &&
+      typeof value.order !== "function"
+    )
+      throw new Error(
+        "An attachment renderer order must be a number or function",
+      );
     this.attachmentEntries.register(this.ctx, value);
   }
   registerMessage(value: MessageRenderer) {
@@ -255,7 +471,7 @@ export class ConversationService extends Service implements Conversation {
     validate(value);
     if (
       value.placement !== undefined &&
-      !["composer", "message"].includes(value.placement)
+      !["composer", "message", "response"].includes(value.placement)
     )
       throw new Error("Invalid accessory placement");
     this.accessoryEntries.register(this.ctx, value);
@@ -265,10 +481,27 @@ export class ConversationService extends Service implements Conversation {
     this.toolEntries.register(this.ctx, value);
   }
   registerCompletion(value: ComposerCompletion) {
+    if (value?.supplement !== undefined)
+      throw new Error(
+        "Register a supplement with registerCompletionSupplement",
+      );
+    this.addCompletion(value);
+  }
+  registerCompletionSupplement(value: ComposerCompletion) {
+    this.addCompletion(value, true);
+  }
+  private addCompletion(value: ComposerCompletion, supplement?: true) {
     validate(value);
     if (typeof value.match !== "function")
       throw new Error("A completion provider needs a matcher");
-    this.completionEntries.register(this.ctx, value);
+    this.completionEntries.register(
+      this.ctx,
+      supplement ? { ...value, supplement } : value,
+    );
+  }
+  registerAnnotator(value: ComposerAnnotator) {
+    validate(value);
+    this.annotatorEntries.register(this.ctx, value);
   }
   registerInline(value: InlineRenderer) {
     validate(value);
@@ -290,6 +523,52 @@ export class ConversationService extends Service implements Conversation {
       throw new Error("A link renderer class must be a string");
     this.linkEntries.register(this.ctx, value);
   }
+  registerLinkPreview(value: LinkPreviewRenderer) {
+    validate(value);
+    if (typeof value.matches !== "function")
+      throw new Error("A link preview renderer needs a matcher");
+    if (
+      value.order !== undefined &&
+      typeof value.order !== "number" &&
+      typeof value.order !== "function"
+    )
+      throw new Error(
+        "A link preview renderer order must be a number or function",
+      );
+    if (value.status !== undefined || value.subscribe !== undefined) {
+      if (
+        typeof value.status !== "function" ||
+        typeof value.subscribe !== "function"
+      )
+        throw new Error(
+          "A link preview renderer status needs both status and subscribe functions",
+        );
+      if (value.settings === undefined)
+        throw new Error(
+          "A link preview renderer status needs a settings card id",
+        );
+    }
+    if (
+      value.settings !== undefined &&
+      (typeof value.settings !== "string" ||
+        !settingsCardId.test(value.settings))
+    )
+      throw new Error(
+        "A link preview renderer settings card id must be a Settings card id",
+      );
+    this.linkPreviewEntries.register(this.ctx, value);
+  }
+  readonly settings: LinkPreviewSettings = Object.freeze({
+    has: (section: string) =>
+      this.ctx.reflect.get("settingsCards")?.visibility(section) === true,
+    subscribe: (listener: () => void) =>
+      this.ctx.reflect.get("settingsCards")?.subscribe(listener) ?? (() => {}),
+    open: (section: string) => {
+      void this.ctx.reflect
+        .get("navigation")
+        ?.open({ version: 1, kind: "settings", section });
+    },
+  });
   registerCodeBlock(value: CodeBlockRenderer) {
     validate(value);
     if (typeof value.matches !== "function")

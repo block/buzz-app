@@ -1,4 +1,5 @@
-/** Only the URLs emitted by convertFileSrc(relayMediaUrl, "buzz-media"). */
+/** Only the URLs `nativeMediaUrl` emits: convertFileSrc(relayMediaUrl,
+ * "buzz-media"), optionally with the `channel` that shows the image. */
 export function isNativeMediaSource(source: string): boolean {
   try {
     const url = new URL(source);
@@ -10,7 +11,7 @@ export function isNativeMediaSource(source: string): boolean {
       url.port ||
       url.username ||
       url.password ||
-      url.search ||
+      [...url.searchParams.keys()].some((key) => key !== "channel") ||
       url.hash
     )
       return false;
@@ -25,7 +26,7 @@ export function isNativeMediaSource(source: string): boolean {
       !media.password &&
       !media.search &&
       !media.hash &&
-      /^\/media\/[0-9a-f]{64}(?:\.(?:[a-z0-9]{1,8}|thumb\.jpg))?$/.test(
+      /^\/media\/[0-9a-f]{64}(?:\.(?:[a-z0-9]{1,8}|thumb\.(?:jpg|webp)))?$/.test(
         media.pathname,
       )
     );

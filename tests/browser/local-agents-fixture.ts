@@ -1,3 +1,4 @@
+import { browserOutboxStorage } from "../../src/features/relay/outbox-storage";
 // Browser-only native boundary and controllable plugin. Production service,
 // composition, admission, activity projection and UI are unchanged.
 import type {
@@ -7,38 +8,54 @@ import type {
 import type { BundledPlugin } from "../../src/plugins/manager";
 import { createActivityTab } from "../../src/bundled/builderlab/adapter-type/Activity";
 import type { WorkOutcome } from "../../src/features/agents/local-activity";
+import type { Agents } from "../../src/features/agents/service";
+import type { RelayData } from "../../src/features/relay/service";
 
 // A real curve point: the owner's session derives a NIP-44 key with it to read
 // the agent's memory.
 export const localAgentKey =
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-let identities: AgentIdentity[] = [];
+const resumable = import.meta.env.VITE_BUZZ_TEST_RESUME_AGENTS === true;
+const identityKey = "buzz-test-resumable-agent";
+let identities: AgentIdentity[] = resumable
+  ? JSON.parse(sessionStorage.getItem(identityKey) ?? "[]")
+  : [];
 /** Requests the owner stopped, in order. */
 const stopped: string[] = [];
+const watched: string[] = [];
+let services: { agents: Agents; relay: RelayData } | undefined;
 const pending: {
   id: string;
   handover(): void;
   step(tool: string, target?: string): void;
   finish(result: WorkOutcome): void;
 }[] = [];
+/** The latest run of request `id`: a retried request runs again. */
+const latest = (id: string) => {
+  const row = pending.filter((row) => row.id === id).at(-1);
+  if (!row) throw new Error("No pending request");
+  return row;
+};
 const controls = {
+  services: () => {
+    if (!services) throw new Error("Local agent fixture is not ready");
+    return services;
+  },
+  watched: () => [...watched],
+  outboxStorage: browserOutboxStorage,
   pending: () => pending.map((row) => row.id),
   stopped: () => [...stopped],
   /** Hands over and, like a real harness, reports a first step. */
   handover(id: string) {
-    const row = pending.find((row) => row.id === id);
-    if (!row) throw new Error("No pending request");
+    const row = latest(id);
     row.handover();
     row.step("Read", "notes.txt");
   },
   step(id: string, tool: string, target?: string) {
-    const row = pending.find((row) => row.id === id);
-    if (!row) throw new Error("No pending request");
-    row.step(tool, target);
+    latest(id).step(tool, target);
   },
   finish(id: string, ok: boolean) {
-    const row = pending.find((row) => row.id === id);
-    if (!row) throw new Error("No pending request");
+    const row = latest(id);
     row.handover();
     row.finish(
       ok ? { ok: true } : { ok: false, error: "Fixture provider unavailable" },
@@ -67,6 +84,8 @@ export function localAgentsNative(): AgentsNative {
         deleted: false,
       };
       identities = [identity];
+      if (resumable)
+        sessionStorage.setItem(identityKey, JSON.stringify(identities));
       return identity;
     },
     portable: unsupported,
@@ -90,17 +109,20 @@ export function localAgentsNative(): AgentsNative {
     publishProfile: async () => {},
     claim: async () => true,
     release: async () => {},
+    keepAwake: async () => {},
   };
 }
 export const localAgentPlugin: BundledPlugin = {
   manifest: { id: "fixture.local-agent", name: "Local agent", apiVersion: 1 },
   enabledByDefault: true,
   module: {
-    inject: ["agents", "relay"],
+    inject: ["agents", "relay", "navigation"],
     apply(ctx) {
+      services = { agents: ctx.agents, relay: ctx.relay };
       ctx.agents.register({
         id: "tester",
         title: "Local tester",
+        resumes: resumable,
         defaults: () => ({ config: {} }),
         // The remote agent type's Activity tab, so published turns can be seen.
         tabs: [
@@ -108,10 +130,24 @@ export const localAgentPlugin: BundledPlugin = {
             id: "activity",
             title: "Activity",
             role: "activity",
-            component: createActivityTab(ctx.relay),
+            component: createActivityTab(
+              ctx.relay,
+              (section) =>
+                void ctx.navigation.open({
+                  version: 1,
+                  kind: "settings",
+                  section,
+                }),
+            ),
           },
         ],
         run(delivery) {
+          if (delivery.trigger.type === "catch-up") {
+            watched.push(
+              ...delivery.trigger.events.map(({ event }) => event.content),
+            );
+            return;
+          }
           if (delivery.trigger.type !== "mention")
             throw new Error("Unexpected trigger");
           let handover!: () => void, finish!: (result: WorkOutcome) => void;
@@ -126,7 +162,7 @@ export const localAgentPlugin: BundledPlugin = {
           // Like a harness, the stop ends the turn as it settles.
           delivery.interruptible?.(async () => {
             stopped.push(id);
-            finish({ ok: true });
+            finish({ ok: true, stopped: true });
           });
           pending.push({
             id,
@@ -158,6 +194,7 @@ export const localAgentPlugin: BundledPlugin = {
         stopAgents = ctx.agents.subscribe(ensure);
       ensure();
       ctx.effect(() => () => {
+        services = undefined;
         stopRelay();
         stopAgents();
         for (const row of pending) {

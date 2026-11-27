@@ -9,12 +9,36 @@ import {
   ATTENTION_REVIEW,
 } from "../features/agent-harness/attention-prompt";
 import {
+  ownerInstructions,
+  pluginInstructions,
+} from "../features/agent-harness/plugin-instructions";
+import type { AgentHandle } from "../features/agents/service";
+import {
   ATTENTION_TOOLS,
   callAttentionTool,
   isAttentionTool,
 } from "./attention";
+import { BESTIE_TOOLS, callBestieTool, isBestieTool } from "./bestie";
 import type { BuzzClient, Context } from "./client";
-import { callTool, type Reply, TOOLS, type Tool } from "./tools";
+import {
+  callToolOperation,
+  type AgentToolOperation,
+  type AgentToolProof,
+} from "../features/agents/tool-operation";
+import { callPluginTool, isPluginTool, PLUGIN_TOOLS } from "./plugins";
+import { callSettingsTool, isSettingsTool, SETTINGS_TOOLS } from "./settings";
+import {
+  callSoloWorkerTool,
+  isSoloWorkerTool,
+  SOLO_WORKER_TOOLS,
+} from "./solo-worker";
+import {
+  callTool,
+  captureToolBody,
+  type Reply,
+  TOOLS,
+  type Tool,
+} from "./tools";
 
 /** A tool a plugin adds to every agent session in the app, listed after
  * the Buzz tools under the same server and loaded on search. Its name should
@@ -23,15 +47,20 @@ export type AddedTool = Readonly<{
   name: string;
   description: string;
   inputSchema: Readonly<Record<string, unknown>>;
-  /** Runs it as the agent working in `context`. A throw is a tool error for
-   * the agent to correct. */
+  /** A provider operation checked with these exact tool arguments. */
+  operation?: AgentToolOperation;
+  /** Runs as the agent in `context`. Use `client.signal` to cancel waits and
+   * check it before external writes. A throw is a tool error for the agent. */
   call(
     client: BuzzClient,
     context: Context,
     args: Record<string, unknown>,
+    proof?: AgentToolProof,
   ): Promise<Reply>;
 }>;
 type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
+
+export { isFinalMessage, isMessageTool, MESSAGE_TOOLS } from "./message-tools";
 
 export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
 
@@ -40,7 +69,14 @@ export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
  * never needs replacing when attention is turned on or off: the attention
  * tools refuse calls while it is off, and `turnNote` says which it is. */
 export const BUZZ_SESSION: BuzzSession = Object.freeze({
-  tools: [...TOOLS, ...ATTENTION_TOOLS],
+  tools: [
+    ...TOOLS,
+    ...ATTENTION_TOOLS,
+    ...SOLO_WORKER_TOOLS,
+    ...PLUGIN_TOOLS,
+    ...SETTINGS_TOOLS,
+    ...BESTIE_TOOLS,
+  ],
 });
 
 const listed = ({ name, description, inputSchema }: AddedTool): Listed => ({
@@ -62,16 +98,21 @@ export const sessionTools = (
 ): readonly SessionTool[] => [
   ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
   ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...BESTIE_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
 ];
 
 /** What the server (Claude) or namespace (Codex) with the tools says up
  * front, so the model knows what it can search for. */
 export function sessionHint(added: readonly AddedTool[] = []) {
+  // Codex limits namespace descriptions to 1024 characters. Tool search has the full list.
   const plugins = added.length
-    ? ` and tools plugins add (${added.map((tool) => tool.name).join(", ")})`
+    ? " and tools from enabled plugins. Search by capability to discover specific plugin tools"
     : "";
-  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work)${plugins}.`;
+  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}. To answer from Buzz history, you can search again with a reformulated query or other filters when the results don't answer the question.`;
 }
 
 /** Changes when the added tools change, so a session that keeps the list it
@@ -90,36 +131,142 @@ export function addedKey(added: readonly AddedTool[]) {
   return (hash >>> 0).toString(36);
 }
 
-/** Text for the end of a turn's prompt, as the agent's attention is now.
- * An agent with no Interests has nothing to review, so it need not load the
- * attention tools to find that out. */
-export function turnNote(client?: Pick<BuzzClient, "attention">) {
+/** Text for the end of a turn's prompt: the instructions plugins give the
+ * agent now, then those for its conversation, which a harness names as it
+ * names its notes', then its attention as it is now. An agent with no
+ * Interests has nothing to review, so it need not load the attention tools to
+ * find that out. */
+export function turnNote(
+  client?: Pick<BuzzClient, "attention"> &
+    Pick<AgentHandle, "instructions" | "conversationInstructions">,
+  channelId?: string,
+  root?: string,
+  clearAbsent = false,
+) {
   const attention = client?.attention;
-  if (!attention) return undefined;
-  if (!attention.enabled()) return ATTENTION_OFF;
-  return attention.interests().length ? ATTENTION_REVIEW : ATTENTION_NONE;
+  const review = !attention
+    ? undefined
+    : !attention.enabled()
+      ? ATTENTION_OFF
+      : attention.interests().length
+        ? ATTENTION_REVIEW
+        : ATTENTION_NONE;
+  const notes = [
+    pluginInstructions(client?.instructions?.()),
+    ownerInstructions(
+      channelId
+        ? client?.conversationInstructions?.(channelId, root)
+        : undefined,
+      clearAbsent,
+    ),
+    review,
+  ].filter(Boolean);
+  return notes.length ? notes.join("\n\n") : undefined;
 }
+
+/** A client, or what builds one when the call runs. */
+export type ClientSource =
+  | BuzzClient
+  | undefined
+  | (() => BuzzClient | undefined);
 
 /** Answers one tool call. Throws when the tool cannot run now; the message
  * is for the agent. Without a client, no tool can be called yet. `added`
- * are the tools plugins add now. */
+ * are the tools plugins add now. A builder is built again once its
+ * community's reload settles, so the call reads the new session. */
 export async function callSessionTool(
-  client: BuzzClient | undefined,
+  source: ClientSource,
   context: Context,
   name: string,
   args: Record<string, unknown>,
   added: readonly AddedTool[] = [],
 ): Promise<Reply> {
+  let client = typeof source === "function" ? source() : source;
+  if (client?.settle) {
+    await client.settle();
+    if (typeof source === "function") client = source();
+  }
   if (!client) throw new Error("Buzz is not ready yet. Try again.");
+  const operation = added.find((tool) => tool.name === name && tool.operation);
+  if (operation) {
+    const session = JSON.stringify(context);
+    try {
+      const reply = await callToolOperation(client, context, args, operation);
+      await client.protect?.({ kind: "tool-result", session, content: reply });
+      return reply;
+    } catch (error) {
+      return checkedToolError(client, session, error);
+    }
+  }
+  // Hold the reviewed destination and arguments while the checker waits.
+  if (client.protect) {
+    context = structuredClone(context);
+    args = structuredClone(args);
+  }
+  const session = JSON.stringify(context);
+  // A natively gated call was reviewed with these exact arguments; it is
+  // reviewed again only when a captured file changes what it sends.
+  const reviewed = client.nativeToolGate && JSON.stringify(args);
+  // Plugin tools own their argument semantics, even when shadowing a builtin.
+  if (client.protect && !added.some((tool) => tool.name === name))
+    await captureToolBody(client, name, args).catch((error) =>
+      checkedToolError(client, session, error),
+    );
+  if (JSON.stringify(args) !== reviewed)
+    await client.protect?.({
+      kind: "tool",
+      session,
+      content: { title: name, arguments: args },
+      ...(typeof args.command === "string" ? { command: args.command } : {}),
+    });
+  let reply: Reply;
+  try {
+    reply = await dispatchSessionTool(client, context, name, args, added);
+  } catch (error) {
+    return checkedToolError(client, session, error);
+  }
+  await client.protect?.({ kind: "tool-result", session, content: reply });
+  return reply;
+}
+
+/** File capture and dispatch errors cross the same tool-result boundary. */
+async function checkedToolError(
+  client: BuzzClient,
+  session: string,
+  error: unknown,
+): Promise<never> {
+  await client.protect?.({
+    kind: "tool-result",
+    session,
+    content: { error: error instanceof Error ? error.message : String(error) },
+  });
+  throw error;
+}
+async function dispatchSessionTool(
+  client: BuzzClient,
+  context: Context,
+  name: string,
+  args: Record<string, unknown>,
+  added: readonly AddedTool[],
+): Promise<Reply> {
   const tool = added.find((tool) => tool.name === name);
-  if (tool) return tool.call(client, context, args);
+  if (tool) {
+    // A plugin's tool doesn't get the agent's device settings, Bestie or
+    // the owner's workspaces.
+    const { settings: _, bestie: __, workspaces: ___, ...plugin } = client;
+    return tool.call(plugin, context, args);
+  }
+  if (isSoloWorkerTool(name)) return callSoloWorkerTool(client, name, args);
+  if (isPluginTool(name)) return callPluginTool(client, context, name, args);
+  if (isSettingsTool(name)) return callSettingsTool(client, name, args);
+  if (isBestieTool(name)) return callBestieTool(client, name, args);
   if (!isAttentionTool(name)) return callTool(client, context, name, args);
   const { attention } = client;
   if (!attention) throw new Error(`No tool ${name}`);
   // The owner can turn attention off while the session runs.
   if (!attention.enabled())
     throw new Error(
-      `Attention is off for you: your owner turned it off, so these tools do nothing now.\n(classifier: ${attention.classifier()})`,
+      `Attention is off for you on this device, so these tools do nothing now.\n(classifier: ${attention.classifier()})`,
     );
   return callAttentionTool(attention, name, args);
 }

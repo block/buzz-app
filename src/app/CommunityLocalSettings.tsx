@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CommunityDialog } from "../features/communities/CommunityDialog";
 import { CommunityRepositoriesSettings } from "./CommunityRepositoriesSettings";
+import { DefaultLifetimeSettings } from "../features/solo/DefaultLifetimeSettings";
+import { relayPartition } from "../features/relay/partition";
 import type { Communities, Membership } from "../features/communities/service";
 import { communityDestination } from "../features/communities/destination";
 import {
@@ -12,7 +14,17 @@ import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Field } from "../shared/design-system/ui/Field";
 import { Input } from "../shared/design-system/ui/Input";
 import { Button } from "../shared/design-system/ui/Button";
+import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { useToastNotification } from "../shared/design-system/ui/Toast";
+import { writeClipboardText } from "../shared/clipboard";
+import { relayCacheUsage } from "../features/relay/partition-purge";
+import { CopyLabel, useCopyFeedback } from "../shared/CopyFeedback";
+import { formatFileSize } from "../features/messages/FileAttachment";
+
+const size = (bytes: number) => (bytes ? formatFileSize(bytes) : "0 MB");
+
+const measureCache = (address: string, viewer: string | undefined) =>
+  viewer ? relayCacheUsage(address, viewer) : Promise.resolve(undefined);
 
 /** Captured viewer/community; never saves into a newly selected destination. */
 export function CommunityLocalSettings({
@@ -25,6 +37,7 @@ export function CommunityLocalSettings({
   viewer: string | undefined;
 }) {
   const notify = useToastNotification();
+  const { copied, copy, status } = useCopyFeedback();
   const address = communityDestination(community.id).url;
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState("");
@@ -32,13 +45,36 @@ export function CommunityLocalSettings({
     if (copying) return;
     setCopying(true);
     setCopyError("");
-    try {
-      await navigator.clipboard.writeText(address);
-      notify("Community URL copied.", "success");
-    } catch {
+    if ((await copy(() => writeClipboardText(address))) === "failed")
       setCopyError("Couldn’t copy the URL. Select it and copy manually.");
+    setCopying(false);
+  };
+  const [usage, setUsage] = useState<number>();
+  useEffect(() => {
+    let alive = true;
+    // The readout is optional; without it the row still clears.
+    measureCache(address, viewer).then(
+      (next) => alive && setUsage(next),
+      () => alive && setUsage(undefined),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [address, viewer]);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState("");
+  const clearCache = async () => {
+    if (clearing) return;
+    setClearing(true);
+    setClearError("");
+    try {
+      await communities.relay.clearCache();
+      notify("Cache cleared.", "success");
+    } catch {
+      setClearError("Couldn’t clear the cache. Try again.");
     } finally {
-      setCopying(false);
+      setClearing(false);
+      measureCache(address, viewer).then(setUsage, () => setUsage(undefined));
     }
   };
   const [editingConnection, setEditingConnection] = useState(false);
@@ -132,6 +168,11 @@ export function CommunityLocalSettings({
           )}
         </SettingsGroup>
       </form>
+      {viewer && (
+        <div className="mt-section-gap">
+          <DefaultLifetimeSettings scope={relayPartition(address, viewer)} />
+        </div>
+      )}
       <CommunityRepositoriesSettings
         communities={communities}
         community={community.id}
@@ -154,11 +195,13 @@ export function CommunityLocalSettings({
             <Button
               type="button"
               size="xs"
+              aria-label="Copy URL"
               loading={copying}
               onClick={() => void copyUrl()}
             >
-              Copy URL
+              <CopyLabel label="Copy URL" copied={copied} />
             </Button>
+            {status}
             <Button
               type="button"
               size="xs"
@@ -168,6 +211,28 @@ export function CommunityLocalSettings({
               Edit connection
             </Button>
           </div>
+        </SettingsGroup>
+      </div>
+      <div className="mt-section-gap">
+        <SettingsGroup>
+          <PreferenceRow
+            title="Cached data"
+            subtitle={`Channels, messages and images this device saved from this community. Buzz loads them again as needed. Clearing also cancels uploads in progress.${usage === undefined ? "" : ` Uses ${size(usage)} on this device.`}`}
+            trailing={
+              <Button
+                type="button"
+                loading={clearing}
+                onClick={() => void clearCache()}
+              >
+                Clear cache
+              </Button>
+            }
+          />
+          {clearError && (
+            <p role="alert" className="buzz-field-error">
+              {clearError}
+            </p>
+          )}
         </SettingsGroup>
       </div>
       {editingConnection && (

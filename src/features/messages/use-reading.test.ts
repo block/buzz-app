@@ -3,7 +3,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, useEffect, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
-import { readingPositioned, useReading } from "./use-reading";
+import { ReadingCovers, readingPositioned, useReading } from "./use-reading";
 import type { RelaySession } from "../relay/session";
 
 afterEach(() => {
@@ -27,9 +27,13 @@ function setup({
   settled = true,
   strict = false,
   latestMessageId = undefined as string | undefined,
+  catchUpMessageId = undefined as string | undefined,
   rootId = undefined as string | undefined,
   enabled = true,
+  concealed = false,
   focus = "element" as "element" | "composer" | "parent" | "outside" | "header",
+  trailing = undefined as (() => number | undefined) | undefined,
+  covers = (() => []) as () => readonly DOMRect[],
 } = {}) {
   vi.useFakeTimers();
   vi.spyOn(document, "hasFocus").mockReturnValue(focused);
@@ -48,7 +52,11 @@ function setup({
   panel.dataset.readingSurface = "";
   const header = document.createElement("button");
   panel.append(header, element);
-  document.body.append(panel, composer, parent, outside);
+  panel.toggleAttribute("inert", concealed);
+  // The app's root, a direct body child as in production.
+  const root = document.createElement("div");
+  root.append(panel);
+  document.body.append(root, composer, parent, outside);
   ({ element, composer, parent, outside, header })[focus].focus();
   vi.spyOn(element, "getClientRects").mockReturnValue([
     new DOMRect(0, 0, 500, 500),
@@ -64,14 +72,16 @@ function setup({
   const scroller = { current: element };
   const position = { current: settled };
   let mutation = () => {};
+  let attributes: (records: { target: Node }[]) => void = () => {};
   const disconnected = vi.fn();
   vi.stubGlobal(
     "MutationObserver",
     class {
-      constructor(callback: () => void) {
-        mutation = callback;
+      constructor(private callback: (records: { target: Node }[]) => void) {}
+      observe(_target: Node, options: MutationObserverInit) {
+        if (options.attributes) attributes = this.callback;
+        else mutation = () => this.callback([]);
       }
-      observe() {}
       disconnect = disconnected;
     },
   );
@@ -92,7 +102,8 @@ function setup({
   let observe = async () => {};
   // The real lease fences on the manual-unread revision current at creation.
   let manual = 0;
-  const reading = vi.fn(() => {
+  const leave = vi.fn();
+  const reading = vi.fn((_channel: string, _root?: string, _visit?: object) => {
     const lease = {
       manual,
       view: vi.fn(),
@@ -107,6 +118,8 @@ function setup({
     unread: {
       sync: () => ({ capability: supported ? "frontier-sync" : "unsupported" }),
       reading,
+      present: vi.fn(),
+      leave,
     },
   } as unknown as RelaySession;
   const view = renderHook(useReading, {
@@ -116,8 +129,10 @@ function setup({
       scroller,
       settled: position,
       latestMessageId,
+      catchUpMessageId,
       rootId,
       enabled,
+      trailing,
     },
     reactStrictMode: strict,
     wrapper: ({ children }: { children: ReactNode }) =>
@@ -129,7 +144,7 @@ function setup({
           MessageEditScope,
           null,
           createElement(Composer, { input: composer }),
-          children,
+          createElement(ReadingCovers, { value: covers }, children),
         ),
       ),
   });
@@ -144,6 +159,31 @@ function setup({
     position,
     disconnected,
     mutation: () => mutation(),
+    /** An ancestor attribute change, with no transition or focus event. */
+    conceal: (hidden: boolean, target: HTMLElement = panel) => {
+      target.toggleAttribute("inert", hidden);
+      attributes([{ target }]);
+    },
+    /** Accessibility isolation of an ancestor, as a modal menu applies. */
+    isolate: (isolated: boolean, target: HTMLElement = panel) => {
+      if (isolated) target.setAttribute("aria-hidden", "true");
+      else target.removeAttribute("aria-hidden");
+      attributes([{ target }]);
+    },
+    /** Window-wide modal isolation: inert and aria-hidden on the app root. */
+    modal: (open: boolean) => {
+      root.toggleAttribute("inert", open);
+      if (open) root.setAttribute("aria-hidden", "true");
+      else root.removeAttribute("aria-hidden");
+      attributes([{ target: root }]);
+    },
+    /** Hides an ancestor, as a retained pane's owner does. */
+    hide: (hidden: boolean, target: HTMLElement = panel) => {
+      target.toggleAttribute("hidden", hidden);
+      attributes([{ target }]);
+    },
+    root,
+    panel,
     /** A completed dwell hands viewing to a fresh view-only lease after it. */
     dwelled: () => leases.at(-2),
     setVisibility: (next: DocumentVisibilityState) => {
@@ -165,8 +205,22 @@ function setup({
         scroller,
         settled: position,
         latestMessageId,
+        catchUpMessageId,
         rootId,
         enabled,
+        trailing,
+      }),
+    setLatest: (id: string) =>
+      view.rerender({
+        session,
+        channelId: "room",
+        scroller,
+        settled: position,
+        latestMessageId: id,
+        catchUpMessageId,
+        rootId,
+        enabled,
+        trailing,
       }),
     unmount: view.unmount,
   };
@@ -183,11 +237,29 @@ function row(id: string, top: number, bottom: number) {
 }
 it("reports only fully visible settled evidence after dwell, not mounted overscan", () => {
   const h = setup();
-  expect(h.reading).toHaveBeenCalledExactlyOnceWith("room");
+  expect(h.reading).toHaveBeenCalledExactlyOnceWith("room", undefined, {});
   vi.advanceTimersByTime(299);
   expect(h.leases[0]?.observe).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+it("a row within a pixel of the viewport's edge is fully visible; one clipped further is not", () => {
+  const h = setup();
+  // Scroll offsets snap to whole pixels but rows sit at fractional offsets, so
+  // an exact reveal can leave its row a sliver above the scroller's top.
+  h.setRows([
+    row("revealed", -0.047, 40),
+    row("above", -1.5, 40),
+    row("last", 460, 500.5),
+    row("below", 460, 501.5),
+  ]);
+  h.mutation();
+  vi.advanceTimersToNextFrame(); // Row changes are measured in the next frame.
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith([
+    "revealed",
+    "last",
+  ]);
 });
 it("a burst of scrolls and row changes cancels dwell at once but measures rows once, in the next frame", () => {
   const h = setup();
@@ -340,6 +412,41 @@ it("only the owning selected tab earns dwell; inactive and restored content does
   vi.advanceTimersByTime(1);
   expect(movedLease?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
 });
+it("a panel in a reading-thread workspace reads while focus is elsewhere in that workspace", () => {
+  const h = setup({ focus: "outside" });
+  const workspace = document.createElement("div");
+  const side = document.createElement("div");
+  side.setAttribute("data-panel-workspace", "");
+  const surface = h.element.closest("aside");
+  const unrelated = document.createElement("button");
+  expect(surface).not.toBeNull();
+  document.body.append(workspace, unrelated);
+  if (surface) side.append(surface);
+  workspace.append(side, h.outside);
+  h.retarget("thread-room");
+  h.outside.focus();
+  vi.advanceTimersByTime(300);
+  expect(h.reading).not.toHaveBeenCalled();
+  workspace.setAttribute("data-reading-thread", "");
+  h.retarget("thread-room-again");
+  h.outside.focus();
+  vi.advanceTimersByTime(299);
+  expect(h.leases.at(-1)?.observe).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  const count = h.reading.mock.calls.length;
+  unrelated.focus();
+  vi.advanceTimersByTime(300);
+  expect(h.reading).toHaveBeenCalledTimes(count);
+  // A thread in the main pane belongs to no side-pane selection: the same
+  // workspace focus does not read it.
+  side.setAttribute("data-main-workspace", "");
+  side.removeAttribute("data-panel-workspace");
+  h.retarget("thread-room-main");
+  h.outside.focus();
+  vi.advanceTimersByTime(300);
+  expect(h.reading).toHaveBeenCalledTimes(count);
+});
 it("focus moving from the list to its composer keeps reading; another surface's composer cancels it", () => {
   const h = setup();
   vi.advanceTimersByTime(100);
@@ -447,6 +554,7 @@ it.each(["blur", "scroll", "unmount"] as const)(
     expect(h.leases[0]?.view).toHaveBeenLastCalledWith(
       [],
       expect.any(Function),
+      false,
     );
     expect(h.leases[0]?.view.mock.lastCall?.[1]("visible", true)).toBe(false);
     // A view-only replacement still reports the row, with no timer of its own.
@@ -509,14 +617,21 @@ it("releases the old channel and session on rerender and only observes the curre
   h.retarget("next-room");
   expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
   expect(oldValidity("visible", true)).toBe(false);
-  expect(h.reading).toHaveBeenLastCalledWith("next-room");
-  const nextReading = vi.fn((_channelId: string) => h.reading());
+  expect(h.reading).toHaveBeenLastCalledWith("next-room", undefined, {});
+  const nextReading = vi.fn(
+    (_channelId: string, _rootId?: string, _visit?: object) =>
+      h.reading("next-room"),
+  );
   h.retarget("next-room", {
     ...h.session,
     unread: { ...h.session.unread, reading: nextReading },
   });
   expect(h.leases[1]?.dispose).toHaveBeenCalledOnce();
-  expect(nextReading).toHaveBeenCalledExactlyOnceWith("next-room");
+  expect(nextReading).toHaveBeenCalledExactlyOnceWith(
+    "next-room",
+    undefined,
+    {},
+  );
   vi.advanceTimersByTime(299);
   for (const lease of h.leases) expect(lease.observe).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
@@ -534,7 +649,7 @@ it("StrictMode releases its probe lease and disconnects observation on unmount",
   h.unmount();
   expect(validity()).toBe(false);
   for (const lease of h.leases) expect(lease.dispose).toHaveBeenCalledOnce();
-  expect(h.disconnected).toHaveBeenCalledTimes(4);
+  expect(h.disconnected).toHaveBeenCalledTimes(6);
   act(() => {
     elementEvents(h.element);
     window.dispatchEvent(new Event("focus"));
@@ -561,6 +676,69 @@ it("bottom dwell catches up through the newest row, including a tall clipped row
     "bottom",
     "thread",
   );
+  // Its leases name the thread, which bounds what a DM read may cover.
+  for (const call of h.reading.mock.calls)
+    expect(call).toEqual(["room", "thread", {}]);
+});
+it("a broadcast reply as the bottom row earns dwell but catches up through the top-level post", async () => {
+  const h = setup({ latestMessageId: "broadcast", catchUpMessageId: "top" });
+  // The cut-off row is scrolled out of view; only the bottom row is shown.
+  h.setRows([row("top", -300, -200), row("broadcast", 300, 400)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "top",
+    undefined,
+  );
+});
+it("without the broadcast bottom row fully shown, there is no catch-up through the top-level post", async () => {
+  const h = setup({ latestMessageId: "broadcast", catchUpMessageId: "top" });
+  h.setRows([row("top", 0, 100), row("broadcast", 450, 600)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  await vi.advanceTimersByTimeAsync(1000);
+  for (const lease of h.leases) expect(lease.catchUp).not.toHaveBeenCalled();
+});
+it("a new latest message keeps observation and catches up after its row is measured", async () => {
+  const h = setup({ latestMessageId: "bottom" });
+  h.setRows([row("bottom", 100, 200)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "bottom",
+    undefined,
+  );
+  const leases = h.leases.length;
+  h.setLatest("newer");
+  // Changing only the latest id neither restarts nor takes a lease.
+  expect(h.leases).toHaveLength(leases);
+  expect(h.leases.at(-1)?.dispose).not.toHaveBeenCalled();
+  expect(h.disconnected).not.toHaveBeenCalled();
+  h.setRows([row("bottom", 100, 200), row("newer", 200, 300)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "newer",
+    undefined,
+  );
+});
+it("a folded preview of the latest message catches up without being observed as read", async () => {
+  const h = setup({ latestMessageId: "folded" });
+  const preview = row("preview", 100, 200);
+  delete preview.dataset.messageId;
+  preview.dataset.previewMessageId = "folded";
+  h.setRows([row("visible", 0, 100), preview]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "folded",
+    undefined,
+  );
 });
 it("a historical viewport or a bottom reached only at dwell end cannot catch up", async () => {
   const h = setup({ latestMessageId: "visible" });
@@ -581,6 +759,51 @@ it("a historical viewport or a bottom reached only at dwell end cannot catch up"
   );
 });
 
+it("rows under trailing content are covered, not read", () => {
+  const h = setup({ trailing: () => 300 });
+  h.setRows([row("visible", 100, 200), row("covered", 250, 350)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+it.each([
+  [300, true],
+  [250, false],
+])(
+  "the latest row catches up only above trailing content's top (top=%i)",
+  async (top, caught) => {
+    const h = setup({ latestMessageId: "latest", trailing: () => top });
+    h.setRows([row("latest", 200, 290)]);
+    h.mutation();
+    vi.advanceTimersToNextFrame();
+    await vi.advanceTimersByTimeAsync(300);
+    if (caught)
+      expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+        "latest",
+        undefined,
+      );
+    else expect(h.dwelled()?.catchUp).not.toHaveBeenCalled();
+  },
+);
+
+it("rows under a floating overlay are not read until it closes and dwell wakes", () => {
+  let boxes = [new DOMRect(300, 220, 200, 200)];
+  const h = setup({ latestMessageId: "covered", covers: () => boxes });
+  h.setRows([row("visible", 100, 200), row("covered", 250, 350)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  expect(h.dwelled()?.catchUp).not.toHaveBeenCalled();
+  boxes = [];
+  readingPositioned(h.element);
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "covered",
+    undefined,
+  );
+});
 it("settled notification starts dwell without changed rows, focus or geometry", () => {
   const h = setup({ focus: "header", settled: false });
   vi.advanceTimersByTime(300);
@@ -591,4 +814,234 @@ it("settled notification starts dwell without changed rows, focus or geometry", 
   expect(h.leases[0]?.observe).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+
+it.each(["transitionend", "animationend"])(
+  "%s on the containing panel resumes dwell after translated rows enter view",
+  (event) => {
+    const h = setup({ settled: false });
+    h.setRows([row("visible", 600, 700)]);
+    h.position.current = true;
+    readingPositioned(h.element);
+    vi.advanceTimersByTime(300);
+    expect(h.reading).not.toHaveBeenCalled();
+    // A transform changes viewport geometry without resizing or changing rows.
+    h.setRows([row("visible", 100, 200)]);
+    h.outside.dispatchEvent(new Event(event, { bubbles: true }));
+    vi.advanceTimersByTime(300);
+    expect(h.reading).not.toHaveBeenCalled();
+    h.element.parentElement?.dispatchEvent(new Event(event, { bubbles: true }));
+    vi.advanceTimersByTime(299);
+    expect(h.leases).toHaveLength(1);
+    expect(h.leases[0]?.observe).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  },
+);
+it("one visit spans dwell renewal and reflow handoffs, whose empty views are not measurements", async () => {
+  const h = setup();
+  await vi.advanceTimersByTimeAsync(300);
+  const visit = h.reading.mock.calls[0]?.[2];
+  expect(visit).toBeDefined();
+  // Dwell renewal: the observed lease's empty view is a handoff.
+  expect(h.dwelled()?.view).toHaveBeenLastCalledWith(
+    [],
+    expect.any(Function),
+    false,
+  );
+  // Scroll reflow: the old lease goes, and the deferred one starts empty.
+  h.element.dispatchEvent(new Event("scroll"));
+  expect(h.leases.at(-1)?.view).toHaveBeenLastCalledWith(
+    [],
+    expect.any(Function),
+    false,
+  );
+  await vi.advanceTimersByTimeAsync(16);
+  expect(h.leases.at(-1)?.view).toHaveBeenLastCalledWith(
+    ["visible"],
+    expect.any(Function),
+  );
+  for (const call of h.reading.mock.calls) expect(call[2]).toBe(visit);
+  expect(h.session.unread.leave).not.toHaveBeenCalled();
+});
+it("a completed measurement that shows no row is reported, as a measurement", async () => {
+  const h = setup();
+  vi.advanceTimersByTime(100);
+  h.setRows([row("visible", 600, 700)]);
+  h.mutation();
+  await vi.advanceTimersByTimeAsync(16);
+  expect(h.leases.at(-1)?.view).toHaveBeenLastCalledWith(
+    [],
+    expect.any(Function),
+  );
+  expect(h.leases.at(-1)?.dispose).toHaveBeenCalled();
+  // Nothing shown since: a further empty measurement takes no lease.
+  const leases = h.leases.length;
+  readingPositioned(h.element);
+  expect(h.leases.length).toBe(leases);
+});
+it("accessibility isolation pauses the same visit; concealment during it ends the visit", async () => {
+  const h = setup();
+  const first = h.reading.mock.calls[0]?.[2];
+  await vi.advanceTimersByTimeAsync(300);
+  // A modal menu hides the pane from assistive technology only: paused.
+  h.isolate(true);
+  const paused = h.leases.at(-1);
+  await vi.advanceTimersByTimeAsync(300);
+  expect(paused?.observe).not.toHaveBeenCalled();
+  expect(h.session.unread.leave).not.toHaveBeenCalled();
+  // Dismissed: the same visit resumes and earns its next dwell.
+  h.isolate(false);
+  expect(h.reading.mock.calls.at(-1)?.[2]).toBe(first);
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledWith(["visible"]);
+  expect(h.session.unread.leave).not.toHaveBeenCalled();
+  // Actually concealed while isolated: that is a departure.
+  h.isolate(true);
+  h.conceal(true);
+  expect(h.session.unread.leave).toHaveBeenCalledExactlyOnceWith(first);
+  h.isolate(false);
+  h.conceal(false);
+  expect(h.reading.mock.calls.at(-1)?.[2]).not.toBe(first);
+});
+
+it("a modal's body-level isolation pauses the same visit; pane concealment during it ends the visit", async () => {
+  const h = setup({ rootId: "root" });
+  const first = h.reading.mock.calls[0]?.[2];
+  await vi.advanceTimersByTimeAsync(300);
+  // A media viewer inerts the app root: reading pauses, the visit stays.
+  h.modal(true);
+  const paused = h.leases.at(-1);
+  await vi.advanceTimersByTimeAsync(300);
+  expect(paused?.observe).not.toHaveBeenCalled();
+  expect(paused?.dispose).toHaveBeenCalled();
+  expect(h.session.unread.leave).not.toHaveBeenCalled();
+  // Closed: the same visit resumes and earns its next dwell.
+  h.modal(false);
+  expect(h.reading.mock.calls.at(-1)?.[2]).toBe(first);
+  expect(h.session.unread.present).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledWith(["visible"]);
+  expect(h.session.unread.leave).not.toHaveBeenCalled();
+  // A nested pane made inert while the modal is open departs.
+  h.modal(true);
+  h.conceal(true);
+  expect(h.session.unread.leave).toHaveBeenCalledExactlyOnceWith(first);
+  h.conceal(false);
+  h.modal(false);
+  const second = h.reading.mock.calls.at(-1)?.[2];
+  expect(second).not.toBe(first);
+  // So does a nested pane hidden while the modal is open.
+  h.modal(true);
+  h.hide(true);
+  expect(h.session.unread.leave).toHaveBeenLastCalledWith(second);
+  h.hide(false);
+  h.modal(false);
+  const third = h.reading.mock.calls.at(-1)?.[2];
+  expect(third).not.toBe(second);
+  // `hidden` on the app root itself still departs.
+  h.hide(true, h.root);
+  expect(h.session.unread.leave).toHaveBeenLastCalledWith(third);
+  h.hide(false, h.root);
+});
+
+it("a shown thread is presented for its whole visit, before any row reads or focus", async () => {
+  const h = setup({ rootId: "root", focus: "outside", settled: false });
+  const present = vi.mocked(h.session.unread.present);
+  expect(present).toHaveBeenCalledOnce();
+  const [channel, root, first] = present.mock.calls[0] ?? [];
+  expect([channel, root]).toEqual(["room", "root"]);
+  await vi.advanceTimersByTimeAsync(300);
+  // Presence reads nothing.
+  expect(h.reading).not.toHaveBeenCalled();
+  // An aria-only pause keeps it; actual concealment departs.
+  h.isolate(true);
+  h.isolate(false);
+  expect(h.session.unread.leave).not.toHaveBeenCalled();
+  h.conceal(true);
+  expect(h.session.unread.leave).toHaveBeenCalledExactlyOnceWith(first);
+  h.conceal(false);
+  expect(present).toHaveBeenCalledTimes(2);
+  const second = present.mock.calls[1]?.[2];
+  expect(second).not.toBe(first);
+  // A hidden document departs; showing again is a new visit.
+  h.setVisibility("hidden");
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(h.session.unread.leave).toHaveBeenLastCalledWith(second);
+  h.setVisibility("visible");
+  document.dispatchEvent(new Event("visibilitychange"));
+  const third = present.mock.calls[2]?.[2];
+  expect(third).not.toBe(second);
+  // Retargeting ends it and presents the new conversation.
+  h.retarget("other");
+  expect(h.session.unread.leave).toHaveBeenLastCalledWith(third);
+  expect(present.mock.calls.at(-1)?.slice(0, 2)).toEqual(["other", "root"]);
+  const fourth = present.mock.calls.at(-1)?.[2];
+  h.unmount();
+  expect(h.session.unread.leave).toHaveBeenLastCalledWith(fourth);
+});
+
+it("a retained thread pane that starts concealed is not presented until revealed", () => {
+  const h = setup({ rootId: "root", concealed: true });
+  const present = vi.mocked(h.session.unread.present);
+  expect(present).not.toHaveBeenCalled();
+  h.conceal(false);
+  expect(present).toHaveBeenCalledOnce();
+});
+
+it("a channel list presents no thread", () => {
+  const h = setup();
+  expect(h.session.unread.present).not.toHaveBeenCalled();
+});
+
+it("departing ends the visit: returning, or remounting, is a new one", async () => {
+  const h = setup();
+  vi.advanceTimersByTime(100);
+  const first = h.reading.mock.calls[0]?.[2];
+  h.setVisibility("hidden");
+  document.dispatchEvent(new Event("visibilitychange"));
+  expect(h.session.unread.leave).toHaveBeenLastCalledWith(first);
+  h.setVisibility("visible");
+  document.dispatchEvent(new Event("visibilitychange"));
+  const second = h.reading.mock.calls.at(-1)?.[2];
+  expect(second).not.toBe(first);
+  // Focus moving away is not a departure.
+  window.dispatchEvent(new Event("blur"));
+  window.dispatchEvent(new Event("focus"));
+  expect(h.reading.mock.calls.at(-1)?.[2]).toBe(second);
+  h.unmount();
+  expect(h.session.unread.leave).toHaveBeenLastCalledWith(second);
+});
+it("losing its layout box cancels reading but keeps the visit; concealment ends it", async () => {
+  const h = setup();
+  const first = h.reading.mock.calls[0]?.[2];
+  const rects = vi.mocked(h.element.getClientRects);
+  // A relayout frame with no box at all, then the same rows again.
+  rects.mockReturnValue([] as unknown as DOMRectList);
+  h.element.dispatchEvent(new Event("scroll"));
+  await vi.advanceTimersByTimeAsync(16);
+  rects.mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  h.element.dispatchEvent(new Event("scroll"));
+  await vi.advanceTimersByTimeAsync(16);
+  expect(h.session.unread.leave).not.toHaveBeenCalled();
+  expect(h.reading.mock.calls.at(-1)?.[2]).toBe(first);
+  // An unrelated attribute change elsewhere is not this pane's.
+  const elsewhere = document.createElement("div");
+  document.body.append(elsewhere);
+  h.conceal(true, elsewhere);
+  expect(h.session.unread.leave).not.toHaveBeenCalled();
+  // Concealed by an ancestor, unchanged rows, no transition event: departed.
+  h.conceal(true);
+  expect(h.session.unread.leave).toHaveBeenCalledExactlyOnceWith(first);
+  const leases = h.leases.length;
+  h.conceal(false);
+  expect(h.leases.length).toBe(leases + 1);
+  const second = h.reading.mock.calls.at(-1)?.[2];
+  expect(second).not.toBe(first);
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+  h.unmount();
+  expect(h.disconnected).toHaveBeenCalled();
 });

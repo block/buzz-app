@@ -9,6 +9,7 @@ import { XIcon } from "../icons";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { useModalWindowDrag } from "./ModalWindowDrag";
 import { IconButton } from "./IconButton";
+import { ScrollEdgeMaterial } from "./ScrollEdgeMaterial";
 import { useFinalFocusUnlessMoved } from "./finalFocus";
 
 type PopupProps = ComponentProps<typeof BaseDialog.Popup>;
@@ -19,6 +20,8 @@ export type DialogProps = {
     typeof BaseDialog.Root
   >["onOpenChangeComplete"];
   title: ReactNode;
+  /** Artwork above a centered title lockup, with Close kept at the top right. */
+  artwork?: ReactNode;
   /** Search palettes keep an accessible title without visible header chrome. */
   presentation?: "default" | "search";
   /** Introductory copy belongs in the title lockup, not a body paragraph. */
@@ -30,7 +33,7 @@ export type DialogProps = {
   /** Position within a host; sectioned modals stay bounded. Null waits for its ref. */
   container?: HTMLElement | null;
   actions?: ReactNode;
-  /** Tighter heading-to-body spacing for compact forms. */
+  /** Both values use the shared 12px heading-to-body gap. Compact is a legacy alias. */
   headerGap?: "default" | "compact";
   /** Keep spacing beside scrolling content on the fixed header and footer. */
   chromeSpacing?: "default" | "padded";
@@ -53,6 +56,8 @@ export type DialogProps = {
   size?: "compact" | "default" | "wide" | "expanded";
   /** Keep frequent surfaces such as search palettes immediate. */
   motion?: "default" | "none";
+  /** An addressable dialog: its own navigation visit, so Back closes it. */
+  visit?: boolean;
   /** A pending operation can prevent all user dismissal paths. */
   preventClose?: boolean;
   initialFocus?: PopupProps["initialFocus"];
@@ -65,6 +70,7 @@ export function Dialog({
   onOpenChange,
   onOpenChangeComplete,
   title,
+  artwork,
   presentation = "default",
   description,
   children,
@@ -82,6 +88,7 @@ export function Dialog({
   dismissOnOutsideClick = true,
   closeLabel = "Close",
   size = "default",
+  visit = false,
   preventClose = false,
   motion = "default",
   height = "content",
@@ -112,8 +119,13 @@ export function Dialog({
         <header
           className="buzz-dialog-header"
           data-chrome-spacing={chromeSpacing}
+          data-artwork={artwork != null || undefined}
         >
+          <ScrollEdgeMaterial edge="top" className="buzz-dialog-bar-material" />
           <div className="buzz-dialog-heading">
+            {artwork != null && (
+              <div className="buzz-dialog-artwork">{artwork}</div>
+            )}
             {step ? (
               <div className="text-label" aria-hidden="true">
                 {title}
@@ -199,10 +211,18 @@ export function Dialog({
           className="buzz-dialog-actions"
           data-chrome-spacing={chromeSpacing}
         >
-          {leadingActions && (
-            <div className="buzz-dialog-leading-actions">{leadingActions}</div>
-          )}
-          {actions}
+          <ScrollEdgeMaterial
+            edge="bottom"
+            className="buzz-dialog-bar-material"
+          />
+          <div className="buzz-dialog-action-row">
+            {leadingActions && (
+              <div className="buzz-dialog-leading-actions">
+                {leadingActions}
+              </div>
+            )}
+            {actions}
+          </div>
         </footer>
       )}
     </>
@@ -253,6 +273,7 @@ export function Dialog({
           data-stepped={step ? "" : undefined}
           data-size={navigation ? "expanded" : size}
           data-navigation={navigation ? "" : undefined}
+          data-navigation-visit={visit ? "" : undefined}
           data-contained={container ? "" : undefined}
           data-motion={transition}
           aria-modal="true"

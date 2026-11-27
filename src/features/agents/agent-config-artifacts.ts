@@ -1,7 +1,8 @@
 // NIP-AP config artifacts (NIP-AR kind 45010) in an agent's or team's config
 // channel: identity, validation, the reads that decide state, and one save that
-// tells "accepted" apart from "current". Dormant until config channels ship; the
-// caller supplies a relay-only snapshot reader and a narrow artifact writer.
+// tells "accepted" apart from "current". The caller supplies a relay-only
+// snapshot reader and a narrow artifact writer.
+import { notesOf, noteTags } from "./plugin-notes";
 import { PublishRejected } from "../relay/outbox";
 import type { RelayWriter } from "../relay/transport";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
@@ -143,8 +144,37 @@ export function artifactProblem(event: EventData, expected: Expected) {
   return undefined;
 }
 
+/** A returned revision checked against the selected channel, `d` and type
+ * before anything installs it: one that fails is the invalid head. Every path
+ * that installs a head (sync, save, migration, recovery) goes through this. */
+export const checkedHead = (event: RelayEvent, expected: Expected) => {
+  const problem = artifactProblem(event, expected);
+  return problem
+    ? ({ kind: "head", event, problem } as const)
+    : ({ kind: "head", event } as const);
+};
+
+/** The preset an agent settings snapshot names, such as "recommended", and
+ * its plugin notes' tags. */
+function settingsMarks(type: string, content: string) {
+  if (type !== "buzz.agent.settings") return { tags: [] };
+  try {
+    const body = JSON.parse(content) as { preset?: unknown };
+    const { preset } = body;
+    return {
+      preset: typeof preset === "string" && preset ? preset : undefined,
+      tags: noteTags(notesOf(body)),
+    };
+  } catch {
+    return { tags: [] };
+  }
+}
+
 /** One revision to sign. `content` is the complete snapshot; `extra` carries
- * preserved client tags (e.g. `team`). */
+ * preserved client tags (e.g. `team`). Agent settings also get a `preset` tag
+ * matching their content, so who is on Automatic can be counted from tags
+ * without reading content, and a ["note", pluginId, tag] tag for each tagged
+ * plugin note (plugin-notes.ts); carried ones are never kept. */
 export function artifactTemplate(
   input: Expected & {
     op: "create" | "update" | "restore";
@@ -156,6 +186,7 @@ export function artifactTemplate(
 ) {
   if ((input.op === "create") !== (input.prev === undefined))
     throw new Error("Only a create has no previous revision");
+  const { preset, tags } = settingsMarks(input.type, input.content);
   return {
     kind: ARTIFACT_KIND,
     created_at: Math.floor(Date.now() / 1000),
@@ -168,7 +199,15 @@ export function artifactTemplate(
       ["title", input.title],
       ["op", input.op],
       ...(input.prev ? [["prev", input.prev]] : []),
-      ...(input.extra ?? []).map((t) => [...t]),
+      ...(preset ? [["preset", preset]] : []),
+      ...tags,
+      ...(input.extra ?? [])
+        .filter(
+          ([name]) =>
+            name !== "preset" &&
+            (name !== "note" || input.type !== "buzz.agent.settings"),
+        )
+        .map((t) => [...t]),
     ],
   };
 }
@@ -184,7 +223,10 @@ export const signedEventBytes = (event: RelayEvent) =>
  * stand in for it. */
 export type SnapshotRead = (
   filters: readonly ReadFilter[],
-  options: { signal?: AbortSignal | undefined },
+  options: {
+    signal?: AbortSignal | undefined;
+    priority?: "foreground" | "background";
+  },
 ) => Promise<readonly RelayEvent[]>;
 
 /** The explicit current-heads query. The relay's artifact parser takes only
@@ -199,14 +241,18 @@ export const currentFilter = (channel: string): ReadFilter => ({
 
 /** Current heads in a channel, by `d`. Omits deletions and redacted heads; a
  * returned head is authoritative even when its history is unreadable. Two
- * heads for one `d` decide nothing: undefined. */
+ * heads for one `d`, or a full page, decide nothing: undefined. */
 export async function readCurrent(
   read: SnapshotRead,
   channel: string,
   signal?: AbortSignal,
 ) {
+  const filter = currentFilter(channel);
+  const events = await read([filter], { signal });
+  // A full page may be truncated, and a partial read decides nothing.
+  if (events.length >= filter.limit) return undefined;
   const heads = new Map<string, RelayEvent>();
-  for (const event of await read([currentFilter(channel)], { signal })) {
+  for (const event of events) {
     const d = tag(event, "d");
     if (!d || heads.has(d)) return undefined;
     heads.set(d, event);
@@ -284,13 +330,15 @@ export type Delivery =
 
 /** Sends one signed revision. Only an OK or duplicate-OK proves acceptance; a
  * failure without a typed refusal leaves it uncertain, never rejected. An
- * event over the relay's size limit is refused before dispatch. */
+ * event over the relay's size limit (`maxEventBytes`, from its NIP-11
+ * document) is refused before dispatch. */
 export async function deliver(
   writer: RelayWriter,
   event: RelayEvent,
   signal: AbortSignal,
+  maxEventBytes = ARTIFACT_MAX_EVENT_BYTES,
 ): Promise<Delivery> {
-  if (signedEventBytes(event) > ARTIFACT_MAX_EVENT_BYTES)
+  if (signedEventBytes(event) > maxEventBytes)
     return {
       status: "refused",
       event,

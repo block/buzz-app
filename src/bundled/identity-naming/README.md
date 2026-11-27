@@ -269,7 +269,10 @@ candidate set.
 
 [profiles.ts](../../features/relay/profiles.ts) selects the latest kind-0 profile,
 uses non-blank `display_name` before `name`, and otherwise uses a short hex-key
-fallback. Agent hints come from `is_agent: true`, `isAgent: true`, or a
+fallback. The naming adapter excludes these synthetic names from public-name
+lookup and collision candidates, while preserving profile metadata for library,
+local, and explicit display aliases. Genuine names that resemble keys remain
+valid. Agent hints come from `is_agent: true`, `isAgent: true`, or a
 structurally recognized `auth` tag. That fold extracts an owner hint from the
 latter; the naming path does **not** verify the owner's attestation signature.
 Clients MUST NOT use this display hint as authorization. Missing owner names
@@ -289,8 +292,6 @@ different case-folding rule is a different policy, not byte-identical conformanc
 - Context and fact selection: [directory.ts](../../features/identity-names/directory.ts),
   [react.ts](../../features/identity-names/react.ts), and
   [use-mention-choices.ts](../mentions/use-mention-choices.ts).
-- buzz-app feature-contract precedent: [Profiles](../../../docs/profiles.md) and
-  [Unread](../../../docs/unread.md), especially explicit consumer and authority boundaries.
 - block/buzz, inspected at `797012ff01a6d499959b45ed2e56f7927c6a4d6b`:
   [NIP-MP](https://github.com/block/buzz/blob/797012ff01a6d499959b45ed2e56f7927c6a4d6b/docs/nips/NIP-MP.md)
   supplies the abstract/non-goals/normative-rules pattern;

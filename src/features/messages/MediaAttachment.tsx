@@ -1,3 +1,4 @@
+import { useMediaReadRecovery } from "./use-media-read-recovery";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { prepareReviewEntrance } from "./use-review-entrance";
 import { useMediaCorners } from "./use-media-corners";
@@ -23,13 +24,19 @@ import {
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import {
+  decodedImageCapture,
   openingFrame,
   openingFrameCapture,
   rememberOpeningFrame,
+  retainDecodedImage,
+  takeDecodedImage,
 } from "../relay/media";
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 import { useMediaElementSource } from "./use-media-element-source";
+import { isNativeMediaSource } from "./attachment-source";
+import { MediaContextMenu } from "./MediaContextMenu";
+import { MediaActionAnnouncements } from "./MediaActionAnnouncements";
 
 export type MediaPlayback = Readonly<{
   attachmentUrl: string;
@@ -111,6 +118,7 @@ export function MediaAttachment({
   const [failed, setFailed] = useState(false);
   const captured = source ? openingFrame(source) : undefined;
   const openingSeek = useRef<{ time: number; capture: number }>(undefined);
+  const encoding = useRef(false);
   const [capturedPreview, setCapturedPreview] = useState(captured?.poster);
   const [measuredDimensions, setMeasuredDimensions] = useState<
     { width: number; height: number } | undefined
@@ -128,6 +136,15 @@ export function MediaAttachment({
     attachment.kind === "video" ? source : undefined,
   );
   const videoSource = element.src;
+  const { recover: recoverMedia } = useMediaReadRecovery(
+    active ? videoSource : undefined,
+    () => setFailed(true),
+  );
+  const viewMedia = (seconds: number) => {
+    video.current?.pause();
+    if (onOpenReview) onOpenReview(attachment, seconds);
+    else setViewerOpen(true);
+  };
 
   if (!source && !compact)
     return (
@@ -150,42 +167,49 @@ export function MediaAttachment({
   if (attachment.kind === "image")
     return (
       <>
-        <button
-          ref={corners}
-          className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
-          style={previewStyle}
-          type="button"
-          aria-label="Open image fullscreen"
-          data-image-preview=""
-          data-media-preview=""
-          onClick={(event) => {
-            prepareReviewEntrance(event);
-            if (onOpenReview) onOpenReview(attachment, 0);
-            else setViewerOpen(true);
-          }}
+        <MediaContextMenu
+          kind="image"
+          url={attachment.url}
+          source={source}
+          name={attachment.name}
+          onView={() => viewMedia(0)}
         >
-          <span className={styles.mediaPreviewPixels}>
-            <img
-              src={source}
-              alt={imageDescription}
-              loading="lazy"
-              onLoad={(event) =>
-                setMeasuredDimensions({
-                  width: event.currentTarget.naturalWidth,
-                  height: event.currentTarget.naturalHeight,
-                })
-              }
-              onError={() => setFailed(true)}
-            />
-          </span>
-          <svg
-            className={styles.imageOutline}
-            data-image-outline=""
-            aria-hidden="true"
+          <button
+            ref={corners}
+            className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+            style={previewStyle}
+            type="button"
+            aria-label="Open image fullscreen"
+            data-image-preview=""
+            data-media-preview=""
+            onClick={(event) => {
+              prepareReviewEntrance(event);
+              viewMedia(0);
+            }}
           >
-            <path />
-          </svg>
-        </button>
+            <span className={styles.mediaPreviewPixels}>
+              <img
+                src={source}
+                alt={imageDescription}
+                loading="lazy"
+                onLoad={(event) =>
+                  setMeasuredDimensions({
+                    width: event.currentTarget.naturalWidth,
+                    height: event.currentTarget.naturalHeight,
+                  })
+                }
+                onError={() => setFailed(true)}
+              />
+            </span>
+            <svg
+              className={styles.imageOutline}
+              data-image-outline=""
+              aria-hidden="true"
+            >
+              <path />
+            </svg>
+          </button>
+        </MediaContextMenu>
         {active &&
           viewerOpen &&
           createPortal(
@@ -193,11 +217,18 @@ export function MediaAttachment({
               title="Image attachment"
               close={() => setViewerOpen(false)}
             >
-              <img
-                className={styles.mediaViewerImage}
-                src={source}
-                alt={imageDescription}
-              />
+              <MediaContextMenu
+                kind="image"
+                url={attachment.url}
+                source={source}
+                name={attachment.name}
+              >
+                <img
+                  className={styles.mediaViewerImage}
+                  src={source}
+                  alt={imageDescription}
+                />
+              </MediaContextMenu>
             </MediaViewer>,
             document.body,
           )}
@@ -211,30 +242,43 @@ export function MediaAttachment({
       </span>
     );
 
+  // WebKit can emit loadeddata before nonzero dimensions are available.
+  // Invalid geometry must not replace the usable preview fallback.
+  const measureVideo = (element: HTMLVideoElement) => {
+    if (
+      Number.isFinite(element.videoWidth) &&
+      element.videoWidth > 0 &&
+      Number.isFinite(element.videoHeight) &&
+      element.videoHeight > 0
+    )
+      setMeasuredDimensions({
+        width: element.videoWidth,
+        height: element.videoHeight,
+      });
+  };
+
   const videoElement = (
     // biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL.
     <video
       ref={video}
       className={styles.mediaVideo}
+      // The native listener is another origin; without CORS its frames taint
+      // the canvas, so no opening frame is captured and every remount starts
+      // blank until the video loads again.
+      crossOrigin={
+        source && isNativeMediaSource(source) ? "anonymous" : undefined
+      }
       src={videoSource}
       poster={visiblePreview}
       preload={compact ? "metadata" : preload}
       playsInline
       style={previewStyle}
+      // With preload="metadata", WebKit may load no frame until playback, so
+      // the size is taken from metadata too.
+      onLoadedMetadata={(event) => measureVideo(event.currentTarget)}
       onLoadedData={(event) => {
         const element = event.currentTarget;
-        // WebKit can emit loadeddata before nonzero dimensions are available.
-        // Invalid geometry must not replace the usable preview fallback.
-        if (
-          Number.isFinite(element.videoWidth) &&
-          element.videoWidth > 0 &&
-          Number.isFinite(element.videoHeight) &&
-          element.videoHeight > 0
-        )
-          setMeasuredDimensions({
-            width: element.videoWidth,
-            height: element.videoHeight,
-          });
+        measureVideo(element);
         if (!preview && !capturedPreview && element.currentTime === 0) {
           // WebKit often paints no frame at exactly zero. Seeking after actual
           // frame data arrives forces a decodable opening frame.
@@ -248,7 +292,12 @@ export function MediaAttachment({
         const element = event.currentTarget;
         const opening = openingSeek.current;
         openingSeek.current = undefined;
-        if (!preview && !capturedPreview && element.videoWidth > 0) {
+        if (
+          !preview &&
+          !capturedPreview &&
+          !encoding.current &&
+          element.videoWidth > 0
+        ) {
           try {
             const canvas = document.createElement("canvas");
             const scale = Math.min(1, 640 / element.videoWidth);
@@ -259,33 +308,56 @@ export function MediaAttachment({
             );
             const context = canvas.getContext("2d");
             context?.drawImage(element, 0, 0, canvas.width, canvas.height);
-            const poster = canvas.toDataURL("image/jpeg", 0.8);
+            const { videoWidth: width, videoHeight: height } = element;
             // Only a drawn opening frame is shared; an explicit timecode seek
             // or a blank export stays with this mount.
-            if (
+            const shared =
               source &&
               context &&
               opening &&
-              Math.abs(element.currentTime - opening.time) < 0.01 &&
-              poster.startsWith("data:image/jpeg;")
-            )
-              rememberOpeningFrame(
-                source,
-                {
-                  poster,
-                  width: element.videoWidth,
-                  height: element.videoHeight,
-                },
-                opening.capture,
-              );
-            setCapturedPreview(poster);
+              Math.abs(element.currentTime - opening.time) < 0.01
+                ? { source, capture: opening.capture }
+                : undefined;
+            // Chromium encodes toBlob off the main thread; WebKit still
+            // encodes inline. The first seek owns the poster until its
+            // encode fails.
+            encoding.current = true;
+            canvas.toBlob(
+              (blob) => {
+                if (!blob) {
+                  encoding.current = false;
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const poster = reader.result;
+                  if (typeof poster !== "string") {
+                    encoding.current = false;
+                    return;
+                  }
+                  if (shared && poster.startsWith("data:image/jpeg;"))
+                    rememberOpeningFrame(
+                      shared.source,
+                      { poster, width, height },
+                      shared.capture,
+                    );
+                  setCapturedPreview(poster);
+                };
+                reader.readAsDataURL(blob);
+              },
+              "image/jpeg",
+              0.8,
+            );
           } catch {
+            encoding.current = false;
             // A decoded frame may still paint in the video when canvas export
             // is unavailable; the poster capture is only a compatibility aid.
           }
         }
       }}
-      onError={() => setFailed(true)}
+      onError={(event) => {
+        if (!recoverMedia(event.currentTarget)) setFailed(true);
+      }}
       onPause={() => setPlaying(false)}
       onPlay={() => {
         setStarted(true);
@@ -301,95 +373,112 @@ export function MediaAttachment({
 
   if (compact)
     return (
-      <a
-        ref={corners}
-        className={styles.attachmentImage}
-        style={{
-          width: "100%",
-          height: 0,
-          paddingBottom: "100%",
-          aspectRatio: "auto",
-        }}
-        href={source ?? attachment.url}
-        aria-label={label}
-        data-media-preview=""
-        data-video-preview=""
-        onClick={(event) => {
-          event.preventDefault();
-          prepareReviewEntrance(event);
-          onOpenReview?.(attachment, 0);
-        }}
+      <MediaContextMenu
+        kind="video"
+        url={attachment.url}
+        source={source}
+        name={attachment.name}
+        onView={() => viewMedia(0)}
       >
-        <span className={styles.attachmentImagePixels}>
-          {source && !failed && !element.unavailable ? videoElement : null}
-          <span className={styles.mediaGridBadge} aria-hidden="true">
-            <PlayIcon size={24} />
-          </span>
-          {overlayCount > 0 && (
-            <span className={styles.imageOverflow} aria-hidden="true">
-              +{overlayCount}
-            </span>
-          )}
-        </span>
-        <svg
-          className={styles.imageOutline}
-          data-image-outline=""
-          aria-hidden="true"
+        <a
+          ref={corners}
+          className={styles.attachmentImage}
+          style={{
+            width: "100%",
+            height: 0,
+            paddingBottom: "100%",
+            aspectRatio: "auto",
+          }}
+          href={source ?? attachment.url}
+          aria-label={label}
+          data-media-preview=""
+          data-video-preview=""
+          onClick={(event) => {
+            event.preventDefault();
+            prepareReviewEntrance(event);
+            onOpenReview?.(attachment, 0);
+          }}
         >
-          <path />
-        </svg>
-      </a>
+          <span className={styles.attachmentImagePixels}>
+            {source && !failed && !element.unavailable ? videoElement : null}
+            <span className={styles.mediaGridBadge} aria-hidden="true">
+              <PlayIcon size={24} />
+            </span>
+            {overlayCount > 0 && (
+              <span className={styles.imageOverflow} aria-hidden="true">
+                +{overlayCount}
+              </span>
+            )}
+          </span>
+          <svg
+            className={styles.imageOutline}
+            data-image-outline=""
+            aria-hidden="true"
+          >
+            <path />
+          </svg>
+        </a>
+      </MediaContextMenu>
     );
 
   return (
     <>
-      <div
-        ref={corners}
-        className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
-        data-video-preview=""
-        data-media-preview=""
-        data-started={started || undefined}
-        data-playing={playing ? "true" : undefined}
-        style={previewStyle}
+      <MediaContextMenu
+        kind="video"
+        url={attachment.url}
+        source={source}
+        name={attachment.name}
+        onView={() => viewMedia(currentTime)}
       >
         <div
-          className={`${styles.mediaPreviewPixels} dark`}
-          data-color-mode="dark"
+          ref={corners}
+          className={`${styles.mediaPreview} ${mode === "thread" ? styles.mediaPreviewThread : ""}`}
+          data-video-preview=""
+          data-media-preview=""
+          data-started={started || undefined}
+          data-playing={playing ? "true" : undefined}
+          style={previewStyle}
         >
-          {visiblePreview && !started && (
-            <img
-              className={styles.mediaPoster}
-              src={visiblePreview}
-              alt=""
-              aria-hidden="true"
-            />
-          )}
-          {videoElement}
-          {active && <VideoControls videoRef={video} inline />}
-          <span className={styles.mediaExpand}>
-            <IconButton
-              size="compact"
-              variant="media"
-              type="button"
-              aria-label="Open video fullscreen"
-              onClick={(event) => {
-                prepareReviewEntrance(event);
-                video.current?.pause();
-                if (onOpenReview) onOpenReview(attachment, currentTime);
-                else setViewerOpen(true);
-              }}
-              icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
-            />
-          </span>
+          <div
+            className={`${styles.mediaPreviewPixels} dark`}
+            data-color-mode="dark"
+          >
+            {!started &&
+              (preview ? (
+                <img
+                  className={styles.mediaPoster}
+                  src={preview}
+                  alt=""
+                  aria-hidden="true"
+                />
+              ) : (
+                capturedPreview && <CapturedPoster frame={capturedPreview} />
+              ))}
+            {videoElement}
+            {active && <VideoControls videoRef={video} inline />}
+            <span className={styles.mediaExpand}>
+              <IconButton
+                size="compact"
+                variant="media"
+                type="button"
+                aria-label="Open video fullscreen"
+                onClick={(event) => {
+                  prepareReviewEntrance(event);
+                  viewMedia(currentTime);
+                }}
+                icon={<ArrowsOutIcon size={16} aria-hidden="true" />}
+              />
+            </span>
+          </div>
+          <svg
+            className={styles.imageOutline}
+            data-image-outline=""
+            aria-hidden="true"
+          >
+            <path />
+          </svg>
         </div>
-        <svg
-          className={styles.imageOutline}
-          data-image-outline=""
-          aria-hidden="true"
-        >
-          <path />
-        </svg>
-      </div>
+      </MediaContextMenu>
       {source &&
         active &&
         viewerOpen &&
@@ -399,6 +488,8 @@ export function MediaAttachment({
             close={() => setViewerOpen(false)}
           >
             <VideoPlayer
+              attachmentUrl={attachment.url}
+              downloadName={attachment.name ?? ""}
               source={source}
               poster={visiblePreview}
               videoRef={expandedVideo}
@@ -415,6 +506,30 @@ export function MediaAttachment({
         )}
     </>
   );
+}
+
+// Opening frames are shared by every session already, so their painted
+// elements are too.
+const capturedPosters = {};
+
+/** A remount re-adopts the painted element: WebKit shows a new image element
+ * empty for a frame, even a loaded, synchronously decoded one. */
+function CapturedPoster({ frame }: { frame: string }) {
+  const host = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const capture = decodedImageCapture();
+    const image =
+      takeDecodedImage(capturedPosters, frame) ??
+      Object.assign(new Image(), { src: frame, alt: "", decoding: "sync" });
+    image.className = styles.mediaPoster ?? "";
+    image.setAttribute("aria-hidden", "true");
+    host.current?.append(image);
+    return () => {
+      image.remove();
+      retainDecodedImage(capturedPosters, frame, image, capture);
+    };
+  }, [frame]);
+  return <span ref={host} />;
 }
 
 /** The plain fullscreen fallback for surfaces that host no media review. */
@@ -462,7 +577,7 @@ export function MediaViewer({
             }
           />
         </div>
-        {children}
+        <MediaActionAnnouncements>{children}</MediaActionAnnouncements>
       </section>
     </div>
   );

@@ -8,21 +8,44 @@ const composer = (page, name) =>
 
 export async function settle(page, scroller = history(page)) {
   // Wait for geometry to stop moving, rather than assuming a fixed animation delay.
+  // Each read follows two rendering updates: a DOM write lands before the
+  // frame whose ResizeObserver measures it, and Linux WebKit can go longer
+  // than the stable window without rendering, so unpaced reads can mistake an
+  // unmeasured estimate for settled geometry. Playwright's clock fakes
+  // requestAnimationFrame, so a paused clock would stop rAF pacing; a new
+  // ResizeObserver's first notification comes from the real rendering update.
   let previous;
   let stable = 0;
   await expect
     .poll(
       async () => {
-        const value = await scroller.evaluate((element) =>
-          JSON.stringify([
+        const value = await scroller.evaluate(async (element) => {
+          const rendered = () =>
+            new Promise((resolve) => {
+              const observer = new ResizeObserver(() => {
+                observer.disconnect();
+                // Leave the delivery loop before observing again; a same-depth
+                // observation added inside it is skipped and reported as a loop error.
+                const channel = new MessageChannel();
+                channel.port1.onmessage = () => {
+                  channel.port1.close();
+                  resolve();
+                };
+                channel.port2.postMessage(null);
+              });
+              observer.observe(document.documentElement);
+            });
+          await rendered();
+          await rendered();
+          return JSON.stringify([
             element.scrollTop,
             element.scrollHeight,
             element.clientHeight,
             ...Array.from(element.querySelectorAll("[data-message-id]")).map(
               (row) => [row.dataset.messageId, row.getBoundingClientRect().y],
             ),
-          ]),
-        );
+          ]);
+        });
         stable = value === previous ? stable + 1 : 0;
         previous = value;
         return stable;
@@ -83,28 +106,45 @@ export async function keyScroll(page, key, scroller = history(page)) {
   await gesture(page, scroller, "keydown", () => page.keyboard.press(key));
 }
 
-export async function anchor(page) {
-  return history(page).evaluate((element) => {
-    const bounds = element.getBoundingClientRect();
-    const rows = Array.from(element.querySelectorAll("[data-message-id]"));
-    // Prefer a whole paragraph, but tall messages can leave only clipped rows.
-    // Track the first intersecting row in that case, as the reader does. The
-    // same-ID/Y assertion below still detects displacement after a resize.
-    const row =
-      rows.find((row) => {
-        const rect = row.querySelector("p").getBoundingClientRect();
-        return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
-      }) ??
-      rows.find((row) => {
-        const rect = row.getBoundingClientRect();
-        return rect.bottom > bounds.top && rect.top < bounds.bottom;
-      });
-    if (!row) throw new Error("No visible message anchor");
-    return {
-      id: row.dataset.messageId,
-      y: row.querySelector("p").getBoundingClientRect().top - bounds.top,
-    };
-  });
+// With `scrollBy`, scroll by that many px and read at the resulting scroll
+// event, before rows measure: the timeline's held reader re-reads its row then.
+export async function anchor(page, held, scrollBy = 0) {
+  return history(page).evaluate(
+    (element, [held, scrollBy]) => {
+      const read = () => {
+        const bounds = element.getBoundingClientRect();
+        const rows = Array.from(element.querySelectorAll("[data-message-id]"));
+        const inView = (row) => {
+          const rect = row.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+        };
+        // A held reader keeps its row while any part of it is in view, as the
+        // timeline does across a drag. Otherwise prefer a whole paragraph, but
+        // tall messages can leave only clipped rows. Track the first
+        // intersecting row in that case, as the reader does. The same-ID/Y
+        // assertion below still detects displacement after a resize.
+        const row =
+          rows.find((row) => row.dataset.messageId === held && inView(row)) ??
+          rows.find((row) => {
+            const rect = row.querySelector("p").getBoundingClientRect();
+            return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+          }) ??
+          rows.find(inView);
+        if (!row) throw new Error("No visible message anchor");
+        return {
+          id: row.dataset.messageId,
+          y: row.querySelector("p").getBoundingClientRect().top - bounds.top,
+        };
+      };
+      if (!scrollBy) return read();
+      const scrolled = new Promise((resolve) =>
+        element.addEventListener("scroll", resolve, { once: true }),
+      );
+      element.scrollTop += scrollBy;
+      return scrolled.then(read);
+    },
+    [held, scrollBy],
+  );
 }
 export async function expectAnchor(page, expected) {
   await expect
@@ -136,11 +176,27 @@ export async function edge(page, direction, scroller = history(page)) {
       direction,
     );
   await scroller.hover();
-  // Send one real gesture for the actual distance, not an arbitrary 100,000px
+  // Send real gestures for the actual distance, not an arbitrary 100,000px
   // overshoot. At the boundary, retain input so production can initiate paging.
-  const remaining = await distance();
-  if (remaining >= 4) await wheel(page, direction * remaining, scroller);
-  else await page.mouse.wheel(0, direction * Math.max(1, remaining));
+  let remaining = await distance();
+  if (remaining < 4)
+    await page.mouse.wheel(0, direction * Math.max(1, remaining));
+  // A gesture can end short of the edge: Linux WebKit moves one about 1.5k px
+  // at most. Each further gesture must make real progress, so an immobile
+  // timeline still fails.
+  // A page landing beyond the edge adds height, not lost progress.
+  const height = () => scroller.evaluate((element) => element.scrollHeight);
+  for (let gesture = 0; remaining >= 4 && gesture < 40; gesture++) {
+    const before = remaining;
+    const grown = await height();
+    await wheel(page, direction * remaining, scroller);
+    remaining = await distance();
+    if (remaining >= 4)
+      expect(
+        remaining - Math.max(0, (await height()) - grown),
+        "edge gesture moves toward the edge",
+      ).toBeLessThan(before);
+  }
   await expect
     .poll(distance, { message: "wheel reaches timeline edge" })
     .toBeLessThan(4);
@@ -149,15 +205,101 @@ export async function edge(page, direction, scroller = history(page)) {
     4,
   );
 }
+/** Scroll to the top for the next older read. Gestures stop once the app's
+ * reach starts that read, and the rest of the way is short: a held read waits
+ * only for that, not for a whole Linux scroll past its deadline. With `top`
+ * false, a read the app's read-ahead starts, before the call or during a
+ * gesture, is the next read where the reader is. */
+export async function toOlder(
+  page,
+  app,
+  { top = true } = {},
+  scroller = history(page),
+) {
+  await scroller.hover();
+  for (let gesture = 0; !app.pending.length && gesture < 40; gesture++) {
+    const offset = await scroller.evaluate((element) => element.scrollTop);
+    if (offset < 4) break;
+    await wheel(page, -offset, scroller);
+  }
+  if (top || !app.pending.length) await edge(page, -1, scroller);
+  await expect.poll(() => app.pending.length).toBe(1);
+}
 export async function end(page) {
   await edge(page, 1);
 }
-export async function open(page, app) {
+// `cold` reaches Messages by its tab, for journeys that need conversations
+// unread by the app: search previews the results it highlights on the way.
+export async function open(page, app, { cold = false, hold = false } = {}) {
   await page.goto(app.origin);
-  await openPage(page, "Messages");
+  if (cold)
+    await page.getByRole("tab", { name: "Messages", exact: true }).click();
+  else await openPage(page, "Messages");
   await composer(page, "Alpha").waitFor();
   await expect(history(page).locator(rowSelector).first()).toBeVisible();
   await settle(page);
+  return readAhead(page, app, { hold });
+}
+/** Opening reads older history ahead of a reader at the bottom. Release it
+ * until the reader has the prefetch distance or the channel's first message
+ * above them, or a read fails, so a journey's baseline starts after it.
+ * `hold` leaves the first read pending for a journey that lands it itself.
+ * Returns the reads it released. */
+export async function readAhead(page, app, { hold = false } = {}) {
+  const channel = await history(page).evaluate(
+    (element) =>
+      element.closest("[data-channel-timeline]").dataset.channelTimeline,
+  );
+  const rows = app.histories
+    .get(`primary/${channel}`)
+    .filter((event) => event.kind === 9);
+  const first = Math.min(...rows.map((event) => event.created_at));
+  const start = rows
+    .filter((event) => event.created_at === first)
+    .map((event) => event.id);
+  const done = () =>
+    history(page).evaluate(
+      (element, start) =>
+        element.scrollTop >= Math.max(3000, element.clientHeight * 6) ||
+        start.every((id) =>
+          element.querySelector(`[data-message-id="${id}"]`),
+        ) ||
+        !!element.querySelector('[role="alert"]'),
+      start,
+    );
+  const released = [];
+  // At most the visit's five fill pages.
+  for (let read = 0; read < 5; read++) {
+    if (hold) {
+      await expect
+        .poll(async () => app.pending.length > 0 || (await done()), {
+          message: "opening reads ahead or has history above the reader",
+        })
+        .toBe(true);
+      return released;
+    }
+    // A read-ahead starts once the opening is idle, within 500ms; none starts
+    // when the loaded history is all there is.
+    await expect
+      .poll(async () => app.pending.length > 0 || (await done()), {
+        timeout: 2000,
+      })
+      .toBe(true)
+      .catch(() => {});
+    // The app's own reach can take one page more than `done` (Linux WebKit
+    // did): give that read its start window too, so none is left held.
+    if (!app.pending.length)
+      await expect
+        .poll(() => app.pending.length, { timeout: 1000 })
+        .toBeGreaterThan(0)
+        .catch(() => {});
+    const pending = app.pending.shift();
+    if (!pending) return released;
+    pending.release();
+    released.push(pending);
+    await settle(page);
+  }
+  return released;
 }
 export async function upper(page) {
   await end(page);
@@ -200,12 +342,63 @@ export async function virtuaIdle(page, scroller = history(page)) {
   await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
   await settle(page, scroller);
 }
-// Activate a timeline control by keyboard when the test is about the action,
-// not pointer hit testing. Opening a thread narrows the timeline, and its
-// re-pin can scroll after any idle check. A click released inside Virtua's
-// pointer hold reaches the scroller instead of the control.
-export async function activate(control) {
-  await control.focus();
-  await expect(control).toBeFocused();
-  await control.press("Enter");
+// Wait `count` rendering updates. An imperative scroll moves the DOM before
+// its scroll event, which reaches Virtua in the next rendering update (the one
+// after, if issued from a frame callback); until then its pointer events and
+// range are still at rest.
+export async function frames(page, count = 2) {
+  await page.evaluate(
+    (count) =>
+      new Promise((resolve) => {
+        const next = (left) =>
+          left ? requestAnimationFrame(() => next(left - 1)) : resolve();
+        next(count);
+      }),
+    count,
+  );
 }
+// Hover a row's element with one raw pointer move. Locator.hover retries by
+// scrolling the timeline, and each scroll restarts Virtua's pointer-event
+// hold; a hover rest (Base UI's PreviewCard) starts only on a move over the
+// element, so arrive once its centre hit-tests again. Geometry quiescence has
+// no terminal signal: a later re-measure can still scroll between this check
+// and the move, or after the move. The preview assertion must still catch it.
+export async function hoverRow(page, locator, scroller = history(page)) {
+  await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
+  await expect(locator).toBeInViewport();
+  await expect
+    .poll(
+      () =>
+        locator.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          return element.contains(
+            document.elementFromPoint(
+              box.x + box.width / 2,
+              box.y + box.height / 2,
+            ),
+          );
+        }),
+      { message: "timeline hover target hit-tests at its centre" },
+    )
+    .toBe(true);
+  const box = await locator.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+}
+// Click a control inside a timeline row once the timeline is at rest. Opening
+// a panel resizes the timeline, and its rows rewrap and move through scroll
+// events. Each scroll event restarts Virtua's pointer-event hold. On Linux
+// WebKit CI, a click sent during that movement reached the scroller, and the
+// control never saw it. A scroll event reaches Virtua in a later rendering
+// update, so wait for those updates, and check pointer events again after the
+// geometry settles. Then the control must be fully visible: locator.click()
+// scrolls a control into view, and that would hide a reading position the app
+// moved during the wait.
+export async function clickRow(page, locator, scroller = history(page)) {
+  await virtuaIdle(page, scroller);
+  await frames(page);
+  await virtuaIdle(page, scroller);
+  await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
+  await expect(locator).toBeInViewport({ ratio: 1 });
+  await locator.click();
+}
+export { activate } from "./navigation.mjs";

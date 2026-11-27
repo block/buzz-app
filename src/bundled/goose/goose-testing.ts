@@ -28,6 +28,8 @@ export type FakeTurn = {
 export type FakeGoose = {
   id: string;
   options: HostProcessOptions;
+  /** The agent its credential was bound to, if any. */
+  actedAs?: Readonly<{ pubkey: string; relay: string }>;
   /** Every message written to its stdin. */
   received: Message[];
   /** Each `session/new`'s params. */
@@ -37,10 +39,22 @@ export type FakeGoose = {
   /** Turns, in the order they began. */
   turns: FakeTurn[];
   closed: string[];
+  /** Sessions `session/load` resumed. */
+  loaded: string[];
+  /** Every `session/load` is answered with this error. */
+  loadError?: string;
+  /** Kill asks it to stop, and it never exits on its own. */
+  holdExit: boolean;
   cancelled: string[];
   deleted: string[];
   /** Each `session/set_config_option`, as `sessionId configId=value`. */
   configured: string[];
+  /** When set, the next system prompt set fails with it. */
+  promptError?: string;
+  /** Rejects the next native turn before it begins. */
+  rejectPrompt?: boolean;
+  /** When set, system prompt sets wait for it. */
+  promptGate?: Promise<void>;
   /** When set, `session/set_config_option` fails with it. */
   configError?: string;
   /** The environment it started with. */
@@ -72,6 +86,8 @@ export type FakeSession = Readonly<{
   cwd: string;
   updatedAt: string;
   conversation: readonly Record<string, unknown>[];
+  /** The tags it was opened with, which `session/list` filters by. */
+  tags?: Readonly<Record<string, string>>;
 }>;
 
 /** A loopback MCP server `serve` started, as the app's host would. */
@@ -91,6 +107,8 @@ export function fakeSpawn(
   options: Readonly<{
     /** Whether goose says it can reach HTTP MCP servers. */
     http?: boolean;
+    /** Whether goose says it can resume a saved session. */
+    load?: boolean;
     home?: string;
     hold?: boolean;
     /** What a turn writes before it ends. */
@@ -108,12 +126,18 @@ export function fakeSpawn(
     page?: number;
     /** Whether goose's config turns session naming off. */
     namingDisabled?: boolean;
+    /** goose's `DATABRICKS_MODEL_FILTER`, as its config reads it. */
+    modelFilter?: unknown;
     /** Requests each process never answers. */
     silent?: readonly string[];
     /** The thinking levels a session lists on each model, `""` being the
-     * one it opens on; one not here lists none. */
+     * one it opens on; one not here lists none. `grouped` lists them in one
+     * ACP option group. */
     thinking?: Readonly<
-      Record<string, Readonly<{ current: string; levels: readonly string[] }>>
+      Record<
+        string,
+        Readonly<{ current: string; levels: readonly string[]; grouped?: true }>
+      >
     >;
   }> = {},
 ) {
@@ -166,19 +190,21 @@ export function fakeSpawn(
     const models = new Map<string, string>();
     const configOptions = (sessionId: string) => {
       const thinking = options.thinking?.[models.get(sessionId) ?? ""];
-      return thinking
-        ? [
-            {
-              id: "thinking_effort",
-              category: "thought_level",
-              currentValue: thinking.current,
-              options: thinking.levels.map((level) => ({
-                value: level,
-                name: level,
-              })),
-            },
-          ]
-        : [];
+      if (!thinking) return [];
+      const levels = thinking.levels.map((level) => ({
+        value: level,
+        name: level,
+      }));
+      return [
+        {
+          id: "thinking_effort",
+          category: "thought_level",
+          currentValue: thinking.current,
+          options: thinking.grouped
+            ? [{ group: "levels", name: "Levels", options: levels }]
+            : levels,
+        },
+      ];
     };
     const answers = new Map<number | string, (message: Message) => void>();
     const send = (message: Message) =>
@@ -196,6 +222,8 @@ export function fakeSpawn(
       prompts: new Map(),
       turns: [],
       closed: [],
+      loaded: [],
+      holdExit: false,
       cancelled: [],
       deleted: [],
       configured: [],
@@ -249,18 +277,41 @@ export function fakeSpawn(
       if (fake.silent.has(method)) return;
       const sessionId = String(params.sessionId ?? "");
       switch (method) {
+        case "_buzz/security/capabilities":
+          return reply(id, {
+            version: 2,
+            enabled: fake.env.BUZZ_SECURITY_URL != null,
+          });
         case "initialize":
           return reply(id, {
             protocolVersion: 1,
             agentCapabilities: {
               mcpCapabilities: { http: options.http ?? true, sse: false },
+              ...(options.load && { loadSession: true }),
             },
           });
         case "session/new": {
           fake.opened.push(params);
+          const meta = params._meta as Record<string, unknown> | undefined;
+          // As goose does, a session that names no provider opens on its
+          // config's default provider and model, and fails without them.
+          if (
+            defaults &&
+            !meta?.provider &&
+            !(defaults.providerId && defaults.modelId)
+          )
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: {
+                code: -32603,
+                message: `Internal error: Failed to resolve provider and model: Configuration value not found: ${defaults.providerId ? "GOOSE_MODEL" : "GOOSE_PROVIDER"}`,
+              },
+            });
           const sessionId = `session-${++sessions}`;
-          const extensions = ((params._meta as Record<string, unknown>)
-            ?.enabledExtensions ?? []) as { server?: { url?: string } }[];
+          const extensions = (meta?.enabledExtensions ?? []) as {
+            server?: { url?: string };
+          }[];
           const url = extensions.find((item) => item.server?.url)?.server?.url;
           if (url) declared.set(sessionId, url);
           return reply(id, {
@@ -268,10 +319,31 @@ export function fakeSpawn(
             configOptions: configOptions(sessionId),
           });
         }
-        case "_goose/unstable/session/system-prompt/set":
-          fake.prompts.set(sessionId, String(params.text));
-          return reply(id, {});
+        case "_goose/unstable/session/system-prompt/set": {
+          const failure = fake.promptError;
+          delete fake.promptError;
+          if (failure)
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: failure },
+            });
+          const set = () => {
+            fake.prompts.set(sessionId, String(params.text));
+            reply(id, {});
+          };
+          if (fake.promptGate) return void fake.promptGate.then(set);
+          return set();
+        }
         case "session/prompt": {
+          if (fake.rejectPrompt) {
+            fake.rejectPrompt = false;
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: "Native prompt rejected" },
+            });
+          }
           const runId = `run-${fake.turns.length + 1}`;
           const text = (params.prompt as { text: string }[])
             .map((block) => block.text)
@@ -358,7 +430,9 @@ export function fakeSpawn(
                   )
                 : params.key === "GOOSE_DISABLE_SESSION_NAMING"
                   ? (options.namingDisabled ?? null)
-                  : null,
+                  : params.key === "DATABRICKS_MODEL_FILTER"
+                    ? (options.modelFilter ?? null)
+                    : null,
           });
         case "_goose/unstable/defaults/read":
           return reply(id, defaults ?? {});
@@ -396,14 +470,15 @@ export function fakeSpawn(
             models: options.supported ?? [],
           });
         case "session/list": {
-          const query = String(
-            (params._meta as { query?: string } | undefined)?.query ?? "",
-          );
-          const mentions = (session: FakeSession) =>
-            JSON.stringify(session.conversation).includes(query);
+          const tags = (params._meta as { tags?: Record<string, string> })
+            ?.tags;
+          // A session carries every tag asked for, as goose's index filters.
           const listed = (options.history ?? []).filter(
             (session) =>
-              session.cwd === params.cwd && (!query || mentions(session)),
+              session.cwd === params.cwd &&
+              Object.entries(tags ?? {}).every(
+                ([key, value]) => session.tags?.[key] === value,
+              ),
           );
           const from = Number(params.cursor ?? 0);
           const to = from + (options.page ?? listed.length);
@@ -439,6 +514,15 @@ export function fakeSpawn(
         case "session/close":
           fake.closed.push(sessionId);
           return reply(id, {});
+        case "session/load":
+          if (fake.loadError)
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: fake.loadError },
+            });
+          fake.loaded.push(sessionId);
+          return reply(id, { configOptions: configOptions(sessionId) });
         default:
           return send({
             jsonrpc: "2.0",
@@ -463,8 +547,13 @@ export function fakeSpawn(
       end: async () => undefined,
       kill: async () => {
         fake.killed = true;
-        fake.exit(null);
+        if (!fake.holdExit) fake.exit(null);
       },
+      ...(process.agentCredential && {
+        actAs: async (agent: Readonly<{ pubkey: string; relay: string }>) => {
+          fake.actedAs = agent;
+        },
+      }),
       exited,
     };
   };
@@ -487,3 +576,49 @@ export function fakeSpawn(
 export const flush = async (rounds = 10) => {
   for (let index = 0; index < rounds; index++) await Promise.resolve();
 };
+
+/** Holds each goose's requests for `method` until they are released, as a
+ * slow goose's answers are; those whose session `rejects` names are answered
+ * with an error instead. `wrap` makes the spawn that hands them out. */
+export function gated(
+  method: string,
+  rejects: (sessionId: string) => boolean = () => false,
+) {
+  const held: { sessionId: string; resume(): void }[] = [];
+  return {
+    wrap:
+      (spawn: ReturnType<typeof fakeSpawn>["spawn"]) =>
+      async (id: string, options: HostProcessOptions = {}) => {
+        const process = await spawn(id, options);
+        return {
+          ...process,
+          write: async (data: string) => {
+            if (id !== "goose" || !data.includes(`"method":"${method}"`))
+              return process.write(data);
+            const { id: requestId, params } = JSON.parse(data);
+            const sessionId = String(params?.sessionId ?? "");
+            await new Promise<void>((resume) =>
+              held.push({ sessionId, resume }),
+            );
+            if (!rejects(sessionId)) return process.write(data);
+            options.onStdout?.(
+              `${JSON.stringify({
+                jsonrpc: "2.0",
+                id: requestId,
+                error: { code: -32602, message: "No active run" },
+              })}\n`,
+            );
+          },
+        };
+      },
+    /** The sessions whose request is held. */
+    waiting: () => held.map((request) => request.sessionId),
+    /** Lets the request of `sessionId` go, or every held one. */
+    release: (sessionId?: string) => {
+      for (const request of held.splice(0))
+        if (sessionId === undefined || request.sessionId === sessionId)
+          request.resume();
+        else held.push(request);
+    },
+  };
+}

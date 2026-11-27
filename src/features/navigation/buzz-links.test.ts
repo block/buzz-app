@@ -6,6 +6,8 @@ import {
   parseBuzzLink,
 } from "./buzz-links";
 import { deepLinkStep } from "./deep-links";
+import { newMessageTarget } from "../channel-navigation/routes";
+import { newMessageLink } from "../direct-messages/message-person";
 
 const scope = {
   viewer: "a".repeat(64),
@@ -185,3 +187,318 @@ it.each(["//", "/extra", "/%2F", "/./", "/extra/..", "/%2e/"])(
     ).toBeNull();
   },
 );
+
+const pluginRepository = "ssh://git@github.com/example/plugin.git";
+const pluginLink = `buzz://plugin-install?repository=${encodeURIComponent(pluginRepository)}&ref=release%2Fstable`;
+it("opens Git plugin links in Settings without a community or account", () => {
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginImport: { repository: pluginRepository, reference: "release/stable" },
+  };
+  expect(buzzLinkKind(pluginLink)).toBe("plugin");
+  expect(buzzLinkTarget(pluginLink, scope)).toEqual(target);
+  expect(deepLinkStep(pluginLink, { selected: null })).toEqual({
+    open: target,
+  });
+  expect(
+    buzzLinkTarget(
+      pluginLink.replace("plugin-install?", "plugin-install/?"),
+      scope,
+    ),
+  ).toEqual(target);
+  expect(
+    buzzLinkTarget(`${pluginLink}&enable=true&enable=false`, scope),
+  ).toEqual(target);
+});
+it.each([
+  "buzz://plugin-install",
+  `${pluginLink}&ref=other`,
+  `${pluginLink}&repository=https://example.com/plugin`,
+  pluginLink.replace("plugin-install?", "plugin-install/other?"),
+  pluginLink.replace("plugin-install?", "plugin-install/other/../?"),
+  ...[
+    "file:///tmp/plugin",
+    "http://example.com/plugin",
+    "https://user:secret@example.com/plugin",
+    "https://example.com/plugin?token=secret",
+    "https://example.com/plugin#fragment",
+  ].map(
+    (repository) =>
+      `buzz://plugin-install?repository=${encodeURIComponent(repository)}`,
+  ),
+])("rejects invalid or ambiguous plugin import links: %s", (href) => {
+  expect(parseBuzzLink(href)).toBeNull();
+  expect(deepLinkStep(href, clientForPluginLink)).toEqual({
+    fail: "invalid-target",
+  });
+});
+it("opens Settings links, an agent type's setup included, without a community", () => {
+  const link =
+    "buzz://settings?section=agents&provider=buzz.claude-code%2Fclaude-code";
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "agents",
+    provider: "buzz.claude-code/claude-code",
+  };
+  expect(buzzLinkKind(link)).toBe("buzz");
+  expect(buzzLinkTarget(link, scope)).toEqual(target);
+  expect(deepLinkStep(link, { selected: null })).toEqual({ open: target });
+  expect(buzzLinkTarget("buzz://settings", scope)).toEqual({
+    version: 1,
+    kind: "settings",
+  });
+  expect(buzzLinkTarget("buzz://settings/?section=plugins", scope)).toEqual({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+  });
+});
+it.each([
+  "buzz://settings?provider=buzz.claude-code%2Fclaude-code",
+  "buzz://settings?section=agents&section=plugins",
+  "buzz://settings?section=Agents!",
+  "buzz://settings/other?section=agents",
+])("rejects invalid or ambiguous Settings links: %s", (href) => {
+  expect(parseBuzzLink(href)).toBeNull();
+});
+const artifactUrl = "https://artifacts.example.com/plugins/a.json";
+const artifactHash = "ab".repeat(32);
+const artifactLink = `buzz://plugin-install?id=example.plugin&url=${encodeURIComponent(artifactUrl)}&sha256=${artifactHash.toUpperCase()}`;
+it("opens plugin artifact links pinned by SHA-256 in Settings", () => {
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginImport: {
+      id: "example.plugin",
+      url: artifactUrl,
+      sha256: artifactHash,
+    },
+  };
+  expect(buzzLinkTarget(artifactLink, scope)).toEqual(target);
+  expect(deepLinkStep(artifactLink, { selected: null })).toEqual({
+    open: target,
+  });
+});
+it.each([
+  artifactLink.replace(/&sha256=[^&]+/, ""),
+  artifactLink.replace(/id=[^&]+&/, ""),
+  artifactLink.replace("sha256=", "sha256=00"),
+  artifactLink.replace("https%3A", "http%3A"),
+  `${artifactLink}&ref=main`,
+  `${artifactLink}&url=${encodeURIComponent(artifactUrl)}`,
+  `${pluginLink}&sha256=${artifactHash}`,
+  `buzz://plugin-install?id=example.plugin&sha256=${artifactHash}&url=${encodeURIComponent(`${artifactUrl}?token=secret`)}`,
+])("rejects invalid or ambiguous plugin artifact links: %s", (href) => {
+  expect(parseBuzzLink(href)).toBeNull();
+});
+const commit = "0123456789abcdef0123456789abcdef01234567";
+it("carries an optional plugin folder and pinned commit in plugin links", () => {
+  const pinned = `${pluginLink}&path=plugins%2Fone&commit=${commit.toUpperCase()}`;
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginImport: {
+      repository: pluginRepository,
+      reference: "release/stable",
+      path: "plugins/one",
+      commit,
+    },
+  };
+  expect(buzzLinkTarget(pinned, scope)).toEqual(target);
+  expect(deepLinkStep(pinned, { selected: null })).toEqual({ open: target });
+  expect(buzzLinkTarget(`${pluginLink}&path=`, scope)).toMatchObject({
+    pluginImport: { path: "." },
+  });
+  expect(buzzLinkTarget(`${pluginLink}&path=.`, scope)).toMatchObject({
+    pluginImport: { path: "." },
+  });
+});
+it.each([
+  "path=a&path=b",
+  `commit=${"a".repeat(40)}&commit=${"b".repeat(40)}`,
+  "path=%2Fetc",
+  "path=..%2Fx",
+  "path=a%2F..%2Fb",
+  "path=a%5Cb",
+  "path=a%00b",
+  "commit=",
+  "commit=abc123",
+  `commit=${"a".repeat(41)}`,
+  `commit=${"g".repeat(40)}`,
+])("rejects a plugin link with %s", (query) => {
+  const href = `${pluginLink}&${query}`;
+  expect(parseBuzzLink(href)).toBeNull();
+  expect(deepLinkStep(href, clientForPluginLink)).toEqual({
+    fail: "invalid-target",
+  });
+});
+const clientForPluginLink = {
+  selected: scope.communityOrigin,
+  viewer: scope.viewer,
+};
+
+it.each([
+  ["git@github.com:org/repo.git", "ssh://git@github.com/org/repo.git"],
+  ["github.com/org/repo", "https://github.com/org/repo"],
+  ["org/repo", "https://github.com/org/repo"],
+])(
+  "normalizes a Settings repository address in a plugin link: %s",
+  (input, repository) => {
+    const href = `buzz://plugin-install?repository=${encodeURIComponent(input)}`;
+    const target = {
+      version: 1,
+      kind: "settings",
+      section: "plugins",
+      pluginImport: { repository, reference: "" },
+    };
+    expect(buzzLinkTarget(href, scope)).toEqual(target);
+    expect(deepLinkStep(href, { selected: null })).toEqual({ open: target });
+  },
+);
+
+const plugin = "buzz://plugin?id=com.example.catalog";
+it("parses plugin page links into a plugin target bound to the receiving community", () => {
+  expect(parseBuzzLink(plugin)).toEqual({
+    format: "plugin",
+    pluginId: "com.example.catalog",
+  });
+  expect(buzzLinkKind(plugin)).toBe("buzz");
+  expect(buzzLinkTarget(plugin, scope)).toEqual({
+    version: 1,
+    kind: "plugin",
+    pluginId: "com.example.catalog",
+    scope,
+  });
+  const full = `${plugin}&page=detail&route.slug=hello%20world&route.tab=notes`;
+  expect(parseBuzzLink(full)).toEqual({
+    format: "plugin",
+    pluginId: "com.example.catalog",
+    pageId: "detail",
+    params: { slug: "hello world", tab: "notes" },
+  });
+  expect(buzzLinkTarget(full, scope)).toEqual({
+    version: 1,
+    kind: "plugin",
+    pluginId: "com.example.catalog",
+    pageId: "detail",
+    params: { slug: "hello world", tab: "notes" },
+    scope,
+  });
+});
+it("treats a plugin link that only overflows once scoped as unopenable", () => {
+  const params = (last: number) =>
+    [...Array(7)].map((_, i) => `&route.p${i}=${"a".repeat(1024)}`).join("") +
+    `&route.last=${"a".repeat(last)}`;
+  let last = 1024;
+  while (!buzzLinkTarget(plugin + params(last), scope)) last -= 1;
+  const link = plugin + params(last);
+  expect(buzzLinkTarget(link, scope)).not.toBeNull();
+  const wide = {
+    ...scope,
+    communityOrigin: `https://${"c".repeat(200)}.example`,
+  };
+  expect(() => buzzLinkTarget(link, wide)).not.toThrow();
+  expect(buzzLinkTarget(link, wide)).toBeNull();
+});
+
+it("ignores unknown plugin link parameters and accepts the Windows root slash", () => {
+  const expected = { format: "plugin", pluginId: "com.example.catalog" };
+  expect(parseBuzzLink(`${plugin}&foo=1&foo=2&route=x`)).toEqual(expected);
+  expect(parseBuzzLink(plugin.replace("plugin?", "plugin/?"))).toEqual(
+    expected,
+  );
+  expect(parseBuzzLink(plugin.replace("buzz:", "BUZZ:"))).toEqual(expected);
+});
+it.each([
+  "buzz://plugin",
+  "buzz://plugin?page=detail",
+  "buzz://plugin?id=",
+  `${plugin}&id=other`,
+  `${plugin}&page=`,
+  `${plugin}&page=a&page=b`,
+  `${plugin}&route.slug=a&route.slug=b`,
+  `${plugin}&route.=a`,
+  `${plugin}&route.bad%20key=a`,
+  `${plugin}&route.slug=${"x".repeat(1025)}`,
+  `${plugin}&${Array.from({ length: 17 }, (_, i) => `route.k${i}=v`).join("&")}`,
+  "buzz://plugin?id=Com.Example",
+  "buzz://plugin?id=.hidden",
+  "buzz://plugin?id=has%20space",
+  "buzz://plugin?id=a/b",
+  `buzz://plugin?id=${"a".repeat(129)}`,
+  `${plugin}&page=Detail`,
+  `${plugin}#fragment`,
+  `${plugin}&route.__proto__=x`,
+  "buzz://plugin:443?id=com.example.catalog",
+  "buzz://user@plugin?id=com.example.catalog",
+  "buzz://plugin/extra?id=com.example.catalog",
+  "buzz://plugin//?id=com.example.catalog",
+  "buzz://plugin/./?id=com.example.catalog",
+  "buzz://plugins?id=com.example.catalog",
+])("rejects a malformed plugin link: %s", (href) => {
+  expect(parseBuzzLink(href), href).toBeNull();
+  expect(buzzLinkTarget(href, scope)).toBeNull();
+});
+it("opens a New message link as a draft to that person in the receiving community", () => {
+  const person = "a".repeat(64);
+  const href = newMessageLink(person);
+  expect(buzzLinkKind(href)).toBe("buzz");
+  expect(buzzLinkTarget(href, scope)).toEqual(
+    newMessageTarget(scope, person, expect.any(Number)),
+  );
+  for (const invalid of [
+    "buzz://dm/new",
+    "buzz://dm/new?to=",
+    "buzz://dm/new?to=not-a-key",
+    `buzz://dm/new?to=${person.toUpperCase()}`,
+    `buzz://dm/new?to=${person}&to=${person}`,
+    `buzz://dm/edit?to=${person}`,
+    `buzz://dm/new/extra?to=${person}`,
+    `buzz://dm/new?to=${person}#x`,
+  ])
+    expect(parseBuzzLink(invalid), invalid).toBeNull();
+});
+it("opens an agent card's link as Create agent on the Agents page in the receiving community", () => {
+  const href = "buzz://agent/new?card=tinker&utm=qr";
+  expect(buzzLinkKind(href)).toBe("buzz");
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope,
+    route: { version: 1, params: { card: "tinker" } },
+  };
+  expect(buzzLinkTarget(href, scope)).toEqual(target);
+  expect(
+    deepLinkStep(href, {
+      viewer: scope.viewer,
+      selected: scope.communityOrigin,
+    }),
+  ).toEqual({ open: target });
+  expect(deepLinkStep(href, { selected: null })).toEqual({
+    fail: "unavailable",
+  });
+  expect(parseBuzzLink("buzz://agent/new?card=av_Abc-123")).toEqual({
+    format: "agent-card",
+    card: "av_Abc-123",
+  });
+  for (const invalid of [
+    "buzz://agent/new",
+    "buzz://agent/new?card=",
+    "buzz://agent/new?card=a&card=b",
+    "buzz://agent/new?card=..",
+    "buzz://agent/new?card=a%2Fb",
+    "buzz://agent/new?card=a.b",
+    `buzz://agent/new?card=${"a".repeat(65)}`,
+    "buzz://agent/edit?card=tinker",
+    "buzz://agent/new/extra?card=tinker",
+    "buzz://agent/new?card=tinker#x",
+  ])
+    expect(parseBuzzLink(invalid), invalid).toBeNull();
+});

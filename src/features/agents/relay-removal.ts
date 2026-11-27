@@ -1,5 +1,6 @@
 import type { EventData } from "../relay/events";
 import type { LocalEvents, Outbox } from "../relay/outbox";
+import type { IdentityAttest } from "../relay/identity-archives";
 import type { RelaySession } from "../relay/session";
 
 type RemovalSession = Pick<
@@ -7,27 +8,62 @@ type RemovalSession = Pick<
   "outbox" | "channels" | "channelWrites" | "archives"
 >;
 
-/** Remove a relay-only agent from this community: archive its identity when a
- * consent path exists, delete the owner's kind 30177 record, then try to
- * remove it from its channels. Archive and record deletion must succeed; a
- * refusal stops the later steps and Remove stays retryable. Channel removal is
- * best effort: its failure does not fail the removal. */
+/** A fresh owner proof (NIP-OA) for an agent the caller owns. */
+export type OwnerProof = (
+  pubkey: string,
+  signal: AbortSignal,
+) => Promise<readonly string[]>;
+
+/** How the caller proves it owns an agent: `issue`, a fresh owner proof
+ * (NIP-OA); `attest`, only with the agent's key, republishes its own profile
+ * with its saved owner proof when the profile has none. */
+export type OwnerConsent = { issue: OwnerProof; attest?: IdentityAttest };
+
+/** Archives the agent unless a read started now finds it archived already, so
+ * a retry goes on past it. Rejects unless the relay confirms the archive.
+ * "skipped": the community advertises no archive authority, so nothing is
+ * hidden by one there and Delete goes on without it. */
+export async function archiveAgent(
+  session: Pick<RelaySession, "archives">,
+  pubkey: string,
+  signal: AbortSignal,
+  owner?: OwnerConsent,
+): Promise<"archived" | "skipped"> {
+  const { archives } = session;
+  if (!archives.supported) return "skipped";
+  if (!archives.writable)
+    throw new Error("Archive is unavailable on this connection");
+  // The archive cache is not live; this needs a read started now.
+  await archives.ensure();
+  await archives.refresh();
+  signal.throwIfAborted();
+  const state = archives.state(pubkey);
+  // An unfinished read says nothing, least of all "not archived".
+  if (state === "unknown") throw new Error("Archive state is unknown");
+  if (state === "not-archived")
+    await archives.request(
+      "archive",
+      pubkey,
+      signal,
+      owner?.issue,
+      owner?.attest,
+    );
+  return "archived";
+}
+
+/** Remove a relay-only agent from this community: archive its identity,
+ * delete the owner's kind 30177 record, then try to remove it from its
+ * channels. Archive and record deletion must succeed; a refusal stops the
+ * later steps and Remove stays retryable. Channel removal is best effort: its
+ * failure does not fail the removal. */
 export async function removeRelayAgent(
   session: RemovalSession,
   viewer: string,
   pubkey: string,
   signal: AbortSignal,
+  owner?: OwnerConsent,
 ): Promise<void> {
-  // A retry after a later step failed does not archive again.
-  if (session.archives.state(pubkey) !== "archived") {
-    // No consent path (for example, an agent that never published a profile)
-    // still removes the record and channel memberships.
-    const consent = session.archives.writable
-      ? await session.archives.consent(pubkey, signal)
-      : null;
-    signal.throwIfAborted();
-    if (consent) await session.archives.request("archive", pubkey, signal);
-  }
+  await archiveAgent(session, pubkey, signal, owner);
   await deleteAgentRecord(session, viewer, pubkey, signal);
   try {
     await removeAgentFromChannels(session, pubkey, signal);
@@ -72,8 +108,7 @@ export type AgentRecordEntry = Readonly<{
  * before it, and resolves with what it wrote once the relay accepts it.
  * Another desktop applies the record whole to an agent it has with that key,
  * and its parser requires `parallelism` and `respond_to`, so the record keeps
- * every setting of the one it replaces and defaults those two
- * (docs/relay-queries.md, "Managed-agent registration"). */
+ * every setting of the one it replaces and defaults those two. */
 export async function publishAgentRecord(
   session: Pick<RelaySession, "outbox">,
   { pubkey, name, picture, runtime, prior }: AgentRecordEntry,
@@ -151,22 +186,23 @@ export async function deleteAgentRecord(
 }
 
 /** Base Buzz `removeAgentFromAllChannels` over the relay's rosters for this
- * agent plus the viewer's loaded channels. Resolves only once a fresh relay
- * read lists the agent in none of them; any refusal or unknown outcome throws
- * after every channel operation has settled. */
+ * agent plus the viewer's loaded channels, skipping archived ones. Resolves
+ * only once a fresh relay read lists the agent in none of them; any refusal or
+ * unknown outcome throws after every channel operation has settled. */
 export async function removeAgentFromChannels(
   session: Pick<RelaySession, "outbox" | "channels" | "channelWrites">,
   pubkey: string,
   signal: AbortSignal,
 ) {
-  const pending = new Set([
-    ...(await session.channelWrites.memberChannels(pubkey, signal)),
-    ...session.channels
+  const pending = await session.channelWrites.memberChannels(
+    pubkey,
+    signal,
+    session.channels
       .list()
       .channels.filter((channel) => channel.members?.includes(pubkey))
       .map((channel) => channel.id),
-  ]);
-  if (!pending.size) return;
+  );
+  if (!pending.length) return;
   const outbox = session.outbox;
   if (!outbox?.supports(9001))
     throw new Error("This community cannot remove agents from channels.");
@@ -223,9 +259,7 @@ export async function removeAgentFromChannels(
   // Confirm each channel against its own fresh roster: a cached loaded roster
   // may still list the agent after the relay removed it.
   const listed = await Promise.all(
-    [...pending].map((id) =>
-      session.channelWrites.listsMember(id, pubkey, signal),
-    ),
+    pending.map((id) => session.channelWrites.listsMember(id, pubkey, signal)),
   );
   const remaining = listed.filter(Boolean);
   if (remaining.length)
@@ -266,7 +300,9 @@ async function resumable(
   return undefined;
 }
 
-function delivered(
+/** Settles once the outbox reports the relay accepted `id`, or rejects with
+ * its refusal. */
+export function delivered(
   outbox: LocalEvents,
   id: string,
   signal: AbortSignal,

@@ -2,8 +2,13 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { createRoot } from "react-dom/client";
-import { ChannelMembersButton } from "../../src/bundled/channels/ChannelMembersDialog";
+import { useRef, useState } from "react";
+import {
+  ChannelMembersButton,
+  ChannelMembersDialog,
+} from "../../src/bundled/channels/ChannelMembersDialog";
 import { createRelaySession } from "../../src/features/relay/session";
+import { localAgentsFixture } from "../../src/features/agents/local-testing";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import { matchesEvent } from "../../src/features/relay/projection";
 import { bindNames } from "../../src/features/identity-names/service";
@@ -18,8 +23,9 @@ import {
 import "../../src/shared/styles/globals.css";
 
 const solo = new URLSearchParams(location.search).has("solo");
+const plugin = new URLSearchParams(location.search).has("plugin");
 const administration =
-  new URLSearchParams(location.search).has("administration") || solo;
+  new URLSearchParams(location.search).has("administration") || solo || plugin;
 const rejectRemoval = new URLSearchParams(location.search).has(
   "reject-removal",
 );
@@ -54,21 +60,35 @@ const scrollMembers = new URLSearchParams(location.search).has("scroll")
 const invitationScale = new URLSearchParams(location.search).has(
   "invitation-scale",
 );
-const inventory = invitationScale
-  ? Array.from({ length: 240 }, (_, index) => ({
-      pubkey: keypair().pubkey,
-      name: `Helper ${String(index + 1).padStart(3, "0")}`,
-    }))
-  : solo
-    ? [{ pubkey: person.pubkey, name: "Morgan" }]
+const invitationFocus = new URLSearchParams(location.search).has(
+  "invitation-focus",
+);
+const inventory =
+  invitationScale || invitationFocus
+    ? Array.from({ length: invitationScale ? 240 : 10 }, (_, index) => ({
+        pubkey: keypair().pubkey,
+        name: `Helper ${String(index + 1).padStart(3, "0")}`,
+      }))
+    : solo
+      ? [{ pubkey: person.pubkey, name: "Morgan" }]
+      : [];
+// One agent past a page, so a removal from the last page empties it.
+const lastPageAlone = new URLSearchParams(location.search).has(
+  "last-page-alone",
+);
+const searchScale =
+  new URLSearchParams(location.search).has("search-scale") || lastPageAlone;
+const idleOverlap = new URLSearchParams(location.search).has("idle-overlap");
+const managed =
+  searchScale || idleOverlap
+    ? Array.from(
+        { length: idleOverlap ? 2 : lastPageAlone ? 51 : 60 },
+        (_, index) => ({
+          key: keypair(),
+          name: `Agent ${index + 1}`,
+        }),
+      )
     : [];
-const searchScale = new URLSearchParams(location.search).has("search-scale");
-const managed = searchScale
-  ? Array.from({ length: 60 }, (_, index) => ({
-      key: keypair(),
-      name: `Agent ${index + 1}`,
-    }))
-  : [];
 const managedProfiles = await Promise.all(
   managed.map(async ({ key, name }) => {
     const digest = await crypto.subtle.digest(
@@ -96,9 +116,9 @@ const managedProfiles = await Promise.all(
 const visitor = new URLSearchParams(location.search).has("visitor");
 const members = [
   ...(visitor ? [] : [viewer.pubkey]),
-  ...(administration && !solo ? [person.pubkey] : []),
+  ...(administration && !solo && !plugin ? [person.pubkey] : []),
   ...scrollMembers.map(({ key }) => key.pubkey),
-  ...managed.map(({ key }) => key.pubkey),
+  ...(idleOverlap ? [] : managed.map(({ key }) => key.pubkey)),
 ];
 const scrollProfiles = scrollMembers.map(({ key, name }) =>
   profile(key, { name }),
@@ -112,6 +132,7 @@ const published = new Promise<void>((resolve) => {
 const held = new Promise<void>((resolve) => {
   releasePublish = resolve;
 });
+const pendingAdditions = new Map<string, { confirm(): void; reject(): void }>();
 const searchWork = { images: 0, observations: 0 };
 const provider = createNameProvider({
   id: "fixture",
@@ -183,7 +204,7 @@ const { session: sharedSession } = createRelaySession(
           ],
         }),
         profile(viewer, { name: "Carl" }),
-        ...candidateProfiles,
+        ...(plugin ? [] : candidateProfiles),
         ...scrollProfiles,
         ...managedProfiles,
       ].filter((event) =>
@@ -195,12 +216,31 @@ const { session: sharedSession } = createRelaySession(
           memberAdministration: {
             sign: async (template: import("nostr-tools").EventTemplate) =>
               signed(viewer, template),
-            publish: async () => {
+            publish: async (event) => {
               publishStarted();
-              await held;
+              if (plugin) {
+                const key = event.tags.find(([tag]) => tag === "p")?.[1];
+                if (!key) throw new Error("Missing added identity");
+                additions.push(key);
+                await new Promise<void>((resolve, reject) => {
+                  pendingAdditions.set(key, {
+                    confirm: resolve,
+                    reject: () =>
+                      reject(new PublishRejected("Addition rejected")),
+                  });
+                });
+                members.push(key);
+              } else await held;
               if (rejectRemoval)
                 throw new PublishRejected("Permission changed");
-              members.splice(members.indexOf(person.pubkey), 1);
+              // A removal takes the member it names off the roster.
+              if (event.kind === 9001) {
+                const at = members.indexOf(
+                  event.tags.find(([tag]) => tag === "p")?.[1] ?? "",
+                );
+                if (at === -1) throw new Error("Removed member is not listed");
+                members.splice(at, 1);
+              }
               clock++;
             },
           },
@@ -214,7 +254,14 @@ const { session: sharedSession } = createRelaySession(
         if (!key) throw new Error("Missing added identity");
         additions.push(key);
         publishStarted();
-        await held;
+        if (idleOverlap)
+          await new Promise<void>((resolve, reject) => {
+            pendingAdditions.set(key, {
+              confirm: resolve,
+              reject: () => reject(new PublishRejected("Addition rejected")),
+            });
+          });
+        else await held;
         members.push(key);
         clock++;
       },
@@ -222,6 +269,18 @@ const { session: sharedSession } = createRelaySession(
   },
   {
     outboxStorage: { load: () => [], save: () => {} },
+    ...(idleOverlap || searchScale
+      ? {
+          agentChoices: localAgentsFixture(
+            managed.map(({ key, name }) => ({
+              pubkey: key.pubkey,
+              name,
+              owner: viewer.pubkey,
+              relayUrl: "https://relay.example.test",
+            })),
+          ),
+        }
+      : {}),
     identityNames: {
       register() {},
       bind(source) {
@@ -254,14 +313,50 @@ session.channels.ensureList();
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
 function Fixture() {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   return (
     <ToastProvider>
-      <ChannelMembersButton
-        session={session}
-        channelId={channelId}
-        canOpenLink={() => true}
-        onOpenLink={() => true}
-      />
+      {plugin ? (
+        <>
+          <button type="button" ref={trigger} onClick={() => setOpen(true)}>
+            Access
+          </button>
+          {open && (
+            <ChannelMembersDialog
+              session={session}
+              channelId={channelId}
+              trigger={trigger}
+              close={() => setOpen(false)}
+              shareLink="buzz://plugin?id=example.records&record=design"
+              memberActions={{
+                canAdd: true,
+                pending: false,
+                async change(change, signal) {
+                  await session.memberAdministration.run(
+                    channelId,
+                    change,
+                    signal,
+                  );
+                  const state =
+                    session.memberAdministration.snapshot(channelId);
+                  if (state.operation?.status !== "confirmed") {
+                    await session.memberAdministration.refresh(channelId);
+                    throw new Error(state.error ?? "Addition unconfirmed");
+                  }
+                },
+              }}
+            />
+          )}
+        </>
+      ) : (
+        <ChannelMembersButton
+          session={session}
+          channelId={channelId}
+          canOpenLink={() => true}
+          onOpenLink={() => true}
+        />
+      )}
     </ToastProvider>
   );
 }
@@ -275,5 +370,13 @@ Object.assign(window, {
     releaseNames: () => releaseNames(),
     additions,
     confirm: () => releasePublish(),
+    settleAddition: (index: number, rejected = false) => {
+      const key = additions[index];
+      const pending = key && pendingAdditions.get(key);
+      if (!key || !pending) throw new Error("No pending addition");
+      pendingAdditions.delete(key);
+      if (rejected) pending.reject();
+      else pending.confirm();
+    },
   },
 });

@@ -10,6 +10,8 @@ name = "buzzodz"
 path = "src/main.rs"
 
 [build-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 dotenvy = "0.15"
 url = "2"
 
@@ -30,7 +32,16 @@ dirs = "6"
 tempfile = "3"
 url = "2"
 cap-std = "4"
+cap-fs-ext = "4"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"] }
 nostr = { version = "=0.45.5", default-features = false, features = ["std", "os-rng"] }
+# Unused in code: its build metadata (`DEP_TAURI_DEV`) tells build.rs whether
+# this is a `tauri dev` run. The app's own tauri dependency sets its features.
+# Only the app turns on `app`, so standalone builds need no GTK.
+tauri = { version = "=2.12.4", default-features = false, optional = true }
+
+[features]
+app = ["dep:tauri"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

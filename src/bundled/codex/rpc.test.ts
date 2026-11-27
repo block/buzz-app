@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
 import { AppServer, type Wire } from "./rpc";
-function fixture() {
+function fixture(handler?: ConstructorParameters<typeof AppServer>[0]) {
   let options: HostProcessOptions | undefined;
   let exit!: (code: number) => void;
   const sent: Wire[] = [];
@@ -24,7 +24,7 @@ function fixture() {
   };
   const raw = (text: string) => options?.onStdout?.(text);
   const emit = (wire: Wire) => raw(`${JSON.stringify(wire)}\n`);
-  const rpc = new AppServer();
+  const rpc = new AppServer(handler);
   const open = () =>
     rpc.open(async (_id, value) => {
       options = value;
@@ -32,6 +32,48 @@ function fixture() {
     });
   return { rpc, open, raw, emit, sent, process };
 }
+it("gives each tool call its thread's context size, from Codex's latest usage", async () => {
+  const sizes: (number | undefined)[] = [];
+  const f = fixture(async (_call, tokens) => {
+    sizes.push(tokens);
+    return { success: true, contentItems: [] };
+  });
+  await f.open();
+  const usage = (threadId: string, totalTokens: unknown) =>
+    f.emit({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId,
+        turnId: "turn",
+        tokenUsage: {
+          total: { totalTokens: 999_999 },
+          last: { totalTokens },
+          modelContextWindow: 1_000_000,
+        },
+      },
+    });
+  let id = 0;
+  const call = async (threadId: string) => {
+    const before = sizes.length;
+    f.emit({
+      id: `call-${++id}`,
+      method: "item/tool/call",
+      params: { threadId, turnId: "turn", callId: "c", tool: "send" },
+    });
+    await vi.waitFor(() => expect(sizes.length).toBe(before + 1));
+  };
+  // A thread that has made no call has no size.
+  await call("a");
+  usage("a", 435_123);
+  usage("b", 12_000);
+  // A report without a size keeps the last one.
+  usage("a", 0);
+  await call("a");
+  await call("b");
+  f.emit({ method: "thread/closed", params: { threadId: "b" } });
+  await call("b");
+  expect(sizes).toEqual([undefined, 435_123, 12_000, undefined]);
+});
 it("correlates out-of-order JSONL responses across chunk boundaries and rejects interactive requests once", async () => {
   const f = fixture();
   await f.open();
@@ -84,4 +126,48 @@ it("contains consumer exceptions and closes malformed output while rejecting pen
   } finally {
     consoleError.mockRestore();
   }
+});
+it("attempts a failed close again and never spawns once closed", async () => {
+  const f = fixture();
+  await f.open();
+  f.process.end.mockRejectedValueOnce(new Error("stuck"));
+  f.process.kill.mockRejectedValueOnce(new Error("stuck"));
+  await expect(f.rpc.close()).rejects.toThrow("stuck");
+  await f.rpc.close();
+  expect(f.process.end).toHaveBeenCalledTimes(2);
+  const spawn = vi.fn();
+  await expect(f.rpc.open(spawn)).rejects.toThrow("Codex connection closed");
+  expect(spawn).not.toHaveBeenCalled();
+});
+it("reopens a protected runtime with the same security check and a live process", async () => {
+  const agents = ["fixture buzz-protection-v2", "fixture"];
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    const userAgent = agents.shift();
+    let exit!: (code: number) => void;
+    return {
+      write: async (text: string) => {
+        const wire: Wire = JSON.parse(text);
+        if (wire.method === "initialize")
+          options?.onStdout?.(
+            `${JSON.stringify({ id: wire.id, result: { userAgent } })}\n`,
+          );
+      },
+      end: vi.fn(async () => exit(0)),
+      kill: vi.fn(async () => exit(1)),
+      exited: new Promise<number>((resolve) => {
+        exit = resolve;
+      }),
+    };
+  });
+  const rpc = new AppServer();
+  await rpc.open(spawn, "/work", true);
+  await expect(rpc.reopen()).rejects.toThrow("mandatory security hooks");
+  expect(spawn).toHaveBeenLastCalledWith(
+    "app-server",
+    expect.objectContaining({ cwd: "/work" }),
+  );
+  agents.push("fixture buzz-protection-v2");
+  await expect(rpc.reopen()).resolves.toBe(rpc);
+  expect(rpc.exited).toBe(false);
+  await rpc.close();
 });

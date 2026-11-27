@@ -1,8 +1,14 @@
+import { eventDto } from "../../src/features/relay/events";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
 // Only the transport is synthetic. No dev broker, saved identity or live relay.
-import { StrictMode, useLayoutEffect, useState } from "react";
+import {
+  StrictMode,
+  useLayoutEffect,
+  useState,
+  type ComponentType,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
@@ -13,6 +19,7 @@ import {
   type PanelProps,
 } from "../../src/features/panels/service";
 import { PagesService } from "../../src/features/pages/service";
+import { ConversationService } from "../../src/features/conversation/service";
 import { ChannelWorkspaceFixture } from "./channel-workspace";
 import { createRelaySession } from "../../src/features/relay/session";
 import { localAgentsFixture } from "../../src/features/agents/local-testing";
@@ -31,12 +38,20 @@ import {
   signed,
   summary,
 } from "../../src/features/relay/testing";
-import { profileTarget } from "../../src/features/profiles/target";
+import {
+  profileTarget,
+  profilePanelKey,
+  profileActivityViewKey,
+} from "../../src/features/profiles/target";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
 import { createAppearance } from "../../src/shared/theme/service";
+import { SOLO_LABEL } from "../../src/features/solo/labels";
+import { emptySync } from "../../src/features/communities/known-communities";
+import type { ClientSnapshot } from "../../src/features/communities/service";
 
 createAppearance();
+const soloProbe = new URLSearchParams(location.search).has("solo");
 
 const viewer = keypair(),
   authority = keypair(),
@@ -49,7 +64,10 @@ const localAgentProbe = new URLSearchParams(location.search).has("local-agent");
 const memberMessageProbe = new URLSearchParams(location.search).has(
   "member-message",
 );
-let dmOpened = false;
+// With existing-dm, the viewer already has the DM with Mic, so Message opens
+// it; without, Message drafts one and the DM appears only once opened.
+const existingDmProbe = new URLSearchParams(location.search).has("existing-dm");
+let dmOpened = existingDmProbe;
 const dmOpens: string[][] = [];
 const dmEvents = () => [
   signed(authority, {
@@ -84,9 +102,17 @@ const report = {
   publications: 0,
 };
 let failMissing = true;
+let replyGate: Promise<void> | undefined;
+let releaseReply = () => {};
+let replyPending = false;
 let data = [
   profile(viewer, { name: "Viewer", about: "Human profile", picture }),
-  profile(mic, { name: "Mic", about: "Mic biography" }),
+  profile(mic, {
+    name: new URLSearchParams(location.search).has("name-collision")
+      ? "Viewer "
+      : "Mic",
+    about: "Mic biography",
+  }),
   signed(pinky, {
     kind: 0,
     content: JSON.stringify({
@@ -139,10 +165,47 @@ function session() {
             },
           }
         : {}),
+      ...(new URLSearchParams(location.search).has("verified-name")
+        ? {
+            verifiedProfiles: {
+              pubkey: authority.pubkey,
+              multipleIssuers: false,
+            },
+            readVerifiedProfileAuthority: async () => null,
+          }
+        : {}),
       relayAuthor: authority.pubkey,
       subscribe(callbacks) {
         callbacks.state({ status: "connected", routes: [] });
-        return { update() {}, retry() {}, dispose() {} };
+        return {
+          update() {},
+          retry() {},
+          dispose() {},
+          syncVerifiedProfiles(_filter, sink) {
+            sink.event(
+              eventDto(
+                signed(authority, {
+                  kind: 30382,
+                  content: "",
+                  tags: [
+                    ["d", viewer.pubkey],
+                    ["p", viewer.pubkey],
+                    ["active", "true"],
+                    ["display_name", "Viewer"],
+                    ["username", "viewer"],
+                    ["issuer_label", "Example"],
+                    ["verified_at", "1000000"],
+                    ...(new URLSearchParams(location.search).has("no-full-name")
+                      ? []
+                      : [["full_name", "Viewer Example"]]),
+                  ],
+                }),
+              ),
+            );
+            sink.eose();
+            return () => {};
+          },
+        };
       },
       media: (url, size) => {
         report.media.push([url, size]);
@@ -153,8 +216,20 @@ function session() {
             : url;
       },
       async query(filters) {
+        if (
+          replyGate &&
+          filters.some((filter) => filter.ids?.includes(reply.id))
+        ) {
+          replyPending = true;
+          await replyGate;
+        }
         return filters.flatMap((filter) => {
-          if (dmOpened && filter["#d"]?.includes("member-dm"))
+          // Only a lookup of the DM alone; a batched one also names channels.
+          if (
+            dmOpened &&
+            filter["#d"]?.length === 1 &&
+            filter["#d"][0] === "member-dm"
+          )
             return dmEvents().filter((event) =>
               filter.kinds?.includes(event.kind),
             );
@@ -173,6 +248,9 @@ function session() {
                 pinky.pubkey,
               ]),
               roster(authority, "two", [viewer.pubkey]),
+              ...(existingDmProbe
+                ? dmEvents().filter((event) => event.kind === 39002)
+                : []),
             ];
           if (filter.kinds?.includes(39000))
             return [
@@ -183,6 +261,7 @@ function session() {
                   ["d", "one"],
                   ["name", "One"],
                   ["t", "stream"],
+                  ...(soloProbe ? [["private"], ["t", SOLO_LABEL]] : []),
                 ],
               }),
               signed(authority, {
@@ -194,6 +273,9 @@ function session() {
                   ["t", "stream"],
                 ],
               }),
+              ...(existingDmProbe
+                ? dmEvents().filter((event) => event.kind === 39000)
+                : []),
             ];
           if (
             filter.kinds?.includes(30315) &&
@@ -301,6 +383,19 @@ const relay: RelayData = {
 };
 const context = new Context();
 context.provide("relay", relay);
+const communitySnapshot: ClientSnapshot = {
+  status: "ready",
+  relayAvailable: true,
+  viewer: viewer.pubkey,
+  profile: { name: "Viewer", picture },
+  memberships: [{ id: fixtureOrigin, name: "Fixture community" }],
+  selected: fixtureOrigin,
+  sync: emptySync(),
+};
+context.provide("communityReader", {
+  snapshot: () => communitySnapshot,
+  subscribe: () => () => {},
+});
 const navigationHost = provideNavigation(context, undefined);
 const contexts: PanelContext[] = [];
 function ContextProbe({ context }: PanelProps) {
@@ -332,15 +427,85 @@ const manager = createPluginManager(context, {
           },
         },
       ]
-    : bundledPlugins.filter(({ manifest }) => manifest.id === "buzz.profiles"),
+    : [
+        ...bundledPlugins.filter(
+          ({ manifest }) => manifest.id === "buzz.profiles",
+        ),
+        ...(new URLSearchParams(location.search).has("specialized-profile")
+          ? [
+              {
+                manifest: {
+                  id: "example.profiles",
+                  name: "Specialized profiles",
+                  apiVersion: 1,
+                },
+                module: {
+                  inject: ["panels"],
+                  apply(ctx) {
+                    ctx.panels.register({
+                      id: "enriched",
+                      title: "Profile",
+                      order: -10,
+                      matches: (target) =>
+                        !!profilePanelKey(target) ||
+                        !!profileActivityViewKey(target),
+                      component: Object.assign(
+                        (props: PanelProps) => {
+                          const Native = ctx.panels
+                            .snapshot()
+                            .find(
+                              (panel) => panel.key === "buzz.profiles/profile",
+                            )?.component as
+                            | ComponentType<
+                                PanelProps &
+                                  import("../../src/bundled/profiles/ProfilePanel").PersonProfileInfoContent
+                              >
+                            | undefined;
+                          return Native ? (
+                            <Native
+                              {...props}
+                              renderPersonInfo={(content) => (
+                                <>
+                                  <button type="button">
+                                    Extra profile action
+                                  </button>
+                                  {content}
+                                </>
+                              )}
+                            />
+                          ) : null;
+                        },
+                        { profileHistory: true },
+                      ),
+                    });
+                  },
+                },
+              },
+            ]
+          : []),
+      ],
 });
 const panels = new PanelsService(context);
 // Profiles reads Agents to choose agent tabs; this fixture has no agents.
 new AgentsService(context, relay, undefined);
 const pages = new PagesService(context);
+new ConversationService(context);
 Object.assign(window, {
   profilesFixture: {
+    panels,
     report,
+    messages: { root: root.id, reply: reply.id },
+    holdReply() {
+      replyPending = false;
+      replyGate = new Promise<void>((resolve) => {
+        releaseReply = resolve;
+      });
+    },
+    replyPending: () => replyPending,
+    releaseReply() {
+      replyGate = undefined;
+      releaseReply();
+    },
     navigation: context.navigation,
     contexts,
     dmOpens,
@@ -396,7 +561,13 @@ function Fixture() {
       >
         Toggle appearance
       </button>
-      <div style={{ height: "calc(100vh - 50px)", padding: 16 }}>
+      <div
+        style={{
+          height: "calc(100vh - 50px)",
+          padding: 16,
+          width: soloProbe ? "calc(100% - 420px)" : undefined,
+        }}
+      >
         <ChannelWorkspaceFixture
           host={navigationHost}
           relay={relay}

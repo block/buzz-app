@@ -1,10 +1,14 @@
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import {
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
   type EventTemplate,
 } from "nostr-tools";
-import type { ReadFilter, RelayEvent } from "./events";
+import { hasTag, type ReadFilter, type RelayEvent } from "./events";
+import { PublishRejected } from "./outbox";
+import { authTagOwner } from "../agents/owner-attestation";
 import type { ReadTransport, Signer } from "./transport";
 
 /** Test-only signing helpers. Real signatures so the transport's verification stays on. */
@@ -19,6 +23,37 @@ export function signed(
 ): RelayEvent {
   return finalizeEvent({ created_at: 1_700_000_000, ...template }, key.secret);
 }
+/** A real NIP-OA delegation on an agent's signed profile. */
+export async function ownedProfile(
+  agent: Key,
+  owner: Key,
+  name?: string,
+): Promise<RelayEvent> {
+  const conditions = "kind=0";
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${agent.pubkey}:${conditions}`),
+  );
+  return signed(agent, {
+    kind: 0,
+    content: JSON.stringify(name ? { name } : {}),
+    tags: [
+      [
+        "auth",
+        owner.pubkey,
+        conditions,
+        bytesToHex(schnorr.sign(new Uint8Array(digest), owner.secret)),
+      ],
+    ],
+  });
+}
+/** The native `relay_verify_signatures` command, with real BIP-340 checks. */
+export const nativeSignatureChecks = (args: unknown) =>
+  (
+    args as { claims: { id: string; pubkey: string; sig: string }[] }
+  ).claims.map(({ id, pubkey, sig }) =>
+    schnorr.verify(hexToBytes(sig), hexToBytes(id), hexToBytes(pubkey)),
+  );
 /** Production-shaped host signer: the host authenticates and sends the exact
  * bytes, as the native adapter does. The default host forwards to the test's
  * stubbed `fetch`; credentials never reach JavaScript. */
@@ -123,20 +158,63 @@ export function profile(
   });
 }
 
+/** Unsigned kind 0s named `${label}${index}` for large rosters. The profile
+ * directory folds without checking signatures, and signing thousands of
+ * profiles makes a test slow under a loaded run. Use only where nothing
+ * checks the signature. */
+export function unsignedProfiles(count: number, label = "P"): RelayEvent[] {
+  return Array.from({ length: count }, (_, index) => {
+    const tag = [...label].map((c) => c.charCodeAt(0).toString(16)).join("");
+    const pubkey = tag.padEnd(32, "0") + index.toString(16).padStart(32, "0");
+    return {
+      id: pubkey,
+      pubkey,
+      kind: 0,
+      created_at: 1_700_000_000,
+      tags: [],
+      content: JSON.stringify({ name: `${label}${index}` }),
+      sig: "0".repeat(128),
+    } as unknown as RelayEvent;
+  });
+}
+
 export type Scripted = {
   filters: readonly ReadFilter[];
   respond: (events: RelayEvent[]) => void;
   fail: (error: unknown) => void;
   signal: AbortSignal | undefined;
 };
-/** A transport whose responses the test releases explicitly, so ordering and cancellation are observable. */
-export function scriptedTransport(viewer: string, relayAuthor: string) {
+/** A window's separate membership notice read (see `noticeFilter`). */
+export const isNoticeRead = (filters: readonly ReadFilter[]) =>
+  filters.length > 0 &&
+  filters.every(
+    (filter) => filter.kinds?.length === 1 && filter.kinds[0] === 40099,
+  );
+/** A status read alone, such as the one beside each byline profile read. */
+export const isStatusRead = (filters: readonly ReadFilter[]) =>
+  filters.length > 0 &&
+  filters.every(
+    (filter) => filter.kinds?.length === 1 && filter.kinds[0] === 30315,
+  );
+/** A transport whose responses the test releases explicitly, so ordering and cancellation are observable.
+ * Membership notice and status reads answer empty at once unless `notices` or
+ * `statuses` scripts them too. */
+export function scriptedTransport(
+  viewer: string,
+  relayAuthor: string,
+  {
+    notices = false,
+    statuses = false,
+  }: { notices?: boolean; statuses?: boolean } = {},
+) {
   const pending: Scripted[] = [];
   const transport: ReadTransport = {
     viewer,
     relayAuthor,
     media: (url) => (/^https:\/\//.test(url) ? url : undefined),
     query(filters, signal) {
+      if (!notices && isNoticeRead(filters)) return Promise.resolve([]);
+      if (!statuses && isStatusRead(filters)) return Promise.resolve([]);
       return new Promise<RelayEvent[]>((resolve, reject) => {
         const entry: Scripted = {
           filters,
@@ -161,6 +239,26 @@ export function scriptedTransport(viewer: string, relayAuthor: string) {
     },
   };
 }
+/** Answer the pending channel head reads as the channel's whole history:
+ * `history`'s rows in that channel, or none, so that only the rows the live
+ * stream delivered show. */
+export function completeHeads(
+  wire: { pending: Scripted[] },
+  relay: Key,
+  history: readonly RelayEvent[] = [],
+) {
+  for (const entry of [...wire.pending]) {
+    const [filter] = entry.filters;
+    const channelId = filter?.["#h"]?.[0];
+    if (!filter?.top_level || !channelId || filter.until !== undefined)
+      continue;
+    wire.pending.splice(wire.pending.indexOf(entry), 1);
+    entry.respond([
+      ...history.filter((event) => hasTag(event, "h", channelId)),
+      bounds(relay, channelId, "head", { has_more: false, next_cursor: null }),
+    ]);
+  }
+}
 export const flush = () =>
   new Promise<void>((resolve) => setTimeout(resolve, 0));
 /** Fixture relay for NIP-IA requests: applies accepted 9035/9036 events to its
@@ -174,7 +272,11 @@ export function archiveRelay(
   roles: Readonly<Record<string, string>> = {},
   channels: Record<string, string[]> = {},
 ) {
+  /** Profiles as the relay holds them; `publishProfile` adds a newer one. */
+  const live = [...profiles];
   const archived = new Set<string>();
+  /** Channel IDs whose metadata is archived; the relay refuses 9001 there. */
+  const archivedChannels = new Set<string>();
   /** NIP-09 coordinates the relay accepted for deletion. */
   const deleted = new Set<string>();
   const published: RelayEvent[] = [];
@@ -227,9 +329,7 @@ export function archiveRelay(
             }),
           ];
         if (filter.kinds?.includes(0))
-          return profiles.filter((event) =>
-            filter.authors?.includes(event.pubkey),
-          );
+          return live.filter((event) => filter.authors?.includes(event.pubkey));
         if (filter.kinds?.includes(39000))
           return Object.keys(channels)
             .filter((id) => !filter["#d"] || filter["#d"].includes(id))
@@ -241,6 +341,7 @@ export function archiveRelay(
                 tags: [
                   ["d", id],
                   ["name", id.slice(0, 8)],
+                  ...(archivedChannels.has(id) ? [["archived", "true"]] : []),
                 ],
               }),
             );
@@ -276,6 +377,10 @@ export function archiveRelay(
         }
         const tag = (name: string) =>
           event.tags.find(([key]) => key === name)?.[1] ?? "";
+        if (archivedChannels.has(tag("h"))) {
+          published.pop();
+          throw new PublishRejected("invalid: channel is archived");
+        }
         channels[tag("h")] = (channels[tag("h")] ?? []).filter(
           (key) => key !== tag("p"),
         );
@@ -290,14 +395,40 @@ export function archiveRelay(
       async publish(event) {
         await script.hold;
         if (script.fail) throw script.fail;
+        const target = event.tags.find(([name]) => name === "p")?.[1] ?? "";
+        if (!(await consents(event, target)))
+          throw new PublishRejected("invalid: missing auth tag");
         published.push(event);
         if (!script.apply) return;
-        const target = event.tags.find(([name]) => name === "p")?.[1] ?? "";
         if (event.kind === 9035) archived.add(target);
         else archived.delete(target);
         time += 1;
       },
     },
+  };
+  /** The relay's owner-consent rule: an owner or admin role stands alone;
+   * otherwise the request and the target's latest profile both carry an
+   * owner proof naming the requester. */
+  async function consents(event: RelayEvent, target: string) {
+    const requester = event.pubkey;
+    if (requester === target) return true;
+    if (roles[requester] === "owner" || roles[requester] === "admin")
+      return true;
+    const names = async (tags: readonly string[][] | undefined) => {
+      const auth = tags?.find(([name]) => name === "auth");
+      return !!auth && (await authTagOwner(target, auth)) === requester;
+    };
+    const profile = live
+      .filter((item) => item.kind === 0 && item.pubkey === target)
+      .reduce<RelayEvent | undefined>(
+        (newest, item) =>
+          !newest || item.created_at > newest.created_at ? item : newest,
+        undefined,
+      );
+    return (await names(event.tags)) && (await names(profile?.tags));
+  }
+  const publishProfile = (event: RelayEvent) => {
+    live.push(event);
   };
   /** An out-of-band relay change publishes a newer snapshot, never a same-time fork. */
   const archiveExternally = (target: string) => {
@@ -311,12 +442,14 @@ export function archiveRelay(
   return {
     transport,
     archived,
+    publishProfile,
     archiveExternally,
     unarchiveExternally,
     published,
     signedBy,
     script,
     channels,
+    archivedChannels,
     removal,
     deleted,
   };

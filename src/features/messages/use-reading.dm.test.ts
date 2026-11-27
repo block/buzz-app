@@ -38,6 +38,7 @@ it("one bottom dwell in a DM reads only through the newest message it saw", asyn
   let commitHold: Promise<void> | undefined;
   let committed = () => {};
   const storage: ReadStateStorage = {
+    capture: async () => journal && readJournal(journal, viewer.pubkey),
     async update(change) {
       journal = readJournal(change(journal), viewer.pubkey);
       if (commitHold && journal.state.frontiers.dm !== undefined) {
@@ -70,6 +71,7 @@ it("one bottom dwell in a DM reads only through the newest message it saw", asyn
       },
     },
     {
+      readStateFloor: () => 0,
       readStateStorage: storage,
       readPublisherLock: async (_signal, work) => work(),
     },

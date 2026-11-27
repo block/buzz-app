@@ -1,4 +1,7 @@
+import type { ChatIcon } from "../../features/conversation/service";
+import type { Navigation } from "../../features/navigation/controller";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
+import { useIsPresent } from "motion/react";
 import {
   memo,
   useCallback,
@@ -7,46 +10,83 @@ import {
   useRef,
   useSyncExternalStore,
   type ComponentType,
+  type ReactElement,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
   MenuPopup,
+  MenuRoot,
+  MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
+import { useLiveChannelSummary } from "../../features/relay/react";
 import {
-  ChatCircleIcon,
   ClockIcon,
+  DotsThreeIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
+import { ChatSharedMark, soloSharedMarkId } from "./ChatSharedMark";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
-import { UnreadBadge, ordinaryUnread } from "./UnreadBadge";
+import { UnreadBadge, ordinaryUnread, useConfirmedMute } from "./UnreadBadge";
+import { SoloChatTitle } from "../../features/solo/SoloChatTitle";
 import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import styles from "./Channels.module.css";
+import { SidebarRowRenderer } from "../../features/channel-navigation/SidebarRowRenderer";
+import { TeamRowChannelGroup } from "../../features/channel-navigation/RegionChannelGroup";
+import { ContributionBoundary } from "../../features/conversation/ContributionBoundary";
+import {
+  pluginRowSectionKey,
+  sidebarRow,
+  type RegisteredSidebarRows,
+} from "../../features/channel-navigation/sidebar-rows-service";
 import { avatarMedia } from "../../shared/avatar-source";
+import {
+  sidebarHome,
+  sidebarRowKind,
+  type SidebarRowKind,
+} from "./sidebar-sections";
 
 type ItemProps = {
+  chatIcon?: ChatIcon["component"] | undefined;
+  rowContributions?: readonly RegisteredSidebarRows[] | undefined;
+  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
   channel: ChannelSummary;
   profile?: Profile | undefined;
   session: RelaySession;
   working: boolean;
   selected: string | undefined;
   onSelect: (id: string) => void;
+  navigation?: Navigation | undefined;
+  onRename?: ((id: string) => boolean) | undefined;
+  pendingClick?:
+    | RefObject<ReturnType<typeof setTimeout> | undefined>
+    | undefined;
+  onShareChat?:
+    | ((channel: ChannelSummary, trigger: HTMLElement) => void)
+    | undefined;
   onOpenThread: (channelId: string, rootId: string) => void;
+  onOpenMessage: (channelId: string, messageId: string) => void;
   onOpenWorkingAgent?: (
     channelId: string,
     agent: string,
     messageId: string | undefined,
   ) => void;
-  onOpenAgentActivity?: (channelId: string, agent: string) => void;
+  onOpenAgentActivity?: (
+    channelId: string,
+    agent: string,
+    messageId: string | undefined,
+  ) => void;
   onHideDm?: (id: string) => void;
   menuEnabled?: boolean;
   sectionKey?: string | undefined;
@@ -55,6 +95,7 @@ type ItemProps = {
     | ComponentType<{
         channelId: string;
         sectionKey: string;
+        rowKind: SidebarRowKind;
         children: ReactNode;
       }>
     | undefined;
@@ -77,6 +118,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
   props: ItemProps,
 ) {
   const { channel, session, working } = props;
+  const muted = useConfirmedMute(session, channel.id);
   const { agents, agentProfiles, waiting } = useWorkingAgents(
     session,
     channel.id,
@@ -86,6 +128,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
     session,
     channel.id,
     channel.channelType === "dm",
+    muted,
   );
   return (
     <ChannelSidebarItemCore
@@ -94,6 +137,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
       agentProfiles={agentProfiles}
       waiting={waiting}
       ordinary={ordinary}
+      muted={muted}
     />
   );
 });
@@ -103,6 +147,7 @@ function useOrdinaryUnread(
   session: RelaySession,
   channelId: string,
   dm: boolean,
+  muted: boolean,
 ) {
   const target = useMemo(
     () => ({ kind: "channel" as const, channelId }),
@@ -113,19 +158,27 @@ function useOrdinaryUnread(
     [session, target],
   );
   const get = useCallback(
-    () => ordinaryUnread(session.unread.snapshot(target), dm),
-    [session, target, dm],
+    () => ordinaryUnread(session.unread.snapshot(target), dm, muted),
+    [session, target, dm, muted],
   );
   return useSyncExternalStore(subscribe, get, get);
 }
 
 function ChannelSidebarItemCore({
+  rowContributions,
+  chatIcon: ChatIconComponent,
+  onHiddenChange,
   channel,
   profile,
   session,
   selected,
   onSelect,
+  navigation,
+  onRename,
+  pendingClick,
+  onShareChat,
   onOpenThread,
+  onOpenMessage,
   onOpenWorkingAgent,
   onOpenAgentActivity,
   onHideDm,
@@ -143,29 +196,120 @@ function ChannelSidebarItemCore({
   agentProfiles,
   waiting,
   ordinary,
+  muted,
 }: ItemProps & {
   waiting: boolean;
   agents: readonly string[];
   agentProfiles: ReadonlyMap<string, Profile>;
   ordinary: boolean;
+  muted: boolean;
 }) {
+  const present = useIsPresent();
   const peer =
     channel.channelType === "dm" && channel.participants?.length === 1
       ? channel.participants[0]
       : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
+  const actions = useRef<HTMLButtonElement>(null);
+  const actionsOpen = !!menuAnchor && menuAnchor === actions.current;
+  const menuLabel = `Actions for ${channel.name}`;
+  const channelActions = sidebarHome(channel) === "channels";
   // Keep the closing row's items through the popup's exit transition.
   const lastMenuContent = useRef<ReactNode>(undefined);
   useLayoutEffect(() => {
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
-  const Icon =
-    channel.channelType === "dm" ? ChatCircleIcon : channelIcon(channel);
-  const row = (
+  const popupContent = menuContent ?? lastMenuContent.current;
+  // The row re-renders on each unread, activity and selection change. Its
+  // closed menu keeps the same element, so React skips the menu's subtree.
+  const menuAction = useMemo(
+    () =>
+      menuEnabled &&
+      (channelActions || channel.channelType === "solo") && (
+        <MenuRoot
+          open={menuOpen && present && actionsOpen}
+          onOpenChange={(open) => {
+            if (open && sectionKey && actions.current)
+              onOpenMenu?.(channel, sectionKey, actions.current);
+            else if (!open && actionsOpen) onCloseMenu?.();
+          }}
+          onOpenChangeComplete={(open) => {
+            if (!open) onMenuClosed?.(channel.id);
+          }}
+        >
+          <MenuTrigger
+            ref={actions}
+            render={(props) => (
+              <IconButton
+                {...props}
+                variant="bare"
+                size="compact"
+                aria-label={menuLabel}
+                data-channel-row-action={channelActions ? "" : undefined}
+                data-solo-row-action={channelActions ? undefined : ""}
+                icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+              />
+            )}
+          />
+          <MenuPopup
+            align="end"
+            aria-label={menuLabel}
+            finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
+          >
+            {popupContent}
+          </MenuPopup>
+        </MenuRoot>
+      ),
+    [
+      menuEnabled,
+      channelActions,
+      channel,
+      menuOpen,
+      present,
+      actionsOpen,
+      sectionKey,
+      onOpenMenu,
+      onCloseMenu,
+      onMenuClosed,
+      menuLabel,
+      menuFinalFocus,
+      popupContent,
+    ],
+  );
+  const Icon = channelIcon(channel);
+  const plainRow = (
     <ChannelSidebarRow
       channel={channel}
+      title={
+        channel.channelType === "solo" ? (
+          // Incoming renames animate; a rename saved here shows at once.
+          <SoloChatTitle
+            key={channel.id}
+            channelId={channel.id}
+            title={channel.name}
+            details={session.channelDetails}
+          />
+        ) : undefined
+      }
+      menuAction={menuAction}
+      sharedDescription={
+        onShareChat && channel.channelType === "solo"
+          ? soloSharedMarkId(channel.id)
+          : undefined
+      }
+      sharedAction={
+        onShareChat &&
+        channel.channelType === "solo" && (
+          <ChatSharedMark
+            session={session}
+            channel={channel}
+            onOpen={(trigger) => onShareChat(channel, trigger)}
+          />
+        )
+      }
       working={agents.length > 0}
       ordinary={ordinary}
+      muted={muted}
       dmVisualSpacing={channel.channelType === "dm"}
       icon={
         channel.channelType === "dm" ? (
@@ -199,6 +343,14 @@ function ChannelSidebarItemCore({
               <Icon size={16} />
             )}
           </DmTypingBadge>
+        ) : ChatIconComponent ? (
+          <ContributionBoundary fallback={<Icon size={16} />}>
+            <ChatIconComponent
+              session={session}
+              channelId={channel.id}
+              fallback={<Icon size={16} />}
+            />
+          </ContributionBoundary>
         ) : (
           <Icon size={16} />
         )
@@ -247,6 +399,9 @@ function ChannelSidebarItemCore({
             {...(onOpenWorkingAgent ? { onOpenWorkingAgent } : {})}
             {...(onOpenAgentActivity ? { onOpenAgentActivity } : {})}
             onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
+            onOpenMention={(item) =>
+              onOpenMessage(item.channelId, item.messageId)
+            }
             trigger={trigger}
           />
         );
@@ -272,7 +427,11 @@ function ChannelSidebarItemCore({
           activity
         );
         return SelectFrame && sectionKey ? (
-          <SelectFrame channelId={channel.id} sectionKey={sectionKey}>
+          <SelectFrame
+            channelId={channel.id}
+            sectionKey={sectionKey}
+            rowKind={sidebarRowKind(channel)}
+          >
             {select}
           </SelectFrame>
         ) : (
@@ -285,13 +444,42 @@ function ChannelSidebarItemCore({
       }
       onPrepare={(id) => session.channels.prepare?.(id)}
       onSelect={onSelect}
+      navigation={navigation}
+      onRename={onRename}
+      {...(pendingClick ? { pendingClick } : {})}
       {...(onHideDm ? { onHideDm } : {})}
     />
   );
-  if (!menuEnabled) return row;
+  // Part of the host row: contributions wrap or hide the group with it.
+  const row =
+    sectionKey &&
+    (channel.channelType === "stream" || channel.channelType === "forum") ? (
+      <TeamRowChannelGroup session={session} channelId={channel.id}>
+        {plainRow}
+      </TeamRowChannelGroup>
+    ) : (
+      plainRow
+    );
+  const rendered =
+    sectionKey && rowContributions ? (
+      <ContributionBoundary fallback={row} resetIdentity={rowContributions}>
+        <ContributedChannelRow
+          channel={channel}
+          sectionKey={sectionKey}
+          session={session}
+          entries={rowContributions}
+          onHiddenChange={onHiddenChange}
+        >
+          {row}
+        </ContributedChannelRow>
+      </ContributionBoundary>
+    ) : (
+      row
+    );
+  if (!menuEnabled) return rendered;
   return (
     <ContextMenuRoot
-      open={menuOpen}
+      open={menuOpen && present && !actionsOpen}
       onOpenChange={(open) => {
         if (open) {
           if (sectionKey) onOpenMenu?.(channel, sectionKey);
@@ -304,15 +492,60 @@ function ChannelSidebarItemCore({
         }
       }}
     >
-      {row}
+      {rendered}
       <MenuPopup
-        aria-label={`Actions for ${channel.name}`}
+        aria-label={menuLabel}
         anchor={menuOpen ? menuAnchor : undefined}
         finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
       >
         {menuContent ?? lastMenuContent.current}
       </MenuPopup>
     </ContextMenuRoot>
+  );
+}
+
+function ContributedChannelRow({
+  channel,
+  sectionKey,
+  session,
+  entries,
+  children,
+  onHiddenChange,
+}: {
+  channel: ChannelSummary;
+  sectionKey: string;
+  session: RelaySession;
+  entries: readonly RegisteredSidebarRows[];
+  children: ReactElement;
+  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+}) {
+  const target = useMemo(
+    () => ({ kind: "channel" as const, channelId: channel.id }),
+    [channel.id],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => session.unread.subscribe(target, listener),
+    [session, target],
+  );
+  const snapshot = useCallback(
+    () => session.unread.snapshot(target),
+    [session, target],
+  );
+  const unread = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const live = useLiveChannelSummary(session.channels, channel);
+  const pluginSection = pluginRowSectionKey(channel, sectionKey);
+  const row = useMemo(
+    () => sidebarRow(live, pluginSection, unread),
+    [live, pluginSection, unread],
+  );
+  return (
+    <SidebarRowRenderer
+      row={row}
+      entries={entries}
+      onHiddenChange={onHiddenChange}
+    >
+      {children}
+    </SidebarRowRenderer>
   );
 }
 

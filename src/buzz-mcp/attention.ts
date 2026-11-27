@@ -9,12 +9,14 @@ import type {
   AttentionValue,
   EventWatch,
   TimerWatch,
+  SourceWatch,
 } from "../features/agents/attention";
 import type {
   ShownObject,
   WriteOptions,
 } from "../features/agents/attention-objects";
 import type { AgentAttention } from "../features/agents/service";
+import { type BuzzToolName, TOOL_TITLES } from "./tool-titles";
 import type { Tool } from "./tools";
 
 const str = { type: "string" } as const;
@@ -52,6 +54,24 @@ const question = {
 const watchFields = {
   name: str,
   enabled: bool,
+  provider: {
+    ...str,
+    description: "Source subscription: plugin/source provider id.",
+  },
+  config: {
+    type: "object",
+    description: "Source subscription: provider-owned configuration.",
+  },
+  channel: {
+    ...str,
+    description:
+      "Optional delivery address: destination channel UUID; omit for an independent Interest turn.",
+  },
+  root: {
+    ...str,
+    description:
+      "Optional delivery address: destination thread root, requires channel.",
+  },
   since: {
     anyOf: [int, { type: "string", enum: ["now"] }],
     description: "Event watch: ignore events before this Unix time.",
@@ -95,7 +115,8 @@ const watchFields = {
       questions: {
         type: "object",
         additionalProperties: question,
-        description: "Named yes/no questions; the event passes on any yes.",
+        description:
+          "Named yes/no questions; the event or source output passes on any yes.",
       },
     },
     required: ["questions"],
@@ -113,12 +134,13 @@ const watchFields = {
 const WRITES =
   "A successful write is authoritative; show again only when a later decision needs the current object or the result is ambiguous. wrong-scope means the object belongs to another Interest than the one you named. Report conflicts or failures; do not blindly retry an ambiguous write. Attention does not grant channel membership or authority to act. These tools work only while your owner has attention on; the end of each turn says when it is off.";
 const tool = (
-  name: string,
+  name: BuzzToolName,
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[] = [],
 ): Tool => ({
   name,
+  title: TOOL_TITLES[name],
   description,
   inputSchema: {
     type: "object",
@@ -131,8 +153,17 @@ const tool = (
 export const ATTENTION_TOOLS: readonly Tool[] = [
   tool(
     "interest_set",
-    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Put reporting destinations in the instructions, not in watch options. ${WRITES}`,
-    { id, instructions: str, expected_state: token },
+    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Subscriptions say what wakes you and may specify a conversation delivery address. Keep the task and reporting policy in the Interest instructions. Your owner sees each Interest as a card: give it a title naming the responsibility and a summary of one or two sentences saying what wakes you and what you do, so they can tell your Interests apart without reading the instructions. Write the instructions for them too: name people as [Name](nostr:npub…), which shows as the name and opens their profile, and link pull requests, messages and channels rather than pasting raw IDs. When the work changes, replace the title, summary and instructions rather than appending notes; a replacement without a title or summary clears it. ${WRITES}`,
+    {
+      id,
+      title: { ...str, description: "A short name for the card, one line." },
+      summary: {
+        ...str,
+        description: "One or two sentences shown under the title.",
+      },
+      instructions: str,
+      expected_state: token,
+    },
     ["id", "instructions", "expected_state"],
   ),
   tool("interest_show", "One Interest and its expected_state.", { id }, ["id"]),
@@ -145,19 +176,24 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_add",
-    `Add an event watch (needs since and channels) or a timer (needs prompt and interval_secs) to an Interest; only for a new watch.
+    `Add an event watch (since and channels), a timer (prompt and interval_secs), a source subscription (provider and config) to an Interest; only for a new watch.
 
-Event watch: it sees only channels you are a member of, and "all" means all of those. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
+Event watch: it hears the channels you may read: those you are a member of, and public channels you have not joined. "all" means all of those, but hears a public channel you have not joined only about 30 seconds late. A delivery channel must be one you are a member of; the relay decides where you may post. Creating or enabling a watch, adding listening channels or changing its delivery channel requires confirmed access. Removing or reordering an explicit listening list checks no unchanged channels; changing from all to an explicit list checks the full list. Other edits on active event watches and timers keep working while access is unconfirmed or lost. Event delivery still checks current access. Writing an enabled source starts a new run and requires confirmed destination membership. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
 
-Classifier, for noisy event watches: Jev tests relevance after the normal filters. It sees one event, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
+Classifier, for noisy event watches or source subscriptions: Jev tests relevance after the normal filters. It sees one event or emitted source output, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
 
-Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last.
+All subscription types share delivery: channel and optional root continue that conversation; omit both for an independent turn with the Interest instructions. A root requires a channel. Source providers are supplied by plugins and own their configuration. Empty output starts no agent turn. Attention off or watch_disable cancels execution and queued output; watch_enable restarts a completed source. The address selects the execution conversation and default posting destination; explicit reporting instructions in the Interest take precedence. It grants no additional permission.
+
+Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last. A spent timer or completed source is removed after its final turn succeeds unless you edit or rearm it first.
 
 ${WRITES}`,
     {
       interest: { ...str, description: "The Interest it serves." },
       id,
-      type: { type: "string", enum: ["event", "timer"] },
+      type: {
+        type: "string",
+        enum: ["event", "timer", "source"],
+      },
       expected_state: token,
       ...watchFields,
     },
@@ -177,6 +213,8 @@ ${WRITES}`,
           type: "string",
           enum: [
             "name",
+            "channel",
+            "root",
             "authors",
             "exclude_authors",
             "tags",
@@ -192,7 +230,7 @@ ${WRITES}`,
     [
       [
         "watch_enable",
-        "Turn an event watch on. A timer is turned on by watch_rearm.",
+        "Turn an event or source watch on. A timer is turned on by watch_rearm.",
       ],
       [
         "watch_disable",
@@ -226,16 +264,16 @@ ${WRITES}`,
   ),
   tool(
     "watch_show",
-    "One watch and its expected_state; for a timer, its used occurrences, next_due and status.",
+    "One watch and its expected_state; for a timer, its used occurrences, next_due and status. An addressed watch also reports held or blocked delivery when destination membership is unconfirmed or absent.",
     { id, interest: scope },
     ["id"],
   ),
   tool("watch_list", "Watch summaries. status spent finds spent timers.", {
     interest: str,
-    type: { type: "string", enum: ["event", "timer"] },
+    type: { type: "string", enum: ["event", "timer", "source"] },
     status: {
       type: "string",
-      enum: ["enabled", "disabled", "armed", "inactive", "spent"],
+      enum: ["enabled", "disabled", "armed", "inactive", "spent", "completed"],
     },
     search: { ...str, description: "Case-sensitive, in ids and names." },
   }),
@@ -246,7 +284,7 @@ const NAMES = new Set(ATTENTION_TOOLS.map((item) => item.name));
 export const isAttentionTool = (name: string) => NAMES.has(name);
 
 const UNAVAILABLE_NOTE =
-  "No classifier can run on this device now, so this watch's events pass unchecked. It is kept, and runs once a classifier is available.";
+  "No classifier can run on this device now, so this watch's inputs pass unchecked. It is kept, and runs once a classifier is available.";
 
 /** Runs attention tool `name`. A throw is a tool error for the agent to read;
  * its text names the classifier state too. */
@@ -277,13 +315,17 @@ async function run(
 ): Promise<object> {
   const note = (object: ShownObject | null) =>
     classifier === "unavailable" &&
-    object?.type === "event" &&
+    (object?.type === "event" || object?.type === "source") &&
     object.classifier
       ? { classifier_note: UNAVAILABLE_NOTE }
       : {};
   const shown = async (promise: ReturnType<AgentAttention["show"]>) => {
     const result = await promise;
-    return { ...result, ...note(result.object) };
+    const object = result.object;
+    return {
+      ...result,
+      ...note(object),
+    };
   };
   const scoped = text(args.interest);
   const watch = (key: string) => `watch/${required(args, key)}`;
@@ -294,7 +336,7 @@ async function run(
   /** Writes the stored watch with `change` applied. */
   const edit = async (
     change: (
-      value: EventWatch | TimerWatch,
+      value: EventWatch | TimerWatch | SourceWatch,
       shown: Readonly<{ used?: number }>,
     ) => object,
     write: Partial<WriteOptions> = {},
@@ -304,7 +346,7 @@ async function run(
     if (!current || current.type === "interest")
       throw new Error(`not-found: no watch ${String(args.id)}`);
     const value = change(
-      stored(current) as EventWatch | TimerWatch,
+      stored(current) as EventWatch | TimerWatch | SourceWatch,
       current.type === "timer" ? { used: current.used } : {},
     );
     return shown(
@@ -315,12 +357,23 @@ async function run(
     );
   };
   switch (name) {
-    case "interest_set":
+    case "interest_set": {
+      const slug = `interest/${required(args, "id")}`;
+      const current = (await attention.show(slug)).object;
       return attention.write(
-        `interest/${required(args, "id")}`,
-        { type: "interest", instructions: required(args, "instructions") },
+        slug,
+        {
+          type: "interest",
+          ...given(args, "title"),
+          ...given(args, "summary"),
+          instructions: required(args, "instructions"),
+          ...(current?.type === "interest" && current.paused !== undefined
+            ? { paused: current.paused }
+            : {}),
+        },
         { expected: required(args, "expected_state") },
       );
+    }
     case "interest_show":
       return attention.show(`interest/${required(args, "id")}`);
     case "interest_list":
@@ -355,7 +408,14 @@ async function run(
                 kinds: [],
                 ...eventFields(args),
               }
-            : fail('type must be "event" or "timer"');
+            : args.type === "source"
+              ? {
+                  type: "source",
+                  interest_id: interest,
+                  enabled: true,
+                  ...sourceFields(args),
+                }
+              : fail('type must be "event", "timer" or "source"');
       return shown(
         attention.write(watch("id"), value as AttentionValue, {
           expected: required(args, "expected_state"),
@@ -366,10 +426,25 @@ async function run(
     case "watch_update":
       return edit((value) => {
         const fields =
-          value.type === "event" ? eventFields(args) : timerFields(args);
+          value.type === "event"
+            ? eventFields(args)
+            : value.type === "source"
+              ? sourceFields(args)
+              : timerFields(args);
         const clear = Array.isArray(args.clear) ? args.clear : [];
-        if (value.type === "timer" && clear.length)
-          refuse("a timer has no optional fields to clear");
+        if (
+          value.type === "source" &&
+          clear.some(
+            (key) =>
+              !["name", "channel", "root", "classifier"].includes(String(key)),
+          )
+        )
+          refuse("not an optional field of this source watch");
+        if (
+          value.type === "timer" &&
+          clear.some((key) => !["channel", "root"].includes(String(key)))
+        )
+          refuse("not an optional field of this timer");
         // Janet's rule: only a rearm arms a timer, with a new deadline.
         if (value.type === "timer" && !value.enabled && fields.enabled === true)
           refuse("use watch_rearm to turn a timer on");
@@ -423,7 +498,9 @@ async function run(
         watches: attention
           .watches({
             ...(scoped ? { interest: scoped } : {}),
-            ...(args.type === "event" || args.type === "timer"
+            ...(args.type === "event" ||
+            args.type === "timer" ||
+            args.type === "source"
               ? { type: args.type }
               : {}),
             ...(typeof args.status === "string"
@@ -461,6 +538,8 @@ function stored(object: ShownObject) {
 }
 
 const EVENT = [
+  "channel",
+  "root",
   "name",
   "enabled",
   "since",
@@ -473,6 +552,8 @@ const EVENT = [
   "classifier",
 ];
 const TIMER = [
+  "channel",
+  "root",
   "enabled",
   "prompt",
   "interval_secs",
@@ -480,6 +561,11 @@ const TIMER = [
   "expires_at",
 ];
 function pick(args: Args, names: readonly string[], other: readonly string[]) {
+  // An older caller may still send it; dropping it would widen the watch.
+  if ("keywords" in args)
+    fail(
+      "keywords was removed from watches; narrow the watch with a classifier question, or with authors, exclude_authors, tags or is_reply",
+    );
   const wrong = other.filter((key) => !names.includes(key) && key in args);
   if (wrong.length) fail(`Not a field of this watch type: ${wrong.join(", ")}`);
   return Object.fromEntries(
@@ -488,17 +574,34 @@ function pick(args: Args, names: readonly string[], other: readonly string[]) {
       .map((key) => [key, args[key]]),
   );
 }
+const SOURCE = [
+  "name",
+  "enabled",
+  "provider",
+  "config",
+  "channel",
+  "root",
+  "classifier",
+];
+function sourceFields(args: Args) {
+  return pick(args, SOURCE, [...EVENT, ...TIMER]);
+}
 function eventFields(args: Args) {
-  const fields = pick(args, EVENT, TIMER);
-  if (fields.since === "now") fields.since = seconds();
+  const fields = pick(args, EVENT, [...TIMER, ...SOURCE]);
+  if ("since" in fields)
+    fields.since = fields.since === "now" ? seconds() : whole(fields.since);
   return fields;
 }
 function timerFields(args: Args) {
-  const fields = pick(args, TIMER, EVENT);
+  const fields = pick(args, TIMER, [...EVENT, ...SOURCE]);
   for (const key of ["max_occurrences", "expires_at"])
-    if (fields[key] === "unbounded") fields[key] = null;
+    if (key in fields)
+      fields[key] = fields[key] === "unbounded" ? null : whole(fields[key]);
   return fields;
 }
+/** Some clients send an integer whose schema also allows a word as its digits. */
+const whole = (value: unknown) =>
+  typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
 
 const seconds = () => Math.floor(Date.now() / 1000);
 const fail = (message: string): never => {
@@ -510,6 +613,11 @@ const refuse = (message: string): never => {
 };
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+/** `{ [name]: text }` when the argument has text, otherwise nothing. */
+const given = (args: Args, name: string) => {
+  const value = text(args[name]);
+  return value ? { [name]: value } : {};
+};
 function required(args: Args, name: string) {
   const value = args[name];
   if (typeof value === "string" && value) return value;

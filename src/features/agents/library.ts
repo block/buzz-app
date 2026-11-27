@@ -48,6 +48,8 @@ export function createAgentLibrary(
   const demands = new Set<object>();
   let controller: AbortController | undefined;
   let pending: Promise<void> | undefined;
+  /** Counts clears, so a read joined before a disconnect stays its own. */
+  let generation = 0;
   let snapshot: AgentLibrarySnapshot = {
     ...empty,
     status: read ? "idle" : "unavailable",
@@ -57,9 +59,13 @@ export function createAgentLibrary(
     snapshot = Object.freeze(next);
     for (const listener of listeners) notify(listener);
   }
-  function refresh(): Promise<void> {
+  /** Joins a read in flight, unless `fresh`: then it supersedes that read,
+   * which may predate a change the caller just made, and that read's waiters
+   * wait for the new one. */
+  function refresh({ fresh = false } = {}): Promise<void> {
     if (closed || !read) return Promise.resolve();
-    if (pending) return pending;
+    if (pending && !fresh) return pending;
+    controller?.abort();
     const owned = new AbortController();
     controller = owned;
     publish({ ...snapshot, status: "loading" });
@@ -87,10 +93,14 @@ export function createAgentLibrary(
           controller = undefined;
           pending = undefined;
         }
-      });
+      })
+      // A superseded read's waiters follow the read that replaced it, so a
+      // finished refresh always means current inventory.
+      .then(() => (controller !== owned && pending ? pending : undefined));
     return pending;
   }
   function clear() {
+    generation++;
     controller?.abort();
     controller = undefined;
     pending = undefined;
@@ -119,8 +129,20 @@ export function createAgentLibrary(
     clear,
     reconnect() {
       // Initial establishment can follow a completed activation read. A real
-      // disconnect clears this snapshot; only then is fresh inventory needed.
-      if (demands.size && snapshot.status !== "ready") void refresh();
+      // disconnect clears this snapshot; only then is fresh inventory needed,
+      // unless a source failed: a partial result is ready but not current.
+      if (!demands.size) return;
+      const failed = () =>
+        snapshot.status === "error" ||
+        (snapshot.status === "ready" && !!snapshot.error);
+      // A read in flight began before this connection: reuse it, and reread
+      // once if it fails.
+      const joined = generation;
+      if (pending)
+        void pending.then(() => {
+          if (joined === generation && demands.size && failed()) void refresh();
+        });
+      else if (snapshot.status !== "ready" || snapshot.error) void refresh();
     },
     dispose() {
       closed = true;

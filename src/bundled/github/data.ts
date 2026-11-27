@@ -1,3 +1,4 @@
+import { ReadError, transientStatus } from "../../features/relay/errors";
 import type { GitHubReference } from "./references";
 
 export type Branch = { label: string; url?: string | undefined };
@@ -7,6 +8,11 @@ export type GitHubDetails = {
   body: string;
   bodyHtml?: string | undefined;
   state: string;
+  /** Why an issue was closed, as GitHub gives it, such as `not_planned`. */
+  stateReason?: string | undefined;
+  /** Read as an issue, it is a pull request: GitHub numbers both alike, and
+   * its issues answer for either. */
+  pullRequest?: true | undefined;
   author: string;
   headSha?: string | undefined;
   authorUrl?: string | undefined;
@@ -38,6 +44,8 @@ type ResponseData = {
   body?: string | null;
   body_html?: string | null;
   state?: string;
+  state_reason?: string | null;
+  pull_request?: object | null;
   draft?: boolean;
   merged?: boolean;
   merged_at?: string | null;
@@ -58,6 +66,16 @@ type ResponseData = {
   language?: string | null;
   default_branch?: string;
 };
+
+/** GitHub refused a public read for this hour's limit; `resetAt` is when it
+ * lifts, by its `x-ratelimit-reset` header, or an hour on without one. */
+export class GitHubRateLimited extends Error {
+  constructor(readonly resetAt: number) {
+    super(
+      "GitHub’s public API limit was reached. Try again later or open it on GitHub.",
+    );
+  }
+}
 
 export function branchLink(branch: BranchData, pullRepository: string): Branch {
   const repository = branch.repo?.full_name;
@@ -101,10 +119,15 @@ export async function loadGitHubDetails(
         "This is private or unavailable. Sign in to the gh CLI to see private repositories, or open it on GitHub.",
       );
     if (response.status === 403 || response.status === 429)
-      throw new Error(
-        "GitHub’s public API limit was reached. Try again later or open it on GitHub.",
+      throw new GitHubRateLimited(
+        Number(response.headers.get("x-ratelimit-reset")) * 1000 ||
+          Date.now() + 60 * 60_000,
       );
-    throw new Error(`GitHub couldn’t load this object (${response.status}).`);
+    const message = `GitHub couldn’t load this object (${response.status}).`;
+    // `loadGitHubObject` retries server failures quietly.
+    throw transientStatus(response.status)
+      ? new ReadError("unavailable", message, response.status)
+      : new Error(message);
   }
   const data: ResponseData = await response.json();
   const facts: GitHubDetails["facts"] = [];
@@ -146,6 +169,8 @@ export async function loadGitHubDetails(
         : data.draft
           ? "Draft"
           : (data.state ?? ""),
+    stateReason: data.state_reason ?? undefined,
+    pullRequest: data.pull_request ? true : undefined,
     author:
       data.user?.login ??
       data.author?.login ??

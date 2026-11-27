@@ -6,6 +6,7 @@ import { createRelayProfiler } from "./profiling";
 import { foldMessages } from "./fold";
 import { PublishRejected, type OutgoingEvent } from "./outbox";
 import {
+  completeHeads,
   flush,
   keypair,
   message,
@@ -144,7 +145,7 @@ it("incremental channel projection applies delete-of-reaction and rejects an own
   ).toEqual([]);
 });
 
-it("removal validates every loaded author and conversation before queuing one deletion", () => {
+it("removal validates every loaded author and conversation before queuing one deletion per target", () => {
   const mine = reaction(),
     duplicate = reaction(viewer, 3),
     theirs = reaction(other);
@@ -154,6 +155,7 @@ it("removal validates every loaded author and conversation before queuing one de
   const messages = createMessages(
     {
       ready: async () => {},
+      recovery: async () => undefined,
       recover: async () => {},
       acknowledge: async () => {},
       supports: () => true,
@@ -177,16 +179,19 @@ it("removal validates every loaded author and conversation before queuing one de
   expect(() => messages.remove(["missing"])).toThrow(/Load/);
   expect(send).not.toHaveBeenCalled();
   messages.remove([mine.id, duplicate.id, mine.id]);
-  expect(send).toHaveBeenCalledExactlyOnceWith({
-    kind: 5,
-    content: "",
-    tags: [
-      ["h", "c"],
-      ["e", mine.id],
-      ["e", duplicate.id],
-      ["k", "7"],
-    ],
-  });
+  expect(send.mock.calls).toEqual(
+    [mine.id, duplicate.id].map((id) => [
+      {
+        kind: 5,
+        content: "",
+        tags: [
+          ["h", "c"],
+          ["e", id],
+          ["k", "7"],
+        ],
+      },
+    ]),
+  );
 });
 
 it("requires matching viewer and agent identities to remove agent messages", () => {
@@ -198,6 +203,7 @@ it("requires matching viewer and agent identities to remove agent messages", () 
   const messages = createMessages(
     {
       ready: async () => {},
+      recovery: async () => undefined,
       recover: async () => {},
       acknowledge: async () => {},
       supports: () => true,
@@ -271,6 +277,7 @@ it("authorizes removal against the relay-attributed agent author, not the relay 
   const messages = createMessages(
     {
       ready: async () => {},
+      recovery: async () => undefined,
       recover: async () => {},
       acknowledge: async () => {},
       supports: () => true,
@@ -331,6 +338,8 @@ it("real session retries the same signed deletion and keeps the reaction removed
   owner.session.channels.ensure("c");
   const mine = reaction();
   live.receive([roster(relay, "c", [viewer.pubkey], 1), root, mine]);
+  completeHeads(wire, relay);
+  await flush();
   const id = owner.session.messages.remove([mine.id]);
   expect(owner.session.channels.window("c").rows[0]?.reactions).toEqual([]);
   await flush();
@@ -384,7 +393,7 @@ it.each(["channel", "dm", "thread"])(
     const publish = vi.fn(async (_event: RelayEvent) => {
       throw new PublishRejected("Nope");
     });
-    const connect = () => {
+    const connect = async () => {
       const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
       let live!: LiveCallbacks;
       const owner = createRelaySession(
@@ -412,6 +421,8 @@ it.each(["channel", "dm", "thread"])(
       owner.session.channels.ensure("c");
       live.receive(evidence.filter((event) => event.id !== mine.id));
       live.receive([mine]);
+      completeHeads(wire, relay);
+      await flush();
       const view =
         surface === "thread" ? owner.session.thread("c", root.id) : undefined;
       if (view) owners.push(view);
@@ -421,7 +432,7 @@ it.each(["channel", "dm", "thread"])(
           : owner.session.channels.window("c").rows[0];
       return { ...owner, live, row };
     };
-    const first = connect();
+    const first = await connect();
     expect(first.row()?.reactions[0]?.emoji?.url).toBe(
       "https://old.test/party.png",
     );
@@ -431,7 +442,7 @@ it.each(["channel", "dm", "thread"])(
     expect(first.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
     const original = publish.mock.calls[0]?.[0];
     first.dispose();
-    const next = connect();
+    const next = await connect();
     await flush();
     await flush();
     const restored = next.session.outbox?.snapshot()[0]?.event;
@@ -483,6 +494,8 @@ it("real session publishes attributed-owner edits and deletion through its trust
     ],
   });
   live.receive([roster(relay, "c", [viewer.pubkey], 1), attributed]);
+  completeHeads(wire, relay);
+  await flush();
   expect(owner.session.channels.window("c").rows[0]?.authorId).toBe(
     viewer.pubkey,
   );

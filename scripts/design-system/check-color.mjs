@@ -152,11 +152,11 @@ const MIXER_ALLOWED = new Map([
 /** Specific `path:line` escapes, each with a reason. */
 const OVERRIDES = new Map([
   // Preserve the existing, designer-approved availability capsule when moving
-  // its recipe out of feature CSS. These are not new contrast exemptions:
-  // docs/presence.md records the measured Online shortfall in both themes.
-  ["styles/materials.css:188", "Availability resting status mix: 12%."],
-  ["styles/materials.css:193", "Availability hover status mix: 18%."],
-  ["styles/materials.css:198", "Availability pressed/open status mix: 24%."],
+  // its recipe out of feature CSS. These are not new contrast exemptions: the
+  // Online label is a known, accepted shortfall (see the token registry).
+  ["styles/materials.css:197", "Availability resting status mix: 12%."],
+  ["styles/materials.css:202", "Availability hover status mix: 18%."],
+  ["styles/materials.css:207", "Availability pressed/open status mix: 24%."],
 ]);
 
 const failures = [];
@@ -301,7 +301,7 @@ function auditLayers() {
     }
   }
 
-  // 1. Every palette step exists in both modes and holds a literal.
+  // 1. Every palette step holds a literal, or its explicit shared mode owner.
   for (const hue of HUES) {
     for (let step = 1; step <= 12; step += 1) {
       const name = `--${hue}-${step}`;
@@ -313,6 +313,22 @@ function auditLayers() {
             found: name,
             why: "Missing. Every palette step must be authored in both modes.",
           });
+        } else if (name === "--red-11" && mode === "light") {
+          // Status surfaces share this fixed light step across both themes.
+          const owner = "--red-11-light";
+          if (
+            value !== `var(${owner})` ||
+            !/^#[0-9a-f]{6}$/i.test(
+              read(css.slice(0, css.indexOf("LAYER 1 — FAMILIES")), owner) ??
+                "",
+            )
+          ) {
+            failures.push({
+              at: `${rel} (${mode})`,
+              found: `${name}: ${value}`,
+              why: "Light red-11 must bind to its literal shared mode owner.",
+            });
+          }
         } else if (!/^#[0-9a-f]{6}$/i.test(value)) {
           failures.push({
             at: `${rel} (${mode})`,
@@ -407,6 +423,6 @@ for (const { at, found, why } of failures) {
   console.error(`        ${why}\n`);
 }
 console.error(
-  "Add the step to the palette in tokens.css, or add a documented override\nin scripts/design-system/check-color.mjs with a reason. See DESIGN.md § Colour discipline.",
+  "Add the step to the palette in tokens.css, or add a documented override\nin scripts/design-system/check-color.mjs with a reason. See DESIGN.md § Colour structure.",
 );
 process.exit(1);

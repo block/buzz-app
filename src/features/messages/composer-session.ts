@@ -1,5 +1,21 @@
 import type { RelaySession } from "../relay/session";
 
+export type ComposerDraftSend = {
+  text: string;
+  forward?: import("./forward-clipboard").ForwardReference;
+  draft: string;
+  retirementCursor?: number | undefined;
+  picks?: import("../relay/messages").MentionPicks;
+  mentions: readonly string[];
+  references: readonly string[];
+  attachments: readonly import("../relay/attachments").UploadedAttachment[];
+};
+
+export type ComposerDraftSendResult = {
+  id: string;
+  retirement: "saved" | "changed" | "failed";
+};
+
 type AsyncResult<F> = F extends (...args: infer A) => infer R
   ? (...args: A) => R | Promise<R>
   : never;
@@ -9,6 +25,7 @@ export type ComposerSession = Pick<
   "viewer" | "media" | "scope"
 > & {
   names?: import("../identity-names/service").IdentityNameView | undefined;
+  recovery?: RelaySession["recovery"];
   repositories: Pick<
     RelaySession["repositories"],
     "home" | "load" | "peekHome"
@@ -18,13 +35,13 @@ export type ComposerSession = Pick<
     | "list"
     | "subscribeList"
     | "get"
-    | "window"
     | "ensureList"
     | "refreshList"
     | "searchPublic"
     | "matchPublic"
+    | "openDirectory"
   > &
-    Partial<Pick<RelaySession["channels"], "subscribeWindow">>;
+    Partial<Pick<RelaySession["channels"], "subscribeWindow" | "window">>;
   profiles: RelaySession["profiles"];
   emoji: Pick<
     RelaySession["emoji"],
@@ -42,7 +59,9 @@ export type ComposerSession = Pick<
   typing: Pick<RelaySession["typing"], "snapshot" | "subscribe"> &
     Partial<Pick<RelaySession["typing"], "send">>;
   presence?: Pick<NonNullable<RelaySession["presence"]>, "status"> | undefined;
-  directMessages: Pick<RelaySession["directMessages"], "people">;
+  /** `verified` names searched people; a bridge without it shows shared names only. */
+  directMessages: Pick<RelaySession["directMessages"], "people"> &
+    Partial<Pick<RelaySession["directMessages"], "verified">>;
   memberAdditions: Pick<RelaySession["memberAdditions"], "add">;
   channelWrites: Pick<
     RelaySession["channelWrites"],
@@ -61,6 +80,22 @@ export type ComposerSession = Pick<
         release?(file: import("../relay/attachments").UploadedAttachment): void;
       })
     | undefined;
+  forwarding?: {
+    resolve(
+      reference: import("./forward-clipboard").ForwardReference,
+      signal: AbortSignal,
+    ): Promise<import("./resolve-forward").ResolvedForward>;
+    send(
+      reference: import("./forward-clipboard").ForwardReference,
+      note: string,
+      mentions: readonly string[],
+      attachments: readonly import("../relay/attachments").UploadedAttachment[],
+      references: readonly string[],
+      picks: import("../relay/messages").MentionPicks,
+    ): Promise<string>;
+  };
+  /** The detached owner attempts draft retirement before acknowledging admission. */
+  sendDraft?(message: ComposerDraftSend): Promise<ComposerDraftSendResult>;
   messages: {
     send: AsyncResult<RelaySession["messages"]["send"]>;
     reply: AsyncResult<RelaySession["messages"]["reply"]>;

@@ -1,8 +1,11 @@
+import { readForward } from "./forwarded-message";
 import { workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
-import { agentAudience } from "./audience";
+import { messageAudience } from "./audience";
+import { relayedFromClaim, relayNotice } from "./relayed-from";
+import { pluginRequestId } from "./plugin-request";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { huddleRoom } from "../huddle/lifecycle";
@@ -10,17 +13,24 @@ import { newer } from "./events";
 import type { EventData } from "./events";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
+  MEDIA_TARGET_TAG,
   type Attachment,
   type ChannelMessage,
 } from "./contracts";
 import {
+  IMETA_DIM,
   projectMarkdownAttachments,
   relayHashBasename,
   safeAttachmentName,
   safeMessageUrl,
 } from "./message-content";
 
-import { channelRowKind, membershipChange } from "./membership";
+import {
+  channelRowChannel,
+  channelRowKind,
+  membershipChange,
+} from "./membership";
+import { reactionTarget } from "./reaction-target";
 import { compareMessages, eventMs } from "./message-order";
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -66,7 +76,9 @@ function attachmentName(url: string): string | undefined {
   }
 }
 
-export function imetaAttachmentUrls(event: EventData): ReadonlySet<string> {
+export function imetaAttachmentUrls(event: {
+  tags: readonly (readonly string[])[];
+}): ReadonlySet<string> {
   const urls = new Set<string>();
   for (const entry of event.tags) {
     if (entry[0] !== "imeta") continue;
@@ -102,7 +114,7 @@ export function parseAttachments(
     seen.add(url);
     // Treat signed metadata as untrusted layout input. Invalid/missing dimensions
     // use the renderer's stable fallback rather than image-load-driven geometry.
-    const dim = /^(\d{1,6})x(\d{1,6})$/.exec(fields.dim ?? "");
+    const dim = IMETA_DIM.exec(fields.dim ?? "");
     const width = Number(dim?.[1]),
       height = Number(dim?.[2]);
     const blurhash = validatedBlurhash(fields.blurhash);
@@ -246,7 +258,10 @@ export function deletionApplies(
 
 /** Folds one window's top-level messages with their aux overlays: author deletes (5/9005),
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
- * Replies stay out of the top level. Output is ascending by time; ties break on id so windows merge deterministically. */
+ * Replies stay out of the top level; when they are not rows, the non-deleted `pendingReplies`
+ * of a root layer on top of its summary: they add to `replyCount` and their authors lead
+ * `participants`, so an own reply counts and shows before the relay's summary round trip.
+ * Output is ascending by time; ties break on id so windows merge deterministically. */
 export function foldMessages(
   channelId: string,
   relayAuthor: string,
@@ -256,24 +271,42 @@ export function foldMessages(
     collapseHuddles = true,
     signingAuthority,
     agentOwner,
+    pendingReplies,
   }: {
     includeReplies?: boolean;
     collapseHuddles?: boolean;
     signingAuthority?: string | undefined;
     agentOwner?: ((pubkey: string) => string | undefined) | undefined;
+    /** Retained reply sends of this client's that no relay summary has counted yet
+     * (MessageProjection decides that by observation order); absent means every
+     * summary is complete. */
+    pendingReplies?: ReadonlySet<string> | undefined;
   } = {},
 ): ChannelMessage[] {
   const overlays = new Map<string, EventData[]>();
   const summaries = new Map<string, EventData>();
+  const replies = new Map<string, EventData[]>();
   for (const event of events) {
-    if (channelRowKind(event.kind)) continue;
+    if (channelRowKind(event.kind)) {
+      // Most callers pass no pending replies; skip the tag scan for them.
+      if (!pendingReplies?.has(event.id)) continue;
+      const rootId = threadReference(event)?.rootId;
+      if (rootId && channelRowChannel(event) === channelId) {
+        const list = replies.get(rootId) ?? [];
+        list.push(event);
+        replies.set(rootId, list);
+      }
+      continue;
+    }
     if (event.kind === 39005) {
       const target = event.tags.find((entry) => entry[0] === "e")?.[1];
       if (target && event.pubkey === relayAuthor)
         summaries.set(target, newer(summaries.get(target), event));
       continue;
     }
-    for (const entry of event.tags) {
+    const references =
+      event.kind === 7 ? [["e", reactionTarget(event)]] : event.tags;
+    for (const entry of references) {
       if (entry[0] !== "e" || !entry[1]) continue;
       const list = overlays.get(entry[1]) ?? [];
       list.push(event);
@@ -296,8 +329,7 @@ export function foldMessages(
   const rows: ChannelMessage[] = [];
   for (const event of events) {
     if (!channelRowKind(event.kind)) continue;
-    if (!event.tags.some((entry) => entry[0] === "h" && entry[1] === channelId))
-      continue;
+    if (channelRowChannel(event) !== channelId) continue;
     if (
       !includeReplies &&
       event.tags.some((entry) => entry[0] === "e" && entry[3] === "reply") &&
@@ -382,12 +414,38 @@ export function foldMessages(
     for (const { url, name } of projected.names)
       if (!attachmentNames.has(url)) attachmentNames.set(url, name);
     const authorId = messageAuthor(event, signingAuthority);
+    const mediaTargets = event.tags.filter(
+      (tag) => tag.length === 2 && tag[0] === MEDIA_TARGET_TAG,
+    );
+    const mediaTargetUrl =
+      mediaTargets.length === 1
+        ? safeMessageUrl(mediaTargets[0]?.[1] ?? "")
+        : undefined;
+    const pluginRequest = pluginRequestId(event);
+    const summary = parseSummary(summaries.get(event.id));
+    const pending = includeReplies
+      ? []
+      : (replies.get(event.id)?.filter((reply) => !deleted(reply)) ?? []);
+    // The relay lists participants by signer, so a pending reply whose signer
+    // it lists but not its author (a relay-signed workflow reply) leads as that
+    // signer rather than adding a second identity.
+    const repliers = pending.map((reply) => {
+      const author = messageAuthor(reply, signingAuthority);
+      return !summary.participants.includes(author) &&
+        summary.participants.includes(reply.pubkey)
+        ? reply.pubkey
+        : author;
+    });
+    const forward = readForward({ ...event, content });
+    const audience = messageAudience(event);
+    const relayed = relayedFromClaim(event);
     rows.push(
       Object.freeze({
         id: event.id,
         channelId,
         threadRootId: threadReference(event)?.rootId,
         replyParentId: threadReference(event)?.parentId,
+        ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
         sentFromThread: (() => {
           const tag = event.tags.find(
             ([name, id]) =>
@@ -408,9 +466,47 @@ export function foldMessages(
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,
+        ...(forward ? { forward } : {}),
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
-        ...(agentAudience(event) ? { audience: "agents" as const } : {}),
+        ...(audience ? { audience } : {}),
+        // Only the signer's own agent: an attributed author signed nothing here.
+        ...(relayed && relayed.agent !== event.pubkey
+          ? {
+              relayedFrom: Object.freeze({
+                ...relayed,
+                ...(() => {
+                  const notice = relayNotice(event.content);
+                  return notice ? { notice } : {};
+                })(),
+                verified:
+                  authorId === event.pubkey &&
+                  agentOwner?.(relayed.agent) === event.pubkey,
+              }),
+            }
+          : {}),
+        ...(() => {
+          // One exact id, or none: conflicting claims bind no request.
+          const ids = new Set(
+            event.tags
+              .filter(([name]) => name === "buzz:request")
+              .map(([, id]) => id),
+          );
+          const [request] = ids;
+          return ids.size === 1 && request && HEX64.test(request)
+            ? { request }
+            : {};
+        })(),
+        ...(event.kind === 9 &&
+        event.tags.some(
+          (tag) =>
+            tag.length === 2 &&
+            tag[0] === "buzz:notice" &&
+            tag[1] === "execution-failure",
+        )
+          ? { notice: "execution-failure" as const }
+          : {}),
+        ...(pluginRequest ? { pluginRequest: { id: pluginRequest } } : {}),
         ...(event.kind === 40008
           ? {
               diff: Object.freeze({
@@ -426,7 +522,7 @@ export function foldMessages(
               }),
             }
           : {}),
-        ...(edits.length ? { edited: true as const } : {}),
+        ...(edits[0] ? { edited: true as const, editId: edits[0].id } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(
@@ -460,7 +556,12 @@ export function foldMessages(
           aux.filter((item) => item.kind === 7),
           deleted,
         ),
-        ...parseSummary(summaries.get(event.id)),
+        replyCount: summary.replyCount + pending.length,
+        // Pending repliers lead, returning ones included, so they stay within
+        // the visible avatar stack.
+        participants: Object.freeze([
+          ...new Set([...repliers, ...summary.participants]),
+        ]),
       }),
     );
   }

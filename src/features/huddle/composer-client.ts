@@ -1,5 +1,6 @@
 import type { GifRequests } from "../relay/gifs";
-import { readView } from "../../shared/view-state";
+import { UPLOAD_FAILURES, UploadError } from "../relay/attachments";
+import { viewRevision } from "../../shared/view-state";
 import type { ComposerSession } from "../messages/composer-session";
 import { createNameProvider } from "../identity-names/directory";
 import { resolveIdentityNames } from "../identity-names/policy";
@@ -151,6 +152,7 @@ export function createHuddleComposerClient(token: string) {
         snapshot: () => value().profiles,
         subscribe,
         ensure: (keys) => request("profiles", keys),
+        generation: () => value().profileGeneration,
       },
       emoji: {
         snapshot: () => value().emoji,
@@ -219,8 +221,33 @@ export function createHuddleComposerClient(token: string) {
             },
           }
         : undefined,
+      forwarding: {
+        resolve: (reference, signal) =>
+          request("forwardSource", reference, signal),
+        send: async (
+          reference,
+          text,
+          mentions,
+          attachments,
+          references,
+          picks,
+        ) =>
+          (
+            await request("send", {
+              forward: reference,
+              text,
+              mentions,
+              attachments,
+              references,
+              picks,
+              draft:
+                viewRevision(initial.scope, `draft:${initial.room}`) ?? "null",
+            })
+          ).id,
+      },
+      sendDraft: (message) => request("send", message),
       messages: {
-        send: (
+        send: async (
           room,
           text,
           mentions = [],
@@ -231,16 +258,17 @@ export function createHuddleComposerClient(token: string) {
         ) => {
           if (room !== initial.room)
             return Promise.reject(new Error("Huddle destination changed."));
-          return request("send", {
-            text,
-            picks,
-            mentions,
-            attachments,
-            references,
-            draft: JSON.stringify(
-              readView(initial.scope, `draft:${initial.room}`, null),
-            ),
-          });
+          return (
+            await request("send", {
+              text,
+              picks,
+              mentions,
+              attachments,
+              references,
+              draft:
+                viewRevision(initial.scope, `draft:${initial.room}`) ?? "null",
+            })
+          ).id;
         },
         reply: unavailable,
         edit: unavailable,
@@ -269,7 +297,12 @@ export function createHuddleComposerClient(token: string) {
       if (!pending) return;
       waiting.delete(response.id);
       pending.cleanup();
-      if (response.error) pending.reject(new Error(response.error));
+      if (response.error)
+        pending.reject(
+          response.code && Object.hasOwn(UPLOAD_FAILURES, response.code)
+            ? new UploadError(response.code)
+            : new Error(response.error),
+        );
       else pending.resolve(response.value);
     }
   };

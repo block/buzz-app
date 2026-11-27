@@ -1,5 +1,6 @@
 import type { EmojiMartData } from "@emoji-mart/data";
 import type { CustomEmoji } from "../../features/relay/emoji";
+import { defaultSkinTone } from "./skin-tone";
 
 export type EmojiMatch = Readonly<{
   id: string;
@@ -8,9 +9,16 @@ export type EmojiMatch = Readonly<{
   text: string;
   url?: string;
 }>;
-type Standard = EmojiMatch & { terms: readonly string[] };
+type Standard = EmojiMatch & {
+  terms: readonly string[];
+  /** Natives by Mart skin index 1–6, for emoji that have tones. */
+  skins?: readonly string[];
+};
 const normalize = (value: string) => value.toLowerCase().replace(/[-_\s]/g, "");
 let standard: Promise<readonly Standard[]> | undefined;
+/** Times a match ID was chosen, from the shared emoji usage store. */
+type Uses = (id: string) => number;
+const unused: Uses = () => 0;
 
 type ShortcodeScore = Readonly<{ tier: number; score: number }>;
 
@@ -87,6 +95,9 @@ function loadStandard() {
                 shortcode: emoji.id,
                 name: emoji.name,
                 text: native,
+                ...(emoji.skins.length > 1 && {
+                  skins: emoji.skins.map((skin) => skin.native),
+                }),
                 terms: [
                   emoji.id.toLowerCase(),
                   ...emoji.name.toLowerCase().split(/[-_\s]+/),
@@ -120,17 +131,20 @@ function semanticScore(query: string, terms: readonly string[]) {
 export async function searchEmoji(
   query: string,
   custom: readonly CustomEmoji[],
+  uses: Uses = unused,
   limit = Number.POSITIVE_INFINITY,
+  tone = defaultSkinTone(),
 ): Promise<readonly EmojiMatch[]> {
   const native = await loadStandard();
-  return rankEmoji(query, native, custom, limit);
+  return rankEmoji(query, native, custom, limit, tone, uses);
 }
 export function searchCustomEmoji(
   query: string,
   custom: readonly CustomEmoji[],
+  uses: Uses = unused,
   limit = Number.POSITIVE_INFINITY,
 ): readonly EmojiMatch[] {
-  return rankEmoji(query, [], custom, limit);
+  return rankEmoji(query, [], custom, limit, 1, uses);
 }
 /** The one match whose shortcode is the typed name; separator-insensitive ranking
  * ties (`:1:` for `-1`) and community/Unicode namesakes are not exact. */
@@ -144,6 +158,8 @@ function rankEmoji(
   native: readonly Standard[],
   custom: readonly CustomEmoji[],
   limit: number,
+  tone: number,
+  uses: Uses,
 ): readonly EmojiMatch[] {
   if (!normalize(query)) return [];
   const customCandidates: Standard[] = custom.map(({ shortcode, url }) => ({
@@ -171,16 +187,32 @@ function rankEmoji(
       .map(({ item }) => item)
       .filter((item) => !semanticIds.has(item.id)),
   ];
+  const literal = query.toLowerCase();
   const strong = rank(combined)
     .filter(({ tier }) => tier <= 1)
-    .map(({ item }) => item);
-  const promoted = new Set(strong.map((item) => item.id));
+    // The typed shortcode itself leads its separator-insensitive namesakes.
+    .map((match) =>
+      match.item.shortcode.toLowerCase() === literal
+        ? { ...match, tier: -1 }
+        : match,
+    );
+  const promoted = new Set(strong.map(({ item }) => item.id));
   const ranked = [
     ...strong,
-    ...combined.filter((item) => !promoted.has(item.id)),
-  ];
+    ...combined
+      .filter((item) => !promoted.has(item.id))
+      .map((item) => ({ item, tier: semanticIds.has(item.id) ? 2 : 3 })),
+  ]
+    // Within literal, exact, prefix, name or keyword, and fuzzy matches, the more often
+    // chosen emoji comes first; ties and unused emoji keep their query order.
+    .sort((a, b) => a.tier - b.tier || uses(b.item.id) - uses(a.item.id))
+    .map(({ item }) => item);
   const bounded = Number.isFinite(limit)
     ? ranked.slice(0, Math.max(0, limit))
     : ranked;
-  return bounded.map(({ terms: _terms, ...item }) => item);
+  // Insert in the picker's saved default tone, like a picker selection.
+  return bounded.map(({ terms: _terms, skins, ...item }) => ({
+    ...item,
+    text: skins?.[tone - 1] ?? item.text,
+  }));
 }

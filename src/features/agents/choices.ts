@@ -1,4 +1,5 @@
 import type { LocalAgent, LocalAgents } from "./local";
+import type { AgentExecutionLocation } from "./execution-location";
 import type { AgentLibrarySnapshot, createAgentLibrary } from "./library";
 import type { ChannelList } from "../relay/contracts";
 import { relayOrigin } from "../communities/destination";
@@ -30,8 +31,61 @@ export function sameCommunityAgents(
 
 type Choice = AgentLibrarySnapshot["identities"][number] & {
   managed: boolean;
+  /** Known from this community's local/hosted source, never presence. */
+  execution?: AgentExecutionLocation;
+  runtime?: string;
+  /** A managed agent's type on this machine; it grants no control. */
+  type?: string;
   managedName?: string;
+  /** Additional DM eligibility from completed owned hosted-agent records. */
+  messageable?: true;
+  /** Its Delete started here: kept for existing content, never offered. */
+  deleting?: true;
 };
+
+/** Whether a forward-looking choice (a mention, invite or recipient) must
+ * refuse this agent: its Delete started, whatever source still lists it. */
+export function deletingAgent(
+  choices: Pick<AgentChoicesSnapshot, "identities">,
+  pubkey: string,
+) {
+  return choices.identities.some(
+    (agent) => agent.pubkey === pubkey && agent.deleting,
+  );
+}
+
+/** Where an agent may be offered, added or addressed: the session's archives,
+ * its agent choices and its viewer. */
+export type ForwardScope = {
+  readonly agentChoices: {
+    snapshot(): Pick<AgentChoicesSnapshot, "identities">;
+  };
+  readonly archives?: Pick<IdentityArchives, "snapshot"> | undefined;
+  readonly viewer?: string | undefined;
+};
+
+/** The one forward-looking rule, by pubkey: an agent archived here or whose
+ * Delete started is never offered, added or addressed, whatever its profile
+ * says. Message history, author search and recovery read `identities`. */
+export function agentUnavailable(
+  scope: ForwardScope,
+  pubkey: string,
+  /** The owner's agents from their other communities: bringing one here
+   * takes it out of its archive, never out of a Delete. */
+  bringable?: ReadonlySet<string>,
+) {
+  return (
+    deletingAgent(scope.agentChoices.snapshot(), pubkey) ||
+    (archiveHides(scope.archives, pubkey, scope.viewer) &&
+      !bringable?.has(pubkey))
+  );
+}
+
+export function canMessageAgent(
+  agent: Pick<Choice, "managed" | "messageable">,
+) {
+  return agent.managed || agent.messageable === true;
+}
 type SelectionSource = boolean | "templates";
 type TemplateChoices = Pick<AgentLibrarySnapshot, "status" | "error"> & {
   identities: readonly Choice[];
@@ -117,6 +171,19 @@ export function createAgentChoices({
       for (const row of legacy.identities)
         choices.set(row.pubkey, { ...row, managed: false });
     if (local?.status === "ready")
+      for (const row of sameCommunityAgents(local.hosted ?? [], scope)) {
+        choices.set(row.pubkey, {
+          pubkey: row.pubkey,
+          name: row.name,
+          ...(row.picture ? { avatar: row.picture } : {}),
+          ...choices.get(row.pubkey),
+          managed: false,
+          messageable: true,
+          execution: "remote",
+          ...(row.runtime ? { runtime: row.runtime } : {}),
+        });
+      }
+    if (local?.status === "ready")
       for (const row of sameCommunityAgents(local.agents, scope)) {
         // Keep existing source names in serialized mentions; the shared name
         // resolver supplies native display labels independently.
@@ -127,7 +194,16 @@ export function createAgentChoices({
           ...(row.picture ? { avatar: row.picture } : {}),
           managed: true,
           managedName: row.name,
+          execution: row.execution ?? "local",
+          ...(row.type ? { type: row.type } : {}),
         });
+      }
+    // After every source, so none of them offers one whose Delete started.
+    if (local?.status === "ready")
+      for (const row of sameCommunityAgents(local.agents, scope)) {
+        const choice = choices.get(row.pubkey);
+        if (row.deleting && choice)
+          choices.set(row.pubkey, { ...choice, deleting: true });
       }
     const ready = legacy.status === "ready" || local?.status === "ready";
     const errors = [
@@ -170,7 +246,8 @@ export function createAgentChoices({
       definitions: legacy.status === "ready" ? legacy.definitions : [],
       identities: [...choices.values()],
       selectable: [...choices.values()].filter(
-        (agent) => !archiveHides(archives, agent.pubkey, viewer),
+        (agent) =>
+          !agent.deleting && !archiveHides(archives, agent.pubkey, viewer),
       ),
       archives: archive,
       ...(errors.length ? { error: errors.join(" ") } : {}),
@@ -210,13 +287,14 @@ export function createAgentChoices({
       if (signal.aborted) return;
       if (includeLegacy && library.snapshot().status === "idle")
         void library.refresh();
-      if (archive && archives?.snapshot().status === "idle")
-        void archives.ensure();
+      if (archive) void archives?.ensure();
     },
-    async refresh(source: SelectionSource = true) {
+    /** `fresh` rereads inventory even over a read already in flight, as after
+     * a change that read may predate. */
+    async refresh(source: SelectionSource = true, { fresh = false } = {}) {
       if (signal.aborted) return;
       await Promise.all([
-        usesLegacy(source) ? library.refresh() : undefined,
+        usesLegacy(source) ? library.refresh({ fresh }) : undefined,
         usesLocal(source) ? native?.refresh() : undefined,
         // Archive reads stay lazy; templates always need fresh evidence.
         source === "templates" || archives?.snapshot().status !== "idle"
@@ -250,6 +328,7 @@ export function templateAgentChoices(
   return agents.templates.identities.filter(
     (agent) =>
       (agent.managed || members.has(agent.pubkey)) &&
-      !archives.archived.includes(agent.pubkey),
+      !archives.archived.includes(agent.pubkey) &&
+      !deletingAgent(agents, agent.pubkey),
   );
 }

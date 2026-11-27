@@ -172,6 +172,7 @@ function session(scope: string) {
     {
       outboxStorage: { load: () => [], save() {} },
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         async update(change) {
           journal = change(journal);
           return journal;
@@ -258,6 +259,13 @@ Object.assign(window, {
         ),
       ]);
     },
+    joinUnrelatedChannel: () => {
+      const id = extraChannels[0] as string;
+      incoming?.([
+        roster(authority, id, [viewer.pubkey], 1_800_002_000),
+        metadata(authority, id, "Unrelated channel", 1_800_002_000),
+      ]);
+    },
     restoreAccess: () =>
       incoming?.([
         roster(authority, fixtureChannel, [viewer.pubkey], 1_800_000_001),
@@ -300,6 +308,7 @@ const relay: RelayData = {
     };
   },
   retry() {},
+  tryAgain() {},
   disconnect() {},
   clearCache: () => owner.clearCache(),
 };
@@ -348,6 +357,7 @@ function Fixture() {
         <OutboxStatus
           outbox={owner.session.outbox}
           profiling={owner.session.profiling}
+          memberAdditions={owner.session.memberAdditions}
         />
       )}
     </main>

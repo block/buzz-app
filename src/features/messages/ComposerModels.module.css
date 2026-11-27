@@ -1,8 +1,15 @@
+/* One interpolated position keeps the handle, fill and clamped label together. */
+@property --composer-effort-position {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 /* Base UI positions the group; each agent owns one floating card. */
 .popup {
   display: grid;
   gap: var(--space-1);
-  width: 23.5rem;
+  width: 26rem;
   max-width: min(var(--available-width), calc(100vw - var(--space-4)));
   max-height: var(--available-height);
   overflow: auto;
@@ -13,9 +20,10 @@
 .loading {
   --floating-inset: var(--space-2);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
   min-width: 0;
-  padding: var(--space-2);
+  padding: 0;
 }
 .model {
   display: grid;
@@ -23,10 +31,16 @@
   max-width: 100%;
 }
 .slider {
+  --composer-effort-position: var(--effort-progress);
   --thumb-width: var(--space-8);
   display: grid;
   min-width: 0;
   width: 100%;
+  transition: --composer-effort-position var(--duration-settle)
+    var(--easing-enter);
+  @starting-style {
+    --composer-effort-position: 0;
+  }
 }
 .control {
   position: relative;
@@ -57,7 +71,6 @@
   background: var(--affordance-prominent);
   overflow: hidden;
   transform: translateY(-50%);
-  transition: width var(--duration-settle) var(--easing-settle);
 }
 .slider[data-unknown] .indicator {
   visibility: hidden;
@@ -86,7 +99,6 @@
   height: var(--thumb-width);
   border: 0;
   border-radius: var(--radius-pill);
-  transition: inset-inline-start var(--duration-settle) var(--easing-settle);
 }
 .thumbFace {
   position: absolute;
@@ -124,21 +136,37 @@ html[data-keyboard-navigation] .thumb:focus-within {
     calc(
       var(--thumb-width) /
       2 +
-      var(--effort-progress) *
+      var(--composer-effort-position) *
       (100% - var(--thumb-width))
     ),
     calc(100% - var(--tether-half, 50%))
   );
   transform: translateX(-50%);
-  transition: left var(--duration-settle) var(--easing-settle);
 }
+/* Keep entrance transforms separate from the rubber track's transform. */
 .tetherSway {
   transform-origin: center bottom;
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  transition:
+    opacity var(--duration-state) var(--easing-enter)
+    calc(var(--duration-settle) - var(--duration-state)),
+    translate var(--duration-state) var(--easing-enter)
+    calc(var(--duration-settle) - var(--duration-state)),
+    scale var(--duration-state) var(--easing-enter)
+    calc(var(--duration-settle) - var(--duration-state));
+  @starting-style {
+    opacity: 0;
+    translate: 0 var(--space-1);
+    scale: 0.95;
+  }
 }
 .tetherSway button {
   max-width: 100%;
 }
 .level,
+.latest,
 .about,
 .fixedModel,
 .loading {
@@ -153,37 +181,35 @@ html[data-keyboard-navigation] .thumb:focus-within {
   color: var(--text-standard);
 }
 .level,
+.latest,
 .loading {
   color: var(--text-subtle);
+}
+/* A model id can be one long word: it wraps at its dots and underscores,
+   else anywhere, rather than scroll. */
+.latest {
+  overflow-wrap: anywhere;
 }
 .level {
   white-space: nowrap;
 }
 .fixedModel {
   display: flex;
-  gap: var(--space-2);
-  padding: var(--space-2);
-}
-.solo {
-  display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--affordance-subtle);
+  max-width: 100%;
 }
 .controls {
-  display: flex;
-  align-items: end;
-  gap: var(--space-2);
-}
-.controls > :first-child {
-  flex: 1;
   min-width: 0;
+  padding: 0 var(--space-2) var(--space-2);
 }
-.rail {
+.actions {
   margin: 0;
   flex-shrink: 0;
   display: flex;
-  flex-direction: column;
   padding: 0;
   border: 0;
 }
@@ -200,13 +226,16 @@ html[data-keyboard-navigation] .thumb:focus-within {
   height: calc(100% + 2 * var(--mesh-bleed));
   filter: blur(var(--mesh-blur));
 }
-.slider[data-pointer-moving] .thumb,
-.slider[data-pointer-moving] .indicator,
-.slider[data-pointer-moving] .tetherAnchor,
-html[data-keyboard-input] .slider * {
+.slider[data-pointer-moving],
+.slider[data-dragging] .tetherSway,
+html[data-keyboard-input] .slider,
+html[data-keyboard-input] .slider
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules preserves the shared Button class. */
+:where(.thumbFace, .tetherSway, :global(.buzz-button)) {
   transition: none;
 }
 @media (prefers-reduced-motion: reduce) {
+  .slider,
   .slider * {
     transition: none;
   }
@@ -225,4 +254,29 @@ html[data-keyboard-input] .slider * {
     background: ButtonFace;
     border: 1px solid ButtonText;
   }
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1);
+}
+.statusIcon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--space-5);
+  height: var(--space-5);
+  color: var(--text-subtle);
+}
+.statusCopy {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--text-body-sm--font-weight);
 }

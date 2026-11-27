@@ -130,6 +130,7 @@ function mount(
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -266,6 +267,7 @@ function live(agent: Key, first: RelayEvent) {
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -403,6 +405,7 @@ it("shows no owner for a known agent with no public profile", async () => {
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -548,6 +551,7 @@ it("follows an auth-only head restored from disk while the pane is mounted", asy
     snapshot: () => connection,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -585,19 +589,27 @@ it.each(["remove", "replace", "equal-time removal"])(
     const agent = keypair();
     const a = keypair();
     const b = keypair();
-    const first = timedProfile(agent, [auth(agent, a)], 100);
+    let first = timedProfile(agent, [auth(agent, a)], 100);
     let next = timedProfile(
       agent,
       mode === "replace" ? [auth(agent, b)] : [],
       101,
     );
     if (mode === "equal-time removal")
-      for (
-        let nonce = 0;
-        next.created_at !== 100 || next.id > first.id;
-        nonce++
-      )
+      // Both ids are uniform hashes, so redrawing both halves the miss chance
+      // each round. Redrawing only `next` against a fixed `first` left a
+      // 1/(k+1) tail of synchronous signing that once blocked a CI worker
+      // for 19 s. `first` gets a new id each round only because schnorr
+      // signing draws fresh auxiliary randomness for its auth tag.
+      for (let nonce = 0; ; nonce++) {
+        if (nonce === 64)
+          throw new Error(
+            "No lower-id equal-time removal in 64 rounds: auth() signatures no longer vary",
+          );
         next = timedProfile(agent, [["nonce", String(nonce)]], 100);
+        if (next.id < first.id) break;
+        first = timedProfile(agent, [auth(agent, a)], 100);
+      }
     const h = live(agent, first);
     await screen.findByRole("button", ownerButton(a));
     h.close();

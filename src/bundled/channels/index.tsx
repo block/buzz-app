@@ -1,16 +1,27 @@
-import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
+import type { SidebarContextProps } from "../../features/sidebar/contracts";
+import { useSyncExternalStore } from "react";
+import { MessagesSidebar } from "./MessagesSidebar";
+import { soloSidebarSource } from "./SoloSidebarSource";
+import { teamSidebarSource } from "./TeamSidebarSource";
+import { StartLinkedChat, canStartLinkedChatFrom } from "./StartLinkedChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
-import { PageTabs } from "./PageTabs";
-import { registerSharedSessions } from "./shared-sessions-panel";
+import { ConversationWorkspace, PageTabs } from "./PageTabs";
+import { registerCanvas } from "./canvas-panel";
+import { registerPins } from "./pins-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
-import { soloDraftTarget } from "../../features/channel-navigation/routes";
-import type { ArchiveShortcut } from "./ChannelsPage";
+import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
+import {
+  conversationRows,
+  inFieldOutsideComposer,
+  inTerminal,
+  stepConversation,
+} from "./conversation-rows";
 export const inject = [
   "pages",
   "relay",
@@ -20,9 +31,43 @@ export const inject = [
   "settingsCards",
   "agents",
   "shortcuts",
+  "communityReader",
+  "adminAccess",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  registerSharedSessions(ctx);
+  ctx.reflect.get("sidebarSections")?.registerContext?.({
+    id: "messages",
+    page: "buzz.channels/channels",
+    matches: () => true,
+    order: 100,
+    component: function MessagesContext(props: SidebarContextProps) {
+      const client = useSyncExternalStore(
+        ctx.communityReader.subscribe,
+        ctx.communityReader.snapshot,
+      );
+      return (
+        <MessagesSidebar
+          {...props}
+          relay={ctx.relay}
+          navigator={ctx.navigation}
+          agents={ctx.agents}
+          federatedIdentity={ctx.reflect.get("federatedIdentity")}
+          memberships={client.memberships}
+          chatIcons={ctx.conversation.chatIcons}
+          chatMenus={ctx.conversation.chatMenus}
+          sidebarSections={ctx.reflect.get("sidebarSections")}
+          sidebarScope={ctx.reflect.get("sidebarScope")}
+          sidebarRows={ctx.reflect.get("sidebarRows")}
+        >
+          {props.children}
+        </MessagesSidebar>
+      );
+    },
+  });
+  ctx.reflect.get("sidebarSections")?.registerSource?.(soloSidebarSource);
+  ctx.reflect.get("sidebarSections")?.registerSource?.(teamSidebarSource);
+  registerCanvas(ctx);
+  registerPins(ctx);
   ctx.conversation.registerCompletion({
     id: "channel-typeahead",
     title: "Channel",
@@ -33,6 +78,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   extensions.registerTabs((props) => (
     <PageTabs {...props} host={ctx} extensions={extensions} />
   ));
+  extensions.registerWorkspace(
+    (props) => (
+      <ConversationWorkspace {...props} host={ctx} extensions={extensions} />
+    ),
+    { slots: { headerActions: true, trailing: true, aside: true } },
+  );
   const relay = ctx.relay;
   const navigator = ctx.navigation;
   ctx.conversation.registerMessageAction({
@@ -40,9 +91,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Start Solo chat",
     placement: "menu",
     icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
-    matches: (message, session) =>
-      canStartLinkedChat(session, message.channelId) &&
-      (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
+    matches: canStartLinkedChatFrom,
     component: ({ message, session }) => (
       <StartLinkedChat
         session={session}
@@ -55,25 +104,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const panels = ctx.panels;
   const archive: ArchiveShortcut = {};
   ctx.shortcuts.register({
-    id: "new-conversation",
-    title: "New conversation",
-    binding: { key: "n", mod: true },
-    order: 10,
-    allowInEditable: true,
-    // Off Apple platforms, Ctrl+N is shell history in the terminal.
-    when: () =>
-      !!relay.snapshot().scope &&
-      (isApplePlatform(window.navigator.platform) ||
-        !document.activeElement?.closest(".xterm")),
-    run: () => {
-      const { scope } = relay.snapshot();
-      if (scope) void navigator.open(soloDraftTarget(scope));
-    },
-  });
-  ctx.shortcuts.register({
     id: "archive-chat",
     title: "Archive chat",
-    // Apple Mail's Archive. Elsewhere Ctrl is Mod, and Ctrl+Shift+A is Home.
+    // Apple Mail's Archive. Elsewhere Ctrl is Mod, and Ctrl+Shift+A opens Inbox unread.
     binding: isApplePlatform(globalThis.navigator?.platform ?? "")
       ? { key: "a", mod: true, ctrl: true }
       : { key: "e", mod: true, shift: true },
@@ -82,7 +115,54 @@ export const apply: PluginModule["apply"] = (ctx) => {
     when: () => !!archive.current?.available(),
     run: () => archive.current?.run(),
   });
+  // Slack's sidebar stepping. Terminals and text fields outside the composer
+  // keep Option+Arrow, and stepping is unavailable (the key is left alone)
+  // while the sidebar renders no rows.
+  const stepping = [
+    ["previous-conversation", "Previous conversation", "ArrowUp", false, 30],
+    ["next-conversation", "Next conversation", "ArrowDown", false, 31],
+    [
+      "previous-unread-conversation",
+      "Previous unread conversation",
+      "ArrowUp",
+      true,
+      32,
+    ],
+    [
+      "next-unread-conversation",
+      "Next unread conversation",
+      "ArrowDown",
+      true,
+      33,
+    ],
+  ] as const;
+  for (const [id, title, key, unreadOnly, order] of stepping)
+    ctx.shortcuts.register({
+      id,
+      title,
+      binding: { key, alt: true, shift: unreadOnly },
+      order,
+      allowInEditable: true,
+      when: () =>
+        !inTerminal() &&
+        !inFieldOutsideComposer() &&
+        conversationRows().length > 0,
+      run: () =>
+        stepConversation(key === "ArrowUp" ? "previous" : "next", unreadOnly),
+    });
+  const read: ReadShortcut = {};
+  ctx.shortcuts.register({
+    id: "mark-read",
+    title: "Mark conversation as read",
+    binding: { key: "Escape" },
+    order: 40,
+    allowInEditable: true,
+    // Escape in a terminal belongs to its shell.
+    when: () => !inTerminal() && !!read.current?.available(),
+    run: () => read.current?.run(),
+  });
   const agents = ctx.agents;
+  const membership = ctx.adminAccess.membership;
   ctx.settingsCards.register({
     id: "templates",
     title: "Channel templates",
@@ -96,21 +176,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "channels",
     title: "Channels",
     primary: true,
-    placement: "topbar",
+    placement: "dock",
     layout: "workspace",
     companion: true,
     handlesNavigation: true,
     route: { version: 1, validate: isChannelRoute },
     component: ({ companion, navigation }) => (
       <ChannelsPage
+        chatMenus={ctx.conversation.chatMenus}
         navigation={navigation}
         navigator={navigator}
         extensions={extensions}
         relay={relay}
         panels={panels}
         archive={archive}
+        read={read}
         companion={companion}
         agents={agents}
+        communities={ctx.communityReader}
+        membership={membership}
+        seen={ctx.reflect.get("seen")}
       />
     ),
   });

@@ -1,38 +1,44 @@
-import { memo, useEffect, useId, useLayoutEffect } from "react";
+import { memo, type ReactNode, useEffect, useId, useLayoutEffect } from "react";
 import {
   ConversationTimeline,
   useConversation,
 } from "../../features/conversation/Conversation";
+import type { ChannelTimelineProps } from "../../features/messages/ChannelTimeline";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelWindow } from "../../features/relay/react";
-import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
+import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
+import { headRecovering } from "../../features/relay/live-recovery";
 import { clientMetrics } from "../../features/developer/client-metrics";
+import { MessageLoading } from "../../features/messages/MessageLoading";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Channels.module.css";
 
 export const ChannelBody = memo(function ChannelBody({
   cached,
+  intro,
+  trailing,
+  latestRequest,
   viewer,
   revealMessageId,
+  openThreadRootId,
   inlineTarget,
   marksRead,
   holding,
   onOpenThread,
   navigation,
   onContentReady,
-  activityLane,
 }: {
   onContentReady?(channelId: string): void;
-  /** The channel composer follows this body and shows conversation activity. */
-  activityLane?: boolean | undefined;
   cached: boolean;
+  intro?: ReactNode;
+  trailing?: ChannelTimelineProps["trailing"];
+  latestRequest?: AbortSignal | undefined;
   viewer?: string | undefined;
   navigation?: PageNavigation | undefined;
   revealMessageId?: string | undefined;
+  openThreadRootId?: string | undefined;
   /** One exact visit to a loaded message, without a page navigation. */
-  inlineTarget?:
-    | Readonly<{ messageId: string; signal: AbortSignal }>
-    | undefined;
+  inlineTarget?: ChannelTimelineProps["inlineTarget"];
   /** False: viewing rows marks nothing read. */
   marksRead?: boolean | undefined;
   /** Show the loading notice instead of the list, as while a message is sought. */
@@ -54,7 +60,9 @@ export const ChannelBody = memo(function ChannelBody({
     clientMetrics.channelMounted(channelId);
     return () => clientMetrics.channelUnmounted(channelId);
   }, [channelId]);
-  const recoveryShown = useRecoveryShown(queries.recovery);
+  const headRecovers = useRecoveryOwns(queries, (live) =>
+    headRecovering(live, channelId),
+  );
   const newest = window.rows.at(-1)?.id;
   const settled = window.status === "ready" || window.status === "error";
   useEffect(() => {
@@ -83,12 +91,17 @@ export const ChannelBody = memo(function ChannelBody({
     )
       return;
     if (window.status === "ready") navigation?.complete({ status: "opened" });
+    // The timeline shows this failure in place, beside its own Retry.
     else if (!cached && window.status === "error")
-      navigation?.complete({ status: "failed", reason: "unavailable" });
+      navigation?.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
   }, [cached, navigation, window.status]);
-  // While the recovery notice shows, it owns the one Retry now; an empty
-  // failed timeline waits for it instead of offering a second Retry.
-  if (window.status === "error" && !window.rows.length && !recoveryShown)
+  // While recovery retries this timeline's head read, its notice is the one
+  // report, after the quiet delay; the empty timeline waits.
+  if (window.status === "error" && !window.rows.length && !headRecovers)
     return (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
@@ -106,16 +119,18 @@ export const ChannelBody = memo(function ChannelBody({
   if (holding || (window.status !== "ready" && !window.rows.length))
     return (
       <div
-        className={`${styles.empty} ${styles.timelinePlaceholder}`}
-        role="status"
+        className={`${styles.empty} ${styles.timelinePlaceholder} ${styles.timelineLoading}`}
         data-buzz-launch-pending={!cached ? "required" : undefined}
       >
-        Loading messages…
+        <MessageLoading />
       </div>
     );
   return (
     <ConversationTimeline
       continuityKey={continuityKey}
+      intro={intro}
+      trailing={trailing}
+      latestRequest={latestRequest}
       viewer={viewer}
       window={window}
       launchPending={
@@ -127,10 +142,10 @@ export const ChannelBody = memo(function ChannelBody({
       }
       {...(onOpenThread ? { onOpenThread } : {})}
       revealMessageId={revealMessageId}
+      openThreadRootId={openThreadRootId}
       inlineTarget={inlineTarget}
       marksRead={marksRead}
       navigation={navigation}
-      activityLane={activityLane}
       chatPresentation={solo}
       historyControl={solo ? "scroll" : "button"}
     />

@@ -97,10 +97,41 @@
       calc((var(--size-control-sm) - 1lh - 2px) / 2)
     );
   }
+  /* Mask placeholders read as a centered pattern; revealed values use ordinary type. */
+  .buzz-input[data-appearance="masked"] {
+    @apply text-body-lg;
+    text-align: center;
+    letter-spacing: 0.2em;
+    text-indent: 0.2em;
+    user-select: none;
+    color: var(--text-subtle);
+  }
+  .buzz-input[data-appearance="masked"] .buzz-select-value {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: safe center;
+    gap: var(--space-1);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .buzz-select-prefix {
+    @apply text-body-sm;
+    flex-shrink: 0;
+    letter-spacing: normal;
+    text-indent: 0;
+  }
+  .buzz-input[data-appearance="masked"] .buzz-select-value > :last-child {
+    min-width: 0;
+    overflow: hidden;
+  }
   .buzz-textarea {
     min-height: 6rem;
     padding: var(--space-control-inset);
     resize: vertical;
+  }
+  .buzz-input[data-text-size="large"] {
+    @apply text-body-lg;
   }
   /* Agent instructions intentionally use one outlined boundary and no inset fill. */
   .buzz-textarea:where([data-appearance="outlined"]) {
@@ -139,10 +170,10 @@
   }
   /* Borderless titles have no perimeter to stroke; their message carries
      validation. Keyboard focus still draws its cue. */
-  .buzz-input:is([data-appearance="title"], [data-appearance="heading"]):is(
-    [data-invalid],
-    [aria-invalid="true"]
-  ) {
+  :is(.buzz-input, .buzz-textarea):is(
+    [data-appearance="title"],
+    [data-appearance="heading"]
+  ):is([data-invalid], [aria-invalid="true"]) {
     --border: transparent;
   }
   .buzz-input:disabled,
@@ -156,6 +187,9 @@
     display: grid;
     gap: var(--space-3);
   }
+  .buzz-radio-group[data-size="sm"] {
+    gap: 0;
+  }
   .buzz-choice {
     display: flex;
     align-items: center;
@@ -166,6 +200,10 @@
   .buzz-choice > span {
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+  .buzz-choice[data-size="sm"] {
+    min-height: var(--size-control-sm);
+    gap: var(--space-2);
   }
   .buzz-choice:is([data-variant="card"], [data-variant="tile"]) {
     padding: var(--space-4);
@@ -203,6 +241,11 @@
   .buzz-checkbox {
     border-radius: var(--space-1);
   }
+  .buzz-radio[data-size="sm"],
+  .buzz-checkbox[data-size="sm"] {
+    width: var(--space-4);
+    height: var(--space-4);
+  }
   .buzz-radio[data-checked],
   .buzz-checkbox:is([data-checked], [data-indeterminate]) {
     background: var(--affordance-prominent);
@@ -229,7 +272,21 @@
     position: relative;
     justify-content: center;
   }
-  .buzz-radio[data-variant="tile"] {
+  .buzz-choice[data-variant="row"] {
+    position: relative;
+    padding: var(--space-2) var(--space-3);
+    padding-inline-end: var(--size-control);
+    border-radius: var(--radius-control);
+  }
+  .buzz-choice[data-variant="row"]:has([data-checked]) {
+    background: var(--interaction-selected);
+    color: var(--interaction-selected-text);
+  }
+  .buzz-choice[data-variant="row"]:not(:has([data-disabled])):hover {
+    background: var(--interaction-hover);
+  }
+  .buzz-radio[data-variant="tile"],
+  .buzz-radio[data-variant="row"] {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -237,6 +294,12 @@
     border: 0;
     border-radius: inherit;
     background: transparent;
+  }
+  .buzz-radio-check {
+    position: absolute;
+    inset-inline-end: var(--space-3);
+    display: flex;
+    color: var(--interaction-selected-text);
   }
   html[data-keyboard-navigation]
     :is(
@@ -289,10 +352,21 @@
     inline-size: var(--space-5);
     block-size: var(--space-5);
   }
+  .buzz-select[data-appearance="link"] .buzz-button {
+    @apply text-body-sm;
+    align-items: flex-end;
+    min-height: var(--space-6);
+    padding: 0;
+  }
   /* Artwork provides its own visual inset; keep its edge closer to the frame. */
   .buzz-select .buzz-button:has(.buzz-select-leading),
   .buzz-select .buzz-select-trigger:has(.buzz-select-leading) {
     padding-inline-start: var(--space-2);
+  }
+  /* Give the trailing caret more breathing room than the leading artwork. */
+  .buzz-select[data-variant="compact"]:not([data-appearance="link"])
+  .buzz-button:has(.buzz-select-leading) {
+    padding-inline-end: var(--space-3);
   }
   .buzz-select-value {
     min-width: 0;
@@ -321,7 +395,8 @@
     max-width: 100%;
     color: var(--text-standard);
   }
-  .buzz-select[data-variant="compact"] .buzz-button:disabled {
+  .buzz-select[data-variant="compact"]
+    .buzz-button:is(:disabled, [data-disabled]):not([data-loading]) {
     color: var(--text-unavailable);
   }
   .buzz-select[data-variant="compact"] .buzz-button-label {
@@ -343,6 +418,12 @@
       calc(100vw - var(--space-6))
     );
     overflow-wrap: anywhere;
+  }
+  /* Options with descriptions wrap within a menu's width, as menus do. */
+  .buzz-select-popup[data-variant="compact"]:has(
+    .buzz-select-option-description
+  ) {
+    max-width: min(20rem, var(--available-width), calc(100vw - var(--space-4)));
   }
   .buzz-select-indicator {
     flex-shrink: 0;
@@ -371,6 +452,22 @@
   .buzz-select-popup[data-variant="field"] {
     width: var(--anchor-width);
     overflow-wrap: anywhere;
+  }
+  /* Roughly four avatar-and-detail rows plus search. The viewport may make
+     the list shorter; keep search fixed and every result scrollable. */
+  .buzz-select-popup[data-combobox-size="compact"] {
+    display: flex;
+    flex-direction: column;
+    max-height: min(20rem, var(--available-height));
+    overflow: hidden;
+  }
+  .buzz-select-popup[data-combobox-size="compact"] > :not([role="listbox"]) {
+    flex-shrink: 0;
+  }
+  .buzz-select-popup[data-combobox-size="compact"] > [role="listbox"] {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .buzz-combobox-empty:not(:empty) {
     padding: var(--space-2) var(--space-3);
@@ -401,6 +498,11 @@
   }
   .buzz-select-value[data-placeholder] {
     color: var(--text-metadata);
+  }
+  .buzz-select
+    :is(:disabled, [data-disabled])
+    .buzz-select-value[data-placeholder] {
+    color: inherit;
   }
 
   .buzz-input-group {
@@ -433,13 +535,22 @@
     padding-inline: 0;
     background: transparent;
   }
+  .buzz-input-group[data-wrap] {
+    flex-wrap: wrap;
+    padding-block: var(--space-2);
+  }
+  .buzz-input-group[data-wrap] > .buzz-input {
+    flex-basis: min(12ch, 100%);
+    min-height: 1lh;
+    padding-block: 0;
+  }
   .buzz-input-leading {
     display: flex;
     flex-shrink: 0;
   }
   .buzz-input-trailing {
     display: flex;
-    width: var(--size-control-sm);
+    min-width: var(--size-control-sm);
     flex-shrink: 0;
   }
   .buzz-input-group:has(input:is([data-invalid], [aria-invalid="true"])) {
@@ -488,7 +599,7 @@
     border-radius: 0;
     background: transparent;
   }
-  .buzz-input[data-appearance="heading"] {
+  :is(.buzz-input, .buzz-textarea)[data-appearance="heading"] {
     display: block;
     @apply text-heading;
     min-height: 0;
@@ -504,14 +615,17 @@
   .buzz-input:where(
     :not([data-appearance="title"], [data-appearance="heading"])
   ):where(:focus, [data-popup-open]),
-  .buzz-textarea:where(:focus),
+  .buzz-textarea:where(:not([data-appearance="heading"])):where(:focus),
   .buzz-input-group:where(:focus-within) {
     --border: var(--interaction-border);
   }
   /* Title edits stay visually inline on pointer/autofocus entry. Keep a
      perimeter cue when navigating these borderless inputs with the keyboard. */
   html[data-keyboard-navigation]
-  .buzz-input:is([data-appearance="title"], [data-appearance="heading"]):focus {
+  :is(.buzz-input, .buzz-textarea):is(
+    [data-appearance="title"],
+    [data-appearance="heading"]
+  ):focus {
     --border: var(--interaction-border);
   }
   html[data-keyboard-navigation]

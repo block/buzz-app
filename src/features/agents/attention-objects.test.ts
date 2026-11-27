@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventWatch, TimerWatch } from "./attention";
 import {
+  AGENT_BYTES,
   ABSENT,
   checkedWrite,
   interestIds,
@@ -137,6 +138,49 @@ describe("checked writes", () => {
     );
   });
 
+  it("lets an internal helper move a watch with its current owner's token", async () => {
+    const start = record();
+    const expected = (await show(start, "watch/asks", now)).expected_state;
+    const next = watch({ interest_id: "other" });
+    const options = { expected, interest: "triage", move: true };
+    const moved = await checkedWrite(start, "watch/asks", next, options, now);
+    expect(moved.attention["watch/asks"]?.value).toEqual(next);
+    await expect(
+      checkedWrite(
+        start,
+        "watch/asks",
+        next,
+        { ...options, interest: "other" },
+        now,
+      ),
+    ).rejects.toThrow(/^wrong-scope:/);
+    await expect(
+      checkedWrite(moved, "watch/asks", next, options, now),
+    ).rejects.toThrow(/^wrong-scope:/);
+    const edited = await write(start, "watch/asks", watch({ name: "Edited" }));
+    await expect(
+      checkedWrite(edited, "watch/asks", next, options, now),
+    ).rejects.toThrow(/^conflict:/);
+    await expect(
+      checkedWrite(
+        start,
+        "watch/asks",
+        watch({ interest_id: "missing" }),
+        options,
+        now,
+      ),
+    ).rejects.toThrow(/^not-found:/);
+    await expect(
+      checkedWrite(
+        start,
+        "watch/asks",
+        timer({ interest_id: "other" }),
+        options,
+        now,
+      ),
+    ).rejects.toThrow(/^invalid-operation:.*type/);
+  });
+
   it("remove an Interest only after its watches", async () => {
     const start = record();
     await expect(write(start, "interest/triage", null)).rejects.toThrow(
@@ -145,6 +189,24 @@ describe("checked writes", () => {
     const bare = await write(start, "watch/asks", null);
     const gone = await write(bare, "interest/triage", null);
     expect(interestIds(gone)).toEqual(["other"]);
+  });
+
+  it("keep an Interest whose only remaining watch this app skipped", async () => {
+    const bare = await write(record(), "watch/asks", null);
+    const value: AgentRecord = {
+      ...bare,
+      skipped: {
+        "watch/over": {
+          slug: "watch/over",
+          value: timer(),
+          modifiedAt: 1,
+          problem: "Over the limit",
+        },
+      },
+    };
+    await expect(write(value, "interest/triage", null)).rejects.toThrow(
+      /^invalid-operation: .*over.*your owner can remove/,
+    );
   });
 
   it("report the format's own problems as invalid", async () => {
@@ -180,10 +242,10 @@ describe("checked writes", () => {
   it("cap the attention one agent can store", async () => {
     let value = record();
     const long = "x".repeat(16_000);
-    for (let index = 0; index < 16; index++)
+    for (let index = 0; index < Math.floor(AGENT_BYTES / 16_100); index++)
       value = await write(value, `interest/i${index}`, interest(long));
     await expect(write(value, "interest/more", interest(long))).rejects.toThrow(
-      /^invalid: Your attention would take more than 256 KB/,
+      `invalid: Your attention would take more than ${AGENT_BYTES / 1024} KB`,
     );
     // Removing is always allowed.
     value = await write(value, "interest/i0", null);
@@ -210,6 +272,27 @@ describe("checked writes", () => {
 });
 
 describe("summaries", () => {
+  it("includes source names in summaries and searches", async () => {
+    const value = await write(record(), "watch/ci", {
+      type: "source",
+      provider: "example/command",
+      interest_id: "triage",
+      enabled: true,
+      name: "Release checks",
+      config: {},
+    });
+    expect(
+      watchSummaries(value, { type: "source", search: "Release checks" }, now),
+    ).toEqual([
+      {
+        id: "ci",
+        interest_id: "triage",
+        name: "Release checks",
+        type: "source",
+        status: "enabled",
+      },
+    ]);
+  });
   it("give each watch's status and filter by type, status and search", async () => {
     let value = record();
     value = await write(value, "watch/once", timer());

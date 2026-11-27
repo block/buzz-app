@@ -3,6 +3,9 @@ use bech32::{primitives::decode::CheckedHrpstring, Bech32};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use zeroize::Zeroizing;
 
+/// NIP-AR artifact revisions.
+const ARTIFACT_KIND: u16 = 45010;
+
 /// NIP-44 v2: 65,535 bytes pad to 65,536 with a two-byte prefix;
 /// base64(1 version + 32 nonce + 2 length + 65,536 padded + 32 MAC)
 /// is exactly 87,472 bytes, the native reader cap. At 65,536 the prefix grows
@@ -102,7 +105,9 @@ impl Secret {
     /// A plain signed event; callers bound the kind and size. A channel event
     /// (one with an `h` tag) gets the `ms` tag the app's own outbox adds, read
     /// from the same clock as `created_at`, so the timeline orders it by
-    /// millisecond instead of placing it at the start of its second.
+    /// millisecond instead of placing it at the start of its second. An
+    /// artifact revision (45010) is state, not a timeline entry, and its
+    /// deletion envelope allows no other tags, so it gets none.
     pub(crate) fn signed(
         &self,
         kind: u16,
@@ -113,9 +118,10 @@ impl Secret {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "System clock is unavailable")?;
         tags.retain(|tag| tag.first().map(String::as_str) != Some("ms"));
-        if tags
-            .iter()
-            .any(|tag| tag.first().map(String::as_str) == Some("h"))
+        if kind != ARTIFACT_KIND
+            && tags
+                .iter()
+                .any(|tag| tag.first().map(String::as_str) == Some("h"))
         {
             tags.push(vec!["ms".into(), now.subsec_millis().to_string()]);
         }
@@ -144,7 +150,7 @@ impl Secret {
         let created_at = previous.map_or(created_at, |at| created_at.max(at.saturating_add(1)));
         self.sign_event_at(kind, content, tags, created_at)
     }
-    fn sign_event_at(
+    pub(crate) fn sign_event_at(
         &self,
         kind: u16,
         content: String,
@@ -172,57 +178,39 @@ impl Secret {
         )
     }
 
-    /// A single NIP-AE owner-addressed memory event. Never return key material.
+    /// A single NIP-AE owner-addressed memory event; without a body, the
+    /// tombstone that deletes a memory entry. Never return key material.
     pub fn memory_event(
         &self,
         owner: &str,
         slug: &str,
-        body: &str,
+        body: Option<&str>,
         created_at: u64,
     ) -> Result<serde_json::Value> {
-        use hmac::{Hmac, Mac};
-        use nostr::key::{PublicKey as NostrPublicKey, SecretKey as NostrSecretKey};
         use nostr::nips::nip44::v2;
-        use nostr::nips::nip44::v2::ConversationKey;
-        use sha2::Sha256;
         if !crate::config::canonical_key(owner)
-            || !(slug == "core"
-                || (slug.starts_with("mem/")
-                    && slug.len() <= 255
-                    && slug[4..].split('/').all(|part| {
-                        !part.is_empty()
-                            && part.len() <= 64
-                            && part.bytes().enumerate().all(|(i, byte)| {
-                                if i == 0 {
-                                    byte.is_ascii_lowercase() || byte.is_ascii_digit()
-                                } else {
-                                    byte.is_ascii_lowercase()
-                                        || byte.is_ascii_digit()
-                                        || byte == b'_'
-                                        || byte == b'-'
-                                }
-                            })
-                    })))
-            || body.len() > 64 * 1024
+            || !memory_slug(slug)
+            || body.is_some_and(|body| body.len() > 64 * 1024)
         {
             return Err("Invalid snapshot memory entry".into());
         }
-        let private =
-            NostrSecretKey::from_slice(self.bytes.as_ref()).map_err(|_| "Invalid agent key")?;
-        let public = NostrPublicKey::from_hex(owner).map_err(|_| "Invalid memory owner")?;
-        let conversation =
-            ConversationKey::derive(&private, &public).map_err(|_| "Invalid memory owner")?;
-        let mut mac = Hmac::<Sha256>::new_from_slice(conversation.as_bytes())
-            .map_err(|_| "Invalid memory address")?;
-        mac.update(b"agent-memory/v1/d-tag\0");
-        mac.update(slug.as_bytes());
-        let address = format!("{:x}", mac.finalize().into_bytes());
-        let plaintext = if slug == "core" {
-            serde_json::json!({"slug":slug,"profile":body})
-        } else {
-            serde_json::json!({"slug":slug,"value":body})
+        let conversation = self
+            .conversation(owner)
+            .map_err(|_| "Invalid memory owner")?;
+        let address = memory_address(&conversation, slug)?;
+        let plaintext = match body {
+            // NIP-AE defines no tombstone for core.
+            None if slug == "core" => return Err("core cannot be deleted".into()),
+            None => serde_json::json!({"slug":slug,"value":null}),
+            Some(body) => {
+                validate_snapshot_memory_envelope(slug, body)?;
+                if slug == "core" {
+                    serde_json::json!({"slug":slug,"profile":body})
+                } else {
+                    serde_json::json!({"slug":slug,"value":body})
+                }
+            }
         };
-        validate_snapshot_memory_envelope(slug, body)?;
         let mut nonce = [0; 32];
         getrandom::fill(&mut nonce).map_err(|_| "Could not encrypt snapshot memory")?;
         let encrypted = base64::Engine::encode(
@@ -236,6 +224,49 @@ impl Secret {
             vec![vec!["d".into(), address], vec!["p".into(), owner.into()]],
             created_at,
         )
+    }
+
+    /// The NIP-AE `d` tag of memory entry `slug` addressed to `peer`.
+    pub fn memory_d_tag(&self, peer: &str, slug: &str) -> Result<String> {
+        if !memory_slug(slug) {
+            return Err("Invalid memory slug".into());
+        }
+        memory_address(&self.conversation(peer)?, slug)
+    }
+    /// NIP-44 v2 encryption from this key to `peer`.
+    pub fn nip44_encrypt(&self, peer: &str, plaintext: &str) -> Result<String> {
+        use nostr::nips::nip44::v2;
+        let conversation = self.conversation(peer)?;
+        let mut nonce = [0; 32];
+        getrandom::fill(&mut nonce).map_err(|_| "Could not encrypt")?;
+        let payload = v2::encrypt_to_bytes_with_nonce(&conversation, plaintext.as_bytes(), nonce)
+            .map_err(|_| "Could not encrypt")?;
+        Ok(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            payload,
+        ))
+    }
+    /// NIP-44 v2 decryption of a payload `peer` encrypted to this key.
+    pub fn nip44_decrypt(&self, peer: &str, payload: &str) -> Result<Zeroizing<String>> {
+        use nostr::nips::nip44::v2;
+        let conversation = self.conversation(peer)?;
+        let payload = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload)
+            .map_err(|_| "Invalid encrypted payload")?;
+        let plaintext = Zeroizing::new(
+            v2::decrypt_to_bytes(&conversation, &payload)
+                .map_err(|_| "Invalid encrypted payload")?,
+        );
+        String::from_utf8(plaintext.to_vec())
+            .map(Zeroizing::new)
+            .map_err(|_| "Invalid encrypted payload".into())
+    }
+    fn conversation(&self, peer: &str) -> Result<nostr::nips::nip44::v2::ConversationKey> {
+        use nostr::key::{PublicKey as NostrPublicKey, SecretKey as NostrSecretKey};
+        let private =
+            NostrSecretKey::from_slice(self.bytes.as_ref()).map_err(|_| "Invalid agent key")?;
+        let public = NostrPublicKey::from_hex(peer).map_err(|_| "Invalid peer public key")?;
+        nostr::nips::nip44::v2::ConversationKey::derive(&private, &public)
+            .map_err(|_| "Invalid peer public key".into())
     }
 
     pub fn parse(text: &str, expected: &str) -> Result<Self> {
@@ -265,6 +296,13 @@ impl Secret {
                 return Err("Agent key is malformed".into());
             }
         }
+        Self::checked(bytes, expected)
+    }
+    /// The key `bytes` hold, which must be `expected`'s.
+    pub fn from_bytes(bytes: &[u8; 32], expected: &str) -> Result<Self> {
+        Self::checked(Zeroizing::new(*bytes), expected)
+    }
+    fn checked(bytes: Zeroizing<[u8; 32]>, expected: &str) -> Result<Self> {
         let mut key = SecretKey::from_byte_array(*bytes).map_err(|_| "Agent key is malformed")?;
         let pubkey = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key)
             .x_only_public_key()
@@ -300,6 +338,39 @@ pub trait Credentials: Send + Sync {
     fn add(&self, id: &str, key: &Secret) -> Result<()>;
     /// Remove only this app's exact saved key. Absence is successful for retry.
     fn delete(&self, id: &str, pubkey: &str) -> Result<()>;
+}
+
+/// NIP-AE's slug grammar: `core`, or `mem/` and lowercase path segments.
+fn memory_slug(slug: &str) -> bool {
+    slug == "core"
+        || (slug.starts_with("mem/")
+            && slug.len() <= 255
+            && slug[4..].split('/').all(|part| {
+                !part.is_empty()
+                    && part.len() <= 64
+                    && part.bytes().enumerate().all(|(i, byte)| {
+                        if i == 0 {
+                            byte.is_ascii_lowercase() || byte.is_ascii_digit()
+                        } else {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || byte == b'_'
+                                || byte == b'-'
+                        }
+                    })
+            }))
+}
+/// NIP-AE addressing: HMAC-SHA256 of the slug under the conversation key.
+fn memory_address(
+    conversation: &nostr::nips::nip44::v2::ConversationKey,
+    slug: &str,
+) -> Result<String> {
+    use hmac::{Hmac, Mac};
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(conversation.as_bytes())
+        .map_err(|_| "Invalid memory address")?;
+    mac.update(b"agent-memory/v1/d-tag\0");
+    mac.update(slug.as_bytes());
+    Ok(format!("{:x}", mac.finalize().into_bytes()))
 }
 
 /// V1 starts only unrestricted, verified NIP-OA credentials. Conditional grants
@@ -376,7 +447,9 @@ mod memory_tests {
             ("core", "remember café", "profile"),
             ("mem/one", "value", "value"),
         ] {
-            let event = agent.memory_event(owner.pubkey(), slug, body, 100).unwrap();
+            let event = agent
+                .memory_event(owner.pubkey(), slug, Some(body), 100)
+                .unwrap();
             assert_eq!(event["kind"], 30174);
             assert_eq!(event["pubkey"], agent.pubkey());
             assert_eq!(event["tags"][1], serde_json::json!(["p", owner.pubkey()]));
@@ -400,6 +473,18 @@ mod memory_tests {
             assert!(!event.to_string().contains(body));
             assert!(!event.to_string().contains("nsec1"));
         }
+        let tombstone = agent
+            .memory_event(owner.pubkey(), "mem/one", None, 101)
+            .unwrap();
+        let ciphertext = Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            tombstone["content"].as_str().unwrap(),
+        )
+        .unwrap();
+        let decoded: serde_json::Value =
+            serde_json::from_slice(&v2::decrypt_to_bytes(&conversation, &ciphertext).unwrap())
+                .unwrap();
+        assert_eq!(decoded, serde_json::json!({"slug":"mem/one","value":null}));
     }
     #[test]
     fn invalid_memory_never_builds_an_event() {
@@ -407,11 +492,14 @@ mod memory_tests {
         let owner = Secret::generate().unwrap();
         for slug in ["mem/", "mem/../x", "mem/UPPER", "other"] {
             assert!(agent
-                .memory_event(owner.pubkey(), slug, "text", 100)
+                .memory_event(owner.pubkey(), slug, Some("text"), 100)
                 .is_err());
         }
         assert!(agent
-            .memory_event(owner.pubkey(), "core", &"x".repeat(65537), 100)
+            .memory_event(owner.pubkey(), "core", Some(&"x".repeat(65537)), 100)
+            .is_err());
+        assert!(agent
+            .memory_event(owner.pubkey(), "core", None, 100)
             .is_err());
     }
 }

@@ -1,12 +1,19 @@
 import { expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
-import { keypair, roster, signed } from "./testing";
+import { keypair, ownedProfile, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
-import type { RelayEvent } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import { SOLO_LABEL } from "../solo/labels";
 
-function setup() {
+type ViewerRole = "owner" | "admin" | "member";
+
+function setup(
+  visibility: "private" | "public" = "private",
+  initialRole: ViewerRole = "member",
+  ownership: "viewer" | "other" | "missing" = "viewer",
+) {
+  let viewerRole = initialRole;
   const viewer = keypair(),
     relay = keypair(),
     agent = keypair();
@@ -18,6 +25,7 @@ function setup() {
   let denied = false;
   let foreignRoster = false;
   let libraryFailure = false;
+  let profileResponse: "missing" | "unavailable" | undefined;
   let afterPublish = () => {};
   let omitMembership = false;
   const archived: string[] = [];
@@ -36,20 +44,48 @@ function setup() {
     }
     return signed(viewer, template);
   });
-  const secondAgent = keypair().pubkey;
+  const second = keypair(),
+    other = keypair();
+  const secondAgent = second.pubkey;
+  let agentProfile =
+    ownership === "missing"
+      ? Promise.resolve(
+          signed(agent, {
+            kind: 0,
+            tags: [],
+            content: JSON.stringify({ owner: viewer.pubkey }),
+          }),
+        )
+      : ownedProfile(agent, ownership === "viewer" ? viewer : other);
+  const secondProfile = ownedProfile(second, other);
   const meta = (id: string, type: string, extra: string[][] = []) =>
     signed(relay, {
       kind: 39000,
       content: "",
       tags: [["d", id], ["t", type], ["name", id], ...extra],
     });
+  const membership = (id: string, keys: string[]) =>
+    signed(relay, {
+      kind: 39002,
+      created_at: clock,
+      content: "",
+      tags: [
+        ["d", id],
+        ...keys.map((key) =>
+          key === viewer.pubkey ? ["p", key, "", viewerRole] : ["p", key],
+        ),
+      ],
+    });
   const publish = vi.fn(async (_event: RelayEvent) => {
     const target = _event.tags.find(([name]) => name === "h")?.[1];
     if (denied) throw new PublishRejected("Only channel admins can add agents");
+    const added = _event.tags.flatMap(([tag, key]) =>
+      tag === "p" && key ? [key] : [],
+    );
     if (!omitMembership && target === parent)
-      members = [viewer.pubkey, agent.pubkey];
+      members = [...new Set([...members, ...added])];
     if (!omitMembership && target === child)
-      childMembers = [viewer.pubkey, agent.pubkey];
+      childMembers = [...new Set([...childMembers, ...added])];
     clock++;
     afterPublish();
   });
@@ -76,6 +112,11 @@ function setup() {
       },
       query: async (filters) => {
         if (
+          profileResponse === "unavailable" &&
+          filters.some((filter) => filter.kinds?.includes(0))
+        )
+          throw new Error("Profile read unavailable");
+        if (
           holdRoster &&
           filters.some(
             (filter) =>
@@ -95,6 +136,9 @@ function setup() {
             roster(agent, child, [viewer.pubkey, agent.pubkey], clock + 1),
           ];
         const events = [
+          ...(profileResponse === "missing"
+            ? []
+            : [eventDto(await agentProfile), eventDto(await secondProfile)]),
           signed(relay, {
             kind: 13535,
             created_at: clock,
@@ -102,9 +146,13 @@ function setup() {
             tags: [["-"], ...archived.map((key) => ["p", key])],
           }),
           meta(parent, "stream"),
-          meta(child, "stream", [["private"], ["t", SOLO_LABEL]]),
-          roster(relay, parent, members, clock),
-          roster(relay, child, childMembers, clock),
+          meta(child, "stream", [
+            [visibility],
+            ["t", SOLO_LABEL],
+            ["join_role", "guest"],
+          ]),
+          membership(parent, members),
+          membership(child, childMembers),
         ];
         return events.filter((event) =>
           filters.some((filter) => matchesEvent(event, filter)),
@@ -119,6 +167,27 @@ function setup() {
     child,
     agent: agent.pubkey,
     secondAgent,
+    async transferAgent(receive = true) {
+      const profile = await ownedProfile(agent, other);
+      agentProfile = Promise.resolve(
+        signed(agent, {
+          kind: 0,
+          tags: profile.tags,
+          content: profile.content,
+          created_at: clock + 10,
+        }),
+      );
+      if (!receive) return;
+      await owner.session.read(
+        [{ kinds: [0], authors: [agent.pubkey], limit: 1 }],
+        { fresh: true },
+      );
+      expect(
+        owner.session.profiles
+          .event?.(agent.pubkey)
+          ?.tags.find(([tag]) => tag === "auth")?.[1],
+      ).toBe(other.pubkey);
+    },
     archive: (key: string) => {
       clock++;
       archived.push(key);
@@ -128,6 +197,9 @@ function setup() {
     },
     failLibraryRefresh: () => {
       libraryFailure = true;
+    },
+    profileResponse: (response: "missing" | "unavailable") => {
+      profileResponse = response;
     },
     afterPublish: (callback: () => void) => {
       afterPublish = callback;
@@ -157,6 +229,10 @@ function setup() {
       return signingRequested;
     },
     releaseSigning: () => releaseSigning?.(),
+    setViewerRole: (role: ViewerRole) => {
+      viewerRole = role;
+      clock++;
+    },
     setDenied: (value: boolean) => {
       denied = value;
     },
@@ -174,36 +250,177 @@ function setup() {
   };
 }
 
-it("adds an outside agent once and confirms its membership", async () => {
-  const test = setup();
+it.each(["other", "missing"] as const)(
+  "adds a selectable agent as Bot when its signed ownership is %s",
+  async (ownership) => {
+    const test = setup("private", "owner", ownership);
+    try {
+      await test.ready();
+      await test.owner.session.channelWrites.addAgents(test.child, [
+        test.agent,
+      ]);
+      expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
+        "role",
+        "bot",
+      ]);
+    } finally {
+      test.owner.dispose();
+    }
+  },
+);
+
+it("refreshes cached ownership before choosing a new Solo agent's role", async () => {
+  const test = setup("private", "owner");
   try {
     await test.ready();
-    await test.owner.session.channelWrites.addAgents(test.child, [
-      test.agent,
-      test.agent,
-    ]);
-    expect(test.publish).toHaveBeenCalledOnce();
-    expect(test.publish.mock.calls[0]?.[0]).toMatchObject({
-      kind: 9000,
-      tags: expect.arrayContaining([
-        ["h", test.child],
-        ["p", test.agent],
-      ]),
-    });
-    expect(
-      test.publish.mock.calls[0]?.[0].tags.some(([name]) => name === "role"),
-    ).toBe(false);
-    expect(
-      test.owner.session.channels
-        .list()
-        .channels.find((item) => item.id === test.child)?.members,
-    ).toContain(test.agent);
+    await test.owner.session.profiles.ensure([test.agent]);
+    const cached = test.owner.session.profiles.event?.(test.agent);
+    expect(cached).toBeDefined();
+    await test.transferAgent(false);
+    expect(test.owner.session.profiles.event?.(test.agent)).toBe(cached);
     await test.owner.session.channelWrites.addAgents(test.child, [test.agent]);
     expect(test.publish).toHaveBeenCalledOnce();
+    expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
+      "role",
+      "bot",
+    ]);
+    expect(test.owner.session.profiles.event?.(test.agent)).not.toBe(cached);
   } finally {
     test.owner.dispose();
   }
 });
+
+it.each(["missing", "unavailable"] as const)(
+  "does not use cached ownership for a later addition when the profile read is %s",
+  async (response) => {
+    const test = setup("private", "owner");
+    try {
+      await test.ready();
+      await test.owner.session.profiles.ensure([test.agent]);
+      test.profileResponse(response);
+      const adding = test.owner.session.channelWrites.addAgents(test.child, [
+        test.agent,
+      ]);
+      if (response === "unavailable") {
+        await expect(adding).rejects.toThrow("Profile read unavailable");
+        expect(test.publish).not.toHaveBeenCalled();
+      } else {
+        await adding;
+        expect(test.publish).toHaveBeenCalledOnce();
+        expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
+          "role",
+          "bot",
+        ]);
+      }
+    } finally {
+      test.owner.dispose();
+    }
+  },
+);
+
+it("chooses each new agent's role separately in a mixed-ownership Solo addition", async () => {
+  const test = setup("private", "owner");
+  try {
+    await test.ready();
+    await test.owner.session.channelWrites.addAgents(test.child, [
+      test.agent,
+      test.secondAgent,
+    ]);
+    expect(
+      test.publish.mock.calls.map(([event]) =>
+        event.tags.filter(([tag]) => tag === "role"),
+      ),
+    ).toEqual([[["role", "admin"]], [["role", "bot"]]]);
+  } finally {
+    test.owner.dispose();
+  }
+});
+
+it.each(
+  (["private", "public"] as const).flatMap((visibility) =>
+    (["owner", "admin", "member"] as const).map((viewerRole) => ({
+      visibility,
+      viewerRole,
+      addedRole: viewerRole === "owner" ? "admin" : "bot",
+    })),
+  ),
+)(
+  "adds an agent as $addedRole for a $viewerRole in a $visibility Solo chat with a Guest default",
+  async ({ visibility, viewerRole, addedRole }) => {
+    const test = setup(visibility, viewerRole);
+    try {
+      await test.ready();
+      await test.owner.session.channelWrites.addAgents(test.child, [
+        test.agent,
+        test.agent,
+      ]);
+      expect(test.publish).toHaveBeenCalledOnce();
+      expect(test.publish.mock.calls[0]?.[0]).toMatchObject({
+        kind: 9000,
+        tags: expect.arrayContaining([
+          ["h", test.child],
+          ["p", test.agent],
+          ["role", addedRole],
+        ]),
+      });
+      expect(
+        test.owner.session.channels
+          .list()
+          .channels.find((item) => item.id === test.child)?.members,
+      ).toContain(test.agent);
+      await test.owner.session.channelWrites.addAgents(test.child, [
+        test.agent,
+      ]);
+      expect(test.publish).toHaveBeenCalledOnce();
+    } finally {
+      test.owner.dispose();
+    }
+  },
+);
+it.each([
+  { roleTags: [] },
+  { roleTags: [["role", "guest"]] },
+  { roleTags: [["role", "member"]] },
+  {
+    roleTags: [
+      ["role", "bot"],
+      ["role", "bot"],
+    ],
+  },
+])(
+  "does not reuse a Solo agent receipt with incompatible role tags $roleTags",
+  async ({ roleTags }) => {
+    const test = setup();
+    try {
+      await test.ready();
+      test.setDenied(true);
+      const outbox = test.owner.session.outbox;
+      if (!outbox) throw new Error("Missing fixture outbox");
+      const previous = outbox.send({
+        kind: 9000,
+        content: "",
+        tags: [["h", test.child], ["p", test.agent], ...roleTags],
+      });
+      await vi.waitFor(() =>
+        expect(
+          outbox.snapshot().find((item) => item.event.id === previous)
+            ?.delivery,
+        ).toBe("failed"),
+      );
+      test.setDenied(false);
+      await test.owner.session.channelWrites.addAgents(test.child, [
+        test.agent,
+      ]);
+      expect(test.publish.mock.lastCall?.[0].id).not.toBe(previous);
+      expect(test.publish.mock.lastCall?.[0].tags).toContainEqual([
+        "role",
+        "bot",
+      ]);
+    } finally {
+      test.owner.dispose();
+    }
+  },
+);
 it("reports channel-specific uncertainty when an accepted addition lacks roster confirmation", async () => {
   const test = setup();
   try {
@@ -225,51 +442,178 @@ it("reports channel-specific uncertainty when an accepted addition lacks roster 
   }
 });
 
-it("keeps channel permission failures and retries the same saved invitation", async () => {
-  const test = setup();
+it.each([
+  { initialRole: "member", retryRole: "member", addedRole: "bot" },
+  { initialRole: "member", retryRole: "owner", addedRole: "bot" },
+  { initialRole: "owner", retryRole: "member", addedRole: "admin" },
+  {
+    initialRole: "owner",
+    retryRole: "owner",
+    addedRole: "admin",
+    transferred: true,
+  },
+] as const)(
+  "keeps the saved $addedRole invitation when $initialRole retries as $retryRole",
+  async ({ initialRole, retryRole, addedRole, ...options }) => {
+    const test = setup("private", initialRole);
+    try {
+      await test.ready();
+      test.setDenied(true);
+      await expect(
+        test.owner.session.channelWrites.addAgents(test.child, [test.agent]),
+      ).rejects.toThrow(/Only channel admins/);
+      expect(
+        test.owner.session.channels
+          .list()
+          .channels.find((item) => item.id === test.child)?.members,
+      ).not.toContain(test.agent);
+      const first = test.publish.mock.calls[0]?.[0];
+      expect(first?.tags).toContainEqual(["role", addedRole]);
+      if ("transferred" in options) {
+        await test.transferAgent();
+        test.profileResponse("unavailable");
+      }
+      test.setViewerRole(retryRole);
+      test.setDenied(false);
+      await test.owner.session.channelWrites.addAgents(test.child, [
+        test.agent,
+      ]);
+      expect(test.publish.mock.calls[1]?.[0]).toEqual(first);
+      expect(test.publish).toHaveBeenCalledTimes(2);
+    } finally {
+      test.owner.dispose();
+    }
+  },
+);
+it("preserves ordinary channel admission defaults for an owner", async () => {
+  const test = setup("private", "owner");
   try {
     await test.ready();
-    test.setDenied(true);
-    await expect(
-      test.owner.session.channelWrites.addAgents(test.child, [test.agent]),
-    ).rejects.toThrow(/Only channel admins/);
-    expect(
-      test.owner.session.channels
-        .list()
-        .channels.find((item) => item.id === test.child)?.members,
-    ).not.toContain(test.agent);
-    const first = test.publish.mock.calls[0]?.[0].id;
-    test.setDenied(false);
-    await test.owner.session.channelWrites.addAgents(test.child, [test.agent]);
-    expect(test.publish.mock.calls[1]?.[0].id).toBe(first);
-    expect(test.publish).toHaveBeenCalledTimes(2);
+    await test.owner.session.channelWrites.addAgents(test.parent, [test.agent]);
+    expect(test.publish).toHaveBeenCalledOnce();
+    const tags = test.publish.mock.calls[0]?.[0].tags ?? [];
+    expect(tags).toEqual(
+      expect.arrayContaining([
+        ["h", test.parent],
+        ["p", test.agent],
+      ]),
+    );
+    expect(tags.filter(([name]) => name === "role")).toEqual([]);
   } finally {
     test.owner.dispose();
   }
 });
-it("explains how to recover an expired failed invitation without republishing it", async () => {
+async function expireFailedAddition(
+  test: ReturnType<typeof setup>,
+  channel: string,
+) {
+  test.setDenied(true);
+  vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+  await expect(
+    test.owner.session.channelWrites.addAgents(channel, [test.agent]),
+  ).rejects.toThrow(/Only channel admins/);
+  expect(test.publish).toHaveBeenCalledOnce();
+  vi.mocked(Date.now).mockReturnValue(1_700_000_901_000);
+  test.setDenied(false);
+  return test.publish.mock.calls[0]?.[0];
+}
+it.each(["parent", "child"] as const)(
+  "replaces an expired failed %s invitation with a fresh one",
+  async (target) => {
+    const test = setup("private", "owner");
+    try {
+      await test.ready();
+      const channel = test[target];
+      const expired = await expireFailedAddition(test, channel);
+      await test.owner.session.channelWrites.addAgents(channel, [test.agent]);
+      expect(test.publish).toHaveBeenCalledTimes(2);
+      const fresh = test.publish.mock.calls[1]?.[0];
+      expect(fresh?.id).not.toBe(expired?.id);
+      expect(fresh?.tags).toEqual(
+        expect.arrayContaining([
+          ["h", channel],
+          ["p", test.agent],
+        ]),
+      );
+      expect(
+        test.owner.session.outbox
+          ?.snapshot()
+          .some((item) => item.event.id === expired?.id),
+      ).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+      test.owner.dispose();
+    }
+  },
+);
+it.each([false, true])(
+  "settles an expired unconfirmed invitation from the roster (applied: %s)",
+  async (applied) => {
+    const test = setup("private", "owner");
+    try {
+      await test.ready();
+      vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+      const publishAgent = test.publish.getMockImplementation();
+      test.publish.mockImplementationOnce(async (event) => {
+        if (applied) await publishAgent?.(event);
+        throw new Error("Connection lost");
+      });
+      await expect(
+        test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
+      ).rejects.toThrow();
+      const original = test.publish.mock.calls[0]?.[0];
+      const outbox = test.owner.session.outbox;
+      expect(
+        outbox?.snapshot().find((item) => item.event.id === original?.id)
+          ?.delivery,
+      ).toBe("unknown");
+      vi.mocked(Date.now).mockReturnValue(1_700_000_901_000);
+      await test.owner.session.channelWrites.addAgents(test.parent, [
+        test.agent,
+      ]);
+      expect(test.publish).toHaveBeenCalledTimes(applied ? 1 : 2);
+      if (!applied)
+        expect(
+          outbox?.snapshot().some((item) => item.event.id === original?.id),
+        ).toBe(false);
+      expect(test.owner.session.channels.get?.(test.parent)?.members).toContain(
+        test.agent,
+      );
+    } finally {
+      vi.restoreAllMocks();
+      test.owner.dispose();
+    }
+  },
+);
+it("rechecks agent eligibility before replacing an expired failed invitation", async () => {
   const test = setup();
   try {
     await test.ready();
-    test.setDenied(true);
-    const now = Date.now;
-    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
-    try {
-      await expect(
-        test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
-      ).rejects.toThrow(/Only channel admins/);
-      expect(test.publish).toHaveBeenCalledOnce();
-      vi.mocked(Date.now).mockReturnValue(1_700_000_901_000);
-      test.setDenied(false);
-      await expect(
-        test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
-      ).rejects.toThrow(/expired.*Outbox.*remove.*add the agent again/i);
-      expect(test.publish).toHaveBeenCalledOnce();
-    } finally {
-      vi.restoreAllMocks();
-      expect(Date.now).toBe(now);
-    }
+    const expired = await expireFailedAddition(test, test.parent);
+    const outbox = test.owner.session.outbox;
+    if (!outbox) throw new Error("Fixture outbox unavailable");
+    let archiving: Promise<void> | undefined;
+    const stop = outbox.subscribe(() => {
+      if (
+        archiving ||
+        outbox.snapshot().some((item) => item.event.id === expired?.id)
+      )
+        return;
+      // Hold the replacement's roster read until the agent is archived.
+      void test.holdRoster();
+      test.archive(test.agent);
+      archiving = test.owner.session.archives
+        .ensure()
+        .finally(test.releaseRoster);
+    });
+    await expect(
+      test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
+    ).rejects.toThrow(/archived/);
+    stop();
+    expect(archiving).toBeDefined();
+    expect(test.publish).toHaveBeenCalledOnce();
   } finally {
+    vi.restoreAllMocks();
     test.owner.dispose();
   }
 });

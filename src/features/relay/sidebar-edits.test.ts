@@ -1,10 +1,14 @@
 import { expect, it } from "vitest";
 import { projectSidebarRecord } from "./sidebar-registers";
+import type { SidebarGroups } from "./sidebar-preferences";
 import {
+  editSidebarAssignment,
   editSidebarSectionOrder,
   editSidebarSectionRemoval,
+  editSidebarSectionRename,
   validSidebarSectionOrder,
   validSidebarSectionRemoval,
+  validSidebarSectionRename,
   validSidebarAssignment,
   validSidebarChannelId,
   validSidebarSort,
@@ -84,7 +88,7 @@ it("validates bounded unique section orders", () => {
   expect(validSidebarSectionOrder(["a", "a"])).toBe(false);
   expect(validSidebarSectionOrder([""])).toBe(false);
   expect(
-    validSidebarSectionOrder(Array.from({ length: 101 }, (_, i) => `${i}`)),
+    validSidebarSectionOrder(Array.from({ length: 201 }, (_, i) => `${i}`)),
   ).toBe(false);
 });
 
@@ -101,22 +105,48 @@ it("validates create-section policy separately from the host envelope", () => {
     name: " Work ",
   };
   expect(validSidebarAssignment({ channelId: "c", createSection })).toBe(true);
+  expect(
+    validSidebarAssignment({
+      createSection: { ...createSection, id: "fixture-workspace" },
+    }),
+  ).toBe(true);
+  expect(
+    validSidebarAssignment({
+      channelId: "c",
+      createSection: { ...createSection, position: "first" },
+    }),
+  ).toBe(true);
   expect(validSidebarAssignment({ channelId: "c" })).toBe(true);
   for (const intent of [
     { channelId: "c", sectionId: "" },
     { channelId: "c", sectionId: "existing", createSection },
-    { channelId: "c", createSection: { ...createSection, id: "bad" } },
+    { channelId: "c", createSection: { ...createSection, id: "__proto__" } },
     { channelId: "c", createSection: { ...createSection, name: " " } },
+    { channelId: "c", createSection: { ...createSection, icon: " " } },
+    {
+      channelId: "c",
+      createSection: { ...createSection, icon: "x".repeat(129) },
+    },
     {
       channelId: "c",
       createSection: { ...createSection, name: "x".repeat(257) },
     },
   ])
     expect(validSidebarAssignment(intent)).toBe(false);
+  expect(
+    validSidebarAssignment({
+      createSection: { ...createSection, icon: "📚" },
+    }),
+  ).toBe(true);
+  expect(
+    validSidebarAssignment({
+      createSection: { ...createSection, icon: ":books:" },
+    }),
+  ).toBe(true);
 });
 
 it("retains built-in and known-section sorting limits", () => {
-  for (const group of ["starred", "channels", "forums", "dms"])
+  for (const group of ["starred", "solo", "channels", "forums", "dms"])
     for (const mode of ["alpha", "recent"] as const)
       expect(validSidebarSort(group, mode, [])).toBe(true);
   const section = "x".repeat(256);
@@ -127,11 +157,158 @@ it("retains built-in and known-section sorting limits", () => {
   expect(
     validSidebarSort(`section:${section}x`, "recent", [`${section}x`]),
   ).toBe(false);
-  expect(validSidebarSort("channels", "alpha", Array(100).fill("s"))).toBe(
+  expect(validSidebarSort("channels", "alpha", Array(200).fill("s"))).toBe(
     true,
   );
-  expect(validSidebarSort("channels", "alpha", Array(101).fill("s"))).toBe(
+  expect(validSidebarSort("channels", "alpha", Array(201).fill("s"))).toBe(
     false,
   );
   expect(validSidebarSort("channels", "recent", [" "])).toBe(false);
+});
+
+it("renames one live section by rewriting only its name register", () => {
+  const current = {
+    version: 1,
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+    ],
+    assignments: { alpha: "work" },
+  };
+  const next = editSidebarSectionRename(
+    current,
+    1_700_000_000,
+    "work",
+    " Projects ",
+    42,
+  );
+  expect(projectSidebarRecord("channel-sections", next)).toMatchObject({
+    sections: [
+      { id: "work", name: "Projects", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+    ],
+    assignments: { alpha: "work" },
+  });
+  expect(editSidebarSectionRename(next, 0, "work", "Projects", 43)).toBe(next);
+  expect(() => editSidebarSectionRename(current, 0, "gone", "X", 42)).toThrow(
+    "no longer exists",
+  );
+  expect(validSidebarSectionRename("work", "Projects")).toBe(true);
+  expect(validSidebarSectionRename("work", undefined, "📚")).toBe(true);
+  expect(validSidebarSectionRename("work", undefined, null)).toBe(true);
+  expect(validSidebarSectionRename("work")).toBe(false);
+  expect(validSidebarSectionRename("work", undefined, " ")).toBe(false);
+  expect(validSidebarSectionRename("work", undefined, 1)).toBe(false);
+  expect(validSidebarSectionRename("work", "  ")).toBe(false);
+  expect(validSidebarSectionRename("work", "x".repeat(257))).toBe(false);
+});
+
+it("creates a section with its icon and confirms only a matching retry", () => {
+  const current = {
+    version: 1,
+    sections: [{ id: "work", name: "Work", icon: "🏢", order: 0 }],
+    assignments: {},
+    future: { keep: true },
+  };
+  const createSection = {
+    id: "11111111-1111-1111-1111-111111111111",
+    name: " Launch ",
+    icon: ":launch:",
+  };
+  const next = editSidebarAssignment(
+    current,
+    1_700_000_000,
+    { createSection },
+    42,
+  );
+  expect(projectSidebarRecord("channel-sections", next)).toMatchObject({
+    sections: [
+      { id: "work", name: "Work", icon: "🏢", order: 0 },
+      { id: createSection.id, name: "Launch", icon: ":launch:", order: 1 },
+    ],
+    future: { keep: true },
+  });
+  expect(editSidebarAssignment(next, 0, { createSection })).toBe(next);
+  // Existing name-only callers neither overwrite nor clear an existing icon.
+  expect(
+    editSidebarAssignment(next, 0, {
+      createSection: { id: createSection.id, name: " Launch " },
+    }),
+  ).toBe(next);
+  expect(() =>
+    editSidebarAssignment(next, 0, {
+      createSection: { ...createSection, icon: "📚" },
+    }),
+  ).toThrow("changed");
+});
+
+it("atomically edits only supplied name/icon leaves and explicitly removes icons", () => {
+  const current = {
+    version: 1,
+    sections: [
+      { id: "work", name: "Work", icon: "🏢", order: 0 },
+      { id: "later", name: "Later", icon: ":later:", order: 1 },
+    ],
+    assignments: { alpha: "work" },
+    future: "keep",
+  };
+  const named = editSidebarSectionRename(
+    current,
+    1_700_000_000,
+    "work",
+    { name: " Projects " },
+    42,
+  );
+  expect(projectSidebarRecord("channel-sections", named)).toMatchObject({
+    sections: [
+      { id: "work", name: "Projects", icon: "🏢", order: 0 },
+      { id: "later", name: "Later", icon: ":later:", order: 1 },
+    ],
+    assignments: { alpha: "work" },
+    future: "keep",
+  });
+  expect(editSidebarSectionRename(current, 0, "work", { name: "Work" })).toBe(
+    current,
+  );
+  expect(editSidebarSectionRename(current, 0, "work", { icon: "🏢" })).toBe(
+    current,
+  );
+  const iconOnly = editSidebarSectionRename(
+    named,
+    1_700_000_001,
+    "work",
+    { icon: "📚" },
+    43,
+  );
+  expect(projectSidebarRecord("channel-sections", iconOnly)).toMatchObject({
+    sections: [
+      { id: "work", name: "Projects", icon: "📚", order: 0 },
+      { id: "later", name: "Later", icon: ":later:", order: 1 },
+    ],
+    assignments: { alpha: "work" },
+  });
+  const removed = editSidebarSectionRename(
+    iconOnly,
+    1_700_000_002,
+    "work",
+    { icon: null },
+    44,
+  );
+  expect(projectSidebarRecord("channel-sections", removed)).toMatchObject({
+    sections: [
+      { id: "work", name: "Projects", order: 0 },
+      { id: "later", name: "Later", icon: ":later:", order: 1 },
+    ],
+  });
+  const removedSection = (
+    projectSidebarRecord("channel-sections", removed)
+      .sections as SidebarGroups["sections"]
+  )[0];
+  expect(removedSection).not.toHaveProperty("icon");
+  const meta = removed.meta as {
+    s: { work: { name: unknown[]; icon: unknown[]; order: unknown[] } };
+  };
+  expect(meta.s.work.name[2]).toBe("Projects");
+  expect(meta.s.work.icon[2]).toBeNull();
+  expect(meta.s.work.order[2]).toBe(0);
 });

@@ -4,22 +4,33 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { OnboardingScreen } from "../identity/OnboardingScreen";
 import type { SettingsCards } from "../settings/service";
-import { CommunityDialog } from "./CommunityDialog";
-import { type InviteLink, parsePastedInvite } from "./invite-link";
+import { CommunityDialog, type JoinReports } from "./CommunityDialog";
+import type { FederatedIdentity } from "../federated-identity/service";
+import {
+  type InviteLink,
+  parsePastedInvite,
+  pastedInviteError,
+} from "./invite-link";
+import type { JoinRequest } from "./invite-intent";
 import type { Communities } from "./service";
 
 /** First run with no community: joining replaces the empty shell. */
 export function CommunityLanding({
   communities,
+  federatedIdentity,
   invite,
   onInviteClose,
+  joinReports,
   settingsCards,
   onJoined,
   onCreate,
 }: {
   communities: Communities;
-  invite?: (InviteLink & { requestId: number }) | undefined;
-  onInviteClose(requestId: number): void;
+  federatedIdentity?: FederatedIdentity | undefined;
+  invite?: (JoinRequest & { requestId: string }) | undefined;
+  onInviteClose(requestId: string): void;
+  /** The open join dialog's reports to the app: writes and the typed address. */
+  joinReports?: JoinReports | undefined;
   settingsCards: Pick<SettingsCards, "subscribe" | "has">;
   onJoined(id: string): void;
   onCreate(): void;
@@ -28,9 +39,27 @@ export function CommunityLanding({
   const [error, setError] = useState("");
   const [joining, setJoining] = useState<InviteLink>();
   const hostedAvailable = useSyncExternalStore(settingsCards.subscribe, () =>
-    settingsCards.has("block.hosted-communities/hosted"),
+    settingsCards.has("block.builderlab/login"),
   );
   const opened = invite ?? joining;
+  if (opened)
+    return (
+      <CommunityDialog
+        key={invite ? invite.requestId : `${opened.community} ${opened.code}`}
+        communities={communities}
+        federatedIdentity={federatedIdentity}
+        mode="join"
+        onboarding
+        {...joinReports}
+        submittedDestination={!invite || invite.submitted === true}
+        invite={opened}
+        onJoined={onJoined}
+        close={() => {
+          setJoining(undefined);
+          if (invite) onInviteClose(invite.requestId);
+        }}
+      />
+    );
   return (
     <OnboardingScreen
       labelledBy="community-landing-title"
@@ -46,7 +75,13 @@ export function CommunityLanding({
               event.preventDefault();
               const parsed = parsePastedInvite(link);
               if (parsed) setJoining(parsed);
-              else setError("Paste an invite link or community URL.");
+              else
+                setError(
+                  pastedInviteError(
+                    link,
+                    "Paste an invite link or community URL.",
+                  ),
+                );
             }}
           >
             <Field label="Invite link or community URL" error={error}>
@@ -75,22 +110,9 @@ export function CommunityLanding({
       }
     >
       {hostedAvailable && (
-        <Button size="lg" variant="ghost" onClick={onCreate}>
+        <Button size="lg" variant="subtle" onClick={onCreate}>
           Create a community
         </Button>
-      )}
-      {opened && (
-        <CommunityDialog
-          key={invite ? invite.requestId : `${opened.community} ${opened.code}`}
-          communities={communities}
-          mode="join"
-          invite={opened}
-          onJoined={onJoined}
-          close={() => {
-            setJoining(undefined);
-            if (invite) onInviteClose(invite.requestId);
-          }}
-        />
       )}
     </OnboardingScreen>
   );

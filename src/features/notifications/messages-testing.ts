@@ -1,3 +1,4 @@
+import { createLocalAgentActivity } from "../agents/local-activity";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
 import { Context } from "@deepseek-ai/cordis";
@@ -7,6 +8,7 @@ import { createRelaySession } from "../relay/session";
 import type {
   SidebarDecoder,
   SidebarMuteMutator,
+  SidebarPreferences,
 } from "../relay/sidebar-preferences";
 import type { LiveCallbacks } from "../relay/live";
 import type { ReadFilter } from "../relay/events";
@@ -43,7 +45,12 @@ export async function setup(
     channelsMounted?: boolean;
     deferRoster?: boolean;
   },
-  sidebar?: { decode: SidebarDecoder; write?: SidebarMuteMutator },
+  sidebar?: {
+    decode: SidebarDecoder;
+    write?: SidebarMuteMutator;
+    /** Preferences an earlier launch saved on this device. */
+    saved?: SidebarPreferences;
+  },
   /** A signing host, so visible rows publish read intent as in production. */
   readIntent = false,
 ) {
@@ -94,6 +101,7 @@ export async function setup(
       ? markerQuery()
       : ([] as ReturnType<typeof message>[]),
   );
+  const saved = sidebar?.saved;
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -135,6 +143,7 @@ export async function setup(
       },
     },
     {
+      readStateFloor: () => 0,
       identityNames: {
         register() {},
         bind: (source) =>
@@ -152,6 +161,7 @@ export async function setup(
           }
         : {}),
       readStateStorage: {
+        capture: async () => structuredClone(readState),
         async update(change) {
           await (typeof readBarrier === "function"
             ? readBarrier()
@@ -161,6 +171,21 @@ export async function setup(
         },
         close() {},
       },
+      ...(saved
+        ? {
+            persistence: {
+              read: async () => [],
+              readStartup: async () => ({
+                preferences: { savedAt: Date.now(), data: saved },
+              }),
+              write: async () => {},
+              remove: async () => {},
+              retain: async () => {},
+              clear: async () => {},
+              close() {},
+            },
+          }
+        : {}),
     },
   );
   cleanups.push(owner.dispose);
@@ -233,7 +258,12 @@ export async function setup(
     discover();
     void owner.session.unread.ensure();
   }
-  const stop = bindMessageNotifications(notifications, communities);
+  const activity = createLocalAgentActivity();
+  const stop = bindMessageNotifications(
+    notifications,
+    communities,
+    activity.reader,
+  );
   cleanups.push(stop);
   await flush();
   // Names retain owner inventory independently of notification/roster startup.
@@ -253,6 +283,7 @@ export async function setup(
     ]);
   return {
     owner,
+    activity,
     notifications,
     navigation,
     emit,

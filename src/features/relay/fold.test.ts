@@ -17,10 +17,141 @@ import {
 
 const relay = keypair(),
   alice = keypair(),
-  bob = keypair();
+  bob = keypair(),
+  carol = keypair(),
+  dave = keypair();
 const channel = "chan-1";
 
 describe("message fold", () => {
+  it("shows a broadcast failure notice in the channel and preserves its exact reply target", () => {
+    const request = message(alice, channel, "Read this image", 1);
+    const tags = [
+      ["e", request.id, "", "reply"],
+      ["buzz:notice", "execution-failure"],
+    ];
+    const nested = message(bob, channel, "Failure explanation", 2, tags);
+    expect(foldMessages(channel, relay.pubkey, [request, nested])).toHaveLength(
+      1,
+    );
+    const broadcast = message(bob, channel, "Failure explanation", 2, [
+      ...tags,
+      ["broadcast", "1"],
+    ]);
+    const rows = foldMessages(channel, relay.pubkey, [request, broadcast]);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({
+      id: broadcast.id,
+      notice: "execution-failure",
+      threadRootId: request.id,
+      replyParentId: request.id,
+      content: "Failure explanation",
+    });
+  });
+  it("reads only the explicit automatic failure notice tag without changing the message", () => {
+    const content = "A failure explanation";
+    for (const [tag, notice] of [
+      [["buzz:notice", "execution-failure"], "execution-failure"],
+      [["buzz:notice", "unknown"], undefined],
+      [["buzz:notice", "execution-failure", "extra"], undefined],
+      [["notice", "execution-failure"], undefined],
+    ] as const) {
+      const [row] = foldMessages(channel, relay.pubkey, [
+        message(alice, channel, content, 1, [[...tag]]),
+      ]);
+      expect(row?.notice).toBe(notice);
+      expect(row?.content).toBe(content);
+    }
+  });
+  it("reads one exact signed request id, and none from conflicting or malformed tags", () => {
+    const a = "a".repeat(64),
+      b = "b".repeat(64);
+    for (const [tags, request] of [
+      [[["buzz:request", a]], a],
+      [
+        [
+          ["buzz:request", a],
+          ["buzz:request", a],
+        ],
+        a,
+      ],
+      [
+        [
+          ["buzz:request", a],
+          ["buzz:request", b],
+        ],
+        undefined,
+      ],
+      [[["buzz:request", a.toUpperCase()]], undefined],
+      [[["buzz:request", "nope"]], undefined],
+      [[["buzz:request"]], undefined],
+      [[["request", a]], undefined],
+    ] as const) {
+      const [row] = foldMessages(channel, relay.pubkey, [
+        message(
+          alice,
+          channel,
+          "Checking",
+          1,
+          tags.map((tag) => [...tag]),
+        ),
+      ]);
+      expect(row?.request).toBe(request);
+    }
+  });
+  it("reads the id of a plugin request from the signed tag", () => {
+    const content = "Requested: install Browser — Check the staging site";
+    const id = "5d1f0b8e-8c2a-4a39-9a54-0f6a4e7e6c11";
+    const [row] = foldMessages(channel, relay.pubkey, [
+      signed(alice, {
+        kind: 9,
+        content,
+        tags: [
+          ["h", channel],
+          ["plugin-request", id],
+        ],
+      }),
+    ]);
+    expect(row).toMatchObject({ content, pluginRequest: { id } });
+    for (const tags of [
+      [["h", channel]],
+      [
+        ["h", channel],
+        ["plugin-request", ""],
+      ],
+      [
+        ["h", channel],
+        ["plugin-request", "not an id!"],
+      ],
+    ]) {
+      const [plain] = foldMessages(channel, relay.pubkey, [
+        signed(alice, { kind: 9, content, tags }),
+      ]);
+      expect(plain?.pluginRequest).toBeUndefined();
+    }
+  });
+  it("reads one safe signed media target without accepting ambiguous tags", () => {
+    const root = message(alice, channel, "Two videos", 1);
+    const url = "https://fixture.test/second.mp4";
+    const reply = (targets: readonly string[][]) =>
+      message(bob, channel, "⏱ 0:21 — 😍", 2, [
+        ["e", root.id, "", "reply"],
+        ...targets,
+      ]);
+    const fold = (targets: readonly string[][]) =>
+      foldMessages(channel, relay.pubkey, [root, reply(targets)], {
+        includeReplies: true,
+      })[1]?.mediaTargetUrl;
+    expect(fold([["buzz:media", url]])).toBe(url);
+    expect(fold([["buzz:media", "javascript:alert(1)"]])).toBeUndefined();
+    expect(
+      fold([
+        ["buzz:media", url],
+        ["buzz:media", "https://fixture.test/other.mp4"],
+      ]),
+    ).toBeUndefined();
+    expect(fold([["buzz:media", url, "extra"]])).toBeUndefined();
+  });
+
   it("preserves diff patch bytes and signed metadata without Markdown attachment projection", () => {
     const content =
       "@@ -1 +1 @@\n-![old](https://example.com/old.png)\n+<script>alert(1)</script>  \n";
@@ -348,6 +479,105 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
+  it("layers pending replies on their root's summary and leads participants with their authors", () => {
+    const root = message(alice, channel, "root", 10);
+    const reply = (key: typeof bob, at: number, channelId = channel) =>
+      message(key, channelId, "re", at, [["e", root.id, "", "reply"]]);
+    const first = reply(bob, 11),
+      second = reply(alice, 12),
+      elsewhere = reply(bob, 14, "elsewhere");
+    const count = (body: Record<string, unknown>) =>
+      summary(relay, channel, root.id, body);
+    const fold = (
+      events: Parameters<typeof foldMessages>[2],
+      pending: readonly string[] = [first.id, second.id, elsewhere.id],
+      options: Parameters<typeof foldMessages>[3] = {},
+    ) =>
+      foldMessages(channel, relay.pubkey, [root, ...events], {
+        pendingReplies: new Set(pending),
+        ...options,
+      }).map((row) => [row.replyCount, row.participants]);
+    expect(fold([first])).toEqual([[1, [bob.pubkey]]]);
+    expect(
+      fold([
+        first,
+        count({ descendant_count: 3, participants: [carol.pubkey] }),
+      ]),
+    ).toEqual([[4, [bob.pubkey, carol.pubkey]]]);
+    expect(
+      fold([
+        first,
+        second,
+        count({ descendant_count: 1, participants: [bob.pubkey] }),
+      ]),
+    ).toEqual([[3, [bob.pubkey, alice.pubkey]]]);
+    // Replies the summary counted stand only through the summary.
+    expect(
+      fold(
+        [first, count({ descendant_count: 3, participants: [carol.pubkey] })],
+        [],
+      ),
+    ).toEqual([[3, [carol.pubkey]]]);
+    expect(fold([first], [])).toEqual([[0, []]]);
+    expect(fold([first], [first.id], { includeReplies: true })).toEqual([
+      [0, []],
+      [0, []],
+    ]);
+    const remove = signed(bob, {
+      kind: 5,
+      content: "",
+      created_at: 13,
+      tags: [["e", first.id]],
+    });
+    expect(fold([first, second, remove])).toEqual([[1, [alice.pubkey]]]);
+    expect(fold([elsewhere])).toEqual([[0, []]]);
+    // A new replier stays within the three visible avatars.
+    expect(
+      fold([
+        first,
+        count({
+          descendant_count: 3,
+          participants: [alice.pubkey, carol.pubkey, dave.pubkey],
+        }),
+      ]),
+    ).toEqual([[4, [bob.pubkey, alice.pubkey, carol.pubkey, dave.pubkey]]]);
+    // So does a returning replier the summary lists after the visible three.
+    expect(
+      fold([
+        first,
+        count({
+          descendant_count: 4,
+          participants: [alice.pubkey, carol.pubkey, dave.pubkey, bob.pubkey],
+        }),
+      ]),
+    ).toEqual([[5, [bob.pubkey, alice.pubkey, carol.pubkey, dave.pubkey]]]);
+    // The relay lists a relay-signed workflow reply by its signer; the client
+    // shows its author but adds no second identity next to that signer.
+    const workflow = signed(relay, {
+      kind: 9,
+      content: "re",
+      created_at: 15,
+      tags: [
+        ["p", bob.pubkey],
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+    const relaySigned = { signingAuthority: relay.pubkey };
+    expect(fold([workflow], [workflow.id], relaySigned)).toEqual([
+      [1, [bob.pubkey]],
+    ]);
+    expect(
+      fold(
+        [
+          workflow,
+          count({ descendant_count: 1, participants: [relay.pubkey] }),
+        ],
+        [workflow.id],
+        relaySigned,
+      ),
+    ).toEqual([[2, [relay.pubkey]]]);
+  });
   it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
     const nested = message(
       alice,
@@ -508,27 +738,18 @@ describe("message fold", () => {
     ]);
   });
 
-  it("ignores empty attachment link labels and preserves URL-derived names", () => {
-    const url = "https://relay.test/media/report.pdf";
-    const event = message(alice, channel, `[](${url})`, 10, [
+  it.each([
+    ["RLO", "report\u202eexe.pdf"],
+    ["newline", "report\nfinal.pdf"],
+  ])("rejects %s attachment link labels", (_case, label) => {
+    const url = "https://relay.test/media/file.pdf";
+    const event = message(alice, channel, `[${label}](${url})`, 10, [
       ["imeta", `url ${url}`, "m application/pdf"],
     ]);
     const [row] = foldMessages(channel, relay.pubkey, [event]);
     expect(row?.content).toBe("");
     expect(row?.attachments).toEqual([
-      { url, kind: "file", mime: "application/pdf", name: "report.pdf" },
-    ]);
-  });
-
-  it("keeps URL-derived names for attachment autolinks with ordinary basenames", () => {
-    const url = "https://relay.test/media/report.pdf";
-    const event = message(alice, channel, `<${url}>`, 10, [
-      ["imeta", `url ${url}`, "m application/pdf"],
-    ]);
-    const [row] = foldMessages(channel, relay.pubkey, [event]);
-    expect(row?.content).toBe("");
-    expect(row?.attachments).toEqual([
-      { url, kind: "file", mime: "application/pdf", name: "report.pdf" },
+      { url, kind: "file", mime: "application/pdf", name: "file.pdf" },
     ]);
   });
 
@@ -557,17 +778,6 @@ describe("message fold", () => {
     expect(row?.content).toBe("");
     expect(row?.attachments).toEqual([
       { url, kind: "file", mime: "application/pdf", name: "file.pdf" },
-    ]);
-  });
-
-  it("accepts ordinary unicode attachment link labels", () => {
-    const url = "https://relay.test/media/file.pdf";
-    const event = message(alice, channel, `[résumé-月報.pdf](${url})`, 10, [
-      ["imeta", `url ${url}`, "m application/pdf"],
-    ]);
-    const [row] = foldMessages(channel, relay.pubkey, [event]);
-    expect(row?.attachments).toEqual([
-      { url, kind: "file", mime: "application/pdf", name: "résumé-月報.pdf" },
     ]);
   });
 
@@ -705,6 +915,20 @@ describe("profiles", () => {
       nameIsFallback: true,
     });
   });
+
+  it("drops an ill-formed emoji avatar and keeps the rest of the profile", () => {
+    // Old Buzz's emoji template around a lone surrogate, which cannot be encoded.
+    const picture = `data:image/svg+xml,${encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="256" fill="#FFB84D"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">',
+    )}\ud83d${encodeURIComponent("</text></svg>")}`;
+    const profiles = foldProfiles([
+      profile(alice, { name: "Alice", about: "Skates", picture }),
+    ]);
+    expect(profiles.get(alice.pubkey)).toEqual({
+      name: "Alice",
+      about: "Skates",
+    });
+  });
 });
 
 describe("discovery", () => {
@@ -727,9 +951,18 @@ describe("discovery", () => {
         name: "Alpha",
         description: "",
         visibility: undefined,
+        joinRole: "member",
         members: [alice.pubkey, bob.pubkey].sort(),
+        owners: [],
+        viewerMembership: { pubkey: alice.pubkey, joined: true },
       },
-      { id: "zeta", name: "zeta".slice(0, 8), members: [alice.pubkey] },
+      {
+        id: "zeta",
+        name: "zeta".slice(0, 8),
+        members: [alice.pubkey],
+        owners: [],
+        viewerMembership: { pubkey: alice.pubkey, joined: true },
+      },
     ]);
     expect(
       state.accept(roster(relay, "alpha", [bob.pubkey], 1_700_000_001)),
@@ -1212,4 +1445,74 @@ it("applies an agent owner's edit only with ownership evidence for that author",
   expect(fold(undefined)).toBe("Whole answer");
   expect(fold(relay.pubkey)).toBe("Whole answer");
   expect(fold(bob.pubkey)).toBe("Spoken prefix");
+});
+
+it("honours a relayed-from claim only while the author owns the named agent", () => {
+  const relayed = (tags: string[][]) =>
+    message(alice, channel, "@Juno Notice (relayed)\n\nRebase on main", 10, [
+      ...tags,
+      ["p", carol.pubkey],
+    ]);
+  const fold = (event: ReturnType<typeof message>, owner?: string) =>
+    foldMessages(channel, relay.pubkey, [event], {
+      agentOwner: (pubkey: string) =>
+        pubkey === bob.pubkey ? owner : undefined,
+    })[0];
+  const claim = relayed([["relayed-from", bob.pubkey, "source-chat"]]);
+  expect(fold(claim, alice.pubkey)?.relayedFrom).toEqual({
+    agent: bob.pubkey,
+    channelId: "source-chat",
+    notice: "@Juno Notice (relayed)",
+    verified: true,
+  });
+  // Unverified or forged: the claim is kept so its profile loads, never honoured.
+  expect(fold(claim)?.relayedFrom?.verified).toBe(false);
+  expect(fold(claim, dave.pubkey)?.relayedFrom?.verified).toBe(false);
+  // The content keeps its notice for every consumer; only the row omits it.
+  expect(fold(claim, alice.pubkey)?.content).toContain("Notice");
+  expect(
+    fold(relayed([["relayed-from", bob.pubkey]]), alice.pubkey)?.relayedFrom,
+  ).toMatchObject({ agent: bob.pubkey, verified: true });
+  // A relay-signed message attributed to the owner was not signed by them.
+  const attributed = signed(relay, {
+    kind: 9,
+    content: "Notice\n\nText",
+    created_at: 10,
+    tags: [
+      ["h", channel],
+      ["actor", alice.pubkey],
+      ["relayed-from", bob.pubkey],
+    ],
+  });
+  const [row] = foldMessages(channel, relay.pubkey, [attributed], {
+    signingAuthority: relay.pubkey,
+    agentOwner: (pubkey: string) =>
+      pubkey === bob.pubkey ? alice.pubkey : undefined,
+  });
+  expect(row?.authorId).toBe(alice.pubkey);
+  expect(row?.relayedFrom?.verified).toBe(false);
+  for (const tags of [
+    [
+      ["relayed-from", bob.pubkey],
+      ["relayed-from", dave.pubkey],
+    ],
+    [["relayed-from", "not-a-key"]],
+    [["relayed-from", alice.pubkey]],
+  ])
+    expect(fold(relayed(tags), alice.pubkey)?.relayedFrom).toBeUndefined();
+});
+
+it("replaces a shared row when only its relayed claim's verification changes", () => {
+  const event = message(alice, channel, "Notice\n\nText", 10, [
+    ["relayed-from", bob.pubkey],
+  ]);
+  const fold = (owner?: string) =>
+    foldMessages(channel, relay.pubkey, [event], {
+      agentOwner: () => owner,
+    });
+  const before = fold();
+  const after = shareMessageRows(before, fold(alice.pubkey));
+  expect(after[0]).not.toBe(before[0]);
+  expect(after[0]?.relayedFrom?.verified).toBe(true);
+  expect(shareMessageRows(after, fold(alice.pubkey))[0]).toBe(after[0]);
 });

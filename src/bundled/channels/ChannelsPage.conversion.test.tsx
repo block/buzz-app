@@ -1,3 +1,5 @@
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
@@ -133,8 +135,8 @@ function fixture() {
   const session = {
     ...owner.session,
     channelDetails: { ...owner.session.channelDetails, save },
-    soloPreferences: {
-      ...owner.session.soloPreferences,
+    sidebarPreferences: {
+      ...owner.session.sidebarPreferences,
       snapshot: () => (filed ? filedProjects : unfiledProjects),
       refresh: async () => {},
       assign: unfile,
@@ -151,6 +153,7 @@ function fixture() {
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     async clearCache() {},
   };
@@ -167,7 +170,10 @@ function fixture() {
       },
     },
     signal: visit.signal,
+    position: () => undefined,
+    savePosition() {},
     forSession: () => navigation,
+    passThrough: () => () => {},
     complete: () => true,
     resolve: () => true,
   };
@@ -175,8 +181,21 @@ function fixture() {
     <StrictMode>
       <ToastProvider>
         <ChannelsPage
+          navigator={
+            createNavigationController(createMemoryHistory()).navigation
+          }
           relay={relay}
-          panels={{ ...contribution, register() {}, resolve: () => undefined }}
+          panels={{
+            ui: {
+              Workspace: () => null,
+              useSplit: vi.fn(),
+            },
+            ...contribution,
+            register() {},
+            resolve: () => undefined,
+            requestOpen: () => false,
+            handleOpenRequests: () => () => {},
+          }}
           navigation={navigation}
         />
       </ToastProvider>
@@ -196,11 +215,10 @@ function fixture() {
 }
 async function openConversion() {
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Share" });
+  const trigger = await screen.findByRole("button", { name: "Chat actions" });
   await user.click(trigger);
-  const share = await screen.findByRole("dialog", { name: "Share chat" });
   await user.click(
-    within(share).getByRole("button", { name: "Convert to channel" }),
+    await screen.findByRole("menuitem", { name: "Convert to channel" }),
   );
   const dialog = await screen.findByRole("dialog", {
     name: "Convert to channel",
@@ -220,7 +238,7 @@ it("Messages conversion survives signed type replacement, announces completion a
       await t.confirmed;
     });
     expect(
-      screen.getByRole("button", { name: "Channel members", hidden: true }),
+      screen.getByRole("button", { name: /Manage members of/, hidden: true }),
     ).toBeInTheDocument();
     expect(
       t.session.channels.list().channels.find((channel) => channel.id === id)
@@ -237,14 +255,16 @@ it("Messages conversion survives signed type replacement, announces completion a
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(await screen.findByText("Converted to channel.")).toBeVisible();
   await waitFor(() =>
-    expect(
-      screen.getByRole("textbox", { name: "Message #Work" }),
-    ).toHaveFocus(),
+    expect(screen.getByRole("textbox", { name: "Message Work" })).toHaveFocus(),
   );
   expect(t.sign).toHaveBeenCalledOnce();
   expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.unfile).not.toHaveBeenCalled();
+  expect(t.session.sidebarPreferences.snapshot().data?.assignments[id]).toBe(
+    "g",
+  );
 });
-it("Messages conversion Cancel restores Share without publishing", async () => {
+it("Messages conversion Cancel restores chat actions without publishing", async () => {
   const t = fixture();
   const { user, dialog, trigger } = await openConversion();
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -273,46 +293,4 @@ it("a retired Messages visit receives no late conversion completion", async () =
   }
   expect(screen.queryByText("Converted to channel.")).toBeNull();
   expect(t.publish).toHaveBeenCalledOnce();
-});
-
-it("Messages header reopens unfiling recovery after confirmed metadata and a failed project save", async () => {
-  const t = fixture();
-  t.unfile.mockRejectedValueOnce(new Error("Project save failed"));
-  const { user, confirm, dialog } = await openConversion();
-  try {
-    await user.click(confirm);
-    await act(async () => {
-      await t.confirmed;
-    });
-  } finally {
-    await act(async () => {
-      t.release();
-    });
-  }
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "Project save failed",
-  );
-  const closeButton = within(dialog)
-    .getAllByRole("button", { name: "Close" })
-    .at(-1);
-  if (!closeButton) throw new Error("Close missing");
-  await user.click(closeButton);
-  await user.click(screen.getByRole("button", { name: "Channel actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Finish conversion" }),
-  );
-  const reopened = await screen.findByRole("dialog", {
-    name: "Convert to channel",
-  });
-  await user.click(
-    within(reopened).getByRole("button", { name: "Finish conversion" }),
-  );
-  await waitFor(() => expect(reopened).not.toBeInTheDocument());
-  expect(t.unfile).toHaveBeenCalledTimes(2);
-  expect(t.publish).toHaveBeenCalledOnce();
-  await waitFor(() =>
-    expect(
-      screen.getByRole("textbox", { name: "Message #Work" }),
-    ).toHaveFocus(),
-  );
 });

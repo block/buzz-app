@@ -1,13 +1,23 @@
 import { useState, type ReactNode } from "react";
-import { ModelIcon, type ModelChoice } from "./ModelPicker";
-import { CaretDownIcon, CheckIcon } from "../../shared/design-system/icons";
+import { modelLogo, type ModelChoice } from "./ModelPicker";
+import {
+  CaretDownIcon,
+  CheckIcon,
+  LightningIcon,
+  ArrowsSplitIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import styles from "./ModelFamilyMenu.module.css";
 import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuSeparator,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSubmenu,
@@ -15,12 +25,44 @@ import {
   MenuSubmenuPopup,
 } from "../../shared/design-system/ui/Menu";
 
+/** A bolt after the name marks a low-latency model; its text stays for
+ * screen readers and the trigger's accessible name. */
+function FastMark() {
+  return (
+    <span className={styles.fast} title="Fast">
+      <LightningIcon size={14} aria-hidden="true" />
+      <span className="sr-only">Fast</span>
+    </span>
+  );
+}
+
+/** Menu rows space their children apart; one inline run keeps the mark
+ * attached to the name instead of floating as its own column. */
+function ModelName({
+  model,
+  label,
+  mark = true,
+}: {
+  model: ModelChoice;
+  label: string;
+  mark?: boolean;
+}) {
+  return model.fast && mark ? (
+    <span className={styles.name}>
+      {label} <FastMark />
+    </span>
+  ) : (
+    label
+  );
+}
+
 /** Catalogs expose IDs, not a common family field. Unknown IDs remain available. */
 export function modelFamily(model: ModelChoice): string {
+  if (model.family) return model.family;
   const name = `${model.id} ${model.label}`.toLowerCase();
   for (const [family, pattern] of [
     ["OpenAI", /codex|gpt|openai|(?:^|[\s/._-])o[134](?:[\s/._-]|$)/],
-    ["Claude", /claude|anthropic|sonnet|opus|haiku/],
+    ["Claude", /claude|anthropic|sonnet|opus|haiku|fable/],
     ["Kimi", /kimi|moonshot/],
     ["Gemini", /gemini/],
     ["DeepSeek", /deepseek/],
@@ -28,6 +70,7 @@ export function modelFamily(model: ModelChoice): string {
     ["Llama", /llama/],
     ["Mistral", /mistral|mixtral|codestral/],
     ["Grok", /grok/],
+    ["GLM", /(?:^|[\s/._-])glm(?:[\s/._-]|\d|$)|zhipu|z[.-]ai/],
   ] as const)
     if (pattern.test(name)) return family;
   return "Other";
@@ -36,6 +79,7 @@ export function modelFamily(model: ModelChoice): string {
 export function ModelFamilyMenu({
   leading,
   inherited = false,
+  valueSuffix,
   appearance = "outlined",
   resetLabel,
   label,
@@ -50,12 +94,14 @@ export function ModelFamilyMenu({
   disabled,
   loading = false,
   description,
+  align = "start",
   onChange,
   onCustom,
 }: {
   leading?: ReactNode;
   inherited?: boolean;
-  appearance?: "outlined" | "subtle";
+  valueSuffix?: string | undefined;
+  appearance?: "outlined" | "glass-ghost" | "inverted";
   resetLabel?: string | undefined;
   label: string;
   effort?: string | undefined;
@@ -69,15 +115,61 @@ export function ModelFamilyMenu({
   disabled: boolean;
   loading?: boolean;
   description?: string | undefined;
+  align?: "start" | "center" | "end";
   onChange(id: string): void;
   onCustom?: (() => void) | undefined;
 }) {
+  // Routes are listed on their own up front, beside Default, not in a family.
+  const routes = models.filter((model) => model.route);
   const families = new Map<string, ModelChoice[]>();
   for (const model of models) {
+    if (model.route) continue;
     const family = modelFamily(model);
     families.set(family, [...(families.get(family) ?? []), model]);
   }
-  const selectedLabel = `${selected.label}${inherited ? " · Default" : ""}`;
+  const hasFamilyLogos = [...families.keys()].some((family) =>
+    modelLogo(family),
+  );
+  // Routes' marks need the leading column too.
+  const leadingColumn = hasFamilyLogos || routes.length > 0;
+  // Fast models get their own section up front, so the quick choices are one
+  // click away; they stay in their families too. A catalog of only fast (or
+  // no fast) models gains nothing from a separate section.
+  const fastModels = models.filter((model) => model.fast && !model.route);
+  const fastSection =
+    fastModels.length > 0 && fastModels.length < models.length - routes.length;
+  const selectedLabel = `${selected.label}${selected.fast ? " · Fast" : ""}${valueSuffix ?? (inherited && selected.description ? ` · ${selected.description}` : "")}`;
+  const choiceRow = (model: ModelChoice, inFastSection: boolean) => {
+    const leading = inFastSection && hasFamilyLogos && (
+      <span className="buzz-select-leading" aria-hidden="true">
+        {modelLogo(modelFamily(model))}
+      </span>
+    );
+    return onEffortChange && (model.efforts?.length || model.loadEfforts) ? (
+      <EffortMenu
+        key={`${model.effortScope ?? ""}:${model.id}`}
+        model={model}
+        leading={leading}
+        mark={!inFastSection}
+        selected={selected.id === model.id}
+        effort={effort ?? ""}
+        onChange={onEffortChange}
+      />
+    ) : (
+      <MenuRadioItem key={model.id} value={model.id} closeOnClick>
+        {leading}
+        <ModelName
+          model={model}
+          mark={!inFastSection}
+          label={
+            model.unlisted && model.description
+              ? `${model.label} · ${model.description}`
+              : model.label
+          }
+        />
+      </MenuRadioItem>
+    );
+  };
   const menu = (
     <MenuRoot>
       <MenuTrigger
@@ -88,9 +180,9 @@ export function ModelFamilyMenu({
             disabled={disabled}
             loading={loading}
             focusableWhenDisabled={loading && !disabled}
-            variant={appearance === "subtle" ? "subtle" : "outline"}
+            variant={appearance === "outlined" ? "outline" : appearance}
             shape="control"
-            size="sm"
+            size={appearance === "glass-ghost" ? "xs" : "sm"}
             aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
             title={selectedLabel}
           >
@@ -99,36 +191,103 @@ export function ModelFamilyMenu({
                 {leading}
               </span>
             )}
-            <span className="buzz-select-leading" aria-hidden="true">
-              <ModelIcon model={selected.id || selected.label} />
-            </span>
-            {/* Select's value text: only the name ellipsizes, not Default.
-                A card's chip gives the name that room; its label and hint keep Default. */}
-            <span className="buzz-select-value-text">
-              <span className="buzz-select-value">{selected.label}</span>
-              {inherited && appearance !== "subtle" && (
+            {selected.route ? (
+              <ArrowsSplitIcon
+                className="buzz-select-leading"
+                size={20}
+                aria-hidden="true"
+              />
+            ) : (
+              modelLogo(modelFamily(selected), "buzz-select-leading")
+            )}
+            <span className={styles.value}>
+              <span className={`buzz-select-value ${styles.model}`}>
+                {selected.label}
+              </span>
+              {selected.fast && <FastMark />}
+              {valueSuffix && (
                 <span className="buzz-select-value-suffix text-subtle">
-                  {" · Default"}
+                  {valueSuffix}
+                </span>
+              )}
+              {effortLabel && (
+                <span className={`${styles.effort} text-body-sm text-subtle`}>
+                  {effortLabel}
                 </span>
               )}
             </span>
-            {effortLabel && (
-              <span className="text-body-sm text-subtle">{effortLabel}</span>
-            )}
             <CaretDownIcon size={16} aria-hidden="true" />
           </Button>
         )}
       />
-      <MenuPopup aria-label={label}>
+      <MenuPopup aria-label={label} align={align}>
         {defaultChoice && (
           <MenuRadioGroup
             value={inherited ? "" : selected.id}
             onValueChange={(id) => onChange(id)}
           >
-            <MenuRadioItem value="" closeOnClick>
-              {defaultChoice.label} · Default
+            <MenuRadioItem
+              value=""
+              aria-label="Default"
+              aria-description={defaultChoice.description}
+              closeOnClick
+            >
+              {leadingColumn && (
+                <span className="buzz-select-leading" aria-hidden="true" />
+              )}
+              <ChoiceRow
+                label="Default"
+                description={defaultChoice.description}
+              />
             </MenuRadioItem>
           </MenuRadioGroup>
+        )}
+        {routes.length > 0 && (
+          <>
+            <MenuRadioGroup
+              value={inherited ? "" : selected.id}
+              onValueChange={(id) => onChange(id)}
+            >
+              {routes.map((model) => (
+                <MenuRadioItem
+                  key={model.id}
+                  value={model.id}
+                  aria-label={model.label}
+                  aria-description={model.description}
+                  closeOnClick
+                >
+                  {/* A split arrow marks a route: it picks the model per turn. */}
+                  <span className="buzz-select-leading" aria-hidden="true">
+                    <ArrowsSplitIcon size={20} aria-hidden="true" />
+                  </span>
+                  <ChoiceRow
+                    label={model.label}
+                    description={model.description}
+                  />
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+            {families.size > 0 && <MenuSeparator />}
+          </>
+        )}
+        {fastSection && (
+          <>
+            <MenuGroup>
+              <MenuGroupLabel emphasis="quiet">
+                <span className={styles.name}>
+                  <LightningIcon size={14} aria-hidden="true" />
+                  Fast
+                </span>
+              </MenuGroupLabel>
+              <MenuRadioGroup
+                value={selected.id}
+                onValueChange={(id) => onChange(id)}
+              >
+                {fastModels.map((model) => choiceRow(model, true))}
+              </MenuRadioGroup>
+            </MenuGroup>
+            <MenuSeparator />
+          </>
         )}
         {[...families]
           .sort(([a], [b]) =>
@@ -137,7 +296,11 @@ export function ModelFamilyMenu({
           .map(([family, choices]) => (
             <MenuSubmenu key={family}>
               <MenuSubmenuTrigger>
-                <ModelIcon model={family} />
+                {leadingColumn && (
+                  <span className="buzz-select-leading" aria-hidden="true">
+                    {modelLogo(family)}
+                  </span>
+                )}
                 {family}
               </MenuSubmenuTrigger>
               <MenuSubmenuPopup aria-label={`${family} models`}>
@@ -145,26 +308,7 @@ export function ModelFamilyMenu({
                   value={selected.id}
                   onValueChange={(id) => onChange(id)}
                 >
-                  {choices.map((model) =>
-                    onEffortChange &&
-                    (model.efforts?.length || model.loadEfforts) ? (
-                      <EffortMenu
-                        key={`${model.effortScope ?? ""}:${model.id}`}
-                        model={model}
-                        selected={selected.id === model.id}
-                        effort={effort ?? ""}
-                        onChange={onEffortChange}
-                      />
-                    ) : (
-                      <MenuRadioItem
-                        key={model.id}
-                        value={model.id}
-                        closeOnClick
-                      >
-                        {model.label}
-                      </MenuRadioItem>
-                    ),
-                  )}
+                  {choices.map((model) => choiceRow(model, false))}
                 </MenuRadioGroup>
               </MenuSubmenuPopup>
             </MenuSubmenu>
@@ -195,11 +339,15 @@ export function ModelFamilyMenu({
 
 function EffortMenu({
   model,
+  leading,
+  mark,
   selected,
   effort,
   onChange,
 }: {
   model: ModelChoice;
+  leading?: ReactNode;
+  mark: boolean;
   selected: boolean;
   effort: string;
   onChange(model: string, effort: string): void;
@@ -220,7 +368,8 @@ function EffortMenu({
       }}
     >
       <MenuSubmenuTrigger role="menuitemradio" aria-checked={selected}>
-        {model.label}
+        {leading}
+        <ModelName model={model} label={model.label} mark={mark} />
         {selected && <CheckIcon size={16} aria-hidden="true" />}
       </MenuSubmenuTrigger>
       <MenuSubmenuPopup aria-label={`${model.label} thinking effort`}>

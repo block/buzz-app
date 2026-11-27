@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import {
   act,
   cleanup,
@@ -9,13 +10,20 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { use } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationTab as Tab } from "./useChannelTabState";
-import { PageTabs, type PageTabOptions, type PageTabTarget } from "./PageTabs";
+import {
+  ConversationWorkspace,
+  PageTabs,
+  type PageTabOptions,
+  type PageTabTarget,
+} from "./PageTabs";
 
 // The tab's own conversation has its mounted suite; this owner places it.
 vi.mock("./ConversationTab", () => ({
@@ -24,11 +32,17 @@ vi.mock("./ConversationTab", () => ({
     channel,
     visit,
     onResolvedRoot,
+    parent,
+    intro,
+    trailing,
   }: {
+    intro?: import("react").ReactNode;
+    trailing?: { content(state: object): import("react").ReactNode };
     tab: Tab;
     channel: { name: string };
     visit: boolean;
     onResolvedRoot?: (rootId: string) => void;
+    parent?: { label: string; open(): void };
   }) => (
     <p
       data-tab={tab.id}
@@ -38,11 +52,18 @@ vi.mock("./ConversationTab", () => ({
       data-focus={tab.focusRequest}
       data-reply={tab.kind === "thread" ? tab.replyRequest : undefined}
     >
+      {intro}
       {tab.kind} in {channel.name}
+      {trailing?.content({ expanded: false, toggle() {} })}
       {!visit && " unvisited"}
       {onResolvedRoot && (
         <button type="button" onClick={() => onResolvedRoot("older")}>
           Resolve root
+        </button>
+      )}
+      {parent && (
+        <button type="button" onClick={parent.open}>
+          {parent.label}
         </button>
       )}
     </p>
@@ -69,10 +90,24 @@ function fixture(visits?: boolean) {
     { id: "alpha", name: "alpha" },
     { id: "beta", name: "beta" },
     { id: "pending", name: "pending", cached: true },
+    // Joined, but not shown in a channel list.
+    { id: "archive", name: "archive", archived: true },
+    { id: "guest", name: "guest", readOnly: true, viewerRole: "guest" },
+    { id: "dm", name: "Alice", channelType: "dm" },
+    {
+      id: "group",
+      name: "Everyone",
+      channelType: "dm",
+      participants: ["a", "b", "e", "z"].map((c) => c.repeat(64)),
+    },
   ];
   const list = { channels };
   const rows = { rows: [{ id: "root", content: "Root text" }] };
-  const profiles = new Map();
+  const profiles = new Map([
+    ["a".repeat(64), { name: "Ann" }],
+    ["b".repeat(64), { name: "Bob" }],
+    ["z".repeat(64), { name: "Zed" }],
+  ]);
   const available: never[] = [];
   const session = {
     viewer: "viewer",
@@ -82,15 +117,20 @@ function fixture(visits?: boolean) {
       list: () => list,
       window: () => rows,
     },
-    profiles: { snapshot: () => profiles, subscribe: () => () => {} },
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: () => Promise.resolve(),
+    },
   } as unknown as RelaySession;
-  const connection = { status: "ready", session };
+  const connection = { status: "ready", session, scope: "origin:viewer" };
   const host = {
     relay: { snapshot: () => connection },
     panels: {
       snapshot: () => available,
       subscribe: () => () => {},
       resolve: () => undefined,
+      handleOpenRequests: () => () => {},
     },
     navigation: { open: vi.fn() },
   } as unknown as ConversationHostServices;
@@ -99,6 +139,13 @@ function fixture(visits?: boolean) {
   let close: (target: PageTabTarget) => boolean = () => false;
   let isOpen: (target: PageTabTarget) => boolean = () => false;
   const openers = new Set<typeof open>();
+  // What a message link's Open link calls for a thread in another channel.
+  let link: (channelId: string, rootId: string) => boolean = () => false;
+  function Links() {
+    const linked = use(LinkThreadTabContext);
+    link = (channelId, rootId) => !!linked?.(channelId, rootId, rootId);
+    return null;
+  }
   render(
     <PageTabs
       id="switchboard"
@@ -114,11 +161,18 @@ function fixture(visits?: boolean) {
         close = closer;
         isOpen = opened;
         openers.add(next);
-        return <p>Chat list</p>;
+        return (
+          <>
+            <p>Chat list</p>
+            <Links />
+          </>
+        );
       }}
     </PageTabs>,
   );
   return {
+    host,
+    session,
     openers,
     navigation: host.navigation,
     open(target: PageTabTarget, options?: PageTabOptions) {
@@ -129,6 +183,13 @@ function fixture(visits?: boolean) {
       return opened;
     },
     isOpen: (target: PageTabTarget) => isOpen(target),
+    link(channelId: string, rootId: string) {
+      let opened = false;
+      act(() => {
+        opened = link(channelId, rootId);
+      });
+      return opened;
+    },
     close(target: PageTabTarget) {
       let closed = false;
       act(() => {
@@ -180,6 +241,44 @@ it("replaces the last opened tab unless asked to keep it", () => {
   expect(screen.getByText("conversation in beta")).toBeVisible();
   // Pages can depend on one opener across the renders its tabs cause.
   expect(page.openers.size).toBe(1);
+});
+
+// A thread tab reads its channel; only a conversation tab, which mounts a
+// composer, needs one the viewer can post in. Neither kind of channel is in
+// the page's own rows: the sidebar leaves an archived channel out.
+it.each(["archive", "guest"])(
+  "opens a thread of the %s channel from a row and from a link, but not its conversation",
+  (channelId) => {
+    const page = fixture();
+    expect(page.open({ channelId })).toBe(false);
+    expect(page.open({ channelId, threadId: "root" })).toBe(true);
+    expect(screen.getByText(`thread in ${channelId}`)).toBeVisible();
+    expect(page.close({ channelId, threadId: "root" })).toBe(true);
+    expect(page.link(channelId, "root")).toBe(true);
+    expect(screen.getByText(`thread in ${channelId}`)).toBeVisible();
+  },
+);
+
+it("gives each conversation tab its sidebar icon", () => {
+  const page = fixture();
+  expect(page.open({ channelId: "beta" })).toBe(true);
+  expect(page.open({ channelId: "dm" }, { keep: true })).toBe(true);
+  const list = screen
+    .getAllByRole("tablist")
+    .find((item) => item.getAttribute("aria-label") !== "Switchboard tabs");
+  expect(
+    within(list as HTMLElement)
+      .getAllByRole("tab")
+      .map(
+        (tab) =>
+          `${
+            tab
+              .querySelector("svg")
+              ?.getAttribute("class")
+              ?.match(/tabler-icon-[\w-]+/)?.[0]
+          } ${tab.textContent}`,
+      ),
+  ).toEqual(["tabler-icon-hash beta", "tabler-icon-message-circle Alice"]);
 });
 
 it("opens a thread moved to the main pane where it is", () => {
@@ -294,6 +393,32 @@ it("focuses the composer of each tab it opens, except at a message", () => {
   expect(thread()).not.toHaveAttribute("data-reply");
 });
 
+it("names a thread's conversation inside it, linking where the menu's Open in channel goes", async () => {
+  const user = userEvent.setup();
+  const page = fixture();
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  await user.click(screen.getByRole("button", { name: "#alpha" }));
+  expect(page.navigation.open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: "viewer", communityOrigin: "origin" },
+    channelId: "alpha",
+    messageId: "reply",
+    threadRootId: "root",
+    context: "channel",
+  });
+  page.open({ channelId: "dm", threadId: "root" });
+  expect(screen.getByRole("button", { name: "DM · Alice" })).toBeVisible();
+  // A group DM's caption bounds its names as Inbox rows do; its tab lists all.
+  page.open({ channelId: "group", threadId: "root" });
+  expect(
+    screen.getByRole("button", {
+      name: `DM · Ann, Bob, ${formatPublicKey("e".repeat(64))} +1`,
+    }),
+  ).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Root text" })).toBeVisible();
+});
+
 it("opens a tab's conversation in its channel from the tab's menu", async () => {
   const user = userEvent.setup();
   const page = fixture();
@@ -318,6 +443,7 @@ it("opens a tab's conversation in its channel from the tab's menu", async () => 
     channelId: "alpha",
     messageId: "reply",
     threadRootId: "root",
+    context: "channel",
   });
   page.open({ channelId: "beta" });
   await user.pointer({
@@ -336,3 +462,143 @@ it("opens a tab's conversation in its channel from the tab's menu", async () => 
     }),
   );
 });
+
+it("a workspace owns its main reader, intro, menu, and no initial detail", async () => {
+  const user = userEvent.setup();
+  const f = fixture();
+  cleanup();
+  const source = vi.fn();
+  render(
+    <ConversationWorkspace
+      id="task"
+      session={f.session}
+      scope="origin:viewer"
+      target={{ channelId: "alpha", threadId: "root" }}
+      label="Task"
+      host={f.host}
+      intro={<a href="buzz://channel/alpha">Source channel: #alpha</a>}
+      actions={[{ label: "View in source channel", run: source }]}
+    />,
+  );
+  expect(screen.queryByText("Chat list")).toBeNull();
+  expect(screen.getByText("thread in alpha", { exact: false })).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Source channel: #alpha" }),
+  ).toBeVisible();
+  expect(screen.queryAllByRole("tablist")).toHaveLength(1);
+  await user.click(
+    screen.getByRole("button", { name: "Conversation actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View in source channel" }),
+  );
+  expect(source).toHaveBeenCalledOnce();
+});
+
+it("a workspace gives its trailing content to its main reader", () => {
+  const f = fixture();
+  cleanup();
+  render(
+    <ConversationWorkspace
+      id="task"
+      session={f.session}
+      scope="origin:viewer"
+      target={{ channelId: "alpha" }}
+      label="Task"
+      host={f.host}
+      trailing={{ restHeight: 100, content: () => <p>Decision card</p> }}
+    />,
+  );
+  expect(screen.getByText("Decision card")).toBeVisible();
+});
+
+it.each([
+  ["channel", { channelId: "alpha" }, "conversation in alpha"],
+  ["thread", { channelId: "alpha", threadId: "root" }, "thread in alpha"],
+] as const)(
+  "a workspace docks its aside beside a %s reader",
+  (_, target, label) => {
+    const f = fixture();
+    cleanup();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1200, 600),
+    );
+    render(
+      <ConversationWorkspace
+        id="task"
+        session={f.session}
+        scope="origin:viewer"
+        target={target}
+        label="Task"
+        host={f.host}
+        aside={<aside aria-label="Task dashboard" />}
+        asideWidth={280}
+      />,
+    );
+    const reader = screen.getByText(label, { exact: false });
+    const aside = screen.getByRole("complementary", { name: "Task dashboard" });
+    expect(reader.parentElement?.nextElementSibling).toBe(aside.parentElement);
+    expect(aside.parentElement).toHaveStyle({ inlineSize: "280px" });
+    expect(screen.getByRole("tabpanel")).toContainElement(aside);
+  },
+);
+
+it.each([false, true])(
+  "a workspace shows its header actions before the actions menu (menu=%s)",
+  (menu) => {
+    const f = fixture();
+    cleanup();
+    render(
+      <ConversationWorkspace
+        id="task"
+        session={f.session}
+        scope="origin:viewer"
+        target={{ channelId: "alpha" }}
+        label="Task"
+        host={f.host}
+        headerActions={<button type="button">Dashboard</button>}
+        {...(menu && { actions: [{ label: "Archive", run() {} }] })}
+      />,
+    );
+    const header = screen.getByRole("banner");
+    expect(
+      within(header)
+        .getAllByRole("button")
+        .map(
+          (button) => button.getAttribute("aria-label") ?? button.textContent,
+        )
+        .filter(
+          (name) => name === "Dashboard" || name === "Conversation actions",
+        ),
+    ).toEqual(menu ? ["Dashboard", "Conversation actions"] : ["Dashboard"]);
+  },
+);
+
+it.each([false, true])(
+  "a workspace requests composer focus unless another editor owns it (editing=%s)",
+  (editing) => {
+    const f = fixture();
+    cleanup();
+    render(
+      editing ? (
+        <input aria-label="Chat name" />
+      ) : (
+        <button type="button">Open task</button>
+      ),
+    );
+    screen.getByRole(editing ? "textbox" : "button").focus();
+    render(
+      <ConversationWorkspace
+        id="task"
+        session={f.session}
+        scope="origin:viewer"
+        target={{ channelId: "alpha" }}
+        label="Task"
+        host={f.host}
+      />,
+    );
+    const reader = screen.getByText("conversation in alpha", { exact: false });
+    if (editing) expect(reader).not.toHaveAttribute("data-focus");
+    else expect(reader).toHaveAttribute("data-focus", "1");
+  },
+);

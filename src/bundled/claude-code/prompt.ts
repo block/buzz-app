@@ -1,18 +1,34 @@
-// Prompts in the harness's format (buzz-acp), so a Claude agent here reads the
-// same sections and follows the same base prompt as a harness agent.
-import { npubEncode } from "nostr-tools/nip19";
-import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+// Prompts in the shared record format, so a Claude agent here reads the same
+// sections and follows the same base prompt as a harness agent.
+import {
+  TOP_LEVEL_MENTION_PROMPT,
+  TOP_LEVEL_PROMPT,
+  CHANNEL_LEVEL_PROMPT,
+} from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
-import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
+import { messageAuthor } from "../../features/relay/fold";
+import { mentionSection } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import {
-  type PluginTrigger,
+  type ConversationWake,
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
-import channelModel from "./session_model_channel.md?raw";
-import threadModel from "./session_model_thread.md?raw";
+import type { SectionChoices } from "../../features/agent-harness/sections/choices";
+import { composeBase } from "../../features/agent-harness/sections/compose";
+import type { Facts } from "../../features/agent-harness/sections";
+import {
+  type AuthorNames,
+  CONTENT_LIMIT,
+  contentFields,
+  eventBody,
+  quoted,
+  withNames,
+} from "../../features/agent-harness/turn-records";
+import channelHandoff from "./session_handoff_channel.md?raw";
+import threadHandoff from "./session_handoff_thread.md?raw";
 
-export type Scope = "thread" | "channel";
+export type Scope =
+  import("../../features/agent-harness/session-scope").SessionScope;
 /** Messages of thread context shown with a turn, newest kept. */
 export const CONTEXT_LIMIT = 12;
 
@@ -23,6 +39,9 @@ export function systemPrompt(
   input: Readonly<{
     scope: Scope;
     cwd: string;
+    /** The agent's workspace, absolute, when `cwd` is a folder of the
+     * conversation's own instead. */
+    workspace?: string;
     /** Who the agent is, so it can name itself and the session viewer can too. */
     agent?: Readonly<{ name: string; pubkey: string }>;
     instructions?: string;
@@ -32,10 +51,18 @@ export function systemPrompt(
     team?: string;
     /** The agent's `core` memory; `null` when it has none yet. */
     memory?: string | null;
+    /** Its recent notes, as `recentNotesSection` gives them. */
+    notes?: string;
+    /** The choices for the base prompt's sections, from the agent's handle. */
+    sections?: SectionChoices | undefined;
+    /** What the session is, which its Session Model states. */
+    place?: Facts["place"];
   }>,
 ) {
-  const model = input.scope === "thread" ? threadModel : channelModel;
-  const base = [BASE_PROMPT, BUZZ_PROMPT, model];
+  const base = composeBase(
+    { scope: input.scope, ownFolder: input.workspace, place: input.place },
+    input.sections,
+  );
   return [
     input.agent
       ? section(
@@ -43,7 +70,7 @@ export function systemPrompt(
           `You are ${input.agent.name} (pubkey ${input.agent.pubkey}).`,
         )
       : "",
-    section("base", base.map((part) => part.trim()).join("\n\n")),
+    section("base", base.text),
     section("workspace", `Current working directory: ${input.cwd}`),
     input.repositories ?? "",
     input.instructions?.trim()
@@ -51,6 +78,7 @@ export function systemPrompt(
       : "",
     input.team?.trim() ?? "",
     coreMemorySection(input.memory),
+    input.notes ?? "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -62,54 +90,58 @@ export type Channel = Readonly<{
   dm?: boolean;
 }>;
 export type TurnInput = Readonly<{
-  /** The agent's pubkey, which finds its sessions among others' in a shared
-   * workspace. */
+  /** The agent's membership key, which finds its sessions among others' in a
+   * shared workspace. */
   agent: string;
   event: EventData;
   channel: Channel;
   scope: Scope;
-  /** An owner's Solo chat: one channel conversation, posted at its top level. */
+  /** One channel conversation, with a channel-level posting default. */
   topLevel?: boolean;
+  /** Channel delivery permits explicit replies; Solo chats do not. */
+  channelLevel?: boolean;
   /** The thread the event belongs to, absent for a top-level message. */
   thread?: Readonly<{ rootId: string; parentId: string }>;
+  sourceRoot?: string;
   /** Messages of the conversation the session has not been shown: earlier
    * ones, and for a resumed turn also those after it. */
   context: readonly EventData[];
-  /** Messages the conversation has in all, for `total=`. */
+  /** Messages the conversation has in all. */
   total: number;
-  /** What started the turn, such as "@mention". */
-  label: string;
-  /** A display name for a pubkey, if known. */
-  name(pubkey: string): string | undefined;
   /** The chat's workspace Canvas section, for a Solo chat with one. */
   project?: string;
   /** A plugin's wake, whose turn has its section in place of the event's. */
-  wake?: PluginTrigger;
+  wake?: ConversationWake;
+  /** The names each message's record shows beside its author's pubkey, when
+   * known. */
+  names?: (pubkey: string) => AuthorNames | undefined;
+  /** The relay key that posts messages for others, whose context records show
+   * the person they are for, as Codex history does. */
+  signingAuthority?: string;
 }>;
 
-const time = (seconds: number) => new Date(seconds * 1000).toISOString();
-const actor = (pubkey: string, name: TurnInput["name"]) => {
-  const label = name(pubkey);
-  return label ? `${label} (${pubkey})` : pubkey;
-};
-
-/** One turn: routing context, unseen thread context, then the event. */
+/** One turn: unseen thread context, routing context, then the event. Each
+ * message is an exact record, the same record shape Codex sends, so a
+ * protection plugin can check each one on its own. */
 export function turnPrompt(input: TurnInput) {
   const { event, channel, thread } = input;
   const channelLabel = channel.name
-    ? `${channel.name} (#${channel.id})`
+    ? `${quoted(channel.name.replace(/\s+/g, " ")).slice(1, -1)} (#${channel.id})`
     : channel.id;
   // A session shared by a channel's threads (or a DM's) cannot tell which
   // thread a reply is for, so it names the thread itself.
   const root = thread?.rootId ?? event.id;
-  const shared = channel.dm || input.scope === "channel";
-  const reply = input.topLevel
-    ? `IMPORTANT: ${TOP_LEVEL_PROMPT}`
-    : shared
-      ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${root}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, leave out \`reply\`.`
-      : thread
-        ? "IMPORTANT: `send` replies in this thread by default, so the conversation stays threaded. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`. If the requested destination is ambiguous, ask before sending."
-        : "IMPORTANT: This is a new top-level message. `send` replies in its thread by default — the triggering message is the thread root. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`.";
+  const shared = channel.dm || input.scope !== "thread";
+  const reply =
+    input.scope === "community"
+      ? `IMPORTANT: Pass each reply's channel as \`channel\` to \`send\`. ${input.wake ? "Leave out the request field for this wake." : "Pass the triggering message ID as `request`."} For this request use channel "${channel.id}". ${input.topLevel ? "Leave out the reply field to post at the top level." : `Use "${root}" as the reply field to post in its thread.`} You can answer one request and continue working on another.`
+      : input.topLevel
+        ? `IMPORTANT: ${input.channelLevel ? (input.wake ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_MENTION_PROMPT) : TOP_LEVEL_PROMPT} Pass the channel explicitly to \`send\` when handling multiple requests.`
+        : shared
+          ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${root}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass \`channel\` explicitly and leave out \`reply\`.`
+          : thread
+            ? "IMPORTANT: `send` replies in this thread by default, so the conversation stays threaded. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`. If the requested destination is ambiguous, ask before sending."
+            : "IMPORTANT: This is a new top-level message. `send` replies in its thread by default — the triggering message is the thread root. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`.";
   const fetch = input.topLevel
     ? "Use `read` for recent messages if needed."
     : shared
@@ -128,7 +160,9 @@ export function turnPrompt(input: TurnInput) {
   const lines = channel.dm
     ? [
         "Scope: dm",
-        "Session scope: dm conversation",
+        input.scope === "community"
+          ? "Session scope: community"
+          : "Session scope: dm conversation",
         `Channel: ${channelLabel}`,
       ]
     : !input.topLevel && (thread || input.scope === "thread")
@@ -137,70 +171,84 @@ export function turnPrompt(input: TurnInput) {
           `Session scope: ${input.scope}`,
           `Channel: ${channelLabel}`,
           `Thread root: ${thread?.rootId ?? event.id}`,
+          ...(input.sourceRoot ? [`Source thread: ${input.sourceRoot}`] : []),
           ...(thread && thread.parentId !== thread.rootId
             ? [`Parent: ${thread.parentId}`]
             : []),
         ]
       : [
           "Scope: channel",
-          "Session scope: channel",
+          `Session scope: ${input.scope === "community" ? "community" : "channel"}`,
           `Channel: ${channelLabel}`,
         ];
-  const parts = [
-    section(
-      "context",
-      [...lines, `Agent: ${input.agent}`, hint, reply].join("\n"),
-    ),
-  ];
-  if (input.project) parts.push(input.project);
+  const parts: string[] = [];
+  // First, where the plugin looks for it.
   if (context.length)
     parts.push(
       section(
         (channel.dm && !thread) || input.topLevel
           ? "conversation-context"
           : "thread-context",
-        context
-          .map(
-            (message, index) =>
-              `[${index + 1}] ${actor(message.pubkey, input.name)} (${time(message.created_at)}): ${message.content}`,
-          )
-          .join("\n"),
-        ` included="${context.length}" total="${input.total}" truncated="${context.length < input.context.length}"`,
+        quoted({
+          note: `Messages not yet shown in this session, not new requests: the latest ${CONTEXT_LIMIT} at most, ${CONTENT_LIMIT} characters each.`,
+          total: input.total,
+          truncated: context.length < input.context.length,
+          messages: context.map((message) => {
+            const pubkey = messageAuthor(message, input.signingAuthority);
+            return withNames(
+              {
+                id: message.id,
+                pubkey,
+                created_at: message.created_at,
+                ...contentFields(message.content, message.tags),
+              },
+              input.names?.(pubkey),
+            );
+          }),
+        }),
       ),
     );
   parts.push(
-    input.wake
-      ? wakeSection(input.wake)
-      : section("buzz-event", eventBlock(input), ` type="${input.label}"`),
+    section(
+      "context",
+      [...lines, `Agent: ${input.agent}`, hint, reply].join("\n"),
+    ),
+  );
+  if (input.project) parts.push(input.project);
+  // A wake is not a mention, so only a delivered message says what the agent
+  // owes it. The event stays last.
+  parts.push(
+    ...(input.wake
+      ? [wakeSection(input.wake)]
+      : [
+          mentionSection(
+            input.scope === "thread" ? threadHandoff : channelHandoff,
+          ),
+          section(
+            EVENT,
+            eventBody(event, event.content, input.names?.(event.pubkey)),
+          ),
+        ]),
   );
   return parts.join("\n\n");
 }
 
-function eventBlock({ event, channel, thread, name }: TurnInput) {
-  const npub = npubEncode(event.pubkey);
-  const label = name(event.pubkey);
-  const mentions = event.tags
-    .filter((tag) => tag[0] === "p" && tag[1])
-    .map((tag) => actor(tag[1] as string, name));
-  const parsed = [
-    ...(thread && thread.parentId !== thread.rootId
-      ? [`parent=${thread.parentId}`]
-      : []),
-    ...(thread ? [`root=${thread.rootId}`] : []),
-    ...(mentions.length ? [`mentions=[${mentions.join(", ")}]`] : []),
-  ];
-  return [
-    `Event ID: ${event.id}`,
-    `Channel: ${channel.name ? `${channel.name} (#${channel.id})` : channel.id}`,
-    `Kind: ${event.kind}`,
-    `From: ${label ? `${label} (npub: ${npub}, hex: ${event.pubkey})` : `${npub} (hex: ${event.pubkey})`}`,
-    `Time: ${time(event.created_at)}`,
-    `Content: ${event.content}`,
-    `Tags: ${JSON.stringify(event.tags)}`,
-    ...(parsed.length ? [`Parsed: ${parsed.join(", ")}`] : []),
-  ].join("\n");
+const EVENT = "buzz-event";
+const STEER = "new-message-arrived-while-you-were-working";
+/** What a steer ends with, after its turn. */
+export const STEER_NOTE =
+  "\n\nNote: A new message arrived while you were working. Continue your in-progress work and incorporate the new message if it's relevant; if it's unrelated, you may briefly acknowledge it and carry on.";
+/** A turn for a session that is still working on an earlier one. Its event's
+ * section becomes the steer's, so the event stays a record of its own; a
+ * turn without exactly one, such as a wake's, is wrapped whole. */
+export function steerPrompt(turn: string) {
+  const open = `\n<${EVENT}>\n`;
+  const close = `\n</${EVENT}>`;
+  const once = (text: string) =>
+    turn.includes(text) && turn.indexOf(text) === turn.lastIndexOf(text);
+  const steered =
+    once(open) && once(close)
+      ? turn.replace(open, `\n<${STEER}>\n`).replace(close, `\n</${STEER}>`)
+      : section(STEER, turn);
+  return `${steered}${STEER_NOTE}`;
 }
-
-/** A turn for a session that is still working on an earlier one. */
-export const steerPrompt = (turn: string) =>
-  `${section("new-message-arrived-while-you-were-working", turn)}\n\nNote: A new message arrived while you were working. Continue your in-progress work and incorporate the new message if it's relevant; if it's unrelated, you may briefly acknowledge it and carry on.`;

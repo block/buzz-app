@@ -1,5 +1,5 @@
 import { ProviderDialog } from "./ProviderDialog";
-import { useRef, useState } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import type {
   Agent,
   AgentSettingsHost,
@@ -14,12 +14,20 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { CaretDownIcon } from "../../shared/design-system/icons";
 import {
+  MenuGroup,
+  MenuGroupLabel,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+  PopoverDescription,
+} from "../../shared/design-system/ui/Popover";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -34,6 +42,7 @@ export function useAgentSettingsHost(options: {
   agent: Agent;
   type: RegisteredAgentType | undefined;
   settingsHost: AgentSettingsHost;
+  discard(): void;
 };
 export function useAgentSettingsHost(options: {
   agents: Agents | undefined;
@@ -44,6 +53,7 @@ export function useAgentSettingsHost(options: {
   agent: Agent | undefined;
   type: RegisteredAgentType | undefined;
   settingsHost: AgentSettingsHost | undefined;
+  discard(): void;
 };
 export function useAgentSettingsHost({
   agents,
@@ -59,6 +69,7 @@ export function useAgentSettingsHost({
   agent: Agent | undefined;
   type: RegisteredAgentType | undefined;
   settingsHost: AgentSettingsHost | undefined;
+  discard(): void;
 } {
   const [pendingType, setPendingType] = useState<{
     key: string;
@@ -75,29 +86,32 @@ export function useAgentSettingsHost({
   const pendingTypeSave = stagedType
     ? async (config: unknown = stagedType.config) => {
         if (!agents || !agent) return;
-        await agents.retype(agent.pubkey, stagedType.key, { config });
+        await agents.retype(agent.key, stagedType.key, { config });
         setPendingType(undefined);
       }
     : undefined;
-  const canRetype =
-    agent?.place === "here" &&
-    types.some((item) => !item.remote && item.key !== agent.type);
+  const showTypeControl =
+    (agent?.place === "here" ||
+      (agent?.place === "hosted" && Boolean(type?.remote))) &&
+    types.some((item) => item.key !== agent.type);
   return {
     agent: settingsAgent,
     type: settingsType,
+    discard: () => setPendingType(undefined),
     settingsHost:
       agents && agent
         ? {
             ...(pendingTypeSave ? { pendingSave: pendingTypeSave } : {}),
-            ...(canRetype
+            ...(showTypeControl
               ? {
-                  typeControl: (dirty: boolean) => (
+                  typeControl: (dirty: boolean, action?: ReactNode) => (
                     <TypeField
                       agents={agents}
                       agent={agent}
                       type={type}
                       types={types}
                       dirty={dirty}
+                      action={action}
                       selected={stagedType?.key ?? agent.type}
                       onSelect={setPendingType}
                     />
@@ -109,11 +123,12 @@ export function useAgentSettingsHost({
   };
 }
 
-const CARRY_LABELS: Record<keyof Carry, string> = {
+const CARRY_LABELS = {
   instructions: "Instructions",
   workspace: "Workspace",
-};
-const CARRY_KEYS = Object.keys(CARRY_LABELS) as (keyof Carry)[];
+  sessionScope: "Session scope",
+} satisfies Partial<Record<keyof Carry, string>>;
+const CARRY_KEYS = Object.keys(CARRY_LABELS) as (keyof typeof CARRY_LABELS)[];
 
 function TypeField({
   agents,
@@ -123,6 +138,7 @@ function TypeField({
   dirty,
   selected,
   onSelect,
+  action,
 }: {
   agents: Agents;
   agent: Agent;
@@ -130,15 +146,17 @@ function TypeField({
   types: readonly RegisteredAgentType[];
   dirty: boolean;
   selected: string;
+  action?: ReactNode;
   onSelect(type: { key: string; config: unknown } | undefined): void;
 }) {
-  const available =
-    agent.place === "here" ? types.filter((item) => !item.remote) : [];
-  const others = available.filter((item) => item.key !== agent.type);
-  const selectedType = available.find((item) => item.key === selected) ?? type;
+  const others = types.filter((item) => item.key !== agent.type);
+  const unavailable = others.filter((item) => type?.remote || item.remote);
+  const selectedType = types.find((item) => item.key === selected) ?? type;
   const TypeIcon = selectedType?.icon;
   const [error, setError] = useState("");
+  const [helpOpen, setHelpOpen] = useState<"Remote" | "Local">();
   const providerButton = useRef<HTMLButtonElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   const [checking, setChecking] = useState(false);
   const [configuring, setConfiguring] = useState(false);
   const [migration, setMigration] = useState<{
@@ -146,18 +164,19 @@ function TypeField({
     preview: ReturnType<Agents["previewRetype"]>;
   }>();
   const choose = (next: string) => {
+    if (agent.place !== "here") return;
     if (next === selected) return;
     if (next === agent.type) {
       onSelect(undefined);
       return;
     }
-    const target = available.find((item) => item.key === next);
-    if (!target) return;
+    const target = types.find((item) => item.key === next);
+    if (!target || target.remote) return;
     setError("");
     try {
       setMigration({
         target,
-        preview: agents.previewRetype(agent.pubkey, target.key),
+        preview: agents.previewRetype(agent.key, target.key),
       });
     } catch (reason) {
       setError(message(reason));
@@ -197,51 +216,100 @@ function TypeField({
       <PreferenceRow
         title="Harness"
         trailing={
-          others.length > 0 ? (
-            <div className="buzz-select" data-variant="compact">
-              <MenuRoot onOpenChange={(open) => open && setError("")}>
-                <MenuTrigger
-                  aria-label={`Change harness from ${selectedType?.title ?? "unavailable harness"}`}
-                  render={
-                    <Button
-                      ref={providerButton}
-                      variant="outline"
-                      shape="control"
-                      size="sm"
-                    >
-                      {value}
-                      <CaretDownIcon size={14} aria-hidden="true" />
-                    </Button>
-                  }
-                />
-                <MenuPopup>
-                  <MenuRadioGroup
-                    value={selected}
-                    onValueChange={(next) => choose(String(next))}
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            {others.length > 0 ? (
+              <div className="buzz-select" data-variant="compact">
+                <MenuRoot
+                  onOpenChange={(open) => {
+                    if (open) setError("");
+                    else setHelpOpen(undefined);
+                  }}
+                >
+                  <MenuTrigger
+                    aria-label={`Change harness from ${selectedType?.title ?? "unavailable harness"}`}
+                    render={
+                      <Button
+                        ref={providerButton}
+                        variant="outline"
+                        shape="control"
+                        size="sm"
+                      >
+                        {value}
+                        <CaretDownIcon size={14} aria-hidden="true" />
+                      </Button>
+                    }
+                  />
+                  <MenuPopup
+                    onKeyDownCapture={(event) => {
+                      // WebKit keeps focus on the menu root after pointer entry.
+                      // Consume the help's Escape here, including that focus path.
+                      if (event.key === "Escape" && helpOpen) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setHelpOpen(undefined);
+                      }
+                    }}
                   >
-                    {available.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <MenuRadioItem
-                          key={item.key}
-                          value={item.key}
-                          selection="highlight"
-                          closeOnClick
-                        >
-                          <ChoiceRow
-                            label={item.title}
-                            leading={Icon ? <Icon size={20} /> : undefined}
-                          />
-                        </MenuRadioItem>
-                      );
-                    })}
-                  </MenuRadioGroup>
-                </MenuPopup>
-              </MenuRoot>
-            </div>
-          ) : (
-            value
-          )
+                    <MenuRadioGroup
+                      value={selected}
+                      onValueChange={(next) => choose(String(next))}
+                    >
+                      {[true, false].map((remote) => {
+                        const label = remote ? "Remote" : "Local";
+                        const choices = types.filter(
+                          (item) => Boolean(item.remote) === remote,
+                        );
+                        if (!choices.length) return null;
+                        const blocked = choices.filter((item) =>
+                          unavailable.includes(item),
+                        );
+                        return (
+                          <MenuGroup key={label}>
+                            <MenuGroupLabel emphasis="quiet">
+                              <span className="text-caption">{label}</span>
+                            </MenuGroupLabel>
+                            {choices
+                              .filter((item) => !unavailable.includes(item))
+                              .map((item) => {
+                                const Icon = item.icon;
+                                return (
+                                  <MenuRadioItem
+                                    key={item.key}
+                                    value={item.key}
+                                    selection="highlight"
+                                    closeOnClick
+                                  >
+                                    <ChoiceRow
+                                      label={item.title}
+                                      leading={
+                                        Icon ? <Icon size={20} /> : undefined
+                                      }
+                                    />
+                                  </MenuRadioItem>
+                                );
+                              })}
+                            {blocked.length > 0 && (
+                              <UnavailableHarnessChoices
+                                types={blocked}
+                                source={type}
+                                open={helpOpen === label}
+                                onOpenChange={(open) =>
+                                  setHelpOpen(open ? label : undefined)
+                                }
+                              />
+                            )}
+                          </MenuGroup>
+                        );
+                      })}
+                    </MenuRadioGroup>
+                  </MenuPopup>
+                </MenuRoot>
+              </div>
+            ) : (
+              value
+            )}
+            {action}
+          </div>
         }
       />
       {error && !migration && (
@@ -251,6 +319,7 @@ function TypeField({
       )}
       <Dialog
         open={Boolean(migration) && !configuring}
+        initialFocus={cancel}
         preventClose={checking}
         onOpenChange={(open) => {
           if (!open) {
@@ -263,10 +332,13 @@ function TypeField({
             ? `Move ${agent.name} to ${migration.target.title}?`
             : "Move agent?"
         }
-        headerGap="compact"
         actions={
           <>
-            <Button disabled={checking} onClick={() => setMigration(undefined)}>
+            <Button
+              ref={cancel}
+              disabled={checking}
+              onClick={() => setMigration(undefined)}
+            >
               Cancel
             </Button>
             <Button
@@ -304,7 +376,112 @@ function TypeField({
   );
 }
 
-function MigrationPreview({
+function UnavailableHarnessChoices({
+  types,
+  source,
+  open,
+  onOpenChange,
+}: {
+  types: readonly RegisteredAgentType[];
+  source: RegisteredAgentType | undefined;
+  open: boolean;
+  onOpenChange(open: boolean): void;
+}) {
+  const triggerId = useId();
+  const trigger = useRef<HTMLDivElement>(null);
+  const description = useId();
+  // Builderlab is currently the only registered remote harness.
+  const hosted = types[0];
+  return (
+    <PopoverRoot
+      open={open}
+      triggerId={triggerId}
+      onOpenChange={(next, details) => {
+        // The menu returns focus to itself when the pointer enters this card.
+        // Let hover dismissal handle that move; another item still closes it.
+        if (
+          details.reason === "focus-out" &&
+          "relatedTarget" in details.event &&
+          details.event.relatedTarget ===
+            trigger.current?.closest('[role="menu"]')
+        ) {
+          details.cancel();
+          return;
+        }
+        onOpenChange(next);
+      }}
+    >
+      <PopoverTrigger
+        id={triggerId}
+        openOnHover="control"
+        nativeButton={false}
+        role="group"
+        aria-label="Unavailable harnesses"
+        aria-haspopup={false}
+        aria-expanded={undefined}
+        tabIndex={-1}
+        onFocus={(event) => {
+          if (
+            event.target instanceof HTMLElement &&
+            event.target.matches(":focus-visible")
+          )
+            onOpenChange(true);
+        }}
+        onKeyDownCapture={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpenChange(true);
+          }
+        }}
+        render={
+          <div ref={trigger}>
+            {types.map((item) => {
+              const Icon = item.icon;
+              return (
+                <MenuRadioItem
+                  key={item.key}
+                  value={item.key}
+                  selection="highlight"
+                  disabled
+                  aria-describedby={open ? description : undefined}
+                >
+                  <ChoiceRow
+                    label={item.title}
+                    leading={Icon ? <Icon size={20} /> : undefined}
+                  />
+                </MenuRadioItem>
+              );
+            })}
+          </div>
+        }
+      />
+      <PopoverPopup
+        side="right"
+        align="start"
+        aria-label="Harness availability"
+        initialFocus={false}
+        finalFocus={false}
+      >
+        <PopoverDescription id={description}>
+          {source?.remote ? (
+            <>
+              This agent runs on {source.title}. You can’t switch it to a local
+              harness yet. To run locally, create a new agent.
+            </>
+          ) : (
+            <>
+              This agent runs on your device. You can’t switch it to{" "}
+              {hosted?.title} yet. To run hosted, create a new {hosted?.title}{" "}
+              agent.
+            </>
+          )}
+        </PopoverDescription>
+      </PopoverPopup>
+    </PopoverRoot>
+  );
+}
+
+export function MigrationPreview({
   source,
   target,
   preview,
@@ -318,7 +495,9 @@ function MigrationPreview({
   const SourceIcon = source?.icon;
   const TargetIcon = target.icon;
   const carry = CARRY_KEYS.filter(
-    (key) => preview.moved.includes(key) || preview.dropped.includes(key),
+    (key) =>
+      preview.dropped.includes(key) ||
+      (key !== "sessionScope" && preview.moved.includes(key)),
   );
   const warning = source?.migrationWarning;
   return (

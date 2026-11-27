@@ -1,8 +1,11 @@
 // One Settings section policy for the standalone and shell presentations and
 // route classification. Visibility and authorization stay with settingsCards.
+import { isTauri } from "@tauri-apps/api/core";
+import { developerMode } from "../features/developer/mode";
 import {
   BellIcon,
   BrainIcon,
+  MicrophoneIcon,
   ShieldIcon,
   ChatCircleIcon,
   DownloadIcon,
@@ -15,6 +18,7 @@ import {
   UsersIcon,
   WrenchIcon,
   GearIcon,
+  LockIcon,
 } from "../shared/design-system/icons/index";
 import type { SettingsCard } from "../features/settings/service";
 import type { Contribution } from "../plugins/contributions";
@@ -36,11 +40,7 @@ export type SettingsGroup = {
   sections: readonly SettingsSection[];
 };
 
-// DEV alone is not enough: packaged desktop builds load a production bundle
-// from tauri://localhost, so the hostname check excludes them too.
-export const developerMode =
-  import.meta.env.DEV &&
-  /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+export { developerMode };
 
 const profile: SettingsSection = {
   id: "profile",
@@ -53,6 +53,7 @@ const app: readonly SettingsSection[] = [
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "agents", label: "Agent setup", icon: RobotIcon },
   { id: "decisions", label: "Decisions API", icon: BrainIcon },
+  { id: "speech", label: "Speech to text", icon: MicrophoneIcon },
   { id: "updates", label: "Software updates", icon: DownloadIcon },
 ];
 const plugins: SettingsSection = {
@@ -75,6 +76,11 @@ const identity: SettingsSection = {
   label: "Identity",
   icon: ShieldIcon,
 };
+const security: SettingsSection = {
+  id: "security",
+  label: "Security",
+  icon: LockIcon,
+};
 const local: SettingsSection = {
   id: "local-settings",
   label: "Local settings",
@@ -90,6 +96,7 @@ const builtIn = new Set(
   [
     profile,
     identity,
+    security,
     local,
     departure,
     plugins,
@@ -170,6 +177,8 @@ export function settingsSections(
       label: "Buzz",
       sections: [
         identity,
+        // Paired command-line tools exist only in the desktop app.
+        ...(isTauri() ? [security] : []),
         ...app.filter((item) => item.id !== "updates"),
         ...cards
           .filter((card) => card.group === "App")

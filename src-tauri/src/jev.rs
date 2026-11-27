@@ -10,6 +10,13 @@ use zeroize::Zeroizing;
 
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) const KEY_SERVICE: &str = if cfg!(debug_assertions) {
+    "xyz.block.buzz.desktop.jev-key.debug"
+} else {
+    "xyz.block.buzz.desktop.jev-key"
+};
+/// The service before 1.0. Reads copy a key found only there; clearing removes it too.
+#[cfg_attr(test, allow(dead_code))]
+const PREVIOUS_KEY_SERVICE: &str = if cfg!(debug_assertions) {
     "dev.local.buzz.foundation.jev-key.debug"
 } else {
     "dev.local.buzz.foundation.jev-key"
@@ -108,86 +115,58 @@ fn decode(bytes: Zeroizing<Vec<u8>>) -> Result<Option<Zeroizing<String>>, String
     Ok((!key.is_empty()).then(|| Zeroizing::new(key.to_owned())))
 }
 
-#[cfg(all(target_os = "macos", not(test)))]
-mod platform {
-    use super::*;
-    use security_framework::os::macos::keychain::SecKeychain;
-    const NOT_FOUND: i32 = -25300;
-    fn error(error: security_framework::base::Error) -> String {
-        match error.code() {
-            -128 | -25293 | -25308 => "Keychain access was denied. Allow access and retry",
-            _ => "The Keychain is unavailable",
-        }
-        .into()
-    }
-    impl KeyStore for OsKeyStore {
-        fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
-            // Only "item not found" means no key; a locked or refused Keychain
-            // is an error, so it neither hides nor removes a saved key.
-            match SecKeychain::default()
-                .map_err(error)?
-                .find_generic_password(KEY_SERVICE, KEY_ACCOUNT)
-            {
-                Ok((password, _)) => decode(Zeroizing::new(password.to_vec())),
-                Err(e) if e.code() == NOT_FOUND => Ok(None),
-                Err(e) => Err(error(e)),
-            }
-        }
-        fn replace(&self, key: &str) -> Result<(), String> {
-            // A saved item is updated in place, so a failed write leaves the
-            // key as it was. A new item's access list trusts only this binary.
-            SecKeychain::default()
-                .map_err(error)?
-                .set_generic_password(KEY_SERVICE, KEY_ACCOUNT, key.as_bytes())
-                .map_err(error)
-        }
-        fn clear(&self) -> Result<(), String> {
-            match SecKeychain::default()
-                .map_err(error)?
-                .find_generic_password(KEY_SERVICE, KEY_ACCOUNT)
-            {
-                Ok((_, item)) => item.delete(),
-                Err(e) if e.code() == NOT_FOUND => return Ok(()),
-                Err(e) => return Err(error(e)),
-            }
-            // Deletion reports no error, so confirm it.
-            match self.read()? {
-                None => Ok(()),
-                Some(_) => Err("The key could not be removed from the Keychain".into()),
-            }
-        }
-    }
+/// Delete the key under both services, the previous one first, stopping at a
+/// failure: reads copy it while the current one is absent, so deleting the
+/// current one first could let a read bring the key back.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
+fn clear_with<E>(delete: impl FnMut(&str) -> Result<(), E>) -> Result<(), E> {
+    [PREVIOUS_KEY_SERVICE, KEY_SERVICE]
+        .into_iter()
+        .try_for_each(delete)
 }
 
-#[cfg(all(any(target_os = "windows", target_os = "linux"), not(test)))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "windows", target_os = "linux"),
+    not(test)
+))]
 mod platform {
     use super::*;
     use buzz_credential_store::{self as credentials, Error};
     fn error(error: Error) -> String {
         match error {
+            Error::Denied if cfg!(target_os = "macos") => {
+                "Keychain access was denied. Allow access and retry"
+            }
             Error::Denied => "Secure storage access was denied. Allow access and retry",
             Error::Busy => "Another Buzz app is using secure storage. Retry shortly",
-            Error::Corrupt => "The saved key is damaged",
+            Error::Corrupt | Error::Ambiguous => "The saved key is damaged",
+            _ if cfg!(target_os = "macos") => "The Keychain is unavailable",
             _ => "Secure storage is unavailable. Unlock it and retry",
         }
         .into()
     }
     impl KeyStore for OsKeyStore {
         fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
-            match credentials::read(KEY_SERVICE, KEY_ACCOUNT) {
-                Ok(bytes) => decode(bytes),
+            let find = |service| match credentials::read(service, KEY_ACCOUNT) {
+                Ok(bytes) => Ok(Some(bytes)),
                 Err(Error::Absent) => Ok(None),
-                Err(e) => Err(error(e)),
-            }
+                Err(e) => Err(e),
+            };
+            credentials::read_or_copy(
+                || find(KEY_SERVICE),
+                || credentials::copy(PREVIOUS_KEY_SERVICE, KEY_SERVICE, KEY_ACCOUNT),
+            )
+            .map_err(error)?
+            .map_or(Ok(None), decode)
         }
         fn replace(&self, key: &str) -> Result<(), String> {
             credentials::replace(KEY_SERVICE, KEY_ACCOUNT, key.as_bytes()).map_err(error)
         }
         fn clear(&self) -> Result<(), String> {
-            match credentials::delete(KEY_SERVICE, KEY_ACCOUNT) {
+            clear_with(|service| match credentials::delete(service, KEY_ACCOUNT) {
                 Ok(()) | Err(Error::Absent) => Ok(()),
                 Err(e) => Err(error(e)),
-            }
+            })
         }
     }
 }

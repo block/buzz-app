@@ -15,8 +15,10 @@ import {
 } from "nostr-tools";
 import { createRelaySession } from "../src/features/relay/session.ts";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
+import { ARTIFACT_SYNC_MAX_VIEWS } from "../src/features/relay/artifact-sync-filter.ts";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
+import { LIVE_BATCH_SIZE } from "../src/features/relay/live.ts";
 
 /** Real HTTP setup/response cancellation and production subscriber; only upstream
  * WS I/O is substituted. No Keychain access or network outside localhost. */
@@ -55,7 +57,10 @@ async function harness(
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,
-    authority: async () => ({ relayAuthor: getPublicKey(key) }),
+    authority: async () => ({
+      relayAuthor: getPublicKey(key),
+      artifactSupport: true,
+    }),
     upstreamFetch: async (url, init) => {
       upstream.push(String(url));
       const filters = JSON.parse(init?.body ?? "[]");
@@ -73,13 +78,14 @@ async function harness(
           const filter = filters[0];
           frames.push({ kind, id, at: performance.now(), socket });
           if (kind === "AUTH" && !options.holdAuth)
-            queueMicrotask(() => this.receive(["OK", id.id, true]));
+            setImmediate(() => this.receive(["OK", id.id, true]));
           if (kind === "EVENT") publications.push({ event: id, socket });
           if (kind !== "REQ") return;
           requests.push({ at: performance.now(), id, filter, filters, socket });
           const refused = requests.length === refuseAt;
+          // WS replies arrive on an I/O turn, which also lets HTTP readers drain.
           if (!options.holdSetup)
-            queueMicrotask(() =>
+            setImmediate(() =>
               this.receive(refused ? ["CLOSED", id, reason] : ["EOSE", id]),
             );
         },
@@ -93,7 +99,7 @@ async function harness(
         },
       };
       sockets.push(socket);
-      queueMicrotask(() => socket.receive(["AUTH", "fixture"]));
+      setImmediate(() => socket.receive(["AUTH", "fixture"]));
       return socket;
     },
   });
@@ -124,7 +130,7 @@ async function harness(
       const response = await fetch(`${base}/api/relay/stream`, {
         method: "POST",
         headers: { Origin: origin, "Content-Type": "application/json" },
-        body: JSON.stringify({ channels }),
+        body: JSON.stringify({ channels, statusDeltas: options.statusDeltas }),
         signal: controller.signal,
       });
       return { response, abort: () => controller.abort() };
@@ -258,7 +264,7 @@ test("real HTTP accepts the 1022-channel body and rejects invalid/oversized/orig
     large.abort();
     await until(() => h.sockets.every((s) => s.readyState === 3));
     const count = h.sockets.length;
-    for (const invalid of [[""], Array(1025).fill("a"), ["x".repeat(150001)]]) {
+    for (const invalid of [[""], ["x".repeat(150001)]]) {
       const { response } = await h.post(invalid);
       expect([400, 413]).toContain(response.status);
       await response.text();
@@ -343,11 +349,11 @@ test.each([null, 1])(
             .filter((r) => r.status === "limited")
             .map((r) => r.channelId)
             .sort(),
-        ).toEqual(ids.slice(enabled ? 1021 : 1022));
-        // Status retains every interest, but only 1024 routes may have a wire.
+        ).toEqual(ids.slice(enabled ? 1020 : 1021));
+        // One wire stays free for the silence probe. All interests stay visible.
         expect(
           snapshot.routes.filter((r) => r.status !== "limited"),
-        ).toHaveLength(1024);
+        ).toHaveLength(1023);
         expect(snapshot.routes.some((r) => r.id === "observer")).toBe(enabled);
         sockets ??= h.sockets.length;
         posts ??= streamPosts();
@@ -1054,6 +1060,11 @@ test("production interest controls preserve socket/global routes and pending wri
 test.each([
   ["restricted: not a member", true, "Relay request failed (503)"],
   [
+    'invalid: an open channel named "Launch" already exists',
+    true,
+    'An open channel named "Launch" already exists',
+  ],
+  [
     "error: internal server error",
     false,
     "Relay delivery could not be confirmed (503)",
@@ -1110,6 +1121,8 @@ test.each([
 test("lost publication receipt stays unknown; reconnect never automatically republishes", async () => {
   const h = await harness();
   let traffic;
+  // Draw no reconnect spread when the authenticated connection drops.
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
   try {
     browserFetch(h.base);
     const transport = await connectBrokerTransport(h.base);
@@ -1132,6 +1145,56 @@ test("lost publication receipt stays unknown; reconnect never automatically repu
     expect(h.publications).toHaveLength(1);
     expect(h.upstream.some((url) => url.endsWith("/events"))).toBe(false);
   } finally {
+    random.mockRestore();
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
+test("a reconnect's continuous channel replays cross the real HTTP boundary", async () => {
+  const h = await harness(0, undefined, { holdAuth: true });
+  let traffic;
+  const clock = vi.spyOn(Date, "now");
+  // Draw no reconnect spread when the authenticated connection drops.
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  try {
+    const now = Date.now();
+    clock.mockReturnValue(now - 20 * 60_000);
+    browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    const established = vi.fn();
+    traffic = transport.subscribe({ ...callbacks, established });
+    traffic.update(["a", "b", "c"], ["a", "b"]);
+    await until(() => h.frames.some((frame) => frame.kind === "AUTH"));
+    // Start the session before the floor, then authenticate at the current
+    // time so the connection cursor has the full resume lag behind it.
+    clock.mockRestore();
+    const auth = h.frames.find((frame) => frame.kind === "AUTH");
+    await h.sockets[0].receive(["OK", auth.id.id, true]);
+    const channels = () =>
+      established.mock.calls.filter(([ids]) => ids !== undefined);
+    await until(() => channels().length === 2);
+    // A first connection has no cursor: no channel reports continuity.
+    expect(channels()).toEqual(expect.arrayContaining([[["a", "b"]], ["c"]]));
+    established.mockClear();
+    h.sockets[0].close();
+    await until(
+      () => h.frames.filter((frame) => frame.kind === "AUTH").length === 2,
+    );
+    const nextAuth = h.frames.filter((frame) => frame.kind === "AUTH")[1];
+    await h.sockets[1].receive(["OK", nextAuth.id.id, true]);
+    await until(() => channels().length === 2);
+    // The quiet replays resumed from their cursors, below the limit.
+    expect(channels()).toEqual(
+      expect.arrayContaining([
+        [["a", "b"], undefined, ["a", "b"]],
+        ["c", undefined, ["c"]],
+      ]),
+    );
+  } finally {
+    random.mockRestore();
+    clock.mockRestore();
     traffic?.dispose();
     vi.unstubAllGlobals();
     await h.close();
@@ -1487,25 +1550,40 @@ test("joined batches survive the real HTTP boundary and retirement only rebuilds
       (_, i) => `c${String(i).padStart(3, "0")}`,
     );
     traffic.update([...joined, "preview"], joined);
-    await until(() => established.mock.calls.length === 29);
-    expect(h.requests).toHaveLength(29);
-    const batches = h.requests.filter(
-      (r) => r.filter["#h"] && r.filters.length > 1,
+    await until(
+      () => established.mock.calls.length === 4 && h.requests.length === 5,
     );
-    expect(batches.map((r) => r.filters.length)).toEqual([
-      ...Array(25).fill(10),
-      6,
-    ]);
-    for (const r of batches)
-      for (const f of r.filters) {
-        expect(f["#h"]).toHaveLength(1);
-        expect(f.limit).toBe(500);
-      }
+    expect(h.requests).toHaveLength(5);
+    const batches = h.requests.filter(
+      (r) => r.filter["#h"] && r.filter.limit === 0,
+    );
+    // Every joined channel replays through one combined filter; the preview
+    // channel has its own route.
+    const replays = h.requests.filter(
+      (r) =>
+        r.filter["#h"] &&
+        r.filter.limit === 500 &&
+        !r.filter["#h"].includes("preview"),
+    );
+    expect(replays.map((r) => r.filters.length)).toEqual([1]);
+    expect(replays[0].filter["#h"]).toEqual(joined);
     expect(
       established.mock.calls
         .filter(([ids]) => Array.isArray(ids))
         .map(([ids]) => ids.length),
-    ).toEqual([...Array(25).fill(10), 6]);
+    ).toEqual([256]);
+    // Globals carry their continuity across the host boundary. A first
+    // connection has no cursor, so neither proves it missed nothing.
+    expect(
+      established.mock.calls
+        .filter(([ids]) => ids === undefined)
+        .map(([, global]) => global),
+    ).toEqual(
+      expect.arrayContaining([
+        { route: "profiles", continuous: false },
+        { route: "membership", continuous: false },
+      ]),
+    );
     const old = batches[0];
     // Host rejects mismatched joined scope before changing any live routes.
     const malformed = await fetcher(`${h.base}/api/relay/stream-interests`, {
@@ -1520,16 +1598,17 @@ test("joined batches survive the real HTTP boundary and retirement only rebuilds
     });
     expect(malformed.status).toBe(400);
     await malformed.text();
-    expect(h.requests).toHaveLength(29);
+    expect(h.requests).toHaveLength(5);
     const retained = joined.slice(1);
     traffic.update([...retained, "preview"], retained);
-    await until(() => established.mock.calls.length === 30);
-    expect(h.requests).toHaveLength(30);
-    expect(h.frames.filter((f) => f.kind === "CLOSE").map((f) => f.id)).toEqual(
-      [old.id],
-    );
+    await until(() => established.mock.calls.length === 5);
+    expect(established).toHaveBeenCalledTimes(5);
+    expect(h.requests).toHaveLength(6);
+    expect(
+      h.frames.filter((f) => f.kind === "CLOSE" && f.id === old.id),
+    ).toHaveLength(1);
     expect(h.requests.at(-1).filters.flatMap((f) => f["#h"])).toEqual(
-      joined.slice(1, 10),
+      joined.slice(1),
     );
     const event = finalizeEvent(
       {
@@ -1545,7 +1624,7 @@ test("joined batches survive the real HTTP boundary and retirement only rebuilds
     await until(() => receive.mock.calls.length === 1);
     expect(receive).toHaveBeenCalledExactlyOnceWith([event], {
       phase: "live",
-      sourceChannels: joined.slice(1, 10),
+      sourceChannels: joined.slice(1),
     });
     expect(h.sockets).toHaveLength(1);
   } finally {
@@ -1662,6 +1741,60 @@ test("startup response ABA retires an old wire before applying the latest intere
     release?.();
     traffic?.dispose();
     vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
+test("a re-added pending route replaces its queued removal before drain", async () => {
+  let response;
+  let backpressured = false;
+  const deltas = [];
+  const h = await harness(0, undefined, {
+    holdSetup: true,
+    statusDeltas: true,
+    response(res) {
+      response = res;
+      Object.defineProperty(res, "writableNeedDrain", {
+        get: () => backpressured,
+      });
+      const write = res.write.bind(res);
+      res.write = (chunk, ...args) => {
+        const text = String(chunk);
+        if (text.startsWith("event: state-delta\n"))
+          deltas.push(JSON.parse(text.split("data: ")[1]));
+        return write(chunk, ...args);
+      };
+    },
+  });
+  try {
+    const opened = await h.post(["a"]);
+    await until(() => h.requests.some((r) => r.filter["#h"]?.includes("a")));
+    const control = async (channels, interestRevision) => {
+      const result = await fetch(`${h.base}/api/relay/stream-interests`, {
+        method: "POST",
+        headers: { Origin: h.base, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          streamId: opened.response.headers.get("x-buzz-live-id"),
+          channels,
+          interestRevision,
+        }),
+      });
+      expect(result.status).toBe(200);
+      await result.text();
+    };
+    backpressured = true;
+    await control([], 1);
+    await control(["a"], 2);
+    const before = deltas.length;
+    backpressured = false;
+    response.emit("drain");
+    const drained = deltas.slice(before);
+    expect(drained.flatMap((d) => d.removed)).not.toContain("channel:a");
+    expect(drained.flatMap((d) => d.routes)).toContainEqual(
+      expect.objectContaining({ id: "channel:a", status: "pending" }),
+    );
+    expect(drained.every((d) => d.interestRevision === 2)).toBe(true);
+  } finally {
     await h.close();
   }
 });
@@ -1827,13 +1960,20 @@ test.each([
       ]);
       await h.sockets[0].receive(["OK", event.id, false, reason]);
       const response = await result;
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({
-        error: summary.startsWith("rate-limited:")
-          ? summary
-          : "Socket publication could not be confirmed",
-        ...(!sent ? { sent: false } : {}),
-      });
+      // A proven validation refusal answers this client as the relay's HTTP
+      // API does, with its own text; the log keeps only the safe summary.
+      const validation = !sent && reason.startsWith("invalid:");
+      expect(response.status).toBe(validation ? 400 : 503);
+      expect(await response.json()).toEqual(
+        validation
+          ? { error: reason }
+          : {
+              error: summary.startsWith("rate-limited:")
+                ? summary
+                : "Socket publication could not be confirmed",
+              ...(!sent ? { sent: false } : {}),
+            },
+      );
       expect(lines).toContain(
         `publication id=${event.id} kind=9000 stage=socket sent=${sent} reason=Relay publication not confirmed refusal=${summary}`,
       );
@@ -1853,6 +1993,71 @@ test.each([
       await h.close();
       logger.setReporters(reporters);
       setLogLevel(previousLevel);
+    }
+  },
+);
+
+test.each([
+  [40010, 400],
+  [40011, 400],
+  // Other kinds keep the unconfirmed answer.
+  [9000, 503],
+])(
+  "a relay without pins refuses kind %i, answered %i",
+  async (kind, status) => {
+    const h = await harness();
+    let traffic;
+    try {
+      browserFetch(h.base);
+      const transport = await connectBrokerTransport(h.base);
+      traffic = transport.subscribe(callbacks);
+      await until(() => h.requests.length >= 1 && !!traffic.identity());
+      const channel = "00000000-0000-4000-8000-000000000001";
+      const event = await transport.writer.sign(
+        {
+          kind,
+          content: "",
+          created_at: Math.floor(Date.now() / 1000),
+          tags:
+            kind === 9000
+              ? [
+                  ["h", channel],
+                  ["p", "a".repeat(64)],
+                ]
+              : [
+                  ["h", channel],
+                  ["e", "a".repeat(64)],
+                  ["client-id", "local"],
+                ],
+        },
+        new AbortController().signal,
+      );
+      const result = fetch(`${h.base}/api/relay/publish`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Buzz-Live-ID": traffic.identity(),
+        },
+        body: JSON.stringify(event),
+      });
+      await until(() => h.publications.length === 1);
+      await h.sockets[0].receive([
+        "OK",
+        event.id,
+        false,
+        "restricted: unknown event kind",
+      ]);
+      const response = await result;
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual(
+        status === 400
+          ? { error: "restricted: unknown event kind" }
+          : { error: "Socket publication could not be confirmed", sent: false },
+      );
+    } finally {
+      traffic?.dispose();
+      vi.unstubAllGlobals();
+      await h.close();
     }
   },
 );
@@ -2010,6 +2215,310 @@ test("live streams request no agent telemetry without plugin demand", async () =
   } finally {
     traffic?.dispose();
     vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
+/** Joins `count` channels over the real HTTP boundary, delivers an event in
+ * the last one, which lies outside the first live REQ batch, and swaps it for
+ * a new channel. `budget` is the timeout in ms of the establishment wait and
+ * of the swap wait; the delivery wait between them keeps vi.waitFor's 1 s
+ * default. Returns the closed harness for its upstream record. */
+async function joinedBeyondFirstBatch(count, batches, budget) {
+  const h = await harness();
+  let traffic;
+  try {
+    browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    let snapshot;
+    const received = [];
+    const established = new Set();
+    traffic = transport.subscribe({
+      receive(events) {
+        received.push(...events);
+      },
+      established(ids) {
+        for (const id of typeof ids === "string" ? [ids] : (ids ?? []))
+          established.add(id);
+      },
+      denied() {},
+      state(value) {
+        snapshot = value;
+      },
+    });
+    const ids = Array.from(
+      { length: count },
+      (_, i) => `${String(i).padStart(6, "0")}-${"c".repeat(121)}`,
+    );
+    traffic.update(ids, ids);
+    await vi.waitFor(
+      () => {
+        expect(
+          established.size,
+          JSON.stringify({
+            status: snapshot?.status,
+            error: snapshot?.error,
+            requests: h.requests.length,
+            sockets: h.sockets.length,
+          }),
+        ).toBe(count);
+        expect(snapshot?.status).toBe("connected");
+        expect(
+          snapshot.routes.filter(
+            (route) => route.channelId && route.status === "live",
+          ),
+        ).toHaveLength(count);
+      },
+      { timeout: budget },
+    );
+    expect(h.sockets).toHaveLength(1);
+    // Live-only REQs each name a batch; a batch small enough to replay inside
+    // its own REQ carries limit 500 instead. The first is full and `last` lies
+    // beyond it.
+    const live = h.requests.filter((r) =>
+      r.filters.some((f) => f["#h"] && f.limit === 0),
+    );
+    expect(live).toHaveLength(batches);
+    expect(live[0].filter["#h"]).toHaveLength(LIVE_BATCH_SIZE);
+    const last = ids.at(-1);
+    expect(live[0].filter["#h"]).not.toContain(last);
+    const route = h.requests.find((request) =>
+      request.filters.some((filter) => filter["#h"]?.includes(last)),
+    );
+    expect(route).toBeDefined();
+    const event = finalizeEvent(
+      {
+        kind: 9,
+        content: "last task input",
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", last]],
+      },
+      h.key,
+    );
+    await route.socket.receive(["EVENT", route.id, event]);
+    await vi.waitFor(() =>
+      expect(received.map((item) => item.id)).toContain(event.id),
+    );
+    const next = [...ids.slice(0, -1), "new-task"];
+    traffic.update(next, next);
+    await vi.waitFor(
+      () => {
+        expect(established.has("new-task")).toBe(true);
+        expect(snapshot.routes.some((route) => route.channelId === last)).toBe(
+          false,
+        );
+      },
+      { timeout: budget },
+    );
+    return h;
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+}
+
+// Each budgeted wait gets the 5 s that the default test timeout allowed this
+// case as a whole. The longest failing run is both of them plus the 1 s
+// delivery wait, 11 s, so the 20 s test timeout lets a failed wait throw and
+// the helper's cleanup finish inside this test, not during the next one.
+test("real broker delivers outside the first joined batch", async () => {
+  // The lone overflow channel replays inside its own REQ, so only the first
+  // batch is a live-only REQ.
+  await joinedBeyondFirstBatch(LIVE_BATCH_SIZE + 1, 1, 5_000);
+}, 20_000);
+
+// Asserts wall-clock time: about 20 s of single-threaded CPU inside the 30 s
+// budget. A shared Vitest shard's two workers timed it out under load, so CI
+// runs it alone in the Browser measurements lane with BUZZ_BROKER_SCALE set,
+// selected by the `100,000` in its title; the shards skip it.
+test.skipIf(!process.env.BUZZ_BROKER_SCALE)(
+  "real broker keeps 100,000 joined channels and delivers outside the first batch",
+  async () => {
+    const h = await joinedBeyondFirstBatch(100_000, 49, 30_000);
+    const active = new Set();
+    for (const { kind, id } of h.frames) {
+      if (kind === "REQ") active.add(id);
+      if (kind === "CLOSE") active.delete(id);
+      expect(active.size).toBeLessThanOrEqual(1024);
+    }
+  },
+  60_000,
+);
+
+test("broker renewals retain establishment signals while channel status stays live", async () => {
+  const h = await harness();
+  let traffic;
+  try {
+    browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    const established = vi.fn();
+    const states = [];
+    traffic = transport.subscribe({
+      ...callbacks,
+      established,
+      state: (state) => states.push(state),
+    });
+    const ids = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    traffic.update(ids, ids);
+    await until(
+      () =>
+        established.mock.calls.filter(([value]) => Array.isArray(value))
+          .length === 1,
+    );
+    const membership = h.requests.find((request) =>
+      request.filters.some((filter) => filter.kinds.includes(44100)),
+    );
+    expect(membership).toBeDefined();
+    const before = states.length;
+    const notice = finalizeEvent(
+      {
+        kind: 44100,
+        content: "",
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ["p", getPublicKey(h.key)],
+          ["h", ids[0]],
+        ],
+      },
+      h.key,
+    );
+    await membership.socket.receive(["EVENT", membership.id, notice]);
+    await until(
+      () =>
+        established.mock.calls.filter(([value]) => Array.isArray(value))
+          .length === 2,
+    );
+    expect(
+      states
+        .slice(before)
+        .every((state) =>
+          state.routes
+            .filter((route) => route.channelId)
+            .every((route) => route.status === "live"),
+        ),
+    ).toBe(true);
+    expect(established.mock.calls.at(-1)).toEqual([ids.sort()]);
+    expect(h.sockets).toHaveLength(1);
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
+test("a sync close that overtakes its open keeps the late open from taking a host slot", async () => {
+  const h = await harness();
+  const post = (path, body) =>
+    fetch(`${h.base}${path}`, {
+      method: "POST",
+      headers: { Origin: h.base, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const filter = {
+    artifact: "current",
+    "#h": ["11111111-1111-4111-8111-111111111111"],
+  };
+  try {
+    const stream = await h.post(["a"]);
+    const streamId = stream.response.headers.get("x-buzz-live-id");
+    await until(() => h.requests.length === 3);
+    const close = await post("/api/relay/stream-artifact-sync-close", {
+      streamId,
+      id: "s1",
+    });
+    expect(close.status).toBe(200);
+    await close.text();
+    const late = await post("/api/relay/stream-artifact-sync", {
+      streamId,
+      id: "s1",
+      filter,
+    });
+    expect(late.status).toBe(409);
+    await late.text();
+    // The remembered close is spent; nothing reached the relay for it.
+    expect(h.requests).toHaveLength(3);
+    const next = await post("/api/relay/stream-artifact-sync", {
+      streamId,
+      id: "s2",
+      filter,
+    });
+    expect(next.status).toBe(200);
+    await next.text();
+    stream.abort();
+  } finally {
+    await h.close();
+  }
+});
+
+test("a stream admits as many syncs as the session does", async () => {
+  const h = await harness();
+  const filter = {
+    artifact: "current",
+    "#h": ["11111111-1111-4111-8111-111111111111"],
+  };
+  const open = async (streamId, id) => {
+    const response = await fetch(`${h.base}/api/relay/stream-artifact-sync`, {
+      method: "POST",
+      headers: { Origin: h.base, "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, id, filter }),
+    });
+    await response.text();
+    return response.status;
+  };
+  try {
+    const stream = await h.post(["a"]);
+    const streamId = stream.response.headers.get("x-buzz-live-id");
+    await until(() => h.requests.length === 3);
+    for (let i = 0; i < ARTIFACT_SYNC_MAX_VIEWS; i++)
+      expect(await open(streamId, `s${i}`)).toBe(200);
+    expect(await open(streamId, "over")).toBe(429);
+    stream.abort();
+  } finally {
+    await h.close();
+  }
+});
+
+test("a stream with too many unresolved sync closes ends instead of forgetting one", async () => {
+  const h = await harness();
+  const post = async (path, body) => {
+    const response = await fetch(`${h.base}${path}`, {
+      method: "POST",
+      headers: { Origin: h.base, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await response.text();
+    return response.status;
+  };
+  const filter = {
+    artifact: "current",
+    "#h": ["11111111-1111-4111-8111-111111111111"],
+  };
+  try {
+    const stream = await h.post(["a"]);
+    const streamId = stream.response.headers.get("x-buzz-live-id");
+    await until(() => h.requests.length === 3);
+    const closeSync = (id) =>
+      post("/api/relay/stream-artifact-sync-close", { streamId, id });
+    for (let i = 0; i < 64; i++) expect(await closeSync(`c${i}`)).toBe(200);
+    // The oldest close is still remembered at capacity.
+    expect(
+      await post("/api/relay/stream-artifact-sync", {
+        streamId,
+        id: "c0",
+        filter,
+      }),
+    ).toBe(409);
+    expect(await closeSync("c0")).toBe(200);
+    // One more unresolved close ends the stream rather than forget a record.
+    expect(await closeSync("c64")).toBe(200);
+    for (const id of ["c1", "c64", "fresh"])
+      expect(
+        await post("/api/relay/stream-artifact-sync", { streamId, id, filter }),
+      ).toBe(404);
+    expect(h.requests).toHaveLength(3);
+    stream.abort();
+  } finally {
     await h.close();
   }
 });

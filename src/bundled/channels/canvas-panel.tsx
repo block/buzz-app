@@ -1,0 +1,78 @@
+import { viewerMember } from "../../features/relay/membership";
+import { useContext, useSyncExternalStore } from "react";
+import type { Context } from "@deepseek-ai/cordis";
+import { useListedChannel } from "../../features/relay/listed-channel";
+import type { PanelProps } from "../../features/panels/service";
+import { usePanelTabTitle } from "../../features/panels/PanelWorkspace";
+import { FileTextIcon } from "../../shared/design-system/icons";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelaySession } from "../../features/relay/session";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { CanvasEditor } from "./CanvasEditor";
+import { openFromPanel, PanelPane } from "../../features/panels/opening-pane";
+import { canvasReadOnly } from "../../features/channel-templates/capability";
+
+function eligible(channel: ChannelSummary, session: RelaySession) {
+  return (
+    !channel.cached &&
+    (!channel.readOnly || channel.viewerRole === "guest") &&
+    viewerMember(channel, session.viewer)
+  );
+}
+
+// One element keeps the tab identity stable across renders.
+const tabIcon = <FileTextIcon size="1rem" />;
+
+export function registerCanvas(ctx: Context) {
+  function Panel({ channelContext }: PanelProps) {
+    usePanelTabTitle("Canvas", tabIcon);
+    const pane = useContext(PanelPane);
+    const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
+    const readOnly = useListedChannel(
+      state.status === "ready" ? state.session.channels : undefined,
+      channelContext?.channelId,
+      canvasReadOnly,
+    );
+    if (
+      !channelContext ||
+      state.status !== "ready" ||
+      state.scope !== channelContext.scope
+    )
+      return (
+        <p role="status">
+          Canvas is unavailable while the connection recovers.
+        </p>
+      );
+    const { origin, viewer } = state;
+    const openLink = (url: string) => {
+      const target =
+        origin &&
+        viewer &&
+        buzzLinkTarget(url, { viewer, communityOrigin: origin });
+      if (!target) return false;
+      openFromPanel(ctx.navigation, target, pane);
+      return true;
+    };
+    return (
+      <CanvasEditor
+        key={`${state.scope}:${state.generation}:${channelContext.channelId}`}
+        readOnly={readOnly}
+        canvas={state.session.canvas}
+        profiles={state.session.profiles}
+        scope={state.scope}
+        channelId={channelContext.channelId}
+        openLink={openLink}
+        codeBlocks={ctx.conversation.codeBlocks}
+      />
+    );
+  }
+  ctx.panels.register({
+    id: "canvas",
+    title: "Canvas",
+    // A live editor: it stays a tab until it survives a dialog closing.
+    inline: false,
+    matches: () => false,
+    channelMenu: { label: "View canvas", eligible },
+    component: Panel,
+  });
+}

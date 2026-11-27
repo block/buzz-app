@@ -1,4 +1,6 @@
 import { test, expect } from "./source-fixture.mjs";
+import { animationsSettled } from "./animations.mjs";
+import { pauseClock } from "./clock.mjs";
 
 // Native disabled/blur behavior requires real engines, not jsdom. The fixture
 // mounts the actual forms/service; IPC is held at the native boundary only.
@@ -12,6 +14,8 @@ test("local settings retain keyboard focus through save, recovery, cancel and re
       invoke(command, args) {
         if (command === "workspace_pick_folder")
           return Promise.resolve("~/Development");
+        if (command === "credential_pairing_communities")
+          return Promise.resolve();
         if (command !== "repositories_folder_validate")
           throw new Error(`Unexpected command: ${command}`);
         window.folderRequests.push(args.path);
@@ -101,4 +105,51 @@ test("local settings retain keyboard focus through save, recovery, cancel and re
       window.finishFolder?.({ error: "Fixture cleanup" }),
     );
   }
+});
+
+// Whether a label holds its width is the browser's to say: jsdom lays nothing
+// out. Copy URL is a label with no icon, which gains one with its result.
+test("Copy URL shows a copy in the button, which keeps its size and its neighbour's place", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/community-local-settings.html");
+  const copy = page.getByRole("button", { name: "Copy URL", exact: true });
+  const edit = page.getByRole("button", {
+    name: "Edit connection",
+    exact: true,
+  });
+  await expect(copy).toBeVisible();
+  await page.evaluate(() => {
+    window.copiedUrls = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (value) => window.copiedUrls.push(value) },
+    });
+  });
+  const layout = async () => [
+    await copy.boundingBox(),
+    await edit.boundingBox(),
+  ];
+  await animationsSettled(page.locator("body"), { subtree: true });
+  // The button shows a copy for 1.5 seconds. Hold the clock so the result
+  // stays until it has been read.
+  await pauseClock(page);
+  const atRest = await layout();
+  await copy.click();
+  await expect(copy).toHaveText("Copied");
+  await expect(copy.locator(".tabler-icon-check")).toBeVisible();
+  await expect(copy).toHaveAccessibleName("Copy URL");
+  await expect(
+    page.getByRole("status").filter({ hasText: /^Copied$/ }),
+  ).toHaveCount(1);
+  expect(await layout()).toEqual(atRest);
+  expect(await page.evaluate(() => window.copiedUrls)).toEqual([
+    await page.getByLabel("Community address", { exact: true }).inputValue(),
+  ]);
+  await page.clock.runFor(1500);
+  await expect(copy).toHaveText("Copy URL");
+  await expect(copy.locator("svg")).toHaveCount(0);
+  // The clock a toast mounts on has run.
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  expect(await layout()).toEqual(atRest);
 });

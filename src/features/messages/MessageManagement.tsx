@@ -1,15 +1,19 @@
+import { viewerMember } from "../relay/membership";
 import {
   BellIcon,
   BellSlashIcon,
   EnvelopeIcon,
   EnvelopeOpenIcon,
   PencilSimpleIcon,
+  PinIcon,
+  PinOffIcon,
   TrashIcon,
 } from "../../shared/design-system/icons";
 import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -22,20 +26,26 @@ import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
-import { sharedSessionIds } from "../sessions/shared-session-marker";
 import { useListedChannel } from "../relay/listed-channel";
+import { headReadPending } from "../relay/live-recovery";
 import type { RelaySession } from "../relay/session";
+import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
+import { PIN_KIND, refusedPinCommand, UNPIN_KIND } from "../relay/pins";
+import { RefusedPin } from "./RefusedPin";
+import { followUpQueue } from "./follow-up-queue";
+import { usePinnedMessages } from "./use-pins";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useAfterMessageMenuClose } from "./MessageActionBar";
-import { lastEditableMessage } from "./useMessageEdit";
+import { lastEditableMessage, useCloseAfterPaint } from "./useMessageEdit";
+import { readingDocumentActive } from "./use-reading";
 import styles from "./Messages.module.css";
 
 // A channel tab and its thread can coexist, but unread state owns one visit.
 const visits = new WeakMap<
   RelaySession,
-  Map<string, { count: number; ready: Promise<void> }>
+  Map<string, { count: number; ready: Promise<void>; dispose: () => void }>
 >();
 function enterVisit(session: RelaySession, channelId: string) {
   let channels = visits.get(session);
@@ -45,7 +55,24 @@ function enterVisit(session: RelaySession, channelId: string) {
   }
   let visit = channels.get(channelId);
   if (!visit) {
-    visit = { count: 0, ready: session.unread.enterChannel(channelId) };
+    const update = () =>
+      session.unread.setChannelActive(channelId, readingDocumentActive());
+    const ready = session.unread.enterChannel(
+      channelId,
+      readingDocumentActive(),
+    );
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    visit = {
+      count: 0,
+      ready,
+      dispose() {
+        window.removeEventListener("focus", update);
+        window.removeEventListener("blur", update);
+        document.removeEventListener("visibilitychange", update);
+      },
+    };
     channels.set(channelId, visit);
   }
   visit.count++;
@@ -54,6 +81,7 @@ function enterVisit(session: RelaySession, channelId: string) {
     leave() {
       if (--visit.count === 0) {
         channels.delete(channelId);
+        visit.dispose();
         session.unread.leaveChannel(channelId);
       }
     },
@@ -84,6 +112,36 @@ const Management = createContext<
     }
   | undefined
 >(undefined);
+type MessageVisit = Readonly<{
+  session: RelaySession;
+  channelId: string | undefined;
+  token: object;
+  /** Unset when the window showed no verified page: the first one defines them. */
+  entryMessageIds: ReadonlySet<string> | undefined;
+  entryHistoryComplete: boolean;
+  entryReadRevision: number;
+  entryAttention: ReadonlyMap<
+    string,
+    Pick<MessageAttention, "unread" | "forced"> | null
+  >;
+  active: boolean;
+  ready: boolean;
+  failed: boolean;
+}>;
+const MessageVisitContext = createContext<MessageVisit | undefined>(undefined);
+
+/** The channel visit that owns automatic reading and its entry reconciliation. */
+export function useMessageVisit(
+  session: RelaySession,
+  channelId: string,
+): MessageVisit | null | undefined {
+  const visit = useContext(MessageVisitContext);
+  if (!visit) return undefined;
+  return visit.session === session && visit.channelId === channelId
+    ? visit
+    : null;
+}
+
 export function useMessageDeletion() {
   const management = useContext(Management);
   const editor = useMessageEditScope();
@@ -92,6 +150,83 @@ export function useMessageDeletion() {
         management.remove(row, done, () => editor?.focusTarget() ?? null)
     : undefined;
 }
+
+/**
+ * Selected-message keys act as the message menu does, read when the key is
+ * pressed. Delete covers your own messages; the menu also deletes for agent
+ * owners, which needs ownership evidence a key cannot wait for.
+ */
+export function useMessageKeyActions(session: RelaySession) {
+  const management = useContext(Management);
+  const editor = useMessageEditScope();
+  return useMemo(() => {
+    if (!management) return undefined;
+    const joined = (row: ChannelMessage) => {
+      const channel = session.channels
+        .list()
+        .channels.find((item) => item.id === row.channelId);
+      return channel &&
+        !channel.cached &&
+        (!channel.readOnly || channel.viewerRole === "guest") &&
+        !row.membership &&
+        !row.diff &&
+        (!row.delivery || ["accepted", "seen"].includes(row.delivery))
+        ? channel
+        : undefined;
+    };
+    return {
+      canDelete(row: ChannelMessage) {
+        const channel = joined(row);
+        return (
+          !!channel &&
+          !channel.readOnly &&
+          !channel.archived &&
+          !!session.viewer &&
+          row.authorId === session.viewer &&
+          !!session.outbox?.supports(5)
+        );
+      },
+      remove(row: ChannelMessage) {
+        management.remove(row, undefined, () => editor?.focusTarget() ?? null);
+      },
+      canMarkUnread(row: ChannelMessage) {
+        // Coordination between agents is never unread, so it has no read state.
+        if (!joined(row) || row.audience === "agents") return false;
+        const attention = session.unread.attention(row.channelId, row.id);
+        return !attention.unread && !attention.forced;
+      },
+      markUnread(row: ChannelMessage) {
+        management.report(undefined);
+        void session.unread
+          .markMessageUnread(row.channelId, row.id)
+          .catch((cause) =>
+            management.report(
+              cause instanceof Error
+                ? cause.message
+                : "Could not update unread state. Try again.",
+            ),
+          );
+      },
+    };
+  }, [management, editor, session]);
+}
+
+/** A failed or unconfirmed send is still this device's outbox intent. */
+const unsent = (row: ChannelMessage) =>
+  row.delivery === "failed" || row.delivery === "unknown";
+
+/** An unconfirmed send may be discarded here only when no caller still owns its
+ * recovery: a Solo follow-up's queue releases it once its record is gone. */
+const discardable = (
+  session: RelaySession,
+  row: ChannelMessage,
+  item: OutgoingEvent | undefined,
+) =>
+  item?.event.id === row.id &&
+  item.delivery === row.delivery &&
+  (row.delivery === "failed" ||
+    !item.recovery ||
+    followUpQueue(session).discardable(item));
 
 /** Recovery stays outside virtualized rows; each conversation has one edit destination. */
 export function MessageManagement({
@@ -107,64 +242,98 @@ export function MessageManagement({
 }) {
   const presented = useConversationPresentation();
   const [selection, setSelection] = useState<Deletion>();
-  const completions = useRef(new Map<string, () => void>());
   if (!presented && selection) setSelection(undefined);
   const operations = useSyncExternalStore(
     session.outbox?.subscribe ?? noop,
     session.outbox?.snapshot ?? empty,
   );
-  // Receipt/verified echo owns success; journal dismissal is not acceptance.
-  useEffect(() => {
-    const pending = completions.current;
-    const stop = session.outbox?.observeSend((event) =>
-      event.kind === 5
-        ? () => {
-            const done = pending.get(event.id);
-            pending.delete(event.id);
-            done?.();
-          }
-        : undefined,
-    );
-    return () => {
-      stop?.();
-      pending.clear();
-    };
-  }, [session]);
-  useEffect(() => {
-    for (const id of completions.current.keys())
-      if (!operations.some((item) => item.event.id === id))
-        completions.current.delete(id);
-  }, [operations]);
-  const channels = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
+  const deletable = useListedChannel(
+    session.channels,
+    selection?.row.channelId,
+    (channel) =>
+      !!channel &&
+      !channel.cached &&
+      (!channel.readOnly ||
+        (channel.viewerRole === "guest" && !!selection?.authorization)),
   );
   const available =
     !selection ||
     ((!channelId || channelId === selection.row.channelId) &&
-      channels.channels.some(
-        (channel) =>
-          channel.id === selection.row.channelId && !channel.readOnly,
-      ));
+      (unsent(selection.row) || deletable));
   useEffect(() => {
     if (!available) setSelection(undefined);
   }, [available]);
-  const visitChannelId = channels.channels.find(
+  const visitChannelId = useListedChannel(
+    session.channels,
+    channelId,
     (channel) =>
       active &&
-      channel.id === channelId &&
+      channel &&
       !channel.cached &&
-      !!session.viewer &&
-      channel.members?.includes(session.viewer),
-  )?.id;
-  const [notice, setNotice] = useState<{
-    visit: {
-      session: RelaySession;
-      channelId: string | undefined;
-      visitChannelId: string | undefined;
+      session.viewer &&
+      viewerMember(channel, session.viewer)
+        ? channel.id
+        : undefined,
+  );
+  // The timeline may mount only after loading or an inline seek completes.
+  // Entry membership and provisional read evidence belong to this visit, not
+  // to that later render or the first complete read snapshot.
+  const captureVisit = () => {
+    const window = channelId ? session.channels.window(channelId) : undefined;
+    const rows = window?.rows ?? [];
+    // An older page can mark the window verified while the catch-up head read
+    // is still queued or in flight: those rows are not yet the head.
+    const headPending = !!channelId && headReadPending(session.live, channelId);
+    const entryAttention = new Map<
+      string,
+      Pick<MessageAttention, "unread" | "forced"> | null
+    >();
+    if (channelId)
+      for (const row of rows) {
+        const attention = session.unread.attention(channelId, row.id);
+        entryAttention.set(
+          row.id,
+          attention.status === "unknown" || attention.pending
+            ? null
+            : { unread: attention.unread, forced: attention.forced },
+        );
+      }
+    return {
+      session,
+      channelId,
+      visitChannelId,
+      // A window first opened this session or evicted since has no rows yet,
+      // and one restored from disk, or whose stream dropped, shows rows its
+      // head read has not verified. Either set would rule out every message
+      // that arrived while the channel was not being followed.
+      entryMessageIds:
+        window?.status === "ready" &&
+        window.freshness === "verified" &&
+        !headPending
+          ? new Set(rows.map((row) => row.id))
+          : undefined,
+      entryHistoryComplete:
+        window?.status === "ready" &&
+        window.freshness === "verified" &&
+        !window.refreshing &&
+        !headPending &&
+        !window.loadingOlder &&
+        !window.hasMore &&
+        !window.historyLimited,
+      entryReadRevision: session.unread.revision(),
+      entryAttention,
     };
+  };
+  const [notice, setNotice] = useState<{
+    visit: ReturnType<typeof captureVisit>;
     error?: string | undefined;
-  }>(() => ({ visit: { session, channelId, visitChannelId } }));
+    entryReady: boolean;
+    entryFailed: boolean;
+  }>(() => ({
+    visit: captureVisit(),
+    entryReady: false,
+    entryFailed: false,
+  }));
   const { visit } = notice;
   const currentVisit =
     visit.session === session &&
@@ -172,15 +341,49 @@ export function MessageManagement({
     visit.visitChannelId === visitChannelId;
   if (!currentVisit)
     setNotice({
-      visit: { session, channelId, visitChannelId },
+      visit: captureVisit(),
       error: undefined,
+      entryReady: false,
+      entryFailed: false,
     });
   // Captured reporters cannot overwrite errors from a later visit, even to
   // the same channel. Reset during render so stale alerts never reach children.
-  const report = (error: string | undefined) =>
-    setNotice((current) =>
-      current.visit === visit ? { ...current, error } : current,
-    );
+  // Consumers include every message row; a new value would re-render them all.
+  const management = useMemo(
+    () => ({
+      session,
+      channelId,
+      operations,
+      report: (error: string | undefined) =>
+        setNotice((current) =>
+          current.visit === visit ? { ...current, error } : current,
+        ),
+      remove(
+        row: ChannelMessage,
+        done?: (focus: boolean) => void,
+        focus?: () => HTMLElement | null,
+        authorization?: AgentOwnerAuthorization,
+      ) {
+        setSelection({ row, done, focus, authorization });
+      },
+    }),
+    [session, channelId, operations, visit],
+  );
+  const messageVisit = useMemo(
+    () => ({
+      session: visit.session,
+      channelId: visit.channelId,
+      token: visit,
+      entryMessageIds: visit.entryMessageIds,
+      entryHistoryComplete: visit.entryHistoryComplete,
+      entryReadRevision: visit.entryReadRevision,
+      entryAttention: visit.entryAttention,
+      active: !!visit.visitChannelId,
+      ready: notice.visit === visit && notice.entryReady,
+      failed: notice.visit === visit && notice.entryFailed,
+    }),
+    [visit, notice.visit, notice.entryReady, notice.entryFailed],
+  );
   useEffect(() => {
     const { session, visitChannelId } = visit;
     let active = true;
@@ -188,38 +391,48 @@ export function MessageManagement({
       ? enterVisit(session, visitChannelId)
       : undefined;
     if (presence)
-      void presence.ready.catch((cause) => {
-        if (active)
-          setNotice((current) =>
-            current.visit === visit
-              ? {
-                  ...current,
-                  error:
-                    cause instanceof Error
-                      ? cause.message
-                      : "Could not restore unread state.",
-                }
-              : current,
-          );
-      });
+      void presence.ready.then(
+        () => {
+          if (active)
+            setNotice((current) =>
+              current.visit === visit
+                ? { ...current, entryReady: true }
+                : current,
+            );
+        },
+        (cause) => {
+          if (active)
+            setNotice((current) =>
+              current.visit === visit
+                ? {
+                    ...current,
+                    entryReady: true,
+                    entryFailed: true,
+                    error:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Could not restore unread state.",
+                  }
+                : current,
+            );
+        },
+      );
+    else
+      setNotice((current) =>
+        current.visit === visit
+          ? { ...current, entryReady: true, entryFailed: false }
+          : current,
+      );
     return () => {
       active = false;
       presence?.leave();
     };
   }, [visit]);
   return (
-    <Management.Provider
-      value={{
-        session,
-        channelId,
-        operations,
-        report,
-        remove(row, done, focus, authorization) {
-          setSelection({ row, done, focus, authorization });
-        },
-      }}
-    >
-      <MessageEditScope>{children}</MessageEditScope>
+    <Management.Provider value={management}>
+      <MessageVisitContext.Provider value={messageVisit}>
+        <MessageEditScope>{children}</MessageEditScope>
+      </MessageVisitContext.Provider>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
       {presented && selection && available && (
         <DeleteMessageDialog
@@ -227,17 +440,14 @@ export function MessageManagement({
           session={session}
           selection={selection}
           operations={operations}
-          dispatched={(id, dialog) => {
-            const done = selection.done;
-            if (done && !completions.current.has(id))
-              completions.current.set(id, () =>
-                done(
-                  document.activeElement === document.body ||
-                    !!selection.focus?.()?.contains(document.activeElement) ||
-                    !!dialog?.contains(document.activeElement),
-                ),
-              );
-          }}
+          dispatched={(dialog) =>
+            // The row hides now; MessageManagementStatus owns a failed delete.
+            selection.done?.(
+              document.activeElement === document.body ||
+                !!selection.focus?.()?.contains(document.activeElement) ||
+                !!dialog?.contains(document.activeElement),
+            )
+          }
           close={() => setSelection(undefined)}
         />
       )}
@@ -245,17 +455,19 @@ export function MessageManagement({
   );
 }
 
-/** Read-state, edit and delete items share one gate: a managed, delivered row
- * in a writable channel. */
+/** Personal read/follow actions need current membership, not writing access. */
 function useManagedMessage(row: ChannelMessage, session: RelaySession) {
   const management = useContext(Management);
-  const writable = useListedChannel(
+  const joined = useListedChannel(
     session.channels,
     row.channelId,
-    (channel) => !!channel && !channel.readOnly,
+    (channel) =>
+      !!channel &&
+      !channel.cached &&
+      (!channel.readOnly || channel.viewerRole === "guest"),
   );
   return management &&
-    writable &&
+    joined &&
     !row.membership &&
     !row.diff &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
@@ -280,7 +492,8 @@ export function MessageReadStateItem({
     (listener) => session.unread.subscribe(target, listener),
     () => session.unread.snapshot(target),
   );
-  if (!management) return null;
+  // Coordination between agents is never unread, so it has no read state.
+  if (!management || row.audience === "agents") return null;
   const attention = session.unread.attention(row.channelId, row.id);
   const unread = attention.unread || attention.forced;
   return (
@@ -301,12 +514,66 @@ export function MessageReadStateItem({
       }}
     >
       <MenuIcon>{unread ? <EnvelopeOpenIcon /> : <EnvelopeIcon />}</MenuIcon>
-      {unread ? "Mark read" : "Mark unread"}
+      {unread ? "Mark as read" : "Mark as unread"}
     </MenuItem>
   );
 }
 
 export function MessageManagementItems({
+  row,
+  session,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+}) {
+  return unsent(row) ? (
+    <UnsentMessageItems row={row} session={session} />
+  ) : (
+    <ManagedMessageItems row={row} session={session} />
+  );
+}
+
+/** Removing an unsent message discards it from this device, so it is the only
+ * item and channel state does not gate it. An unconfirmed send may have reached
+ * the relay; a caller that owns its recovery confirms it instead. */
+function UnsentMessageItems({
+  row,
+  session,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+}) {
+  const management = useContext(Management);
+  const editor = useMessageEditScope();
+  const afterClose = useAfterMessageMenuClose();
+  if (
+    !management ||
+    row.authorId !== session.viewer ||
+    row.membership ||
+    row.diff ||
+    (row.delivery === "unknown" &&
+      !discardable(
+        session,
+        row,
+        management.operations.find((item) => item.event.id === row.id),
+      ))
+  )
+    return null;
+  const remove = () =>
+    management.remove(row, undefined, () => editor?.focusTarget() ?? null);
+  return (
+    <MenuItem onClick={() => (afterClose ? afterClose(remove) : remove())}>
+      <MenuIcon>
+        <TrashIcon size={14} />
+      </MenuIcon>
+      {row.delivery === "unknown"
+        ? "Remove from this device"
+        : "Delete message"}
+    </MenuItem>
+  );
+}
+
+function ManagedMessageItems({
   row,
   session,
 }: {
@@ -326,6 +593,17 @@ export function MessageManagementItems({
     row.channelId,
     (channel) => channel?.channelType === "dm",
   );
+  const writable = useListedChannel(
+    session.channels,
+    row.channelId,
+    (channel) => !!channel && !channel.readOnly && !channel.cached,
+  );
+  // A Solo chat has one person, so it offers no pins.
+  const solo = useListedChannel(
+    session.channels,
+    row.channelId,
+    (channel) => channel?.channelType === "solo",
+  );
   const threadRootId = row.threadRootId ?? row.id;
   const following = useSyncExternalStore(session.unread.subscribeSync, () =>
     session.unread.following(row.channelId, threadRootId),
@@ -336,6 +614,13 @@ export function MessageManagementItems({
       ? row.authorId
       : undefined,
   );
+  const canPin =
+    !!management &&
+    writable &&
+    !archived &&
+    !solo &&
+    !!session.outbox?.supports(PIN_KIND);
+  const pins = usePinnedMessages(session, canPin ? row.channelId : undefined);
   if (!management) return null;
   const busy = management.operations.some(
     (item) =>
@@ -344,7 +629,8 @@ export function MessageManagementItems({
       item.event.tags.some(([name, id]) => name === "e" && id === row.id),
   );
   const own = row.authorId === session.viewer && !archived;
-  const canEdit = own && editor && lastEditableMessage(session, [row]);
+  const canEdit =
+    writable && own && editor?.current && lastEditableMessage(session, [row]);
   const authorization =
     row.authorId !== session.viewer &&
     session.viewer &&
@@ -352,11 +638,45 @@ export function MessageManagementItems({
     ownership.owner === session.viewer
       ? { agentId: row.authorId, ownerId: session.viewer }
       : undefined;
-  const canDelete = (own || !!authorization) && session.outbox?.supports(5);
+  const canDelete =
+    ((writable && own) || !!authorization) && session.outbox?.supports(5);
   const act = (action: () => void) =>
     afterClose ? afterClose(action) : action();
   return (
     <>
+      {canPin && pins.status === "ready" && (
+        <MenuItem
+          disabled={management.operations.some(
+            (item) =>
+              ["sending", "accepted"].includes(item.delivery) &&
+              [PIN_KIND, UNPIN_KIND].includes(item.event.kind) &&
+              item.event.tags.some(
+                ([name, id]) => name === "e" && id === row.id,
+              ),
+          )}
+          onClick={() => {
+            management.report(undefined);
+            try {
+              session.messages.pin(
+                row.channelId,
+                row.id,
+                !pins.set.has(row.id),
+              );
+            } catch (cause) {
+              management.report(
+                cause instanceof Error
+                  ? cause.message
+                  : "Could not update the pin. Try again.",
+              );
+            }
+          }}
+        >
+          <MenuIcon>
+            {pins.set.has(row.id) ? <PinOffIcon /> : <PinIcon />}
+          </MenuIcon>
+          {`${pins.set.has(row.id) ? "Unpin from" : "Pin to"} ${dm ? "DM" : "channel"}`}
+        </MenuItem>
+      )}
       {canEdit && (
         <MenuItem
           disabled={
@@ -410,15 +730,15 @@ export function MessageManagementItems({
         <MenuItem
           onClick={() => {
             management.report(undefined);
-            try {
-              session.unread.follow(row.channelId, threadRootId, !following);
-            } catch (cause) {
-              management.report(
-                cause instanceof Error
-                  ? cause.message
-                  : "Could not save thread follow. Try again.",
+            session.unread
+              .follow(row.channelId, threadRootId, !following)
+              .catch((cause: unknown) =>
+                management.report(
+                  cause instanceof Error
+                    ? cause.message
+                    : "Could not save thread follow. Try again.",
+                ),
               );
-            }
           }}
         >
           <MenuIcon>{following ? <BellSlashIcon /> : <BellIcon />}</MenuIcon>
@@ -439,33 +759,10 @@ function DeleteMessageDialog({
   session: RelaySession;
   selection: Deletion;
   operations: readonly OutgoingEvent[];
-  dispatched(id: string, dialog: Element | null): void;
+  dispatched(dialog: Element | null): void;
   close(): void;
 }) {
   const { row, authorization } = selection;
-  const [indexedShare, setIndexedShare] = useState(false);
-  useEffect(() => {
-    let current = true;
-    void session
-      .read([{ ids: [row.id], limit: 1, consistency: "strong" }], {
-        fresh: true,
-      })
-      .then((events) => {
-        if (current)
-          setIndexedShare(
-            events.some(
-              (event) =>
-                event.id === row.id &&
-                sharedSessionIds(event, row.sourceContent ?? row.content)
-                  .length > 0,
-            ),
-          );
-      })
-      .catch(() => {});
-    return () => {
-      current = false;
-    };
-  }, [session, row.id, row.sourceContent, row.content]);
   const [operationId, setOperationId] = useState(
     () =>
       operations.find(
@@ -476,46 +773,61 @@ function DeleteMessageDialog({
   );
   const cancelAction = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string>();
+  // Deleting an unsent message discards only its outbox intent. An unconfirmed
+  // one may already be on the relay; discarding it never retracts that copy.
+  const local = unsent(row);
+  const unconfirmed = row.delivery === "unknown";
+  const [discarding, setDiscarding] = useState(false);
   const operation = operations.find((item) => item.event.id === operationId);
-  const pending = operation?.delivery === "sending";
+  const pending = operation?.delivery === "sending" || discarding;
   const retryable =
     operation?.delivery === "failed" || operation?.delivery === "unknown";
-  useEffect(() => {
-    if (
-      operationId &&
-      (!operation ||
-        operation.delivery === "seen" ||
-        operation.delivery === "accepted")
-    ) {
-      close();
-    }
-  }, [operationId, operation, close]);
-  const run = (event: MouseEvent<HTMLButtonElement>) => {
+  // The row hides optimistically; MessageManagementStatus owns failures.
+  useCloseAfterPaint(!!operationId && !retryable, close);
+  const run = async (event: MouseEvent<HTMLButtonElement>) => {
     const dialog = event.currentTarget.closest('[role="alertdialog"]');
     setError(undefined);
     try {
       if (
+        !local &&
         !session.channels
           .list()
           .channels.some(
             (channel) =>
               channel.id === row.channelId &&
               !channel.archived &&
-              !channel.readOnly,
+              !channel.cached &&
+              (!channel.readOnly ||
+                (channel.viewerRole === "guest" && !!authorization)),
           )
       )
         throw new Error(
           "This conversation is no longer available for changes.",
         );
-      if (operationId) {
+      if (local) {
+        // dismiss() leaves a send that is retrying alone, without an error.
+        const item = session.outbox
+          ?.snapshot()
+          .find((item) => item.event.id === row.id);
+        if (!session.outbox || !discardable(session, row, item))
+          throw new Error(
+            "This message’s delivery changed. Cancel to see its current status.",
+          );
+        setDiscarding(true);
+        await (unconfirmed && item?.recovery
+          ? followUpQueue(session).discard(row.id)
+          : session.outbox.dismiss(row.id));
+        close();
+      } else if (operationId) {
         session.outbox?.retry(operationId);
-        dispatched(operationId, dialog);
+        dispatched(dialog);
       } else {
         const id = session.messages.remove([row.id], authorization);
         setOperationId(id);
-        dispatched(id, dialog);
+        dispatched(dialog);
       }
     } catch (cause) {
+      setDiscarding(false);
       setError(
         cause instanceof Error
           ? cause.message
@@ -525,11 +837,21 @@ function DeleteMessageDialog({
   };
   return (
     <AlertDialog
-      title="Delete message?"
+      title={
+        unconfirmed ? "Remove message from this device?" : "Delete message?"
+      }
       initialFocus={cancelAction}
-      description="This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
+      description={
+        unconfirmed
+          ? "Buzz couldn’t confirm whether this message was delivered. Removing it stops this device from sending it. If it was delivered, it stays in the conversation. This cannot be undone."
+          : local
+            ? "This message wasn’t sent. Deleting it removes it from this device. This cannot be undone."
+            : "This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
+      }
       pending={pending}
-      finalFocus={() => (operationId ? (selection.focus?.() ?? true) : true)}
+      finalFocus={() =>
+        operationId || discarding ? (selection.focus?.() ?? true) : true
+      }
       onClose={close}
       actions={
         <>
@@ -537,17 +859,19 @@ function DeleteMessageDialog({
             {operationId ? "Close" : "Cancel"}
           </Button>
           <Button variant="destructive" disabled={pending} onClick={run}>
-            {pending ? "Deleting…" : retryable ? "Retry" : "Delete"}
+            {pending
+              ? unconfirmed
+                ? "Removing…"
+                : "Deleting…"
+              : retryable
+                ? "Retry"
+                : unconfirmed
+                  ? "Remove"
+                  : "Delete"}
           </Button>
         </>
       }
     >
-      {indexedShare && (
-        <p role="status">
-          This share will leave Shared sessions; other shares and existing
-          access remain.
-        </p>
-      )}
       {(error || retryable) && (
         <p role="alert">
           {error ??
@@ -565,12 +889,11 @@ export function MessageManagementStatus() {
   const [error, setError] = useState<string>();
   if (!management) return null;
   const { session, channelId, operations } = management;
-  const channel = session.channels
-    .list()
-    .channels.find((item) => item.id === channelId);
   const pending = operations.filter(
     (item) =>
       (item.event.kind === 40003 ||
+        item.event.kind === PIN_KIND ||
+        item.event.kind === UNPIN_KIND ||
         (item.event.kind === 5 &&
           item.event.tags.some(
             ([name, kind]) =>
@@ -588,22 +911,31 @@ export function MessageManagementStatus() {
           role="status"
         >
           <p>
-            {item.event.kind === 40003 ? "Message edit" : "Message deletion"}:{" "}
-            {item.error ?? "Delivery could not be confirmed."}
+            {item.event.kind === 40003
+              ? "Message edit"
+              : item.event.kind === PIN_KIND
+                ? "Pin"
+                : item.event.kind === UNPIN_KIND
+                  ? "Unpin"
+                  : "Message deletion"}
+            : {item.error ?? "Delivery could not be confirmed."}
           </p>
           {item.event.kind === 40003 && <p>{item.event.content}</p>}
-          {item.delivery === "unknown" && (
+          {refusedPinCommand(item) ? (
             <p>
-              This may already have reached the conversation. Retry sends the
-              same operation; dismissing does not undo it.
+              <RefusedPin source={session} item={item} />
             </p>
+          ) : (
+            <>
+              {item.delivery === "unknown" && (
+                <p>
+                  This may already have reached the conversation. Retry sends
+                  the same operation; dismissing does not undo it.
+                </p>
+              )}
+              <RetryMessageUpdate session={session} event={item.event} />
+            </>
           )}
-          <Button
-            disabled={!channel || channel.archived || channel.readOnly}
-            onClick={() => session.outbox?.retry(item.event.id)}
-          >
-            Retry message update
-          </Button>
           <Button
             onClick={async () => {
               try {
@@ -626,5 +958,33 @@ export function MessageManagementStatus() {
       ))}
       {error && <p role="alert">{error}</p>}
     </>
+  );
+}
+
+function RetryMessageUpdate({
+  session,
+  event,
+}: {
+  session: RelaySession;
+  event: OutgoingEvent["event"];
+}) {
+  const eligible = useSyncExternalStore(
+    (listener) => {
+      const offChannels = session.channels.subscribeList(listener);
+      const offProfiles = session.profiles.subscribe(listener);
+      return () => {
+        offChannels();
+        offProfiles();
+      };
+    },
+    () => session.messages.canRetry(event),
+  );
+  return (
+    <Button
+      disabled={!eligible}
+      onClick={() => session.outbox?.retry(event.id)}
+    >
+      Retry message update
+    </Button>
   );
 }

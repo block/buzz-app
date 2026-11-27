@@ -4,22 +4,45 @@ import { useState, useSyncExternalStore } from "react";
 import type { RelayProfiler } from "../../features/relay/profiling";
 import { RelayTimings } from "./RelayTimings";
 import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
-import { isSoloChatLinkReceipt } from "../../features/solo/share";
-import type { Outbox } from "../../features/relay/outbox";
+import { HELD_RETRY_REFUSED, type Outbox } from "../../features/relay/outbox";
+import type { RelaySession } from "../../features/relay/session";
+import { isBatchAddition } from "../../features/channel-members/members";
+import { soloAdminSetup } from "../../features/relay/solo-admins";
+import { migrationSource } from "../../features/relay/migration";
+import { refusedPinCommand, type PinSource } from "../../features/relay/pins";
+import { RefusedPin } from "../../features/messages/RefusedPin";
+
+/** A batch names everyone its Retry re-adds. */
+function additionLabel(tags: readonly (readonly string[])[]) {
+  const people = tags.filter(([tag]) => tag === "p");
+  return people.length > 1
+    ? `Add ${people.length} people`
+    : `Add agent ${people[0]?.[1]?.slice(0, 12) ?? ""}`;
+}
 
 /** Delivery belongs to the session, including messages from other pages or a previous launch. */
 export function OutboxStatus({
   outbox,
   profiling,
+  memberAdditions,
+  pins,
 }: {
   outbox: Outbox;
   profiling: RelayProfiler;
+  memberAdditions: Pick<RelaySession["memberAdditions"], "add">;
+  /** Reads a pin list again after its command is refused as too old. */
+  pins?: PinSource | undefined;
 }) {
   const operations = useSyncExternalStore(
     outbox.subscribe,
     outbox.snapshot,
     outbox.snapshot,
-  ).filter((item) => item.event.kind !== PRODUCT_FEEDBACK_KIND);
+  )
+    .filter((item) => item.event.kind !== PRODUCT_FEEDBACK_KIND)
+    .map((item) => ({
+      ...item,
+      setup: soloAdminSetup(item),
+    }));
   const [error, setError] = useState<string>();
 
   return (
@@ -36,9 +59,11 @@ export function OutboxStatus({
         {operations.map((item) => (
           <li key={item.event.id}>
             <span>
-              {item.event.kind === 9000
-                ? `Add agent ${item.event.tags.find(([tag]) => tag === "p")?.[1]?.slice(0, 12) ?? ""}`
-                : item.event.content.slice(0, 100)}{" "}
+              {item.setup
+                ? "Opening agent admin setup"
+                : item.event.kind === 9000
+                  ? additionLabel(item.event.tags)
+                  : item.event.content.slice(0, 100)}{" "}
               ·{" "}
               {
                 {
@@ -52,10 +77,65 @@ export function OutboxStatus({
             </span>{" "}
             {!isWorkflowOperation(item.event) &&
               !item.guarded &&
-              (item.delivery === "failed" || item.delivery === "unknown") && (
+              !item.held &&
+              !refusedPinCommand(item) &&
+              (item.delivery === "failed" ||
+                item.delivery === "unknown" ||
+                // A kept batch still names someone unsettled.
+                (isBatchAddition(item) && item.delivery !== "sending")) && (
                 <Button
                   type="button"
-                  onClick={() => outbox.retry(item.event.id)}
+                  onClick={async () => {
+                    try {
+                      if (
+                        item.event.kind === 9000 &&
+                        (item.recovery?.key.startsWith("member-add:") ||
+                          !item.event.tags.some(([tag]) => tag === "role"))
+                      ) {
+                        const channelId = item.event.tags.find(
+                          ([tag]) => tag === "h",
+                        )?.[1];
+                        const pubkeys = item.event.tags.flatMap(
+                          ([tag, value]) =>
+                            tag === "p" && value ? [value] : [],
+                        );
+                        if (!channelId || !pubkeys.length)
+                          throw new Error(
+                            "Reopen Members to check this addition.",
+                          );
+                        // A stale explicit role must never overwrite a newer
+                        // admission, so each person is checked again. A guest
+                        // addition is retried as one, so it never sends a
+                        // writing role. A single addition finishes only its own
+                        // receipt. Retry a batch through Add for each person
+                        // so the session rechecks the roster before writing.
+                        const guest = item.event.tags.some(
+                          ([tag, value]) => tag === "role" && value === "guest",
+                        );
+                        const batch = isBatchAddition(item);
+                        const migration = migrationSource(item.event.tags);
+                        const results = await Promise.allSettled(
+                          pubkeys.map((pubkey) =>
+                            memberAdditions.add(channelId, pubkey, {
+                              ...(guest ? { role: "guest" as const } : {}),
+                              ...(batch ? {} : { retry: true as const }),
+                              ...(migration === undefined ? {} : { migration }),
+                              ...(batch && migration !== undefined
+                                ? { batchReceipt: item.event.id }
+                                : {}),
+                            }),
+                          ),
+                        );
+                        const failed = results.find(
+                          (result) => result.status === "rejected",
+                        );
+                        if (failed) throw failed.reason;
+                      } else outbox.retry(item.event.id);
+                      setError(undefined);
+                    } catch (reason) {
+                      setError(String(reason));
+                    }
+                  }}
                 >
                   Retry
                 </Button>
@@ -67,30 +147,38 @@ export function OutboxStatus({
                   membership.
                 </span>
               )}{" "}
-            {item.delivery !== "sending" && (
-              <Button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const shareReceipt =
-                      item.event.kind === 9 &&
-                      (/^snapshot-share:(agent|team):.+$/.test(
-                        item.recovery?.key ?? "",
-                      ) ||
-                        isSoloChatLinkReceipt(item)) &&
-                      (item.delivery === "accepted" ||
-                        item.delivery === "seen");
-                    if (shareReceipt) await outbox.acknowledge(item.event.id);
-                    await outbox.dismiss(item.event.id);
-                    setError(undefined);
-                  } catch (reason) {
-                    setError(String(reason));
-                  }
-                }}
-              >
-                Remove from outbox
-              </Button>
-            )}
+            {item.held &&
+              (item.delivery === "failed" || item.delivery === "unknown") && (
+                <span>{HELD_RETRY_REFUSED}</span>
+              )}{" "}
+            {refusedPinCommand(item) && (
+              <RefusedPin source={pins} item={item} />
+            )}{" "}
+            {(!item.setup || item.delivery === "failed") &&
+              item.delivery !== "sending" && (
+                <Button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const shareReceipt =
+                        item.event.kind === 9 &&
+                        // Share receipts, including those of earlier flows.
+                        /^(snapshot-share:(agent|team)|solo-share-link:[^:]+|agent-share:[^:]+):.+$/.test(
+                          item.recovery?.key ?? "",
+                        ) &&
+                        (item.delivery === "accepted" ||
+                          item.delivery === "seen");
+                      if (shareReceipt) await outbox.acknowledge(item.event.id);
+                      await outbox.dismiss(item.event.id);
+                      setError(undefined);
+                    } catch (reason) {
+                      setError(String(reason));
+                    }
+                  }}
+                >
+                  Remove from outbox
+                </Button>
+              )}
           </li>
         ))}
       </ul>

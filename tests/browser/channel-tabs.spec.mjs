@@ -43,7 +43,7 @@ test("middle-click closes a content tab without selecting it", async ({
   );
   await main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Chat: Beta" })
+    .getByRole("link", { name: "Open Beta" })
     .click();
   const workspace = page.locator("[data-panel-workspace]");
   const beta = workspace.getByRole("tab", { name: "Beta", exact: true });
@@ -54,6 +54,15 @@ test("middle-click closes a content tab without selecting it", async ({
     exact: true,
   });
   await expect(settings).toHaveAttribute("aria-selected", "true");
+  // A covered tab keeps its state but leaves workspace layout until shown.
+  const contentVisibility = async (tab) => {
+    const pane = await tab.getAttribute("aria-controls");
+    return page
+      .locator(`[id="${pane}"]`)
+      .evaluate((element) => getComputedStyle(element).contentVisibility);
+  };
+  await expect.poll(() => contentVisibility(beta)).toBe("hidden");
+  await expect.poll(() => contentVisibility(settings)).toBe("visible");
   await beta.click({ button: "right" });
   await expect(
     page.getByRole("menuitem", { name: "Close all tabs", exact: true }),
@@ -93,7 +102,7 @@ test("Open in channel takes a content tab to its conversation with its composer 
   );
   await main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Chat: Beta" })
+    .getByRole("link", { name: "Open Beta" })
     .click();
   await page
     .locator("[data-panel-workspace]")
@@ -136,7 +145,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   );
   const chip = main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Chat: Beta" });
+    .getByRole("link", { name: "Open Beta" });
   await expect(chip).toBeVisible();
   await main
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
@@ -249,7 +258,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await expect(reply).toBeFocused();
   await reply.fill("Alpha reply draft");
   // Shared Beta lists with the viewer's chats.
-  await page.locator('button[data-solo-channel-id="beta"]').click();
+  await page.locator('button[data-solo-destination-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(
@@ -351,9 +360,7 @@ test.describe("crowded content tabs", () => {
         .join(" "),
     );
     const row = main.locator(`[data-message-id="${link.id}"]`);
-    await row
-      .getByRole("link", { name: "Open Chat: Beta", exact: true })
-      .click();
+    await row.getByRole("link", { name: "beta", exact: true }).click();
     const workspace = page.locator("[data-panel-workspace]");
     const list = workspace.getByRole("tablist", { name: "Panel tabs" });
     const tabs = list.getByRole("tab");
@@ -379,9 +386,7 @@ test.describe("crowded content tabs", () => {
       );
     };
     for (const id of ids.slice(2))
-      await row
-        .getByRole("link", { name: `Open Chat: ${id}`, exact: true })
-        .click();
+      await row.getByRole("link", { name: id, exact: true }).click();
     await expect(tabs).toHaveCount(6);
     await settlePanelMotion(page);
     const activeClose = workspace.getByRole("button", {
@@ -421,7 +426,7 @@ test.describe("crowded content tabs", () => {
     }));
     expect(geometry.scrollbar).toBeLessThanOrEqual(4);
     expect(geometry.nativeWidth).toBe("auto");
-    expect(geometry.trackHeight).toBe("4px");
+    expect(geometry.trackHeight).toBe("3px");
     await expect
       .poll(() => list.evaluate((el) => el.scrollWidth > el.clientWidth))
       .toBe(true);
@@ -475,5 +480,143 @@ test.describe("crowded content tabs", () => {
     await expect(
       workspace.getByRole("button", { name: "Add tab", exact: true }),
     ).toHaveCount(0);
+  });
+});
+
+// Real plugin registration through the channel menu, channel navigation and
+// tab focus need app wiring in both browsers. Save/conflict permutations
+// belong to editor tests.
+test("Canvas opens once beside Thread and retains its channel draft", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const main = page.getByRole("article", { name: "Conversation", exact: true });
+  const row = main.locator("[data-message-id]").first();
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const workspace = page.locator("[data-panel-workspace]");
+  const thread = workspace.locator(
+    '[role="tab"][data-tab-value^="thread:alpha:"]',
+  );
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  const viewCanvas = async () => {
+    await main
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
+  };
+  await viewCanvas();
+  const canvas = workspace.getByRole("tab", { name: "Canvas", exact: true });
+  const text = workspace.getByRole("textbox", { name: "Canvas Markdown" });
+  const view = workspace.getByRole("article", { name: "Saved Canvas" });
+  const edit = workspace.getByRole("tab", { name: "Edit", exact: true });
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  await expect(view).toBeVisible();
+  await edit.click();
+  await expect(text).toBeEnabled();
+  await text.fill("Channel-scoped draft");
+  await thread.click();
+  await expect(text).toBeHidden();
+  await viewCanvas();
+  await expect(canvas).toHaveCount(1);
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  // Returning to an open Canvas tab keeps its selected Edit tab.
+  await expect(text).toHaveValue("Channel-scoped draft");
+  // Pointer-returning to Canvas on Edit resumes the editor, not hidden View.
+  await text.evaluate((node) => node.setSelectionRange(2, 7));
+  await thread.click();
+  await expect(text).toBeHidden();
+  await canvas.click();
+  await expect(text).toBeFocused();
+  await expect(text).toHaveValue("Channel-scoped draft");
+  expect(
+    await text.evaluate((node) => [node.selectionStart, node.selectionEnd]),
+  ).toEqual([2, 7]);
+  await workspace
+    .getByRole("button", { name: "Close Canvas tab", exact: true })
+    .click();
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await viewCanvas();
+  await expect(view).toBeVisible();
+  await edit.click();
+  await expect(text).toHaveValue("Channel-scoped draft");
+  // Leaving a channel keeps its Canvas tab open for the return.
+  await page.locator('button[data-solo-destination-id="beta"]').click();
+  await expect(workspace).toHaveCount(0);
+  await page.locator('button[data-channel-id="alpha"]').click();
+  await expect(thread).toBeVisible();
+  await expect(canvas).toHaveCount(1);
+  await expect(canvas).toHaveAttribute("aria-selected", "true");
+  // Returning shows the open Canvas; Edit still holds the channel's draft.
+  await edit.click();
+  await expect(text).toHaveValue("Channel-scoped draft");
+});
+
+// Real channel metadata, membership, panel registration, and history reads must
+// agree on archived access. The write-control matrix stays in component tests.
+test.describe("archived Canvas", () => {
+  test.use({ lifecycleVisibility: { archived: ["alpha"], hidden: [] } });
+  test("members can open Canvas and History in an archived channel", async ({
+    page,
+    app,
+  }) => {
+    const revision = app.sign({
+      kind: 40100,
+      content: "Archived plan",
+      tags: [["h", "alpha"]],
+      created_at: 1700000000,
+    });
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (!filters.every((filter) => filter.kinds?.includes(40100)))
+        return route.continue();
+      return route.fulfill({ json: [revision] });
+    });
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    const scope = await page.evaluate(
+      () => history.state.buzzNavigationV1.entry.target.scope,
+    );
+    const target = {
+      version: 1,
+      kind: "conversation",
+      channelId: "alpha",
+      scope,
+    };
+    await page.goto(
+      `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+    );
+    await page
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
+    const canvas = page.getByRole("region", {
+      name: "Channel Canvas",
+      exact: true,
+    });
+    await expect(
+      canvas.getByRole("article", { name: "Saved Canvas" }),
+    ).toHaveText("Archived plan");
+    await canvas.getByRole("tab", { name: "Edit", exact: true }).click();
+    const editor = canvas.getByRole("textbox", { name: "Canvas Markdown" });
+    await expect(editor).toHaveValue("Archived plan");
+    await expect(editor).toHaveAttribute("readonly", "");
+    await expect(
+      canvas.getByRole("button", { name: "Save Canvas" }),
+    ).toBeDisabled();
+    await canvas.getByRole("tab", { name: "History", exact: true }).click();
+    await expect(canvas.getByText("Same as current version.")).toBeVisible();
+    await canvas.getByRole("checkbox", { name: "Show full content" }).click();
+    await expect(
+      canvas.getByRole("textbox", { name: "Revision Markdown" }),
+    ).toHaveValue("Archived plan");
+    await expect(
+      canvas.getByRole("button", { name: "Restore this version" }),
+    ).toBeDisabled();
   });
 });

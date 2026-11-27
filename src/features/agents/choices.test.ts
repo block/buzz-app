@@ -2,7 +2,11 @@ import { expect, it } from "vitest";
 import { createLocalAgents } from "./local";
 import { localAgentsFixture } from "./local-testing";
 import { createAgentLibrary } from "./library";
-import { createAgentChoices, templateAgentChoices } from "./choices";
+import {
+  canMessageAgent,
+  createAgentChoices,
+  templateAgentChoices,
+} from "./choices";
 import { soloRecipients } from "../solo/recipients";
 import type { IdentityArchiveSnapshot } from "../relay/identity-archives";
 
@@ -15,17 +19,118 @@ const agent = {
   owner: viewer,
 };
 
+it("allows hosted DMs only with current owned source evidence, without local management", async () => {
+  const source = localAgentsFixture();
+  const lifetime = new AbortController();
+  const library = createAgentLibrary(undefined);
+  const archived = ["cd".repeat(32)];
+  const archives = archiveFixture(archived);
+  source.set({
+    hosted: [
+      agent,
+      { ...agent, pubkey: "bc".repeat(32), owner: "ee".repeat(32) },
+      { ...agent, pubkey: "de".repeat(32), relayUrl: "https://elsewhere.test" },
+      { ...agent, pubkey: "cd".repeat(32) },
+    ],
+  });
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native: source,
+    archives,
+    signal: lifetime.signal,
+  });
+  expect(choices.snapshot().identities).toEqual([
+    {
+      pubkey: agent.pubkey,
+      name: agent.name,
+      managed: false,
+      messageable: true,
+      execution: "remote",
+    },
+    {
+      pubkey: "cd".repeat(32),
+      name: agent.name,
+      managed: false,
+      messageable: true,
+      execution: "remote",
+    },
+  ]);
+  expect(choices.snapshot().selectable.filter(canMessageAgent)).toHaveLength(1);
+  expect(choices.snapshot().templates.identities).toEqual([]);
+  archived.push(agent.pubkey);
+  await archives.refresh();
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(2);
+  expect(choices.snapshot().selectable.filter(canMessageAgent)).toEqual([]);
+  archived.pop();
+  await archives.refresh();
+  expect(choices.snapshot().selectable.filter(canMessageAgent)).toHaveLength(1);
+  source.set({ status: "error", error: "Cannot read agents" });
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toEqual([]);
+  source.set({ status: "ready", hosted: [] });
+  expect(choices.snapshot().identities).toEqual([]);
+  source.set({ hosted: [agent] });
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
+  lifetime.abort();
+  expect(choices.snapshot().identities).toEqual([]);
+});
+
+it("preserves library names and artwork when hosted evidence makes the same key messageable", async () => {
+  const source = localAgentsFixture();
+  source.set({
+    hosted: [
+      {
+        ...agent,
+        name: "Hosted name",
+        picture: "https://cdn.example/hosted.png",
+      },
+    ],
+  });
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [
+      {
+        pubkey: agent.pubkey,
+        name: "Library name",
+        avatar: "https://cdn.example/library.png",
+      },
+    ],
+  }));
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native: source,
+    signal: new AbortController().signal,
+  });
+  await choices.refresh();
+  expect(choices.snapshot().identities).toEqual([
+    {
+      pubkey: agent.pubkey,
+      name: "Library name",
+      avatar: "https://cdn.example/library.png",
+      managed: false,
+      messageable: true,
+      execution: "remote",
+    },
+  ]);
+});
+
 /** Finite archive evidence with the real lazy-read lifecycle. */
 function archiveFixture(
   archived: string[] = [],
   initial: IdentityArchiveSnapshot["status"] = "ready",
 ) {
   const listeners = new Set<() => void>();
-  let snapshot: IdentityArchiveSnapshot = { status: initial, archived };
+  // Like the store, nothing is known before the first read.
+  let snapshot: IdentityArchiveSnapshot = {
+    status: initial,
+    archived: initial === "ready" ? archived : [],
+  };
   const reads: string[] = [];
   const read = async () => {
     reads.push(snapshot.status);
-    snapshot = { status: "ready", archived };
+    // Like the store, each read publishes a new frozen list.
+    snapshot = { status: "ready", archived: Object.freeze([...archived]) };
     for (const listener of listeners) listener();
   };
   return {
@@ -68,13 +173,19 @@ it("merges exact keys, preserves namesakes and keeps local agents to their commu
   });
   await choices.refresh();
   expect(choices.snapshot().identities).toEqual([
-    { ...duplicate, managed: true, managedName: "Calvin" },
+    { ...duplicate, managed: true, managedName: "Calvin", execution: "local" },
     { ...namesake, managed: false },
   ]);
   expect(
     templateAgentChoices(choices.snapshot(), { status: "ready", channels: [] }),
   ).toEqual([
-    { ...duplicate, name: "Calvin", managed: true, managedName: "Calvin" },
+    {
+      ...duplicate,
+      name: "Calvin",
+      managed: true,
+      managedName: "Calvin",
+      execution: "local",
+    },
   ]);
   const elsewhere = createAgentChoices({
     scope: `https://elsewhere.test:${viewer}`,
@@ -287,6 +398,7 @@ it("reads the local list again from Retry and clears its error once a read succe
         name: agent.name,
         managed: true,
         managedName: agent.name,
+        execution: "local",
       },
     ]);
     expect(state.templates).toMatchObject({
@@ -462,4 +574,47 @@ it("hides known-archived agents from selection but keeps them as known agents", 
     lifetime.abort();
     library.dispose();
   }
+});
+
+it("keeps a remotely executing native agent managed without labeling it local", async () => {
+  const lifetime = new AbortController();
+  const library = createAgentLibrary(undefined);
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native: localAgentsFixture([{ ...agent, execution: "remote" }]),
+    archives: archiveFixture(),
+    signal: lifetime.signal,
+  });
+  await choices.refresh();
+  expect(choices.snapshot().identities).toEqual([
+    expect.objectContaining({
+      pubkey: agent.pubkey,
+      managed: true,
+      execution: "remote",
+    }),
+  ]);
+  lifetime.abort();
+  library.dispose();
+});
+
+it("leaves an agent whose Delete started out of template lineups and defaults", async () => {
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [{ pubkey: agent.pubkey, name: agent.name }],
+  }));
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native: localAgentsFixture([{ ...agent, deleting: true }]),
+    archives: archiveFixture(),
+    signal: new AbortController().signal,
+  });
+  await choices.refresh("templates");
+  expect(
+    templateAgentChoices(choices.snapshot(), { status: "ready", channels: [] }),
+  ).toEqual([]);
+  expect(choices.snapshot().identities.map((a) => a.pubkey)).toEqual([
+    agent.pubkey,
+  ]);
 });

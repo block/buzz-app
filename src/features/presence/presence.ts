@@ -12,6 +12,9 @@ type Subject = {
   revision: number;
 };
 const minute = () => 60000 + Math.random() * 5000;
+/** Unexpired evidence kept for subjects no longer shown, so a remount paints
+ * it immediately instead of waiting for the next gated read. */
+const RETAINED = 1024;
 /** Volatile session-owned evidence. No event retention or outbox. */
 export function createPresence(
   transport: ReadTransport | null,
@@ -21,7 +24,17 @@ export function createPresence(
 ) {
   const subjects = new Map<string, Subject>();
   const profiles = new Map<string, Subject>();
+  const retained = new Map<
+    string,
+    { status: PresenceStatus; expires: number }
+  >();
+  const remembered = (key: string) => {
+    const evidence = retained.get(key);
+    return evidence && evidence.expires > Date.now() ? evidence : undefined;
+  };
   let selected = new Map<string, Subject>();
+  /** Told when demand moves subjects within or past the limit. */
+  const selectionListeners = new Set<() => void>();
   let connected = false,
     closed = false,
     reading = false;
@@ -100,15 +113,20 @@ export function createPresence(
         if (subjects.get(key) === subject) selected.set(key, subject);
       }
     }
+    let evicted = false,
+      admitted = false;
     for (const [key, subject] of previous)
       if (!selected.has(key)) {
+        evicted = true;
         change(subject, "unknown");
         for (const listener of subject.listeners.keys()) notify(listener);
       }
     for (const [key, subject] of selected)
-      if (previous.get(key) !== subject)
+      if (previous.get(key) !== subject) {
+        admitted = true;
         for (const listener of subject.listeners.keys()) notify(listener);
-    if ([...selected].some(([key, subject]) => previous.get(key) !== subject)) {
+      }
+    if (admitted) {
       const initial = Math.max(Date.now() + 100, readGate);
       nextRead = previous.size ? Math.min(nextRead, initial) : initial;
     }
@@ -117,6 +135,8 @@ export function createPresence(
       controller?.abort();
     }
     schedule();
+    if (admitted || evicted)
+      for (const listener of selectionListeners) listener();
   }
   let selectionQueued = false;
   function queueDemand() {
@@ -203,6 +223,7 @@ export function createPresence(
     }
   }
   function clear(publication = true) {
+    retained.clear();
     stopObservation?.();
     stopObservation = undefined;
     observedKeys = "";
@@ -312,12 +333,21 @@ export function createPresence(
   });
   return {
     status(key: string): PresenceStatus {
-      return subjects.get(key)?.status ?? "unknown";
+      return subjects.get(key)?.status ?? remembered(key)?.status ?? "unknown";
     },
     limited: (key: string) => subjects.has(key) && !selected.has(key),
+    /** Notifies when demand moves subjects within or past the limit, so a
+     * presence layered on this one can keep to the same window. */
+    subscribeSelection(listener: () => void) {
+      selectionListeners.add(listener);
+      return () => {
+        selectionListeners.delete(listener);
+      };
+    },
     subscribe(key: string, listener: () => void, profile = false) {
       if (closed || !/^[0-9a-f]{64}$/.test(key)) return () => {};
       let subject = subjects.get(key);
+      const fresh = !subject;
       if (!subject) {
         subject = {
           listeners: new Map(),
@@ -325,7 +355,9 @@ export function createPresence(
           status: "unknown",
           expires: 0,
           revision: 0,
+          ...remembered(key),
         };
+        retained.delete(key);
         subjects.set(key, subject);
       }
       const priority = subject.profiles > 0;
@@ -340,6 +372,8 @@ export function createPresence(
         priority !== subject.profiles > 0
       )
         demand();
+      // Past the demand limit, nothing would renew or expire retained evidence.
+      if (fresh && !selected.has(key)) change(subject, "unknown");
       return () => {
         if (subjects.get(key) !== subject || !subject.listeners.has(listener))
           return;
@@ -349,7 +383,22 @@ export function createPresence(
         if (!subject.profiles) profiles.delete(key);
         if (!subject.listeners.size) {
           subjects.delete(key);
-          selected.delete(key);
+          // The viewer's own status changes by publication, which skips an
+          // unmounted subject, so only other authors' evidence is retained.
+          if (
+            selected.delete(key) &&
+            subject.status !== "unknown" &&
+            key !== transport?.viewer
+          ) {
+            retained.set(key, {
+              status: subject.status,
+              expires: subject.expires,
+            });
+            for (const old of retained.keys()) {
+              if (retained.size <= RETAINED) break;
+              retained.delete(old);
+            }
+          }
         }
         if (!subjects.size) {
           nextRead = Infinity;
@@ -377,6 +426,8 @@ export function createPresence(
       subjects.clear();
       profiles.clear();
       selected.clear();
+      retained.clear();
+      selectionListeners.clear();
     },
   };
 }

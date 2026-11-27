@@ -1,7 +1,11 @@
-import type { ComposerSession } from "../messages/composer-session";
+import type {
+  ComposerDraftSend,
+  ComposerDraftSendResult,
+  ComposerSession,
+} from "../messages/composer-session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
-import type { UploadedAttachment } from "../relay/attachments";
+import type { UploadCode, UploadedAttachment } from "../relay/attachments";
 
 export type ComposerSnapshot = {
   modelRevision: number;
@@ -13,6 +17,8 @@ export type ComposerSnapshot = {
   canAdd: boolean;
   channels: ReturnType<ComposerSession["channels"]["list"]>;
   profiles: ReturnType<ComposerSession["profiles"]["snapshot"]>;
+  /** The owner's profile purge generation; views reread shown names when it moves. */
+  profileGeneration: number;
   emoji: ReturnType<ComposerSession["emoji"]["snapshot"]>;
   agents: ReturnType<ComposerSession["agentChoices"]["snapshot"]>;
   library: ReturnType<ComposerSession["agentLibrary"]["snapshot"]>;
@@ -23,6 +29,10 @@ export type ComposerSnapshot = {
   completions: readonly string[];
 };
 export type ComposerOperations = {
+  forwardSource: {
+    args: import("../messages/forward-clipboard").ForwardReference;
+    result: import("../messages/resolve-forward").ResolvedForward;
+  };
   models: {
     args: readonly string[];
     result: readonly import("../agents/react").MentionModelChoice[];
@@ -30,15 +40,8 @@ export type ComposerOperations = {
   gifSupport: { args: undefined; result: boolean };
   gifSearch: { args: string; result: import("../relay/gifs").KlipyGif[] };
   send: {
-    args: {
-      text: string;
-      draft: string;
-      picks?: import("../relay/messages").MentionPicks;
-      mentions: readonly string[];
-      references: readonly string[];
-      attachments: readonly UploadedAttachment[];
-    };
-    result: string;
+    args: ComposerDraftSend;
+    result: ComposerDraftSendResult;
   };
   release: { args: UploadedAttachment; result: undefined };
   agents: {
@@ -89,6 +92,8 @@ export type ComposerResponse =
       id: number;
       value?: unknown;
       error?: string;
+      /** The failure's upload code, so the editor can tell a refused type. */
+      code?: UploadCode;
     }
   | { kind: "closed"; client: string };
 export type ComposerReader = Pick<

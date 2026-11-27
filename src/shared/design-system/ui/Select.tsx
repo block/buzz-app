@@ -1,5 +1,11 @@
 import { PreferenceRow } from "./PreferenceRow";
-import { useId, type ReactNode } from "react";
+import {
+  Fragment,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import { Field } from "./Field";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { CheckIcon, CaretDownIcon } from "../icons/index";
@@ -7,6 +13,8 @@ import { Button } from "./Button";
 
 export type SelectGroup = {
   label: string;
+  /** Separate this group from the preceding choices. */
+  separator?: boolean;
   options: readonly {
     value: string;
     label: string;
@@ -38,6 +46,7 @@ export function Select({
   align = "start",
   size,
   appearance = "outlined",
+  describedBy,
 }: {
   label: string;
   description?: ReactNode;
@@ -50,15 +59,17 @@ export function Select({
   valueLabel?: string | undefined;
   valueTitle?: string;
   /** Compact metadata stays visible while the selected value truncates. */
-  valueSuffix?: string | undefined;
+  valueSuffix?: ReactNode;
   /** Decorative 20px icon, avatar, or custom accessory shown before the selected value. */
   leading?: ReactNode;
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
   variant?: "inline" | "field" | "compact" | "preference";
   /** Match adjacent controls without changing the selection treatment. */
-  size?: "sm" | "md";
-  appearance?: "outlined" | "subtle";
+  size?: "xs" | "sm" | "md";
+  appearance?: "outlined" | "subtle" | "glass-ghost" | "inverted" | "link";
+  /** Text the trigger is described by, such as its row's subtitle. */
+  describedBy?: string | undefined;
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
@@ -70,11 +81,17 @@ export function Select({
   const items = groups.flatMap((group) => group.options);
   const selectedValue =
     value === "" && !items.some((option) => option.value === "") ? null : value;
+  const choices = JSON.stringify(items.map((item) => item.value));
+  const committedChoices = useRef(choices);
+  useLayoutEffect(() => {
+    committedChoices.current = choices;
+  }, [choices]);
   const control = (
     <div
       data-buzz-ui=""
       className="buzz-select text-body"
       data-variant={variant}
+      data-appearance={appearance}
     >
       <BaseSelect.Root
         disabled={disabled}
@@ -83,7 +100,18 @@ export function Select({
         readOnly={readOnly}
         value={selectedValue}
         items={items}
-        onValueChange={(next) => {
+        onValueChange={(next, details) => {
+          // Base UI's item-removal callback can still see the old selection
+          // while registering a new list. Keep a valid controlled replacement.
+          // Closed-trigger typeahead also uses "none", after this commit.
+          if (
+            details.reason === "none" &&
+            committedChoices.current !== choices &&
+            items.some((item) => item.value === value)
+          ) {
+            details.cancel();
+            return;
+          }
           if (next !== null) onValueChange(next);
         }}
       >
@@ -126,6 +154,7 @@ export function Select({
             // Base UI adds aria-labelledby after the commit that inserts the
             // trigger, so it can be unnamed until a later task. Name it now.
             aria-label={label}
+            {...(describedBy ? { "aria-describedby": describedBy } : {})}
             render={(props) => (
               <Button
                 {...props}
@@ -134,9 +163,9 @@ export function Select({
                 }
                 variant={
                   variant === "compact"
-                    ? appearance === "subtle"
-                      ? "subtle"
-                      : "outline"
+                    ? appearance === "outlined"
+                      ? "outline"
+                      : appearance
                     : "ghost"
                 }
                 size={size ?? (variant === "compact" ? "sm" : "md")}
@@ -172,15 +201,13 @@ export function Select({
                     )}
                   </span>
                 </span>
-                {!(variant === "compact" && appearance === "subtle") && (
-                  <BaseSelect.Icon>
-                    <CaretDownIcon
-                      size={14}
-                      className="buzz-dropdown-chevron"
-                      aria-hidden="true"
-                    />
-                  </BaseSelect.Icon>
-                )}
+                <BaseSelect.Icon>
+                  <CaretDownIcon
+                    size={14}
+                    className="buzz-dropdown-chevron"
+                    aria-hidden="true"
+                  />
+                </BaseSelect.Icon>
               </Button>
             )}
           />
@@ -199,58 +226,63 @@ export function Select({
             >
               <BaseSelect.List>
                 {groups.map((group, groupIndex) => (
-                  <BaseSelect.Group key={group.label}>
-                    {group.label && (
-                      <BaseSelect.GroupLabel className="buzz-select-group-label text-secondary">
-                        {group.label}
-                      </BaseSelect.GroupLabel>
+                  <Fragment key={group.options[0]?.value ?? group.label}>
+                    {groupIndex > 0 && group.separator && (
+                      <BaseSelect.Separator className="buzz-select-separator" />
                     )}
-                    {group.options.map((option, optionIndex) => {
-                      const descriptionId = `${optionDescriptionId}-${groupIndex}-${optionIndex}`;
-                      return (
-                        <BaseSelect.Item
-                          key={option.value}
-                          value={option.value}
-                          disabled={option.disabled}
-                          aria-label={option.label}
-                          aria-describedby={
-                            option.description ? descriptionId : undefined
-                          }
-                          className="buzz-select-option"
-                        >
-                          <span className="buzz-select-option-main">
-                            {option.leading && (
-                              <span
-                                className="buzz-select-leading"
-                                aria-hidden="true"
-                              >
-                                {option.leading}
-                              </span>
-                            )}
-                            <span className="buzz-select-option-content">
-                              <BaseSelect.ItemText>
-                                {option.label}
-                              </BaseSelect.ItemText>
-                              {option.description && (
+                    <BaseSelect.Group>
+                      {group.label && (
+                        <BaseSelect.GroupLabel className="buzz-select-group-label text-secondary">
+                          {group.label}
+                        </BaseSelect.GroupLabel>
+                      )}
+                      {group.options.map((option, optionIndex) => {
+                        const descriptionId = `${optionDescriptionId}-${groupIndex}-${optionIndex}`;
+                        return (
+                          <BaseSelect.Item
+                            key={option.value}
+                            value={option.value}
+                            disabled={option.disabled}
+                            aria-label={option.label}
+                            aria-describedby={
+                              option.description ? descriptionId : undefined
+                            }
+                            className="buzz-select-option"
+                          >
+                            <span className="buzz-select-option-main">
+                              {option.leading && (
                                 <span
-                                  id={descriptionId}
-                                  className="buzz-select-option-description text-body-sm text-subtle"
+                                  className="buzz-select-leading"
+                                  aria-hidden="true"
                                 >
-                                  {option.description}
+                                  {option.leading}
                                 </span>
                               )}
+                              <span className="buzz-select-option-content">
+                                <BaseSelect.ItemText>
+                                  {option.label}
+                                </BaseSelect.ItemText>
+                                {option.description && (
+                                  <span
+                                    id={descriptionId}
+                                    className="buzz-select-option-description text-body-sm text-subtle"
+                                  >
+                                    {option.description}
+                                  </span>
+                                )}
+                              </span>
                             </span>
-                          </span>
-                          <BaseSelect.ItemIndicator
-                            className="buzz-select-indicator"
-                            keepMounted={variant === "compact"}
-                          >
-                            <CheckIcon size={14} aria-hidden="true" />
-                          </BaseSelect.ItemIndicator>
-                        </BaseSelect.Item>
-                      );
-                    })}
-                  </BaseSelect.Group>
+                            <BaseSelect.ItemIndicator
+                              className="buzz-select-indicator"
+                              keepMounted={variant === "compact"}
+                            >
+                              <CheckIcon size={14} aria-hidden="true" />
+                            </BaseSelect.ItemIndicator>
+                          </BaseSelect.Item>
+                        );
+                      })}
+                    </BaseSelect.Group>
+                  </Fragment>
                 ))}
               </BaseSelect.List>
             </BaseSelect.Popup>

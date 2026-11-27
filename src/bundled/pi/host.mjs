@@ -5,30 +5,46 @@
 // in the app, which holds the agent's key: a call to one here is a request
 // back to the plugin. `pi.sh` runs this with Node in the folder its packages
 // are installed in.
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   awaitWithContext,
   BACKGROUND_CONTEXT,
+  withTelemetry,
 } from "@earendil-works/chord/context";
 import {
   clampThinkingLevel,
+  createModels,
+  createProvider,
   getSupportedThinkingLevels,
+  getSystemMessageText,
 } from "@earendil-works/pi-ai";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { lazyStream } from "@earendil-works/pi-ai/api/lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AssistantEntry,
   createRegistry,
+  DEFAULT_COMPACTION_POLICY,
   defineDoc,
   defineExtension,
   defineTool,
   Harness,
+  hook,
+  ToolTask,
+  ProviderDoc,
+  ResetEntry,
   SessionFailed,
   section,
   UsageDoc,
-  watchEvents,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -36,7 +52,456 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import lockfile from "proper-lockfile";
 
+/** Protected Pi uses the same snapshots for review and execution. The model
+ * barrier is inside Models.applyAuth, before every provider dispatch, including
+ * compaction and retry/recovery paths. Payload hooks that replace a request fail closed. */
+export function protectModels(models, inspect, conversationFor) {
+  const requests = new Set([
+    "stream",
+    "complete",
+    "streamSimple",
+    "completeSimple",
+    "generateImages",
+    "classify",
+  ]);
+  const deferred = new Set([
+    "streamDeferred",
+    "fetchDeferred",
+    "cancelDeferred",
+  ]);
+  return new Proxy(models, {
+    get(target, name) {
+      if (deferred.has(name))
+        return () => {
+          throw new Error(
+            "Protected Pi does not support deferred provider requests",
+          );
+        };
+      const method = Reflect.get(target, name);
+      if (!requests.has(name))
+        return typeof method === "function" ? method.bind(target) : method;
+      return (model, input, options = {}) => {
+        if (
+          options.transformHeaders ||
+          options.samplingParams ||
+          options.deferred ||
+          model.samplingParams ||
+          model.samplingParamsByThinkingLevel
+        )
+          throw new Error(
+            "Protected Pi cannot review this provider payload override",
+          );
+        const selected = structuredClone(model),
+          content = structuredClone(input);
+        // Telemetry spans hold functions and only observe the request.
+        const { signal, apiKey, headers, env, telemetry, onPayload, ...data } =
+          options;
+        const settings = structuredClone(data);
+        return method.call(target, selected, content, {
+          ...settings,
+          signal,
+          telemetry,
+          // Pi passes its payload hooks to every request: one that replaces
+          // the reviewed request fails it.
+          ...(onPayload && {
+            onPayload: async (payload, model) => {
+              const replaced = await onPayload(payload, model);
+              if (replaced !== undefined && replaced !== payload)
+                throw new Error(
+                  "Protected Pi cannot review this provider payload override",
+                );
+            },
+          }),
+          apiKey,
+          headers: structuredClone(headers),
+          env: structuredClone(env),
+          transformHeaders: async (assembled) => {
+            signal?.throwIfAborted();
+            const session = await conversationFor(settings.sessionId);
+            if (!Array.isArray(content.messages))
+              throw new Error(
+                "Protected Pi requires explicit conversation messages",
+              );
+            // Provider settings and tool schemas are not conversation text.
+            // Keep dynamic instructions and every native message as distinct sources.
+            for (const [source, value] of [
+              ["instructions", content.systemPrompt ?? ""],
+              ...content.messages.map((message) => [
+                "message",
+                message.role === "system"
+                  ? { role: "system", content: getSystemMessageText(message) }
+                  : message,
+              ]),
+            ]) {
+              await inspect(
+                {
+                  kind: "context",
+                  session: String(session),
+                  content: { source, value },
+                },
+                signal,
+              );
+            }
+            signal?.throwIfAborted();
+            return assembled;
+          },
+        });
+      };
+    },
+  });
+}
+
+/** How Pi's own providers reach the model gateway: each by its native
+ * protocol, under the gateway's root for Pi. A request keeps its model's
+ * own ID, which the gateway resolves; any other provider is refused there
+ * (README: "gateway mode"). */
+const PROTOCOLS = {
+  anthropic: {
+    api: "anthropic-messages",
+    path: "anthropic",
+    compat: { sendSessionAffinityHeaders: true },
+  },
+  openai: { api: "openai-responses", path: "openai/v1" },
+};
+/** A header name as the gateway compares it: ASCII lowercase, `_` as `-`. */
+const fold = (name) => name.toLowerCase().replaceAll("_", "-");
+/** Whether only Buzz may set `name` under the build's header profile: one
+ * of its context headers, or a name under one of its reserved prefixes. */
+const reserved = (profile, name) => {
+  const folded = fold(name);
+  return (
+    Object.values(profile.headers).includes(folded) ||
+    profile.reserved_prefixes.some((prefix) => folded.startsWith(prefix))
+  );
+};
+/** Headers the gateway takes a session from ahead of, or as, the affinity
+ * one, folded: any other value would attribute the request to another
+ * session. */
+const CORRELATION =
+  /^(?:x-session-affinity|x-litellm-(?:session|trace)-id|agent-session-id|(?:x-)?session-id|x-.+-session-id)$/;
+/** Caller options that carry a provider's own credential or headers: never
+ * sent to the gateway's origin. */
+const PROVIDER_ONLY = ["apiKey", "env", "headers"];
+/** The gateway's own credential stands in for this placeholder. */
+const GATEWAY_KEY = "buzz-gateway";
+/** The provider a gateway request is sent with: never listed or chosen. */
+const GATEWAY = "buzz-gateway";
+
+/** Sends a model of Pi's own providers to the gateway, with the gateway's
+ * credential in place of the provider's. */
+function gatewayCatalog() {
+  const catalog = createModels();
+  catalog.setProvider(
+    createProvider({
+      id: GATEWAY,
+      name: "Model gateway",
+      auth: {
+        apiKey: {
+          name: "Model gateway",
+          resolve: async () => ({
+            auth: { apiKey: GATEWAY_KEY },
+            source: "gateway",
+          }),
+        },
+      },
+      models: [],
+      api: {
+        "anthropic-messages": anthropicMessagesApi(),
+        "openai-responses": openAIResponsesApi(),
+      },
+    }),
+  );
+  return catalog;
+}
+
+/** `model`, one of Pi's built-in ones, as the gateway serves it under
+ * `root`: its own ID, limits and protocol, at the gateway. */
+export function gatewayModel(model, root) {
+  const protocol = PROTOCOLS[model?.provider];
+  if (!protocol || model.api !== protocol.api)
+    throw new Error(
+      `${model?.provider ?? "This provider"}/${model?.id ?? "this model"} isn't available through the model gateway. Choose an Anthropic or OpenAI model in the agent's Identity tab.`,
+    );
+  return {
+    ...model,
+    provider: GATEWAY,
+    baseUrl: `${root}/${protocol.path}`,
+    ...(protocol.compat
+      ? { compat: { ...model.compat, ...protocol.compat } }
+      : {}),
+  };
+}
+
+/** A gateway response that drops the access a request was admitted with. */
+const refused = (response) =>
+  response.status === 401 || response.status === 403;
+
+/** The final request headers: native ones, less any name the build's
+ * header `profile` reserves to Buzz, with the run's own context and the
+ * native session for affinity. A conflicting session would win over
+ * affinity at the gateway: refused. */
+export function composeGateway(profile, assembled, bundle, session) {
+  if (typeof session !== "string" || !session)
+    throw new Error("Gateway model request has no session");
+  if (!profile) throw new Error("Gateway model request has no header profile");
+  const names = Object.values(profile.headers);
+  for (const name of Object.keys(bundle ?? {}))
+    if (!names.includes(name))
+      throw new Error(
+        "A gateway bundle may only set the profile's context headers",
+      );
+  const headers = {};
+  for (const [name, value] of Object.entries(assembled ?? {})) {
+    if (reserved(profile, name)) continue;
+    const folded = fold(name);
+    if (CORRELATION.test(folded)) {
+      if (value != null && value !== session)
+        throw new Error(
+          `Gateway model request has a conflicting ${folded} header`,
+        );
+      continue;
+    }
+    headers[name] = value;
+  }
+  return { ...headers, ...bundle, "x-session-affinity": session };
+}
+
+const REQUEST = Symbol("buzz.request");
+/** The Buzz request a context's durable work serves, if it carries one. */
+export const requestOf = (telemetry) => telemetry?.[REQUEST];
+/** Telemetry that records nothing and carries only a Buzz request. Pi keeps
+ * the carrier in each submission's and task's trace and gives every model
+ * call its task's context, so a request's work, its compactions and retries,
+ * queued or continued after a restart, carries that request. An input's
+ * admission, whose parent is the root, takes its caller's request from its
+ * first link only: a later one, as a steer's to its run, never replaces it. */
+export function requestTelemetry(request) {
+  const propagation = {
+    inject: (telemetry) => {
+      const carried = requestOf(telemetry);
+      return carried === undefined ? undefined : { buzz: carried };
+    },
+    extract: (carrier) =>
+      context(typeof carrier?.buzz === "string" ? carrier.buzz : undefined),
+  };
+  const context = (request, admission = false) => {
+    let linked = false;
+    return {
+      get [REQUEST]() {
+        return request;
+      },
+      propagation,
+      startSpan: async (options, callback) =>
+        callback(
+          context(
+            request,
+            request === undefined && options.name === "pi.durable.submit",
+          ),
+        ),
+      addLink(link) {
+        if (admission && !linked) request = requestOf(link?.context);
+        linked = true;
+      },
+      addEvent() {},
+      setAttributes() {},
+      setStatus() {},
+    };
+  };
+  return context(request);
+}
+
+/** Pi's models, with each request whose Buzz request has a gateway
+ * record sent through the gateway instead: the same model, by its own ID,
+ * with its run's Buzz context, after any caller's header transform
+ * (protection's review). Every other request runs on Pi's own provider, as
+ * a turn the runner sent without the gateway does. `gatewayOf` reads a
+ * request's record and admits it, at an eligibility revision, or answers
+ * that it has none; it returns nothing at once for a request that surely
+ * has none, which is then dispatched as it is, with nothing read before
+ * it. A 401 or 403 for an admitted request is told to
+ * `denied` with that revision before its client sees the response. A
+ * gateway request's deferred and one-shot operations fail closed. */
+export function routeModels(models, gatewayOf, denied) {
+  const gateway = gatewayCatalog();
+  /** Each request method, by the stream it is the result of. */
+  const requests = {
+    stream: "stream",
+    complete: "stream",
+    streamSimple: "streamSimple",
+    completeSimple: "streamSimple",
+  };
+  const unsupported = new Set([
+    "streamDeferred",
+    "fetchDeferred",
+    "cancelDeferred",
+    "generateImages",
+    "classify",
+  ]);
+  return new Proxy(models, {
+    get(target, name) {
+      const method = Reflect.get(target, name);
+      if (unsupported.has(name))
+        return (model, input, options = {}) => {
+          const checking = gatewayOf(options ?? {});
+          if (!checking) return method.call(target, model, input, options);
+          const checked = checking.then((admitted) => {
+            if (admitted)
+              throw new Error(`Gateway mode does not support ${String(name)}`);
+            return method.call(target, model, input, options);
+          });
+          return name === "streamDeferred"
+            ? lazyStream(model, () => checked)
+            : checked;
+        };
+      const stream = requests[name];
+      if (!stream)
+        return typeof method === "function" ? method.bind(target) : method;
+      return (model, input, options = {}) => {
+        const checking = gatewayOf(options);
+        if (!checking) return method.call(target, model, input, options);
+        /** The revision this call was admitted at. */
+        let revision;
+        const streamed = lazyStream(model, async () => {
+          const admitted = await checking;
+          if (!admitted)
+            return Reflect.get(target, stream).call(
+              target,
+              model,
+              input,
+              options,
+            );
+          revision = admitted.revision;
+          const caller = options.transformHeaders;
+          const own = { ...options };
+          for (const name of PROVIDER_ONLY) delete own[name];
+          return gateway[stream](gatewayModel(model, admitted.root), input, {
+            ...own,
+            transformHeaders: async (assembled) =>
+              composeGateway(
+                admitted.profile,
+                caller ? await caller(assembled) : assembled,
+                admitted.bundle,
+                options.sessionId,
+              ),
+            // This call's own: the caller's fetch, else the global one as
+            // the client would use it, with the response untouched.
+            fetch: async (input, init) => {
+              const response = await (options.fetch ?? globalThis.fetch)(
+                input,
+                init,
+              );
+              if (refused(response)) await denied(revision);
+              return response;
+            },
+          });
+        });
+        return stream === name ? streamed : streamed.result();
+      };
+    },
+  });
+}
+
+/** Hold all native tool output until reviewed, including streaming progress,
+ * diagnostics and thrown errors. Wrapping execute also covers safe replay. */
+export function protectTool(tool, inspect, preceding = async () => []) {
+  return {
+    ...tool,
+    async execute(original, api, signalled) {
+      const args = structuredClone(original);
+      const session = String(api.conversationId);
+      const signal = signalled.abortSignal;
+      const conversation = structuredClone(await preceding(api, signalled));
+      await inspect(
+        {
+          kind: "tool",
+          session,
+          content: { title: tool.name, arguments: args, conversation },
+          ...(typeof args.command === "string"
+            ? { command: args.command }
+            : {}),
+        },
+        signal,
+      );
+      const decoder = new TextDecoder();
+      let text = "",
+        bytes = 0,
+        details;
+      const diagnostics = [];
+      const bound = (value) => {
+        bytes += Buffer.byteLength(
+          typeof value === "string" ? value : JSON.stringify(value),
+        );
+        if (bytes > 256 * 1024)
+          throw new Error("Protected Pi tool output exceeds the review limit");
+      };
+      let result;
+      try {
+        result = await tool.execute(
+          args,
+          {
+            ...api,
+            outputWindow: undefined,
+            output(chunk, skipped) {
+              if (skipped)
+                throw new Error("Protected Pi cannot review omitted output");
+              const value =
+                typeof chunk === "string"
+                  ? decoder.decode() + chunk
+                  : decoder.decode(chunk, { stream: true });
+              bound(value);
+              text += value;
+            },
+            retainedOutput: () => ({ text, truncated: false }),
+            diagnostic(value) {
+              const copy = structuredClone(value);
+              bound(copy);
+              diagnostics.push(copy);
+            },
+            async details(value) {
+              const copy = structuredClone(value);
+              bound(copy);
+              details = copy;
+            },
+          },
+          signalled,
+        );
+        text += decoder.decode();
+        result = {
+          ...result,
+          output: result.output ?? (text ? [{ type: "text", text }] : []),
+          diagnostics: [...diagnostics, ...(result.diagnostics ?? [])],
+          ...(result.details !== undefined
+            ? { details: result.details }
+            : details !== undefined
+              ? { details }
+              : {}),
+        };
+      } catch (error) {
+        if (signal?.aborted)
+          throw new Error("Protected Pi action was cancelled");
+        result = {
+          isError: true,
+          output: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        };
+      }
+      result = structuredClone(result);
+      await inspect({ kind: "tool-result", session, content: result }, signal);
+      signal?.throwIfAborted();
+      return result;
+    },
+  };
+}
+
 const context = BACKGROUND_CONTEXT;
+/** Stores a document whole after this many changes, so reading it replays
+ * a bounded number of them, as Pi's own Code Mode documents do. */
+const checkpointWhen = (_value, _ops, { deltasSinceBase }) =>
+  deltasSinceBase >= 64;
 /** Each Buzz conversation key's Pi conversation, the tools' default
  * destination for it, and the newest message it has been shown. */
 const Places = defineDoc({
@@ -44,19 +509,130 @@ const Places = defineDoc({
   version: 1,
   scope: "session",
   initial: () => ({}),
+  checkpointWhen,
 });
+/** A request's reply destination is stored independently
+ * of the conversation's tool defaults. Recorded before submission for recovery. */
+const Replies = defineDoc({
+  kind: "buzz.replies",
+  version: 1,
+  scope: "session",
+  initial: () => ({}),
+  checkpointWhen,
+});
+/** How a request ran, by its request id, for its conversation's transcript:
+ * a wake the runner sent without the gateway, which no request row notes.
+ * Display only, never model context; recorded before submission, with its
+ * prompt's entry once a transcript first finds it placed. */
+const Notices = defineDoc({
+  kind: "buzz.notices",
+  version: 1,
+  scope: "session",
+  initial: () => ({}),
+  checkpointWhen,
+});
+/** The entry a noted turn that failed before Pi placed its prompt leaves in
+ * its conversation: the notice and that failure. Pi shows a model nothing of
+ * an entry of only a kind and data. */
+const NOTICE_ENTRY = "buzz.notice";
+/** gateway mode: each conversation key's session binding; each key's reset
+ * intent, until its next binding replaces it; and each request's Buzz
+ * context, recorded before it is submitted, so its work dispatches with it,
+ * also continued after a restart. */
+const GatewayRuns = defineDoc({
+  kind: "buzz.gateway",
+  version: 1,
+  scope: "session",
+  initial: () => ({ places: {}, resets: {}, requests: {} }),
+  checkpointWhen,
+});
+/** Why a run Pi cut off is unanswered, in words: Pi's detail is technical. */
+const CUT_OFF = {
+  restart_limit:
+    "Pi stopped this turn because it crashed partway through it several times in a row.",
+  interrupted:
+    "Pi stopped this turn because it was cut off while the model was answering, and it had no retries left.",
+};
+/** A turn an Interrupt withdrew while it waited for a run in the other mode. */
+const WITHDRAWN = Symbol("withdrawn");
+/** The diagnostic codes of the results Pi writes itself, for a tool call
+ * that did not run, or did not finish because Pi stopped it. */
+const UNRUN = new Set([
+  "tool_unavailable",
+  "invalid_arguments",
+  "blocked",
+  "interrupted",
+  "restart_limit",
+  "aborted",
+  "abandoned",
+]);
 /** Messages that arrive while Pi works join its run at the next boundary. */
 const SETTINGS = { steeringMode: "all" };
+/** An agent's compaction at `tokens`, for every model `models` lists, so a
+ * run resumed on any of them has it: a compaction starts in the background
+ * there, or as early as Pi's own would. */
+export class Compaction {
+  tokens;
+  overrides;
+  constructor(models) {
+    this.models = models;
+  }
+  /** Compacts at `tokens`, or Pi's default when unset. */
+  use(tokens) {
+    if (tokens === this.tokens) return;
+    this.tokens = tokens;
+    this.overrides = undefined;
+  }
+  /** Pi's settings, read at each use. */
+  settings() {
+    const { tokens } = this;
+    if (!tokens) return SETTINGS;
+    const { reserveTokens, backgroundTokens } = DEFAULT_COMPACTION_POLICY;
+    this.overrides ??= Object.fromEntries(
+      this.models()
+        .filter(({ contextWindow }) => contextWindow > 0)
+        .map(({ provider, id, contextWindow }) => [
+          `${provider}/${id}`,
+          {
+            backgroundTokens: Math.max(
+              backgroundTokens,
+              contextWindow - reserveTokens - tokens,
+            ),
+          },
+        ]),
+    );
+    return { ...SETTINGS, compaction: { modelOverrides: this.overrides } };
+  }
+}
 /** Pi's own default thinking level, for a model that thinks. */
 const THINKING = "medium";
 /** A lock left by a host that was killed is taken over after this long. */
 const STALE_MS = 30_000;
 const TEST_TIMEOUT_MS = 30_000;
+/** How long a turn waits by default for a run in the other mode to show
+ * progress before it fails. */
+const PARK_MS = 15 * 60_000;
+/** How often a turn waiting only for the other mode's tasks reads them
+ * again: Pi offers no wait for a task's end. */
+const TASK_POLL_MS = 1_000;
+/** How long a gateway refusal waits for the plugin to take it. */
+const DENY_MS = 5_000;
 /** Entries a transcript reads at a time. */
 const PAGE = 200;
+/** How far back, in pages of entries, a Buzz tool call looks for the
+ * answer that asked for it, whose usage is the conversation's context size. */
+const SIZE_PAGE = 32;
+const SIZE_PAGES = 4;
 /** Buzz tools are `buzz_<name>`, apart from Pi's own `read` and `edit`. */
 const PREFIX = "buzz_";
+/** The prompt section of the agent's `core` memory. */
+const CORE = "core-memory";
 const TOOL_NAMES = `The Buzz tools are named \`${PREFIX}<name>\`: where your instructions name a Buzz tool such as \`send\` or \`read\`, call \`${PREFIX}send\` or \`${PREFIX}read\`. The unprefixed \`read\`, \`write\`, \`edit\` and \`bash\` work on files in the workspace.`;
+
+/** A membership key: an agent's pubkey, alone or with its community's
+ * percent-encoded host. Mirrors `AGENT_KEY` in features/agents/membership.ts,
+ * which this file cannot import. The characters are safe in a file name. */
+const AGENT_KEY = /^[0-9a-f]{64}(?:@[A-Za-z0-9._~%-]{1,512})?$/;
 
 /** Pi's folder, shared with the `pi` command: its keys and settings. */
 const piDir = () => {
@@ -151,9 +727,17 @@ export class AuthFile {
   }
 }
 
-/** Why a provider that a Pi package adds, which Buzz doesn't load, can't run. */
-const notBuiltIn = (id) =>
-  `Buzz can use only Pi's built-in providers, and ${id} isn't one. It may come from a Pi package. Choose another provider in the agent's Identity tab.`;
+/** Why a provider that neither Pi nor a Pi package Buzz loaded has can't
+ * run, with each package that didn't load. */
+const unknownProvider = (id, errors) =>
+  [
+    `${id} isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it.`,
+    ...errors.map(
+      ({ source, error }) =>
+        `Pi could not load the package ${source}: ${error.replace(/\.?$/, ".")}`,
+    ),
+    "Buzz loads the packages in Pi's settings when it starts. Choose another provider in the agent's Identity tab.",
+  ].join(" ");
 
 /** The default provider, model and thinking level in Pi's settings. */
 async function piDefaults(dir) {
@@ -171,6 +755,149 @@ async function piDefaults(dir) {
   } catch {
     return {};
   }
+}
+
+/** How long a package has to load before it's left out, so one that hangs
+ * doesn't keep every Pi agent from starting. */
+const PACKAGE_MS = 30_000;
+
+/** The Pi packages in Pi's settings that have parts for Pi durable: a
+ * package lists them as `"pi": { "durable": ["./durable.ts"] }` in its
+ * package.json, which the `pi` command ignores. Each one's default export
+ * returns the `extensions` every agent runs with and the `providers` added
+ * to Pi's. A package that fails is left out, and said why. Only packages in
+ * a local folder load for now. */
+export async function loadPackages(dir, limit = PACKAGE_MS) {
+  const loaded = { extensions: [], providers: [], errors: [] };
+  let settings;
+  try {
+    // As Pi does, with the BOM an editor may save.
+    settings = JSON.parse(
+      (await readFile(join(dir, "settings.json"), "utf8")).replace(
+        /^\uFEFF/,
+        "",
+      ),
+    );
+  } catch {
+    return loaded;
+  }
+  const sources = Array.isArray(settings?.packages) ? settings.packages : [];
+  if (sources.length) hookPackages();
+  // The extensions are checked against what every agent installs, so one
+  // that can't install is left out instead of stopping every agent opening.
+  // Buzz's own goes in last, under `buzz`.
+  const registry = createRegistry();
+  registry.install(CodingTools);
+  registry.install(createToolSearchExtension());
+  for (const item of sources) {
+    const source = typeof item === "string" ? item : item?.source;
+    const installed = [];
+    try {
+      if (typeof source !== "string" || /^(?:npm|git|https?|ssh):/.test(source))
+        throw new Error("Buzz loads only Pi packages in a local folder");
+      const root = resolvePath(dir, source.replace(/^~(?=$|[\\/])/, homedir()));
+      // A timer the host waits for: a setup that never settles may hold
+      // nothing else that keeps Node running.
+      let timer;
+      const { extensions, providers } = await Promise.race([
+        loadPackage(root),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`It took over ${limit / 1000} seconds`)),
+            limit,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
+      for (const extension of extensions) {
+        if (typeof extension?.name !== "string")
+          throw new Error("An extension it returns has no name");
+        if (
+          extension.name === "buzz" ||
+          registry.snapshot().extension(extension.name)
+        )
+          throw new Error(`Another extension is named ${extension.name}`);
+        registry.install(extension);
+        installed.push(extension);
+      }
+      if (!providers.every(isProvider))
+        throw new Error(
+          "A provider it returns needs an id, name, auth and getModels",
+        );
+      // The host never refreshes models, so a provider whose models come
+      // only from `fetchModels` would be missing from the list unexplained.
+      const empty = providers.find((provider) => !provider.getModels().length);
+      if (empty)
+        throw new Error(
+          `Provider ${empty.id} lists no models, and Buzz doesn't fetch a provider's models`,
+        );
+      loaded.extensions.push(...extensions);
+      loaded.providers.push(...providers);
+    } catch (error) {
+      for (const extension of installed) registry.uninstall(extension);
+      loaded.errors.push({
+        source: String(source),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return loaded;
+}
+
+/** Whether a provider has what listing Pi's providers reads, which one made
+ * without pi-ai's `createProvider` may lack: without it, the list fails for
+ * every agent. */
+const isProvider = (provider) =>
+  typeof provider?.id === "string" &&
+  typeof provider.name === "string" &&
+  Boolean(provider.auth?.apiKey || provider.auth?.oauth) &&
+  typeof provider.getModels === "function";
+
+/** What the package in a folder adds, from each of its durable entries. */
+async function loadPackage(root) {
+  const manifest = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  );
+  const entries = manifest.pi?.durable ?? [];
+  if (!Array.isArray(entries))
+    throw new Error('"pi.durable" in its package.json must list files');
+  const made = { extensions: [], providers: [] };
+  for (const entry of entries) {
+    const { default: setup } = await import(
+      pathToFileURL(resolvePath(root, entry)).href
+    );
+    const { extensions = [], providers = [] } = (await setup()) ?? {};
+    made.extensions.push(...extensions);
+    made.providers.push(...providers);
+  }
+  return made;
+}
+
+/** Packages get Pi's own packages from the host, so what they define is
+ * what the host runs, and may be TypeScript, also under `node_modules`,
+ * where Node doesn't strip types itself. */
+let hooked = false;
+function hookPackages() {
+  if (hooked) return;
+  hooked = true;
+  const here = import.meta.url;
+  registerHooks({
+    resolve(specifier, context, next) {
+      if (specifier.startsWith("@earendil-works/"))
+        try {
+          return next(specifier, { ...context, parentURL: here });
+        } catch {}
+      return next(specifier, context);
+    },
+    load(url, context, next) {
+      if (!/^file:.*\/node_modules\/.*\.m?ts$/.test(url))
+        return next(url, context);
+      return {
+        format: "module",
+        source: stripTypeScriptTypes(readFileSync(fileURLToPath(url), "utf8")),
+        shortCircuit: true,
+      };
+    },
+  });
 }
 
 /** A message as a transcript and usage show it: no image data or
@@ -207,27 +934,128 @@ const targetOf = (args) => {
     : value;
 };
 
+/** Serialize native Pi values without making a second whole JSON string. */
+async function* evidenceJSON(value) {
+  if (typeof value === "string") {
+    yield '"';
+    for (let at = 0; at < value.length; ) {
+      let end = Math.min(value.length, at + 16384);
+      if (end < value.length && /[\uD800-\uDBFF]/.test(value[end - 1])) end--;
+      yield JSON.stringify(value.slice(at, end)).slice(1, -1);
+      at = end;
+    }
+    yield '"';
+  } else if (Array.isArray(value)) {
+    yield "[";
+    for (let i = 0; i < value.length; i++) {
+      if (i) yield ",";
+      yield* evidenceJSON(value[i] ?? null);
+    }
+    yield "]";
+  } else if (value && typeof value === "object") {
+    yield "{";
+    let first = true;
+    for (const [key, item] of Object.entries(value)) {
+      if (item === undefined) continue;
+      if (!first) yield ",";
+      first = false;
+      yield* evidenceJSON(key);
+      yield ":";
+      yield* evidenceJSON(item);
+    }
+    yield "}";
+  } else {
+    const text = JSON.stringify(value);
+    if (text === undefined) throw new Error("Invalid evidence");
+    yield text;
+  }
+}
+
+/** The arguments the model gave a tool call, from its answer in `entries`. */
+const argumentsOf = (entries, callId) => {
+  for (const entry of entries.toReversed())
+    for (const message of entry.model ?? [])
+      for (const part of Array.isArray(message.content) ? message.content : [])
+        if (part.type === "toolCall" && part.id === callId)
+          return part.arguments;
+};
+
 /** Serves the plugin on `input` and `output` until `input` closes. */
 export function serve({
   data,
   models,
+  packages = { extensions: [], errors: [] },
+  protectedAgent,
   dir = piDir(),
   input = process.stdin,
   output = process.stdout,
   exit = () => process.exit(0),
+  /** How long a turn waits, with no activity in its conversation, for its
+   * run in the other mode to finish. */
+  parkMs = PARK_MS,
 }) {
-  /** Each agent's open Harness, by pubkey. */
+  /** Each agent's open Harness, by membership key. */
   const agents = new Map();
   /** Agents whose storage failed and that nothing has opened again. */
   const failed = new Set();
+  /** Each agent's deliveries Pi doesn't have yet, by conversation key,
+   * listed as each arrives: an Interrupt or a Stop withdraws a gateway one. */
+  const pending = new Map();
+  /** Lists `waiting`; the result unlists it. */
+  function listed(agent, key, waiting) {
+    const keys = pending.get(agent) ?? new Map();
+    const waits = keys.get(key) ?? new Set();
+    pending.set(agent, keys.set(key, waits.add(waiting)));
+    return () => {
+      waits.delete(waiting);
+      if (!waits.size && keys.get(key) === waits) keys.delete(key);
+      if (!keys.size && pending.get(agent) === keys) pending.delete(agent);
+    };
+  }
+  /** Marks a key's pending deliveries, or only `request`'s, withdrawn. */
+  function withdrawPending(agent, key, request) {
+    for (const waiting of pending.get(agent)?.get(key) ?? [])
+      if (request === undefined || waiting.request === request) {
+        waiting.interrupted = true;
+        waiting.wake?.();
+      }
+  }
   const calls = new Map();
+  const reviews = new Map();
   let called = 0;
   const write = (message) => output.write(`${JSON.stringify(message)}\n`);
   const notify = (method, params) => write({ method, params });
-  const call = (method, params) =>
+  /** Tells the plugin the gateway refused one of the agent's requests at
+   * `revision`, waiting for it only so long: the request fails either way. */
+  const deny = (agent, revision) =>
+    call(
+      "gateway",
+      { op: "deny", agent, revision },
+      AbortSignal.timeout(DENY_MS),
+    ).catch((error) =>
+      console.error("Pi could not report a gateway refusal", error),
+    );
+  const call = (method, params, signal) =>
     new Promise((resolve, reject) => {
+      signal?.throwIfAborted();
       const id = `h${++called}`;
-      calls.set(id, { resolve, reject });
+      const cancel = () => {
+        calls.delete(id);
+        write({ method: "security_cancel", params: { id } });
+        reject(new Error("Protected Pi action was cancelled"));
+      };
+      const clear = () => signal?.removeEventListener("abort", cancel);
+      calls.set(id, {
+        resolve: (value) => {
+          clear();
+          resolve(value);
+        },
+        reject: (error) => {
+          clear();
+          reject(error);
+        },
+      });
+      signal?.addEventListener("abort", cancel, { once: true });
       write({ id, method, params });
     });
 
@@ -240,7 +1068,8 @@ export function serve({
       pick.model ||
       model ||
       (id === defaults.provider ? defaults.model : undefined);
-    if (id && !models.getProvider(id)) throw new Error(notBuiltIn(id));
+    if (id && !models.getProvider(id))
+      throw new Error(unknownProvider(id, packages.errors));
     if (!id || !modelId)
       throw new Error(
         "This agent has no model. Choose a provider and model in its Identity tab.",
@@ -258,7 +1087,9 @@ export function serve({
   }
 
   async function open(agent, lost) {
-    if (!/^[0-9a-f]{64}$/.test(agent)) throw new Error("Not an agent key");
+    if (!AGENT_KEY.test(agent)) throw new Error("Not an agent key");
+    if (protectedAgent && agent !== protectedAgent)
+      throw new Error("This protected host belongs to another agent");
     const path = join(data, "agents", `${agent}.sqlite`);
     // An agent's storage holds its conversations: only its owner may read
     // it, however an earlier build made it.
@@ -288,46 +1119,285 @@ export function serve({
         await chmod(file, 0o600).catch((error) => {
           if (error.code !== "ENOENT") throw error;
         });
+      if (
+        protectedAgent &&
+        (packages.extensions.length || packages.providers?.length)
+      )
+        throw new Error("Protected Pi does not load user packages");
       const registry = createRegistry();
-      registry.install(CodingTools);
+      const inspect = async (action, signal) => {
+        if (
+          process.env[
+            {
+              context: "BUZZ_SECURITY_CONTEXT",
+              tool: "BUZZ_SECURITY_TOOL",
+              "tool-result": "BUZZ_SECURITY_TOOL_RESULT",
+            }[action.kind]
+          ] === "0"
+        )
+          action = {
+            kind: action.kind,
+            session: action.session,
+            content: null,
+          };
+        const rpc = (op, params) =>
+          call(`buzz/security/evidence/${op}`, params, signal);
+        const id = crypto.randomUUID();
+        try {
+          const opened = await rpc("begin", {
+            id,
+            kind: action.kind,
+            session: action.session,
+          });
+          if (opened?.skipped === true) return;
+          if (
+            opened?.id !== id ||
+            !Number.isSafeInteger(opened.chunkBytes) ||
+            opened.chunkBytes <= 0
+          )
+            throw new Error("Invalid security transfer");
+          const chunk = Math.min(opened.chunkBytes, 65536);
+          let sequence = 0,
+            bytes = 0,
+            buffer = Buffer.alloc(0);
+          const send = async (data) => {
+            if (
+              (
+                await rpc("chunk", {
+                  id,
+                  sequence,
+                  data: data.toString("base64"),
+                })
+              )?.accepted !== true
+            )
+              throw new Error("Security evidence was not accepted");
+            sequence++;
+            bytes += data.length;
+          };
+          for await (const text of evidenceJSON(action.content)) {
+            const data = Buffer.from(text);
+            for (let at = 0; at < data.length; ) {
+              const take = Math.min(chunk - buffer.length, data.length - at);
+              buffer = Buffer.concat([buffer, data.subarray(at, at + take)]);
+              at += take;
+              if (buffer.length === chunk) {
+                await send(buffer);
+                buffer = Buffer.alloc(0);
+              }
+            }
+          }
+          if (buffer.length) await send(buffer);
+          if ((await rpc("finish", { id, sequence, bytes }))?.allowed !== true)
+            throw new Error("Pi action denied by its protection policy");
+        } catch (error) {
+          // The cancellation message is independent of the cancelled run signal.
+          void call("buzz/security/evidence/cancel", { id }).catch(() => {});
+          throw error;
+        }
+      };
+      const install = (extension) => {
+        if (
+          protectedAgent &&
+          (extension.tasks?.length ||
+            extension.hooks?.length ||
+            extension.wraps?.length)
+        )
+          throw new Error("Unsupported protected Pi extension");
+        registry.install(
+          protectedAgent
+            ? {
+                ...extension,
+                tools: extension.tools?.map((tool) =>
+                  protectTool(tool, inspect, async (api, context) => {
+                    const conversation = await harness.conversation(
+                      api.conversationId,
+                      context,
+                    );
+                    if (!conversation)
+                      throw new Error(
+                        "The tool's preceding conversation is unavailable",
+                      );
+                    return (await conversation.context(context)).messages;
+                  }),
+                ),
+              }
+            : extension,
+        );
+      };
+      const conversations = new Set();
+      const sessions = new Map();
+      let harness;
+      const conversationFor = async (sessionId) => {
+        if (typeof sessionId !== "string" || !sessionId)
+          throw new Error("Pi model request has no session");
+        if (!sessions.has(sessionId)) {
+          for (const conversation of conversations) {
+            const document = await harness.snapshot(
+              ProviderDoc,
+              conversation,
+              context,
+            );
+            if (document?.sessionId)
+              sessions.set(document.sessionId, conversation);
+          }
+        }
+        if (!sessions.has(sessionId))
+          throw new Error("Pi model request has an unknown session");
+        return sessions.get(sessionId);
+      };
+      /** What may have gateway state, read when the agent opened and added
+       * to before each write, never removed while it is open: requests with
+       * a record (until read, any request may), the conversations they are
+       * in, keys with a session binding, a reset intent or a gateway
+       * delivery, and keys whose reset intent's write may not be submitted.
+       * Everything else is an ordinary agent's, which runs as on `main`. */
+      const recorded = {
+        requests: new Set(),
+        read: false,
+        conversations: new Set(),
+        keys: new Set(),
+        resets: new Set(),
+      };
+      /** A request's gateway record, admitted: the Buzz context of the Buzz
+       * request its durable task serves, as the task's trace carries it,
+       * recorded before that request was submitted, and where it goes. Only
+       * while the plugin still admits the binding it was made with. None
+       * for a request with no record, which runs on Pi's own provider: at
+       * once for one that surely has none, as ordinary Pi dispatches. */
+      const gatewayOf = ({ telemetry, ...options }) => {
+        const request = requestOf(telemetry);
+        if (
+          request === undefined ||
+          (recorded.read && !recorded.requests.has(request))
+        )
+          return undefined;
+        return admit(request, options);
+      };
+      const admit = async (request, { sessionId, signal }) => {
+        const record = (await harness.snapshot(GatewayRuns, context))
+          ?.requests?.[request];
+        if (!record) return undefined;
+        if (record.conversation !== (await conversationFor(sessionId)))
+          throw new Error(
+            "Gateway model request has another conversation's Buzz context",
+          );
+        const admitted = await call(
+          "gateway",
+          { op: "admit", agent, binding: record.binding },
+          signal,
+        );
+        if (admitted?.ok !== true)
+          throw new Error(
+            admitted?.message || "This agent can't use the model gateway now",
+          );
+        return {
+          bundle: record.bundle,
+          revision: admitted.revision,
+          root: admitted.root,
+          profile: admitted.profile,
+        };
+      };
+      const routed = routeModels(models, gatewayOf, (revision) =>
+        deny(agent, revision),
+      );
+      install(CodingTools);
       // Loads the Buzz tools that are deferred when the model asks for them.
-      registry.install(createToolSearchExtension());
-      const harness = await Harness.open(
-        await openNodeSqliteStorage(path),
+      install(createToolSearchExtension());
+      for (const extension of packages.extensions) install(extension);
+      const storage = await openNodeSqliteStorage(path);
+      const compaction = new Compaction(() =>
+        models.getProviders().flatMap((provider) =>
+          models.getModels(provider.id).map((model) => ({
+            provider: provider.id,
+            id: model.id,
+            contextWindow: model.contextWindow,
+          })),
+        ),
+      );
+      harness = await Harness.open(
+        storage,
         {
-          models,
+          models: protectedAgent
+            ? protectModels(routed, inspect, conversationFor)
+            : routed,
           registry,
-          settings: SETTINGS,
-          env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? homedir() }),
-          onReport: (error) => console.error("Pi reported", error),
+          settings: () => compaction.settings(),
+          telemetry: requestTelemetry(),
+          // Its tools' commands, and only theirs, act as this agent.
+          env: ({ cwd }) => {
+            const credential = credentials.get(agent);
+            return new NodeExecutionEnv({
+              cwd: cwd ?? homedir(),
+              ...(credential && {
+                shellEnv: { BUZZ_CREDENTIAL_PROVIDER: credential },
+              }),
+            });
+          },
+          onReport: ({ kind, error }) =>
+            console.error(`Pi reported ${kind}`, error),
         },
         context,
       );
       const opened = {
         agent,
         harness,
+        storage,
         registry,
+        compaction,
+        install,
+        conversations,
         release,
         tools: "",
+        /** Each conversation's `core` memory section as its latest turn read
+         * it. None when that read failed. */
+        cores: new Map(),
         /** Each conversation's tool context, for runs resumed after a restart. */
         contexts: new Map(),
-        /** Each watched conversation, and whether a run is in it. */
+        /** Each watched conversation, once its watch has started, and
+         * whether a run is in it. */
         watched: new Map(),
+        /** The arguments each conversation's tool calls run with, after the
+         * hooks, by call. */
+        arguments: new Map(),
         /** Deliveries to each conversation key, one after another. */
         queues: new Map(),
         /** Why each request withdrawn with a failed run is unanswered. */
         failed: new Map(),
+        recorded,
         closing: false,
       };
       const places = (await harness.snapshot(Places, context)) ?? {};
-      for (const place of Object.values(places))
+      for (const place of Object.values(places)) {
+        conversations.add(place.conversation);
         opened.contexts.set(place.conversation, place.context);
+      }
+      const live = await harness.inspect(context);
+      for (const submission of live.submissions)
+        conversations.add(submission.conversationId);
+      await prune(harness, live);
+      const gateway = (await harness.snapshot(GatewayRuns, context)) ?? {};
+      for (const [request, record] of Object.entries(gateway.requests ?? {})) {
+        recorded.requests.add(request);
+        if (record.conversation)
+          recorded.conversations.add(record.conversation);
+      }
+      for (const key of Object.keys(gateway.places ?? {}))
+        recorded.keys.add(key);
+      for (const [key, reset] of Object.entries(gateway.resets ?? {})) {
+        recorded.keys.add(key);
+        if (!reset.written) recorded.resets.add(key);
+      }
+      recorded.read = true;
       return opened;
     } catch (error) {
       await release().catch(() => undefined);
       throw error;
     }
   }
+
+  /** Each agent's credential for its tools' commands, never this host's own
+   * environment. */
+  const credentials = new Map();
 
   /** The agent's storage, opened once. */
   function opening(agent) {
@@ -337,7 +1407,14 @@ export function serve({
       // leaves its runs to it. Opening again says the agent is open there.
       const opened = open(agent, () => {
         forget();
-        void opened.then(shut, () => undefined);
+        void opened
+          .then(shut, () => undefined)
+          .catch((error) =>
+            console.error(
+              "Pi could not close after losing storage custody",
+              error,
+            ),
+          );
       });
       started = opened;
       failed.delete(agent);
@@ -350,11 +1427,13 @@ export function serve({
       void opened.then(
         (ready) =>
           ready.harness.closed.then((end) => {
-            if (end.reason !== "failed") return;
+            if (end.kind !== "failed") return;
             console.error("Pi's storage failed for an agent", end.error);
             if (agents.get(agent) === opened) failed.add(agent);
             forget();
-            void shut(ready);
+            void shut(ready).catch((error) =>
+              console.error("Pi could not close an agent", error),
+            );
           }),
         forget,
       );
@@ -368,6 +1447,31 @@ export function serve({
     return opened;
   }
 
+  /** A conversation's context size: the tokens of its latest model call, as
+   * its newest answer in the transcript records them. Read by the host, not
+   * by a hook, so a protected agent, which takes no extension hooks, has it
+   * too. Undefined when none of its recent entries has one. */
+  async function sizeOf(opened, conversation, context) {
+    const found = await opened.harness.conversation(conversation, context);
+    let cursor;
+    // The answer that asked for the call is the newest one, behind only the
+    // results of its other calls.
+    for (let page = 0; found && page < SIZE_PAGES; page++) {
+      const entries = await found.entries({}, SIZE_PAGE, cursor, context);
+      for (const entry of entries.items)
+        for (const message of (entry.model ?? []).toReversed())
+          if (message.role === "assistant") {
+            const tokens = message.usage?.totalTokens;
+            return Number.isSafeInteger(tokens) && tokens > 0
+              ? tokens
+              : undefined;
+          }
+      cursor = entries.next;
+      if (!cursor) break;
+    }
+    return undefined;
+  }
+
   /** The agent's Buzz tools, served by the plugin. Those it lists to load on
    * search are deferred: the model finds them with `tool_search`, which
    * `hint` says what it can find with. */
@@ -375,7 +1479,62 @@ export function serve({
     const text = hint ? `${TOOL_NAMES} ${hint}` : TOOL_NAMES;
     return defineExtension({
       name: "buzz",
-      sections: [section("buzz-tools", () => text)],
+      sections: [
+        section("buzz-tools", () => text),
+        // The agent's `core` memory as its latest turn read it, so an edit
+        // made in any conversation reaches this one at its next turn. Its own
+        // section, so an edit re-sends only the memory, never the
+        // instructions. A failed read keeps what the conversation was shown.
+        // Always present, even empty, so it keeps its place before the
+        // instructions.
+        section(
+          CORE,
+          ({ conversationId, shown }) =>
+            opened.cores.get(conversationId) ?? shown[CORE] ?? "",
+          { tag: false },
+        ),
+      ],
+      hooks: protectedAgent
+        ? []
+        : [
+            hook(ToolTask, {
+              beforeTool: (input, api, context) =>
+                awaitWithContext(
+                  call("hook", {
+                    agent: opened.agent,
+                    conversation: api.conversationId,
+                    event: "beforeTool",
+                    input,
+                  }),
+                  context,
+                ).then((value) => {
+                  // Its step shows the call as it runs, not as the model
+                  // asked for it. Only a watched conversation sends steps,
+                  // and its watch lets go of them.
+                  if (opened.watched.has(api.conversationId)) {
+                    const calls =
+                      opened.arguments.get(api.conversationId) ?? new Map();
+                    opened.arguments.set(api.conversationId, calls);
+                    calls.set(input.id, value?.arguments ?? input.arguments);
+                  }
+                  return value ?? undefined;
+                }),
+              // Pi also runs afterTool on results it writes for calls that
+              // never ran or were cut off; Buzz's hooks see executed calls.
+              afterTool: (input, result, api, context) =>
+                result.diagnostics?.some(({ code }) => UNRUN.has(code))
+                  ? undefined
+                  : awaitWithContext(
+                      call("hook", {
+                        agent: opened.agent,
+                        conversation: api.conversationId,
+                        event: "afterTool",
+                        input: { call: input, result },
+                      }),
+                      context,
+                    ).then((value) => value ?? undefined),
+            }),
+          ],
       tools: tools.map((tool) =>
         defineTool({
           name: `${PREFIX}${tool.name}`,
@@ -386,13 +1545,22 @@ export function serve({
             // Given up when the run is stopped, so closing the agent does
             // not wait on Buzz.
             const result = await awaitWithContext(
-              call("tool", {
-                agent: opened.agent,
-                conversation: api.conversationId,
-                context: opened.contexts.get(api.conversationId) ?? {},
-                name: tool.name,
-                arguments: args,
-              }),
+              call(
+                "tool",
+                {
+                  agent: opened.agent,
+                  conversation: api.conversationId,
+                  context: opened.contexts.get(api.conversationId) ?? {},
+                  contextTokens: await sizeOf(
+                    opened,
+                    api.conversationId,
+                    signalled,
+                  ).catch(() => undefined),
+                  name: tool.name,
+                  arguments: args,
+                },
+                signalled.abortSignal,
+              ),
               signalled,
             );
             return {
@@ -402,7 +1570,7 @@ export function serve({
                   : { type: "text", text: JSON.stringify(part) },
               ),
               ...(result.isError ? { isError: true } : {}),
-              // A final `send` answered the run; Pi ends it without another
+              // A final message answered the run; Pi ends it without another
               // model call, and starts a new one for what arrived meanwhile.
               ...(result.final ? { control: { terminate: true } } : {}),
             };
@@ -413,45 +1581,129 @@ export function serve({
   }
 
   /** Watches a conversation for its steps, whether it is working, and when
-   * each request joins its run. */
-  async function watch(opened, conversation) {
-    const watched = opened.watched.get(conversation);
-    if (watched) return watched;
-    const stream = await watchEvents(opened.harness, conversation, context);
-    const state = { busy: Boolean(stream.snapshot.run), stream };
-    opened.watched.set(conversation, state);
-    const send = (event) =>
-      notify("event", { agent: opened.agent, conversation, ...event });
-    stream.start(async (events) => {
-      for (const event of events)
-        if (event.type === "run_start") state.busy = true;
-        else if (event.type === "run_end") state.busy = false;
-        else if (
-          event.type === "submission" &&
-          event.record.status === "placed" &&
-          event.record.requestId
-        )
-          send({
-            type: "placed",
-            request: event.record.requestId,
-            entry: event.record.entry,
-          });
-        else if (event.type === "tool_execution_start")
-          send({
-            type: "step",
-            tool: event.toolName.startsWith(PREFIX)
-              ? event.toolName.slice(PREFIX.length)
-              : event.toolName,
-            target: targetOf(event.args),
-          });
-        else if (event.type === "message_update")
-          for (const change of event.changes)
-            if (change.type === "thinking_start")
-              send({ type: "step", tool: "Thinking" });
-            else if (change.type === "text_start")
-              send({ type: "step", tool: "Writing reply" });
-    });
+   * each request joins its run. Pi's observer sees every commit, so a step
+   * that starts and ends between two reads is still sent. */
+  function watch(opened, conversation) {
+    let watched = opened.watched.get(conversation);
+    if (!watched) {
+      watched = observe(opened, conversation);
+      opened.watched.set(conversation, watched);
+      watched.catch(() => opened.watched.delete(conversation));
+    }
+    return watched;
+  }
+
+  async function observe(opened, conversation) {
+    let queue = Promise.resolve();
+    /** `sent`: once every event so far has gone out. `events`: how many
+     * commits it has seen, which a turn waiting for its run reads as
+     * progress. */
+    const state = {
+      busy: false,
+      observation: undefined,
+      sent: () => queue,
+      events: 0,
+    };
+    // Events go out in order, each after the reads it needs. The observer
+    // must not wait or call the Session, so a read is queued as a function
+    // and starts only when its turn comes.
+    const send = (event) => {
+      queue = queue
+        .then(async () => {
+          const ready = await (typeof event === "function" ? event() : event);
+          if (ready)
+            notify("event", { agent: opened.agent, conversation, ...ready });
+        })
+        .catch((error) => console.error("Pi could not send a step", error));
+    };
+    /** Sent already: the run's inputs and tool calls, and reply parts. */
+    const inputs = new Set();
+    const calls = new Set();
+    let attempt;
+    let parts = 0;
+    const look = (view, initial) => {
+      const live = view.docs["pi.live"] ?? {};
+      // A run that answered keeps `run` while its `afterRun` tasks finish; a
+      // new request then starts the next run, not steers this one.
+      state.busy = Boolean(live.run && !live.run.afterRun);
+      if (!initial) state.events++;
+      if (!live.run) {
+        inputs.clear();
+        calls.clear();
+        opened.arguments.delete(conversation);
+      }
+      for (const id of live.run?.inputs ?? []) {
+        if (inputs.has(id)) continue;
+        inputs.add(id);
+        if (!initial) send(() => placed(opened, id));
+      }
+      for (const slot of [...(live.tools ?? []), ...(live.nestedTools ?? [])]) {
+        // A step is a start: Pi shows each run of a call running, in a commit
+        // of its own, and a call it blocked goes from pending to done. The
+        // same call ID may come again in a later answer, as another task.
+        if (slot.status !== "running" || calls.has(slot.taskId)) continue;
+        calls.add(slot.taskId);
+        const ran = opened.arguments.get(conversation)?.get(slot.callId);
+        opened.arguments.get(conversation)?.delete(slot.callId);
+        if (initial) continue;
+        const { name } = slot;
+        send({
+          type: "step",
+          tool: name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name,
+          // Only the prefix says a tool is Buzz's: Pi's own tools and its
+          // extensions' are reported bare.
+          ...(name.startsWith(PREFIX) ? { origin: "buzz" } : {}),
+          target: targetOf(
+            // A nested call shows the arguments it runs with. A call the
+            // model made runs with what the hooks left of its arguments.
+            "parentCallId" in slot
+              ? slot.arguments
+              : (ran ?? argumentsOf(view.entries, slot.callId)),
+          ),
+        });
+      }
+      const generation = live.generation;
+      const content = generation?.message?.content ?? [];
+      if (generation?.attempt !== attempt || content.length < parts) {
+        attempt = generation?.attempt;
+        parts = 0;
+      }
+      for (; parts < content.length; parts++)
+        if (initial) continue;
+        else if (content[parts].type === "thinking")
+          send({ type: "step", tool: "Thinking" });
+        else if (content[parts].type === "text")
+          send({ type: "step", tool: "Writing reply" });
+    };
+    // Pi may deliver commits before it hands over the value they follow:
+    // they wait for it.
+    let early = [];
+    state.observation = await opened.harness.observeConversation(
+      conversation,
+      {
+        advance: (call) => {
+          if (call.kind !== "value") return;
+          if (early) early.push(call.value);
+          else look(call.value, false);
+        },
+        end: () => undefined,
+      },
+      context,
+    );
+    // What was there before the watch is not sent again.
+    look(state.observation.value, true);
+    for (const view of early) look(view, false);
+    early = undefined;
     return state;
+  }
+
+  /** A request that joined its run, as Buzz is told of it. */
+  async function placed(opened, id) {
+    const submission = await opened.harness.submission(id, context);
+    const record = await submission?.status(context);
+    return record?.requestId && record.entry
+      ? { type: "placed", request: record.requestId, entry: record.entry }
+      : undefined;
   }
 
   async function settle(opened, id) {
@@ -460,6 +1712,9 @@ export function serve({
       const submission = await opened.harness.submission(id, context);
       if (!submission) throw new Error("Pi has no record of this request");
       record = await submission.wait(context);
+      // What Buzz was told of the request's run comes before its answer.
+      const watched = opened.watched.get(record.conversationId);
+      await (await watched?.catch(() => undefined))?.sent();
     } catch (error) {
       // Storage that failed closed the Harness, with the run in it: the
       // plugin opens the agent again, and waits for the run there.
@@ -470,11 +1725,15 @@ export function serve({
       if (opened.closing) return { status: "closed" };
       throw error;
     }
+    // A one-off turn's conversation, with no place, is not used again.
+    if (!opened.contexts.has(record.conversationId))
+      opened.cores.delete(record.conversationId);
     if (record.status !== "done") {
+      const detail = CUT_OFF[record.reason] ?? record.detail;
       const failed = opened.failed.get(id) ?? {
         status: "unanswered",
         reason: record.reason,
-        ...(record.detail ? { detail: String(record.detail) } : {}),
+        ...(detail ? { detail: String(detail) } : {}),
       };
       opened.failed.delete(id);
       if (record.reason !== "aborted")
@@ -508,10 +1767,299 @@ export function serve({
     }
   }
 
+  /** The session `conversation` is in at entry `at`, or now: the id of the
+   * reset that began it, or 0 before any reset. Read from Pi's own head
+   * markers, so it always agrees with the history: a compaction's marker
+   * leads back to the one before it. Only markers are read, never the
+   * history between them. */
+  async function sessionOf(storage, conversation, at) {
+    let head = await storage.findLatestHeadMarker(conversation, at, context);
+    while (head && head.kind !== "pi.reset")
+      head = await storage.findLatestHeadMarker(
+        conversation,
+        head.head,
+        context,
+      );
+    return head?.id ?? 0;
+  }
+  /** Whether the next turn is its session's first: no compaction since the
+   * session began, no prompt in it, and none queued. A prompt follows its
+   * reset closely, so only the entries before the first one are read. */
+  async function firstTurn({ harness, storage }, conversation) {
+    const head = await storage.findLatestHeadMarker(
+      conversation,
+      undefined,
+      context,
+    );
+    if (head && head.kind !== "pi.reset") return false;
+    const query = { conversationId: conversation, order: "ascending" };
+    if (head) query.minEntryId = head.head;
+    let cursor;
+    do {
+      const page = await storage.scanEntries(query, 20, cursor, context);
+      if (page.items.some((entry) => entry.kind === "pi.user")) return false;
+      cursor = page.next;
+    } while (cursor);
+    const { submissions } = await harness.inspect(context);
+    return !submissions.some((s) => s.conversationId === conversation);
+  }
+
+  /** Records a gateway mode request's binding and Buzz context before it is
+   * submitted, with its reply destination, in one commit. One already
+   * recorded, by a host that stopped before submitting it, is kept. A
+   * `manual` request, an owner's compaction, binds its key's session as it
+   * is and changes nothing of the key's. */
+  async function bind(
+    opened,
+    turn,
+    { key, fresh, gatewayTurn, reply, notice, conversation, manual },
+  ) {
+    const { request } = turn;
+    const { harness } = opened;
+    const doc = (await harness.snapshot(GatewayRuns, context)) ?? {};
+    let reset = key && !manual && doc.resets?.[key];
+    let persist;
+    // A request asked again keeps the mode it was bound in: one bound to the
+    // gateway never runs without it.
+    let record = doc.requests?.[request];
+    if (record && reset) {
+      // A reset since it was recorded makes it the reset's first request,
+      // unless Pi has it already: its run keeps its binding, and the reset
+      // waits for the next.
+      if (
+        await opened.storage.submissionByRequest(conversation, request, context)
+      )
+        reset = undefined;
+      else record = undefined;
+    }
+    // Only a turn the runner sent through the gateway binds.
+    if (gatewayTurn && !record) {
+      // A model the gateway doesn't take binds nothing; an owner's
+      // compaction keeps the model its conversation has.
+      if (!manual) gatewayModel((await choose(turn)).found, "");
+      const bound = await call("gateway", {
+        op: "bind",
+        agent: opened.agent,
+        event:
+          !key && !manual
+            ? "standalone"
+            : fresh
+              ? "new_generation"
+              : reset
+                ? "reset"
+                : "resume",
+        saved: key ? doc.places?.[key] : undefined,
+        turn: gatewayTurn,
+      });
+      if (bound?.ok !== true)
+        throw new Error(
+          bound?.message || "This agent can't use the model gateway now",
+        );
+      record = {
+        conversation,
+        binding: bound.binding,
+        bundle: bound.bundle,
+        ...(manual ? { manual } : {}),
+      };
+      // The key's session from now on; a record kept from before has its
+      // own, which its first commit published with it.
+      if (key && !manual && bound.persist) persist = bound.binding;
+    }
+    // A reset is done once its key has the binding that replaces it: a turn
+    // without the gateway binds nothing, and leaves it for the next.
+    if (!record) reset = undefined;
+    if (!record && !reply && !notice) return false;
+    // Known before it is written, so its requests are never dispatched as
+    // Pi's own, and its conversation's turns keep to their modes.
+    if (record) {
+      opened.recorded.requests.add(request);
+      opened.recorded.conversations.add(conversation);
+      if (key) opened.recorded.keys.add(key);
+    }
+    await harness.commit(async (tx) => {
+      const doc = await tx.doc(GatewayRuns);
+      if (record) {
+        if (persist) doc.places[key] = persist;
+        doc.requests[request] = record;
+      }
+      if (reset) delete doc.resets[key];
+      if (reply) (await tx.doc(Replies))[request] = reply;
+      if (notice) (await tx.doc(Notices))[request] = { conversation, notice };
+    }, context);
+    return Boolean(record);
+  }
+
+  /** Forgets the gateway record of a request Pi was never given, so a
+   * record outlives no turn that failed before its submission; read in the
+   * commit, so one Pi has is kept. A `withdrawn` one's notice and reply
+   * destination go with it, as nothing answers it. */
+  async function unbind(opened, conversation, request, withdrawn = false) {
+    await opened.harness.commit(async (tx) => {
+      if (await tx.submissionByRequest(conversation, request)) return;
+      delete (await tx.doc(GatewayRuns)).requests[request];
+      if (!withdrawn) return;
+      delete (await tx.doc(Notices))[request];
+      delete (await tx.doc(Replies))[request];
+    }, context);
+  }
+
+  /** Forgets the Buzz context of requests no durable work carries any
+   * longer, read from a complete picture of that work taken before Pi has
+   * scheduled any: a submitted request's once its submission settled and no
+   * task's trace has it, a manual one's once none has it. One not yet
+   * submitted, by a host that stopped before submitting it, is kept. */
+  async function prune(harness, { scheduling, tasks, submissions }) {
+    if (scheduling !== "paused") return;
+    const carried = new Set();
+    for (const { record } of tasks)
+      for (const trace of [record.trace, ...(record.links ?? [])])
+        if (typeof trace?.buzz === "string") carried.add(trace.buzz);
+    for (const submission of submissions) {
+      if (submission.requestId) carried.add(submission.requestId);
+      if (typeof submission.trace?.buzz === "string")
+        carried.add(submission.trace.buzz);
+    }
+    const { requests } = (await harness.snapshot(GatewayRuns, context)) ?? {};
+    if (!requests) return;
+    const stale = Object.keys(requests).filter((r) => !carried.has(r));
+    if (!stale.length) return;
+    await harness.commit(async (tx) => {
+      const doc = await tx.doc(GatewayRuns);
+      for (const request of stale) {
+        const record = doc.requests[request];
+        if (
+          record &&
+          (!record.conversation ||
+            record.manual ||
+            (await tx.submissionByRequest(record.conversation, request)))
+        )
+          delete doc.requests[request];
+      }
+    }, context);
+  }
+
+  /** Completes a key's `new` session: its reset intent's write, submitted
+   * by its request id, so asking again submits nothing more, then noted as
+   * written. The intent stays until the key's next binding replaces it. */
+  async function resetPending(opened, conversation, key) {
+    const { harness, recorded } = opened;
+    const reset = (await harness.snapshot(GatewayRuns, context))?.resets?.[key];
+    if (reset && !reset.written) {
+      await conversation.submit(
+        {
+          type: "write",
+          entry: { kind: ResetEntry.kind, head: "self" },
+          requestId: reset.request,
+        },
+        context,
+      );
+      await harness.commit(async (tx) => {
+        const resets = (await tx.doc(GatewayRuns)).resets;
+        if (resets[key]?.request === reset.request)
+          resets[key] = { ...resets[key], written: true };
+      }, context);
+    }
+    recorded.resets.delete(key);
+  }
+
+  /** Waits until the conversation holds no unfinished input in the other
+   * mode than `bound`, and no live task of that mode, read from Pi's storage, as Pi may hold one that no
+   * run it has been seen to start has yet. WITHDRAWN once an Interrupt or
+   * Stop came for it. Woken when such an input settles; its
+   * own wait for each asks Pi for progress, which continues work a restart
+   * left; a run Pi cuts off after repeated crashes ends its requests
+   * itself. With no run working in the conversation and no activity in it
+   * for `parkMs`, it fails: a run that works silently, as a long tool
+   * call does, never fails it. A closing agent ends the wait. */
+  async function settledMode(opened, conversation, state, bound, waiting) {
+    const closed = () => new Error("This agent was closed.");
+    let seen = state.events;
+    let since = Date.now();
+    /** Inputs whose wait here ended: only the bound wakes it for them
+     * again, so a wait that settles at once never spins. */
+    const waited = new Set();
+    for (;;) {
+      const ended = new Promise((resolve) => {
+        waiting.wake = resolve;
+      });
+      if (opened.closing) throw closed();
+      if (waiting.interrupted) return WITHDRAWN;
+      let other, tasks;
+      try {
+        const inspection = await opened.harness.inspect(context);
+        const inputs = inspection.submissions.filter(
+          (s) => s.type === "input" && s.conversationId === conversation.id,
+        );
+        // A task can outlive its input, as a background compaction whose
+        // retry sleeps does, and still make model requests. One Pi can't
+        // run makes none.
+        const live = inspection.tasks.filter(
+          ({ record, state }) =>
+            record.conversationId === conversation.id &&
+            state.kind !== "blocked",
+        );
+        if (!inputs.length && !live.length) return;
+        // Its mode is its requests': each one the gateway bound has a record.
+        // A task's request is the one its trace carries.
+        const { requests = {} } =
+          (await opened.harness.snapshot(GatewayRuns, context)) ?? {};
+        other = inputs.filter((s) => Boolean(requests[s.requestId]) !== bound);
+        tasks = live.filter(
+          ({ record }) => Boolean(requests[record.trace?.buzz]) !== bound,
+        );
+      } catch (error) {
+        // Closed while it read: the close is the reason, not the storage.
+        throw opened.closing ? closed() : error;
+      }
+      if (!other.length && !tasks.length) return;
+      if (waiting.interrupted) return WITHDRAWN;
+      // The bound runs only while no run works in the conversation.
+      if (state.busy || state.events !== seen) {
+        seen = state.events;
+        since = Date.now();
+      }
+      const left = since + parkMs - Date.now();
+      if (left <= 0)
+        throw new Error(
+          "The previous run didn't finish, so this turn didn't start. Try again, or start a new session.",
+        );
+      let timer;
+      await Promise.race([
+        ended,
+        new Promise((resolve) => {
+          timer = setTimeout(
+            resolve,
+            tasks.length ? Math.min(left, TASK_POLL_MS) : left,
+          );
+        }),
+        ...other
+          .filter((input) => !waited.has(input.id))
+          .map((input) =>
+            opened.harness
+              .submission(input.id, context)
+              .then((submission) => submission?.wait(context))
+              .catch(() => undefined)
+              .then(() => waited.add(input.id)),
+          ),
+      ]);
+      clearTimeout(timer);
+    }
+  }
+
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. */
-  async function submit(conversation, turn, busy) {
+   * as in Claude. The agent's `core` memory read for it is the
+   * conversation's latest; a failed read shows it none if not yet shown. */
+  async function submit(
+    opened,
+    conversation,
+    turn,
+    busy,
+    refresh,
+    accept,
+    withdrawn,
+  ) {
+    opened.cores.set(conversation.id, turn.core?.text);
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
     const change = steers
@@ -529,6 +2077,23 @@ export function serve({
         };
     if (Object.keys(change).length)
       await conversation.configure(change, context);
+    if (refresh) {
+      const prompt = await refresh(!!steers);
+      if (!prompt) return;
+      // Built past any wait: a new run takes the instructions current now,
+      // which its prompt's Canvas reads too. A steer keeps its run's.
+      if (!steers && prompt.instructions !== undefined)
+        await conversation.configure(
+          { instructions: prompt.instructions },
+          context,
+        );
+      turn = { ...turn, ...prompt };
+    }
+    if (withdrawn?.()) return;
+    const apply = await accept?.();
+    if (withdrawn?.()) return;
+    apply?.();
+    // Its work carries its request: see `requestTelemetry`.
     const submission = await conversation.submit(
       {
         type: "input",
@@ -536,12 +2101,85 @@ export function serve({
         whenBusy: "steer",
         requestId: turn.request,
       },
-      context,
+      withTelemetry(requestTelemetry(turn.request), context),
     );
     return { submission: submission.id, conversation: conversation.id };
   }
 
   const methods = {
+    async review(turn) {
+      if (protectedAgent)
+        throw new Error("Security inference runs outside requesting workers");
+      if (
+        typeof turn.id !== "string" ||
+        reviews.has(turn.id) ||
+        reviews.size >= 16 ||
+        !turn.prompt ||
+        typeof turn.prompt.system !== "string" ||
+        typeof turn.prompt.input !== "string"
+      )
+        throw new Error("Invalid security review request");
+      const controller = new AbortController();
+      const signal = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(TEST_TIMEOUT_MS),
+      ]);
+      reviews.set(turn.id, controller);
+      try {
+        const { found, model } = await choose(turn);
+        signal.throwIfAborted();
+        const reply = await models.completeSimple(
+          found,
+          {
+            // Pi's models have no response-format option and cannot be made to
+            // call a tool, so the schema can only be stated in the prompt.
+            systemPrompt: turn.prompt.outputSchema
+              ? `${turn.prompt.system}\n\nReply with only JSON that matches this JSON Schema, and no other text:\n${JSON.stringify(turn.prompt.outputSchema)}`
+              : turn.prompt.system,
+            messages: [
+              {
+                role: "user",
+                content: turn.prompt.input,
+                timestamp: Date.now(),
+              },
+            ],
+          },
+          { maxTokens: 1024, maxRetries: 0, signal },
+        );
+        signal.throwIfAborted();
+        if (reply.stopReason === "error" || reply.stopReason === "aborted")
+          throw new Error(
+            reply.errorMessage || "Security model did not answer",
+          );
+        return {
+          text: reply.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join(""),
+          model: { provider: model.provider, id: model.modelId },
+        };
+      } finally {
+        reviews.delete(turn.id);
+      }
+    },
+    "cancel-review"({ id }) {
+      reviews.get(id)?.abort();
+    },
+    runtime() {
+      if (protectedAgent)
+        throw new Error("Protected hosts cannot bootstrap another host");
+      const file = fileURLToPath(import.meta.url),
+        node = realpathSync(process.execPath);
+      return {
+        file,
+        node,
+        codeRoot: dirname(dirname(file)),
+        nodeRoot: dirname(dirname(node)),
+        data,
+        auth: dir,
+      };
+    },
+    /** Pi's providers, as they are now. */
     async providers() {
       const providers = [];
       for (const provider of models.getProviders()) {
@@ -590,6 +2228,10 @@ export function serve({
     },
     /** Asks the model for one short reply. */
     async test(turn) {
+      if (protectedAgent)
+        throw new Error(
+          "Test providers in Pi setup, outside the protected worker",
+        );
       const { found, model } = await choose(turn);
       const reply = await models.completeSimple(
         found,
@@ -612,11 +2254,14 @@ export function serve({
         : { ok: true, message: `Connected to ${model.modelId}` };
     },
     /** Opens the agent's storage, once, with its Buzz tools as they are now. */
-    async open({ agent, tools, hint }) {
+    async open({ agent, tools, hint, credential, compactAt }) {
+      if (credential) credentials.set(agent, credential);
       const opened = await opening(agent);
+      // Before anything resumes a run left unfinished.
+      opened.compaction.use(compactAt);
       const listed = JSON.stringify([tools, hint]);
       if (opened.tools !== listed) {
-        opened.registry.install(buzz(opened, tools, hint));
+        opened.install(buzz(opened, tools, hint));
         opened.tools = listed;
       }
     },
@@ -637,14 +2282,51 @@ export function serve({
     /** A page of a conversation's entries, newest first, as a transcript
      * shows them. */
     async entries({ agent, conversation, cursor }) {
-      const { harness } = await opening(agent);
+      const { harness, storage } = await opening(agent);
       const found = await harness.conversation(conversation, context);
       if (!found) return { entries: [] };
       const page = await found.entries({}, PAGE, cursor, context);
+      const oldest = page.items.at(-1);
+      // Each noted request's own prompt entry, once Pi placed it: looked up
+      // once, then kept on its notice, so a page reads no submission again.
+      const noted = new Map();
+      const placed = {};
+      const notices = (await harness.snapshot(Notices, context)) ?? {};
+      for (const [request, record] of Object.entries(notices)) {
+        if (record.conversation !== found.id) continue;
+        let { entry } = record;
+        if (entry === undefined) {
+          entry = (
+            await storage.submissionByRequest(found.id, request, context)
+          )?.entry;
+          if (entry !== undefined) placed[request] = entry;
+        }
+        if (entry !== undefined) noted.set(entry, record.notice);
+      }
+      if (Object.keys(placed).length)
+        await harness
+          .commit(async (tx) => {
+            const doc = await tx.doc(Notices);
+            for (const [request, entry] of Object.entries(placed))
+              if (doc[request]) doc[request] = { ...doc[request], entry };
+          }, context)
+          .catch((error) =>
+            console.warn("Pi could not keep a notice's prompt entry", error),
+          );
       return {
+        // The session the page's oldest entry is in, however old its reset.
+        ...(oldest
+          ? { session: await sessionOf(storage, found.id, oldest.id) }
+          : {}),
         entries: page.items.map(({ id, kind, model, data }) => ({
           id,
           kind,
+          ...(noted.has(id) && { notice: noted.get(id) }),
+          ...(kind === NOTICE_ENTRY && {
+            notice: data.notice,
+            error: data.error,
+            at: data.at,
+          }),
           // Pi writes this result itself for a call an abort cut off.
           ...(data?.diagnostics?.some?.((d) => d.code === "aborted") && {
             aborted: true,
@@ -654,6 +2336,13 @@ export function serve({
         })),
         ...(page.next ? { next: page.next } : {}),
       };
+    },
+    /** The native conversation snapshot used for a final publication review. */
+    async protectionContext({ agent, conversation }) {
+      const { harness } = await agentOf(agent);
+      const found = await harness.conversation(conversation, context);
+      if (!found) throw new Error("The protected conversation is unavailable");
+      return structuredClone((await found.context(context)).messages);
     },
     /** The usage Pi recorded for a conversation, by `<provider>/<model>`:
      * its answers', and the requests that left no answer, such as
@@ -677,8 +2366,31 @@ export function serve({
     },
     /** A turn for a conversation key: its Pi conversation, made the first
      * time, takes the request, or steers its run if one is working. */
-    async deliver({ agent, key, at, context: tools, ...turn }) {
-      const opened = await agentOf(agent);
+    async deliver({
+      agent,
+      key,
+      at,
+      context: tools,
+      reply,
+      notice,
+      refresh,
+      gatewayTurn,
+      ...turn
+    }) {
+      // Listed as it arrives, so an Interrupt or a Stop that comes while it
+      // waits, or while it is prepared, withdraws a gateway one.
+      const waiting = { request: turn.request };
+      const unlist = listed(agent, key, waiting);
+      let opened;
+      try {
+        opened = await agentOf(agent);
+      } catch (error) {
+        unlist();
+        throw error;
+      }
+      if (gatewayTurn) opened.recorded.keys.add(key);
+      // Before this turn waits on a run it resumes.
+      opened.compaction.use(turn.compactAt);
       const prior = opened.queues.get(key);
       const delivered = (async () => {
         await prior?.catch(() => undefined);
@@ -686,6 +2398,7 @@ export function serve({
         const place = (await harness.snapshot(Places, context))?.[key];
         let conversation =
           place && (await harness.conversation(place.conversation, context));
+        const fresh = !conversation;
         if (!conversation) {
           conversation = await harness.createConversation(
             { ownership: { kind: "ownerless" } },
@@ -703,23 +2416,167 @@ export function serve({
             };
           }, context);
         }
-        opened.contexts.set(conversation.id, tools);
-        const { busy } = await watch(opened, conversation.id);
-        const submitted = await submit(conversation, turn, busy);
+        opened.conversations.add(conversation.id);
+        // The conversation's tools follow a turn only once Pi takes it, so
+        // one dropped before then leaves the running turn's.
+        const accept = async () => {
+          // Tools must recover at this source even if the host stops after
+          // acceptance, before the history watermark can advance.
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            places[key] = {
+              conversation: conversation.id,
+              context: tools,
+              seen:
+                places[key]?.conversation === conversation.id
+                  ? places[key].seen
+                  : 0,
+            };
+          }, context);
+          return () => opened.contexts.set(conversation.id, tools);
+        };
+        const state = await watch(opened, conversation.id);
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
-        await harness.commit(async (tx) => {
-          const places = await tx.doc(Places);
-          places[key] = {
+        const placed = async (submitted) => {
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            places[key] = {
+              conversation: conversation.id,
+              context: tools,
+              seen: Math.max(at, places[key]?.seen ?? 0),
+            };
+          }, context);
+          return submitted;
+        };
+        const prompt = refresh
+          ? (steers) => call("prompt", { agent, request: turn.request, steers })
+          : undefined;
+        let bound;
+        try {
+          // A `new` session a host stopped partway through is done first.
+          if (opened.recorded.resets.has(key))
+            await resetPending(opened, conversation, key);
+          // A request Pi has already is answered by its own submission, in
+          // the mode it ran in: asked again, it binds and configures nothing,
+          // and its prompt is not built again, so notes it would take stay
+          // for the next turn. Its run, continuing, reads the memory and
+          // messages it was given.
+          const held = await opened.storage.submissionByRequest(
+            conversation.id,
+            turn.request,
+            context,
+          );
+          if (held) {
+            opened.cores.set(conversation.id, turn.core?.text);
+            opened.contexts.set(conversation.id, tools);
+            return placed({
+              submission: held.id,
+              conversation: conversation.id,
+            });
+          }
+          // An ordinary turn, in a conversation with no gateway work, runs
+          // as on main.
+          if (
+            !gatewayTurn &&
+            !opened.recorded.conversations.has(conversation.id)
+          ) {
+            const { busy } = state;
+            // Read before the turn is submitted: what Pi then holds decides it.
+            const session =
+              !busy && (await firstTurn(opened, conversation.id))
+                ? await sessionOf(opened.storage, conversation.id)
+                : undefined;
+            if (reply || notice)
+              await harness.commit(async (tx) => {
+                if (reply) (await tx.doc(Replies))[turn.request] = reply;
+                if (notice)
+                  (await tx.doc(Notices))[turn.request] = {
+                    conversation: conversation.id,
+                    notice,
+                  };
+              }, context);
+            const submitted = await submit(
+              opened,
+              conversation,
+              turn,
+              busy,
+              prompt,
+              accept,
+            );
+            if (!submitted) return false;
+            if (session !== undefined) Object.assign(submitted, { session });
+            return placed(submitted);
+          }
+          bound = await bind(opened, turn, {
+            key,
+            fresh,
+            gatewayTurn,
+            reply,
+            notice,
             conversation: conversation.id,
-            context: tools,
-            seen: Math.max(at, places[key]?.seen ?? 0),
-          };
-        }, context);
-        return submitted;
+          });
+          // A run steers only with a turn of its own mode: one through the
+          // gateway, or not, starts once Pi holds no work in the other mode.
+          const withdrawn =
+            (await settledMode(opened, conversation, state, bound, waiting)) ===
+            WITHDRAWN;
+          // Whether it steers is as on main: whether a run is working.
+          const { busy } = state;
+          const session =
+            !withdrawn && !busy && (await firstTurn(opened, conversation.id))
+              ? await sessionOf(opened.storage, conversation.id)
+              : undefined;
+          const submitted =
+            !withdrawn &&
+            (await submit(
+              opened,
+              conversation,
+              turn,
+              busy,
+              prompt,
+              accept,
+              () => waiting.interrupted,
+            ));
+          if (!submitted) {
+            // Withdrawn before Pi had it: nothing will dispatch for it, and
+            // nothing answers it.
+            await unbind(opened, conversation.id, turn.request, true);
+            return false;
+          }
+          if (session !== undefined) Object.assign(submitted, { session });
+          return placed(submitted);
+        } catch (error) {
+          // Its record goes with a turn that failed before Pi had it.
+          if (bound)
+            await unbind(opened, conversation.id, turn.request).catch(
+              () => undefined,
+            );
+          // A noted turn that failed before Pi placed its prompt shows its
+          // notice beside that failure, in an entry no model sees.
+          if (notice)
+            await conversation
+              .submit(
+                {
+                  type: "write",
+                  entry: {
+                    kind: NOTICE_ENTRY,
+                    data: {
+                      notice,
+                      error: error?.message ?? String(error),
+                      at: Date.now(),
+                    },
+                  },
+                },
+                context,
+              )
+              .catch(() => undefined);
+          throw error;
+        }
       })();
       opened.queues.set(key, delivered);
       const done = () => {
+        unlist();
         if (opened.queues.get(key) === delivered) opened.queues.delete(key);
       };
       void delivered.then(done, done);
@@ -728,13 +2585,30 @@ export function serve({
     /** A one-off turn in a conversation of its own, with no default
      * destination for its tools. Nothing watches it: it has no other
      * requests, and no Activity. */
-    async once({ agent, ...turn }) {
+    async once({ agent, gatewayTurn, ...turn }) {
       const opened = await agentOf(agent);
+      opened.compaction.use(turn.compactAt);
       const conversation = await opened.harness.createConversation(
         { ownership: { kind: "ownerless" } },
         context,
       );
-      return submit(conversation, turn, false);
+      // Without the gateway, as on main.
+      const bound =
+        gatewayTurn &&
+        (await bind(opened, turn, {
+          gatewayTurn,
+          conversation: conversation.id,
+        }));
+      opened.conversations.add(conversation.id);
+      try {
+        return await submit(opened, conversation, turn, false);
+      } catch (error) {
+        if (bound)
+          await unbind(opened, conversation.id, turn.request).catch(
+            () => undefined,
+          );
+        throw error;
+      }
     },
     /** The requests of runs Pi has not finished, with where each one's tools
      * default to when the agent has a place for its conversation; a one-off
@@ -743,16 +2617,28 @@ export function serve({
     async unfinished({ agent }) {
       const opened = await agentOf(agent);
       const { submissions } = await opened.harness.inspect(context);
+      const places = (await opened.harness.snapshot(Places, context)) ?? {};
+      const keys = new Map(
+        Object.entries(places).map(([key, place]) => [place.conversation, key]),
+      );
+      const replies = (await opened.harness.snapshot(Replies, context)) ?? {};
       return {
         submissions: submissions.flatMap(
-          ({ id, conversationId, requestId }) => {
+          ({ id, type, conversationId, requestId }) => {
             const place = opened.contexts.get(conversationId);
-            return requestId
+            // A reset intent's write has a request id too.
+            return requestId && type === "input"
               ? [
                   {
                     submission: id,
                     conversation: conversationId,
+                    ...(keys.has(conversationId)
+                      ? { key: keys.get(conversationId) }
+                      : {}),
                     request: requestId,
+                    ...(replies[requestId]
+                      ? { reply: replies[requestId] }
+                      : {}),
                     ...(place ? { context: place } : {}),
                   },
                 ]
@@ -785,10 +2671,29 @@ export function serve({
       }
     },
     /** How a request settled: its answer's text, or why it has none. */
-    async wait({ agent, submission }) {
+    async wait({ agent, submission, request }) {
       // Its run is in Pi's storage: the plugin opens the agent again.
       if (failed.has(agent)) return { status: "reopen" };
-      return settle(await agentOf(agent), submission);
+      const opened = await agentOf(agent);
+      const result = await settle(opened, submission);
+      if (
+        request &&
+        (result.status === "done" || result.status === "unanswered")
+      ) {
+        try {
+          // Its Buzz context stays while its work may still dispatch, as a
+          // compaction it left: `prune` forgets it.
+          await opened.harness.commit(async (tx) => {
+            delete (await tx.doc(Replies))[request];
+          }, context);
+        } catch (error) {
+          console.warn(
+            "Pi could not clear a request's reply destination",
+            error,
+          );
+        }
+      }
+      return result;
     },
     async abort({ agent, conversation }) {
       const { harness } = await agentOf(agent);
@@ -798,52 +2703,120 @@ export function serve({
      * one: `interrupt` aborts its run and any compaction, `compact` summarizes
      * it and settles once the summary is placed, and `new` starts a new
      * context, shown the whole Buzz conversation at its next turn. */
-    async session({ agent, key, action }) {
-      const { harness } = await agentOf(agent);
-      const place = (await harness.snapshot(Places, context))?.[key];
-      const conversation =
-        place && (await harness.conversation(place.conversation, context));
-      if (!conversation) return;
-      if (action === "interrupt") return conversation.abort(context);
-      if (action === "new") {
-        await conversation.reset(undefined, context);
-        await harness.commit(async (tx) => {
-          const places = await tx.doc(Places);
-          if (places[key]) places[key] = { ...places[key], seen: 0 };
-        }, context);
-        return;
-      }
-      const { outcome } = (
-        await harness.waitForTask(
+    async session({ agent, key, action, gatewayTurn }) {
+      // A gateway turn not yet submitted, waiting for the run this ends or
+      // being prepared, is withdrawn with it, as one steered into that run
+      // would end with it.
+      if (action === "interrupt") withdrawPending(agent, key);
+      const opened = await agentOf(agent);
+      const { harness } = opened;
+      const find = async () => {
+        const place = (await harness.snapshot(Places, context))?.[key];
+        return (
+          place && (await harness.conversation(place.conversation, context))
+        );
+      };
+      if (action === "interrupt") return (await find())?.abort(context);
+      // A key with no gateway state is an ordinary agent's: as on main.
+      if (!gatewayTurn && !opened.recorded.keys.has(key)) {
+        const conversation = await find();
+        if (!conversation) return;
+        if (action === "new") {
+          await conversation.reset(undefined, context);
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            if (places[key]) places[key] = { ...places[key], seen: 0 };
+          }, context);
+          return;
+        }
+        return compacted(
+          harness,
           await conversation.compact(undefined, context),
-          context,
-        )
-      ).state;
-      if (outcome.status === "failed") throw new Error(outcome.error.message);
-      if (outcome.status !== "completed") return;
-      const { submissionId } = outcome.result;
-      if (submissionId !== undefined)
-        await (await harness.submission(submissionId, context))?.wait(context);
+        );
+      }
+      // After the key's deliveries, so none binds across the reset, and
+      // one making its conversation has.
+      const prior = opened.queues.get(key);
+      const acted = (async () => {
+        await prior?.catch(() => undefined);
+        const conversation = await find();
+        if (!conversation) return;
+        if (action === "new") {
+          // Intended in one commit with what the next turn is shown, then
+          // done: a host that stops between them does it at the next. The
+          // intent stays for the key's next binding, which it makes new.
+          opened.recorded.resets.add(key);
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            if (places[key]) places[key] = { ...places[key], seen: 0 };
+            (await tx.doc(GatewayRuns)).resets[key] = {
+              request: `reset/${randomUUID()}`,
+            };
+          }, context);
+          return resetPending(opened, conversation, key);
+        }
+        if (opened.recorded.resets.has(key))
+          await resetPending(opened, conversation, key);
+        // The compaction's own request, which its task's trace carries.
+        const request = `manual/${randomUUID()}`;
+        await bind(
+          opened,
+          { request },
+          { key, gatewayTurn, conversation: conversation.id, manual: true },
+        );
+        return conversation.compact(
+          undefined,
+          withTelemetry(requestTelemetry(request), context),
+        );
+      })();
+      opened.queues.set(key, acted);
+      const done = () => {
+        if (opened.queues.get(key) === acted) opened.queues.delete(key);
+      };
+      void acted.then(done, done);
+      const task = await acted;
+      if (action === "new" || task === undefined) return;
+      return compacted(harness, task);
+    },
+    /** Withdraws a delivery of `request` Pi doesn't have yet, as Stop on its
+     * Activity: a gateway turn waiting for a run in the other mode, or
+     * being prepared, is never submitted. Any other is unchanged, and its
+     * run is stopped once it has one. */
+    async cancel({ agent, key, request }) {
+      if (typeof request === "string") withdrawPending(agent, key, request);
     },
     /** Closes the agent's storage. Unfinished runs stay, and continue when it
      * opens again. */
     async close({ agent }) {
       const opening = agents.get(agent);
+      await shut(await opening?.catch(() => undefined));
       agents.delete(agent);
       failed.delete(agent);
-      await shut(await opening?.catch(() => undefined));
     },
   };
 
+  /** Settles once compaction `task` has placed its summary. */
+  async function compacted(harness, task) {
+    const { outcome } = (await harness.waitForTask(task, context)).state;
+    if (outcome.status === "failed") throw new Error(outcome.error.message);
+    if (outcome.status !== "completed") return;
+    const { submissionId } = outcome.result;
+    if (submissionId !== undefined)
+      await (await harness.submission(submissionId, context))?.wait(context);
+  }
+
   async function shut(opened) {
-    if (!opened || opened.closing) return;
-    opened.closing = true;
-    for (const { stream } of opened.watched.values())
-      await stream.stop().catch(() => undefined);
-    await opened.harness.close(context).catch((error) => {
-      console.error("Pi could not close an agent", error);
-    });
-    await opened.release().catch(() => undefined);
+    if (!opened) return;
+    if (!opened.closing)
+      opened.closing = (async () => {
+        for (const watched of opened.watched.values())
+          (await watched.catch(() => undefined))?.observation.detach();
+        await opened.harness.close(context);
+        // A compromised lock may already be released. Native execution has
+        // ended above; releasing ownership is cleanup, not its acknowledgement.
+        await opened.release().catch(() => undefined);
+      })();
+    await opened.closing;
   }
 
   async function handle({ id, method, params }) {
@@ -861,7 +2834,8 @@ export function serve({
 
   let stopping;
   const stop = () => {
-    stopping ??= Promise.all(
+    for (const review of reviews.values()) review.abort();
+    stopping ??= Promise.allSettled(
       [...agents.values()].map((opening) =>
         opening.then(shut, () => undefined),
       ),
@@ -881,7 +2855,7 @@ export function serve({
       const pending = calls.get(message.id);
       calls.delete(message.id);
       if (message.error) pending?.reject(new Error(message.error));
-      else pending?.resolve(message.result ?? {});
+      else pending?.resolve(message.result);
     }
   });
   // The plugin closes stdin to stop the host; each agent's storage closes
@@ -893,12 +2867,13 @@ export function serve({
 
 if (process.env.BUZZ_PI_HOST === "1") {
   const dir = piDir();
-  const { stop } = serve({
-    data: process.argv[1],
-    models: builtinModels({
-      credentials: new AuthFile(join(dir, "auth.json")),
-    }),
-    dir,
+  const models = builtinModels({
+    credentials: new AuthFile(join(dir, "auth.json")),
   });
+  const packages = await loadPackages(dir);
+  for (const provider of packages.providers) models.setProvider(provider);
+  for (const { source, error } of packages.errors)
+    console.error(`Pi could not load the package ${source}: ${error}`);
+  const { stop } = serve({ data: process.argv[1], models, packages, dir });
   process.on("SIGTERM", stop);
 }

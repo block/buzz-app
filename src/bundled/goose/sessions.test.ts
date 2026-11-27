@@ -3,9 +3,10 @@ import {
   type Choice,
   REQUEST_TIMEOUT_MS,
   type ServeMcp,
+  type Spawn,
   type ToolServer,
 } from "./goose";
-import { fakeSpawn, flush } from "./goose-testing";
+import { fakeSpawn, flush, gated } from "./goose-testing";
 import {
   AgentSessions,
   IDLE_MS,
@@ -13,7 +14,9 @@ import {
   localSessions,
   type SavedConversation,
   ServerPool,
-  SharedProcess,
+  AgentProcess,
+  type SessionStore,
+  type SessionsOptions,
 } from "./sessions";
 
 const tools: ToolServer = async (_conversation, message) => ({
@@ -32,13 +35,29 @@ const setup = (
     silent,
     onChange,
     store,
+    started,
+    tags,
+    wrap,
+    delay,
+    fingerprint = (settings: Launch) =>
+      JSON.stringify([settings.workspace, settings.systemPrompt]),
+    compactAt,
   }: Readonly<{
     pool?: ServerPool;
+    started?: SessionsOptions["started"];
+    tags?: SessionsOptions["tags"];
     onChange?: () => void;
-    store?: Map<string, SavedConversation>;
+    store?: SessionStore;
     /** Wraps the fake's `serve`. */
     serve?: (serve: ServeMcp) => ServeMcp;
     silent?: readonly string[];
+    /** Wraps the fake's `spawn`, as `gated(…).wrap` does. */
+    wrap?: (spawn: ReturnType<typeof fakeSpawn>["spawn"]) => Spawn;
+    fingerprint?: (settings: Launch) => string;
+    /** Holds each launch, which reads the settings when asked. */
+    delay?: () => Promise<void>;
+    /** The agent's compaction threshold, which its goose starts with. */
+    compactAt?: () => number | undefined;
   }> = {},
 ) => {
   const fake = fakeSpawn({
@@ -47,9 +66,12 @@ const setup = (
     ...(silent && { silent }),
     providers: [{ providerId: "openai", defaultModel: "gpt-default" }],
   });
-  const process = new SharedProcess(
-    fake,
+  const process = new AgentProcess(
+    wrap ? { ...fake, spawn: wrap(fake.spawn) } : fake,
     serve ? serve(fake.serve) : fake.serve,
+    undefined,
+    undefined,
+    compactAt,
   );
   /** Another agent in the same goose. */
   const agent = (
@@ -70,12 +92,17 @@ const setup = (
       pool,
       ...(onChange && { onChange }),
       ...(store && {
-        store: { set: (key: string, saved) => void store.set(key, saved) },
+        store,
       }),
-      launch: async () => settings,
+      ...(started && { started }),
+      ...(tags && { tags }),
+      launch: async () => {
+        const asked = settings;
+        await delay?.();
+        return asked;
+      },
       choice: () => choice,
-      fingerprint: () =>
-        JSON.stringify([settings.workspace, settings.systemPrompt]),
+      fingerprint: () => fingerprint(settings),
     });
     return {
       sessions,
@@ -95,6 +122,7 @@ const setup = (
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 /** A host that, like the app's, counts a server until its close finishes and
@@ -124,6 +152,36 @@ const host = (cap: number) => {
 };
 
 describe("AgentSessions", () => {
+  it("maps conversation and one-off keys to their native sessions and the process each lives in", async () => {
+    const { fake, sessions, process } = setup({}, true);
+    const delivery = sessions.deliver("thread", "one", 1);
+    const once = sessions.runOnce("watch", () => "two");
+    try {
+      await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(2));
+      const turns = fake.geese[0]?.turns ?? [];
+      const normal = turns.find((turn) => turn.text === "one");
+      const standalone = turns.find((turn) => turn.text === "two");
+      expect(normal?.sessionId).toBeDefined();
+      expect(standalone?.sessionId).toBeDefined();
+      const running = await process.get();
+      expect(sessions.serving("thread")?.sessionId).toBe(normal?.sessionId);
+      expect(sessions.serving("thread")?.process).toBe(running);
+      expect(sessions.serving("watch #1")?.sessionId).toBe(
+        standalone?.sessionId,
+      );
+      expect(sessions.serving("watch #1")?.process).toBe(running);
+      expect(sessions.serving("missing")).toBeUndefined();
+      for (const turn of turns) turn.finish();
+      await Promise.all([delivery, once]);
+      expect(sessions.serving("watch #1")).toBeUndefined();
+    } finally {
+      sessions.dispose();
+      await process.shutdown();
+      await Promise.all([delivery, once]);
+    }
+    expect(sessions.serving("thread")).toBeUndefined();
+  });
+
   it("serves each conversation from its own session in one process", async () => {
     const { fake, sessions } = setup();
     await sessions.deliver("a", "one", 1);
@@ -165,11 +223,13 @@ describe("AgentSessions", () => {
     ]);
     await goose?.mcp("session-2", "tools/list");
     expect(ada).not.toHaveBeenCalled();
-    expect(bo).toHaveBeenCalledWith("chan/root", {
-      id: expect.anything(),
-      method: "tools/list",
-      params: {},
-    });
+    expect(bo).toHaveBeenCalledWith(
+      "chan/root",
+      { id: expect.anything(), method: "tools/list", params: {} },
+      expect.objectContaining({ aborted: true }),
+      // It has made no model call yet.
+      undefined,
+    );
     await goose?.mcp("session-1", "tools/list");
     expect(ada).toHaveBeenCalledOnce();
     expect(bo).toHaveBeenCalledOnce();
@@ -188,13 +248,15 @@ describe("AgentSessions", () => {
     const { fake, sessions } = setup({}, true);
     const one = sessions.deliver("a", "one", 1);
     const other = sessions.deliver("b", "other", 2);
-    await flush(20);
+    // Both turns are running before the interrupt.
+    await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(2));
     const [first, second] = fake.geese[0]?.turns ?? [];
     expect(first?.text).toContain("one");
+    expect(second?.text).toContain("other");
     await sessions.interrupt("a");
     await flush();
     expect(fake.geese[0]?.cancelled).toEqual([first?.sessionId]);
-    await expect(one).resolves.toMatchObject({ ok: true });
+    await expect(one).resolves.toEqual({ ok: true, stopped: true });
     second?.finish();
     await expect(other).resolves.toMatchObject({ ok: true });
   });
@@ -204,11 +266,9 @@ describe("AgentSessions", () => {
     const delivered = sessions.deliver("a", "one", 1);
     // Asked while the session still opens.
     await sessions.interrupt("a");
-    await flush();
-    expect(fake.geese[0]?.turns).toHaveLength(1);
-    expect(fake.geese[0]?.cancelled).toEqual([
-      fake.geese[0]?.turns[0]?.sessionId,
-    ]);
+    await flush(30);
+    // Stopped while its prompt was brought up to date: never sent.
+    expect(fake.geese[0]?.turns).toHaveLength(0);
     await expect(delivered).resolves.toMatchObject({ ok: true });
   });
 
@@ -227,6 +287,99 @@ describe("AgentSessions", () => {
     await flush(30);
     expect(fake.geese[0]?.closed).toEqual(["session-1"]);
     expect(sessions.seen("a")).toBe(0);
+  });
+
+  it("gives an idle session a changed system prompt in place, keeping its conversation", async () => {
+    const { fake, sessions, change } = setup({}, false, {
+      fingerprint: (settings) => settings.workspace,
+    });
+    const fresh = vi.fn(async () => "everything so far");
+    await sessions.deliver("a", "one", 1, { fresh });
+    change({ systemPrompt: "newer" });
+    await sessions.deliver("a", "two", 2, { fresh });
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.opened).toHaveLength(1);
+    expect(goose?.prompts.get("session-1")).toBe("newer");
+    expect(goose?.turns.at(-1)?.text).toBe("two");
+    expect(fresh).not.toHaveBeenCalled();
+  });
+
+  it("gives a turn queued during a busy one the prompt changed meanwhile", async () => {
+    const { fake, sessions, change } = setup({}, true, {
+      fingerprint: (settings) => settings.workspace,
+    });
+    const first = sessions.deliver("a", "one", 1);
+    await flush(30);
+    change({ systemPrompt: "newer" });
+    // Another model cannot steer: it queues behind the running turn.
+    const second = sessions.deliver("a", "two", 2, { model: "other" });
+    await flush(30);
+    const [goose] = fake.geese;
+    expect(goose?.prompts.get("session-1")).toBe("prompt");
+    if (goose) goose.hold = false;
+    goose?.turns[0]?.finish();
+    await Promise.all([first, second]);
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["one", "two"]);
+    expect(goose?.prompts.get("session-1")).toBe("newer");
+  });
+
+  it.each(["prompt update", "launch"])(
+    "never lets a delayed %s roll back a newer prompt",
+    async (held) => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let delayed = false;
+      const { fake, sessions, change } = setup({}, false, {
+        fingerprint: (settings) => settings.workspace,
+        delay: () => (delayed ? gate : Promise.resolve()),
+      });
+      await sessions.deliver("a", "one", 1);
+      const [goose] = fake.geese;
+      if (held === "launch") delayed = true;
+      else if (goose) goose.promptGate = gate;
+      change({ systemPrompt: "first" });
+      const second = sessions.deliver("a", "two", 2);
+      await flush(30);
+      delayed = false;
+      change({ systemPrompt: "latest" });
+      const third = sessions.deliver("a", "three", 3, { model: "other" });
+      await flush(30);
+      release();
+      await Promise.all([second, third]);
+      expect(goose?.turns.map((turn) => turn.text)).toEqual([
+        "one",
+        "two",
+        "three",
+      ]);
+      expect(goose?.prompts.get("session-1")).toBe("latest");
+      expect(goose?.closed).toEqual([]);
+    },
+  );
+
+  it("fails a turn whose prompt update fails, keeps the session, and updates it at the next turn", async () => {
+    const { fake, sessions, change } = setup({}, false, {
+      fingerprint: (settings) => settings.workspace,
+    });
+    await sessions.deliver("a", "one", 1);
+    const [goose] = fake.geese;
+    if (goose) goose.promptError = "database is locked";
+    change({ systemPrompt: "newer" });
+    // It is not run on the rules it had before.
+    await expect(sessions.deliver("a", "two", 2)).resolves.toEqual({
+      ok: false,
+      error: expect.stringContaining(
+        "could not update its instructions: database is locked",
+      ),
+      undelivered: true,
+    });
+    expect(goose?.prompts.get("session-1")).toBe("prompt");
+    await sessions.deliver("a", "three", 3);
+    expect(goose?.opened).toHaveLength(1);
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.prompts.get("session-1")).toBe("newer");
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["one", "three"]);
   });
 
   it("shows a reopened conversation everything again", async () => {
@@ -354,13 +507,33 @@ describe("AgentSessions", () => {
       "session-1 thinking_effort=low",
     ]);
     expect(goose?.closed).toEqual([]);
-    // goose names no value for its own level, so only a new session is on it.
+    // goose names no value for its own level, so only a new session is on
+    // it; the next turn opens one.
     choose({ provider: "openai", model: "" });
     await flush();
-    expect(goose?.closed).toEqual(["session-1"]);
+    expect(goose?.closed).toEqual([]);
     await sessions.deliver("a", "five", 5);
+    expect(goose?.closed).toEqual(["session-1"]);
     expect(goose?.turns.map((turn) => turn.sessionId).at(-1)).toBe("session-2");
     expect(goose?.configured).toHaveLength(3);
+  });
+
+  it("keeps the conversation across turns on a picked thinking level", async () => {
+    const { fake, sessions } = setup();
+    await sessions.deliver("a", "one", 1, { effort: "high" });
+    await sessions.deliver("a", "two", 2, { effort: "high" });
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.configured).toEqual(["session-1 thinking_effort=high"]);
+    expect(goose?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+    // A turn without a pick runs on goose's own level, in a new session.
+    await sessions.deliver("a", "three", 3);
+    expect(goose?.closed).toEqual(["session-1"]);
+    expect(goose?.turns.map((turn) => turn.sessionId).at(-1)).toBe("session-2");
+    expect(goose?.configured).toHaveLength(1);
   });
 
   it("fails a turn goose cannot switch, and switches at the next", async () => {
@@ -372,6 +545,7 @@ describe("AgentSessions", () => {
     await expect(sessions.deliver("a", "two", 2)).resolves.toEqual({
       ok: false,
       error: "goose could not switch its provider to nope: Unknown provider",
+      undelivered: true,
     });
     expect(goose?.turns).toHaveLength(1);
     if (goose) delete goose.configError;
@@ -395,6 +569,205 @@ describe("AgentSessions", () => {
       "/home/test/other",
     ]);
     expect(goose?.killed).toBe(false);
+  });
+
+  it("opens new sessions in a goose started with a changed compaction threshold, keeping open ones in theirs", async () => {
+    let limit: number | undefined;
+    const { fake, sessions } = setup({}, true, { compactAt: () => limit });
+    const one = sessions.deliver("a", "one", 1);
+    await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(1));
+    expect(fake.geese[0]?.env).not.toHaveProperty(
+      "GOOSE_AUTO_COMPACT_TOKEN_LIMIT",
+    );
+    fake.geese[0]?.turns[0]?.finish();
+    await expect(one).resolves.toMatchObject({ ok: true });
+    limit = 200000;
+    // An open conversation keeps its session, and the history goose holds.
+    const again = sessions.deliver("a", "two", 2);
+    await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(2));
+    expect(fake.geese[0]?.turns[1]?.sessionId).toBe(
+      fake.geese[0]?.turns[0]?.sessionId,
+    );
+    const other = sessions.deliver("b", "other", 3);
+    await vi.waitFor(() => expect(fake.geese[1]?.turns).toHaveLength(1));
+    expect(fake.geese[1]?.env.GOOSE_AUTO_COMPACT_TOKEN_LIMIT).toBe("200000");
+    expect(fake.geese[0]?.killed).toBe(false);
+    fake.geese[0]?.turns[1]?.finish();
+    fake.geese[1]?.turns[0]?.finish();
+    await expect(again).resolves.toMatchObject({ ok: true });
+    await expect(other).resolves.toMatchObject({ ok: true });
+    expect(fake.geese[0]?.killed).toBe(false);
+    // Once its last session closes, it stops.
+    await sessions.reset("a", "new");
+    await vi.waitFor(() => expect(fake.geese[0]?.killed).toBe(true));
+    expect(fake.geese[1]?.killed).toBe(false);
+  });
+
+  it("stops a replaced goose whose last session closes during an open only once the open settles", async () => {
+    let limit: number | undefined;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { fake, sessions } = setup({}, false, {
+      compactAt: () => limit,
+      wrap: (spawn) => async (id, options) => {
+        const process = await spawn(id, options);
+        const [, second] = fake.geese;
+        if (second && fake.geese.length === 2) second.promptGate = gate;
+        return process;
+      },
+    });
+    await sessions.deliver("a", "one", 1);
+    limit = 200000;
+    const opening = sessions.deliver("b", "other", 2);
+    await vi.waitFor(() => expect(fake.geese[1]?.opened).toHaveLength(1));
+    await sessions.reset("a", "new");
+    await vi.waitFor(() => expect(fake.geese[0]?.closed).toHaveLength(1));
+    await flush(30);
+    expect(fake.geese[0]?.killed).toBe(false);
+    release();
+    await expect(opening).resolves.toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(fake.geese[0]?.killed).toBe(true));
+    expect(fake.geese[1]?.killed).toBe(false);
+  });
+
+  it.each(["closes", "exits"] as const)(
+    "keeps the newer goose current when an older one finishes starting after it, and drops the older's session once it %s",
+    async (end) => {
+      let limit: number | undefined;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const { fake, sessions } = setup({}, false, {
+        compactAt: () => limit,
+        wrap: (spawn) => async (id, options) => {
+          const process = await spawn(id, options);
+          if (fake.geese.length === 1) await gate;
+          return process;
+        },
+      });
+      const first = sessions.deliver("a", "one", 1);
+      await vi.waitFor(() => expect(fake.geese).toHaveLength(1));
+      limit = 200000;
+      await sessions.deliver("b", "other", 2);
+      release();
+      await first;
+      expect(fake.geese[0]?.opened).toHaveLength(1);
+      // Closing the newer goose's last session leaves it running.
+      await sessions.reset("b", "new");
+      await flush(30);
+      expect(fake.geese[1]?.killed).toBe(false);
+      await sessions.deliver("c", "more", 3);
+      expect(fake.geese).toHaveLength(2);
+      if (end === "closes") {
+        // The older one stops once its last session closes.
+        await sessions.reset("a", "new");
+        await vi.waitFor(() => expect(fake.geese[0]?.killed).toBe(true));
+      } else {
+        // Its exit drops its session, which reopens in the newer one.
+        fake.geese[0]?.exit(1, "crashed");
+        await flush(30);
+        await sessions.deliver("a", "again", 4);
+        expect(fake.geese[1]?.opened).toHaveLength(3);
+      }
+      expect(fake.geese).toHaveLength(2);
+      expect(fake.geese[1]?.killed).toBe(false);
+    },
+  );
+
+  it("stops a drained goose before starting one with a changed compaction threshold", async () => {
+    let limit: number | undefined;
+    let release!: () => void;
+    const exit = new Promise<void>((resolve) => (release = resolve));
+    let stopping = false;
+    const { fake, sessions } = setup({}, false, {
+      compactAt: () => limit,
+      // At the host's process limit, a second goose can start only once the
+      // first has exited, which it does only once released.
+      wrap: (spawn) => async (id, options) => {
+        const first = fake.geese[0];
+        if (first && !first.killed) throw new Error("Too many processes");
+        const process = await spawn(id, options);
+        // Like the host's, kill returns once it signals; exit comes later.
+        return first
+          ? process
+          : {
+              ...process,
+              kill: async () => {
+                stopping = true;
+                void exit.then(() => process.kill());
+              },
+            };
+      },
+    });
+    await sessions.runOnce("watch/x", () => "look");
+    limit = 200000;
+    const run = sessions.runOnce("watch/y", () => "look");
+    await vi.waitFor(() => expect(stopping).toBe(true));
+    await flush(30);
+    expect(fake.geese).toHaveLength(1);
+    release();
+    await expect(run).resolves.toEqual(expect.objectContaining({ ok: true }));
+    expect(fake.geese).toHaveLength(2);
+    expect(fake.geese[1]?.env.GOOSE_AUTO_COMPACT_TOKEN_LIMIT).toBe("200000");
+  });
+
+  it("stops a goose whose session outlived a failed start with a changed compaction threshold, once that session closes", async () => {
+    let limit: number | undefined;
+    const { fake, sessions } = setup({}, false, {
+      compactAt: () => limit,
+      // At the host's process limit, a second goose starts only once the
+      // first has stopped.
+      wrap: (spawn) => async (id, options) => {
+        const first = fake.geese[0];
+        if (first && !first.killed) throw new Error("Too many processes");
+        return spawn(id, options);
+      },
+    });
+    await sessions.deliver("a", "one", 1);
+    limit = 200000;
+    await expect(sessions.deliver("b", "other", 2)).resolves.toMatchObject({
+      ok: false,
+    });
+    await sessions.reset("a", "new");
+    await vi.waitFor(() => expect(fake.geese[0]?.closed).toHaveLength(1));
+    await flush(30);
+    await expect(sessions.deliver("c", "more", 3)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(fake.geese[0]?.killed).toBe(true);
+    expect(fake.geese[1]?.env.GOOSE_AUTO_COMPACT_TOKEN_LIMIT).toBe("200000");
+  });
+
+  it("keeps a goose whose session is still opening when the compaction threshold changes", async () => {
+    let limit: number | undefined;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { fake, sessions } = setup({}, false, {
+      compactAt: () => limit,
+      wrap: (spawn) => async (id, options) => {
+        const process = await spawn(id, options);
+        const [first] = fake.geese;
+        if (first && fake.geese.length === 1) first.promptGate = gate;
+        return process;
+      },
+    });
+    const opening = sessions.runOnce("watch/x", () => "look");
+    await vi.waitFor(() => expect(fake.geese[0]?.opened).toHaveLength(1));
+    limit = 200000;
+    const other = sessions.runOnce("watch/y", () => "look");
+    await vi.waitFor(() => expect(fake.geese).toHaveLength(2));
+    expect(fake.geese[0]?.killed).toBe(false);
+    release();
+    await expect(opening).resolves.toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+    await expect(other).resolves.toEqual(expect.objectContaining({ ok: true }));
+    expect(fake.geese[1]?.env.GOOSE_AUTO_COMPACT_TOKEN_LIMIT).toBe("200000");
+  });
+
+  it("gives goose a threshold above its own token limit", async () => {
+    const { fake, sessions } = setup({}, false, { compactAt: () => 1000000 });
+    await sessions.runOnce("watch/x", () => "look");
+    expect(fake.geese[0]?.env.GOOSE_AUTO_COMPACT_TOKEN_LIMIT).toBe("1000000");
   });
 
   it("reports a failed immediate compaction", async () => {
@@ -452,13 +825,92 @@ describe("AgentSessions", () => {
     const { sessions } = setup({}, false, { store });
     await sessions.deliver("a", "one", 1);
     const at = sessions.snapshot()[0]?.at;
-    expect(store.get("a")).toEqual({ at });
+    expect(store.get("a")).toEqual({ at, sessions: ["session-1"] });
     await vi.advanceTimersByTimeAsync(IDLE_MS);
     expect(sessions.snapshot()).toEqual([]);
-    expect(store.get("a")).toEqual({ at });
+    expect(store.get("a")).toEqual({ at, sessions: ["session-1"] });
     // A one-off turn joins no conversation.
     await sessions.runOnce("watch/x", () => "look");
     expect([...store.keys()]).toEqual(["a"]);
+  });
+
+  it("keeps a conversation's session ids as each message and reopening saves it, newest first", async () => {
+    vi.useFakeTimers();
+    const store = new Map<string, SavedConversation>([
+      [
+        "a",
+        { at: 1, sessions: Array.from({ length: 10 }, (_, i) => `old-${i}`) },
+      ],
+    ]);
+    const { sessions } = setup({}, false, { store });
+    await sessions.deliver("a", "one", 1);
+    await sessions.deliver("a", "two", 2);
+    const first = store.get("a")?.sessions;
+    expect(first?.[0]).toBe(sessions.snapshot()[0]?.sessionId);
+    expect(first).toHaveLength(10);
+    expect(first?.at(-1)).toBe("old-8");
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    await sessions.deliver("a", "three", 3);
+    const reopened = sessions.snapshot()[0]?.sessionId;
+    expect(reopened).not.toBe(first?.[0]);
+    expect(store.get("a")?.sessions?.slice(0, 3)).toEqual([
+      reopened,
+      first?.[0],
+      "old-0",
+    ]);
+  });
+
+  it("says which conversation each session started for, and none for a one-off turn", async () => {
+    vi.useFakeTimers();
+    const started = vi.fn();
+    const { sessions } = setup({}, false, { started });
+    await sessions.deliver("chan/root", "one", 1);
+    await sessions.runOnce("watch/x", () => "look");
+    expect(started.mock.calls.map((call) => call[3])).toEqual([
+      "chan/root",
+      undefined,
+    ]);
+  });
+
+  it("says which turn a one-off session was started for, and none for a conversation", async () => {
+    vi.useFakeTimers();
+    const started = vi.fn();
+    const { sessions } = setup({}, false, { started });
+    await sessions.deliver("chan/root", "one", 1);
+    await sessions.runOnce("watch/x", () => "look");
+    expect(started.mock.calls.map((call) => call[4])).toEqual([
+      undefined,
+      "watch/x",
+    ]);
+  });
+
+  it("opens each session with the tags for its conversation, and a one-off turn's with none", async () => {
+    vi.useFakeTimers();
+    const { sessions, fake } = setup({}, false, {
+      tags: (conversation) => ({ for: conversation ?? "none" }),
+    });
+    await sessions.deliver("chan/root", "one", 1);
+    await sessions.runOnce("watch/x", () => "look");
+    expect(
+      fake.geese[0]?.opened.map(
+        (params) => (params._meta as { tags?: unknown }).tags,
+      ),
+    ).toEqual([{ for: "chan/root" }, { for: "none" }]);
+  });
+
+  it("keeps delivering past a damaged saved conversation, saving it afresh", async () => {
+    vi.useFakeTimers();
+    for (const sessions of [{ not: "a list" }, "s9", null, [7, "kept"]]) {
+      const store = new Map([
+        ["a", { at: 1, sessions } as unknown as SavedConversation],
+      ]);
+      const { sessions: agent } = setup({}, false, { store });
+      await agent.deliver("a", "one", 1);
+      const id = agent.snapshot()[0]?.sessionId;
+      expect(store.get("a")?.sessions).toEqual(
+        Array.isArray(sessions) ? [id, "kept"] : [id],
+      );
+    }
   });
 
   it("dates a session by the messages it takes in and the turns it ends, not by a long turn keeping it open", async () => {
@@ -506,9 +958,9 @@ describe("AgentSessions", () => {
     const sessions = new AgentSessions({
       resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake, fake.serve),
+      process: new AgentProcess(fake, fake.serve),
       pool: new ServerPool(),
-      store: { set: (key, saved) => void store.set(key, saved) },
+      store,
       launch: async () => {
         await held;
         return { workspace: "/w", systemPrompt: "" };
@@ -535,7 +987,7 @@ describe("AgentSessions", () => {
     const sessions = new AgentSessions({
       resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake, fake.serve),
+      process: new AgentProcess(fake, fake.serve),
       pool: new ServerPool(),
       launch: async () => ({ workspace: "/w", systemPrompt: "" }),
       choice: () => ({ provider: "", model: "" }),
@@ -561,7 +1013,7 @@ describe("AgentSessions", () => {
     const sessions = new AgentSessions({
       resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake, fake.serve),
+      process: new AgentProcess(fake, fake.serve),
       pool: new ServerPool(),
       launch,
       choice: () => ({ provider: "", model: "" }),
@@ -861,6 +1313,271 @@ describe("AgentSessions", () => {
   });
 });
 
+/** `work`, and whether it has settled. */
+const tracked = <T>(work: Promise<T>) => {
+  const state = { settled: false, work };
+  const settle = () => {
+    state.settled = true;
+  };
+  work.then(settle, settle);
+  return state;
+};
+
+describe("AgentSessions shutdown", () => {
+  it.each(["a conversation", "a one-off turn", "a one-off turn given up"])(
+    "waits for a session still opening for %s, and closes it once open",
+    async (kind) => {
+      const held = gated("session/new");
+      const { fake, sessions } = setup({}, false, { wrap: held.wrap });
+      const abort = new AbortController();
+      const turn =
+        kind === "a conversation"
+          ? sessions.deliver("a", "one", 1)
+          : sessions.runOnce("watch/x", () => "look", {
+              signal: abort.signal,
+            });
+      await vi.waitFor(() => expect(held.waiting()).toHaveLength(1));
+      if (kind === "a one-off turn given up")
+        abort.abort(new Error("The agent was removed"));
+      const shutdown = tracked(sessions.shutdown());
+      await flush(30);
+      expect(shutdown.settled).toBe(false);
+      held.release();
+      await shutdown.work;
+      expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+      expect(fake.geese[0]?.turns).toEqual([]);
+      await turn;
+    },
+  );
+
+  it("creates no session for a delivery still rebuilding its text", async () => {
+    const { fake, sessions, change } = setup();
+    await sessions.deliver("a", "one", 1);
+    change({ systemPrompt: "newer" });
+    let release!: () => void;
+    const rebuilding = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const late = sessions.deliver("a", "two", 2, {
+      fresh: async () => {
+        await rebuilding;
+        return "two again";
+      },
+    });
+    await flush(30);
+    await sessions.shutdown();
+    release();
+    await expect(late).resolves.toEqual({
+      ok: false,
+      error: "goose was stopped",
+      undelivered: true,
+    });
+    expect(fake.geese[0]?.opened).toHaveLength(1);
+    expect(fake.servers).toHaveLength(1);
+  });
+
+  it("waits for every close, then rejects with the one that failed", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const held = gated("session/close", (id) => id === "session-1");
+    const { sessions } = setup({}, false, { wrap: held.wrap });
+    await sessions.deliver("a", "one", 1);
+    await sessions.deliver("b", "two", 2);
+    const shutdown = tracked(sessions.shutdown());
+    await vi.waitFor(() =>
+      expect(held.waiting()).toEqual(["session-1", "session-2"]),
+    );
+    held.release("session-1");
+    await flush(30);
+    expect(shutdown.settled).toBe(false);
+    held.release();
+    await expect(shutdown.work).rejects.toThrow("No active run");
+  });
+
+  it("waits for a close an idle session's eviction started", async () => {
+    const held = gated("session/close");
+    const { sessions, change } = setup({}, false, { wrap: held.wrap });
+    await sessions.deliver("a", "one", 1);
+    change({ systemPrompt: "newer" });
+    await vi.waitFor(() => expect(held.waiting()).toEqual(["session-1"]));
+    const shutdown = tracked(sessions.shutdown());
+    await flush(30);
+    expect(shutdown.settled).toBe(false);
+    held.release();
+    await shutdown.work;
+  });
+
+  it("fails again on retry while a close stays failed, and passes once goose has exited", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const held = gated("session/close", () => true);
+    const { fake, sessions, change } = setup({}, false, { wrap: held.wrap });
+    await sessions.deliver("a", "one", 1);
+    change({ systemPrompt: "newer" });
+    await vi.waitFor(() => expect(held.waiting()).toEqual(["session-1"]));
+    held.release();
+    await expect(sessions.shutdown()).rejects.toThrow("No active run");
+    await expect(sessions.shutdown()).rejects.toThrow("No active run");
+    fake.geese[0]?.exit(null);
+    await flush(30);
+    await expect(sessions.shutdown()).resolves.toBeUndefined();
+  });
+});
+
+it("keeps a worker whose initialize failed until it has exited, though its start fails at the time limit", async () => {
+  vi.useFakeTimers();
+  const fake = fakeSpawn();
+  let kills = 0;
+  const spawn: typeof fake.spawn = async (id, options = {}) => {
+    const process = await fake.spawn(id, options);
+    return {
+      ...process,
+      write: async (data) => {
+        if (!data.includes('"method":"initialize"')) return process.write(data);
+        const { id: request } = JSON.parse(data);
+        options.onStdout?.(
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: request,
+            error: { code: -32603, message: "init failed" },
+          })}\n`,
+        );
+      },
+      // Asked to stop, it exits only once the test lets it.
+      kill: async () => void kills++,
+    };
+  };
+  const process = new AgentProcess({ ...fake, spawn }, fake.serve);
+  const starting = tracked(process.get());
+  // A failed start waits 5 s for its worker to exit, then fails anyway.
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(kills).toBe(1);
+  expect(starting.settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(starting.settled).toBe(true);
+  await expect(starting.work).rejects.toThrow("init failed");
+  // Asked for again while it is exiting, it is the same failed start.
+  const again = process.get();
+  expect(again).toBe(starting.work);
+  await flush(30);
+  expect(fake.geese).toHaveLength(1);
+  const shutdown = tracked(process.shutdown());
+  await vi.advanceTimersByTimeAsync(5_000);
+  await flush(30);
+  expect(shutdown.settled).toBe(false);
+  expect(kills).toBe(2);
+  fake.geese[0]?.exit(null);
+  await shutdown.work;
+  await expect(again).rejects.toThrow("init failed");
+  // Once it has exited, the next call starts another.
+  const retry = process.get();
+  retry.catch(() => undefined);
+  await flush(30);
+  expect(fake.geese).toHaveLength(2);
+  fake.geese[1]?.exit(null);
+  await expect(retry).rejects.toThrow("init failed");
+});
+
+it("repeats a failed kill on the next retirement", async () => {
+  const fake = fakeSpawn();
+  let kills = 0;
+  const spawn: typeof fake.spawn = async (id, options) => ({
+    ...(await fake.spawn(id, options)),
+    // The first kill fails; it exits only once the test lets it.
+    kill: async () => {
+      if (++kills === 1) throw new Error("kill failed");
+    },
+  });
+  const process = new AgentProcess({ ...fake, spawn }, fake.serve);
+  await process.get();
+  await expect(process.shutdown()).rejects.toThrow("kill failed");
+  const shutdown = tracked(process.shutdown());
+  await flush(30);
+  expect(kills).toBe(2);
+  expect(shutdown.settled).toBe(false);
+  fake.geese[0]?.exit(null);
+  await shutdown.work;
+});
+
+it("keeps what held work saved, and New session, as stored across every write", () => {
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const damaged = { session: 7, junk: [1] };
+  data.set(
+    "buzz.goose.sessions.v1",
+    JSON.stringify({
+      one: {
+        broken: { at: 1, sessions: ["s1"], binding: damaged, next: "new" },
+      },
+    }),
+  );
+  const one = localSessions(storage, "one");
+  // Another conversation's write rewrites every record, leaving this raw.
+  one.set("other", {
+    at: 2,
+    sessions: ["g1"],
+    binding: { session: "g1", value: { v: 1 } },
+  });
+  const reloaded = localSessions(storage, "one");
+  expect(reloaded.get("broken")).toEqual({
+    at: 1,
+    sessions: ["s1"],
+    binding: damaged,
+    next: "new",
+  });
+  expect(reloaded.get("other")).toEqual({
+    at: 2,
+    sessions: ["g1"],
+    binding: { session: "g1", value: { v: 1 } },
+  });
+});
+
+it("refuses New session, keeping what was saved, when storage cannot save it", async () => {
+  const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const data = new Map<string, string>();
+  let full = false;
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      if (full) throw new DOMException("quota", "QuotaExceededError");
+      data.set(key, value);
+    },
+  } as Storage;
+  const prior = {
+    at: 1,
+    sessions: ["g1", "g0"],
+    binding: { session: "g1", value: { v: 1 } },
+  };
+  localSessions(storage, "one").set("a", prior);
+  full = true;
+  const { sessions } = setup({}, false, {
+    store: localSessions(storage, "one"),
+  });
+  await expect(sessions.reset("a", "new")).resolves.toEqual({
+    ok: false,
+    error: "goose could not save New session",
+  });
+  expect(warned).toHaveBeenCalledWith(
+    "goose sessions were not saved",
+    expect.any(DOMException),
+  );
+  full = false;
+  expect(localSessions(storage, "one").get("a")).toEqual(prior);
+  // The next held work resumes what was left, with its value.
+  await expect(
+    sessions.exclusive("a", async ({ saved, reset, binding }) => ({
+      saved,
+      reset,
+      binding,
+    })),
+  ).resolves.toEqual({
+    saved: "g1",
+    reset: false,
+    binding: { value: { v: 1 } },
+  });
+});
+
 it("keeps saved conversations per agent in storage, most recent first", () => {
   const data = new Map<string, string>();
   const storage = {
@@ -876,6 +1593,329 @@ it("keeps saved conversations per agent in storage, most recent first", () => {
     ["c/root", { at: 1 }],
   ]);
   expect(localSessions(storage, "two").list()).toEqual([["c/root", { at: 2 }]]);
+  expect(one.get("dm")).toEqual({ at: 3 });
+  one.set("dm", { at: 4, sessions: ["s1"] });
+  expect(localSessions(storage, "one").get("dm")).toEqual({
+    at: 4,
+    sessions: ["s1"],
+  });
+  data.set(
+    "buzz.goose.sessions.v1",
+    JSON.stringify({
+      one: {
+        kept: {
+          at: 5,
+          sessions: [
+            "s1",
+            "s1",
+            3,
+            "x".repeat(300),
+            ...Array.from({ length: 12 }, (_, i) => `n${i}`),
+          ],
+        },
+        legacy: { at: 4 },
+        list: { at: 6, sessions: { 0: "s" } },
+        infinite: { at: null },
+        far: { at: -1e20 },
+        empty: null,
+      },
+      two: "damaged",
+    }),
+  );
+  expect(one.list()).toEqual([
+    [
+      "kept",
+      {
+        at: 5,
+        sessions: ["s1", ...Array.from({ length: 9 }, (_, i) => `n${i}`)],
+      },
+    ],
+    ["legacy", { at: 4 }],
+  ]);
+  expect(localSessions(storage, "two").list()).toEqual([]);
   data.set("buzz.goose.sessions.v1", "not json");
   expect(one.list()).toEqual([]);
+});
+
+it("drops a source delivery invalidated during session startup", async () => {
+  const fake = fakeSpawn();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const sessions = new AgentSessions({
+    resolveDirectory: fake.resolveDirectory,
+    tools,
+    process: new AgentProcess(fake, fake.serve),
+    pool: new ServerPool(),
+    launch: async () => {
+      await held;
+      return { workspace: "/w", systemPrompt: "" };
+    },
+    choice: () => ({ provider: "", model: "" }),
+    fingerprint: () => "",
+  });
+  let current = true;
+  const late = sessions.deliver("source", "cancelled wake", 1, {
+    current: () => current,
+  });
+  await flush(30);
+  current = false;
+  release();
+  await expect(late).resolves.toMatchObject({ undelivered: true });
+  await sessions.deliver("other", "ordinary message", 2);
+  expect(
+    fake.geese
+      .flatMap((g) => g.turns)
+      .some((t) => JSON.stringify(t).includes("cancelled wake")),
+  ).toBe(false);
+  sessions.dispose();
+});
+
+it.each([false, true])(
+  "keeps history unseen when a source is cancelled during provider selection (existing: %s)",
+  async (existing) => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    let selecting!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      selecting = resolve;
+    });
+    const spawn: typeof fake.spawn = async (id, options) => {
+      const process = await fake.spawn(id, options);
+      return {
+        ...process,
+        write: async (data) => {
+          if (
+            id === "goose" &&
+            data.includes('"method":"session/set_config_option"')
+          ) {
+            selecting();
+            await held;
+          }
+          return process.write(data);
+        },
+      };
+    };
+    let choice: Choice = { provider: "", model: "" };
+    const sessions = new AgentSessions({
+      resolveDirectory: fake.resolveDirectory,
+      tools,
+      process: new AgentProcess({ ...fake, spawn }, fake.serve),
+      pool: new ServerPool(),
+      launch: async () => ({ workspace: "/w", systemPrompt: "" }),
+      choice: () => choice,
+      fingerprint: () => "",
+    });
+    if (existing) await sessions.deliver("source", "earlier", 1);
+    choice = { provider: "openai", model: "gpt-4.1" };
+    let current = true;
+    const late = sessions.deliver("source", "cancelled history", 10, {
+      current: () => current,
+    });
+    try {
+      await started;
+      current = false;
+    } finally {
+      release();
+    }
+    await expect(late).resolves.toMatchObject({ undelivered: true });
+    expect(sessions.seen("source")).toBe(existing ? 1 : 0);
+    await sessions.deliver("source", "ordinary message with history", 5);
+    expect(sessions.seen("source")).toBe(5);
+    expect(fake.geese.flatMap((g) => g.turns).map((t) => t.text)).toEqual([
+      ...(existing ? ["earlier"] : []),
+      "ordinary message with history",
+    ]);
+    sessions.dispose();
+  },
+);
+
+it("drops standalone output invalidated after its prompt is built", async () => {
+  const { sessions, fake } = setup();
+  let current = true;
+  const result = await sessions.runOnce(
+    "source/check",
+    () => {
+      current = false;
+      return "cancelled output";
+    },
+    { current: () => current },
+  );
+  expect(result.ok).toBe(true);
+  expect(fake.geese.flatMap((process) => process.turns)).toEqual([]);
+  sessions.dispose();
+});
+
+it.each(["startup", "provider"] as const)(
+  "refreshes an Attention prompt after %s waits",
+  async (boundary) => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    let waiting!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      waiting = resolve;
+    });
+    const spawn: typeof fake.spawn = async (id, options) => {
+      const process = await fake.spawn(id, options);
+      return {
+        ...process,
+        write: async (data) => {
+          if (
+            boundary === "provider" &&
+            id === "goose" &&
+            data.includes('"method":"session/set_config_option"')
+          ) {
+            waiting();
+            await gate;
+          }
+          return process.write(data);
+        },
+      };
+    };
+    const sessions = new AgentSessions({
+      resolveDirectory: fake.resolveDirectory,
+      tools,
+      process: new AgentProcess({ ...fake, spawn }, fake.serve),
+      pool: new ServerPool(),
+      launch: async () => {
+        if (boundary === "startup") {
+          waiting();
+          await gate;
+        }
+        return { workspace: "/w", systemPrompt: "" };
+      },
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      fingerprint: () => "",
+    });
+    let instructions = "Old Interest instructions";
+    const late = sessions.deliver("source", instructions, 1, {
+      refresh: async () => instructions,
+    });
+    try {
+      await started;
+      instructions = "Updated Interest instructions";
+    } finally {
+      release();
+    }
+    await late;
+    expect(fake.geese.flatMap((g) => g.turns).map((t) => t.text)).toEqual([
+      instructions,
+    ]);
+    sessions.dispose();
+  },
+);
+
+it("stops a goose replaced by a compaction change when retired", async () => {
+  const fake = fakeSpawn();
+  let limit: number | undefined;
+  const process = new AgentProcess(
+    fake,
+    fake.serve,
+    undefined,
+    undefined,
+    () => limit,
+  );
+  await process.get();
+  limit = 200000;
+  await process.get();
+  expect(fake.geese).toHaveLength(2);
+  const shutdown = tracked(process.shutdown());
+  await flush(30);
+  expect(fake.geese.map((goose) => goose.killed)).toEqual([true, true]);
+  await shutdown.work;
+});
+
+describe("AgentSessions held work", () => {
+  it("stops waiting its turn at its deadline, but never ends work it started", async () => {
+    const { sessions } = setup();
+    let release!: () => void;
+    const holding = sessions.exclusive(
+      "a",
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    await flush(10);
+    const deadline = new AbortController();
+    const ran = vi.fn(async () => undefined);
+    const waiting = sessions.exclusive("a", ran, undefined, deadline.signal);
+    await flush(10);
+    deadline.abort();
+    await expect(waiting).rejects.toThrow("goose did not start in time");
+    expect(ran).not.toHaveBeenCalled();
+    release();
+    await holding;
+    // Past its deadline once it holds the conversation: it runs on.
+    const late = new AbortController();
+    let finish!: () => void;
+    const running = sessions.exclusive(
+      "a",
+      async ({ signal }) => {
+        late.abort();
+        await new Promise<void>((resolve) => (finish = resolve));
+        return signal.aborted;
+      },
+      undefined,
+      late.signal,
+    );
+    await flush(10);
+    finish();
+    await expect(running).resolves.toBe(false);
+  });
+
+  it("notes what held work's session was shown only while it holds the conversation", async () => {
+    const { sessions } = setup();
+    let note!: (seen: number) => void;
+    await sessions.exclusive("a", async ({ shown }) => {
+      note = shown;
+      shown(5);
+      shown(3);
+    });
+    expect(sessions.seen("a")).toBe(5);
+    note(9);
+    expect(sessions.seen("a")).toBe(5);
+  });
+
+  it("holds a busy pooled server for a session outside its own, closing an idle one to make room", async () => {
+    const pool = new ServerPool(1);
+    const { fake, sessions } = setup({}, false, { pool });
+    await sessions.deliver("a", "one", 1);
+    const handler = async () => undefined;
+    const server = await sessions.pooled(fake.serve)(handler as never);
+    expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(pool.size).toBe(1);
+    // Busy until closed: the next session goes over rather than close it.
+    expect(pool.evict()).toBeUndefined();
+    await server.close();
+    await flush(10);
+    expect(pool.size).toBe(0);
+    // One that fails to start holds nothing.
+    await expect(
+      sessions.pooled(async () => {
+        throw new Error("Too many MCP servers are running");
+      })(handler as never),
+    ).rejects.toThrow("Too many");
+    expect(pool.size).toBe(0);
+  });
+});
+
+it("asks for the variables of the local agent it runs, and none for no agent", async () => {
+  const agent = { pubkey: "a".repeat(64), relay: "wss://relay.test" };
+  const fake = fakeSpawn();
+  const own = new AgentProcess(fake, fake.serve, undefined, () => agent);
+  const none = new AgentProcess(fake, fake.serve);
+  await own.get();
+  await none.get();
+  expect(fake.geese.map((goose) => goose.options.secrets)).toEqual([
+    ["agent-env"],
+    undefined,
+  ]);
+  expect(fake.geese[0]?.options.envAgent).toBe(agent.pubkey);
+  await own.shutdown();
+  await none.shutdown();
 });

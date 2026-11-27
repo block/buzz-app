@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { clickSidebarHeadingAction, openPage } from "./navigation.mjs";
 
 // Pointer hit testing, drop-edge geometry and header click suppression need a
 // layout engine. Record edits and store supersession stay in Vitest.
@@ -16,7 +16,9 @@ const header = (page, id) =>
 const orders = (app) => {
   const { blob } = app.report.sidebarPublications.at(-1);
   return Object.fromEntries(
-    Object.entries(blob.meta.s).map(([id, node]) => [id, node.order[2]]),
+    blob.sectionOrder
+      .filter((key) => key.startsWith("group:"))
+      .map((key, index) => [key.slice("group:".length), index]),
   );
 };
 // Hold a real pointer drag over another group's header; the caller releases it.
@@ -58,6 +60,10 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   // A cancelled drag shows its landing edge, then leaves everything unchanged.
   await pull(page, "laptop", "work");
   await expect(laptop).toHaveAttribute("data-section-dragging");
+  await expect(page.locator('[class*="channelDragOverlay"]')).toHaveCSS(
+    "translate",
+    "none",
+  );
   await expect(work).toHaveAttribute("data-drop-edge", "before");
   await expect(work).not.toHaveAttribute("data-drop-target");
   await page.keyboard.press("Escape");
@@ -119,7 +125,7 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   await header(page, "laptop").click();
   await expect(laptop.locator("details")).not.toHaveAttribute("open");
 
-  // Built-in sections are not group targets.
+  // Built-in sections are valid reorder targets. Escape cancels the move.
   const channels = await page
     .locator('[data-sidebar-section="channels"] summary')
     .boundingBox();
@@ -132,8 +138,9 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   );
   await expect(laptop).toHaveAttribute("data-section-dragging");
   await expect(
-    page.locator("[data-drop-edge], [data-drop-target]"),
-  ).toHaveCount(0);
+    page.locator('[data-sidebar-section="channels"]'),
+  ).toHaveAttribute("data-drop-edge", "after");
+  await page.keyboard.press("Escape");
   await page.mouse.up();
   await expect
     .poll(() => groups(page))
@@ -167,10 +174,12 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   expect(orders(app)).toEqual({ laptop: 0, missing: 1, work: 2 });
 
   // The section menu is the single-pointer and keyboard path.
-  await page.getByRole("button", { name: "More actions for Work" }).click();
+  await clickSidebarHeadingAction(
+    page.getByRole("button", { name: "More actions for Work" }),
+  );
   await expect(
     page.getByRole("menuitem", { name: "Move down", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.getByRole("menuitem", { name: "Move up", exact: true }).click();
   await expect
     .poll(() => groups(page))
@@ -209,7 +218,9 @@ test("group move recovery keeps keyboard focus on the group header", async ({
     .getByRole("alert")
     .filter({ hasText: "Couldn’t save the move for Work" });
   const failMove = async () => {
-    await page.getByRole("button", { name: "More actions for Work" }).click();
+    await clickSidebarHeadingAction(
+      page.getByRole("button", { name: "More actions for Work" }),
+    );
     await page
       .getByRole("menuitem", { name: "Move down", exact: true })
       .click();
@@ -342,6 +353,10 @@ test("group landing edge follows list order when text size changes during a drag
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "16px";
   });
+  // The pointer is still below the resized groups. Wait for collision geometry
+  // to catch up, or the old marker could satisfy the next assertion before the
+  // move is processed and let the drop race against remeasurement.
+  await expect(missing).not.toHaveAttribute("data-drop-edge");
   const target = await header(page, "missing").boundingBox();
   // The stale initial pixel comparison would now put the line on the wrong side.
   expect(initial.y).toBeGreaterThan(target.y);

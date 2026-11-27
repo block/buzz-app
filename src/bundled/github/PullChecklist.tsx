@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
+  CaretDownIcon,
+  CaretRightIcon,
   CheckCircleIcon,
   CircleDashedIcon,
   DotsThreeIcon,
@@ -19,7 +21,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
-import { loadGitHubChecks, type CheckSummary } from "./checks";
+import type { CheckSummary } from "./checks";
 import type { GitHubDetails } from "./data";
 import type { GitHubCli } from "./gh";
 import { readable } from "./object";
@@ -43,18 +45,30 @@ const toneIcons = {
 function Row({
   tone,
   label,
+  action,
+  details,
   children,
 }: {
   tone: Tone;
   label: string;
+  action?: ReactNode;
+  details?: ReactNode;
   children: ReactNode;
 }) {
   const Icon = toneIcons[tone];
   return (
-    <li className={styles.checklistRow} data-tone={tone}>
+    <li
+      className={styles.checklistRow}
+      data-tone={tone}
+      data-action={!!action || undefined}
+    >
       <Icon size={16} aria-hidden="true" />
       <span className={styles.checklistLabel}>{label}</span>
-      <span className={styles.checklistValue}>{children}</span>
+      <div className={styles.checklistContent}>
+        <span className={styles.checklistValue}>{children}</span>
+        {details}
+        {action && <span className={styles.checklistAction}>{action}</span>}
+      </div>
     </li>
   );
 }
@@ -64,7 +78,15 @@ const names = (people: readonly string[]) =>
     ? `${people.slice(0, 2).join(", ")} and ${people.length - 2} more`
     : people.join(", ");
 
-function ChecksRow({ checks, url }: { checks: CheckSummary; url: string }) {
+function ChecksRow({
+  checks,
+  url,
+  action,
+}: {
+  checks: CheckSummary;
+  url: string;
+  action?: ReactNode;
+}) {
   const count = (category: string) =>
     checks.checks?.filter((check) => check.category === category).length ?? 0;
   const failing =
@@ -86,20 +108,19 @@ function ChecksRow({ checks, url }: { checks: CheckSummary; url: string }) {
     passed && `${passed} passed`,
     count("skipped") && `${count("skipped")} skipped`,
   ].filter(Boolean);
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
   return (
-    <Row tone={tone} label="Checks">
-      {checks.state === "unavailable" ? (
-        "Couldn’t read every check"
-      ) : !checks.checks?.length ? (
-        "No checks"
-      ) : (
-        <>
-          {!!failing.length && (
-            <>
-              {failing.length} failed:{" "}
-              {failing.slice(0, 3).map((check, index) => (
-                <span key={check.key}>
-                  {index > 0 && ", "}
+    <Row
+      tone={tone}
+      label="Checks"
+      action={action}
+      details={
+        expanded && failing.length > 0 ? (
+          <div id={detailsId} className={styles.checklistDetails}>
+            <ul aria-label="Failed checks">
+              {failing.map((check) => (
+                <li key={check.key}>
                   {check.url ? (
                     <a
                       className={inlineStyles.link}
@@ -112,28 +133,45 @@ function ChecksRow({ checks, url }: { checks: CheckSummary; url: string }) {
                   ) : (
                     check.name
                   )}
-                </span>
+                  {check.description && <> — {check.description}</>}
+                </li>
               ))}
-              {failing.length > 3 && (
-                <>
-                  {", "}
-                  <a
-                    className={inlineStyles.link}
-                    href={`${url}/checks`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {failing.length - 3} more
-                  </a>
-                </>
-              )}
-              {!!parts.length && " · "}
-            </>
+            </ul>
+            <a
+              className={inlineStyles.link}
+              href={`${url}/checks`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View all checks
+            </a>
+          </div>
+        ) : undefined
+      }
+    >
+      {checks.state === "unavailable" && !failing.length ? (
+        "Couldn’t read every check"
+      ) : !checks.checks?.length ? (
+        "No checks"
+      ) : failing.length ? (
+        <Button
+          variant="plain"
+          size="inline"
+          aria-expanded={expanded}
+          aria-controls={expanded ? detailsId : undefined}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {[`${failing.length} failed`, ...parts].join(" · ")}
+          {expanded ? (
+            <CaretDownIcon size={14} />
+          ) : (
+            <CaretRightIcon size={14} />
           )}
-          {!failing.length && !running && passed
-            ? `All ${passed} passed${count("skipped") ? ` · ${count("skipped")} skipped` : ""}`
-            : parts.join(" · ")}
-        </>
+        </Button>
+      ) : !running && passed ? (
+        `All ${passed} passed${count("skipped") ? ` · ${count("skipped")} skipped` : ""}`
+      ) : (
+        parts.join(" · ")
       )}
     </Row>
   );
@@ -171,9 +209,10 @@ function ReviewRow({ review }: { review: Checklist["review"] }) {
   );
 }
 
-function MergeRow({ pull }: { pull: Checklist }) {
+function MergeRow({ pull, action }: { pull: Checklist; action?: ReactNode }) {
   const base = <span className={styles.branchLabel}>{pull.base}</span>;
   const [tone, text]: [Tone, ReactNode] = (() => {
+    if (pull.queued) return ["pending", <>Queued for merge into {base}</>];
     switch (pull.merge) {
       case "CLEAN":
       case "HAS_HOOKS":
@@ -185,7 +224,7 @@ function MergeRow({ pull }: { pull: Checklist }) {
           "pending",
           <>
             Blocked by {base}’s rules
-            {pull.canBypass && " · you can bypass them"}
+            {pull.canBypass && !pull.queueRequired && " · you can bypass them"}
           </>,
         ];
       case "BEHIND":
@@ -199,7 +238,7 @@ function MergeRow({ pull }: { pull: Checklist }) {
     }
   })();
   return (
-    <Row tone={tone} label="Merge">
+    <Row tone={tone} label="Merge" action={action}>
       {text}
     </Row>
   );
@@ -207,7 +246,29 @@ function MergeRow({ pull }: { pull: Checklist }) {
 
 /** Whether the merge button can merge now, and whether that bypasses rules. */
 function mergeability(pull: Checklist) {
-  if (pull.state !== "open") return { now: false, bypass: false };
+  if (pull.state !== "open" || pull.queued)
+    return { now: false, bypass: false };
+  // A queue-required branch can report BLOCKED until enqueued; GitHub
+  // validates its prerequisites when accepting the enqueue request. Missing
+  // reviews and unfinished or failing checks would be rejected, so those wait
+  // for auto-merge to enqueue instead, as do checks that could not be read
+  // and unresolved conversations (the branch may require resolving them).
+  if (pull.queueRequired) {
+    const waiting =
+      pull.review.decision === "REVIEW_REQUIRED" ||
+      pull.review.decision === "CHANGES_REQUESTED" ||
+      pull.checks.state === "failure" ||
+      pull.checks.state === "pending" ||
+      pull.checks.state === "unavailable" ||
+      pull.unresolved > 0 ||
+      pull.moreThreads;
+    return {
+      now:
+        ["CLEAN", "HAS_HOOKS", "UNSTABLE"].includes(pull.merge) ||
+        (["BLOCKED", "BEHIND"].includes(pull.merge) && !waiting),
+      bypass: false,
+    };
+  }
   if (["CLEAN", "HAS_HOOKS", "UNSTABLE"].includes(pull.merge))
     return { now: true, bypass: false };
   if (["BLOCKED", "BEHIND"].includes(pull.merge) && pull.canBypass)
@@ -240,6 +301,7 @@ function Actions({
         head: string;
         base: string;
         bypass: boolean;
+        queue: boolean;
       }>
     >();
   const alive = useRef(true);
@@ -271,23 +333,29 @@ function Actions({
       head: pull.head,
       base: pull.base,
       bypass: merge.bypass,
+      queue: pull.queueRequired,
     });
   };
   const confirming =
     merge.now &&
     asked?.head === pull.head &&
     asked.base === pull.base &&
-    asked.bypass === merge.bypass
+    asked.bypass === merge.bypass &&
+    asked.queue === pull.queueRequired
       ? asked
       : undefined;
   // Forgotten during render, so changing back does not reopen it.
   if (asked && !confirming) setConfirming(undefined);
   const canAutoMerge =
+    !pull.queued &&
     pull.canEnableAutoMerge &&
     !pull.autoMerge &&
     pull.state === "open" &&
-    !["CLEAN", "HAS_HOOKS", "DIRTY"].includes(pull.merge);
-  const others = pull.methods.filter((method) => method !== pull.method);
+    !["CLEAN", "HAS_HOOKS", "DIRTY", "UNKNOWN"].includes(pull.merge);
+  const others =
+    pull.queueRequired || pull.queued
+      ? []
+      : pull.methods.filter((method) => method !== pull.method);
   const menu = [
     ...(merge.now
       ? others.map((method) => (
@@ -296,7 +364,8 @@ function Actions({
           </MenuItem>
         ))
       : []),
-    ...(canAutoMerge && merge.now
+    // A queue branch that can be queued already has its one way in.
+    ...(canAutoMerge && merge.now && !pull.queueRequired
       ? [
           <MenuItem
             key="auto"
@@ -331,10 +400,15 @@ function Actions({
             Ready for review
           </Button>
         )}
-        {pull.autoMerge ? (
+        {pull.queued ? (
+          <span className={styles.pullActionNote}>Queued for merge</span>
+        ) : pull.autoMerge ? (
           <>
             <span className={styles.pullActionNote}>
-              Merges automatically when ready
+              {/* GitHub enqueues a queue branch's pull request, not merges it. */}
+              {pull.queueRequired
+                ? "Joins the merge queue when ready"
+                : "Merges automatically when ready"}
               {pull.autoMerge.by && ` · set by ${pull.autoMerge.by}`}
             </span>
             {pull.canDisableAutoMerge && (
@@ -355,7 +429,7 @@ function Actions({
             disabled={!!busy}
             onClick={() => confirm(pull.method)}
           >
-            {mergeLabels[pull.method]}
+            {pull.queueRequired ? "Queue for merge" : mergeLabels[pull.method]}
           </Button>
         ) : (
           canAutoMerge && (
@@ -405,13 +479,15 @@ function Actions({
       )}
       {confirming && (
         <AlertDialog
-          title={`${mergeLabels[confirming.method]} #${number}?`}
+          title={`${confirming.queue ? "Queue for merge" : mergeLabels[confirming.method]} #${number}?`}
           description={
-            confirming.bypass
-              ? `${title}. This bypasses ${pull.base}’s branch rules, which haven’t all passed.`
-              : `${title}, into ${pull.base} at the commit shown here.`
+            confirming.queue
+              ? `${title}, into ${pull.base} at the commit shown here. GitHub will merge it through the queue once the required checks pass.`
+              : confirming.bypass
+                ? `${title}. This bypasses ${pull.base}’s branch rules, which haven’t all passed.`
+                : `${title}, into ${pull.base} at the commit shown here.`
           }
-          pending={busy === "merge"}
+          pending={busy === "merge" || busy === "enqueue"}
           onClose={() => {
             setConfirming(undefined);
             setError(undefined);
@@ -419,7 +495,7 @@ function Actions({
           actions={
             <>
               <Button
-                disabled={busy === "merge"}
+                disabled={busy === "merge" || busy === "enqueue"}
                 onClick={() => {
                   setConfirming(undefined);
                   setError(undefined);
@@ -429,15 +505,17 @@ function Actions({
               </Button>
               <Button
                 variant={confirming.bypass ? "attention" : "prominent"}
-                loading={busy === "merge"}
+                loading={busy === "merge" || busy === "enqueue"}
                 onClick={() =>
                   void run(
-                    { type: "merge", method: confirming.method },
+                    confirming.queue
+                      ? { type: "enqueue" }
+                      : { type: "merge", method: confirming.method },
                     confirming.head,
                   )
                 }
               >
-                Merge
+                {confirming.queue ? "Queue for merge" : "Merge"}
               </Button>
             </>
           }
@@ -461,12 +539,14 @@ export function PullChecklist({
   checklist,
   gh,
   refresh,
+  resolveAction,
 }: {
   url: string;
   details: GitHubDetails;
   checklist: Checklist;
   gh: GitHubCli;
   refresh(): Promise<void>;
+  resolveAction?: ((action: "failures" | "conflicts") => ReactNode) | undefined;
 }) {
   if (checklist.state === "merged" || checklist.state === "closed")
     return (
@@ -492,7 +572,18 @@ export function PullChecklist({
   return (
     <>
       <ul className={styles.checklist} aria-label="Pull request checklist">
-        <ChecksRow checks={checklist.checks} url={url} />
+        <ChecksRow
+          checks={checklist.checks}
+          url={url}
+          action={
+            checklist.checks.state === "failure" ||
+            checklist.checks.checks?.some((check) =>
+              ["failing", "cancelled"].includes(check.category),
+            )
+              ? resolveAction?.("failures")
+              : undefined
+          }
+        />
         <ReviewRow review={checklist.review} />
         <Row
           tone={
@@ -517,7 +608,14 @@ export function PullChecklist({
             "None unresolved"
           )}
         </Row>
-        <MergeRow pull={checklist} />
+        <MergeRow
+          pull={checklist}
+          action={
+            checklist.merge === "DIRTY"
+              ? resolveAction?.("conflicts")
+              : undefined
+          }
+        />
       </ul>
       <Actions
         pull={checklist}
@@ -530,29 +628,17 @@ export function PullChecklist({
   );
 }
 
-/** Without `gh`, only CI can be read for the checklist, from the public API. */
+/** Without `gh`, only CI can be read for the checklist, from the public API,
+ * as the store reads the rest of the pull request. */
 export function PublicChecklist({
   url,
-  repository,
   sha,
+  checks,
 }: {
   url: string;
-  repository: string;
   sha: string | undefined;
+  checks: CheckSummary | undefined;
 }) {
-  const [checks, setChecks] = useState<CheckSummary>();
-  useEffect(() => {
-    if (!sha) return;
-    const controller = new AbortController();
-    void loadGitHubChecks(
-      repository,
-      sha,
-      AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-    ).then((summary) => {
-      if (!controller.signal.aborted) setChecks(summary);
-    });
-    return () => controller.abort();
-  }, [repository, sha]);
   return (
     <ul className={styles.checklist} aria-label="Pull request checklist">
       {checks ? (

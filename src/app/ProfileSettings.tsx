@@ -1,3 +1,4 @@
+import { useProfileGeneration } from "../features/relay/react";
 import { ProfileBackdrop } from "../features/profiles/ProfileBackdrop";
 import hero from "../features/profiles/ProfileHero.module.css";
 import { useAvatarPreview } from "../features/profiles/use-avatar-preview";
@@ -28,10 +29,31 @@ import {
   profilesEqual,
 } from "../features/communities/ProfileFields";
 import * as communityApi from "../features/communities/api";
+import {
+  backgroundProfileWrites,
+  beginProfileSave,
+  endProfileSave,
+  isCurrentProfileSave,
+} from "../features/communities/profile-saves";
 import type { Membership } from "../features/communities/service";
 import { communityName } from "../features/communities/names";
+import { profileTimeZone } from "../features/profiles/local-time";
+import { TimeZoneField } from "../features/profiles/TimeZoneField";
+import {
+  deviceTimeZone,
+  withDeviceTimeZone,
+} from "../features/profiles/share-time-zone";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
+
+/** The profile content with `tz` shared as chosen. An empty `tz` records the
+ * opt-out, so sharing by default never brings it back. */
+function withTimeZone(
+  existing: Record<string, unknown>,
+  tz: string | undefined,
+): Record<string, unknown> {
+  return { ...existing, tz: tz ?? "" };
+}
 
 function selectedProfileSession(
   communities: Communities,
@@ -70,16 +92,6 @@ function mergeRefreshedDraft(
         ? (after.about ?? "")
         : (draft.about ?? ""),
   };
-}
-
-const profileSaveGenerations = new WeakMap<Communities, number>();
-function beginProfileSave(communities: Communities) {
-  const generation = (profileSaveGenerations.get(communities) ?? 0) + 1;
-  profileSaveGenerations.set(communities, generation);
-  return generation;
-}
-function isCurrentProfileSave(communities: Communities, generation: number) {
-  return profileSaveGenerations.get(communities) === generation;
 }
 
 export function ProfileSettings({
@@ -123,6 +135,8 @@ export function ProfileSettings({
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
+  // Unset until the time zone is edited; null clears the shared zone.
+  const [tzDraft, setTzDraft] = useState<string | null>();
   const latestPersisted = useRef<PersonalProfile>(client.profile);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -144,6 +158,7 @@ export function ProfileSettings({
     if (previousScope.current === profileScope) return;
     previousScope.current = profileScope;
     setDraft(null);
+    setTzDraft(undefined);
     setLoaded(cachedProfile(selectedProfileSession(communities, communityId)));
     setLoadStatus(communityId ? "idle" : "ready");
     setSaved(false);
@@ -205,10 +220,52 @@ export function ProfileSettings({
   const persisted =
     community && loaded?.exists ? loaded.profile : client.profile;
   latestPersisted.current = persisted;
-  const profile = previewReady
-    ? (draft ?? persisted)
-    : { name: "", picture: "", about: "" };
-  const hasChanges = draft !== null && !profilesEqual(draft, persisted);
+  const session = selectedProfileSession(communities, communityId);
+  const thumbnailMedia = session?.media;
+  const viewer = session?.viewer;
+  const verified = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) =>
+        session?.profiles.subscribe(listener) ?? (() => {}),
+      [session],
+    ),
+    () =>
+      viewer ? session?.profiles.snapshot().get(viewer)?.verified : undefined,
+  );
+  const profileGeneration = useProfileGeneration(session?.profiles);
+  useEffect(() => {
+    void profileGeneration;
+    if (viewer) void session?.profiles.ensure([viewer]).catch(() => {});
+  }, [session, viewer, profileGeneration]);
+  const verifiedName = verified
+    ? {
+        name: verified.fullName ?? verified.displayName,
+        username: verified.username,
+        issuerLabel: verified.issuerLabel,
+        status: verified.status,
+      }
+    : undefined;
+  // Lock the name only over a valid signed name, which every save keeps;
+  // an empty signed name stays editable so it can be repaired.
+  const lockedName = persisted.name.trim() ? verifiedName : undefined;
+  const edited = lockedName
+    ? { ...(draft ?? persisted), name: persisted.name }
+    : (draft ?? persisted);
+  const profile = previewReady ? edited : { name: "", picture: "", about: "" };
+  // A profile without a `tz` key gets this device's zone by default, so the
+  // control shows that zone as shared and any save writes it; unchecking
+  // records the opt-out.
+  const tzByDefault = !!community && !!loaded && !("tz" in loaded.existing);
+  const persistedTz =
+    community && loaded
+      ? tzByDefault
+        ? deviceTimeZone()
+        : profileTimeZone(loaded.existing.tz)
+      : undefined;
+  const tz = tzDraft === undefined ? persistedTz : (tzDraft ?? undefined);
+  const tzChanged = tzDraft !== undefined && tz !== persistedTz;
+  const profileEdited = draft !== null && !profilesEqual(edited, persisted);
+  const hasChanges = profileEdited || tzChanged;
   // A dispatched save continues after Settings closes, so it is not
   // discardable. Before then (the fresh read), closing would drop the edit.
   const discardable = hasChanges && !dispatched;
@@ -217,10 +274,6 @@ export function ProfileSettings({
     onUnsavedChange?.(true);
     return () => onUnsavedChange?.(false);
   }, [discardable, onUnsavedChange]);
-  const thumbnailMedia = selectedProfileSession(
-    communities,
-    communityId,
-  )?.media;
   const backdrop = useAvatarPreview(
     profile.picture,
     community?.id,
@@ -283,9 +336,10 @@ export function ProfileSettings({
                 <ProfileBackdrop src={backdrop} />
                 <div>
                   <AvatarEditor
+                    personal
                     size="compact"
                     value={profile.picture}
-                    name={profile.name}
+                    name={verifiedName?.name ?? profile.name}
                     community={community?.id}
                     {...(thumbnailMedia ? { thumbnailMedia } : {})}
                     disabled={saving || !previewReady}
@@ -303,7 +357,8 @@ export function ProfileSettings({
                 </div>
                 <div className={styles.previewCopy}>
                   <h3 className="text-body-lg">
-                    {profile.name.trim() || "Your profile"}
+                    {verifiedName?.name ??
+                      (profile.name.trim() || "Your profile")}
                   </h3>
                   {profile.about?.trim() ? (
                     <p className={`${styles.about} text-body-sm text-muted`}>
@@ -324,7 +379,7 @@ export function ProfileSettings({
                       (community && (!loaded || loadStatus !== "ready"))
                     )
                       return;
-                    const next = {
+                    let next = {
                       ...profile,
                       name: profile.name.trim(),
                       about: profile.about?.trim() ?? "",
@@ -345,20 +400,45 @@ export function ProfileSettings({
                     void (async () => {
                       try {
                         if (community && loaded) {
+                          // A background write already handed to the writer
+                          // would land after this save; read after it instead.
+                          const background =
+                            backgroundProfileWrites(communities);
+                          if (background) await background;
                           // Preserve fields outside this editor even if another client edited them.
                           const latest = await inspect(community.id);
                           if (!mounted.current) return;
+                          // A save about `tz` alone keeps fields another
+                          // client changed since Settings opened.
+                          if (
+                            !profileEdited &&
+                            latest.exists &&
+                            latest.profile.name.trim()
+                          )
+                            next = {
+                              ...latest.profile,
+                              name: latest.profile.name.trim(),
+                              about: latest.profile.about?.trim() ?? "",
+                            };
                           setDispatched(true);
                           await communityApi.publishProfile(
                             community.id,
                             next,
-                            latest.existing,
+                            tzChanged
+                              ? withTimeZone(latest.existing, tz)
+                              : // Any save shares the default zone the box
+                                // shows, unless a zone arrived since.
+                                tzByDefault
+                                ? withDeviceTimeZone(latest.existing, tz)
+                                : latest.existing,
                           );
                           // Once dispatched, finish on this session even if Settings closes.
                           const confirmed = await inspect(community.id);
                           if (
                             !confirmed.exists ||
-                            !profilesEqual(confirmed.profile, next)
+                            !profilesEqual(confirmed.profile, next) ||
+                            (tzChanged &&
+                              profileTimeZone(confirmed.existing.tz) !== tz)
                           )
                             throw new Error(
                               "Your profile change is not current. Your edits are retained; save again to retry.",
@@ -374,6 +454,7 @@ export function ProfileSettings({
                             ),
                           );
                         setDraft(null);
+                        setTzDraft(undefined);
                         setSaved(true);
                       } catch (reason) {
                         if (mounted.current)
@@ -383,6 +464,7 @@ export function ProfileSettings({
                               : String(reason),
                           );
                       } finally {
+                        endProfileSave(communities);
                         if (mounted.current) {
                           setSaving(false);
                           setDispatched(false);
@@ -395,12 +477,26 @@ export function ProfileSettings({
                     profile={profile}
                     showAvatar={false}
                     disabled={saving || !previewReady}
+                    verifiedName={lockedName}
                     onChange={(next) => {
                       setDraft(next);
                       setSaved(false);
                       setError("");
                     }}
                   />
+                  {community && (
+                    <TimeZoneField
+                      value={tz}
+                      fallback={persistedTz}
+                      byDefault={tzByDefault && !tzChanged}
+                      disabled={saving || !previewReady}
+                      onChange={(next) => {
+                        setTzDraft(next ?? null);
+                        setSaved(false);
+                        setError("");
+                      }}
+                    />
+                  )}
                   {error && (
                     <p role="alert" className="error">
                       {error}
@@ -416,6 +512,7 @@ export function ProfileSettings({
                         disabled={saving || uploading}
                         onClick={() => {
                           setDraft(null);
+                          setTzDraft(undefined);
                           setSaved(false);
                           setError("");
                         }}

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -11,9 +12,16 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Agent } from "../../features/agents/service";
+import type {
+  Agent,
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
+import type { ChannelLabel } from "../../features/channels/channel-icon";
+import { AgentTabs } from "../agents/AgentTabs";
 import { type Config, DEFAULT_CONFIG, type Place } from "./runtime";
 import { type Provider, type Providers, PiSetup } from "./setup";
+import { PiStopped } from "./pi";
 import { createTabs } from "./tabs";
 import { piTurns } from "./transcript";
 
@@ -90,7 +98,8 @@ function fakePi(
   return { request: request as unknown as Request, calls: request };
 }
 
-/** The runtime's conversations: a thread Pi works in, and a channel. */
+/** The runtime's conversations: a thread Pi works in, in a channel the
+ * community lists, and a channel it does not. */
 function fakeRuntime() {
   const places: Place[] = [
     {
@@ -98,16 +107,30 @@ function fakeRuntime() {
       conversation: 1,
       channelId: "chan",
       root: "root",
-      name: "general",
       at: 2_000,
     },
     { key: "other", conversation: 2, channelId: "other", at: 1_000 },
   ];
+  const labels = new Map<string, ChannelLabel>([
+    ["chan", { name: "general", channelType: "stream" }],
+  ]);
+  const listeners = new Set<() => void>();
   const working = [1];
   return {
     places: vi.fn(async () => places),
     working: () => working,
     subscribe: () => () => {},
+    channelLabel: (_agent: string, channelId: string) => labels.get(channelId),
+    readablePlaces: <T,>(_agent: string, rows: readonly T[]) => [...rows],
+    subscribeChannels: (_agent: string, listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** The community's channel list changed: these channels read so now. */
+    relabel(changes: Readonly<Record<string, ChannelLabel>>) {
+      for (const [id, label] of Object.entries(changes)) labels.set(id, label);
+      for (const listener of listeners) listener();
+    },
     transcript: vi.fn(async (_agent: string, place: Place) => ({
       turns: piTurns(
         [
@@ -137,13 +160,12 @@ function fakeRuntime() {
         place,
         true,
       ),
-      unknownThread: 0,
       more: false,
     })),
   };
 }
 
-function created(pi = fakePi()) {
+function created(pi = fakePi(), modelAppearance?: "glass-ghost") {
   const { Create, CreateModel } = createTabs({
     setup: new PiSetup(pi),
     runtime: fakeRuntime(),
@@ -158,7 +180,12 @@ function created(pi = fakePi()) {
     // As New agent shows them: the Model row, then the type's own choices.
     return (
       <>
-        <CreateModel config={config} disabled={false} onChange={onChange} />
+        <CreateModel
+          config={config}
+          disabled={false}
+          onChange={onChange}
+          {...(modelAppearance && { modelAppearance })}
+        />
         <Create config={config} disabled={false} onChange={onChange} />
       </>
     );
@@ -182,19 +209,26 @@ async function openChoices() {
   return screen.findByRole("dialog", { name: "Provider and model" });
 }
 
-it("starts New agent's Model field on Pi's default, with the provider kept to its dialog", async () => {
-  created();
-  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
-  await waitFor(() =>
-    expect(modelButton()).toHaveTextContent(
-      "Pi default (Anthropic · Claude X)",
-    ),
-  );
-  // Pi's mark, then the provider's.
-  expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
-  expect(modelButton()).toHaveAttribute("aria-haspopup", "dialog");
-  expect(screen.getByLabelText("Instructions Optional")).toBeVisible();
-});
+it.each([undefined, "glass-ghost"] as const)(
+  "starts Model on Pi's default with appearance %s, with the provider kept to its dialog",
+  async (appearance) => {
+    created(fakePi(), appearance);
+    expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+    await waitFor(() =>
+      expect(modelButton()).toHaveTextContent(
+        "Pi default (Anthropic · Claude X)",
+      ),
+    );
+    // Pi's mark, then the provider's.
+    expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
+    expect(modelButton()).toHaveAttribute("aria-haspopup", "dialog");
+    expect(modelButton()).toHaveAttribute(
+      "data-variant",
+      appearance ?? "outline",
+    );
+    expect(screen.getByLabelText("Instructions Optional")).toBeVisible();
+  },
+);
 
 it("saves a provider's key with Pi's login, needs a model for it, and tests it", async () => {
   const { pi, changes } = created();
@@ -311,10 +345,10 @@ it("reads Pi's providers again when the window gets focus, after a change in the
   );
 });
 
-it("says Buzz can't use a default provider that a Pi package adds", async () => {
+it("says when Pi has no provider for the choice", async () => {
   created(fakePi({}, { provider: "databricks", model: "databricks-x" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "databricks isn't built into Pi, so Buzz can't use it",
+    "Pi has no provider databricks",
   );
   // Only Pi's mark: Buzz has none for this provider.
   expect(modelButton().querySelectorAll("svg")).toHaveLength(1);
@@ -324,7 +358,7 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
   });
   await waitFor(() => expect(provider).toBeEnabled());
   expect(provider).toHaveAccessibleDescription(
-    /Buzz can use only Pi's built-in providers, and databricks isn't one/,
+    /databricks isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it/,
   );
   const use = within(dialog).getByRole("button", { name: "Use" });
   expect(use).toHaveAttribute("aria-disabled", "true");
@@ -339,6 +373,7 @@ it("says Buzz can't use a default provider that a Pi package adds", async () => 
 });
 
 const AGENT = {
+  key: "c".repeat(64),
   pubkey: "c".repeat(64),
   name: "pii",
   type: "buzz.pi/pi",
@@ -364,6 +399,84 @@ it("keeps Try again's providers for what the dialog's Use allows", async () => {
     "aria-disabled",
     "true",
   );
+});
+
+it("guards an invalid Pi provider draft through an agent tab switch", async () => {
+  const user = userEvent.setup();
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup(fakePi()),
+    runtime: fakeRuntime(),
+  });
+  const save = vi.fn(async () => {});
+  const agent: Agent<Config> = {
+    ...AGENT,
+    place: "here",
+    relay: "wss://example.com",
+    attention: {},
+    skipped: {},
+    timers: {},
+    attentionEnabled: true,
+  };
+  const type = {
+    key: AGENT.type,
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        splitSettings: true,
+        component: SettingsTab,
+      },
+    ],
+  } as unknown as RegisteredAgentType;
+  render(
+    <AgentTabs
+      agents={
+        {
+          save,
+          subscribe: () => () => {},
+          memberships: () => [],
+          configHistory: () => undefined,
+          addedTabs: () => [],
+          registerTab: () => {},
+          controlAttention: () => {},
+        } as unknown as Agents
+      }
+      agent={agent}
+      type={type}
+      channels={[]}
+      settingsHost={{}}
+      memories={undefined}
+      settingsContent={null}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Provider" }),
+    ).toHaveTextContent("Anthropic"),
+  );
+  await choose("Provider", "OpenAI");
+  expect(
+    await screen.findByText(
+      "Pi's settings name no model for OpenAI. Choose one.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  await user.click(screen.getByRole("tab", { name: "Memory" }));
+  expect(await screen.findByRole("alertdialog")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(screen.getByRole("combobox", { name: "Provider" })).toHaveTextContent(
+    "OpenAI",
+  );
+  await user.click(screen.getByRole("tab", { name: "Memory" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Provider" }),
+    ).toHaveTextContent("Anthropic"),
+  );
+  expect(save).not.toHaveBeenCalled();
 });
 
 it("shows the provider, model and thinking level in Identity, and the provider's setup in Settings", async () => {
@@ -428,6 +541,78 @@ it("saves a key on Enter without saving the agent's settings", async () => {
   expect(save).not.toHaveBeenCalled();
 });
 
+it("settles a transcript request without opening it once Pi's late listing arrives", async () => {
+  const runtime = fakeRuntime();
+  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+  const done = vi.fn();
+  render(
+    <ActivityTab
+      agent={AGENT}
+      conversation={{ channelId: "chan", rootId: "root" }}
+      initialTranscript={{ opening: 1, done }}
+    />,
+  );
+  expect(done).toHaveBeenCalled();
+  const here = await screen.findByRole("region", { name: "This thread" });
+  expect(
+    within(here).getByRole("button", { name: /^View transcript/ }),
+  ).toBeVisible();
+  expect(runtime.transcript).not.toHaveBeenCalled();
+  expect(
+    screen.queryByText("Hello from chan/root", { selector: "summary span" }),
+  ).toBeNull();
+});
+
+it("shows a channel's lock as soon as the community makes it private, without reading Pi again", async () => {
+  const runtime = fakeRuntime();
+  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+  render(<ActivityTab agent={AGENT} />);
+  const name = await screen.findByTitle("general · thread root");
+  expect(name.querySelector("svg")).toHaveClass("tabler-icon-hash");
+
+  act(() => {
+    runtime.relabel({
+      chan: { name: "general", channelType: "stream", private: true },
+    });
+  });
+  expect(
+    screen.getByTitle("general · thread root").querySelector("svg"),
+  ).toHaveClass("tabler-icon-lock");
+  expect(runtime.places).toHaveBeenCalledTimes(1);
+  expect(runtime.transcript).not.toHaveBeenCalled();
+});
+
+it("relabels the opened-from channel too when the thread has no Pi conversation of its own", async () => {
+  const runtime = fakeRuntime();
+  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+  render(
+    <ActivityTab
+      agent={AGENT}
+      conversation={{ channelId: "other", rootId: "zzz" }}
+    />,
+  );
+  // The thread has no conversation: the channel's stands in for it.
+  const here = await screen.findByRole("region", { name: "This thread" });
+  await waitFor(() =>
+    expect(
+      within(here).getByRole("button", { name: "View transcript: other" }),
+    ).toBeInTheDocument(),
+  );
+  expect(here.querySelector("svg")).toBeNull();
+
+  act(() => {
+    runtime.relabel({
+      other: { name: "secret", channelType: "stream", private: true },
+    });
+  });
+  const name = within(here).getByTitle("secret");
+  expect(name.querySelector("svg")).toHaveClass("tabler-icon-lock");
+  expect(
+    within(here).getByRole("button", { name: "View transcript: secret" }),
+  ).toBeInTheDocument();
+  expect(runtime.places).toHaveBeenCalledTimes(1);
+});
+
 it("lists Pi's conversations in the Activity tab, and shows a transcript", async () => {
   const runtime = fakeRuntime();
   const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
@@ -439,17 +624,26 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   );
   const user = userEvent.setup();
   const here = await screen.findByRole("region", { name: "This thread" });
-  expect(here).toHaveTextContent("#general");
+  expect(here).toHaveTextContent("general");
+  expect(here.querySelector("svg")).toHaveClass("tabler-icon-hash");
   expect(here).toHaveTextContent("Working");
   expect(screen.getAllByRole("listitem").map((row) => row.textContent)).toEqual(
-    [expect.stringContaining("other · channel")],
+    [expect.stringMatching(/^otherChannel · /)],
   );
+  // Unlisted, its kind is unknown: no icon claims one.
+  expect(screen.getByTitle("other · channel").querySelector("svg")).toBeNull();
 
   await user.click(
     within(here).getByRole("button", { name: /^View transcript/ }),
   );
-  expect(await screen.findByText("Hello from chan/root")).toBeVisible();
-  expect(screen.getByText("Hi there")).toBeVisible();
+  expect(
+    await screen.findByText("Hello from chan/root", {
+      selector: "summary span",
+    }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Hi there", { selector: "summary span" }),
+  ).toBeVisible();
   expect(runtime.transcript).toHaveBeenLastCalledWith(
     "c".repeat(64),
     expect.objectContaining({ conversation: 1 }),
@@ -459,16 +653,127 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   await user.click(screen.getByRole("button", { name: "Back to profile" }));
   await user.click(
     within(screen.getByRole("listitem")).getByRole("button", {
-      name: "View transcript",
+      name: "View transcript: other · channel",
     }),
   );
-  expect(await screen.findByText("Hello from other")).toBeVisible();
+  expect(
+    await screen.findByText("Hello from other", { selector: "summary span" }),
+  ).toBeVisible();
 
   // A refresh that fails says so, and keeps the transcript it has.
   runtime.transcript.mockRejectedValueOnce(new Error("Pi stopped"));
-  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await user.click(screen.getByRole("button", { name: "Refresh transcript" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not read the Pi conversation: Pi stopped",
   );
-  expect(screen.getByText("Hello from other")).toBeVisible();
+  expect(
+    screen.getByText("Hello from other", { selector: "summary span" }),
+  ).toBeVisible();
+});
+
+it("retries a stopped Pi's transcript read only once the window shows", async () => {
+  const runtime = fakeRuntime();
+  const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });
+  render(
+    <ActivityTab
+      agent={AGENT}
+      conversation={{ channelId: "chan", rootId: "root" }}
+    />,
+  );
+  const user = userEvent.setup();
+  const here = await screen.findByRole("region", { name: "This thread" });
+  await user.click(
+    within(here).getByRole("button", { name: /^View transcript/ }),
+  );
+  await screen.findByText("Hello from chan/root", { selector: "summary span" });
+  const reads = runtime.transcript.mock.calls.length;
+  runtime.transcript.mockRejectedValueOnce(new PiStopped("Pi stopped"));
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  await user.click(screen.getByRole("button", { name: "Refresh transcript" }));
+  // Past the first backoff, hidden: no new read starts another host.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 1200)));
+  expect(runtime.transcript).toHaveBeenCalledTimes(reads + 1);
+  hidden.mockReturnValue(false);
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  await waitFor(() =>
+    expect(runtime.transcript).toHaveBeenCalledTimes(reads + 2),
+  );
+  hidden.mockRestore();
+});
+
+it.each([
+  [{}, false],
+  [{ provider: "anthropic" }, false],
+  [{ model: "claude-x" }, false],
+  [{ provider: "anthropic", model: "claude-x" }, true],
+] as const)(
+  "reports Pi connection readiness from resolved defaults %j",
+  async (defaults, expected) => {
+    const pi = fakePi({}, defaults);
+    const setup = new PiSetup(pi);
+    const { CreateModel } = createTabs({ setup, runtime: fakeRuntime() });
+    const onReadyChange = vi.fn();
+    render(
+      <CreateModel
+        config={DEFAULT_CONFIG}
+        onChange={vi.fn()}
+        onReadyChange={onReadyChange}
+        disabled={false}
+      />,
+    );
+    await act(async () => {
+      await setup.providers();
+    });
+    await waitFor(() =>
+      expect(onReadyChange).toHaveBeenLastCalledWith(expected),
+    );
+  },
+);
+
+it("describes the inherited Pi model without nesting a Pi default label", async () => {
+  created();
+  const dialog = await openChoices();
+  const picker = within(dialog).getByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(picker).toHaveTextContent("Claude X · Default"));
+  await userEvent.setup().click(picker);
+  const option = await screen.findByRole("option", { name: "Default" });
+  expect(option).toHaveAccessibleDescription("Currently Claude X");
+  expect(option).not.toHaveTextContent("Pi default");
+});
+
+it("blocks an unsupported proposal effort and lets the owner clear it", async () => {
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup(fakePi()),
+    runtime: fakeRuntime(),
+  });
+  const save = vi.fn(async () => {});
+  const user = userEvent.setup();
+  render(
+    <SettingsTab
+      agent={{
+        ...AGENT,
+        config: { ...AGENT.config, model: "claude-x", effort: "max" },
+      }}
+      save={save}
+      settingsHost={{ proposedModelOrEffort: true, pendingSave: save }}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Claude X",
+    ),
+  );
+  const submit = screen.getByRole("button", { name: "Save" });
+  await user.click(submit);
+  expect(
+    await screen.findByText(/Choose a thinking level this Pi model supports/),
+  ).toBeVisible();
+  expect(save).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "Clear model and thinking overrides" }),
+  );
+  await user.click(submit);
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ model: "", effort: "" }),
+  );
 });

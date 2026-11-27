@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { appClient } from "../../buzz-mcp/app-client";
+import { callSessionTool, type AddedTool } from "../../buzz-mcp/session-tools";
+import { stepText } from "../../features/agents/local-activity";
+import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeProcess, stepLabel } from "./claude";
 import {
   backgroundTasks,
+  type FakeClaude,
   fakeSpawn,
   flush,
   sessionState,
@@ -28,6 +33,8 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
     "stream-json",
     "--verbose",
     "--replay-user-messages",
+    "--system-prompt-snapshot",
+    "off",
     "--thinking-display",
     "summarized",
     "--permission-mode",
@@ -54,6 +61,63 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
   });
   expect(claude.sessionId).toBe("new-session");
   expect(claude.started).toBe(false);
+});
+
+it.each([
+  [undefined, undefined],
+  [200000, "200000"],
+])("starts Claude compacting at %s tokens", async (compactAt, window) => {
+  const { spawn, processes } = fakeSpawn();
+  await ClaudeProcess.start(spawn, {
+    ...launch,
+    ...(compactAt && { compactAt }),
+  });
+  expect(processes[0]?.options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+    window,
+  );
+});
+
+it("resumes a session on the system prompt it is launched with, not the one it saved", async () => {
+  const { spawn, processes } = fakeSpawn();
+  await ClaudeProcess.start(spawn, { ...launch, resume: "old-session" });
+  const args = processes[0]?.options.args ?? [];
+  expect(args).toContain("--resume");
+  expect(args[args.indexOf("--system-prompt-snapshot") + 1]).toBe("off");
+});
+
+it("lets its Buzz credential act as its agent before it initializes", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const agent = { pubkey: "ab".repeat(32), relay: "wss://relay.example" };
+  await ClaudeProcess.start(spawn, { ...launch, agent });
+  const [fake] = processes;
+  expect(fake?.options.agentCredential).toBe(true);
+  expect(fake?.actedAs).toEqual([agent]);
+  expect(fake?.received[0]).toMatchObject({
+    request: { subtype: "initialize" },
+  });
+});
+
+it("fails to start, and stops, when its credential cannot act as its agent", async () => {
+  const { spawn, processes } = fakeSpawn();
+  await expect(
+    ClaudeProcess.start(
+      async (id, options) => ({
+        ...(await spawn(id, options)),
+        actAs: async () => {
+          throw new Error("revoked");
+        },
+      }),
+      { ...launch, agent: { pubkey: "ab".repeat(32), relay: "wss://r" } },
+    ),
+  ).rejects.toThrow("revoked");
+  expect(processes[0]?.killed).toBe(true);
+  expect(processes[0]?.received).toEqual([]);
+});
+
+it("asks no credential for a discovery probe", async () => {
+  const { spawn, processes } = fakeSpawn();
+  await ClaudeProcess.start(spawn, { ...launch, discovery: true });
+  expect(processes[0]?.options.agentCredential).toBe(false);
 });
 
 it("resolves a message once the session is idle, and keeps the process for the next", async () => {
@@ -219,11 +283,12 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   });
   emit({ ...a, isReplay: true });
   expect(first.acknowledged).toHaveBeenCalledOnce();
+  expect(first.acknowledged).toHaveBeenCalledWith(undefined);
   const steered = claude.send("same text", second);
   const b = fake.received.filter((m) => m.type === "user").at(-1);
   if (!b) throw new Error("Expected follow-up");
   emit(tool("Read"));
-  expect(first.step).toHaveBeenLastCalledWith("Read", undefined);
+  expect(first.step).toHaveBeenLastCalledWith("Read", undefined, undefined);
   expect(second.step).not.toHaveBeenCalled();
   // Neither a tool result nor a same-text echo with an unknown id admits work.
   emit({ type: "user", uuid: b.uuid, message: { content: "tool result" } });
@@ -232,13 +297,14 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   emit({ ...b, isReplay: true });
   expect(first.superseded).toHaveBeenCalledOnce();
   expect(second.acknowledged).toHaveBeenCalledOnce();
+  expect(second.acknowledged).toHaveBeenCalledWith({ steering: true });
   emit({ ...b, isReplay: true });
   const watched = claude.send("watched event");
   const watch = fake.received.filter((m) => m.type === "user").at(-1);
   emit({ ...watch, isReplay: true });
   emit(tool("Bash"));
-  expect(first.step).not.toHaveBeenCalledWith("Bash", undefined);
-  expect(second.step).toHaveBeenLastCalledWith("Bash", undefined);
+  expect(first.step).not.toHaveBeenCalledWith("Bash", undefined, undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Bash", undefined, undefined);
   expect(first.superseded).toHaveBeenCalledOnce();
   const other = {
     step: vi.fn(),
@@ -250,8 +316,8 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   emit({ ...third, isReplay: true });
   emit(tool("Grep"));
   expect(second.superseded).not.toHaveBeenCalled();
-  expect(second.step).toHaveBeenLastCalledWith("Grep", undefined);
-  expect(other.step).toHaveBeenLastCalledWith("Grep", undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Grep", undefined, undefined);
+  expect(other.step).toHaveBeenLastCalledWith("Grep", undefined, undefined);
   expect(claude.busy).toBe(true);
   fake.finish();
   await watched;
@@ -259,7 +325,7 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   await expect(sent).resolves.toEqual({ ok: true });
   await expect(steered).resolves.toEqual({ ok: true });
   emit(tool("Edit"));
-  expect(second.step).not.toHaveBeenCalledWith("Edit", undefined);
+  expect(second.step).not.toHaveBeenCalledWith("Edit", undefined, undefined);
 });
 
 it("settles on each result when Claude does not report idle", async () => {
@@ -297,8 +363,12 @@ const interrupts = (fake: { received: Record<string, unknown>[] }) =>
       message.type === "control_request" &&
       (message.request as { subtype?: string }).subtype === "interrupt",
   );
-/** Ends the open turn as Claude does one stopped in the middle of a tool. */
-const abortTools = (fake: { emit(message: Record<string, unknown>): void }) => {
+/** Ends the open turn as Claude does one stopped in the middle of a tool;
+ * an older `claude` reports no idle. */
+const abortTools = (
+  fake: { emit(message: Record<string, unknown>): void },
+  idle = true,
+) => {
   fake.emit({
     type: "result",
     subtype: "error_during_execution",
@@ -307,12 +377,13 @@ const abortTools = (fake: { emit(message: Record<string, unknown>): void }) => {
     result: "Tool use was interrupted",
     session_id: "s1",
   });
-  fake.emit({
-    type: "system",
-    subtype: "session_state_changed",
-    state: "idle",
-    session_id: "s1",
-  });
+  if (idle)
+    fake.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "idle",
+      session_id: "s1",
+    });
 };
 
 it("interrupts a running turn with a control request, and does nothing when idle", async () => {
@@ -338,7 +409,7 @@ it("interrupts a running turn with a control request, and does nothing when idle
   expect(interrupts(fake)).toHaveLength(1);
 });
 
-it("settles a stopped turn that Claude ends as aborted tools as done, not failed", async () => {
+it("settles a stopped turn that Claude ends as aborted tools as stopped, not failed", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {
     ...launch,
@@ -351,8 +422,344 @@ it("settles a stopped turn that Claude ends as aborted tools as done, not failed
   await flush();
   await claude.interrupt();
   abortTools(fake);
-  await expect(sent).resolves.toEqual({ ok: true });
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
   expect(claude.busy).toBe(false);
+});
+
+/** A Claude whose Buzz tools run through the real app client: its first
+ * `mem_get` of `later` holds until `release`, and other reads answer at once.
+ * With `holdStops`, Claude answers a Stop only when the test does. */
+async function heldTurns(
+  env?: Record<string, string>,
+  added: AddedTool[] = [],
+) {
+  const { spawn, processes } = fakeSpawn();
+  const stops: string[] = [];
+  let holdStops = false;
+  let release: (() => void) | undefined;
+  let entered!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let later = 0;
+  const memories = vi.fn(async (slug?: string) => {
+    if (slug === "mem/later" && ++later === 1) {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    return {
+      entries: [{ slug: slug ?? "core", body: `${slug} notes`, createdAt: 1 }],
+      partial: false,
+    };
+  });
+  const signals: AbortSignal[] = [];
+  const tools = vi.fn(
+    async (_conversation: unknown, message: unknown, signal: AbortSignal) => {
+      signals.push(signal);
+      const { id, params } = message as {
+        id: number;
+        params: { name: string; arguments: Record<string, unknown> };
+      };
+      const client = appClient(
+        { pubkey: "agent", key: "agent" } as unknown as AgentHandle,
+        { read: vi.fn(), memories, signal, callSignal: signal },
+      );
+      return callSessionTool(
+        client,
+        {},
+        params.name,
+        params.arguments,
+        added,
+      ).then(
+        (text) => ({ jsonrpc: "2.0", id, result: { content: [{ text }] } }),
+        (error: Error) => ({
+          jsonrpc: "2.0",
+          id,
+          result: { isError: true, content: [{ text: error.message }] },
+        }),
+      );
+    },
+  );
+  const claude = await ClaudeProcess.start(
+    async (id, options) => {
+      const process = await spawn(id, env ? { ...options, env } : options);
+      return {
+        ...process,
+        write: async (data: string) => {
+          const stop = holdStops && data.includes('"subtype":"interrupt"');
+          if (!stop) return process.write(data);
+          stops.push(JSON.parse(data).request_id);
+        },
+      };
+    },
+    { ...launch, sessionId: "s1", tools },
+  );
+  claude.conversation = "chan/root";
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  const answer = async (requestId: string) => {
+    const of = (message: Record<string, unknown>) =>
+      (message.response as { request_id?: string } | undefined)?.request_id ===
+      requestId;
+    await vi.waitFor(() => expect(fake.received.some(of)).toBe(true));
+    return JSON.stringify(fake.received.find(of));
+  };
+  const ask = (requestId: string, slug = "later", name = "mem_get") =>
+    fake.emit({
+      type: "control_request",
+      request_id: requestId,
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: {
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "tools/call",
+          params: { name, arguments: { slug } },
+        },
+      },
+    });
+  const answerStop = (requestId: string | undefined) =>
+    fake.emit({
+      type: "control_response",
+      response: { subtype: "success", request_id: requestId },
+    });
+  return {
+    claude,
+    fake,
+    stops,
+    holdStops: () => {
+      holdStops = true;
+    },
+    answerStop,
+    memories,
+    signals,
+    reading,
+    ask,
+    answer,
+    release: () => release?.(),
+  };
+}
+
+it("keeps an added tool canceled after Stop while a new turn can write", async () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const signals: AbortSignal[] = [];
+  const publish = vi.fn();
+  let calls = 0;
+  const t = await heldTurns(undefined, [
+    {
+      name: "notes_write",
+      description: "Write a note.",
+      inputSchema: { type: "object" },
+      async call(client) {
+        const first = ++calls === 1;
+        if (first) entered();
+        if (!client.signal) throw new Error("No request cancellation signal");
+        const signal = client.signal;
+        signals.push(signal);
+        if (first) await waiting;
+        signal.throwIfAborted();
+        publish();
+        return "saved";
+      },
+    },
+  ]);
+  try {
+    t.fake.hold = true;
+    const stopped = t.claude.send("write");
+    await flush();
+    t.ask("r1", "later", "notes_write");
+    await started;
+    expect(signals[0]?.aborted).toBe(false);
+    await t.claude.interrupt();
+    expect(signals[0]?.aborted).toBe(true);
+    abortTools(t.fake);
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+    void t.claude.send("write again");
+    await flush();
+    t.ask("r2", "later", "notes_write");
+    expect(await t.answer("r2")).toContain("saved");
+    expect(signals[1]?.aborted).toBe(false);
+    release();
+    expect(await t.answer("r1")).toContain('"isError":true');
+    expect(publish).toHaveBeenCalledOnce();
+  } finally {
+    release();
+    t.fake.finish();
+  }
+});
+
+it("withholds a read an unprotected Stop overtook, which later work cannot revive", async () => {
+  const t = await heldTurns();
+  try {
+    t.fake.hold = true;
+    const stopped = t.claude.send("check my notes");
+    await flush();
+    t.ask("r1");
+    await t.reading;
+    await t.claude.interrupt();
+    t.release();
+    const refused = await t.answer("r1");
+    expect(refused).toContain('"isError":true');
+    expect(refused).not.toContain("later notes");
+    abortTools(t.fake);
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+
+    // The next message is new work; the stopped call stays stopped.
+    void t.claude.send("again");
+    await flush();
+    t.ask("r2");
+    expect(await t.answer("r2")).toContain("later notes");
+    expect(t.signals[0]?.aborted).toBe(true);
+    expect(t.signals[1]?.aborted).toBe(false);
+  } finally {
+    t.release();
+    t.fake.finish();
+  }
+});
+
+it("answers a turn of its own after a Stop, while a call held across the Stop stays refused", async () => {
+  const t = await heldTurns();
+  try {
+    t.fake.hold = true;
+    const stopped = t.claude.send("check my notes");
+    await flush();
+    t.ask("r1");
+    await t.reading;
+    await t.claude.interrupt();
+    abortTools(t.fake);
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+
+    // A finished background task starts a turn with no message from Buzz.
+    sessionState(t.fake, "running");
+    t.ask("r2", "core");
+    t.ask("r3");
+    const memory = await t.answer("r2");
+    expect(memory).not.toContain('"isError":true');
+    expect(memory).toContain("core notes");
+    expect(await t.answer("r3")).toContain("later notes");
+
+    t.release();
+    const refused = await t.answer("r1");
+    expect(refused).toContain('"isError":true');
+    expect(refused).not.toContain("later notes");
+    sessionState(t.fake, "idle");
+  } finally {
+    t.release();
+  }
+});
+
+it.each([
+  ["reports idle", undefined],
+  ["settles per result", {}],
+])(
+  "keeps a message sent while a Stop lands in the stopped turn, when Claude %s",
+  async (_, env) => {
+    const t = await heldTurns(env);
+    const idle = !env;
+    t.fake.hold = true;
+    const stopped = t.claude.send("check my notes");
+    await flush();
+    if (idle) sessionState(t.fake, "running");
+    await t.claude.interrupt();
+    const folded = t.claude.send("and the later ones");
+    await flush();
+    // A call the stopped turn makes late is still stopped.
+    t.ask("r1", "core");
+    t.ask("r2");
+    expect(await t.answer("r1")).toContain('"isError":true');
+    expect(await t.answer("r2")).toContain('"isError":true');
+    expect(t.memories).not.toHaveBeenCalled();
+    let settled = false;
+    void stopped.then(() => {
+      settled = true;
+    });
+    abortTools(t.fake, false);
+    await flush();
+    // Claude that reports idle settles there, not at the result.
+    expect(settled).toBe(!idle);
+    if (idle) sessionState(t.fake, "idle");
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+    await expect(folded).resolves.toEqual({ ok: true, stopped: true });
+
+    // The next message is new work, whose calls answer.
+    const next = t.claude.send("next");
+    await flush();
+    t.ask("r3", "core");
+    t.ask("r4");
+    expect(await t.answer("r3")).toContain("core notes");
+    await t.reading;
+    t.release();
+    expect(await t.answer("r4")).toContain("later notes");
+    t.fake.finish();
+    await expect(next).resolves.toEqual({ ok: true });
+  },
+);
+
+it("stops a turn that starts while an earlier Stop awaits Claude's answer", async () => {
+  const t = await heldTurns();
+  t.holdStops();
+  t.fake.hold = true;
+  const sent = t.claude.send("check my notes");
+  await flush();
+  const first = t.claude.interrupt();
+  abortTools(t.fake);
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
+
+  // Claude starts a turn of its own before answering the first Stop.
+  sessionState(t.fake, "running");
+  const second = t.claude.interrupt();
+  expect(t.stops).toHaveLength(2);
+  t.ask("r1", "core");
+  expect(await t.answer("r1")).toContain('"isError":true');
+  t.answerStop(t.stops[0]);
+  t.answerStop(t.stops[1]);
+  await expect(first).resolves.toBeUndefined();
+  await expect(second).resolves.toBeUndefined();
+  sessionState(t.fake, "idle");
+});
+
+it("asks Claude once for Stops made together, which share its refusal", async () => {
+  const t = await heldTurns();
+  t.fake.hold = true;
+  t.fake.interruptError = "not now";
+  const sent = t.claude.send("check my notes");
+  await flush();
+  const first = t.claude.interrupt();
+  const second = t.claude.interrupt();
+  await expect(first).rejects.toThrow("Claude did not stop: not now");
+  await expect(second).rejects.toThrow("Claude did not stop: not now");
+  expect(interrupts(t.fake)).toHaveLength(1);
+  // Claude refused, so the turn and its calls go on.
+  t.ask("r1", "core");
+  expect(await t.answer("r1")).toContain("core notes");
+  t.fake.finish();
+  await expect(sent).resolves.toEqual({ ok: true });
+});
+
+it("keeps work stopped when Claude refuses a repeated Stop", async () => {
+  const t = await heldTurns();
+  t.fake.hold = true;
+  const sent = t.claude.send("check my notes");
+  await flush();
+  await t.claude.interrupt();
+  t.fake.interruptError = "already stopping";
+  await expect(t.claude.interrupt()).rejects.toThrow(
+    "Claude did not stop: already stopping",
+  );
+  t.ask("r1", "core");
+  expect(await t.answer("r1")).toContain('"isError":true');
+  abortTools(t.fake);
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
 });
 
 it("still reports aborted tools as a failure when the owner did not stop the turn", async () => {
@@ -386,7 +793,7 @@ it("forgets a stop once its turn ends, so a later failure is reported", async ()
   await flush();
   await claude.interrupt();
   abortTools(fake);
-  await expect(stopped).resolves.toEqual({ ok: true });
+  await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
   const next = claude.send("second");
   await flush();
   fake.finish({ error: "Credit balance is too low" });
@@ -394,6 +801,21 @@ it("forgets a stop once its turn ends, so a later failure is reported", async ()
     ok: false,
     error: "Credit balance is too low",
   });
+});
+
+it("does not carry a stopped turn of its own into the next message", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  sessionState(fake, "running");
+  await claude.interrupt();
+  abortTools(fake);
+  expect(claude.active).toBe(false);
+  await expect(claude.send("next")).resolves.toEqual({ ok: true });
 });
 
 it("throws when Claude refuses to stop, and reports a later real error", async () => {
@@ -477,7 +899,214 @@ it("allows tool use and acknowledges hooks it is asked about", async () => {
   ]);
 });
 
-it("serves the Buzz tools over the pipe and ends a turn on a final send", async () => {
+it("cancels a Buzz tool still running when its turn settles, failed or not, and serves the next turn's", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const signals: AbortSignal[] = [];
+  let called = () => {};
+  const tools = vi.fn(
+    (_conversation: unknown, _message: unknown, signal: AbortSignal) => {
+      signals.push(signal);
+      called();
+      return new Promise<never>(() => {});
+    },
+  );
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+    tools,
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  const call = (id: string) => {
+    const reached = new Promise<void>((resolve) => {
+      called = resolve;
+    });
+    fake.emit({
+      type: "control_request",
+      request_id: id,
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: { jsonrpc: "2.0", id: 3, method: "tools/call" },
+      },
+    });
+    return reached;
+  };
+  const taken = (text: string) => {
+    let submitted = () => {};
+    const written = new Promise<void>((resolve) => {
+      submitted = resolve;
+    });
+    return { settled: claude.send(text, { submitted }), written };
+  };
+  const failed = taken("first");
+  await failed.written;
+  await call("r1");
+  expect(signals).toHaveLength(1);
+  expect(signals[0]?.aborted).toBe(false);
+  fake.finish({ error: "Credit balance is too low" });
+  await expect(failed.settled).resolves.toMatchObject({ ok: false });
+  expect(signals[0]?.aborted).toBe(true);
+  const ok = taken("second");
+  await ok.written;
+  await call("r2");
+  expect(signals).toHaveLength(2);
+  expect(signals[1]?.aborted).toBe(false);
+  fake.finish();
+  await expect(ok.settled).resolves.toEqual({ ok: true });
+  expect(signals[1]?.aborted).toBe(true);
+});
+
+it("gives each Buzz tool call its session's context size, from its last model call", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const sizes: unknown[] = [];
+  const tools = vi.fn(
+    async (
+      _conversation: unknown,
+      message: unknown,
+      _signal: AbortSignal,
+      _check?: () => void,
+      tokens?: number,
+    ) => {
+      sizes.push(tokens);
+      return { jsonrpc: "2.0", id: (message as { id: number }).id, result: {} };
+    },
+  );
+  await ClaudeProcess.start(spawn, { ...launch, sessionId: "s1", tools });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  let id = 0;
+  const call = async () => {
+    const before = sizes.length;
+    fake.emit({
+      type: "control_request",
+      request_id: `r${++id}`,
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: { jsonrpc: "2.0", id, method: "tools/call" },
+      },
+    });
+    await vi.waitFor(() => expect(sizes).toHaveLength(before + 1));
+  };
+  const assistant = (
+    usage: Record<string, number>,
+    more: Record<string, unknown> = {},
+  ) =>
+    fake.emit({
+      type: "assistant",
+      session_id: "s1",
+      parent_tool_use_id: null,
+      message: { role: "assistant", content: [], usage },
+      ...more,
+    });
+  // No model call yet.
+  await call();
+  assistant({
+    input_tokens: 3,
+    cache_creation_input_tokens: 120,
+    cache_read_input_tokens: 435_000,
+    output_tokens: 200,
+  });
+  // A subagent's call has its own context, and a synthetic one no usage.
+  assistant({ input_tokens: 9_000 }, { parent_tool_use_id: "toolu_1" });
+  assistant({ input_tokens: 0, output_tokens: 0 });
+  await call();
+  // Another session says nothing of this one's size.
+  fake.emit({ type: "system", subtype: "status", session_id: "s2" });
+  await call();
+  expect(sizes).toEqual([undefined, 435_323, undefined]);
+});
+
+it.each([
+  [
+    "reports its state",
+    (fake: FakeClaude) => sessionState(fake, "running"),
+    (fake: FakeClaude) => sessionState(fake, "idle"),
+  ],
+  [
+    "is too old to report its state",
+    () => {},
+    (fake: FakeClaude) =>
+      fake.emit({ type: "result", subtype: "success", is_error: false }),
+  ],
+])(
+  "cancels a Buzz tool called in a turn of its own when that turn ends, on a claude that %s",
+  async (_, start, end) => {
+    const { spawn, processes } = fakeSpawn();
+    const signals: AbortSignal[] = [];
+    let called = () => {};
+    const tools = vi.fn(
+      (_conversation: unknown, _message: unknown, signal: AbortSignal) => {
+        signals.push(signal);
+        called();
+        return new Promise<never>(() => {});
+      },
+    );
+    await ClaudeProcess.start(spawn, {
+      ...launch,
+      sessionId: "s1",
+      tools,
+    });
+    const fake = processes[0];
+    if (!fake) throw new Error("no process");
+    const call = (id: string) => {
+      const reached = new Promise<void>((resolve) => {
+        called = resolve;
+      });
+      fake.emit({
+        type: "control_request",
+        request_id: id,
+        request: {
+          subtype: "mcp_message",
+          server_name: "buzz",
+          message: { jsonrpc: "2.0", id: 3, method: "tools/call" },
+        },
+      });
+      return reached;
+    };
+    start(fake);
+    await call("r1");
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
+    end(fake);
+    expect(signals[0]?.aborted).toBe(true);
+    start(fake);
+    await call("r2");
+    expect(signals).toHaveLength(2);
+    expect(signals[1]?.aborted).toBe(false);
+  },
+);
+
+it("cancels a Buzz tool that is still running when its process stops", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const signals: AbortSignal[] = [];
+  const tools = vi.fn(
+    (_conversation: unknown, _message: unknown, signal: AbortSignal) => {
+      signals.push(signal);
+      return new Promise<never>(() => {});
+    },
+  );
+  const claude = await ClaudeProcess.start(spawn, { ...launch, tools });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.emit({
+    type: "control_request",
+    request_id: "r1",
+    request: {
+      subtype: "mcp_message",
+      server_name: "buzz",
+      message: { jsonrpc: "2.0", id: 3, method: "tools/call" },
+    },
+  });
+  await vi.waitFor(() => expect(signals).toHaveLength(1));
+  expect(signals[0]?.aborted).toBe(false);
+  await claude.kill();
+  expect(signals[0]?.aborted).toBe(true);
+});
+
+it("serves the Buzz tools over the pipe and ends a turn on a final send or subthread reply", async () => {
   const { spawn, processes } = fakeSpawn();
   const tools = vi.fn(async (_conversation: unknown, message: unknown) => ({
     jsonrpc: "2.0",
@@ -503,7 +1132,11 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
       sdkMcpServers: ["buzz"],
       hooks: {
         PostToolUse: [
-          { matcher: "mcp__buzz__send", hookCallbackIds: ["final"] },
+          { hookCallbackIds: ["buzz:PostToolUse"] },
+          {
+            matcher: "mcp__buzz__(send|reply_in_subthread)",
+            hookCallbackIds: ["final"],
+          },
         ],
       },
     },
@@ -516,14 +1149,14 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
     request_id: "r1",
     request: { subtype: "mcp_message", server_name: "buzz", message: call },
   });
-  const hook = (final: boolean) => ({
+  const hook = (final: boolean, tool = "send") => ({
     type: "control_request",
-    request_id: `final-${final}`,
+    request_id: `final-${tool}-${final}`,
     request: {
       subtype: "hook_callback",
       callback_id: "final",
       input: {
-        tool_name: "mcp__buzz__send",
+        tool_name: `mcp__buzz__${tool}`,
         tool_input: { text: "done", final },
         tool_response: [{ type: "text", text: "sent" }],
       },
@@ -531,16 +1164,29 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
   });
   fake.emit(hook(false));
   fake.emit(hook(true));
+  fake.emit(hook(true, "reply_in_subthread"));
   await flush();
-  expect(tools).toHaveBeenCalledWith("chan/root", call);
+  expect(tools).toHaveBeenCalledWith(
+    "chan/root",
+    call,
+    expect.any(AbortSignal),
+    expect.any(Function),
+    // It has made no model call yet.
+    undefined,
+  );
   const responses = fake.received
     .filter((message) => message.type === "control_response")
     .map((message) => message.response);
   expect(responses).toEqual([
-    { subtype: "success", request_id: "final-false", response: {} },
+    { subtype: "success", request_id: "final-send-false", response: {} },
     {
       subtype: "success",
-      request_id: "final-true",
+      request_id: "final-send-true",
+      response: { continue: false },
+    },
+    {
+      subtype: "success",
+      request_id: "final-reply_in_subthread-true",
       response: { continue: false },
     },
     {
@@ -609,7 +1255,26 @@ describe("stepLabel", () => {
     ).toEqual({ tool: "Bash", target: "List files" });
     expect(
       stepLabel(msg([{ type: "tool_use", name: "mcp__buzz__send_message" }])),
-    ).toEqual({ tool: "send_message" });
+    ).toEqual({ tool: "send_message", origin: "buzz" });
+    // A Buzz tool is reported by its bare name and its origin, which the
+    // step text titles.
+    const buzz = stepLabel(
+      msg([{ type: "tool_use", name: "mcp__buzz__search" }]),
+    );
+    expect(buzz).toEqual({ tool: "search", origin: "buzz" });
+    expect(buzz && stepText(buzz)).toBe("Search messages");
+    // Another server's tool of the same name is not Buzz's.
+    const docs = stepLabel(
+      msg([
+        {
+          type: "tool_use",
+          name: "mcp__docs__search",
+          input: { query: "release notes" },
+        },
+      ]),
+    );
+    expect(docs).toEqual({ tool: "search", target: "release notes" });
+    expect(docs && stepText(docs)).toBe("search · release notes");
     expect(stepLabel(msg([{ type: "thinking" }]))).toEqual({
       tool: "Thinking",
     });
@@ -619,4 +1284,182 @@ describe("stepLabel", () => {
     expect(stepLabel(msg("text"))).toBeUndefined();
     expect(stepLabel({ type: "assistant" })).toBeUndefined();
   });
+});
+
+it("dispatches SDK callbacks using the process session, independent of payload claims", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const hook = vi.fn(async () => ({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+    },
+  }));
+  const process = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "owned",
+    tools: async () => ({}),
+    hook,
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.emit({
+    type: "control_request",
+    request_id: "hook1",
+    request: {
+      subtype: "hook_callback",
+      callback_id: "buzz:PreToolUse",
+      input: { session_id: "forged", tool_name: "Bash" },
+    },
+  });
+  await flush();
+  expect(hook).toHaveBeenCalledWith("owned", "PreToolUse", {
+    session_id: "forged",
+    tool_name: "Bash",
+  });
+  expect(fake.received).toContainEqual({
+    type: "control_response",
+    response: {
+      subtype: "success",
+      request_id: "hook1",
+      response: {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+        },
+      },
+    },
+  });
+  await process.kill();
+});
+
+it.each(["quiet", "exit"] as const)(
+  "releases native idle waiters on %s",
+  async (end) => {
+    const { spawn, processes } = fakeSpawn();
+    const claude = await ClaudeProcess.start(spawn, {
+      ...launch,
+      sessionId: "idle",
+    });
+    await claude.send("start background work");
+    const fake = processes[0];
+    if (!fake) throw new Error("no process");
+    backgroundTasks(fake, {});
+    const settled = vi.fn();
+    const idle = claude.idle().then(settled);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    if (end === "exit") fake.exit(0);
+    else backgroundTasks(fake, { ambient: true });
+    await idle;
+    expect(settled).toHaveBeenCalledOnce();
+    await claude.kill();
+  },
+);
+
+it("holds idle across task removal until the notified continuation finishes", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "continuation",
+  });
+  await claude.send("start background");
+  const fake = processes[0];
+  if (!fake) throw new Error("missing process");
+  fake.emit({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: [{ task_id: "build" }],
+  });
+  const settled = vi.fn();
+  const idle = claude.idle().then(settled);
+  fake.emit({ type: "system", subtype: "task_notification", task_id: "build" });
+  backgroundTasks(fake);
+  await Promise.resolve();
+  expect(settled).not.toHaveBeenCalled();
+  expect(claude.active).toBe(true);
+  sessionState(fake, "running");
+  sessionState(fake, "idle");
+  await idle;
+  expect(claude.active).toBe(false);
+  await claude.kill();
+});
+
+it.each(["foreground", "continuation"] as const)(
+  "settles task notifications consumed during %s work",
+  async (work) => {
+    const { spawn, processes } = fakeSpawn();
+    const claude = await ClaudeProcess.start(spawn, {
+      ...launch,
+      sessionId: "overlap",
+    });
+    await claude.send("start background");
+    const fake = processes[0];
+    if (!fake) throw new Error("missing process");
+    try {
+      fake.emit({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [{ task_id: "first" }, { task_id: "second" }],
+      });
+      if (work === "continuation")
+        fake.emit({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "first",
+        });
+      sessionState(fake, "running");
+      fake.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "second",
+      });
+      backgroundTasks(fake);
+      const settled = vi.fn();
+      const idle = claude.idle().then(settled);
+      sessionState(fake, "idle");
+      await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
+      await idle;
+      expect(claude.active).toBe(false);
+    } finally {
+      await claude.kill();
+    }
+  },
+);
+
+it("releases result-only background continuations and their idle waiters", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(
+    (id, options) =>
+      spawn(id, {
+        ...options,
+        env: { ...options?.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "0" },
+      }),
+    { ...launch, sessionId: "result-only" },
+  );
+  try {
+    await claude.send("start background");
+    const fake = processes[0];
+    if (!fake) throw new Error("missing process");
+    fake.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "build" }],
+    });
+    const settled = vi.fn();
+    const idle = claude.idle().then(settled);
+    fake.emit({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "build",
+    });
+    backgroundTasks(fake);
+    expect(claude.active).toBe(true);
+    fake.emit({ type: "result", subtype: "success", is_error: false });
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
+    await idle;
+    expect(claude.active).toBe(false);
+    await expect(claude.send("next request")).resolves.toEqual({ ok: true });
+  } finally {
+    await claude.kill();
+  }
 });

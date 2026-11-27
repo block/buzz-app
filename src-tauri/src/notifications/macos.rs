@@ -100,6 +100,16 @@ pub(super) fn make_room(count: &super::Notifications) -> Option<String> {
     None
 }
 
+/// How a notification is presented while Buzz is the active application.
+/// `Banner` interrupts, `List` keeps the Notification Center entry so a missed
+/// banner stays reachable. `Sound` and `Badge` are deliberately absent: alert
+/// audio is app-owned (the renderer plays the chosen sound, and submissions are
+/// always silent so the OS cannot play a second one), and the Dock badge is
+/// projected from unread state rather than individual notifications.
+fn foreground_presentation() -> UNNotificationPresentationOptions {
+    UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List
+}
+
 struct DelegateIvars {
     registry: Arc<Registry>,
 }
@@ -123,8 +133,14 @@ define_class!(
             _notification: &objc2_user_notifications::UNNotification,
             completion: &Block<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
-            // Notification Center list only, never a foreground banner.
-            completion.call((UNNotificationPresentationOptions::List,));
+            // The frontend's notification policy already decided this alert is
+            // worth interrupting for: it drops candidates for the conversation
+            // in view unless Notify while viewing is on, and applies the
+            // read/mute/category gates. Suppressing the banner here would
+            // overrule that decision and leave Notify while viewing with no
+            // visible effect on macOS. Sound stays app-owned, so the banner is
+            // presented silently and the renderer plays the chosen alert.
+            completion.call((foreground_presentation(),));
         }
 
         #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
@@ -192,11 +208,8 @@ pub(super) fn show(id: String, title: String, body: String, pending: Arc<Pending
     tauri::async_runtime::spawn_blocking(move || {
         match notification_permission() {
             Ok(Permission::Granted) => {}
-            Ok(_) => {
-                registry.finish(
-                    &id,
-                    Outcome::Failed("macOS notification permission is not granted".into()),
-                );
+            Ok(permission) => {
+                registry.finish(&id, Outcome::Failed(permission_error(permission)));
                 return;
             }
             Err(error) => {
@@ -219,10 +232,7 @@ pub(super) fn show(id: String, title: String, body: String, pending: Arc<Pending
         let callback_id = id.clone();
         let completion = RcBlock::new(move |error: *mut NSError| {
             if let Some(error) = unsafe { error.as_ref() } {
-                callback_registry.finish(
-                    &callback_id,
-                    Outcome::Failed(format!("failed to submit macOS notification: {error}")),
-                );
+                callback_registry.finish(&callback_id, Outcome::Failed(submission_error(error)));
             }
             // A successful submission remains registered for a later click.
         });
@@ -240,6 +250,28 @@ pub(super) fn show(id: String, title: String, body: String, pending: Arc<Pending
     });
 }
 
+const NOTIFICATIONS_NOT_ALLOWED: &str = "macOS did not allow this app to send notifications. Enable Buzz in System Settings → Notifications. Development builds also need a stable Code Signing certificate configured as BUZZ_DEV_SIGNING_IDENTITY.";
+
+fn permission_error(permission: Permission) -> String {
+    match permission {
+        Permission::Denied => NOTIFICATIONS_NOT_ALLOWED.into(),
+        _ => "macOS notification permission is not granted".into(),
+    }
+}
+
+fn submission_error(error: &NSError) -> String {
+    submission_error_message(error.code(), &error.to_string())
+}
+
+fn submission_error_message(code: isize, detail: &str) -> String {
+    // This callback is specified to return UNErrorDomain values.
+    if code == objc2_user_notifications::UNErrorCode::NotificationsNotAllowed.0 {
+        NOTIFICATIONS_NOT_ALLOWED.into()
+    } else {
+        format!("failed to submit macOS notification: {detail}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +280,28 @@ mod tests {
         assert!(!crate::dock::bundled());
         init();
         assert!(REGISTRY.get().is_none());
+    }
+    #[test]
+    fn notification_not_allowed_has_actionable_setup_copy() {
+        assert_eq!(
+            permission_error(Permission::Denied),
+            NOTIFICATIONS_NOT_ALLOWED
+        );
+        assert_eq!(
+            permission_error(Permission::Default),
+            "macOS notification permission is not granted",
+        );
+        assert_eq!(
+            submission_error_message(
+                objc2_user_notifications::UNErrorCode::NotificationsNotAllowed.0,
+                "The operation couldn’t be completed. (UNErrorDomain error 1.)",
+            ),
+            "macOS did not allow this app to send notifications. Enable Buzz in System Settings → Notifications. Development builds also need a stable Code Signing certificate configured as BUZZ_DEV_SIGNING_IDENTITY.",
+        );
+        assert_eq!(
+            submission_error_message(1400, "native detail"),
+            "failed to submit macOS notification: native detail",
+        );
     }
     #[test]
     fn unsuccessful_submission_reports_failure_without_click() {
@@ -439,6 +493,18 @@ mod permission_tests {
             notification_error("Dock permission requires a bundled macOS app".into()),
             "macOS notifications are unavailable when Buzz is not running from an app bundle"
         );
+    }
+    #[test]
+    fn foreground_presentation_banners_without_borrowing_sound_or_badge() {
+        let options = foreground_presentation();
+        // The frontend's policy, not this delegate, decides whether an alert is
+        // worth interrupting for; a foreground alert that reached the OS shows.
+        assert!(options.contains(UNNotificationPresentationOptions::Banner));
+        // A missed banner stays reachable in Notification Center.
+        assert!(options.contains(UNNotificationPresentationOptions::List));
+        // Alert audio is app-owned and the Dock badge comes from unread state.
+        assert!(!options.contains(UNNotificationPresentationOptions::Sound));
+        assert!(!options.contains(UNNotificationPresentationOptions::Badge));
     }
     #[test]
     fn authorization_projection() {

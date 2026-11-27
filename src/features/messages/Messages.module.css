@@ -1,5 +1,18 @@
 @reference "../../shared/styles/globals.css";
 
+/* Match native selection while a message menu owns keyboard focus. Gate the
+   rule to its visible lifetime, as Find on screen does for its highlights. */
+:root[data-message-highlight] ::highlight(buzz-message-highlight) {
+  background-color: var(--selection-fill, var(--surface-text-selection));
+  color: var(--selection-text, var(--text-on-selection));
+}
+@media (forced-colors: active) {
+  :root[data-message-highlight] ::highlight(buzz-message-highlight) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}
+
 /* Reusable conversation components; plugins own placement and surrounding layout. */
 .thread {
   position: relative;
@@ -20,7 +33,8 @@
   background: transparent;
 }
 .feed {
-  --timeline-measure: 52rem;
+  --message-hover-inset: var(--space-panel-inset);
+  --timeline-measure: var(--buzz-message-width, 52rem);
 
   flex: 1;
   min-height: 0;
@@ -30,7 +44,7 @@
   /* Keep fractional last rows reachable despite integer scroll extents. */
   --history-bottom-inset: var(--space-half);
   padding-bottom: var(--history-bottom-inset);
-  /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.53.5.patch)
+  /* The vendored Virtua patch (interruptMomentum in patches/virtua@0.54.2.patch)
      flips this scroller to overflow-y: hidden !important on every nonzero size
      correction on Mac WebKit. With classic, space-taking scrollbars that frame
      removes the scrollbar, widens the content box, re-wraps rows above the
@@ -43,6 +57,24 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+/* A docked workspace aside sits over the history's end edge, left of its
+   scrollbar; WorkspaceRow marks the reader and sets --timeline-aside-width to
+   its width. The rows keep to the space beside it. A docked reader is wider
+   than the narrow rules that follow. */
+[data-aside-docked] .feed {
+  padding-inline-end: calc(
+    var(--space-panel-inset) +
+    var(--timeline-aside-width)
+  );
+}
+/* Narrow conversations keep the shared compact inset beside the app dock. */
+@container messages (max-width: 30rem) {
+  .feed {
+    --message-hover-inset: var(--space-4);
+    padding-inline: var(--space-4);
+  }
+}
+
 .threadHistory::-webkit-scrollbar {
   width: 8px;
 }
@@ -55,20 +87,65 @@
   background: var(--scrollbar-thumb-quiet);
   background-clip: padding-box;
 }
-/* Keep the final message clear of floating typing/activity indicators.
-   The spacer scrolls away with history instead of shortening its viewport. */
+/* Keep the final message clear of floating typing/activity indicators and
+   the join preview lane. The spacer scrolls away with history instead of
+   shortening its viewport. Threads end with it too, not bottom padding: WebKit
+   drops block-end padding from the scroll range for one layout when a covered
+   workspace tab is shown again (content-visibility), which pulls a thread read
+   at its end up by it. */
 .timelineEnd {
   height: calc(var(--space-8) + var(--channel-preview-inset, 0px));
 }
-.feed ol {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* The floating typing label is a 24px pill 2px above the composer; with the
+   history inset and a row's end padding, this still clears it. */
+:where(html[data-message-density="compact"]) .timelineEnd {
+  height: calc(var(--space-6) + var(--channel-preview-inset, 0px));
 }
-/* Center the list itself so coordination and membership rows share the measure. */
-.feed > ol {
+/* A workspace's trailing card covers the end of the history, and a box of its
+   rest height ends the scroll range so the latest message stays above it.
+   The history inset would only add a gap between the two. Focus scrolls into
+   view above the card's visible top. A thread's inset is already none. */
+:is(.feed, .threadHistory)[data-trailing] {
+  --history-bottom-inset: 0px;
+  scroll-padding-bottom: var(--timeline-trailing-rest, 0px);
+}
+/* useTrailingSheet places the sheet over the history's scrollport with the
+   history's inline padding and measure. Only the card takes pointer input, so
+   the history scrolls under the sheet's empty top. Scrolling the card grows
+   it, then slides it up; it never scrolls the history. */
+.trailingSheet {
+  /* The history's measure, so the card lines up with its rows. */
+  --timeline-measure: var(--buzz-message-width, 52rem);
+  position: absolute;
+  z-index: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The history's gutter, so the card lines up with its rows. */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  pointer-events: none;
+}
+.trailingSpacer {
+  height: calc(100% - var(--trailing-rest));
+}
+/* Held by a pointer over the card, the sheet takes input across its empty top
+   too, so a gesture keeps scrolling it as the card slides away. */
+.trailingSheet[data-held] {
+  pointer-events: auto;
+}
+.trailingCard {
   width: min(100%, var(--timeline-measure));
   margin-inline: auto;
+  pointer-events: auto;
+}
+/* Center the list itself so coordination and membership rows share the measure.
+   The reset stays on this list alone so numbered lists in messages keep numbers. */
+.feed > ol {
+  list-style: none;
+  width: min(100%, var(--timeline-measure));
+  margin: 0 auto;
+  padding: 0;
 }
 .edge {
   width: min(100%, var(--timeline-measure));
@@ -84,6 +161,10 @@
   letter-spacing: var(--text-caption--letter-spacing);
   color: var(--text-subtle);
   gap: var(--space-2);
+}
+.edge[data-intro] {
+  flex-direction: column;
+  align-items: stretch;
 }
 .edge[data-history-space] {
   min-height: calc(var(--size-control) + var(--space-4));
@@ -101,6 +182,12 @@
   color: var(--text-subtle);
   @apply text-caption;
   margin: var(--space-5) auto;
+}
+/* Compact density tightens vertical rhythm only; Interface size owns text.
+   :where() keeps each override at its default's specificity, so the layout
+   and stacking rules that follow it still apply. */
+:where(html[data-message-density="compact"]) .day {
+  margin-block: var(--space-3);
 }
 .day::before,
 .day::after {
@@ -134,6 +221,12 @@
   /* Match continuation bottom padding so regrouping preserves reading anchors. */
   padding: calc(var(--space-3) + var(--space-half)) 0 var(--space-half);
 }
+:where(html[data-message-density="compact"]) .message {
+  isolation: isolate;
+  gap: var(--space-5);
+  /* Keep the 12px group rhythm centered around each message. */
+  padding-block: calc(var(--space-1) + var(--space-half));
+}
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
   gap: var(--space-2);
@@ -147,6 +240,16 @@
 /* Timeline continuations keep the full-size avatar column's text alignment. */
 .feed .message[data-layout="continuation"] {
   gap: var(--space-3);
+}
+:where(html[data-message-density="compact"])
+  .message:is([data-layout="thread"], [data-layout="continuation"]) {
+  gap: var(--space-5);
+  padding-block: calc(var(--space-1) + var(--space-half));
+}
+:where(html[data-message-density="compact"])
+  .feed
+  .message[data-layout="continuation"] {
+  gap: var(--space-5);
 }
 .nestedAvatar {
   display: grid;
@@ -163,15 +266,20 @@
   flex: 1;
   min-width: 0;
 }
-/* Reserve the opposing avatar column when space permits. At narrow widths or
-   enlarged text, keep enough of the row for readable words. The own avatar
-   remains outside this body in its existing flex column. */
+/* Long bubbles stop 32px before the opposite avatar's visible inner edge.
+   Avatars sit space-1 from their body, including the wider timeline gutter. */
 .message:has(> .messageGutter) > .messageBody {
-  max-width: min(
-    85%,
-    46rem,
-    max(60%, calc(100% - 2 * var(--message-side-space) - var(--space-4)))
+  /* The rem-based clearance grows with enlarged text; keep a readable floor. */
+  max-width: max(
+    60%,
+    calc(100% - 2 * var(--message-side-space) + var(--space-1) - var(--space-8))
   );
+}
+.message[data-full-width] {
+  width: 100%;
+}
+.message:where([data-full-width]):has(> .messageGutter) > .messageBody {
+  max-width: none;
 }
 .message[data-viewer-message] > .messageBody {
   flex: 0 1 auto;
@@ -203,10 +311,51 @@
 }
 .author {
   font-weight: var(--type-weight-medium);
+  flex-shrink: 0;
   min-width: 0;
+  max-width: 100%;
+}
+/* The name opens a profile but stays the byline's text at rest; the link
+   shows only under a fine pointer or keyboard focus. */
+.authorLink {
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .authorLink:hover {
+    color: var(--text-link);
+    text-decoration: underline;
+  }
+}
+html[data-keyboard-navigation] .authorLink:focus-visible {
+  color: var(--text-link);
+  text-decoration: underline;
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.authorAgentIcon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.125em;
+}
+.authorOwner {
+  color: var(--text-subtle);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .text {
-  white-space: normal;
+  composes: document message from "../markdown/Markdown.module.css";
+  white-space: pre-wrap;
+}
+.codeBlock {
+  composes: codeFrame from "../markdown/Markdown.module.css";
+}
+.codeActions {
+  composes: codeActions from "../markdown/Markdown.module.css";
+}
+.imageAlt {
+  composes: imageAlt from "../markdown/Markdown.module.css";
 }
 .text[data-single-emoji] {
   --inline-emoji-size: var(--size-emoji-display);
@@ -224,6 +373,8 @@
   align-items: center;
   gap: var(--space-1);
   margin: var(--space-1h) 0 0;
+  /* Keep reaction groups out of text selection; copy uses data-copy-text. */
+  user-select: none;
 }
 .reactions[data-populated],
 .reactionFallback {
@@ -232,23 +383,31 @@
   width: fit-content;
   max-width: 100%;
 }
-.message[data-own] > .messageBody {
-  --reaction-surface: var(--surface-message-own);
-  --reaction-ink: var(--text-message-own);
+.reactions[data-populated] {
+  padding: var(--space-half);
+}
+:where(html[data-message-density="compact"]) .reactions[data-populated] {
+  padding: var(--space-1) var(--space-half);
 }
 .reactions:empty {
   margin-top: 0;
 }
-.reactionFallback > span:not([role]) {
+.reactionFallback > [data-reaction] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-half);
   min-width: var(--size-control-sm);
+  max-width: 100%;
   padding-inline: var(--space-2);
   height: calc(var(--size-control-sm) - var(--space-1));
   font-size: var(--text-caption);
   --inline-emoji-size: 0.75rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.reactionFallbackLabel {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -259,24 +418,21 @@
 }
 .reactionItem,
 .inlineReactionTool,
-.reactionFallback > span:not([role]) {
+.reactionFallback > [data-reaction] {
   border-radius: var(--radius-capsule);
-  background: var(--affordance-backdrop-hover);
+  background: var(--reaction-surface, var(--affordance-reaction));
 }
-.reactionItem button {
-  min-width: var(--size-control-sm);
-  min-height: calc(var(--size-control-sm) - var(--space-1));
+/* Your reactions take the other bubble's fill: yours on a received message,
+   the received one inside your bubble. */
+.reactionItem[data-mine] {
+  background: var(--reaction-self-surface, var(--affordance-reaction-self));
 }
-.reactionLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-half);
-  padding-inline: var(--space-1);
-  color: var(--reaction-ink, var(--text-standard));
-}
-.reactionCount {
-  @apply text-caption;
-  font-variant-numeric: tabular-nums;
+/* Forced colors replace the tint, so a system-color ring keeps it marked. */
+@media (forced-colors: active) {
+  .reactionItem[data-mine] {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
 }
 .reactionGlyph {
   display: inline-flex;
@@ -285,22 +441,59 @@
   max-width: var(--size-control-sm);
   pointer-events: none;
 }
+.reactionGlyph[data-grouped] {
+  max-width: none;
+  gap: var(--space-1);
+}
+.reactionFallback .reactionGlyph[data-grouped] {
+  min-width: 0;
+  max-width: 100%;
+}
+.reactionCount {
+  @apply text-caption;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.reactionItem [data-reaction] {
+  color: var(--reaction-ink, var(--text-standard));
+}
+.reactionItem[data-mine] [data-reaction] {
+  color: var(--reaction-self-ink, var(--text-reaction-self));
+}
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
   ) {
-  .reactionGlyph {
-    transition: transform var(--duration-fast) var(--easing-enter);
+  .reactionGlyph > :not(.reactionCount) {
+    transform-origin: center;
+    transition: transform var(--duration-settle) var(--easing-settle);
   }
-  .reactionItem
+  html:not([data-keyboard-navigation])
+    .reactionItem
     button:enabled:not([aria-disabled="true"]):hover
-    .reactionGlyph {
-    transform: rotate(var(--reaction-tilt, 0deg)) scale(1.1);
+    .reactionGlyph
+    > :not(.reactionCount) {
+    transform: translateY(calc(-1 * var(--space-half)))
+      rotate(clamp(-8deg, var(--reaction-tilt, -6deg), 8deg)) scale(1.5);
+    transition-duration: var(--duration-state);
+    transition-timing-function: var(--easing-enter);
   }
+  html:not([data-keyboard-navigation])
+    .reactionItem
+    button:enabled:not([aria-disabled="true"]):hover:active
+    .reactionGlyph
+    > :not(.reactionCount) {
+    transform: scale(0.96);
+    transition-duration: var(--duration-fast);
+  }
+}
+/* Read-only and busy pills reject clicks but still preview who reacted. */
+.reactionItem button[aria-disabled="true"] {
+  cursor: default;
 }
 .reactionNativeEmoji {
   display: inline-block;
   min-width: 0.75rem;
-  max-width: var(--size-control-sm);
+  max-width: var(--compact-control-size, var(--size-control-sm));
   font-size: var(--text-caption);
   line-height: 1;
   text-align: center;
@@ -313,21 +506,23 @@
 .reactionGlyph .reactionNativeEmoji {
   padding: var(--space-half);
 }
-.reactionFallbackEmoji {
-  display: inline-block;
-  min-width: 0;
-  max-width: var(--size-control-sm);
-  font-size: var(--text-caption);
-  line-height: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .reactionCustomEmoji {
   display: block;
   width: 0.75rem;
   height: 0.75rem;
   object-fit: contain;
+}
+/* A shortcode without usable artwork shows this neutral glyph, never its text. */
+.reactionPlaceholder {
+  display: block;
+  width: 0.75rem;
+  height: 0.75rem;
+}
+/* Paint 12px artwork at 14px (10.5pt), keeping the capsule's layout box. */
+.reactionGlyph [data-reaction-artwork],
+.reactionGlyph .reactionCustomEmoji,
+.reactionGlyph .reactionPlaceholder {
+  scale: calc(7 / 6);
 }
 .visuallyHidden {
   position: absolute;
@@ -339,11 +534,20 @@
 }
 .reactionPreviewContent {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
   justify-items: center;
   gap: var(--space-1);
-  max-width: 14rem;
+  max-width: 28rem;
   text-align: center;
   overflow-wrap: anywhere;
+}
+.reactionPreview.reactionPreview {
+  /* Spend available height on the names scrollport, keeping emoji and label visible. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-width: min(30rem, 85vw, var(--available-width, 100vw));
 }
 .reactionPreviewEmoji {
   --reaction-preview-size: calc(var(--space-6) * 2);
@@ -358,7 +562,8 @@
   /* Color glyph ink extends beyond its em square, especially on macOS. */
   line-height: 1.25;
 }
-.reactionPreviewEmoji .reactionCustomEmoji {
+.reactionPreviewEmoji .reactionCustomEmoji,
+.reactionPreviewEmoji .reactionPlaceholder {
   width: calc(var(--space-6) * 2);
   height: calc(var(--space-6) * 2);
 }
@@ -367,6 +572,11 @@
 }
 .reactionPreviewNames {
   @apply text-caption text-standard;
+  min-height: 0;
+  max-width: 100%;
+  max-height: min(20rem, 40vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 @media (prefers-reduced-motion: reduce) {
   .reactionPreview.reactionPreview {
@@ -409,13 +619,12 @@
   }
 }
 .inlineReactionTool {
-  /* Keep the filled pill and icon stable while neighboring emoji animate. */
+  /* Keep the add control stable while neighboring emoji animate. */
   transform: translateZ(0);
   transform-style: preserve-3d;
   display: inline-flex;
   align-items: center;
-  width: calc(var(--size-control-sm) + var(--space-2));
-  height: calc(var(--size-control-sm) - var(--space-1));
+  border-radius: var(--radius-capsule);
 }
 .inlineReactionTool:empty {
   display: none;
@@ -426,16 +635,15 @@
   opacity: 0.65;
 }
 .inlineReactionTool [data-icon-variant] {
-  width: 100%;
-  height: 100%;
   border: 1px solid transparent;
-  border-radius: inherit;
+  border-radius: var(--radius-capsule);
   background: transparent;
   color: var(--reaction-ink, var(--text-secondary));
 }
 .inlineReactionTool
   [data-icon-variant]:is(:hover, :focus-visible, [aria-expanded="true"]) {
-  background: var(--affordance-backdrop-hover);
+  /* Reinforce the capsule on hover, keyboard focus, and while picking. */
+  background: var(--reaction-surface, var(--affordance-reaction));
   color: var(--reaction-ink, var(--text-standard));
 }
 .attachment {
@@ -502,6 +710,11 @@
 }
 .attachmentImage video {
   object-fit: contain;
+}
+/* The scale hides the blur's faded edge. */
+.attachmentImage img[data-thumbnail] {
+  filter: blur(12px);
+  transform: scale(1.1);
 }
 .mediaGridBadge {
   position: absolute;
@@ -573,7 +786,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-width: 0;
 }
 /* Soften the scroll edge without reserving a blank strip above the composer. */
-:is(.feed, .threadHistory)[data-jump-visible] + .composerContext::before {
+/* Attributes, not :has(): a :has() here restyles the whole conversation, under
+   its size container, whenever scrolling changes what it might match. */
+:is(.feed, .threadHistoryFrame)[data-jump-visible] + .composerContext::before {
   content: "";
   position: absolute;
   inset-inline: 0;
@@ -581,6 +796,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   height: var(--space-3);
   background: linear-gradient(to bottom, transparent, var(--surface-panel));
   pointer-events: none;
+}
+/* A thread sheet already fades into its raised surface with DialogBarMaterial.
+   The panel-colored composer fade would paint a second, darker strip over it. */
+[data-details-sheet-surface][data-height="content"]
+  .threadHistoryFrame
+  + .composerContext::before {
+  content: none;
 }
 /* The existing editor owns text; this surface owns only composer layout. */
 .composer {
@@ -590,12 +812,12 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   align-self: stretch;
   position: relative;
   border: 1px solid var(--border-standard);
-  background: var(--surface-panel);
+  background: var(--surface-composer);
   /* Match the send control plus its inset, measured from the outer border. */
   border-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
   box-shadow: var(--shadow-xs);
   padding: var(--space-3) var(--space-1h) var(--space-1h);
-  width: min(calc(100% - 2 * var(--space-4)), 52rem);
+  width: min(calc(100% - 2 * var(--space-4)), var(--buzz-message-width, 52rem));
   margin: 0 auto var(--space-4);
   display: flex;
   flex-shrink: 0;
@@ -609,11 +831,18 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .feed:has(.emptyConversation) .edge:empty {
   min-height: 0;
 }
+:where(.feed:has([data-agent-connection-setup])) .emptyConversation {
+  display: none;
+}
 .emptyConversation {
   padding-block: var(--space-panel-inset);
 }
 .composer[data-chat-presentation] {
   margin-bottom: var(--space-3);
+}
+/* The composer spans the same full width as a compact list. */
+:where(html[data-message-density="compact"]) .composer {
+  width: calc(100% - 2 * var(--space-4));
 }
 .empty {
   padding: var(--space-8) var(--space-4);
@@ -630,9 +859,49 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
     padding-block: var(--space-3);
   }
   .composer {
-    width: min(calc(100% - 2 * var(--space-3)), 52rem);
+    width: min(
+      calc(100% - 2 * var(--space-3)),
+      var(--buzz-message-width, 52rem)
+    );
     margin: 0 auto var(--space-3);
   }
+}
+/* In a view the composer sits in a dock, which takes its place in the layout
+   and holds the sheets opened from the view's rows, drawn around it. */
+.composerDock {
+  --composer-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
+  position: relative;
+  z-index: 2;
+  box-sizing: border-box;
+  min-width: 0;
+  align-self: stretch;
+  flex-shrink: 0;
+  width: min(
+    calc(100% - var(--timeline-aside-width, 0px) - 2 * var(--space-4)),
+    var(--buzz-message-width, 52rem)
+  );
+  margin: 0 auto var(--space-4);
+  /* Beside a docked workspace aside, centered in the history's width. */
+  inset-inline-start: calc(var(--timeline-aside-width, 0px) / -2);
+}
+:where(html[data-message-density="compact"]) .composerDock {
+  width: calc(100% - var(--timeline-aside-width, 0px) - 2 * var(--space-4));
+}
+@media (max-width: 40.625rem) {
+  .composerDock {
+    width: min(
+      calc(100% - 2 * var(--space-3)),
+      var(--buzz-message-width, 52rem)
+    );
+    margin: 0 auto var(--space-3);
+  }
+}
+/* Above a details sheet in its dock, so a reply can be written while
+   reading. */
+.composerDock > .composer {
+  z-index: 2;
+  width: auto;
+  margin: 0;
 }
 .composer[data-editing] {
   overflow: hidden;
@@ -646,22 +915,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--text-caption--font-weight);
 }
-.composerEditHeader {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-1h)) var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-inset);
-  color: var(--text-secondary);
-  font-size: var(--text-label-sm);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
-  font-weight: var(--text-label-sm--font-weight);
-}
-.composerEditHeader span {
-  flex: 1;
-}
 .composerContent {
   display: flex;
   flex-direction: column;
@@ -671,13 +924,38 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding-inline-start: var(--space-1);
 }
 .composerInput {
+  @apply text-message;
+  box-sizing: border-box;
   position: relative;
   min-width: 0;
   width: 100%;
-  padding-inline: 0;
+  padding-inline: var(--space-1);
 }
 .composer .composerInput [data-placeholder]::before {
   color: var(--text-metadata);
+}
+/* Stands in for the editor's text placeholder, and shows only while it would. */
+.channelPlaceholder {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--space-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-metadata);
+  pointer-events: none;
+}
+.channelPlaceholder::before {
+  content: attr(data-lead) " ";
+}
+.channelPlaceholder::after {
+  content: attr(data-name);
+}
+.composerInput:has(> .channelPlaceholder) [data-placeholder]::before {
+  visibility: hidden;
+}
+.composerInput:not(:has([data-placeholder])) > .channelPlaceholder {
+  display: none;
 }
 .composerActions {
   display: flex;
@@ -712,6 +990,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .backgroundUploadBar {
   position: relative;
   overflow: hidden;
+  flex-shrink: 0;
   width: 64px;
   height: 4px;
   border-radius: var(--radius-pill);
@@ -766,6 +1045,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex: none;
   width: var(--space-5);
   height: var(--space-5);
+  -webkit-user-select: none;
   user-select: none;
 }
 .dayCalendar > * {
@@ -789,6 +1069,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   border-radius: 50%;
   background: var(--text-standard);
 }
+.threadDraft {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-subtle);
+}
 .threadWorking {
   margin-inline-start: var(--space-1);
   display: inline-flex;
@@ -805,15 +1092,27 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   max-width: 100%;
   align-self: flex-start;
   margin-inline-start: var(--space-3);
+  margin-top: var(--space-1);
+}
+/* Channel and thread-branch reply summaries share one caption treatment. */
+.messageBody [data-thread-summary],
+.replyBranchSummary > [data-thread-summary] {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--type-weight-regular);
-  margin-top: var(--space-1);
-}
-.messageBody [data-thread-summary]:not([data-activity-summary]) {
   padding: var(--space-1);
   padding-right: var(--space-1h);
+  user-select: none;
+}
+/* Compact summaries keep their 24px participants but drop the control's
+   spare block padding. */
+:where(html[data-message-density="compact"])
+  .messageBody
+  [data-thread-summary] {
+  min-height: 0;
+  margin-top: var(--space-half);
+  padding-block: var(--space-half);
 }
 .messageBody [data-reply-connector] {
   margin-inline-start: calc(var(--space-4) + var(--space-3));
@@ -832,8 +1131,27 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   pointer-events: none;
 }
 
+.threadHistoryFrame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+/* Shown only in a thread sheet, where the reader fades into its raised surface
+   above the reply box. */
+.threadEdgeBottom {
+  position: absolute;
+  z-index: 1;
+  bottom: 0;
+  inset-inline: 0;
+  height: var(--space-6);
+  transform: scaleY(-1);
+  pointer-events: none;
+}
 .threadHistory {
-  --timeline-measure: 52rem;
+  --message-hover-inset: var(--space-4);
+  --timeline-measure: var(--buzz-message-width, 52rem);
   position: relative;
   flex: 1;
   min-height: 0;
@@ -842,12 +1160,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding: 0 var(--space-4);
   /* The original starts space-4 below the header, less its .message padding. */
   padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
-  /* Include the join preview lane while keeping the approved message inset. */
-  --history-bottom-inset: calc(
-    var(--space-8) +
-    var(--channel-preview-inset, 0px)
-  );
-  padding-bottom: var(--history-bottom-inset);
+  /* The end spacer below replaces bottom padding, so the jump button's sticky
+     offset has no padding to cross. */
+  --history-bottom-inset: 0px;
   /* ThreadPanel owns every layout-shift correction here (resize, older-page and
      exact-target anchors). Browser scroll anchoring would correct the same shift
      first, and the exact-target anchor would then apply it a second time. */
@@ -856,24 +1171,44 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+/* Beside a docked workspace aside, as in .feed. */
+[data-aside-docked] .threadHistory {
+  padding-inline-end: calc(var(--space-4) + var(--timeline-aside-width));
+}
+/* Compact gives conversations the window's full width, as list layouts do. */
+:where(html[data-message-density="compact"]) :is(.feed, .threadHistory) {
+  --timeline-measure: 100%;
+  --message-hover-start-inset: var(--space-3);
+  padding-inline-start: var(--space-3);
+}
+:where(html[data-message-density="compact"]) .trailingSheet {
+  --timeline-measure: 100%;
+}
 /* Measure loaded rows without painting a scroll position we will replace,
    then fade them in once positioned. */
 .threadHistory > [data-thread-rows] {
   width: min(100%, var(--timeline-measure));
   margin-inline: auto;
   transition: opacity var(--duration-state) var(--easing-state);
+  /* A stacking context inside the scroller: each scroll update then reaches
+     the rows' layers from here, not from the panel around the scroller. The
+     jump control and composer stay outside it and keep their order. */
+  isolation: isolate;
 }
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
-/* Fills whichever thread area is waiting. The mark waits one state change
-   before appearing, so a thread that loads at once never flashes it. */
+/* Fills whichever message area is waiting. A thread draws nothing in it; a
+   timeline's placeholders wait one state change before appearing, so a read
+   that lands at once never flashes them. */
 .threadLoading {
-  container-type: size;
   flex: 1;
-  display: grid;
-  place-items: center;
-  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: var(--space-8);
+  padding: var(--space-4);
+  color: var(--text-subtle);
   animation: thread-loading-in var(--duration-state) var(--easing-enter)
     var(--duration-state) both;
 }
@@ -881,20 +1216,21 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   position: absolute;
   inset: 0;
 }
-/* The mark scales with the waiting area: a side pane and a full main pane
-   both read it as the thread's placeholder, not a stray icon. */
-.threadLoading picture {
-  display: block;
-  width: clamp(3.35rem, 16cqmin, 6.7rem);
-  line-height: 0;
+/* A thread sheet sizes to its content, so its waiting area keeps a height of
+   its own under its header rather than filling (and collapsing with) the
+   sheet. */
+[data-details-sheet-surface][data-height="content"] .threadLoading {
+  flex: none;
+  min-height: calc(var(--sheet-header-height) + 4 * var(--space-16));
 }
-.threadLoading img {
-  display: block;
-  width: 100%;
-  height: auto;
+[data-details-sheet-surface][data-height="content"]
+  .threadHistory:has(> .threadLoading) {
+  min-height: calc(var(--sheet-header-height) + 4 * var(--space-16));
 }
-:root[data-color-mode="dark"] .threadLoading picture {
-  filter: invert(1);
+/* A thread sheet's reader runs under its header; so do its placeholders. */
+[data-details-sheet-surface][data-height="content"][data-contained-composer]
+.threadLoading {
+  padding-top: calc(var(--sheet-header-height) + var(--space-3));
 }
 @keyframes thread-loading-in {
   from {
@@ -909,10 +1245,24 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .threadHistoryPageStatus p {
   margin: 0;
 }
-.threadHistory ol {
+/* Reset only the thread's own reply lists, never lists inside message text. */
+.threadList {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+/* A thread notice keeps its recovery aligned beneath its text. */
+.threadNotice {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  color: var(--text-subtle);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
 }
 .threadHistoryControls {
   flex-shrink: 0;
@@ -920,6 +1270,25 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
+}
+/* Where the thread lives, above its history; the thread tab stays its title. */
+.threadParent {
+  flex: none;
+  margin: 0;
+  /* The thread history's inset, so the name sits over its original message. */
+  padding: var(--space-2) var(--space-4) 0;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  overflow-wrap: anywhere;
+}
+/* The pane cannot reflow the name as a whole control, so its label wraps. */
+.threadParent > button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
 }
 .threadNote {
   color: var(--text-subtle);
@@ -981,13 +1350,15 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   text-align: start;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  width: 21rem;
+  gap: calc(var(--space-5) / 2 + var(--space-1));
+  width: 18rem;
+  box-sizing: border-box;
+  min-height: calc(36px + 2 * var(--space-2) + 2px);
   max-width: 100%;
   margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-container);
+  padding: var(--space-2) calc(var(--space-5) / 2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-icon-button);
   background: var(--surface-inset);
   color: var(--text-standard);
   text-decoration: none;
@@ -1016,15 +1387,17 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
-.fileGroup .fileAttachment {
-  margin-top: 0;
+.fileGroup > div {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
 }
 .fileAttachmentBody {
   flex: 1;
   min-width: 0;
   max-width: 100%;
   display: grid;
-  gap: var(--space-half);
+  gap: 0;
 }
 .fileAttachmentName,
 .fileAttachmentMeta {
@@ -1033,23 +1406,60 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   white-space: nowrap;
 }
 .fileAttachmentName {
-  font-weight: var(--type-weight-medium);
+  font-size: var(--text-label-sm);
+  font-weight: var(--text-label-sm--font-weight);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
 }
 .fileAttachmentMeta {
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+.filePreviewAttachment {
+  display: flex;
+  align-items: center;
+  width: 21rem;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: var(--space-2);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-row);
+  background: var(--surface-inset);
+  color: var(--text-standard);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--text-body-sm--font-weight);
+}
+.filePreviewMain {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.fileDownloadAction {
+  display: flex;
+  align-self: stretch;
+}
+.fileGroup .fileAttachment,
+.fileGroup .filePreviewAttachment {
+  margin-top: 0;
+}
 .audioAttachment {
+  flex-wrap: wrap;
   position: relative;
-  width: min(24rem, 100%);
+  width: 24rem;
+  max-width: 100%;
   min-inline-size: 0;
   margin: var(--space-2) 0 0;
   border: 1px solid var(--border-standard);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--size-control-sm);
   background: var(--surface-inset);
+}
+.audioAttachment [data-download-feedback] {
+  flex-basis: 100%;
 }
 .audioAttachment audio {
   position: absolute;
@@ -1085,7 +1495,9 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
   container: media-preview / inline-size;
   position: relative;
   display: block;
-  width: min(32rem, 100%, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)));
+  /* A definite preferred width keeps outgoing fit-content messages from
+     collapsing to their byline. max-width still lets narrow panes shrink. */
+  width: min(32rem, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)));
   max-width: 100%;
   aspect-ratio: var(--media-ratio, 16 / 9);
   overflow: visible;
@@ -1101,7 +1513,7 @@ button.mediaPreview {
   cursor: zoom-in;
 }
 .mediaPreviewThread {
-  width: min(32rem, 100%, calc(min(22rem, 45vh) * var(--media-ratio, 16 / 9)));
+  width: min(32rem, calc(min(22rem, 45vh) * var(--media-ratio, 16 / 9)));
 }
 .mediaPreviewPixels > img:not(.mediaPoster),
 .mediaVideo {
@@ -1110,8 +1522,11 @@ button.mediaPreview {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   background: var(--surface-inverse);
+}
+.mediaPreviewPixels > img:not(.mediaPoster) {
+  object-fit: cover;
 }
 .mediaPoster {
   position: absolute;
@@ -1119,7 +1534,7 @@ button.mediaPreview {
   z-index: 1;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   pointer-events: none;
 }
 .mediaPlay,
@@ -1228,7 +1643,10 @@ button.mediaPreview {
     border-radius: 0;
   }
   .mediaPreview {
-    max-height: 18rem;
+    width: min(32rem, calc(min(18rem, 56vh) * var(--media-ratio, 16 / 9)));
+  }
+  .mediaPreviewThread {
+    width: min(32rem, calc(min(18rem, 45vh) * var(--media-ratio, 16 / 9)));
   }
   .audioAttachment {
     max-width: 100%;
@@ -1277,9 +1695,6 @@ button.mediaPreview {
 }
 .mediaReviewHeading [class~="panel-header-actions"] {
   flex-shrink: 0;
-}
-.mediaReviewThreadHeading [class~="panel-header"]::after {
-  content: none;
 }
 .mediaReviewStage {
   display: grid;
@@ -1331,7 +1746,7 @@ button.mediaPreview {
 }
 /* Media comments have frame controls above the composer, not scrollback to
    float over. Give active typing/agents their own row; idle still takes no space. */
-.mediaReviewComposer [data-conversation-activity] {
+.mediaReviewComposer [data-conversation-activity][data-audience="humans"] {
   position: static;
   margin: var(--space-2) var(--space-4);
 }
@@ -1350,6 +1765,7 @@ button.mediaPreview {
   font-weight: var(--text-label--font-weight);
   font-variant-numeric: tabular-nums;
 }
+
 @media (max-width: 50rem) {
   .mediaReviewBackdrop {
     padding: 0;
@@ -1507,206 +1923,39 @@ button.mediaPreview {
 .plainText {
   text-wrap-style: pretty;
 }
-.text p {
-  line-height: inherit;
+
+/* Metadata after the body's last line; on its own line after a closing block
+   or plugin card, or after attachments when no body is drawn. A large-emoji
+   paragraph is itself `.text` and keeps its marker inline. */
+.edited {
+  color: var(--message-metadata, var(--text-metadata));
+  font-size: var(--text-caption);
+  letter-spacing: var(--text-caption--letter-spacing);
 }
-.text > :first-child:not([data-single-emoji]) {
-  margin-top: 0;
-}
-.text > :last-child {
-  margin-bottom: 0;
-}
-.text :where(p, ul, ol, blockquote, pre, .codeBlock, table, hr) {
-  margin: var(--space-4) 0;
-}
-.text > p:has(+ :is(ul, ol)) {
-  margin-bottom: var(--space-2);
-}
-.text > p + :where(ul, ol) {
-  margin-top: var(--space-2);
-}
-.text :where(h1, h2, h3, h4, h5, h6) {
-  margin: var(--space-4) 0 var(--space-1h);
-  color: var(--text-standard);
-  font-size: var(--text-body);
-  line-height: var(--text-body--line-height);
-  letter-spacing: var(--text-body--letter-spacing);
-}
-.text h1 {
-  font-size: var(--text-heading);
-  line-height: var(--text-heading--line-height);
-  letter-spacing: var(--text-heading--letter-spacing);
-}
-.text h2 {
-  font-size: var(--text-body-lg);
-  line-height: var(--text-body-lg--line-height);
-  letter-spacing: var(--text-body-lg--letter-spacing);
-}
-.text h3 {
-  font-size: var(--text-label);
-  line-height: var(--text-label--line-height);
-  letter-spacing: var(--text-label--letter-spacing);
-}
-.text :where(h1, h2, h3) {
-  font-weight: var(--type-weight-medium);
-}
-.text :where(h4, h5, h6) {
-  font-weight: var(--type-weight-medium);
-}
-.text.text :where(ul, ol) {
-  padding-left: var(--space-6);
-}
-.text ol {
-  list-style: decimal;
-}
-.text ul {
-  list-style: disc;
-}
-.text li + li {
+/* A plugin card's marker sits in its bubble, above the reactions. */
+.messagePayload > .edited,
+.messageBubble > .edited {
+  display: block;
   margin-top: var(--space-1);
 }
-.text li > :where(p, ul, ol) {
-  margin-top: var(--space-1);
+.audienceLine > .edited {
+  flex: none;
+  margin-inline-end: auto;
+}
+.text:not(p) > .edited {
+  display: block;
+  /* Its leading space separates an inline marker; here it would indent. */
+  white-space: normal;
+}
+.text:not(p) > :has(+ .edited:last-child) {
   margin-bottom: var(--space-1);
 }
-.text blockquote {
-  position: relative;
-  padding: var(--space-half) 0 var(--space-half) var(--space-3);
-  border-left: 3px solid transparent;
+.message[data-viewer-message] .messagePayload > .edited {
+  text-align: end;
 }
-.text blockquote::before {
-  content: "";
-  position: absolute;
-  inset-block: 0;
-  left: -3px;
-  width: 3px;
-  border-radius: var(--radius-pill);
-  background: color-mix(
-    in srgb,
-    var(--border-prominent),
-    var(--border-standard)
-  );
-}
-@media (forced-colors: active) {
-  .text blockquote::before {
-    background: CanvasText;
-  }
-}
-.text blockquote > :first-child {
-  margin-top: 0;
-}
-.text blockquote > :last-child {
-  margin-bottom: 0;
-}
-.text code {
-  border-radius: var(--radius-chip);
-  background: var(--affordance-subtle);
-  padding: var(--space-half) var(--space-1h);
-  font-family: var(--font-system-mono);
-  font-size: var(--text-mono-sm);
-  line-height: var(--text-mono-sm--line-height);
-  letter-spacing: var(--text-mono-sm--letter-spacing);
-}
-/* The code scrolls inside its frame so the copy action stays in the corner.
-   A plugin-presented block keeps the same frame and action. */
-.text :is(pre, .codeBlock) {
-  position: relative;
-  max-width: 100%;
-  overflow: hidden;
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-row);
-  background: var(--surface-panel);
-}
-.text pre code {
-  display: block;
-  overflow-x: auto;
-  border-radius: 0;
-  background: transparent;
-  padding: var(--space-3) var(--space-3);
-  scrollbar-width: thin;
-  white-space: pre;
-  overflow-wrap: normal;
-}
-/* Keep every line end reachable beside the pinned action. */
-.text pre:has(> .codeActions) code {
-  padding-inline-end: calc(var(--size-control-sm) + var(--space-3));
-}
-/* `pre` clips, so a focusable scroller draws its ring inside. */
-html[data-keyboard-navigation] .text pre code:focus-visible {
-  outline-offset: -2px;
-}
-.codeActions {
-  position: absolute;
-  display: flex;
-  gap: var(--space-half);
-  top: var(--space-1);
-  inset-inline-end: var(--space-1);
-  border-radius: var(--radius-icon-button);
-  background: var(--surface-panel);
-  user-select: none;
-}
-@media (hover: hover) and (pointer: fine) {
-  .text :is(pre, .codeBlock):not(:hover, :focus-within) .codeActions {
-    opacity: 0;
-  }
-}
-.text table {
-  display: block;
-  width: max-content;
-  max-width: 100%;
-  overflow-x: auto;
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
-  overflow-wrap: normal;
-  scrollbar-width: thin;
-  white-space: nowrap;
-}
-.text :where(th, td) {
-  border: 0;
-  border-right: 1px solid var(--border-standard);
-  border-bottom: 1px solid var(--border-standard);
-  padding: var(--space-1) var(--space-2);
-  text-align: left;
-  vertical-align: top;
-}
-.text :where(th, td):last-child {
-  border-right: 0;
-}
-.text tbody tr:last-child td {
-  border-bottom: 0;
-}
-.text th {
-  background: var(--affordance-subtle);
-  font-weight: var(--type-weight-medium);
-}
-.text hr {
-  border: 0;
-  border-top: 1px solid var(--border-standard);
-}
-.text input[type="checkbox"] {
-  width: 1em;
-  height: 1em;
-  margin: 0 var(--space-1h) var(--space-half) 0;
-  vertical-align: middle;
-  accent-color: var(--affordance-prominent);
-}
-.text a:not([data-solo-link]) {
-  color: var(--text-link);
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-}
-.text a:not([data-solo-link]):hover {
-  text-decoration-thickness: 2px;
-}
-.imageAlt {
-  color: var(--text-subtle);
-  font-style: italic;
+/* The edit marker follows a short preview and stays visible beside a long one. */
+.audiencePreview:has(+ .edited) {
+  flex: 0 1 auto;
 }
 
 .mention {
@@ -1729,6 +1978,7 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
 }
 
 .membership {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1757,11 +2007,29 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
 html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   --link-text: var(--text-link);
 }
+.membershipPeople {
+  max-height: min(20rem, 50vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-top: var(--space-2);
+  @apply text-body-sm text-standard;
+}
+.membershipPeople ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
 .membershipAvatars,
 .mentionRecipients {
+  /* How far each avatar tucks under the next; the stack's trailing padding
+     and the overflow count's margin balance it from the same value. */
+  --avatar-overlap: var(--space-1h);
   display: flex;
   flex-shrink: 0;
-  padding-right: var(--space-1h);
+  padding-right: var(--avatar-overlap);
 }
 .membershipAvatar,
 .mentionRecipients > [data-mention-recipient] {
@@ -1771,7 +2039,7 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   width: 1.75rem;
   height: 1.75rem;
   min-height: 1.75rem;
-  margin-right: calc(-1 * var(--space-1h));
+  margin-right: calc(-1 * var(--avatar-overlap));
   border: 2px solid var(--surface-panel);
   overflow: hidden;
   background: var(--surface-panel);
@@ -1787,26 +2055,32 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   min-height: var(--space-5);
 }
 
-/* Overflow counts are group metadata, not profile artwork. */
+/* Overflow counts are group metadata, not profile artwork: a pill that grows
+   with its digits but still ends the stack as its last member, overlapping
+   the previous avatar by --avatar-overlap like every avatar before it. */
 .membershipAvatarCount {
-  display: inline-grid;
-  place-items: center;
+  /* Left unpositioned so the positioned .membershipAvatar siblings paint over
+     it: the avatar covers the pill's leading --avatar-overlap and the pill
+     reads as sitting behind the stack. The "+" stays fully visible because
+     the 2px border plus --space-1h left padding exceed --avatar-overlap, so
+     the glyph starts just past the covering avatar's right edge. That
+     clearance relies on the padding matching --avatar-overlap (both
+     --space-1h); revisit the padding if the overlap token is retuned. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  width: 1.5rem;
-  height: 1.5rem;
+  height: var(--space-5);
+  margin-right: calc(-1 * var(--avatar-overlap));
+  padding: 0 var(--space-1h);
   border: 2px solid var(--surface-panel);
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--affordance-selected);
   color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-}
-
-.membershipAvatarCount {
-  width: var(--space-5);
-  height: var(--space-5);
-  margin-right: calc(-1 * var(--space-1h));
+  white-space: nowrap;
 }
 
 .typing {
@@ -1859,47 +2133,13 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   scroll-margin-inline-end: var(--space-3);
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
+  -webkit-user-select: none;
   user-select: none;
   @apply popover-surface;
   --floating-radius: var(--radius-control);
   --floating-inset: var(--space-half);
 }
-.quickReactionGlyph {
-  pointer-events: none;
-  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.quickReactionGlyph[data-emoji]::before {
-  content: attr(data-emoji);
-}
-@media (hover: hover) and (pointer: fine) and (
-    prefers-reduced-motion: no-preference
-  ) {
-  html:not([data-keyboard-input])
-    .quickReaction
-    button:enabled:hover
-    .quickReactionGlyph {
-    transform: translateY(-1px) scale(1.12);
-  }
-  html:not([data-keyboard-input])
-    .quickReaction
-    button:enabled:active
-    .quickReactionGlyph {
-    transform: scale(0.96);
-  }
-}
-html[data-keyboard-input] .quickReactionGlyph {
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .quickReactionGlyph {
-    transition: none;
-  }
-}
 @media (hover: hover) and (pointer: fine) {
-  /* Preserve main's author-line anchor without reserving extra message space. */
   .messageHeader {
     position: relative;
   }
@@ -1922,6 +2162,13 @@ html[data-keyboard-input] .quickReactionGlyph {
     pointer-events: none;
     translate: 0 -100%;
   }
+  /* Every row keeps its closed bar laid out (including the placeholder before
+     first hover), and WebKit composites each backdrop blur, even at opacity 0.
+     Closed bars are invisible, so they skip the glass; an open bar is
+     :popover-open and keeps it. */
+  .messageActions:not(:popover-open) {
+    backdrop-filter: none;
+  }
   /* Closed controls remain focusable at the slot, not at viewport offsets. */
   .messageActions[popover] {
     position: absolute;
@@ -1942,9 +2189,14 @@ html[data-keyboard-input] .quickReactionGlyph {
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
   ) {
-  html:not([data-keyboard-navigation]) .messageActions[popover]:popover-open {
+  .messageActions[popover]:popover-open {
     animation: message-actions-in calc(var(--duration-state) / 2)
       var(--easing-enter);
+  }
+  /* Keyboard reveal is immediate. Only the duration differs, so a pointer
+     press that ends keyboard navigation cannot restart an open bar's entry. */
+  html[data-keyboard-navigation] .messageActions[popover]:popover-open {
+    animation-duration: 0s;
   }
 }
 @keyframes message-actions-in {
@@ -1978,8 +2230,39 @@ html[data-keyboard-input] .quickReactionGlyph {
 .replyBranchSummary > button > [class~="buzz-button-label"] {
   flex-wrap: wrap;
 }
+/* Replies indent from both edges, so a reply on either side reads as nested. */
 .replyBranchPanel {
-  padding-inline-start: var(--reply-indent);
+  position: relative;
+  padding-inline: var(--reply-indent);
+}
+/* A wide hit area centred on the thread line folds the branch. */
+.replyBranchCollapse {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(var(--reply-spine-offset) - var(--space-2));
+  inline-size: calc(2 * var(--space-2));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  cursor: pointer;
+}
+.replyBranchCollapse::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(50% - 1px);
+  inline-size: 2px;
+  border-radius: var(--radius-control);
+  background: transparent;
+}
+.replyBranchCollapse:hover::before,
+html[data-keyboard-navigation] .replyBranchCollapse:focus-visible::before {
+  background: var(--border-message-thread);
+}
+html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
 }
 .replyItem {
   position: relative;
@@ -1988,17 +2271,47 @@ html[data-keyboard-input] .quickReactionGlyph {
   content: "";
   position: absolute;
   inset-inline-start: calc(var(--reply-spine-offset) - var(--reply-indent));
-  inset-block-start: 0;
+  /* Browsers without anchor positioning assume the avatar ends the row. */
+  inset-block: 0 calc(var(--space-half) + var(--size-control-sm) / 2);
   inline-size: calc(
     var(--reply-indent) -
     var(--reply-spine-offset) -
     var(--space-1)
   );
-  block-size: calc(var(--space-1) + var(--size-control-sm) / 2);
   border-inline-start: 1px solid var(--border-message-thread);
   border-block-end: 1px solid var(--border-message-thread);
   border-end-start-radius: var(--radius-control);
   pointer-events: none;
+}
+/* Each reply's own avatar anchors its hook, so the hook lands on the avatar
+   whatever renders around it: reactions, delivery notices, an open agents
+   disclosure, or an agent's activity on the reply, whose avatar is not the
+   reply's. */
+.replyItem {
+  anchor-scope: --reply-avatar;
+}
+:where(.replyItem) .messageAvatar:not([data-message-activity] *),
+:where(.replyItem .audienceLine) > .audienceAvatar:first-child {
+  anchor-name: --reply-avatar;
+}
+@supports (anchor-name: --reply-avatar) {
+  .replyBranchPanel > ol > .replyItem::before {
+    inset-block-end: anchor(
+      --reply-avatar center,
+      calc(var(--space-half) + var(--size-control-sm) / 2)
+    );
+    inset-inline-end: calc(anchor(--reply-avatar start, 100%) + var(--space-1));
+    inline-size: auto;
+  }
+}
+/* Stacked bubbles share the last one's avatar, so only that row hooks in.
+   Match the row's own marker, not rows nested inside an agents disclosure. */
+.replyBranchPanel
+  > ol
+  > .replyItem:has(
+    > .replyBranch > .replyBranchMessage > [data-message-id] > [data-stack-next]
+  )::before {
+  content: none;
 }
 .replyBranchPanel > ol > .replyItem:not(:last-child)::after {
   content: "";
@@ -2110,6 +2423,95 @@ html[data-keyboard-input] .quickReactionGlyph {
   border-inline-start: 1px solid var(--border-message-thread);
   pointer-events: none;
 }
+/* A branch started by the viewer sits on the right, so its spine, hooks
+   and summary mirror to stay beside the avatar that started it. */
+.replyBranch:has(
+  > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+) > .replyBranchSummary {
+  display: flex;
+  justify-content: flex-end;
+  margin-inline: 0 calc(var(--size-control-sm) + var(--space-2));
+}
+.replyBranch[data-open="true"]:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchMessage::after {
+  inset-inline: auto var(--reply-spine-offset);
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+}
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchPanel
+  > .replyBranchCollapse {
+  inset-inline: auto calc(var(--reply-spine-offset) - var(--space-2));
+}
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchPanel
+  > ol
+  > .replyItem::before {
+  inset-inline: auto calc(var(--reply-spine-offset) - var(--reply-indent));
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+  border-end-start-radius: 0;
+  border-end-end-radius: var(--radius-control);
+}
+@supports (anchor-name: --reply-avatar) {
+  .replyBranch:has(
+      > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+    )
+    > .replyBranchPanel
+    > ol
+    > .replyItem::before {
+    inset-inline-start: calc(anchor(--reply-avatar end, 100%) + var(--space-1));
+  }
+}
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchPanel
+  > ol
+  > .replyItem:not(:last-child)::after {
+  inset-inline: auto calc(var(--reply-spine-offset) - var(--reply-indent));
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--border-message-thread);
+}
+
+/* A reply on the other side of the branch has its avatar out of reach, so the
+   line runs straight past the whole reply instead of hooking toward an empty
+   edge. */
+.replyBranch:not(
+    :has(> .replyBranchMessage > [data-message-id] > [data-viewer-message])
+  )
+  > .replyBranchPanel
+  > ol
+  > .replyItem:has(
+    > .replyBranch
+      > .replyBranchMessage
+      > [data-message-id]
+      > [data-viewer-message]
+  )::before,
+.replyBranch:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  )
+  > .replyBranchPanel
+  > ol
+  > .replyItem:not(
+    :has(
+      > .replyBranch
+        > .replyBranchMessage
+        > [data-message-id]
+        > [data-viewer-message]
+    )
+  )::before {
+  inset-block-end: 0;
+  border-block-end: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
 
 /* Bound visual indentation without limiting reply ancestry. */
 .replyBranch[data-depth="6"] {
@@ -2139,12 +2541,6 @@ html[data-keyboard-input] .quickReactionGlyph {
   justify-content: center;
   align-items: flex-start;
 }
-/* The picker retains every reaction when the shortcut strip cannot fit. */
-@container message-row (max-width: 16.25rem) {
-  .quickReaction {
-    display: none;
-  }
-}
 /* A persistent sidebar can leave less than one indent of spare reading space. */
 @container messages (max-width: 20rem) {
   .threadHistory {
@@ -2155,6 +2551,13 @@ html[data-keyboard-input] .quickReactionGlyph {
     --reply-indent: 0px;
     --reply-spine-offset: calc(0px - var(--space-3));
     --reply-spine-start: 0px;
+  }
+  /* The end padding is a step narrower, so a right-side spine keeps the same
+     inset from the edge as a left-side one. */
+  .replyBranch[data-depth="0"]:has(
+    > .replyBranchMessage > [data-message-id] > [data-viewer-message]
+  ) {
+    --reply-spine-offset: calc(0px - var(--space-2));
   }
 }
 
@@ -2290,8 +2693,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 /* Shared media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
-  width: min(24rem, 100%, calc(var(--media-ratio, 16 / 9) * 11.25rem));
-  max-height: 16rem;
+  /* Ordinary 9:16 portraits still fit at the readable 16rem width. */
+  max-height: min(32rem, 70vh);
+  width: min(24rem, max(16rem, calc(var(--media-ratio, 16 / 9) * 11.25rem)));
 }
 .mediaPreview[data-video-preview] .mediaExpand {
   z-index: 4;
@@ -2341,6 +2745,26 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   padding-block: var(--space-2);
   margin-bottom: var(--space-2);
 }
+/* A working step stacked under its agent's comment reads as one group: the
+   row spacing between them gives way to the thread's stacked-row gap. The
+   viewer marks the pair; rows drawn inside a comment never change it. */
+.mediaReviewViewer .mediaReviewComment[data-stack-next] {
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+.mediaReviewViewer .mediaReviewComment[data-stack-previous] {
+  padding-top: var(--space-half);
+}
+:where(html[data-message-density="compact"])
+  .mediaReviewViewer
+  .mediaReviewComment[data-stack-next] {
+  padding-bottom: var(--space-1);
+}
+:where(html[data-message-density="compact"])
+  .mediaReviewViewer
+  .mediaReviewComment[data-stack-previous] {
+  padding-top: var(--space-1);
+}
 .mediaReviewComment[data-selected] {
   outline: 1px solid var(--border-prominent);
   outline-offset: -1px;
@@ -2370,8 +2794,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: inherit;
   clip-path: var(--media-corner-clip, none);
 }
+/* Only the gutter avatar: an avatar inside a comment keeps its own size. */
 .mediaReviewViewer .mediaReviewComment .message > :first-child,
-.mediaReviewViewer .mediaReviewComment [data-avatar-shape] {
+.mediaReviewViewer .mediaReviewComment .messageAvatar [data-avatar-shape] {
   width: 1.5rem;
   height: 1.5rem;
   min-width: 1.5rem;
@@ -2554,13 +2979,13 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 
 .message[data-layout="timeline"],
 .feed .message[data-layout="continuation"] {
-  --message-side-space: calc(var(--size-control) + var(--space-3));
+  --message-side-space: calc(var(--size-control-sm) + var(--space-3));
 }
 .message[data-layout="timeline"] .messageGutter {
-  flex-basis: var(--size-control);
+  flex-basis: var(--size-control-sm);
 }
 .feed .message[data-layout="continuation"] .messageGutter {
-  flex-basis: var(--size-control);
+  flex-basis: var(--size-control-sm);
 }
 .text pre {
   text-wrap-style: auto;
@@ -2571,41 +2996,28 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: var(--radius-capsule);
   opacity: 1;
   transform: translateY(0);
-  transition:
-    opacity var(--duration-state) var(--easing-enter),
-    transform var(--duration-settle) var(--easing-enter),
-    visibility 0s;
-  transition-delay: var(--duration-fast);
-
-  @starting-style {
-    visibility: hidden;
-    opacity: 0;
-    transform: translateY(50%);
-  }
 }
 .channelJoinSurface[data-ready="false"] {
   visibility: hidden;
   opacity: 0;
-  transform: translateY(50%);
-  transition: none;
+  transform: translateY(var(--space-3));
 }
-html[data-keyboard-navigation] .channelJoinSurface {
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .channelJoinSurface {
-    transition-delay: 0s;
-    transition-property: opacity;
-    transform: none;
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .channelJoinSurface[data-ready="true"] {
+    transition:
+      opacity var(--duration-state) var(--easing-enter),
+      transform var(--duration-settle) var(--easing-enter);
 
     @starting-style {
-      transform: none;
+      opacity: 0;
+      transform: translateY(var(--space-3));
     }
   }
 }
 
 .jumpToLatest {
   align-items: flex-end;
+  user-select: none;
   position: sticky;
   z-index: 2;
   /* Anchor the bottom edge, leaving space-3 for the shadow at any text size. */
@@ -2616,23 +3028,20 @@ html[data-keyboard-navigation] .channelJoinSurface {
   pointer-events: none;
 }
 :is(.feed, .threadHistory) .jumpToLatest {
-  top: calc(
-    100% +
-    var(--history-bottom-inset) -
-    var(--space-3) -
-    var(--channel-preview-inset, 0px)
+  /* Above a trailing card's visible top, and at most in the gap Full brief
+     leaves above it. */
+  top: max(
+    calc(var(--space-3) + var(--space-6)),
+    calc(
+      100% +
+      var(--history-bottom-inset) -
+      var(--space-3) -
+      var(--channel-preview-inset, 0px) -
+      var(--timeline-trailing-rest, 0px)
+    )
   );
 }
-/* Leave a separate floating lane when the composer has an activity pill. */
-.jumpToLatest[data-activity-lane] {
-  top: calc(
-    100% +
-    var(--history-bottom-inset) -
-    var(--space-3) -
-    2 *
-    var(--space-6)
-  );
-}
+
 .jumpToLatestSurface {
   @apply glass-secondary;
   display: flex;
@@ -2683,31 +3092,21 @@ html[data-keyboard-navigation] .channelJoinSurface {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.workflowDetails {
-  margin-block: var(--space-3);
-  font-size: var(--text-body-sm);
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
-}
-.workflowDetails dt {
-  color: var(--text-subtle);
-  margin-top: var(--space-2);
-}
-.workflowDetails dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
 
 /* Content hugs short messages while rich content can use the available width. */
 .messageBubble {
   position: relative;
+  /* Like the Markdown boxes inside it: no WebKit selection fill in the
+     bubble's padding or beside short lines, only behind selected text. */
+  translate: 0 0;
   --message-link: var(--text-message-link);
   --message-inset: var(--space-2);
   --message-radius: calc(
     var(--text-message) *
     var(--text-message--line-height) /
     2 +
-    var(--space-2)
+    var(--space-2) +
+    var(--space-half)
   );
   --message-inner-radius: max(
     0px,
@@ -2716,7 +3115,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   box-sizing: border-box;
   width: fit-content;
   font-size: var(--text-body-sm);
-  max-width: min(100%, calc(60ch + 2 * var(--space-4)));
+  max-width: 100%;
   min-width: 0;
   margin-top: var(--space-1);
   padding: var(--space-2) var(--space-4);
@@ -2725,20 +3124,64 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-standard);
   overflow-wrap: anywhere;
 }
-/* Own bubbles retain their toolbar hover treatment; received bubbles stay
-   on the same quiet surface as their reaction strip. */
+/* Compact is a flat list without a bubble surface; see the flat list rules. */
+:where(html[data-message-density="compact"]) .messageBubble {
+  --surface-message: transparent;
+  --surface-message-hover: transparent;
+  margin-top: 0;
+  padding: 0;
+  border-radius: 0;
+}
+/* The compact hover and open-thread marker share geometry and paint. A pseudo
+   element is generated only by the state selectors below. */
+:where(html[data-message-density="compact"])
+.message:not(.messageHighlight)::before {
+  position: absolute;
+  inset-block: 0;
+  inset-inline: calc(-1 * var(--message-hover-inset, 0px));
+  inset-inline-start: calc(
+    -1 *
+    var(--message-hover-start-inset, var(--message-hover-inset, 0px))
+  );
+  z-index: -1;
+  pointer-events: none;
+  background: var(--affordance-subtle-hover);
+  opacity: 0.5;
+}
+
+:where(html[data-message-density="compact"])
+  .message:not(.messageHighlight):is(
+    [data-actions-revealed],
+    [data-thread-open]
+  )::before {
+  content: "";
+}
 @media (hover: hover) and (pointer: fine) {
-  .message[data-own][data-actions-revealed]
-    > .messageBody
-    > .messageContent
-    .messageBubble:not([data-emoji-only])::after {
+  :where(html[data-message-density="compact"])
+    .message:not(.messageHighlight):hover::before {
     content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: var(--affordance-backdrop-hover);
-    pointer-events: none;
   }
+}
+/* An arrival cue replaces hover on its bubble rather than stacking on it. */
+.message:is([data-actions-revealed], [data-thread-open]):not(.messageHighlight)
+  > .messageBody
+  > .messageContent
+  .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+    :has(> .text > table:only-child),
+    :has(> .text > table:first-child + .edited:last-child)
+  ) {
+  background: var(--surface-message-hover);
+}
+.message[data-own]:is([data-actions-revealed], [data-thread-open]):not(
+    .messageHighlight
+  )
+  > .messageBody
+  > .messageContent
+  .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+    :has(> .text > table:only-child),
+    :has(> .text > table:first-child + .edited:last-child)
+  ) {
+  background: var(--surface-message-own-hover);
 }
 .message[data-layout="continuation"] .messageBubble {
   margin-top: 0;
@@ -2764,28 +3207,50 @@ html[data-keyboard-navigation] .channelJoinSurface {
   width: 100%;
 }
 
+/* Keep sent and received avatars close to their message in every layout. */
 .messageAvatar {
+  -webkit-user-select: none;
   user-select: none;
   position: absolute;
   bottom: 0;
-  right: calc(100% + var(--space-3));
+  right: calc(100% + var(--space-1));
   display: flex;
 }
-.message:not([data-layout="timeline"]) .messageAvatar {
-  right: calc(100% + var(--space-2));
+/* A flat list's avatar centres on the byline and first message line. */
+:where(html[data-message-density="compact"]) .message .messageAvatar {
+  top: calc(var(--text-message) * var(--text-message--line-height));
+  translate: 0 -50%;
+  bottom: auto;
+  right: calc(100% + var(--space-2) + var(--space-half));
+}
+.continuationTime {
+  @apply text-caption;
+  position: absolute;
+  inset-inline-end: calc(100% + var(--space-2) + var(--space-half));
+  inset-block-start: calc(
+    (
+      var(--text-message) *
+      var(--text-message--line-height) -
+      var(--text-caption) *
+      var(--text-caption--line-height)
+    ) /
+    2
+  );
+  width: max-content;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .message[data-viewer-message] .messageAvatar {
   right: auto;
-  left: calc(100% + var(--space-3));
-}
-.message[data-viewer-message]:not([data-layout="timeline"]) .messageAvatar {
-  left: calc(100% + var(--space-2));
+  left: calc(100% + var(--space-1));
 }
 .messageBubble > :is(.text, .plainText) {
   margin: 0;
 }
 /* Links take the bubble's paired link ink; mentions keep their own tint. */
-.messageBubble .text a:not([data-solo-link]) {
+.messageBubble .text a {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;
@@ -2795,7 +3260,6 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .messageBubble .text [data-mention-kind] {
   font-weight: var(--type-weight-medium);
   padding-inline: var(--space-1h);
-  border-radius: calc(var(--radius-chip) / 2);
 }
 .messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
@@ -2803,10 +3267,14 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-standard);
   /* Neutral inset surfaces keep their own link palette inside colored bubbles. */
   --message-link: var(--text-link);
-  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  /* Neutral insets drop own-bubble mention and state icon pairing back to the
+     shared roles. */
   --mention-fill: initial;
   --mention-hover: initial;
   --mention-text: initial;
+  --message-icon-subtle: initial;
+  --message-icon-success: initial;
+  --message-icon-categorical-purple: initial;
 }
 .messageContent {
   position: relative;
@@ -2831,9 +3299,6 @@ html[data-keyboard-navigation] .channelJoinSurface {
   max-width: 100%;
   margin-block: 0;
 }
-.messageAttachments[data-solo-cards] + .messageBubble {
-  margin-top: var(--space-half);
-}
 .messageAttachments .imageUnavailable {
   border-radius: calc(var(--radius-panel) - var(--space-2));
 }
@@ -2847,6 +3312,17 @@ html[data-keyboard-navigation] .channelJoinSurface {
   --mention-fill: var(--affordance-mention-own);
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
+  /* Only reactions on your bubble take its ink and overlay. Reactions outside
+     it, under an emoji-only message, or under a table-only one, keep the panel's. */
+  --reaction-surface: var(--affordance-reaction-own);
+  --reaction-ink: var(--text-message-own);
+  --reaction-self-surface: var(--affordance-reaction-self-own);
+  --reaction-self-ink: var(--text-reaction-self-own);
+  /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
+  --message-icon-subtle: var(--icon-subtle-own);
+  --message-metadata: var(--text-metadata-own);
+  --message-icon-success: var(--icon-success-own);
+  --message-icon-categorical-purple: var(--icon-categorical-purple-own);
 }
 /* Neutral content and unboxed renderers keep selection paired with their surface. */
 .messageBubble[data-emoji-only],
@@ -2860,12 +3336,9 @@ html[data-keyboard-navigation] .channelJoinSurface {
   background: transparent;
   color: var(--text-standard);
   --message-link: var(--text-link);
+  --message-metadata: initial;
 }
 
-.messageBubble[data-own] .text blockquote {
-  color: inherit;
-  border-color: currentColor;
-}
 .messageBubble[data-own] .text :is(code, pre, .codeBlock) {
   color: var(--text-standard);
 }
@@ -2882,10 +3355,14 @@ html[data-keyboard-navigation] .channelJoinSurface {
   background: var(--surface-panel);
   color: var(--text-standard);
   --message-link: var(--text-link);
-  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  /* Neutral insets drop own-bubble mention and state icon pairing back to the
+     shared roles. */
   --mention-fill: initial;
   --mention-hover: initial;
   --mention-text: initial;
+  --message-icon-subtle: initial;
+  --message-icon-success: initial;
+  --message-icon-categorical-purple: initial;
 }
 
 .threadAvatar:nth-child(1) {
@@ -2901,11 +3378,23 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message[data-layout="timeline"] {
   padding-block: var(--space-2);
 }
+:where(html[data-message-density="compact"]) .message[data-layout="timeline"] {
+  /* Keep the 12px group rhythm centered around a single-line message. */
+  padding-block: calc(var(--space-1) + var(--space-half));
+}
 .message[data-stack-next] {
   padding-bottom: 0;
 }
 .message[data-stack-previous] {
   padding-top: var(--space-half);
+}
+/* A flat list keeps 8px between stacked rows, such as one author's run, so
+   each reads as its own message rather than a wrapped line of the last. */
+:where(html[data-message-density="compact"]) .message[data-stack-next] {
+  padding-bottom: var(--space-1);
+}
+:where(html[data-message-density="compact"]) .message[data-stack-previous] {
+  padding-top: var(--space-1);
 }
 .message .byline {
   padding-inline-start: var(--space-4);
@@ -2920,13 +3409,21 @@ html[data-keyboard-navigation] .channelJoinSurface {
   margin-inline-start: var(--space-2);
   max-width: calc(100% - var(--space-2));
 }
+:where(html[data-message-density="compact"]) .message .reactions {
+  margin-inline-start: 0;
+  max-width: 100%;
+}
 .message .messageBubble > .reactions {
   margin: var(--space-2) 0 0;
-  margin-inline-start: calc(-1 * var(--space-1));
-  /* Short prose still leaves room for a counted reaction and its add pill. */
-  min-inline-size: calc(3 * var(--size-control-sm));
-  max-width: 100%;
+  margin-inline-start: calc(-1 * var(--space-2));
+  /* Short prose still leaves room for a counted reaction, gap, and add control. */
+  min-inline-size: calc(3 * var(--size-control-sm) + var(--space-1));
+  max-width: calc(100% + 2 * var(--space-2));
   border: 0;
+}
+.messageBubble:has(> .reactions:is([data-populated], .reactionFallback)) {
+  border-end-start-radius: calc(var(--size-control-sm) / 2 + var(--space-2));
+  border-end-end-radius: calc(var(--size-control-sm) / 2 + var(--space-2));
 }
 .message
   .messageBubble
@@ -2939,6 +3436,70 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message .messageBubble > .reactions:empty {
   margin: 0;
   min-inline-size: 0;
+}
+
+/* Compact is a flat list: no bubble surface, the avatar beside the byline
+   that starts each group, and metadata aligned with the prose. MessageRow
+   places that avatar and leaves every row unaligned and unpainted as own. */
+:where(html[data-message-density="compact"])
+  .message:has(> .messageGutter)
+  > .messageBody {
+  max-width: none;
+}
+:where(html[data-message-density="compact"])
+  .message
+  :is(.byline, .delivery, .sentFromThread) {
+  padding-inline-start: 0;
+}
+:where(html[data-message-density="compact"]) .message .byline {
+  @apply text-message;
+}
+:where(html[data-message-density="compact"]) .message .byline time {
+  @apply text-caption;
+}
+:where(html[data-message-density="compact"]) .message .continuationTime {
+  opacity: 0;
+  pointer-events: none;
+}
+/* Standalone :focus-within: compounded with :is() or :not(), WebKit
+   restyles the whole document on every focus change. */
+:where(html[data-message-density="compact"])
+  .message:is(:hover, [data-actions-revealed])
+  .continuationTime,
+:where(html[data-message-density="compact"])
+  .message:focus-within
+  .continuationTime {
+  opacity: 1;
+  pointer-events: auto;
+}
+:where(html[data-message-density="compact"]) .message .author {
+  font-weight: var(--type-weight-medium);
+}
+:where(html[data-message-density="compact"])
+  .messageBubble
+  .text
+  [data-mention-kind] {
+  padding-inline-start: var(--space-half);
+}
+:where(html[data-message-density="compact"])
+  .message
+  .messageBubble
+  > .reactions {
+  margin: var(--space-half) 0 0;
+  min-inline-size: 0;
+  max-width: 100%;
+}
+/* The summary's own inset puts its first participant on the prose edge. */
+:where(html[data-message-density="compact"])
+  .messageBody
+  :is([data-thread-summary], [data-reply-connector]) {
+  margin-inline-start: calc(-1 * var(--space-1));
+  max-width: none;
+}
+:where(html[data-message-density="compact"])
+  .messageBody
+  [data-reply-connector]::before {
+  content: none;
 }
 
 /* Outgoing metadata follows the bubble edge, even when media widens its body. */
@@ -3005,24 +3566,38 @@ html[data-keyboard-navigation] .channelJoinSurface {
   display: none;
 }
 
-/* Agent coordination shares the conversation's measure. Avatars and quiet
-   type distinguish it without a second rail or a full message bubble. */
+/* Agent activity shares the conversation measure with compact, content-sized rows. */
 .activityDisclosure {
   width: min(100%, var(--timeline-measure));
   margin-inline: auto;
-  padding-block: var(--space-1);
+  padding-block: 0;
 }
-.activityChevron {
-  transform: rotate(-90deg);
+.newMessages {
+  width: min(100%, var(--timeline-measure));
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) auto;
+  color: var(--text-subtle);
+  @apply text-caption;
 }
-.activityDisclosure [aria-expanded="true"] .activityChevron {
-  transform: rotate(0deg);
+.newMessages::before,
+.newMessages::after {
+  content: "";
+  height: 1px;
+  min-width: 0;
+  flex: 1;
+  background: var(--border-standard);
 }
 .activityExpansionRoot {
   display: contents;
 }
+/* One column as wide as the timeline: an implicit auto column would grow to a
+   row's unwrapped content, such as a relayed line's whole preview, and push
+   the row past the conversation's edge. */
 .activityExpansion {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(var(--activity-reveal-min, 0px), 1fr);
 }
 .activityExpansionContent {
@@ -3036,99 +3611,149 @@ html[data-keyboard-navigation] .channelJoinSurface {
   .activityExpansion {
     transition: grid-template-rows var(--duration-settle) var(--easing-enter);
   }
-  .activityChevron {
-    transition: transform var(--duration-state) var(--easing-enter);
-  }
 }
 .audienceRow {
+  position: relative;
+  --activity-avatar-size: var(--size-control-sm);
+  --activity-gap: var(--space-2);
+  --message-side-space: calc(var(--activity-avatar-size) + var(--activity-gap));
   container: audience-row / inline-size;
   width: min(100%, var(--timeline-measure));
   margin-inline: auto;
-  padding-block: var(--space-1);
+  padding-block: var(--space-half) 0;
+}
+:where(html[data-message-density="compact"]) .audienceRow {
+  padding-block: calc(var(--space-1) + var(--space-half));
+}
+.audienceRow[data-layout="timeline"],
+.feed .audienceRow[data-layout="continuation"] {
+  --activity-avatar-size: var(--size-control);
+  --activity-gap: var(--space-3);
+}
+.audienceRow[data-stack-next] {
+  padding-block-end: 0;
+}
+.audienceRow[data-stack-previous] {
+  padding-block-start: var(--space-half);
 }
 .audienceLine {
+  position: relative;
   display: flex;
-  flex: 1;
   align-items: center;
-  gap: var(--space-1h);
-  inline-size: 100%;
+  gap: var(--space-2);
+  inline-size: fit-content;
+  max-inline-size: calc(100% - var(--space-3));
+  align-self: flex-start;
+  margin-inline-start: var(--space-3);
   min-inline-size: 0;
-  padding: var(--space-1);
+  padding: var(--space-1) var(--space-1h) var(--space-1) var(--space-1);
   border: 0;
   border-radius: var(--radius-control);
   background: none;
   cursor: pointer;
-  color: var(--text-subtle);
-  font: inherit;
+  color: var(--text-standard);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--type-weight-regular);
   text-align: start;
 }
-.audienceEntry:has(.audienceLine:hover) {
-  background: var(--affordance-subtle-hover);
+:where(html[data-message-density="compact"]) .audienceLine {
+  padding-inline: var(--space-2);
 }
-html[data-keyboard-navigation] .audienceLine:focus-visible {
+html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
 }
 .audienceEntry {
+  position: relative;
+  font-size: var(--text-body-sm);
+  box-sizing: border-box;
+  padding-inline-start: var(--message-side-space);
+  /* Match the message body reservation and its prose bubble's reading measure. */
+  max-inline-size: min(
+    100%,
+    calc(
+      var(--message-side-space) +
+      min(
+        85%,
+        46rem,
+        max(60%, calc(100% - 2 * var(--message-side-space) - var(--space-4))),
+        calc(60ch + 2 * var(--space-4))
+      )
+    )
+  );
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
   border-radius: var(--radius-control);
 }
-.audienceTime {
-  flex: none;
-  padding: var(--space-2) var(--space-1);
-  color: var(--text-subtle);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  white-space: nowrap;
-}
+/* The detail replaces the preview in the same text column, with the avatar
+   aligned to the parent bubble's text inset throughout expansion. */
 .audienceRow:has(.audienceBody) .audienceEntry {
+  display: grid;
+  grid-template-columns: calc(
+      var(--space-3) +
+      var(--space-1) +
+      1.5rem +
+      var(--space-2)
+    ) minmax(0, 1fr);
+  align-items: start;
   cursor: pointer;
-  background: var(--affordance-subtle);
-}
-.audienceRow:has(.audienceBody) .audienceEntry:hover {
-  background: var(--affordance-subtle-hover);
 }
 .audienceRow:has(.audienceBody) .audienceLine {
-  flex: none;
-  inline-size: auto;
-  padding-inline-end: var(--space-1h);
-  background: none;
+  grid-area: 1 / 1;
+  inline-size: calc(1.5rem + var(--space-1) + var(--space-1h));
 }
-/* Open, the text keeps the line's size and colour and starts where its
-   preview was, so expanding only lets it run on. */
+.audienceRow[data-message-notice] .audienceEntry {
+  display: flex;
+  align-items: stretch;
+  padding-inline-start: 0;
+}
+.audienceRow[data-message-notice] .audienceLine {
+  inline-size: fit-content;
+}
 .audiencePanel {
-  flex: 1;
+  grid-area: 1 / 2;
   min-inline-size: 0;
 }
+.audienceRow[data-message-notice] .audiencePanel {
+  margin-inline-start: calc(
+    var(--space-3) +
+    var(--space-1) +
+    var(--space-6) +
+    var(--space-2)
+  );
+}
+/* Base UI measures the full text; the collapsed endpoint is one avatar row. */
 .audienceBody {
-  --activity-content-inset: calc(
-    (
-      var(--size-control-sm) *
-      0.75 -
-      var(--text-caption) *
-      var(--text-caption--line-height)
-    ) /
-    2 +
-    var(--space-1)
-  );
-  /* The preview hands off to a readable first line immediately. Only the
-     additional space expands, avoiding a blank frame at either endpoint. */
-  --activity-reveal-min: calc(
-    var(--activity-content-inset) +
-    var(--text-caption) *
-    var(--text-caption--line-height)
-  );
-  color: var(--text-subtle);
+  box-sizing: border-box;
+  height: var(--collapsible-panel-height);
+  min-height: calc(var(--space-6) + 2 * var(--space-1));
+  overflow: clip;
+  color: var(--text-standard);
+}
+.audienceBody:is([data-starting-style], [data-ending-style]) {
+  height: calc(var(--space-6) + 2 * var(--space-1));
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .audienceBody {
+    transition: height var(--duration-state) var(--easing-enter);
+  }
 }
 .audienceContent {
-  padding-block-end: var(--space-2);
-  padding-block-start: var(--activity-content-inset);
-  color: var(--text-subtle);
+  /* Preserve the preview baseline: its line is centered in a 24px avatar. */
+  padding: calc(
+      var(--space-1) +
+      (
+        var(--space-6) -
+        var(--text-caption) *
+        var(--text-caption--line-height)
+      ) /
+      2
+    )
+    var(--space-1h) var(--space-1) 0;
+  color: var(--text-standard);
 }
 .audienceBody .message[data-layout="continuation"] {
   width: 100%;
@@ -3153,52 +3778,42 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 .audienceAvatar {
   display: grid;
   flex: none;
-  inline-size: calc(var(--size-control-sm) * 0.75);
-  block-size: calc(var(--size-control-sm) * 0.75);
+  inline-size: var(--space-4);
+  block-size: var(--space-4);
 }
-.audienceArrow {
-  flex: none;
-  color: var(--text-subtle);
-}
-.audiencePreview {
-  flex: 1;
+.audiencePreviewText {
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* Retain the expanded columns during exit, so wrapping and the preview do
-   not replace the closing details before their space has folded away. */
-.audienceRow:has(.audienceBody) .audiencePreview {
+.audienceRow:has(.audienceBody) .audiencePreviewText {
   display: none;
 }
-
-/* At narrow widths or enlarged text, give the details the full reading width
-   while keeping the avatars and clock on their original header line. */
-@container audience-row (max-width: 28rem) {
-  .audienceRow:has(.audienceBody) .audienceEntry {
-    flex-wrap: wrap;
-  }
-  .audienceBody {
-    --activity-content-inset: var(--space-1);
-    order: 1;
-    flex-basis: 100%;
-  }
-  .audienceContent {
-    padding: var(--space-1) var(--space-1) var(--space-2);
-  }
-  .audienceTime {
-    margin-inline-start: auto;
-  }
+.audienceLine:hover,
+.audienceEntry:where([data-thread-open]):not(.messageHighlight)
+  > .audienceLine {
+  background: var(--affordance-subtle-hover);
 }
 
-/* Returning from a thread only paints its already-visible origin. The wash
-   extends into the feed's inset without changing the row's layout box. */
-.returnHighlight {
+/* Arriving at a message, by link, search or returning from its thread,
+   briefly marks it. A filled bubble takes a see-through layer, chosen like its
+   chips, so they stay readable on top. A row without one (membership lines,
+   emoji, attachments, tables, diffs) is washed instead; the wash extends into
+   the feed's inset without changing the row's layout box. */
+.messageHighlight {
   isolation: isolate;
 }
-.returnHighlight::after {
+.messageHighlight:not(
+  :has(
+    > .messageBody
+      > .messageContent
+      .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+        :has(> .text > table:only-child),
+        :has(> .text > table:first-child + .edited:last-child)
+      )
+  )
+)::after {
   content: "";
   position: absolute;
   inset-block: 0;
@@ -3207,12 +3822,53 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   border-radius: var(--radius-row);
   background: var(--surface-message-highlight);
   pointer-events: none;
-  animation: return-message-highlight calc(var(--duration-settle) * 5) ease-out
-    both;
+  animation: message-highlight calc(var(--duration-settle) * 10) ease-out both;
 }
-@keyframes return-message-highlight {
+/* The pending response and a recorded step share a normal message line box. */
+.message[data-agent-response-preview] .messageBubble {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-standard);
+  font-size: var(--text-message);
+  line-height: var(--text-message--line-height);
+  letter-spacing: var(--text-message--letter-spacing);
+  font-weight: var(--text-message--font-weight);
+}
+
+:where(html[data-message-density="compact"])
+  .message[data-agent-response-preview]
+  .messageBubble {
+  border-radius: calc(var(--radius-chip) - var(--space-1));
+}
+
+.messageHighlight > .messageBody > .messageContent .messageBubble {
+  isolation: isolate;
+}
+.messageHighlight
+  > .messageBody
+  > .messageContent
+  .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+    :has(> .text > table:only-child),
+    :has(> .text > table:first-child + .edited:last-child)
+  )::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--affordance-message-highlight);
+  pointer-events: none;
+  animation: message-highlight calc(var(--duration-settle) * 10) ease-out both;
+}
+.messageHighlight
+  > .messageBody
+  > .messageContent
+  .messageBubble[data-own]::after {
+  background: var(--affordance-message-own-highlight);
+}
+/* Held about a second so it reads as intentional, then a slow fade. */
+@keyframes message-highlight {
   0%,
-  35% {
+  45% {
     opacity: 1;
   }
   100% {
@@ -3220,34 +3876,71 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .returnHighlight::after {
+  .messageHighlight::after,
+  .messageHighlight .messageBubble::after {
     animation-timing-function: steps(1, end);
+  }
+}
+
+/* A keyboard-selected message holds the same wash steady, ringed with the
+   focus colour, without changing the row's layout box. */
+html[data-keyboard-navigation] .message:focus-visible {
+  outline: none;
+  isolation: isolate;
+}
+html[data-keyboard-navigation] .message:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline: calc(-1 * var(--space-2));
+  z-index: -1;
+  border-radius: var(--radius-row);
+  background: var(--surface-message-highlight);
+  box-shadow: inset 0 0 0 2px var(--border-focus);
+  pointer-events: none;
+}
+@media (forced-colors: active) {
+  html[data-keyboard-navigation] .message:focus-visible {
+    outline: 2px solid Highlight;
   }
 }
 
 [data-attachment-drop-zone] {
   position: relative;
 }
+/* A tint and a border mark the pane as the drop target without hiding it:
+   the drag can still rest on a thread summary to open it. The border runs
+   along the pane's edge, outside its header's controls, and the label sits in
+   a badge at the top, clear of the composer however narrow the pane, and
+   below the pane's header where the zone includes one. */
 .fileDropOverlay {
   position: absolute;
-  inset: var(--space-2);
+  inset: 0;
   z-index: 5;
   display: grid;
-  place-items: center;
-  align-content: center;
-  gap: var(--space-2);
-  padding: var(--space-4);
+  place-items: start center;
+  padding: var(--space-3);
   border: 2px dashed var(--border-focus);
   border-radius: var(--radius-panel);
-  background: var(--surface-panel);
+  background: var(--affordance-backdrop-hover);
+  pointer-events: none;
+}
+[data-attachment-drop-zone]:has([class~="panel-header"]) > .fileDropOverlay {
+  padding-block-start: calc(var(--size-panel-header) + var(--space-3));
+}
+.fileDropBadge {
+  @apply glass-secondary;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1h);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-capsule);
   color: var(--text-standard);
   font-size: var(--text-label);
   font-weight: var(--text-label--font-weight);
   line-height: var(--text-label--line-height);
   letter-spacing: var(--text-label--letter-spacing);
-  text-align: center;
-  opacity: 0.95;
-  pointer-events: none;
 }
 
 .draftMediaSlide {
@@ -3269,6 +3962,7 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 /* Keyboard users can read a grouped message's time without opening a popup. */
 .keyboardMessageTime {
   display: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 html[data-keyboard-navigation]
@@ -3283,15 +3977,29 @@ html[data-keyboard-navigation]
 
 /* A standalone renderer already owns its surface. Mixed prose keeps its bubble. */
 .messageBubble[data-diff-only],
-.messageBubble:has(> .text > table:only-child) {
+.messageBubble:has(> .text > table:only-child),
+.messageBubble:has(> .text > table:first-child + .edited:last-child) {
   padding: 0;
   background: transparent;
   color: var(--text-standard);
   --message-link: var(--text-link);
+  /* A table's reactions stay in the bubble, which is now see-through, so they
+     sit on the panel and drop your bubble's pairing. */
+  --reaction-surface: initial;
+  --reaction-ink: initial;
+  --reaction-self-surface: initial;
+  --reaction-self-ink: initial;
+  /* An edited marker there sits on the panel too. */
+  --message-metadata: initial;
 }
-.messageBubble[data-diff-only]::after,
-.messageBubble:has(> .text > table:only-child)::after {
-  display: none;
+/* Unboxed renderers have no inner gutter for the reaction strip to outdent. */
+.message .messageBubble[data-diff-only] > .reactions,
+.message .messageBubble:has(> .text > table:only-child) > .reactions,
+.message
+  .messageBubble:has(> .text > table:first-child + .edited:last-child)
+  > .reactions {
+  margin-inline-start: 0;
+  max-width: 100%;
 }
 .workflowAttribution {
   display: inline-flex;
@@ -3300,21 +4008,684 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
   min-width: 0;
 }
-.composerSoloCards {
-  container-type: inline-size;
-  container-name: message-row;
+html[data-keyboard-navigation] .activityExpansion {
+  transition: none;
+}
+
+.audienceLine[data-collapse] {
+  color: var(--text-subtle);
+}
+
+/* Extend the native button hit target, keeping its painted surface content-sized. */
+.audienceRow[data-collapse] > .audienceEntry,
+.audienceLine[data-collapse] {
+  position: static;
+}
+.audienceLine[data-collapse]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+/* Standalone activity uses the normal incoming identity and bubble geometry. */
+.standaloneActivity .audienceRow {
+  container-type: normal;
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+.standaloneActivity .audienceRow .audienceEntry {
+  padding-inline-start: 0;
+  max-inline-size: 100%;
+  display: block;
+}
+.standaloneActivity .audienceRow .audienceLine {
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  min-height: calc(var(--text-message) * var(--text-message--line-height));
+}
+.standaloneActivity .audienceRow .audiencePreviewText {
+  display: block;
+}
+.containedActivityHistory .audienceRow .audienceEntry {
+  max-inline-size: 100%;
+  padding-inline-start: 0;
+}
+.standaloneActivity .audienceRow[data-open] .audienceEntry {
+  display: flex;
+}
+.containedActivityHistory .audienceRow .audienceLine {
+  margin: 0;
+  padding: 0;
+  align-items: flex-start;
+}
+.standaloneActivity .audienceRow[data-open] .audienceLine {
+  order: 1;
+  color: var(--text-subtle);
+}
+.standaloneActivity .audienceBody .message[data-layout="continuation"] {
+  container-type: normal;
+  padding-inline-end: 0;
+}
+
+.standaloneActivity .audienceBody {
+  min-height: calc(var(--text-message) * var(--text-message--line-height));
+}
+.standaloneActivity
+  .audienceBody:is([data-starting-style], [data-ending-style]) {
+  height: calc(var(--text-message) * var(--text-message--line-height));
+}
+.standaloneActivity .audienceContent {
+  padding: 0;
+}
+.standaloneActivity .audienceBody .message[data-layout="continuation"] .text {
+  font-size: var(--text-message);
+  line-height: var(--text-message--line-height);
+  letter-spacing: var(--text-message--letter-spacing);
+  font-weight: var(--text-message--font-weight);
+}
+
+.audienceRow[data-message-notice][data-viewer-message] .audienceEntry {
+  inline-size: fit-content;
+  max-inline-size: calc(100% - var(--size-control-sm) - var(--activity-gap));
+  margin-inline-start: auto;
+  margin-inline-end: calc(var(--size-control-sm) + var(--activity-gap));
+}
+.audienceRow[data-message-notice][data-viewer-message] .audienceLine {
+  align-self: flex-end;
+  max-inline-size: 100%;
+  margin-inline-start: 0;
+}
+
+/* Keep a working team inside the same footprint as one message avatar. */
+.agentAvatarGroup {
+  position: relative;
+  display: block;
+  width: 2.5rem;
+  height: 2.5rem;
+}
+.message:not([data-layout="timeline"]) .agentAvatarGroup {
+  width: 2rem;
+  height: 2rem;
+}
+:where(html[data-message-density="compact"])
+  .message[data-layout]
+  .agentAvatarGroup {
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+}
+/* Media comments use 24px avatars. Size the slot, not only the image, so
+   comment and working-agent avatars share one column in every engine.
+   `.messageAvatar` keeps this above the slot sizes set by layout and density. */
+.mediaReviewViewer
+  .mediaReviewThread
+  .messageAvatar
+  :is(.nestedAvatar, .agentAvatarGroup) {
+  flex-basis: 1.5rem;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.agentAvatarGroupItem {
+  position: absolute;
+  inset: 0;
+  transform-origin: top left;
+  transform: scale(1);
+  opacity: 1;
+  transition:
+    transform var(--duration-state) var(--easing-settle),
+    opacity var(--duration-state) var(--easing-enter);
+}
+.agentAvatarGroup[data-count="2"] .agentAvatarGroupItem:first-child {
+  transform: scale(0.62);
+}
+.agentAvatarGroup[data-count="2"] .agentAvatarGroupItem:nth-child(2) {
+  transform: translate(38%, 38%) scale(0.62);
+}
+.agentAvatarGroup[data-count="3"] .agentAvatarGroupItem:first-child {
+  transform: translateX(22%) scale(0.56);
+}
+.agentAvatarGroup[data-count="3"] .agentAvatarGroupItem:nth-child(2) {
+  transform: translateY(44%) scale(0.56);
+}
+.agentAvatarGroup[data-count="3"] .agentAvatarGroupItem:nth-child(3) {
+  transform: translate(44%, 44%) scale(0.56);
+}
+@starting-style {
+  .agentAvatarGroup[data-count] .agentAvatarGroupItem:not(:first-child) {
+    opacity: 0;
+    transform: translate(22%, 22%) scale(0.52);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agentAvatarGroupItem {
+    transition: none;
+  }
+}
+
+.activityDisclosureIcon {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-subtle);
+}
+.standaloneActivity[data-contained-history]
+  .audienceLine[data-collapse]::after {
+  display: none;
+}
+.containedActivityHistory {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
+  gap: var(--space-3);
+  padding-block-start: var(--space-3);
 }
-.composerSoloCard {
+.containedActivityHistory .audienceRow .audiencePreviewText {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.containedActivityHistory .audienceRow:has(.audienceBody) .audienceEntry {
+  display: grid;
+  grid-template-columns: calc(var(--space-6) + var(--space-2)) minmax(0, 1fr);
+}
+
+/* A message interaction uses the bubble's type and inset, not control sizing. */
+.activityBubbleTrigger {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* The painted bubble and its interactive area must have the same bounds. */
+.messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
+  padding: 0;
+}
+:where(html[data-message-density="compact"])
+  .message[data-agent-response-preview]
+  .messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
+  @apply text-caption;
+  border-radius: var(--radius-capsule);
+  background: var(--reaction-surface, var(--affordance-reaction));
+  box-shadow: none;
+}
+.messageBubble > .activityBubbleTrigger,
+.activityBubbleControls > .activityBubbleTrigger {
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border-radius: inherit;
+}
+:where(html[data-message-density="compact"])
+  .messageBubble
+  > .activityBubbleTrigger,
+:where(html[data-message-density="compact"])
+  .activityBubbleControls
+  > .activityBubbleTrigger {
+  min-height: calc(var(--space-6) + var(--space-half));
+  padding: calc(var(--space-1) + var(--space-half) / 2)
+    calc(var(--space-1h) + var(--space-half) / 2);
+}
+/* Compact removes the bubble inset. A collapsed activity disclosure ("Stopped",
+   or a standalone failure reply inside its notice) has no trigger inset, so its
+   outlined box takes the activity bubble's inset. */
+:where(html[data-message-density="compact"])
+  .message[data-agent-response-preview]
+  .messageBubble:has(
+    > .standaloneActivity > .activityGroupHeader:not([data-expanded]),
+    > .standaloneActivity
+      > [data-message-notice]
+      > .standaloneActivity
+      > .activityGroupHeader:not([data-expanded])
+  ) {
+  padding: calc(var(--space-1) + var(--space-half) / 2)
+    calc(var(--space-1h) + var(--space-half) / 2);
+}
+
+.activityBubbleControls {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  border-radius: inherit;
+}
+.activityBubbleControls > .activityBubbleTrigger {
+  min-width: 0;
+  flex: 1;
+  align-self: stretch;
+}
+
+/* Activity interactions paint their shared bubble, never a second pill inside it. */
+.message[data-agent-response-preview] .audienceLine:hover {
+  background: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .message[data-agent-response-preview] .messageBubble:hover {
+    background: var(--affordance-subtle-hover);
+  }
+}
+
+/* Activity bubbles retain their aligned 24px identity column. */
+.standaloneActivity .audienceAvatar {
+  inline-size: var(--space-6);
+  block-size: var(--space-6);
+}
+
+.activityGroupHeader[data-expanded] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.messageBubble:has(
+  > .standaloneActivity > .activityGroupHeader[data-expanded],
+  > .standaloneActivity
+    > [data-message-notice]
+    > .standaloneActivity
+    > .activityGroupHeader[data-expanded]
+) {
+  padding: var(--space-4);
+}
+.standaloneActivity .activityGroupHeader[data-expanded] .audienceLine {
+  min-height: var(--size-control-sm);
+}
+.activityGroupHeader[data-expanded] > .audienceRow {
+  flex: 1;
   min-width: 0;
 }
-.composerSoloCardContent {
+.activityGroupHeader[data-expanded] > div:last-child {
+  flex-shrink: 0;
+}
+.agentNote {
+  margin: var(--space-1h) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+
+/* A relayed line spans the row in the message's own columns: the agent's
+   avatar centered on the avatar column, its text where bubbles start. */
+.relayedRow,
+.relayedRun {
+  --relayed-text-start: calc(var(--size-control-sm) + var(--space-3));
+  --relayed-avatar-offset: var(--space-1);
+  --relayed-avatar-center: calc(
+    var(--relayed-text-start) -
+    var(--relayed-avatar-offset) -
+    var(--size-control-sm) /
+    2
+  );
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
+  padding-block: var(--space-2) var(--space-half);
+}
+.relayedRow:is([data-layout="thread"], [data-layout="continuation"]),
+.relayedRun[data-layout="thread"] {
+  --relayed-text-start: calc(var(--size-control-sm) + var(--space-2));
+}
+:where(html[data-message-density="compact"]) :is(.relayedRow, .relayedRun) {
+  --relayed-text-start: calc(var(--size-control-sm) + var(--space-5));
+  --relayed-avatar-offset: calc(var(--space-2) + var(--space-half));
+}
+.relayedRunItems .relayedRow {
+  padding-block: 0;
+}
+/* Their line already names the one chat they all came from. */
+.relayedRunItems[data-same-source] [data-relayed-source] {
+  display: none;
+}
+.relayedEntry {
+  border-radius: var(--radius-chip);
+}
+.relayedHeader {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-inline-size: 0;
+  padding: var(--space-1) var(--space-2) var(--space-1)
+    var(--relayed-text-start);
+  border-radius: var(--radius-chip);
+  color: var(--text-subtle);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  white-space: nowrap;
+}
+/* A stack of senders is wider than the avatar lane. Half its artwork is 15px
+   for two and 22px for three. It keeps 8px from the line's start edge, as the
+   line's end does, and the text starts 4px past its last avatar. */
+.relayedHeader[data-senders="2"] {
+  --relayed-stack-half: calc(
+    var(--space-5) -
+    var(--space-1h) /
+    2 -
+    var(--space-half)
+  );
+}
+.relayedHeader[data-senders="3"] {
+  --relayed-stack-half: calc(var(--space-5) + var(--space-half));
+}
+.relayedHeader:is([data-senders="2"], [data-senders="3"]) {
+  --relayed-stack-center: max(
+    var(--relayed-avatar-center),
+    calc(var(--space-2) + var(--relayed-stack-half))
+  );
+  padding-inline-start: max(
+    var(--relayed-text-start),
+    calc(
+      var(--relayed-stack-center) +
+      var(--relayed-stack-half) +
+      var(--space-1)
+    )
+  );
+}
+.relayedHeader:hover {
+  background: var(--affordance-subtle-hover);
+}
+/* A relayed line and a fold's line stay filled; lines inside an opened fold
+   fill only while open or while their thread is, and a jump to a line shows
+   its highlight through it. */
+.relayedRun > .relayedHeader:not(:hover),
+.relayedHeader[data-open]:not(:hover),
+.relayedEntry:where([data-thread-open]):not(.messageHighlight)
+  > .relayedHeader:not(:hover),
+.relayedEntry:not(.relayedRunItems .relayedEntry, .messageHighlight)
+  > .relayedHeader:not(:hover) {
+  background: var(--affordance-subtle);
+}
+html[data-keyboard-navigation]
+  .relayedHeader:has(> .relayedTrigger:focus-visible) {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+/* The line's button covers it; the source chat link stays above it. */
+.relayedTrigger {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  cursor: pointer;
+}
+.relayedAvatar {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: var(--relayed-stack-center, var(--relayed-avatar-center));
+  /* A definite row and no line box of its own keep the avatar 16px square and
+     on the line's center; a stack's ringed avatars overflow it evenly. */
+  display: grid;
+  grid-template-rows: var(--space-4);
+  place-items: center;
+  min-inline-size: var(--space-4);
+  block-size: var(--space-4);
+  line-height: 0;
+  translate: -50% -50%;
+  pointer-events: none;
+}
+/* A narrow row gives up the preview first, then the name and chat. */
+.relayedName,
+.relayedChat {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.relayedName {
+  color: var(--text-standard);
+  font-weight: var(--type-weight-semibold);
+}
+.relayedSubtle {
+  flex: none;
+}
+.relayedChat {
+  position: relative;
+  z-index: 1;
+  /* The link's hover padding overhangs it; this box takes the overhang, so a
+     chat name that fits is not clipped into an ellipsis. */
+  margin-inline: calc(-1 * var(--space-half));
+  color: var(--text-standard);
+}
+.relayedHeader > .relayedChat > * {
+  margin-inline: 0;
+}
+.relayedHeader:not([data-open]) > .relayedChat {
+  max-inline-size: 20rem;
+}
+.relayedPreview {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Sized like the time in a message's byline. */
+.relayedTime {
+  @apply text-caption;
+  flex: none;
+}
+/* A fold's count belongs to its preview, so the two stay together: the
+   preview takes only the room left, up to its own width, and gives it all up
+   before the chat name truncates. */
+.relayedRun > .relayedHeader > .relayedPreview {
+  max-inline-size: max-content;
+}
+/* A narrow conversation keeps the avatar, the chat and the message: the name
+   and "from" go. An opened fold's lines keep naming each sender, and "from"
+   stays before a direct message's person, whose name has no "#" to mark it
+   as the chat. */
+@container messages (max-width: 30rem) {
+  .relayedHeader > [data-relayed-from]:not([data-relayed-from="dm"]),
+  .relayedHeader > .relayedName:not(.relayedRunItems .relayedName) {
+    display: none;
+  }
+}
+.relayedRun > .relayedHeader > .relayedTime {
+  margin-inline-start: auto;
+}
+/* Points right while closed and down while open, as other disclosures do. */
+.relayedCaret {
+  flex: none;
+  inline-size: var(--space-3);
+  block-size: var(--space-3);
+}
+.relayedHeader[data-open] > .relayedCaret {
+  rotate: 90deg;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .relayedCaret {
+    transition: rotate var(--duration-fast) var(--easing-enter);
+  }
+}
+/* Base UI measures the opened text. */
+.relayedPanel {
+  height: var(--collapsible-panel-height);
+  overflow: clip;
+}
+.relayedPanel:is([data-starting-style], [data-ending-style]) {
+  height: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-keyboard-navigation]) .relayedPanel {
+    transition: height var(--duration-state) var(--easing-enter);
+  }
+}
+/* The opened text hangs from the avatar on a thread rule. */
+.relayedBody {
+  position: relative;
+  padding: var(--space-3) var(--space-2) var(--space-1)
+    var(--relayed-text-start);
+}
+.relayedBody::before {
+  content: "";
+  position: absolute;
+  inset-block: var(--space-1) 0;
+  inset-inline-start: var(--relayed-avatar-center);
+  inline-size: 1px;
+  background: var(--border-message-thread);
+}
+.relayedBody .message:where([data-layout="continuation"]) {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+.relayedFooter {
+  margin: var(--space-2) 0 0;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+
+.pinnedMarker {
+  composes: sentFromThread;
+}
+.pinnedMarker > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* A thread sheet's own reply box has taken the composer's place. */
+.composer[data-composer-covered] {
+  visibility: hidden;
+}
+/* Only the reader under a sheet hides its jump control, not the sheet's own.
+   ComposerSheet marks the pane that holds the sheet's dock. */
+[data-holds-sheet] > :not(.composerDock) .jumpToLatest {
+  display: none;
+}
+
+/* In a dialog the reader scrolls below the header and above the bottom inset,
+   so its scrollbar stays off the dialog's rounded corners. */
+.detailsDialogScroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-inline: calc(-1 * var(--dialog-padding));
+  padding-inline: var(--dialog-padding);
+}
+/* The details reader's sections sit below its dialog title in hierarchy. */
+.detailsReader .text :is(h1, h2) {
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  letter-spacing: var(--text-label--letter-spacing);
+}
+.detailsReader .text :is(h3, h4, h5, h6) {
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+}
+
+/* A details message reads in the chat as its opening brief, at full contrast,
+   then the first line of what follows fading out. The rest waits for the
+   reader; a long brief ends in an ellipsis. */
+.detailsPreview {
+  --details-lines: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   min-width: 0;
-  max-width: calc(100% - var(--size-control));
+}
+/* Expanded or not, the body takes the bubble's width, so a wide table
+   scrolls inside it rather than widening it. */
+.detailsBody,
+.detailsClip {
+  align-self: stretch;
+  min-width: 0;
+}
+.detailsPreview[data-clipped] .detailsClip {
+  cursor: pointer;
+}
+.detailsClip .text > * {
+  margin-bottom: 0;
+  max-height: calc(
+    var(--details-lines) *
+    var(--text-message) *
+    var(--text-message--line-height)
+  );
+  overflow: hidden;
+}
+.detailsClip .text > p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--details-lines);
+}
+.detailsPreview .detailsClip .text > :is(h1, h2, h3, h4, h5, h6) {
+  margin-bottom: 0;
+  font-size: var(--text-message);
+  line-height: var(--text-message--line-height);
+  letter-spacing: var(--text-message--letter-spacing);
+}
+.detailsPreview
+  .detailsClip
+  .text
+  > :is(h1, h2, h3, h4, h5, h6):first-child
+  + * {
+  margin-top: 0;
+}
+.detailsClip
+  .text
+  > :is(
+    :first-child:not(:is(h1, h2, h3, h4, h5, h6)) + *,
+    :is(h1, h2, h3, h4, h5, h6):first-child + * + *
+  ) {
+  max-height: calc(var(--text-message) * var(--text-message--line-height));
+  margin-block: var(--space-2) 0;
+  mask-image: linear-gradient(to bottom, black, transparent);
+}
+.detailsClip
+  .text
+  > :not(:first-child):not(:first-child + *):not(
+    :is(h1, h2, h3, h4, h5, h6):first-child + * + *
+  ) {
+  display: none;
+}
+.detailsMore {
+  display: flex;
+  margin-top: var(--space-1);
+}
+
+/* Under a thread's quick open, the view's composer stays drawn
+   over the sheet until the thread's reply box takes its place, and its
+   placeholder turns into the reply box's in place. */
+.composer[data-composer-above] {
+  z-index: 2;
+}
+.composer[data-thread-placeholder]
+  .composerInput:has([data-placeholder])::after {
+  content: var(--thread-placeholder);
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--space-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-metadata);
+  pointer-events: none;
+  animation: thread-placeholder-in 150ms var(--easing-enter) both;
+}
+.composer[data-thread-placeholder] .composerInput > .channelPlaceholder,
+.composer[data-thread-placeholder] .composerInput [data-placeholder]::before {
+  animation: thread-placeholder-out 150ms var(--easing-enter) forwards;
+}
+@keyframes thread-placeholder-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@keyframes thread-placeholder-out {
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
 }

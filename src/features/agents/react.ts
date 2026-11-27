@@ -1,3 +1,5 @@
+import { routesGeneration, subscribeRoutes } from "./model-routes";
+import { onAutomatic } from "./recommended";
 import {
   createContext,
   useCallback,
@@ -89,9 +91,11 @@ export function useSessionState(
   return useSyncExternalStore(
     subscribe,
     () => {
-      const states = pubkeys.map(
-        (pubkey) => agents?.sessionState(pubkey, place) ?? "unavailable",
-      );
+      // The selected community's agents, by their membership there.
+      const states = pubkeys.map((pubkey) => {
+        const key = agents?.find(pubkey)?.key;
+        return (key && agents?.sessionState(key, place)) || "unavailable";
+      });
       if (states.includes("compacting")) return "compacting";
       if (states.includes("active")) return "active";
       return states.length && states.every((state) => state === "idle")
@@ -115,13 +119,17 @@ export type MentionModelChoice = Models &
     pubkey: string;
     name: string;
     loading?: boolean;
+    failed?: boolean;
     /** Its type offers immediate controls for sessions of this scope. */
-    session?: "thread" | "channel";
+    session?: "thread" | "channel" | "community";
+    /** On Automatic (Recommended): only its session controls are offered. */
+    automatic?: true;
   }>;
-/** The mentioned agents, of the viewer's own, whose type offers a choice of
- * model or effort, or session actions. */
+/** Model catalogs and session actions for the viewer's mentioned agents.
+ * A single model still validates saved picks even when no control is needed. */
 export function useMentionModels(
   pubkeys: readonly string[],
+  retry = 0,
 ): readonly MentionModelChoice[] {
   const remote = useContext(MentionModelsContext);
   const agents = useContext(AgentsContext);
@@ -136,15 +144,24 @@ export function useMentionModels(
     agents ? agents.types : none,
     none,
   );
+  // A plugin that adds, changes or removes a model route lists again, so
+  // only routes that run are offered. The previous list stays meanwhile.
+  const routes = useSyncExternalStore(
+    subscribeRoutes,
+    routesGeneration,
+    routesGeneration,
+  );
   const key = [...new Set(pubkeys)].join(":");
   const [resolved, setResolved] = useState<{
     remote: typeof remote;
     snapshot: typeof snapshot;
     types: typeof types;
     key: string;
+    retry: number;
     choices: readonly MentionModelChoice[];
   }>();
   useEffect(() => {
+    void routes;
     let current = true;
     void (
       remote
@@ -160,23 +177,39 @@ export function useMentionModels(
                   agent && types?.find((item) => item.key === agent.type);
                 if (!agent || !type) return [];
                 const session = type.sessionControls?.scope(agent);
+                // It runs on the recommendation: no model or effort to pick,
+                // only its session controls, if any.
+                if (onAutomatic(agent.config, type.id))
+                  return session
+                    ? [
+                        {
+                          pubkey,
+                          name: agent.name,
+                          current: "",
+                          models: [],
+                          automatic: true,
+                          session,
+                        },
+                      ]
+                    : [];
                 let found: Models = { current: "", models: [] };
+                let failed = false;
                 try {
                   if (type.models) found = await type.models(agent);
                 } catch (error) {
+                  failed = true;
                   console.warn(
                     `Agent type ${type.key} could not list its models`,
                     error,
                   );
                 }
-                return found.models.length > 1 ||
-                  found.models.some((m) => m.efforts.length) ||
-                  session
+                return failed || type.models || found.models.length || session
                   ? [
                       {
                         pubkey,
                         name: agent.name,
                         ...found,
+                        ...(failed ? { failed } : {}),
                         ...(session ? { session } : {}),
                       },
                     ]
@@ -184,17 +217,19 @@ export function useMentionModels(
               }),
           ).then((choices) => choices.flat())
     ).then((choices) => {
-      if (current) setResolved({ remote, snapshot, types, key, choices });
+      if (current)
+        setResolved({ remote, snapshot, types, key, retry, choices });
     });
     return () => {
       current = false;
     };
-  }, [snapshot, types, key, remote]);
+  }, [snapshot, types, key, remote, retry, routes]);
   // Never offer a previous agent/config's choices while the new lookup settles.
   return resolved?.remote === remote &&
     resolved?.snapshot === snapshot &&
     resolved?.types === types &&
-    resolved?.key === key
+    resolved?.key === key &&
+    resolved?.retry === retry
     ? resolved.choices
     : key.split(":").flatMap((pubkey) => {
         const agent = snapshot?.agents.find((item) => item.pubkey === pubkey);

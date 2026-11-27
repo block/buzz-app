@@ -1,14 +1,20 @@
 // A conversation's goose sessions, read back through a short-lived `goose-acp`
 // and shown in the host's turn-transcript model. goose keeps the sessions in
 // its own database; nothing here writes or keeps them.
+import { isMessageTool } from "../../buzz-mcp/session-tools";
+import { readEventBody } from "../../features/agent-harness/turn-records";
 import {
+  postedAs,
   promptMessage,
   promptSections,
+  STEER,
   type ToolItem,
   type Transcript,
   type TranscriptItem,
   type TranscriptTurn,
+  withNotices,
 } from "../../features/agents/activity-transcript";
+import { STEER_NOTE } from "../claude-code/prompt";
 import { type GooseHost, type GooseProcess, REQUEST_TIMEOUT_MS } from "./goose";
 import { absolute, abortable } from "./sessions";
 import { briefly } from "./setup";
@@ -19,7 +25,6 @@ export const TURN_LIMIT = 50;
 const SESSION_LIMIT = 10;
 /** The agent's recent sessions listed. */
 export const RECENT_LIMIT = 30;
-const STEER = "new-message-arrived-while-you-were-working";
 
 type Json = Record<string, unknown>;
 /** A message as goose saves it. */
@@ -36,7 +41,11 @@ export type Message = {
   };
 };
 /** A place the agent talks in: a channel, or a thread in one. */
-export type Place = Readonly<{ channelId: string; root?: string }>;
+export type Place = Readonly<{
+  channelId: string;
+  root?: string;
+  community?: true;
+}>;
 /** A goose session the agent ran, as goose lists it. */
 export type GooseSessionRow = Readonly<{
   sessionId: string;
@@ -66,20 +75,63 @@ const KINDS: Record<string, string> = {
   read_image: "read",
 };
 
-/** A Buzz prompt, or a steer wrapping one, as the turn's opening item. */
-function prompt(id: string, at: number, raw: string, steered: boolean) {
-  let sections = promptSections(raw);
+/** A person's display name, if known. */
+type Names = (pubkey: string) => string | undefined;
+
+/** The suffix Buzz ends a fallback wake's prompt with, naming the turn only so
+ * its notice shows beside it: never a wake's or the gateway's id. */
+const MARK =
+  /\n\n<buzz-turn id="([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})"\/>$/;
+export const marked = (text: string, id: string) =>
+  `${text}\n\n<buzz-turn id="${id}"/>`;
+/** `text`, which Buzz didn't mark, with every mark-like tag in it escaped, as
+ * `unframed` escapes a section's: whatever a steer later adds or trims, no
+ * mark is read from it. */
+export const unforged = (text: string) =>
+  text.replace(/<(?=buzz-turn)/g, "<\\");
+/** What a steer adds after a marked wake: its note, and, for a wake it wraps
+ * whole, the end of its section. */
+const STEERED = [`\n</${STEER}>${STEER_NOTE}`, STEER_NOTE];
+/** `raw` without Buzz's suffix, and the turn it names. Only the very end, or
+ * what a steer adds after it, counts, so the same text quoted within the
+ * prompt stays as it is. */
+export function unmarked(raw: string): { text: string; turn?: string } {
+  const tail = STEERED.find((end) => raw.endsWith(end)) ?? "";
+  const match = MARK.exec(raw.slice(0, raw.length - tail.length));
+  const turn = match?.[1];
+  return match && turn
+    ? { text: raw.slice(0, match.index) + tail, turn }
+    : { text: raw };
+}
+
+/** A Buzz prompt, or a steer, as the turn's opening item, and the turn Buzz
+ * marked it as, if any. */
+function prompt(
+  id: string,
+  at: number,
+  raw: string,
+  steered: boolean,
+  name?: Names,
+) {
+  const { text: shown, turn } = unmarked(raw);
+  let sections = promptSections(shown);
   const steer = sections.find((section) => section.tag === STEER);
-  if (steer) sections = promptSections(steer.body);
-  const { text, author } = promptMessage(sections);
+  // An older steer wraps a whole turn.
+  if (steer && !readEventBody(steer.body))
+    sections = promptSections(steer.body);
+  const { text, author, authorPubkey } = promptMessage(sections, name);
   return {
-    id,
-    at,
-    type: "prompt" as const,
-    text: text || raw,
-    ...(author ? { author } : {}),
-    sections,
-    steer: steered || !!steer,
+    turn,
+    item: {
+      id,
+      at,
+      type: "prompt" as const,
+      text: text || shown,
+      ...(author ? { author } : {}),
+      ...(authorPubkey ? { authorPubkey } : {}),
+      sections,
+      steer: steered || !!steer,
+    },
   };
 }
 
@@ -99,13 +151,21 @@ export function gooseTurns(
   messages: readonly Message[],
   conversation: Place & { sessionId: string },
   working: boolean,
+  name?: Names,
+  /** Notices by the turn Buzz marked their prompts as. */
+  notices?: ReadonlyMap<string, string>,
 ): TranscriptTurn[] {
   const turns: TranscriptTurn[] = [];
+  /** Notices by the id goose gave their prompts. */
+  const noticed = new Map<string, string>();
   const tools = new Map<string, ToolItem>();
   /** Messages sent with send, until their result says whether they posted. */
   const sends = new Map<
     string,
-    { turn: TranscriptTurn; message: { posted?: boolean } }
+    {
+      turn: TranscriptTurn;
+      message: { posted?: boolean; messageId?: string };
+    }
   >();
   let last = 0;
   const turn = (id: string, at: number, partial: boolean) => {
@@ -135,7 +195,15 @@ export function gooseTurns(
     if (message.role === "user" && !responses.length) {
       const raw = texts(content);
       if (!raw.trim()) return;
-      const item = prompt(id, at, raw, message.metadata?.steer === true);
+      const { item, turn: marked } = prompt(
+        id,
+        at,
+        raw,
+        message.metadata?.steer === true,
+        name,
+      );
+      const notice = marked && notices?.get(marked);
+      if (notice) noticed.set(id, notice);
       const current = item.steer ? turns.at(-1) : undefined;
       (current ?? turn(id, at, false)).items.push(item);
       last = at;
@@ -147,7 +215,7 @@ export function gooseTurns(
       const callId = str(response.id);
       const { failed, text } = result(response.toolResult);
       const sent = sends.get(callId);
-      if (sent && !failed) sent.message.posted = true;
+      if (sent && !failed) Object.assign(sent.message, postedAs(text));
       else if (sent)
         sent.turn.items.push({
           id: `${id}:${callId}`,
@@ -205,7 +273,11 @@ export function gooseTurns(
         const name = str(value.name);
         const input = object(value.arguments) ?? {};
         const callId = str(block.id);
-        if (name === "buzz__send" && str(input.text).trim()) {
+        if (
+          name.startsWith("buzz__") &&
+          isMessageTool(name.slice("buzz__".length)) &&
+          str(input.text).trim()
+        ) {
           const message: TranscriptItem & { posted?: boolean } = {
             id: key,
             at,
@@ -239,7 +311,9 @@ export function gooseTurns(
   });
   const current = turns.at(-1);
   if (current && !working) current.endedAt = Math.max(last, current.startedAt);
-  return turns;
+  // goose returns a session's every message, from its start.
+  if (turns[0] && !turns[0].partial) turns[0].newSession = true;
+  return noticed.size ? withNotices(turns, noticed) : turns;
 }
 
 /** A field of the context a session's first prompt carries, such as its
@@ -260,24 +334,23 @@ function opening(messages: readonly Message[]) {
   return undefined;
 }
 
-/** Whether a session was started for the agent in `place`: its first prompt's
- * context names the same agent, channel and, for a thread, thread root. */
-export function startedFor(
-  messages: readonly Message[],
-  agent: string,
-  place: Place,
-) {
-  const field = opening(messages);
-  return (
-    !!field &&
-    field("Agent") === agent &&
-    !!field("Channel")?.endsWith(`(#${place.channelId})`) &&
-    (place.root
-      ? field("Session scope") === "thread" &&
-        field("Thread root") === place.root
-      : field("Session scope") !== "thread")
-  );
-}
+/** The agent a session's first prompt names, if any. */
+export const ownerOf = (messages: readonly Message[]) =>
+  opening(messages)?.("Agent");
+
+/** The tags a Buzz session opens with, which goose indexes: the agent's
+ * membership key, and the conversation's key (its channel, or `channel/root`
+ * for a thread). A one-off turn has no conversation. */
+export const sessionTags = (agent: string, conversation?: string) => ({
+  "buzz.agent": agent,
+  ...(conversation ? { "buzz.conversation": conversation } : {}),
+});
+const conversationOf = (place: Place) =>
+  place.community
+    ? "@community"
+    : place.root
+      ? `${place.channelId}/${place.root}`
+      : place.channelId;
 
 type Listed = {
   sessionId: string;
@@ -285,20 +358,20 @@ type Listed = {
   updatedAt?: string | null;
 };
 
-/** A page of the goose sessions in the workspace, newest first; `query`
- * keeps those whose messages mention it. */
+/** A page of the goose sessions in the workspace, newest first; `tags`
+ * keeps those opened with every one of them, an index lookup. */
 async function page(
   goose: GooseProcess,
   cwd: string,
-  query?: string,
   cursor?: string,
+  tags?: Readonly<Record<string, string>>,
 ) {
   const { sessions, nextCursor } = (await goose.request(
     "session/list",
     {
       cwd,
       ...(cursor ? { cursor } : {}),
-      _meta: { types: ["acp"], ...(query ? { query } : {}) },
+      _meta: { types: ["acp"], ...(tags ? { tags } : {}) },
     },
     REQUEST_TIMEOUT_MS,
   )) as { sessions: Listed[]; nextCursor?: string | null };
@@ -314,20 +387,12 @@ async function page(
   };
 }
 
-/** The first page of the agent's goose sessions in the workspace, newest
- * first; `query` keeps those whose messages mention it. */
-async function list(goose: GooseProcess, cwd: string, query?: string) {
-  return (await page(goose, cwd, query)).rows;
-}
-
-/** Every goose session in the workspace. Without a query a page is an index
- * lookup; with one, the SQLite goose bundles (3.51) parses each session's
- * messages again for every message in it, which takes seconds. */
+/** Every goose session in the workspace. */
 async function all(goose: GooseProcess, cwd: string) {
   const rows: GooseSessionRow[] = [];
   let cursor: string | undefined;
   do {
-    const read = await page(goose, cwd, undefined, cursor);
+    const read = await page(goose, cwd, cursor);
     rows.push(...read.rows);
     cursor = read.next;
   } while (cursor);
@@ -356,10 +421,13 @@ const listed = (goose: GooseProcess, sessionId: string) =>
 /** What a session's transcript is read for: one session, or every session the
  * agent ran for a place. */
 export type Lookup = Readonly<{
-  /** The agent's pubkey, as its turn prompts name it. */
+  /** The agent's membership key, as its turn prompts name it. */
   agent: string;
   workspace: string;
   sessionId?: string;
+  /** The ids saved for `place`, read without listing goose's sessions. */
+  sessions?: readonly string[];
+  /** Where the sessions ran, found by their tags when no saved id is. */
   place?: Place;
   /** The session still working, whose last turn has not ended. */
   working?: string;
@@ -368,54 +436,81 @@ export type Lookup = Readonly<{
 /** goose's history for an agent, each read in its own short-lived `goose-acp`. */
 export class GooseHistory {
   constructor(private readonly host: GooseHost | undefined) {}
+  /** The last transcript read's messages, by session. */
+  private exported = new Map<string, Message[]>();
 
-  /** The agent's latest sessions in `workspace`, newest first: those whose
-   * first prompt names its pubkey, `agent`. */
-  recent(agent: string, workspace: string, signal: AbortSignal) {
+  /** The `folders` other than `workspace`, as written or as goose's
+   * listing of it names it. */
+  async elsewhere(workspace: string, folders: readonly string[]) {
+    const { host } = this;
+    if (!host || !folders.length) return folders;
+    const named = await absolute(host.resolveDirectory, workspace);
+    return folders.filter((folder) => folder !== workspace && folder !== named);
+  }
+
+  /** Every session in the `workspaces` used since `since`, newest first, and
+   * the messages of those `wanted` picks, all from one `goose-acp`: every
+   * agent in a workspace reads its sessions from one listing. */
+  workspace(
+    workspaces: readonly string[],
+    since: number,
+    wanted: (row: GooseSessionRow) => boolean,
+    signal: AbortSignal,
+  ) {
     return this.with(signal, async (goose, { resolveDirectory }) => {
-      const cwd = await absolute(resolveDirectory, workspace);
-      const rows: GooseSessionRow[] = [];
-      for (const row of await list(goose, cwd, agent)) {
-        if (rows.length >= RECENT_LIMIT) break;
+      // By id: two of them may name one folder.
+      const sessions = new Map<string, GooseSessionRow>();
+      for (const workspace of workspaces)
+        for (const row of await all(
+          goose,
+          await absolute(resolveDirectory, workspace),
+        ))
+          sessions.set(row.sessionId, row);
+      const rows = [...sessions.values()]
+        .filter((row) => row.at >= since)
+        .sort((a, b) => b.at - a.at);
+      const messages = new Map<string, Message[]>();
+      for (const row of rows) {
+        if (!wanted(row)) continue;
         signal.throwIfAborted();
-        const read = await listed(goose, row.sessionId);
-        if (opening(read)?.("Agent") === agent) rows.push(row);
+        messages.set(row.sessionId, await listed(goose, row.sessionId));
       }
-      return rows;
+      return { rows, messages };
     });
   }
 
-  /** The agent's sessions in `workspace` used since `since`, with their
-   * messages: those whose first prompt names its pubkey, `agent`. */
-  sessions(
-    agent: string,
+  /** Whether goose has a session the agent opened for `conversation` in
+   * `workspace`, by its tag index, which holds sessions the app no longer
+   * lists. */
+  started(
     workspace: string,
-    since: number,
+    agent: string,
+    conversation: string,
     signal: AbortSignal,
   ) {
     return this.with(signal, async (goose, { resolveDirectory }) => {
       const cwd = await absolute(resolveDirectory, workspace);
-      const found: { sessionId: string; messages: Message[] }[] = [];
-      for (const row of await all(goose, cwd)) {
-        if (row.at < since) continue;
-        signal.throwIfAborted();
-        const read = await listed(goose, row.sessionId);
-        if (opening(read)?.("Agent") === agent)
-          found.push({ sessionId: row.sessionId, messages: read });
-      }
-      return found;
+      const tags = sessionTags(agent, conversation);
+      return (await page(goose, cwd, undefined, tags)).rows.length > 0;
     });
   }
 
-  /** The agent's newest session for `place`, or undefined when goose has none
-   * for it in this workspace. */
-  find(agent: string, workspace: string, place: Place, signal: AbortSignal) {
+  /** The listed rows of `ids`, read from goose's sessions in `workspace`
+   * newest first, page by page, until every one is found or none are left:
+   * no session's messages. */
+  listed(workspace: string, ids: ReadonlySet<string>, signal: AbortSignal) {
     return this.with(signal, async (goose, { resolveDirectory }) => {
       const cwd = await absolute(resolveDirectory, workspace);
-      for (const row of await candidates(goose, cwd, place))
-        if (startedFor(await messages(goose, row.sessionId), agent, place))
-          return row;
-      return undefined;
+      const found = new Map<string, GooseSessionRow>();
+      let cursor: string | undefined;
+      do {
+        const read = await page(goose, cwd, cursor);
+        for (const row of read.rows)
+          if (ids.has(row.sessionId)) found.set(row.sessionId, row);
+        cursor = read.next;
+        signal.throwIfAborted();
+      } while (cursor && found.size < ids.size);
+      return found;
     });
   }
 
@@ -424,45 +519,59 @@ export class GooseHistory {
   transcript(
     lookup: Lookup,
     signal: AbortSignal,
+    name?: Names,
+    reuse = false,
+    notices?: ReadonlyMap<string, string>,
   ): Promise<GooseTranscript | undefined> {
     return this.with(signal, async (goose, { resolveDirectory }) => {
-      const ids = new Set(lookup.sessionId ? [lookup.sessionId] : []);
-      if (lookup.place) {
-        const cwd = await absolute(resolveDirectory, lookup.workspace);
-        for (const row of await candidates(goose, cwd, lookup.place))
-          ids.add(row.sessionId);
-      }
       const turns: TranscriptTurn[] = [];
       let found = false;
-      for (const sessionId of ids) {
-        let read: Message[];
-        try {
-          read = await messages(goose, sessionId);
-        } catch (error) {
-          if (/not found/i.test(String(error))) continue;
-          throw error;
+      // With `reuse`, while one session works, the others' messages are as
+      // last exported.
+      const exported = new Map<string, Message[]>();
+      const readAll = async (ids: Iterable<string>) => {
+        for (const sessionId of new Set(ids)) {
+          if (exported.has(sessionId)) continue;
+          let read: Message[];
+          signal.throwIfAborted();
+          const kept = reuse && lookup.working && this.exported.get(sessionId);
+          try {
+            read =
+              kept && sessionId !== lookup.working
+                ? kept
+                : await messages(goose, sessionId);
+          } catch (error) {
+            if (/not found/i.test(String(error))) continue;
+            throw error;
+          }
+          signal.throwIfAborted();
+          exported.set(sessionId, read);
+          found = true;
+          turns.push(
+            ...gooseTurns(
+              read,
+              { sessionId, ...(lookup.place ?? { channelId: "" }) },
+              sessionId === lookup.working,
+              name,
+              notices,
+            ),
+          );
         }
-        signal.throwIfAborted();
-        if (
-          lookup.place &&
-          sessionId !== lookup.sessionId &&
-          !startedFor(read, lookup.agent, lookup.place)
-        )
-          continue;
-        found = true;
-        turns.push(
-          ...gooseTurns(
-            read,
-            { sessionId, ...(lookup.place ?? { channelId: "" }) },
-            sessionId === lookup.working,
-          ),
-        );
+      };
+      await readAll([
+        ...(lookup.sessionId ? [lookup.sessionId] : []),
+        ...(lookup.sessions ?? []),
+      ]);
+      // When goose has none of the saved ids, its tag index finds the place's.
+      if (!found && lookup.place) {
+        const cwd = await absolute(resolveDirectory, lookup.workspace);
+        await readAll(await tagged(goose, cwd, lookup.agent, lookup.place));
       }
+      this.exported = exported;
       if (!found) return undefined;
       turns.sort((a, b) => a.startedAt - b.startedAt);
       return {
         turns: turns.slice(-TURN_LIMIT),
-        unknownThread: 0,
         more: turns.length > TURN_LIMIT,
       };
     });
@@ -474,15 +583,30 @@ export class GooseHistory {
   ) {
     const { host } = this;
     if (!host) throw new Error("goose runs only in the desktop app");
-    // Cancelling rejects at once, and `briefly` then stops goose.
-    return briefly(host, (goose) => abortable(run(goose, host), signal));
+    // Cancelling rejects at once, and `briefly` then stops goose, or stops
+    // its startup.
+    return briefly(
+      host,
+      (goose) => {
+        signal.throwIfAborted();
+        return abortable(run(goose, host), signal);
+      },
+      {},
+      signal,
+    );
   }
 }
 
-/** The workspace's sessions whose messages mention the place, newest first. */
-async function candidates(goose: GooseProcess, cwd: string, place: Place) {
-  return (await list(goose, cwd, place.root ?? place.channelId)).slice(
-    0,
-    SESSION_LIMIT,
-  );
+/** The agent's latest sessions goose tagged with the place's conversation,
+ * newest first. */
+async function tagged(
+  goose: GooseProcess,
+  cwd: string,
+  agent: string,
+  place: Place,
+) {
+  const tags = sessionTags(agent, conversationOf(place));
+  return (await page(goose, cwd, undefined, tags)).rows
+    .slice(0, SESSION_LIMIT)
+    .map((row) => row.sessionId);
 }

@@ -1,18 +1,46 @@
 import type { ActivityTurn } from "./activity";
 import { activityRecords, type ActivityRecord } from "./activity-records";
+import { terminalOutcome } from "./observer";
+import { freshTurnTriggers, turnTriggerIds } from "./turn-triggers";
 
-/** Live request association from explicit captured trigger IDs only. No time/name
- * inference, backfill, or broader channel fallback when the start is missing. */
-export function requestActivity(
-  records: readonly Omit<ActivityRecord, "envelopeId">[],
+type Parsed = Readonly<{
+  record: ActivityRecord;
+  value: {
+    kind: string;
+    turnId: string;
+    seq: number;
+    timestamp?: unknown;
+    payload?: { triggeringEventIds?: unknown; outcome?: unknown };
+  };
+}>;
+// Snapshot record arrays are immutable and every mounted message row asks about
+// the same agent/channel. Admitted record objects are frozen and reused across
+// snapshots, and a record's projection depends on no other record, so parse each
+// record once per scope and assemble each array from those results.
+const parsedRecords = new WeakMap<object, Map<string, readonly Parsed[]>>();
+const parsedArrays = new WeakMap<
+  object,
+  Map<string, Map<string, readonly Parsed[]>>
+>();
+
+function parseRecord(
+  record: Omit<ActivityRecord, "envelopeId">,
   agent: string,
   channelId: string,
-  requestId: string | readonly string[],
-) {
-  const parsed = activityRecords(records, agent, channelId).flatMap(
-    (record) => {
+  scope: string,
+): readonly Parsed[] {
+  // Only a frozen record can be cached by identity.
+  let byScope = parsedRecords.get(record);
+  if (!byScope && Object.isFrozen(record)) {
+    byScope = new Map();
+    parsedRecords.set(record, byScope);
+  }
+  const cached = byScope?.get(scope);
+  if (cached) return cached;
+  const parsed = activityRecords([record], agent, channelId).flatMap(
+    (projected): Parsed[] => {
       try {
-        const value = JSON.parse(record.plaintext);
+        const value = JSON.parse(projected.plaintext);
         if (
           !value ||
           typeof value !== "object" ||
@@ -22,49 +50,189 @@ export function requestActivity(
           value.turnId.length > 256
         )
           return [];
+        // A frozen projection lets transcripts reuse its parse by identity.
         return [
-          {
-            record,
-            value: value as {
-              kind: string;
-              turnId: string;
-              seq: number;
-              timestamp?: unknown;
-              payload?: { triggeringEventIds?: unknown };
-            },
-          },
+          { record: byScope ? Object.freeze(projected) : projected, value },
         ];
       } catch {
         return [];
       }
     },
   );
-  const turnIds = new Set<string>();
-  const selected: ActivityRecord[] = [];
-  const terminal = new Map<string, "ended" | "error">();
-  let uncertain = false;
-  const result = () => ({ records: selected, turnIds, terminal, uncertain });
-  const triggersWanted = new Set(
+  byScope?.set(scope, parsed);
+  return parsed;
+}
+
+function parseRecords(
+  records: readonly Omit<ActivityRecord, "envelopeId">[],
+  agent: string,
+  channelId: string,
+): readonly Parsed[] {
+  let byAgent = parsedArrays.get(records);
+  if (!byAgent) {
+    byAgent = new Map();
+    parsedArrays.set(records, byAgent);
+  }
+  let byChannel = byAgent.get(agent);
+  if (!byChannel) {
+    byChannel = new Map();
+    byAgent.set(agent, byChannel);
+  }
+  const cached = byChannel.get(channelId);
+  if (cached) return cached;
+  const scope = `${agent}\n${channelId}`;
+  const parsed: Parsed[] = [];
+  for (const record of records)
+    if (record.agent === agent)
+      parsed.push(...parseRecord(record, agent, channelId, scope));
+  byChannel.set(channelId, parsed);
+  return parsed;
+}
+
+// Most mounted rows have no agent work: index which triggers each snapshot can
+// associate so those rows answer without replaying every turn.
+const turnTriggers = new WeakMap<
+  object,
+  ReadonlyMap<string, ReadonlySet<string>>
+>();
+const anchorTriggers = new WeakMap<object, ReadonlySet<string>>();
+
+/** Agents whose turns name each trigger, keyed by channel and trigger ID. */
+export function triggeredAgents(
+  turns: readonly Pick<
+    ActivityTurn,
+    "agent" | "channelId" | "triggeringEventIds"
+  >[],
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const cached = turnTriggers.get(turns);
+  if (cached) return cached;
+  const index = new Map<string, Set<string>>();
+  for (const turn of turns)
+    for (const id of turn.triggeringEventIds ?? []) {
+      const key = `${turn.channelId}\n${id}`;
+      const agents = index.get(key);
+      if (agents) agents.add(turn.agent);
+      else index.set(key, new Set([turn.agent]));
+    }
+  if (Object.isFrozen(turns)) turnTriggers.set(turns, index);
+  return index;
+}
+
+function anchoredTriggers(parsed: readonly Parsed[]) {
+  const cached = anchorTriggers.get(parsed);
+  if (cached) return cached;
+  const ids = new Set<string>();
+  for (const { value } of parsed)
+    if (value.kind === "turn_started" || value.kind === "turn_steered")
+      for (const id of turnTriggerIds(value.payload?.triggeringEventIds) ?? [])
+        ids.add(id);
+  anchorTriggers.set(parsed, ids);
+  return ids;
+}
+
+// requestWork asks every agent about the same request, and never mutates it.
+let lastRequest:
+  | { id: string | readonly string[]; wanted: ReadonlySet<string> }
+  | undefined;
+function wantedTriggers(requestId: string | readonly string[]) {
+  if (lastRequest?.id === requestId) return lastRequest.wanted;
+  const wanted = new Set(
     (typeof requestId === "string" ? [requestId] : requestId).filter((id) =>
       /^[0-9a-f]{64}$/.test(id),
     ),
   );
+  lastRequest = { id: requestId, wanted };
+  return wanted;
+}
+
+/** Live request association from explicit captured trigger IDs only. No time/name
+ * inference, backfill, or broader channel fallback when the start is missing. */
+export function requestActivity(
+  records: readonly Omit<ActivityRecord, "envelopeId">[],
+  agent: string,
+  channelId: string,
+  requestId: string | readonly string[],
+  turns: readonly ActivityTurn[] = [],
+) {
+  const turnIds = new Set<string>();
+  const selected: ActivityRecord[] = [];
+  const terminal = new Map<
+    string,
+    NonNullable<ReturnType<typeof terminalOutcome>>
+  >();
+  let uncertain = false;
+  const result = () => ({ records: selected, turnIds, terminal, uncertain });
+  const triggersWanted = wantedTriggers(requestId);
   if (!triggersWanted.size) return result();
-  for (const start of parsed.filter(
-    ({ value }) => value.kind === "turn_started",
-  )) {
-    const triggers = start.value.payload?.triggeringEventIds;
+  const parsed = parseRecords(records, agent, channelId);
+  const anchored = anchoredTriggers(parsed);
+  const triggered = triggeredAgents(turns);
+  let wanted = false;
+  for (const id of triggersWanted)
+    if (anchored.has(id) || triggered.get(`${channelId}\n${id}`)?.has(agent)) {
+      wanted = true;
+      break;
+    }
+  if (!wanted) return result();
+  const ambiguous = new Set(
+    turns
+      .filter(
+        (turn) =>
+          turn.agent === agent &&
+          turn.channelId === channelId &&
+          turn.ambiguous,
+      )
+      .map((turn) => turn.turnId),
+  );
+  // The lifecycle's membership of a turn it still holds is authoritative: a
+  // start or steer anchors the turn only for messages the lifecycle admitted.
+  // A turn it no longer holds, or holds without membership, is replayed from
+  // the raw records, admitting each start's and steer's messages in arrival
+  // order by the lifecycle's rules, so a list it rejected cannot associate a
+  // message here.
+  const retained = new Map<string, readonly string[]>();
+  for (const turn of turns)
     if (
-      !Array.isArray(triggers) ||
-      !triggers.some((id) => triggersWanted.has(id))
+      turn.agent === agent &&
+      turn.channelId === channelId &&
+      turn.triggeringEventIds
     )
+      retained.set(turn.turnId, turn.triggeringEventIds);
+  const replayed = new Map<string, string[]>();
+  const anchors: Parsed[] = [];
+  for (const anchor of parsed) {
+    const { kind, turnId, payload } = anchor.value;
+    if (kind !== "turn_started" && kind !== "turn_steered") continue;
+    const listed = turnTriggerIds(payload?.triggeringEventIds);
+    const members = retained.get(turnId);
+    let joined: readonly string[];
+    if (members) joined = (listed ?? []).filter((id) => members.includes(id));
+    else {
+      const known = replayed.get(turnId) ?? [];
+      replayed.set(turnId, known);
+      joined = freshTurnTriggers(known, listed);
+      known.push(...joined);
+    }
+    if (joined.some((id) => triggersWanted.has(id))) anchors.push(anchor);
+  }
+  // A steered message joined a turn that started for another message, so it
+  // shares that turn's records from its start, or from the steer when the start
+  // is not loaded.
+  for (const anchor of anchors) {
+    if (turnIds.has(anchor.value.turnId)) continue;
+    if (ambiguous.has(anchor.value.turnId)) {
+      uncertain = true;
       continue;
+    }
     const turn = parsed.filter(
-      ({ value }) => value.turnId === start.value.turnId,
+      ({ value }) => value.turnId === anchor.value.turnId,
     );
+    const starts = turn.filter(({ value }) => value.kind === "turn_started");
+    const start =
+      anchor.value.kind === "turn_started" ? anchor : (starts[0] ?? anchor);
     // Duplicate starts/sequence resets leave identity ambiguous. Do not mix runs.
     if (
-      turn.filter(({ value }) => value.kind === "turn_started").length !== 1 ||
+      starts.length > 1 ||
       turn.some(
         ({ value }) => !Number.isSafeInteger(value.seq) || value.seq < 0,
       )
@@ -83,7 +251,7 @@ export function requestActivity(
     selected.push(...after.map(({ record }) => record));
     // Match the lifecycle owner's timestamp admission. Raw future/malformed
     // terminal-looking records remain inspectable but cannot classify outcome.
-    const admitted = ({ value, record }: (typeof parsed)[number]) =>
+    const admitted = ({ value, record }: Parsed) =>
       typeof value.timestamp === "string" &&
       Number.isFinite(Date.parse(value.timestamp)) &&
       Date.parse(value.timestamp) <= record.receivedAt + 5000;
@@ -102,26 +270,41 @@ export function requestActivity(
     if (end && end.value.seq >= start.value.seq)
       terminal.set(
         start.value.turnId,
-        end.value.kind === "turn_completed" ? "ended" : "error",
+        terminalOutcome(end.value.kind, end.value.payload?.outcome) ??
+          "unknown",
       );
+  }
+  // The lifecycle owns bounded request associations and the first terminal
+  // receipt. Raw-buffer eviction must not erase either fact.
+  for (const turn of turns) {
+    if (
+      turn.agent !== agent ||
+      turn.ambiguous ||
+      turn.channelId !== channelId ||
+      !turn.triggeringEventIds?.some((id) => triggersWanted.has(id))
+    )
+      continue;
+    turnIds.add(turn.turnId);
+    if (turn.outcome) terminal.set(turn.turnId, turn.outcome);
   }
   return result();
 }
 
 /** Already scoped lifecycle evidence, never a claim that a reply was delivered.
  * Working dominates; all linked turns must agree before an aggregate end label.
- * Any feed trimming can have erased another linked start; do not claim completeness. */
+ * Retained request associations survive raw feed trimming. */
 export function requestActivityState(
   selected: ReturnType<typeof requestActivity>,
   turns: readonly ActivityTurn[],
   trimmed = 0,
-): "waiting" | "working" | "unknown" | "ended" | "error" {
+): "waiting" | "working" | "unknown" | "ended" | "error" | "stopped" {
   const linked = [...selected.turnIds].map((id) =>
     turns.find((turn) => turn.turnId === id),
   );
   if (linked.some((turn) => turn?.state === "working")) return "working";
   if (
-    trimmed > 0 ||
+    (trimmed > 0 &&
+      (!linked.length || !linked.every((turn) => turn?.triggeringEventIds))) ||
     selected.uncertain ||
     linked.some((turn) => !turn || turn.state === "unknown")
   )
@@ -133,5 +316,8 @@ export function requestActivityState(
     )
   )
     return "unknown";
-  return [...selected.terminal.values()].includes("error") ? "error" : "ended";
+  const outcomes = [...selected.terminal.values()];
+  if (outcomes.includes("unknown")) return "unknown";
+  if (outcomes.includes("error")) return "error";
+  return outcomes.includes("stopped") ? "stopped" : "ended";
 }

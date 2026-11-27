@@ -1,0 +1,528 @@
+import type { Context } from "@deepseek-ai/cordis";
+import { createContributions } from "../../plugins/contributions";
+import type { JsonValue } from "../navigation/targets";
+import { unframed } from "../agent-harness/plugin-wake";
+import { hasEventProof, type RelayEvent } from "../relay/events";
+import {
+  INVOCATION_INTENT_TAG,
+  INVOCATION_INTENT_VERSION,
+} from "../relay/contracts";
+import { threadReference } from "../relay/thread-reference";
+import { pubkeyOf, type AgentKey } from "./membership";
+import type { AgentStore } from "./store";
+
+export type AgentSessionSource = Readonly<{
+  channelId: string;
+  root?: string;
+  /** One session across every conversation in this agent membership. */
+  community?: true;
+}>;
+
+export type AgentInvocationIntent = Readonly<{
+  communityOrigin: string;
+  owner: string;
+  source: Readonly<{ channelId: string; root: string }>;
+  agentPubkey: string;
+}>;
+
+export type AgentSessionAdmission = Readonly<{
+  agent: AgentKey;
+  owner: string;
+  harness: string;
+  /** The runner's community, independent of the selected community. */
+  communityOrigin: string;
+  source: AgentSessionSource;
+  /** The native conversation scope. It can include several source threads. */
+  conversation: AgentSessionSource;
+  invocationId: string;
+  event?: RelayEvent;
+  sessionKey: string;
+  intent: "new" | "existing";
+  resumed: boolean;
+  /** The host adopts a source lifetime with no saved logical association. */
+  adopted: boolean;
+  association?: JsonValue;
+  signal: AbortSignal;
+}>;
+
+export type AgentSessionAssociation = Readonly<{
+  sessionKey: string;
+  router: string;
+  association: JsonValue;
+}>;
+
+type AdmissionRequest = Omit<
+  AgentSessionAdmission,
+  "sessionKey" | "intent" | "association" | "adopted"
+>;
+
+export function hasInvocationIntent({
+  agent,
+  event,
+  owner,
+  source,
+  invocationId,
+}: Pick<
+  AdmissionRequest,
+  "agent" | "event" | "owner" | "source" | "invocationId"
+>) {
+  if (
+    event?.kind !== 9 ||
+    event.id !== invocationId ||
+    event.pubkey !== owner ||
+    !hasEventProof(event)
+  )
+    return false;
+  const thread = threadReference(event);
+  const channels = event.tags.filter(([name]) => name === "h");
+  const recipient = pubkeyOf(agent);
+  return (
+    !!thread &&
+    thread.rootId === source.root &&
+    thread.rootId !== event.id &&
+    thread.parentId !== event.id &&
+    channels.length === 1 &&
+    channels[0]?.[1] === source.channelId &&
+    event.tags.some(([name, key]) => name === "p" && key === recipient) &&
+    event.tags.some(
+      ([name, version, key, ...rest]) =>
+        name === INVOCATION_INTENT_TAG &&
+        version === String(INVOCATION_INTENT_VERSION) &&
+        key === recipient &&
+        !rest.length,
+    )
+  );
+}
+/** Physical thread and the invocation that owns a routed conversation. */
+export type InvocationSubthread = Readonly<{ root: string; parent: string }>;
+export type RoutedInvocation = InvocationSubthread &
+  Readonly<{ turnContext?: string }>;
+export type AgentSessionRouter = Readonly<{
+  id: string;
+  /** Opens local keyed storage. This must not wait for a sidebar or relay. */
+  ready(): Promise<void>;
+  matches(
+    input: Pick<
+      AgentSessionAdmission,
+      "agent" | "owner" | "harness" | "communityOrigin" | "source"
+    >,
+  ): boolean;
+  /** Opt in to signed invocation intent for an eligible addressed agent. */
+  invocationIntent?(input: AgentInvocationIntent): boolean;
+  /** Runs after authority checks, before the harness chooses its session.
+   * Resolve task ancestry here; undefined preserves the native placement.
+   * Optional turn context applies to this invocation and is never saved. */
+  route?(
+    input: AdmissionRequest & Readonly<{ savedRoute?: InvocationSubthread }>,
+  ): Promise<RoutedInvocation | undefined>;
+  /** Saves the local association before returning. Undefined leaves the run unchanged. */
+  prepare(input: AgentSessionAdmission): Promise<
+    | Readonly<{
+        association: JsonValue;
+        context?: string;
+      }>
+    | undefined
+  >;
+}>;
+
+export const SESSION_ADMISSION_PREFIX = "buzz.agents.session-admission.v1:";
+type Pointer = Readonly<{
+  sessionKey: string;
+  adopted?: true;
+  resetting?: true;
+}>;
+type Saved = AgentSessionAssociation &
+  Readonly<{
+    context?: string;
+    contextAcknowledged?: true;
+  }>;
+
+function parse<T>(text: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error("The saved agent session association is invalid");
+  }
+}
+
+function checkedRoute(value: unknown): InvocationSubthread {
+  const route = value as InvocationSubthread | undefined;
+  if (
+    !route ||
+    typeof route.root !== "string" ||
+    typeof route.parent !== "string" ||
+    !/^[a-f0-9]{64}$/.test(route.root) ||
+    !/^[a-f0-9]{64}$/.test(route.parent) ||
+    route.root === route.parent
+  )
+    throw new Error("The invocation subthread is invalid");
+  return { root: route.root, parent: route.parent };
+}
+
+const keyFor = (agent: AgentKey, harness: string, source: AgentSessionSource) =>
+  SESSION_ADMISSION_PREFIX +
+  JSON.stringify([
+    "source",
+    agent,
+    harness,
+    source.community ? "@community" : source.channelId,
+    source.community ? null : (source.root ?? null),
+  ]);
+const savedKey = (sessionKey: string) =>
+  SESSION_ADMISSION_PREFIX + JSON.stringify(["session", sessionKey]);
+
+const routeConversationKey = (
+  agent: AgentKey,
+  harness: string,
+  source: AgentSessionSource,
+) =>
+  SESSION_ADMISSION_PREFIX +
+  JSON.stringify([
+    "route-conversation",
+    agent,
+    harness,
+    source.channelId,
+    source.root,
+  ]);
+
+/** Logical lifetimes survive harness reconnects. Each invocation keeps its own key. */
+export function createSessionAdmissions(root: Context, storage: AgentStore) {
+  const routers = createContributions<AgentSessionRouter>(root);
+  const pending = new Map<string, Promise<Saved | undefined>>();
+  let stopped = false;
+  root.effect(() => () => {
+    stopped = true;
+  });
+  const check = (signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    if (stopped) throw new Error("Agent session admission is stopped");
+  };
+  return {
+    routed(agent: AgentKey, harness: string, source: AgentSessionSource) {
+      return (
+        !!source.root &&
+        storage.get(routeConversationKey(agent, harness, source)) !== null
+      );
+    },
+    register(ctx: Context, router: AgentSessionRouter) {
+      if (
+        !ctx.pluginOwner ||
+        !/^[a-z0-9][a-z0-9._-]*$/.test(router.id) ||
+        typeof router.ready !== "function" ||
+        typeof router.matches !== "function" ||
+        typeof router.prepare !== "function"
+      )
+        throw new Error(
+          "A session router needs an id, ready, matches and prepare",
+        );
+      routers.register(ctx, router);
+    },
+    invocationIntent(input: AgentInvocationIntent) {
+      return (
+        !stopped &&
+        routers.snapshot().some((router) => {
+          try {
+            return !!router.route && router.invocationIntent?.(input) === true;
+          } catch {
+            return false;
+          }
+        })
+      );
+    },
+    async route(
+      input: AdmissionRequest,
+      nativePlacement?: true,
+      pinNativePlacement?: () => Promise<void> | undefined,
+    ) {
+      check(input.signal);
+      const finishNativePlacement = async () => {
+        await pinNativePlacement?.();
+        check(input.signal);
+        return undefined;
+      };
+      const marked = hasInvocationIntent(input);
+      if (marked && !input.communityOrigin)
+        throw new Error(
+          "The invocation community is unavailable. Retry when it is connected.",
+        );
+      const key =
+        SESSION_ADMISSION_PREFIX +
+        JSON.stringify([
+          "route",
+          input.agent,
+          input.harness,
+          input.invocationId,
+        ]);
+      const saved = await storage.read(key);
+      const ordinary =
+        saved !== null && parse<InvocationSubthread | null>(saved) === null;
+      if (ordinary && !marked) return;
+      const conversationKey = (parent: string) =>
+        routeConversationKey(input.agent, input.harness, {
+          channelId: input.source.channelId,
+          root: parent,
+        });
+      const prior =
+        saved === null && input.source.root
+          ? await storage.read(conversationKey(input.source.root))
+          : saved;
+      const savedRoute =
+        prior === null || ordinary
+          ? undefined
+          : checkedRoute(parse<unknown>(prior));
+      if (nativePlacement && !savedRoute && !marked) return;
+      const candidates = routers
+        .snapshot()
+        .filter(
+          (router) => router.route && (!marked || router.invocationIntent),
+        );
+      if (!candidates.length && !marked) return savedRoute;
+      await Promise.all(candidates.map((router) => router.ready()));
+      check(input.signal);
+      const matches = candidates.filter((router) => router.matches(input));
+      if (matches.length > 1)
+        throw new Error("More than one plugin routes this conversation");
+      const router = matches[0];
+      if (!router) {
+        if (marked)
+          throw new Error(
+            "The invocation router is unavailable. Retry when it is ready.",
+          );
+        return savedRoute;
+      }
+      if (ordinary) return finishNativePlacement();
+      // A request already admitted under the old placement stays there.
+      const legacy = await storage.read(
+        SESSION_ADMISSION_PREFIX +
+          JSON.stringify([
+            "invocation",
+            input.agent,
+            input.harness,
+            input.invocationId,
+          ]),
+      );
+      const route =
+        legacy === null || savedRoute
+          ? await router.route?.({
+              ...input,
+              ...(savedRoute ? { savedRoute } : {}),
+            })
+          : undefined;
+      check(input.signal);
+      if (!routers.snapshot().includes(router))
+        throw new Error("The conversation router changed");
+      const placement = route === undefined ? undefined : checkedRoute(route);
+      const turnContext = route?.turnContext;
+      if (turnContext !== undefined && typeof turnContext !== "string")
+        throw new Error("Invocation turn context must be text");
+      if (route && input.event && route.root !== input.source.root)
+        throw new Error(
+          "The invocation subthread has a different source thread",
+        );
+      if (
+        savedRoute &&
+        (savedRoute.root !== route?.root || savedRoute.parent !== route.parent)
+      )
+        throw new Error("The invocation subthread cannot change");
+      if (!placement && !marked) return finishNativePlacement();
+      // Retain a marked router's ordinary decision if pinning fails.
+      const receipt = parse<InvocationSubthread | null>(
+        await storage.add(key, JSON.stringify(placement ?? null)),
+      );
+      const accepted = receipt === null ? undefined : checkedRoute(receipt);
+      if (
+        turnContext &&
+        (placement?.root !== accepted?.root ||
+          placement?.parent !== accepted?.parent)
+      )
+        throw new Error("The invocation subthread cannot change");
+      if (!accepted) return finishNativePlacement();
+      await storage.add(
+        conversationKey(accepted.parent),
+        JSON.stringify(accepted),
+      );
+      return turnContext
+        ? { ...accepted, turnContext: unframed(turnContext) }
+        : accepted;
+    },
+    async prepare(input: AdmissionRequest) {
+      check(input.signal);
+      const pointerKey = keyFor(input.agent, input.harness, input.conversation);
+      if (!routers.snapshot().length && storage.get(pointerKey) === null)
+        return;
+      const candidates = routers.snapshot();
+      await Promise.all(candidates.map((router) => router.ready()));
+      check(input.signal);
+      const invocationKey =
+        SESSION_ADMISSION_PREFIX +
+        JSON.stringify([
+          "invocation",
+          input.agent,
+          input.harness,
+          input.invocationId,
+        ]);
+      const pointerText = await storage.read(pointerKey);
+      const existing =
+        pointerText === null ? undefined : parse<Pointer>(pointerText);
+      if (existing) {
+        if (!existing.sessionKey || existing.resetting)
+          throw new Error(
+            "The agent session reset is incomplete. Use New again before sending a message.",
+          );
+        const receipt = await storage.read(invocationKey);
+        if (receipt !== null && parse<string>(receipt) !== existing.sessionKey)
+          throw new Error(
+            "This request belongs to an earlier session. Send a new message to continue.",
+          );
+      }
+      const savedText = existing
+        ? await storage.read(savedKey(existing.sessionKey))
+        : null;
+      const prior = savedText === null ? undefined : parse<Saved>(savedText);
+      const matches = candidates.filter((router) =>
+        prior ? router.key === prior.router : router.matches(input),
+      );
+      if (matches.length > 1)
+        throw new Error("More than one plugin routes this agent session");
+      const router = matches[0];
+      if (!router && !prior) return;
+      const firstKey = JSON.stringify([
+        input.agent,
+        input.harness,
+        input.invocationId,
+      ]);
+      const pointer = parse<Pointer>(
+        await storage.add(
+          pointerKey,
+          JSON.stringify({
+            sessionKey: firstKey,
+            adopted: true,
+          }),
+        ),
+      );
+      if (!pointer.sessionKey || pointer.resetting)
+        throw new Error(
+          "The agent session reset is incomplete. Use New again before sending a message.",
+        );
+      const sessionKey = parse<string>(
+        await storage.add(invocationKey, JSON.stringify(pointer.sessionKey)),
+      );
+      if (
+        typeof sessionKey !== "string" ||
+        !sessionKey ||
+        sessionKey.length > 1024
+      )
+        throw new Error("The saved agent session key is invalid");
+      if (sessionKey !== pointer.sessionKey)
+        throw new Error(
+          "This request belongs to an earlier session. Send a new message to continue.",
+        );
+      const prepare = async () => {
+        const text = await storage.read(savedKey(sessionKey));
+        const prior = text === null ? undefined : parse<Saved>(text);
+        if (
+          prior &&
+          (prior.sessionKey !== sessionKey ||
+            prior.router !== (router?.key ?? prior.router))
+        )
+          throw new Error("The agent session belongs to another router");
+        check(input.signal);
+        if (!router) {
+          if (!prior)
+            throw new Error("The agent session router is unavailable");
+          return prior;
+        }
+        const result = await router.prepare({
+          ...input,
+          sessionKey,
+          intent: prior || pointer.adopted ? "existing" : "new",
+          adopted: !prior && !!pointer.adopted,
+          ...(prior ? { association: structuredClone(prior.association) } : {}),
+        });
+        check(input.signal);
+        if (!routers.snapshot().includes(router))
+          throw new Error("The agent session router changed");
+        if (!result) {
+          if (prior)
+            throw new Error(
+              "The plugin cannot restore this agent session association",
+            );
+          return;
+        }
+        if (result.context !== undefined && typeof result.context !== "string")
+          throw new Error("Agent session context must be text");
+        const association = JSON.stringify(result.association);
+        if (
+          association === undefined ||
+          (prior && association !== JSON.stringify(prior.association))
+        )
+          throw new Error("The agent session association cannot change");
+        if (prior) return prior;
+        const saved: Saved = {
+          sessionKey,
+          router: router.key,
+          association: result.association,
+          ...(result.context ? { context: result.context } : {}),
+        };
+        return parse<Saved>(
+          await storage.add(savedKey(sessionKey), JSON.stringify(saved)),
+        );
+      };
+      const active = pending.get(sessionKey) ?? prepare();
+      pending.set(sessionKey, active);
+      let saved: Saved | undefined;
+      try {
+        saved = await active;
+      } finally {
+        if (pending.get(sessionKey) === active) pending.delete(sessionKey);
+      }
+      check(input.signal);
+      if (!saved) return;
+      let acknowledged = !!saved.contextAcknowledged;
+      return Object.freeze({
+        acknowledged: () => {
+          if (acknowledged || !saved?.context) return;
+          acknowledged = true;
+          void storage
+            .set(
+              savedKey(saved.sessionKey),
+              JSON.stringify({ ...saved, contextAcknowledged: true }),
+            )
+            .catch((error) =>
+              console.error(
+                `Agent ${input.agent} session ${sessionKey} context acknowledgement was not saved`,
+                error,
+              ),
+            );
+        },
+        session: Object.freeze({
+          sessionKey: saved.sessionKey,
+          router: saved.router,
+          association: structuredClone(saved.association),
+        }),
+        // A plugin's text: it cannot open Buzz's own sections of a turn.
+        ...(!saved.contextAcknowledged && saved.context
+          ? { context: unframed(saved.context) }
+          : {}),
+      });
+    },
+    async reset(
+      agent: AgentKey,
+      harness: string,
+      source: AgentSessionSource,
+      run: () => Promise<void>,
+    ) {
+      const key = keyFor(agent, harness, source);
+      if (!routers.snapshot().length && storage.get(key) === null) return run();
+      const text = await storage.read(key);
+      if (text === null) return run();
+      const prior = parse<Pointer>(text);
+      const sessionKey = prior.resetting
+        ? prior.sessionKey
+        : crypto.randomUUID();
+      await storage.set(key, JSON.stringify({ sessionKey, resetting: true }));
+      await run();
+      await storage.set(key, JSON.stringify({ sessionKey }));
+    },
+  };
+}

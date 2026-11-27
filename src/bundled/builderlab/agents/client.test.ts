@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
-import { deferred } from "../test-helpers";
+import { deferred, createTestSession } from "../test-helpers";
 import { createAgentClient } from "./client";
 
 beforeEach(() => {
@@ -31,10 +30,20 @@ const response = (value: unknown, status = 200): HostResponse => ({
 const viewer = "cd".repeat(32);
 const bound = (pubkey_hex = viewer) => response({ identity: { pubkey_hex } });
 async function fixture(subject = "user", canUseRemoteAgents = true) {
-  const session = createOAuthSession(async () => ({
-    value: "secret",
-    account: { subject, email: "a@example.com", canUseRemoteAgents },
-  }));
+  const session = createTestSession(
+    async () => ({
+      revision: "secret",
+      account: {
+        subject,
+        email: "a@example.com",
+        canUseRemoteAgents,
+        canUseBuilderlabDecisions: false,
+        canUseHostedTranscription: false,
+      },
+    }),
+    undefined,
+    { request: (input) => host.request(input) },
+  );
   await session.signIn();
   const host: Host = {
     runCommand: vi.fn(),
@@ -50,19 +59,155 @@ async function fixture(subject = "user", canUseRemoteAgents = true) {
     session,
     host,
     owner,
-    client: createAgentClient(host, session, owner),
+    client: createAgentClient(session, owner),
     retain: vi.fn(),
     signal: new AbortController().signal,
   };
 }
 it("refuses remote reads and creation before sending requests or retaining replay state", async () => {
   const h = await fixture("user", false);
-  await expect(h.client.list(h.signal)).rejects.toThrow("coming soon");
+  await expect(h.client.list(h.signal)).rejects.toThrow(
+    "unavailable for this account",
+  );
   await expect(h.client.register("Helper", h.signal, h.retain)).rejects.toThrow(
-    "coming soon",
+    "unavailable for this account",
   );
   expect(h.host.request).not.toHaveBeenCalled();
   expect(h.retain).not.toHaveBeenCalled();
+});
+it("reads terminal task status only for the requested task IDs", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      outcomes: {
+        done: "completed",
+        failed: "failed",
+        stopped: "cancelled",
+        terminated: "terminated",
+      },
+    }),
+  );
+  expect(
+    await h.client.turnStatus(
+      "session",
+      ["done", "failed", "stopped", "terminated"],
+      h.signal,
+    ),
+  ).toEqual(
+    new Map([
+      ["done", "ended"],
+      ["failed", "error"],
+      ["stopped", "stopped"],
+      ["terminated", "error"],
+    ]),
+  );
+  for (const outcomes of [
+    { other: "completed" },
+    { done: "new-status" },
+    { done: null },
+    [],
+  ]) {
+    vi.mocked(h.host.request).mockResolvedValueOnce(response({ outcomes }));
+    await expect(
+      h.client.turnStatus("session", ["done"], h.signal),
+    ).rejects.toThrow("invalid turn status");
+  }
+});
+it("reads one page of an agent's stored sessions, or one conversation's, and a session's messages", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      sessions: [
+        {
+          session_id: "s-thread",
+          channel_id: "alpha",
+          thread_root_event_id: "r".repeat(64),
+          updated_at: "1767225602000",
+        },
+        { session_id: "dm", channel_id: "beta" },
+      ],
+      next_cursor: "older",
+    }),
+  );
+  expect(await h.client.sessions("agent-1", h.signal)).toEqual({
+    cursor: "older",
+    sessions: [
+      {
+        sessionId: "s-thread",
+        channelId: "alpha",
+        threadRootId: "r".repeat(64),
+        updatedAt: 1_767_225_602_000,
+      },
+      { sessionId: "dm", channelId: "beta", updatedAt: 0 },
+    ],
+  });
+  vi.mocked(h.host.request).mockResolvedValue(response({ sessions: [] }));
+  expect(
+    await h.client.sessions("agent-1", h.signal, {
+      community: "wss://relay.example.org",
+      channelId: "alpha",
+      threadRootId: "r".repeat(64),
+    }),
+  ).toEqual({ cursor: undefined, sessions: [] });
+  await h.client.sessions("agent-1", h.signal, {
+    community: "wss://relay.example.org",
+    channelId: "beta",
+  });
+  await h.client.sessions("agent-1", h.signal, undefined, "older");
+  const bodies = vi
+    .mocked(h.host.request)
+    .mock.calls.map(([input]) => [
+      input.url.split("/").at(-1),
+      JSON.parse(input.body ?? ""),
+    ]);
+  expect(bodies).toEqual([
+    ["list-agent-sessions", { agent_id: "agent-1", limit: 50 }],
+    [
+      "list-agent-sessions",
+      {
+        agent_id: "agent-1",
+        limit: 50,
+        community: "relay.example.org",
+        channel_id: "alpha",
+        thread_root_event_id: "r".repeat(64),
+      },
+    ],
+    [
+      "list-agent-sessions",
+      {
+        agent_id: "agent-1",
+        limit: 50,
+        community: "relay.example.org",
+        channel_id: "beta",
+      },
+    ],
+    [
+      "list-agent-sessions",
+      { agent_id: "agent-1", limit: 50, cursor: "older" },
+    ],
+  ]);
+  await expect(
+    h.client.sessions("agent-1", h.signal, {
+      community: "relay.example.org",
+      channelId: "alpha",
+    }),
+  ).rejects.toThrow("The agent's community is not a URL: relay.example.org");
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({ sessions: [{ session_id: "s" }] }),
+  );
+  await expect(h.client.sessions("agent-1", h.signal)).rejects.toThrow(
+    "invalid session list",
+  );
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({ messages: [], turns: [] }),
+  );
+  expect(await h.client.sessionMessages("s", h.signal)).toEqual({
+    messages: [],
+    turns: [],
+  });
+  expect(
+    JSON.parse(vi.mocked(h.host.request).mock.calls.at(-1)?.[0].body ?? ""),
+  ).toEqual({ session_id: "s" });
 });
 it("lists the authenticated account through the configured native host", async () => {
   const h = await fixture();
@@ -87,7 +232,6 @@ it("lists the authenticated account through the configured native host", async (
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      "X-BB-Session-Credential": "secret",
     },
     body: JSON.stringify({ include_instructions: true }),
   });
@@ -102,6 +246,44 @@ it.each([{}, { agents: [] }])(
     expect(await h.client.list(h.signal)).toEqual([]);
   },
 );
+it("normalizes optional creation dates from JSON without inventing dates", async () => {
+  const h = await fixture();
+  const millis = Date.UTC(2026, 6, 15, 12);
+  const values = [
+    millis,
+    millis / 1000,
+    String(millis),
+    String(millis / 1000),
+    "2026-07-15T12:00:00Z",
+    null,
+    "",
+    "bad date",
+    undefined,
+    true,
+    1e20,
+  ];
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agents: values.map((created_at) => ({ ...row, created_at })),
+    }),
+  );
+  expect(
+    (await h.client.list(h.signal)).map(({ createdAt }) => createdAt),
+  ).toEqual([
+    millis,
+    millis,
+    millis,
+    millis,
+    millis,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  ]);
+});
 it.each([
   ["AGENT_STATUS_UNATTESTED", "Unattested"],
   [1, "Unattested"],
@@ -140,12 +322,19 @@ it.each([401, 403, 500])(
     vi.mocked(h.host.request).mockResolvedValue(
       response({ error: "private-secret" }, status),
     );
-    const error = await h.client.list(h.signal).catch((error: Error) => error);
+    vi.useFakeTimers();
+    let error: unknown;
+    try {
+      const pending = h.client.list(h.signal).catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(7000);
+      error = await pending;
+    } finally {
+      vi.useRealTimers();
+    }
     expect(error).toBeInstanceOf(Error);
     expect(String(error)).not.toContain("private-secret");
-    expect(h.session.snapshot().status).toBe(
-      status === 401 ? "signed-out" : "signed-in",
-    );
+    // A 401 refuses only this call: the native session decides when it ends.
+    expect(h.session.snapshot().status).toBe("signed-in");
   },
 );
 it.each(["sign-out", "new-login", "cancel", "dispose"])(
@@ -153,22 +342,33 @@ it.each(["sign-out", "new-login", "cancel", "dispose"])(
   async (action) => {
     const h = await fixture();
     const held = deferred<HostResponse>();
-    vi.mocked(h.host.request).mockReturnValue(held.promise);
+    const started = deferred<void>();
+    vi.mocked(h.host.request).mockImplementation(() => {
+      started.resolve();
+      return held.promise;
+    });
     const controller = new AbortController();
     const pending = h.client.list(controller.signal);
-    if (action === "cancel") controller.abort();
-    else if (action === "dispose") h.session.dispose();
-    else {
-      h.session.signOut();
-      if (action === "new-login") await h.session.signIn();
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await started.promise;
+    try {
+      if (action === "cancel") controller.abort();
+      else if (action === "dispose") h.session.dispose();
+      else {
+        h.session.signOut();
+        if (action === "new-login") await h.session.signIn();
+      }
+    } finally {
+      held.resolve(
+        response(
+          { status: 1, agents: [row] },
+          action === "new-login" ? 401 : 200,
+        ),
+      );
     }
-    held.resolve(
-      response(
-        { status: 1, agents: [row] },
-        action === "new-login" ? 401 : 200,
-      ),
-    );
-    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await rejected;
     if (action === "new-login")
       expect(h.session.snapshot().status).toBe("signed-in");
   },
@@ -192,6 +392,125 @@ const remoteAgent = {
   pubkey: row.agent_pubkey,
   status: "Active",
 } as const;
+it("loads the standalone catalog with model-specific effort identifiers", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      models: [
+        {
+          id: "model-one",
+          display_name: "Friendly Model",
+          supported_reasoning_efforts: ["none", "max"],
+        },
+        {
+          id: "model-two",
+          display_name: "Fast Model",
+          supported_reasoning_efforts: ["low"],
+          fast: true,
+        },
+      ],
+    }),
+  );
+  expect(await h.client.modelCatalog(h.signal)).toEqual({
+    models: [
+      {
+        id: "model-one",
+        displayName: "Friendly Model",
+        supportedReasoningEfforts: ["none", "max"],
+        fast: false,
+      },
+      {
+        id: "model-two",
+        displayName: "Fast Model",
+        supportedReasoningEfforts: ["low"],
+        fast: true,
+      },
+    ],
+  });
+  expect(vi.mocked(h.host.request).mock.calls[0]?.[0].url).toBe(
+    "https://builderlab.example/api/goose/v3/beekeeper/get-model-catalog",
+  );
+});
+it.each([
+  [{ model_id: "model-one", reasoning_effort: "max" }, true],
+  [{ model_id: "model-one", reasoning_effort: "high" }, false],
+  [{ model_id: "missing", reasoning_effort: "max" }, false],
+  [{ model_id: "model-one" }, false],
+  ["model-one", false],
+  [null, false],
+])(
+  "keeps only a recommendation the catalog offers: %j",
+  async (recommended_selection, kept) => {
+    const h = await fixture();
+    vi.mocked(h.host.request).mockResolvedValueOnce(
+      response({
+        models: [
+          {
+            id: "model-one",
+            display_name: "Friendly Model",
+            supported_reasoning_efforts: ["none", "max"],
+          },
+        ],
+        recommended_selection,
+      }),
+    );
+    expect((await h.client.modelCatalog(h.signal)).recommended).toEqual(
+      kept ? { modelId: "model-one", reasoningEffort: "max" } : undefined,
+    );
+  },
+);
+it.each([
+  null,
+  [null],
+  [{ id: "model" }],
+  [{ id: "model", display_name: "Model", supported_reasoning_efforts: [""] }],
+])("rejects malformed catalog choices: %j", async (models) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(response({ models }));
+  if (models === null)
+    expect(await h.client.modelCatalog(h.signal)).toEqual({ models: [] });
+  else
+    await expect(h.client.modelCatalog(h.signal)).rejects.toThrow(
+      "invalid model catalog",
+    );
+});
+it.each([
+  [1, "valid"],
+  ["MODEL_SELECTION_STATUS_SETUP_REQUIRED", "setup-required"],
+  [3, "model-unavailable"],
+  ["MODEL_SELECTION_STATUS_EFFORT_UNSUPPORTED", "effort-unsupported"],
+  [99, "unknown"],
+])("reads the saved pair and server validity %s", async (status, expected) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agents: [
+        {
+          ...row,
+          model_id: "one",
+          reasoning_effort: "max",
+          model_selection_status: status,
+        },
+      ],
+    }),
+  );
+  expect((await h.client.list(h.signal))[0]).toMatchObject({
+    modelId: "one",
+    reasoningEffort: "max",
+    modelSelectionStatus: expected,
+  });
+});
+it("does not treat empty model fields as reset requests", async () => {
+  const h = await fixture();
+  await expect(
+    h.client.updateModel(remoteAgent, "", "high", h.signal),
+  ).rejects.toThrow("Choose a model");
+  await expect(
+    h.client.updateModel(remoteAgent, "one", "", h.signal),
+  ).rejects.toThrow("Choose a model");
+  expect(h.host.request).not.toHaveBeenCalled();
+});
 it("replaces instructions verbatim through the authenticated host", async () => {
   const h = await fixture();
   const instructions = "  Review carefully.\nPreserve formatting.\n";
@@ -203,7 +522,6 @@ it("replaces instructions verbatim through the authenticated host", async () => 
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      "X-BB-Session-Credential": "secret",
     },
     body: JSON.stringify({
       agent_pubkey: row.agent_pubkey,
@@ -263,7 +581,6 @@ it("deletes through the configured authenticated host", async () => {
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      "X-BB-Session-Credential": "secret",
     },
     body: JSON.stringify({ agent_id: row.agent_id }),
   });
@@ -364,6 +681,75 @@ it("registers with a saved UUID and submits the supplied owner proof", async () 
     }),
   );
 });
+it("registers with a picture and replays it unchanged", async () => {
+  const h = await fixture();
+  const registered = response({
+    status: 1,
+    agent_id: row.agent_id,
+    agent_pubkey: row.agent_pubkey,
+  });
+  vi.mocked(h.host.request)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce(registered);
+  await expect(
+    h.client.register("Helper", h.signal, h.retain, "https://a.example/1.png"),
+  ).rejects.toThrow("Retry the same name");
+  const agent = await h.client.register(
+    "Helper",
+    h.signal,
+    h.retain,
+    "https://a.example/2.png",
+  );
+  // The caller lists the picture Beekeeper actually registered.
+  expect(agent.picture).toBe("https://a.example/1.png");
+  const bodies = vi
+    .mocked(h.host.request)
+    .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
+  expect(bodies[0]).toEqual({
+    agent_name: "Helper",
+    agent_picture_url: "https://a.example/1.png",
+    idempotency_key: expect.any(String),
+  });
+  // Beekeeper refuses a replay whose picture differs from the first request.
+  expect(bodies[1]).toEqual(bodies[0]);
+});
+it.each([
+  ["https://a.example/1.png", "https://a.example/1.png"],
+  [undefined, ""],
+])("updates the profile with picture %s", async (picture, sent) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(response({}));
+  await h.client.updateProfile(
+    {
+      pubkey: row.agent_pubkey,
+      community: "wss://agent.example",
+      name: " Helper ",
+      ...(picture ? { picture } : {}),
+    },
+    h.signal,
+  );
+  expect(h.host.request).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      url: "https://builderlab.example/api/goose/v3/beekeeper/update-agent-profile",
+      body: JSON.stringify({
+        agent_pubkey: row.agent_pubkey,
+        community_url: "wss://agent.example",
+        agent_name: "Helper",
+        agent_picture_url: sent,
+      }),
+    }),
+  );
+});
+it("does not update the profile to an invalid name", async () => {
+  const h = await fixture();
+  await expect(
+    h.client.updateProfile(
+      { pubkey: row.agent_pubkey, community: "wss://a", name: "bad/name" },
+      h.signal,
+    ),
+  ).rejects.toThrow("agent name");
+  expect(h.host.request).not.toHaveBeenCalled();
+});
 it.each(["network", "server", "malformed", "cancel"])(
   "retains the registration UUID after an uncertain %s result",
   async (failure) => {
@@ -385,11 +771,7 @@ it.each(["network", "server", "malformed", "cancel"])(
       }),
     );
     // A fresh consumer after navigation/restart reuses the persisted intent.
-    await createAgentClient(h.host, h.session).register(
-      "Helper",
-      h.signal,
-      h.retain,
-    );
+    await createAgentClient(h.session).register("Helper", h.signal, h.retain);
     const bodies = vi
       .mocked(h.host.request)
       .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
@@ -418,6 +800,30 @@ it("does not reuse a pending creation for another verified account with the same
   const newBody = JSON.parse(
     vi.mocked(second.host.request).mock.calls[0]?.[0].body ?? "{}",
   );
+  expect(newBody.idempotency_key).not.toBe(oldBody.idempotency_key);
+});
+it("keeps each sign-in server's pending creation apart for the same account", async () => {
+  const first = await fixture("account-a");
+  vi.mocked(first.host.request).mockRejectedValueOnce(new Error("offline"));
+  await expect(
+    first.client.register("Helper", first.signal, first.retain),
+  ).rejects.toThrow("Retry the same name");
+  const peer = { ...first.session, target: "https://peer.example/goose" };
+  vi.mocked(first.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agent_id: row.agent_id,
+      agent_pubkey: row.agent_pubkey,
+    }),
+  );
+  await createAgentClient(peer, first.owner).register(
+    "Helper",
+    first.signal,
+    first.retain,
+  );
+  const [oldBody, newBody] = vi
+    .mocked(first.host.request)
+    .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
   expect(newBody.idempotency_key).not.toBe(oldBody.idempotency_key);
 });
 it.each([2, 3, 4, 5, "REGISTER_AGENT_STATUS_TOO_MANY_AGENTS"])(
@@ -492,7 +898,6 @@ it("links an unbound Buzz key to the account before attesting", async () => {
   expect(calls[1]?.headers).toEqual({
     Accept: "application/json",
     "Content-Type": "application/json",
-    "X-BB-Session-Credential": "secret",
     Origin: "https://builderlab.example",
   });
   expect(JSON.parse(calls[1]?.body ?? "")).toEqual({
@@ -504,6 +909,33 @@ it("links an unbound Buzz key to the account before attesting", async () => {
     nonce: challenge.nonce,
     signed_payload: JSON.stringify({ id: "signed-binding" }),
   });
+});
+it("asks another sign-in server's binding challenge for its own origin", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(response({ identity: null }))
+    .mockResolvedValueOnce(response({ error: { code: "stop" } }, 400));
+  const peer = { ...h.session, target: "https://peer.example/goose" };
+  await expect(
+    createAgentClient(peer, h.owner).link(h.signal),
+  ).rejects.toThrow();
+  const calls = vi.mocked(h.host.request).mock.calls.map(([input]) => input);
+  expect(calls[1]?.headers?.Origin).toBe("https://peer.example");
+  expect(JSON.parse(calls[1]?.body ?? "")).toEqual({
+    origin: "https://peer.example",
+  });
+});
+it("never signs another site's challenge from a sign-in server", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(response({ identity: null }))
+    .mockResolvedValueOnce(response({ ...challenge, kind: 24243 }));
+  const peer = { ...h.session, target: "https://peer.example/goose" };
+  await expect(createAgentClient(peer, h.owner).link(h.signal)).rejects.toThrow(
+    "challenge for another site",
+  );
+  expect(h.owner.signBinding).not.toHaveBeenCalled();
+  expect(h.host.request).toHaveBeenCalledTimes(2);
 });
 it("skips linking when this key is already bound", async () => {
   const h = await fixture();
@@ -558,19 +990,22 @@ it("refuses to link without a local Buzz identity", async () => {
   );
   expect(h.host.request).not.toHaveBeenCalled();
 });
-it("signs out when the identity check finds the session expired", async () => {
+it("refuses activation with a 401, keeping the session and claiming no expiry", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValueOnce(response({}, 401));
   await expect(
     h.client.activate(row.agent_pubkey, proof, undefined, h.signal),
-  ).rejects.toThrow("session expired");
-  expect(h.session.snapshot().status).toBe("signed-out");
+  ).rejects.toMatchObject({
+    message: "Builderlab didn’t accept this request. Try again.",
+    status: 401,
+  });
+  expect(h.session.snapshot().status).toBe("signed-in");
   expect(h.host.request).toHaveBeenCalledTimes(1);
 });
 it("attests without linking when there is no native identity", async () => {
   const h = await fixture();
   vi.mocked(h.host.request).mockResolvedValueOnce(response({ status: 1 }));
-  await createAgentClient(h.host, h.session, null).activate(
+  await createAgentClient(h.session, null).activate(
     row.agent_pubkey,
     proof,
     undefined,
@@ -626,4 +1061,92 @@ it("shares one binding attempt between overlapping links", async () => {
       .mocked(h.host.request)
       .mock.calls.map(([input]) => input.url.split("/").at(-1)),
   ).toEqual(["current", "attest-agent"]);
+});
+
+it("shares one binding attempt across clients of one sign-in", async () => {
+  const h = await fixture();
+  const current = deferred<HostResponse>();
+  vi.mocked(h.host.request)
+    .mockImplementationOnce(() => current.promise)
+    .mockResolvedValueOnce(response({ status: 1 }));
+  const signIn = createAgentClient(h.session, h.owner).link(h.signal);
+  const activation = h.client.activate(
+    row.agent_pubkey,
+    proof,
+    undefined,
+    h.signal,
+  );
+  current.resolve(bound());
+  await Promise.all([signIn, activation]);
+  expect(
+    vi
+      .mocked(h.host.request)
+      .mock.calls.map(([input]) => input.url.split("/").at(-1)),
+  ).toEqual(["current", "attest-agent"]);
+});
+
+it.each(["network", "429"])(
+  "quietly recovers read-only Builderlab discovery after %s",
+  async (failure) => {
+    const h = await fixture();
+    vi.useFakeTimers();
+    try {
+      const request = vi.mocked(h.host.request);
+      if (failure === "network")
+        request.mockRejectedValueOnce(new Error("offline"));
+      else request.mockResolvedValueOnce(response({}, Number(failure)));
+      const pending = h.client.list(h.signal);
+      await vi.advanceTimersByTimeAsync(499);
+      expect(request).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(501);
+      expect(await pending).toHaveLength(1);
+      expect(request).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("does not replay a Builderlab mutation after a transport failure", async () => {
+  const h = await fixture();
+  vi.useFakeTimers();
+  try {
+    const request = vi
+      .mocked(h.host.request)
+      .mockRejectedValue(new Error("offline"));
+    await expect(h.client.delete({ id: "agent-1" }, h.signal)).rejects.toThrow(
+      "Could not reach Builderlab",
+    );
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(request).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("exhausts Builderlab reads once and cancels the same backoff on account change", async () => {
+  const h = await fixture();
+  vi.useFakeTimers();
+  try {
+    const request = vi
+      .mocked(h.host.request)
+      .mockResolvedValue(response({}, 503));
+    const rejected = expect(h.client.list(h.signal)).rejects.toThrow(
+      "HTTP 503",
+    );
+    await vi.advanceTimersByTimeAsync(7000);
+    await rejected;
+    expect(request).toHaveBeenCalledTimes(4);
+    const pending = h.client.list(h.signal);
+    const cancelled = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    h.session.signOut();
+    await vi.advanceTimersByTimeAsync(1000);
+    await cancelled;
+    expect(request).toHaveBeenCalledTimes(5);
+  } finally {
+    vi.useRealTimers();
+  }
 });

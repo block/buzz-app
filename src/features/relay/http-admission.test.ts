@@ -1,14 +1,16 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  API_ACTIVE_LIMIT,
   apiFailure,
   admittedApiRequest,
   ApiPaused,
   createApiAdmission,
   readApiFailure,
+  refusalOfError,
 } from "./http-admission";
 
 afterEach(() => vi.useRealTimers());
-it("starts six requests without advancing time and refills by foreground priority on completion", async () => {
+it("starts background reads immediately up to the request ceiling and refills by foreground priority", async () => {
   vi.useFakeTimers();
   const lane = createApiAdmission();
   const calls: string[] = [];
@@ -17,11 +19,13 @@ it("starts six requests without advancing time and refills by foreground priorit
     calls.push(name);
     return new Promise<void>((resolve) => release.push(resolve));
   };
-  const active = Array.from({ length: 6 }, (_, i) => lane.run(work(`${i}`)));
-  expect(calls).toEqual(["0", "1", "2", "3", "4", "5"]);
+  const active = Array.from({ length: API_ACTIVE_LIMIT }, (_, i) =>
+    lane.run(work(`${i}`), undefined, "background"),
+  );
+  expect(calls).toEqual(active.map((_, i) => `${i}`));
   const background = lane.run(work("background"), undefined, "background");
   const foreground = lane.run(work("foreground"));
-  expect(calls).toHaveLength(6);
+  expect(calls).toHaveLength(API_ACTIVE_LIMIT);
   release.shift()?.();
   await active[0];
   await Promise.resolve();
@@ -37,6 +41,41 @@ it("starts six requests without advancing time and refills by foreground priorit
   expect(performance.now()).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
 });
+it("keeps room for foreground requests during artifact publication saturation", async () => {
+  const lane = createApiAdmission();
+  const calls: number[] = [];
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const artifacts = Array.from({ length: 124 }, (_, i) =>
+    lane.run(
+      async () => {
+        calls.push(i);
+        await held;
+      },
+      undefined,
+      "artifact",
+    ),
+  );
+  try {
+    expect(calls).toEqual([0, 1, 2, 3]);
+    await expect(
+      lane.run(async () => {}, undefined, "artifact"),
+    ).rejects.toThrow(/capacity/i);
+    const read = lane.run(async () => calls.push(-1), undefined, "background");
+    const message = lane.run(async () => calls.push(-2));
+    expect(calls).toEqual([0, 1, 2, 3, -1, -2]);
+    await Promise.all([read, message]);
+  } finally {
+    release();
+    await Promise.all(artifacts);
+  }
+  expect(calls.filter((i) => i >= 0)).toEqual(
+    Array.from({ length: 124 }, (_, i) => i),
+  );
+});
+
 it("pauses queued consumers, cancels before dispatch, and never retries admitted work", async () => {
   vi.useFakeTimers();
   const lane = createApiAdmission();
@@ -45,7 +84,7 @@ it("pauses queued consumers, cancels before dispatch, and never retries admitted
     release = resolve;
   });
   const work = vi.fn(() => held);
-  const active = Array.from({ length: 6 }, () => lane.run(work));
+  const active = Array.from({ length: API_ACTIVE_LIMIT }, () => lane.run(work));
   const controller = new AbortController();
   const cancelled = expect(
     lane.run(work, controller.signal),
@@ -62,7 +101,7 @@ it("pauses queued consumers, cancels before dispatch, and never retries admitted
   await expect(lane.run(work)).rejects.toBeInstanceOf(ApiPaused);
   await vi.advanceTimersByTimeAsync(1);
   await lane.run(async () => {});
-  expect(work).toHaveBeenCalledTimes(6);
+  expect(work).toHaveBeenCalledTimes(API_ACTIVE_LIMIT);
   expect(vi.getTimerCount()).toBe(0);
 });
 it("normalizes only upstream quota hints and bounds streaming error bodies", async () => {
@@ -225,5 +264,86 @@ it("reads an edge 403 page as unavailable, not as the relay's denial", async () 
   });
   await expect(readApiFailure(page)).resolves.toEqual({
     error: "Relay request failed (403)",
+  });
+});
+it.each([
+  [401, "authentication required\n", "sign-in"],
+  [403, "evidence rejected\n", "sign-in"],
+  [403, "authorization denied\n", "access"],
+])(
+  "reads the relay's exact %i %j as a community refusal",
+  async (status, body, admission) => {
+    const failure = await readApiFailure(
+      new Response(body, {
+        status,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      }),
+    );
+    expect(failure).toMatchObject({ denied: true, admission });
+    // The broker forwards it as JSON; reading that again keeps the refusal.
+    expect(apiFailure(status, failure)).toEqual(failure);
+  },
+);
+it.each([
+  // An outage, not a refusal: NIP-FI's, and the media route's own.
+  [503, "authorization unavailable\n"],
+  [503, JSON.stringify({ error: "media service temporarily unavailable" })],
+  // A known body under the wrong status, or not exactly the relay's bytes.
+  [403, "authentication required\n"],
+  [403, "authorization denied"],
+  [403, "Authorization denied\n"],
+])("leaves %i %j to the feature that asked", async (status, body) => {
+  const failure = await readApiFailure(new Response(body, { status }));
+  expect(failure.admission).toBeUndefined();
+  expect(failure.denied).toBeUndefined();
+});
+it.each([
+  [
+    {
+      error: "relay_membership_required",
+      message: "You must be a relay member to access this relay",
+    },
+    "restricted: not a relay member",
+  ],
+  [
+    { error: "blocked: you are banned from this community" },
+    "blocked: you are banned from this community",
+  ],
+  // Media routes refuse a non-member or a banned key with their own spelling.
+  [{ error: "relay membership required" }, "restricted: not a relay member"],
+])(
+  "reads a community's membership refusal %j as a community refusal",
+  async (body, error) => {
+    const failure = await readApiFailure(Response.json(body, { status: 403 }));
+    expect(failure).toEqual({ error, denied: true, admission: "access" });
+    // The broker forwards it as JSON; reading that again keeps the refusal.
+    expect(apiFailure(403, failure)).toEqual(failure);
+    // A refusal met while connecting keeps its reason.
+    expect(refusalOfError(new Error(failure.error))).toBe("access");
+    // Under another status it isn't the relay's front door.
+    expect(apiFailure(401, body).admission).toBeUndefined();
+  },
+);
+it("keeps one item's JSON refusal with its feature", async () => {
+  const failure = await readApiFailure(
+    Response.json({ error: "restricted: p-gated" }, { status: 403 }),
+  );
+  expect(failure).toMatchObject({ denied: true });
+  expect(failure.admission).toBeUndefined();
+  // Claimed admission without the relay's own reason is not one either.
+  expect(
+    apiFailure(403, { error: "restricted: p-gated", admission: "access" })
+      .admission,
+  ).toBeUndefined();
+});
+it("keeps the relay's status and its classified reason through the lane", async () => {
+  const response = await admittedApiRequest(
+    createApiAdmission(),
+    async () => new Response("authorization denied\n", { status: 403 }),
+  );
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({
+    error: "restricted: authorization denied",
+    admission: "access",
   });
 });

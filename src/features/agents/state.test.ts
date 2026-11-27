@@ -1,6 +1,13 @@
 import { expect, it, vi } from "vitest";
-import { fileStore, loadAgentStorage, MOVED_KEY } from "./state";
+import {
+  executionStorage,
+  fileStore,
+  loadAgentStorage,
+  MOVED_KEY,
+} from "./state";
 import { memoryStorage } from "./test-fakes";
+import { SyncedTeams, teamSources } from "./team-config";
+import { TeamMoves } from "./team-migration";
 
 const files = (items: Record<string, string> = {}) => {
   const saved = new Map(Object.entries(items));
@@ -25,6 +32,11 @@ it("moves agent state from localStorage, which replaces what agent storage has",
   local.setItem("buzz.agents.archive-unchecked.v1", "unchecked");
   local.setItem("buzz.agents.catch-up.v1", "checkpoints");
   local.setItem("buzz.agents.catch-up.v1:aa", "agent checkpoints");
+  local.setItem("buzz.agent.execution.v1:aa", "binding");
+  local.setItem(
+    'buzz.agents.conversation-instructions.v1:["s","aa","c"]',
+    "do",
+  );
   local.setItem("buzz.theme", "dark");
   const native = files({
     "buzz.agents.teams.v1": "stale teams",
@@ -42,6 +54,8 @@ it("moves agent state from localStorage, which replaces what agent storage has",
     "buzz.agents.archive-unchecked.v1": "unchecked",
     "buzz.agents.catch-up.v1": "checkpoints",
     "buzz.agents.catch-up.v1:aa": "agent checkpoints",
+    "buzz.agent.execution.v1:aa": "binding",
+    'buzz.agents.conversation-instructions.v1:["s","aa","c"]': "do",
     [MOVED_KEY]: "1",
   });
   expect(storage.get("buzz.agents.teams.v1")).toBe("new teams");
@@ -105,6 +119,54 @@ it("keeps the moved state when a later start without agent storage saves", async
   expect(next.get("buzz.claude-code.sessions.v1")).toBe("all sessions");
   expect(next.get("buzz.agent.v1:bb")).toBe("new agent");
   expect(native.saved.get("buzz.claude-code.sessions.v1")).toBe("all sessions");
+  expect(local.length).toBe(0);
+});
+
+it("keeps synced team rosters a start without agent storage saved", async () => {
+  const local = memoryStorage();
+  const native = files();
+  await loadAgentStorage(local, native);
+
+  native.load.mockRejectedValueOnce(new Error("denied"));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const fallback = await loadAgentStorage(local, native);
+  error.mockRestore();
+  new SyncedTeams(fallback).set("o", "wss://home", [
+    { id: "crew", channel: "ch", archived: false, members: ["a"] },
+  ]);
+  await vi.waitFor(() =>
+    expect(local.getItem("buzz.agents.teams.synced.v1")).not.toBeNull(),
+  );
+
+  // Agent storage is back; the home community isn't reachable yet.
+  const next = await loadAgentStorage(local, native);
+  expect(
+    teamSources(new SyncedTeams(next), "o", "a").map((team) => team.id),
+  ).toEqual(["crew"]);
+  expect(local.length).toBe(0);
+});
+
+it("keeps a partial team move a start without agent storage saved, so Delete still finds its relay copy", async () => {
+  const local = memoryStorage();
+  const native = files();
+  await loadAgentStorage(local, native);
+
+  native.load.mockRejectedValueOnce(new Error("denied"));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const fallback = await loadAgentStorage(local, native);
+  error.mockRestore();
+  await new TeamMoves(fallback).set("local-1", {
+    community: "wss://home",
+    failed: true,
+    created: true,
+  });
+
+  const next = await loadAgentStorage(local, native);
+  expect(new TeamMoves(next).get("local-1")).toEqual({
+    community: "wss://home",
+    failed: true,
+    created: true,
+  });
   expect(local.length).toBe(0);
 });
 
@@ -188,4 +250,54 @@ it("puts back a key whose write failed, so it is not taken as saved and can be s
   await storage.set("a", "new");
   expect(native.saved.get("a")).toBe("new");
   expect(storage.get("a")).toBe("new");
+});
+
+it("rejects native execution when native state cannot be read", async () => {
+  vi.stubGlobal("isTauri", true);
+  const local = memoryStorage();
+  const native = files();
+  native.load.mockRejectedValueOnce(new Error("denied"));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const fallback = await loadAgentStorage(local, native);
+    await expect(
+      executionStorage(fallback).read("buzz.agent.execution.v1:aa"),
+    ).rejects.toThrow("Native agent storage is unavailable");
+    await expect(
+      executionStorage(fallback).add("buzz.agent.execution.v1:aa", '"local"'),
+    ).rejects.toThrow("Native agent storage is unavailable");
+  } finally {
+    error.mockRestore();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("scans saved entries beyond the startup copy after its pending writes", async () => {
+  const prefix = "buzz.codex.sessions.v4:agent:";
+  const native = files();
+  const storage = await loadAgentStorage(memoryStorage(), native);
+  native.saved.set(`${prefix}other-window`, "remote");
+  native.saved.set("another-prefix", "private");
+  expect(storage.get(`${prefix}other-window`)).toBeNull();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const save = native.set.getMockImplementation();
+  native.set.mockImplementationOnce(async (key, value) => {
+    await held;
+    await save?.(key, value);
+  });
+  const saving = storage.set(`${prefix}this-window`, "saved");
+  const scanning = storage.scan(prefix);
+  release();
+  await saving;
+  expect(await scanning).toEqual({
+    [`${prefix}other-window`]: "remote",
+    [`${prefix}this-window`]: "saved",
+  });
+  expect(storage.get(`${prefix}other-window`)).toBeNull();
+  expect(storage.keys()).not.toContain(`${prefix}other-window`);
+  native.load.mockRejectedValueOnce(new Error("Storage denied"));
+  await expect(storage.scan(prefix)).rejects.toThrow("Storage denied");
 });

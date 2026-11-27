@@ -2,11 +2,13 @@ import { PreviewCard as BasePreviewCard } from "@base-ui/react/preview-card";
 import {
   useCallback,
   useRef,
+  useState,
   type ReactElement,
   type ReactNode,
   type RefObject,
 } from "react";
 import { behindActiveOverlay, observeOverlays } from "../overlayLayer";
+import { hoverOpenTiming } from "./hoverIntent";
 
 export type PreviewCardProps = {
   /** The one interactive element that anchors and reveals this preview. */
@@ -16,18 +18,23 @@ export type PreviewCardProps = {
   open?: boolean;
   onOpenChange?: BasePreviewCard.Root.Props["onOpenChange"];
   side?: BasePreviewCard.Positioner.Props["side"];
+  /** Distance from the anchor; defaults to 8px. */
+  sideOffset?: BasePreviewCard.Positioner.Props["sideOffset"];
   /** Alignment along the anchor's edge; defaults to its start. */
   align?: BasePreviewCard.Positioner.Props["align"];
   /** Optional content anchor when the trigger owns a wider hit area. */
   anchor?: BasePreviewCard.Positioner.Props["anchor"];
-  delay?: number;
+  /** A preview in the same group is already open: move to this one at once. */
+  warm?: boolean;
   className?: string;
   id?: string;
   "aria-label"?: string;
   /** Optional anchor that makes the whole card open the trigger's destination. */
   link?: ReactElement;
-  /** First supplemental button, reachable from the trigger with Tab. Not used with link. */
-  actionRef?: RefObject<HTMLButtonElement | null>;
+  /** First supplemental control or scrollport, reachable with Tab. Not used with link. */
+  actionRef?: RefObject<HTMLElement | null>;
+  /** Keep within the viewport when space is tight; defaults to interactive previews. */
+  sticky?: boolean;
 };
 
 const focusableActions =
@@ -60,16 +67,25 @@ export function PreviewCard({
   open,
   onOpenChange,
   side = "bottom",
+  sideOffset = 8,
   align = "start",
   anchor,
-  delay,
+  warm = false,
   className,
   id,
   link,
   actionRef,
+  sticky = !!actionRef,
   "aria-label": label,
 }: PreviewCardProps) {
   const triggerRef = useRef<HTMLAnchorElement>(null);
+  const [boundary, setBoundary] = useState<HTMLElement>();
+  const rememberTrigger = useCallback((element: HTMLAnchorElement | null) => {
+    triggerRef.current = element;
+    setBoundary(
+      element?.closest<HTMLElement>("[data-overlay-boundary]") ?? undefined,
+    );
+  }, []);
   const actions = useRef<BasePreviewCard.Root.Actions>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   // Where the trigger was when opening began, or at the last scroll since.
@@ -78,6 +94,8 @@ export function PreviewCard({
   const pointer = useRef<{ x: number; y: number; time: number } | null>(null);
   // A hover close was refused because the pointer never left the trigger.
   const heldLeave = useRef(false);
+  // The card reopened during its exit, keeping its place in the top layer.
+  const rejoin = useRef(false);
   const promote = useCallback((positioner: HTMLDivElement) => {
     // Join the top layer after the hovered row's floating actions, but not
     // above an unrelated interactive overlay. The portal is never inside one.
@@ -85,7 +103,14 @@ export function PreviewCard({
     const update = () => {
       const trigger = triggerRef.current;
       if (trigger && behindActiveOverlay(trigger)) positioner.hidePopover?.();
-      else positioner.showPopover?.();
+      else if (rejoin.current && popupRef.current?.hasAttribute("data-open")) {
+        // The reopening has committed, with any row actions that the same
+        // pointer move showed again. Join again, after them. A manual
+        // popover keeps focus through this.
+        rejoin.current = false;
+        positioner.hidePopover?.();
+        positioner.showPopover?.();
+      } else positioner.showPopover?.();
     };
     update();
     const stopObserving = observeOverlays(update);
@@ -212,6 +237,8 @@ export function PreviewCard({
           popupRef.current?.contains(document.activeElement)
             ? popupRef.current
             : null;
+        rejoin.current =
+          next && !!popupRef.current?.hasAttribute("data-closed");
       }}
       onOpenChangeComplete={(next) => {
         if (next) return;
@@ -229,9 +256,12 @@ export function PreviewCard({
     >
       <BasePreviewCard.Trigger
         render={trigger}
-        delay={delay ?? (actionRef ? 0 : 250)}
-        closeDelay={150}
-        ref={triggerRef}
+        {...hoverOpenTiming.preview}
+        {...(warm && { delay: 0 })}
+        ref={rememberTrigger}
+        // Base UI marks every open popup's trigger data-popup-open; this tells
+        // a preview's trigger apart.
+        data-preview-card-trigger=""
         onMouseEnter={() => {
           heldLeave.current = false;
         }}
@@ -258,12 +288,13 @@ export function PreviewCard({
       />
       <BasePreviewCard.Portal>
         <BasePreviewCard.Positioner
+          collisionBoundary={boundary}
           side={side}
           // Keep supplemental controls reachable when no side has enough room.
-          sticky={!!actionRef}
+          sticky={sticky}
           anchor={anchor}
           align={align}
-          sideOffset={8}
+          sideOffset={sideOffset}
           positionMethod="fixed"
           popover="manual"
           ref={promote}

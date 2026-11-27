@@ -1,10 +1,17 @@
-import type { LocalAgentSource, LocalWork } from "./local-activity";
+import type {
+  LocalAgentSource,
+  LocalDecline,
+  LocalWork,
+} from "./local-activity";
+import { activityPromptThread } from "./activity-transcript";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
+import { freshTurnTriggers, turnTriggerIds } from "./turn-triggers";
 import {
   ACTIVITY_HISTORY_AGE_MS,
   observerFrame,
+  terminalOutcome,
   type ObserverFrame,
 } from "./observer";
 
@@ -22,20 +29,31 @@ type RawRecord = ObserverFrame &
 export type ActivityTurn = Readonly<{
   agent: string;
   turnId: string;
+  sessionId?: string;
+  threadRootId?: string;
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  /** Retained independently of the bounded raw activity buffer. */
+  outcome?: ReturnType<typeof terminalOutcome>;
+  triggeringEventIds?: readonly string[];
+  /** Multiple distinct starts reused this turn ID; request identity is ambiguous. */
+  ambiguous?: boolean;
   /** Roots established from retained signed triggering messages, not typing. */
   requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
-type Typing = Readonly<{
+/** Published typing: a pulse that only refreshes its clock changes nothing. */
+type TypingEntry = Readonly<{
   agent: string;
   channelId: string;
   threadRootId: string | undefined;
-  timestamp: number;
   /** First observed working signal in this uninterrupted typing run. */
   startedAt: number;
   working: boolean;
+}>;
+type Typing = Readonly<{
+  entry: TypingEntry;
+  timestamp: number;
   expiresAt: number;
 }>;
 const TYPING_FRESH_MS = 8000;
@@ -49,15 +67,42 @@ type Snapshot = Readonly<{
   records: readonly RawRecord[];
   turns: readonly ActivityTurn[];
   local?: readonly LocalWork[];
-  typing: readonly Typing[];
+  /** This device's agents' mentions declined for who sent them. */
+  declined?: readonly LocalDecline[];
+  typing: readonly TypingEntry[];
   trimmed: number;
+  /** Unlike raw-record trimming, losing a turn can lose request completeness. */
+  turnsTrimmed?: boolean;
 }>;
+type ChannelEvidence = {
+  records: RawRecord[];
+  turns: ActivityTurn[];
+  local: LocalWork[];
+  declined: LocalDecline[];
+  typing: TypingEntry[];
+};
+const sameEntries = <T>(before: readonly T[], after: readonly T[]) =>
+  before.length === after.length &&
+  before.every((value, index) => value === after[index]);
+const keepEntries = <T>(before: readonly T[], after: readonly T[]) =>
+  sameEntries(before, after) ? before : Object.freeze(after);
+function sameTypers(
+  before: readonly TypingEntry[],
+  after: readonly TypingEntry[],
+) {
+  if (sameEntries(before, after)) return true;
+  if (before.length !== after.length) return false;
+  const entries = new Set(after);
+  return before.every((value) => entries.has(value));
+}
 type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   requests?: ActivityTurn["requests"];
   triggeringEventIds?: readonly string[];
   ended: boolean;
   epoch: number;
   unresolvedTriggers?: readonly string[];
+  /** A turn_started frame set triggers; a second one makes the turn ambiguous. */
+  started?: boolean;
 };
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -67,12 +112,36 @@ const text = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 256;
 const starts = new Set([
   "turn_started",
+  // A message the agent's harness added to this running turn (remote steering).
+  "turn_steered",
   "turn_liveness",
   "acp_read",
   "acp_write",
   "session_resolved",
 ]);
 const ends = new Set(["turn_completed", "turn_error", "agent_panic"]);
+/** A start's or steer's messages join the turn's triggers; nothing removes one. */
+function triggerFields(
+  previous: Turn | undefined,
+  added: readonly string[] | undefined,
+): Required<
+  Pick<Turn, "triggeringEventIds" | "requests" | "unresolvedTriggers">
+> {
+  const known = previous?.triggeringEventIds ?? [];
+  const fresh = freshTurnTriggers(known, added);
+  return {
+    triggeringEventIds: fresh.length ? [...known, ...fresh] : known,
+    requests: previous?.requests ?? [],
+    unresolvedTriggers: [...(previous?.unresolvedTriggers ?? []), ...fresh],
+  };
+}
+function withTriggers(previous: Turn, added: readonly string[]): Turn {
+  const fields = triggerFields(previous, added);
+  return fields.triggeringEventIds.length ===
+    (previous.triggeringEventIds?.length ?? 0)
+    ? previous
+    : { ...previous, ...fields };
+}
 
 /** Session-owned live evidence. Plugin activation owns demand, not sockets or keys. */
 export function createAgentActivity(
@@ -93,11 +162,17 @@ export function createAgentActivity(
     bytes = 0,
     trimmed = 0,
     evidenceFloor = 0;
+  let turnsTrimmed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   const turns = new Map<string, Turn>();
   const typing = new Map<string, Typing>();
   const listeners = new Set<() => void>();
   const workingListeners = new Set<() => void>();
+  const channelListeners = new Map<string, Set<() => void>>();
+  let channels = new Map<string, Snapshot>();
+  const projectedTurns = new WeakMap<Turn, ActivityTurn>();
+  let nextExpiry = Infinity;
+  let lastCheck = -Infinity;
   let workingChannels = "[]";
   let snapshot: Snapshot = Object.freeze({
     status,
@@ -106,6 +181,78 @@ export function createAgentActivity(
     typing: [],
     trimmed,
   });
+  let emptyChannel = snapshot;
+  function channelSnapshot(channelId: string) {
+    return channels.get(channelId) ?? emptyChannel;
+  }
+  function indexChannels(next: Snapshot) {
+    const evidence = new Map<string, ChannelEvidence>();
+    function bucket(id: string) {
+      let entry = evidence.get(id);
+      if (!entry) {
+        entry = { records: [], turns: [], local: [], declined: [], typing: [] };
+        evidence.set(id, entry);
+      }
+      return entry;
+    }
+    for (const record of next.records)
+      for (const id of record.channelIds) bucket(id).records.push(record);
+    for (const turn of next.turns)
+      if (turn.channelId) bucket(turn.channelId).turns.push(turn);
+    for (const row of next.local ?? []) bucket(row.channelId).local.push(row);
+    for (const row of next.declined ?? [])
+      bucket(row.channelId).declined.push(row);
+    for (const row of next.typing) bucket(row.channelId).typing.push(row);
+
+    const before = emptyChannel;
+    if (before.status !== next.status)
+      emptyChannel = Object.freeze({ ...before, status: next.status });
+    const previous = channels;
+    const indexed = new Map<string, Snapshot>();
+    const changed = new Set<string>();
+    for (const [id, entry] of evidence) {
+      const prior = channelSnapshot(id);
+      const records = keepEntries(prior.records, entry.records);
+      const turns = keepEntries(prior.turns, entry.turns);
+      const local = keepEntries(prior.local ?? [], entry.local);
+      const declined = keepEntries(prior.declined ?? [], entry.declined);
+      // Only remote request evidence uses these loss flags. Keep the exact
+      // trim count on the global feed, where it is displayed.
+      const remote = records.length > 0 || turns.length > 0;
+      const lostHistory = Number(remote && next.trimmed > 0);
+      const lostTurns = remote && !!next.turnsTrimmed;
+      const sameEvidence =
+        prior.status === next.status &&
+        prior.trimmed === lostHistory &&
+        !!prior.turnsTrimmed === lostTurns &&
+        prior.records === records &&
+        prior.turns === turns &&
+        prior.local === local &&
+        prior.declined === declined;
+      // Typing renewals change eviction order but do not change this view.
+      const current =
+        sameEvidence && sameTypers(prior.typing, entry.typing)
+          ? prior
+          : Object.freeze({
+              ...emptyChannel,
+              trimmed: lostHistory,
+              turnsTrimmed: lostTurns,
+              records,
+              turns,
+              local,
+              declined,
+              typing: keepEntries(prior.typing, entry.typing),
+            });
+      indexed.set(id, current);
+      if ((previous.get(id) ?? before) !== current) changed.add(id);
+    }
+    channels = indexed;
+    for (const id of previous.keys()) if (!indexed.has(id)) changed.add(id);
+    if (before !== emptyChannel)
+      for (const id of channelListeners.keys())
+        if (!indexed.has(id)) changed.add(id);
+    return changed;
+  }
   function associate(turn: Turn) {
     const unresolved: string[] = [];
     const requests = [...(turn.requests ?? [])];
@@ -140,7 +287,15 @@ export function createAgentActivity(
               (row) => row.scope === local.scope && canAccess(row.channelId),
             )
         : [];
+    const declined =
+      local && !closed
+        ? (local.source.declined?.() ?? []).filter(
+            (row) => row.scope === local.scope && canAccess(row.channelId),
+          )
+        : [];
     const now = Date.now();
+    lastCheck = now;
+    nextExpiry = Infinity;
     const fresh = records.filter(
       (record) => now - record.receivedAt < ACTIVITY_HISTORY_AGE_MS,
     );
@@ -153,31 +308,64 @@ export function createAgentActivity(
         0,
       );
     }
+    const first = records[0];
+    if (first) nextExpiry = first.receivedAt + ACTIVITY_HISTORY_AGE_MS;
     const retained = new Set(records.map((record) => record.agent));
     for (const agent of liveAgents)
       if (!retained.has(agent)) liveAgents.delete(agent);
     const known = liveAgents;
-    for (const [key, entry] of typing)
-      if (now >= entry.expiresAt || !known.has(entry.agent)) typing.delete(key);
-    const typers = [...typing.values()].filter((entry) => entry.working);
-    const visible = [...turns.values()].map(
-      (turn): ActivityTurn =>
-        Object.freeze({
-          agent: turn.agent,
-          turnId: turn.turnId,
-          channelId: turn.channelId,
-          timestamp: turn.timestamp,
-          ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
-          state: turn.ended
-            ? "ended"
-            : status === "listening" &&
-                turn.epoch === epoch &&
-                now - turn.timestamp <= ACTIVITY_FRESH_MS &&
-                turn.timestamp <= now + 5000
-              ? "working"
-              : "unknown",
-        }),
-    );
+    for (const [key, entry] of typing) {
+      if (now >= entry.expiresAt || !known.has(entry.entry.agent))
+        typing.delete(key);
+      else nextExpiry = Math.min(nextExpiry, entry.expiresAt);
+    }
+    const nextTyping = new Set<TypingEntry>();
+    for (const { entry } of typing.values())
+      if (entry.working) nextTyping.add(entry);
+    // A renewal alone changes the map's eviction order, not visible activity.
+    const sameTyping =
+      snapshot.typing.length === nextTyping.size &&
+      snapshot.typing.every((entry) => nextTyping.has(entry));
+    const typers = [...nextTyping];
+    const visible = [...turns.values()].map((turn): ActivityTurn => {
+      let state: ActivityTurn["state"] = turn.ended ? "ended" : "unknown";
+      if (!turn.ended && status === "listening" && turn.epoch === epoch) {
+        if (turn.timestamp > now + 5000)
+          nextExpiry = Math.min(nextExpiry, turn.timestamp - 5000);
+        else if (now - turn.timestamp <= ACTIVITY_FRESH_MS) {
+          state = "working";
+          nextExpiry = Math.min(
+            nextExpiry,
+            turn.timestamp + ACTIVITY_FRESH_MS + 1,
+          );
+        }
+      }
+      const previous = projectedTurns.get(turn);
+      const requests = turn.triggeringEventIds ? turn.requests : undefined;
+      if (
+        previous &&
+        previous.state === state &&
+        previous.requests === requests
+      )
+        return previous;
+      const value = Object.freeze({
+        agent: turn.agent,
+        turnId: turn.turnId,
+        ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
+        ...(turn.threadRootId ? { threadRootId: turn.threadRootId } : {}),
+        ...(turn.ambiguous ? { ambiguous: true } : {}),
+        channelId: turn.channelId,
+        timestamp: turn.timestamp,
+        ...(turn.outcome ? { outcome: turn.outcome } : {}),
+        ...(turn.triggeringEventIds
+          ? { triggeringEventIds: turn.triggeringEventIds }
+          : {}),
+        ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
+        state,
+      });
+      projectedTurns.set(turn, value);
+      return value;
+    });
     // A primitive snapshot lets workspace subscribers ignore observer records and
     // refreshed typing timestamps. The existing publish timer also drives expiry.
     const nextWorking = JSON.stringify(
@@ -201,12 +389,13 @@ export function createAgentActivity(
     if (
       !workingChanged &&
       snapshot.status === status &&
-      (snapshot.local ?? []).length === localWork.length &&
-      (snapshot.local ?? []).every((row, index) => row === localWork[index]) &&
+      sameEntries(snapshot.local ?? [], localWork) &&
+      sameEntries(snapshot.declined ?? [], declined) &&
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
-      JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
-      JSON.stringify(snapshot.typing) === JSON.stringify(typers)
+      !!snapshot.turnsTrimmed === turnsTrimmed &&
+      sameEntries(snapshot.turns, visible) &&
+      sameTyping
     )
       return;
     snapshot = Object.freeze({
@@ -214,10 +403,15 @@ export function createAgentActivity(
       records: Object.freeze(records),
       turns: Object.freeze(visible),
       local: Object.freeze(localWork),
+      declined: Object.freeze(declined),
       typing: Object.freeze(typers),
       trimmed,
+      turnsTrimmed,
     });
+    const changedChannels = indexChannels(snapshot);
     for (const listener of listeners) notify(listener);
+    for (const id of changedChannels)
+      for (const listener of channelListeners.get(id) ?? []) notify(listener);
     if (workingChanged)
       for (const listener of workingListeners) notify(listener);
   }
@@ -226,6 +420,7 @@ export function createAgentActivity(
     bytes = 0;
     trimmed = 0;
     evidenceFloor = 0;
+    turnsTrimmed = false;
     turns.clear();
     typing.clear();
     liveAgents.clear();
@@ -256,41 +451,74 @@ export function createAgentActivity(
     if (!Number.isFinite(timestamp) || timestamp > Date.now() + 5000) return;
     const key = `${agent}:${item.turnId}`;
     const previous = turns.get(key);
+    const payload = object(item.payload);
+    const added =
+      item.kind === "turn_started" || item.kind === "turn_steered"
+        ? turnTriggerIds(payload?.triggeringEventIds)
+        : undefined;
     // Terminal evidence wins even when a delayed earlier heartbeat arrives later.
     if (
       previous?.ended ||
       (previous && previous.timestamp > timestamp && !ends.has(item.kind))
-    )
+    ) {
+      // Membership is not progress: a late start or steer still names the
+      // messages its turn ran for, without reviving or refreshing it. A late
+      // second start makes the turn ambiguous, as one in order would.
+      if (!added || !previous) return;
+      let merged: Turn;
+      if (item.kind === "turn_steered") merged = withTriggers(previous, added);
+      else if (item.kind !== "turn_started") return;
+      else if (previous.started)
+        merged = previous.ambiguous
+          ? previous
+          : { ...previous, ambiguous: true };
+      else merged = { ...withTriggers(previous, added), started: true };
+      if (merged === previous) return;
+      associate(merged);
+      turns.set(key, merged);
       return;
+    }
     if (!previous && timestamp <= evidenceFloor) return;
-    const triggers =
-      item.kind === "turn_started"
-        ? object(item.payload)?.triggeringEventIds
-        : previous?.triggeringEventIds;
-    const triggeringEventIds =
-      Array.isArray(triggers) &&
-      triggers.length <= 64 &&
-      triggers.every(
-        (id) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id),
-      )
-        ? (triggers as string[])
+    const root = payload?.threadRootEventId;
+    const legacyRoot =
+      item.kind === "acp_write" && !previous?.threadRootId
+        ? activityPromptThread(payload)
         : undefined;
+    const sessionId =
+      item.kind === "session_resolved" && text(payload?.sessionId)
+        ? payload.sessionId
+        : item.sessionId;
     const turn: Turn = {
-      ...(triggeringEventIds
-        ? {
-            triggeringEventIds,
-            requests: previous?.requests ?? [],
-            unresolvedTriggers:
-              previous?.unresolvedTriggers ?? triggeringEventIds,
-          }
+      ...(previous?.triggeringEventIds || added
+        ? triggerFields(previous, added)
+        : {}),
+      ...(previous?.started || (item.kind === "turn_started" && added)
+        ? { started: true }
         : {}),
       agent,
       turnId: item.turnId,
+      ...(previous?.ambiguous ||
+      (item.kind === "turn_started" && previous?.started)
+        ? { ambiguous: true }
+        : {}),
+      ...(typeof root === "string" && /^[0-9a-f]{64}$/.test(root)
+        ? { threadRootId: root }
+        : previous?.threadRootId
+          ? { threadRootId: previous.threadRootId }
+          : typeof legacyRoot === "string"
+            ? { threadRootId: legacyRoot }
+            : {}),
+      ...(text(sessionId)
+        ? { sessionId }
+        : previous?.sessionId
+          ? { sessionId: previous.sessionId }
+          : {}),
       channelId: item.channelId,
       // Completion may precede liveness on a rolled-back producer clock. Keep
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
       ended: ends.has(item.kind),
+      outcome: terminalOutcome(item.kind, payload?.outcome),
       epoch,
     };
     associate(turn);
@@ -303,6 +531,7 @@ export function createAgentActivity(
         turns.delete(oldest[0]);
         // Forgetting a tombstone must not let older evidence resurrect that turn.
         evidenceFloor = Math.max(evidenceFloor, oldest[1].timestamp);
+        turnsTrimmed = true;
         trimmed++;
       }
     }
@@ -339,12 +568,12 @@ export function createAgentActivity(
     const items = Array.isArray(children) ? children : [raw];
     // A denied child cannot leak through an otherwise visible raw batch.
     if (!channelsAllowed(raw, canAccess)) return;
-    liveAgents.add(frame.agent);
-    for (const item of items) fold(frame.agent, item);
     if (records.some((record) => record.id === frame.id)) {
       publish();
       return;
     }
+    liveAgents.add(frame.agent);
+    for (const item of items) fold(frame.agent, item);
     const record = Object.freeze({
       id: frame.id,
       agent: frame.agent,
@@ -377,7 +606,29 @@ export function createAgentActivity(
   const stopLocal = local?.source.subscribeWork(publish);
   return {
     queries: Object.freeze({
-      snapshot: () => snapshot,
+      snapshot: (channelId?: string) =>
+        channelId === undefined ? snapshot : channelSnapshot(channelId),
+      /** Owner-authorized status readback for an exact retained remote task.
+       * Never invent raw telemetry or replace an already received terminal. */
+      reconcile(turn: ActivityTurn, outcome: "ended" | "error" | "stopped") {
+        if (closed || !leases || !turn.channelId || !canAccess(turn.channelId))
+          return;
+        const current = turns.get(`${turn.agent}:${turn.turnId}`);
+        if (
+          !current ||
+          current.ended ||
+          !turn.sessionId ||
+          current.sessionId !== turn.sessionId ||
+          current.channelId !== turn.channelId
+        )
+          return;
+        turns.set(`${turn.agent}:${turn.turnId}`, {
+          ...current,
+          ended: true,
+          outcome,
+        });
+        publish();
+      },
       /** Display-only local acknowledgement, scoped to this session and access. */
       dismissError(agent: string, channelId: string, messageId: string) {
         if (!local || closed || !canAccess(channelId)) return false;
@@ -394,24 +645,47 @@ export function createAgentActivity(
           messageId,
         });
       },
+      /** Asks again for a failed local request, scoped to this session and access. */
+      retry(agent: string, channelId: string, messageId: string) {
+        if (!local?.source.retry || closed || !canAccess(channelId))
+          throw new Error("This request can't be retried here");
+        local.source.retry({ scope: local.scope, agent, messageId });
+      },
       workingSnapshot: () => workingChannels,
       subscribeWorking(listener: () => void) {
         if (closed) return () => {};
         workingListeners.add(listener);
         return () => workingListeners.delete(listener);
       },
-      subscribe(listener: () => void) {
+      subscribe(listener: () => void, channelId?: string) {
         if (closed) return () => {};
-        listeners.add(listener);
+        if (channelId === undefined) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        }
+        let subscriptions = channelListeners.get(channelId);
+        if (!subscriptions) {
+          subscriptions = new Set();
+          channelListeners.set(channelId, subscriptions);
+        }
+        subscriptions.add(listener);
         return () => {
-          listeners.delete(listener);
+          subscriptions.delete(listener);
+          if (
+            !subscriptions.size &&
+            channelListeners.get(channelId) === subscriptions
+          )
+            channelListeners.delete(channelId);
         };
       },
       activate() {
         if (closed || !available) return () => {};
         if (++leases === 1) {
           restart();
-          timer = setInterval(publish, 1000);
+          timer = setInterval(() => {
+            const now = Date.now();
+            if (now >= nextExpiry || now < lastCheck) publish();
+          }, 1000);
         }
         let released = false;
         return () => {
@@ -469,6 +743,7 @@ export function createAgentActivity(
       if (closed || !leases || status !== "listening") return;
       const known = liveAgents;
       const now = Date.now();
+      let changed = false;
       for (const event of events) {
         if (![9, 20002].includes(event.kind) || !known.has(event.pubkey))
           continue;
@@ -488,38 +763,55 @@ export function createAgentActivity(
         // Malformed thread tags must not become channel-wide working evidence.
         if (event.tags.some(([name]) => name === "e") && !reference) continue;
         const threadRootId = reference?.rootId;
-        const key = JSON.stringify([event.pubkey, channelId, threadRootId]);
-        const previous = typing.get(key);
-        if (
-          previous &&
-          (timestamp < previous.timestamp ||
-            (event.kind === 20002 &&
-              !previous.working &&
-              timestamp <= previous.timestamp + 2000))
-        )
-          continue;
-        typing.delete(key);
-        typing.set(
-          key,
-          Object.freeze({
-            agent: event.pubkey,
-            channelId,
-            threadRootId,
-            timestamp,
-            startedAt:
-              previous?.working && now < previous.expiresAt
-                ? previous.startedAt
-                : timestamp,
-            working: event.kind === 20002,
-            expiresAt: Math.min(timestamp, now) + TYPING_FRESH_MS,
-          }),
-        );
-        if (typing.size > ACTIVITY_TURN_LIMIT) {
+        // A reply in a thread also ends the agent's channel-level typing: its
+        // pulses and replies can be filed apart for the same turn. Other
+        // threads keep theirs.
+        const scopes =
+          event.kind === 9 && threadRootId
+            ? [threadRootId, undefined]
+            : [threadRootId];
+        for (const threadRootId of scopes) {
+          const key = JSON.stringify([event.pubkey, channelId, threadRootId]);
+          const previous = typing.get(key);
+          if (
+            previous &&
+            (timestamp < previous.timestamp ||
+              (event.kind === 20002 &&
+                !previous.entry.working &&
+                timestamp <= previous.timestamp + 2000))
+          )
+            continue;
+          changed = true;
+          typing.delete(key);
+          const working = event.kind === 20002;
+          const continued = previous?.entry.working && now < previous.expiresAt;
+          typing.set(
+            key,
+            Object.freeze({
+              timestamp,
+              entry:
+                continued && working
+                  ? previous.entry
+                  : Object.freeze({
+                      agent: event.pubkey,
+                      channelId,
+                      threadRootId,
+                      startedAt: continued
+                        ? previous.entry.startedAt
+                        : timestamp,
+                      working,
+                    }),
+              expiresAt: Math.min(timestamp, now) + TYPING_FRESH_MS,
+            }),
+          );
+        }
+        while (typing.size > ACTIVITY_TURN_LIMIT) {
           const oldest = typing.keys().next().value;
           if (oldest) typing.delete(oldest);
         }
       }
-      publish();
+      // Expiry and freshness ride the publish timer; other traffic changes nothing.
+      if (changed) publish();
     },
     state(live: LiveSnapshot) {
       if (closed || !available || !leases) return;
@@ -537,7 +829,7 @@ export function createAgentActivity(
       else
         for (const [key, entry] of typing) {
           const route = live.routes.find(
-            (route) => route.channelId === entry.channelId,
+            (route) => route.channelId === entry.entry.channelId,
           );
           if (route && route.status !== "live") typing.delete(key);
         }
@@ -546,6 +838,9 @@ export function createAgentActivity(
     },
     accessChanged() {
       restart();
+    },
+    refreshLocal() {
+      if (!closed && local) publish();
     },
     clear: restart,
     dispose() {
@@ -558,6 +853,7 @@ export function createAgentActivity(
       restart();
       listeners.clear();
       workingListeners.clear();
+      channelListeners.clear();
     },
   };
 }

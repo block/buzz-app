@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { BACKGROUND_JITTER_MS } from "../features/notifications/community-unread";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Host } from "../features/host/service";
+import type { Seen } from "../features/seen/service";
 import { createServices, type AppServices } from "./services";
 
 const plugin = vi.hoisted(() => ({
   cleanup: vi.fn<() => void | Promise<void>>(),
   host: undefined as Host | undefined,
+  seen: undefined as Seen | undefined,
 }));
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
@@ -27,6 +30,7 @@ vi.mock("../bundled", () => ({
         inject: ["pages", "host"],
         apply(ctx: Context) {
           plugin.host = ctx.host;
+          plugin.seen = ctx.reflect.get("seen");
           ctx.pages.register({
             id: "main",
             title: "Test",
@@ -53,6 +57,7 @@ beforeEach(() => {
   vi.stubGlobal("navigator", { platform: "MacIntel" });
   plugin.cleanup.mockReset();
   plugin.host = undefined;
+  plugin.seen = undefined;
   vi.mocked(isTauri).mockReturnValue(false);
   vi.mocked(invoke).mockReset();
   values = new Map<string, string>();
@@ -118,6 +123,15 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+it("provides Seen through optional lookup even with no selected community", async () => {
+  await vi.advanceTimersByTimeAsync(0);
+  expect(services.communities.snapshot().selected).toBeNull();
+  const key = "test.page/welcome";
+  expect(plugin.seen?.has(key)).toBe(false);
+  plugin.seen?.mark(key);
+  expect(services.seen.has(key)).toBe(true);
+});
+
 async function openCommunities() {
   await vi.advanceTimersByTimeAsync(0);
   expect(services.pages.snapshot()).toHaveLength(1);
@@ -141,7 +155,7 @@ function expectHostStopped() {
   for (const stream of streams) expect(stream.close).toHaveBeenCalledTimes(1);
   const added = vi.mocked(document.addEventListener).mock.calls;
   const removed = vi.mocked(document.removeEventListener).mock.calls;
-  expect(added).toHaveLength(10); // Host listeners plus capture-phase presence input.
+  expect(added).toHaveLength(11); // Host/presence listeners plus built-in emoji copy.
   expect(removed).toHaveLength(added.length);
   const capture = (options?: boolean | EventListenerOptions) =>
     typeof options === "boolean" ? options : !!options?.capture;
@@ -170,6 +184,56 @@ it("provides the host command service to plugins", async () => {
     revision: expect.any(String),
     commandId: "token",
   });
+});
+
+it.each([
+  JSON.stringify({
+    version: 3,
+    enabled: { "buzz.emoji": false, "buzz.mentions": false },
+  }),
+  "invalid saved plugin settings",
+])(
+  "keeps conversation features available independently of saved plugin settings: %s",
+  async (saved) => {
+    await services.dispose();
+    values.set("buzzodz.plugins.v1", saved);
+    services = createServices();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      services.conversation.tools.snapshot().map(({ key }) => key),
+    ).toEqual(["buzz.emoji/picker", "buzz.mentions/picker"]);
+    expect(
+      services.conversation.completions.snapshot().map(({ key }) => key),
+    ).toEqual([
+      "buzz.emoji/typeahead",
+      "buzz.mentions/typeahead",
+      "buzz.mentions/folders",
+      "buzz.mentions/skills",
+    ]);
+    expect(
+      services.conversation.inline.snapshot().map(({ key }) => key),
+    ).toEqual(["buzz.emoji/custom"]);
+    expect(services.settingsCards.has("buzz.emoji/custom-emoji")).toBe(true);
+    const tools = services.conversation.tools.snapshot();
+    await services.plugins.change("disable", "buzz.emoji");
+    await services.plugins.change("disable", "buzz.mentions");
+    expect(services.conversation.tools.snapshot()).toBe(tools);
+    await services.dispose();
+    expect(services.conversation.tools.snapshot()).toEqual([]);
+    expect(services.conversation.completions.snapshot()).toEqual([]);
+    expect(services.conversation.inline.snapshot()).toEqual([]);
+    expect(services.settingsCards.has("buzz.emoji/custom-emoji")).toBe(false);
+  },
+);
+
+it("lists the host-owned features' real manifests on the plugin manager's snapshot", () => {
+  expect(
+    services.plugins.snapshot().hostOwned.map(({ id, name }) => [id, name]),
+  ).toEqual([
+    ["buzz.emoji", "Emoji"],
+    ["buzz.mentions", "Mentions"],
+    ["buzz.plugin-requests", "Plugin requests"],
+  ]);
 });
 
 it("disposes the real host services and plugins once", async () => {
@@ -262,6 +326,7 @@ it("seeds and persists the configured relay through the real app composition", a
     profile: { name: "", picture: "", about: "" },
     memberships: [membership],
     selected: membership.id,
+    sync: { known: [], outbox: [] },
   });
 });
 
@@ -415,7 +480,12 @@ it("restores the selected native community and recovers discovery failure withou
     viewer,
     scope: `${community}:${viewer}`,
   });
-  expect(new Set(destinations)).toEqual(new Set([community]));
+  // The other saved community connects in the background for switcher unread,
+  // once its start delay ends.
+  await vi.advanceTimersByTimeAsync(BACKGROUND_JITTER_MS);
+  expect(new Set(destinations)).toEqual(
+    new Set([community, "https://unopened.test"]),
+  );
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -481,6 +551,7 @@ it("seeds a packaged native community after onboarding and preserves the user's 
     profile: { name: "", picture: "", about: "" },
     memberships: [membership],
     selected: membership.id,
+    sync: { known: [], outbox: [] },
   });
   // A later build's default cannot change the saved selection.
   await services.dispose();
@@ -489,7 +560,8 @@ it("seeds a packaged native community after onboarding and preserves the user's 
   await vi.advanceTimersByTimeAsync(0);
   expect(services.communities.snapshot().selected).toBe(membership.id);
   expect(services.relay.snapshot().status).toBe("ready");
-  // Choosing Personal space also survives restart, without a new relay connection.
+  // Choosing Personal space also survives restart; the saved community still
+  // connects in the background for switcher unread.
   services.communities.select(null);
   await services.dispose();
   destinations.length = 0;
@@ -499,7 +571,8 @@ it("seeds a packaged native community after onboarding and preserves the user's 
     selected: null,
     memberships: [membership],
   });
-  expect(destinations).toEqual([]);
+  await vi.advanceTimersByTimeAsync(BACKGROUND_JITTER_MS);
+  expect(new Set(destinations)).toEqual(new Set([membership.id]));
   expect(fetch).not.toHaveBeenCalled();
 });
 

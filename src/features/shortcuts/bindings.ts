@@ -1,4 +1,6 @@
 // FOUNDATION: In-app key matching. Local editors handle events before this layer.
+import { bindingKey, keyboardKey } from "../../shared/keyboard-key";
+
 export type KeyBinding = Readonly<{
   key: string;
   /** Command on Apple platforms, Control elsewhere. Other modifiers match exactly. */
@@ -17,6 +19,8 @@ export type Shortcut = Readonly<{
   when?: () => boolean;
   allowInEditable?: boolean;
   allowInModal?: boolean;
+  /** Also run when the topmost modal is its own navigation visit (Settings, Members). */
+  allowInVisit?: boolean;
   /** Held keys are consumed but run only once unless opted in. */
   repeat?: boolean;
   /** Lower values appear first within this owner's Settings category; defaults to zero. */
@@ -36,9 +40,12 @@ export function normalizeShortcut(shortcut: Shortcut): NormalizedShortcut {
     !shortcut.title.trim() ||
     typeof shortcut.run !== "function" ||
     (shortcut.when !== undefined && typeof shortcut.when !== "function") ||
-    [shortcut.allowInEditable, shortcut.allowInModal, shortcut.repeat].some(
-      (value) => value !== undefined && typeof value !== "boolean",
-    ) ||
+    [
+      shortcut.allowInEditable,
+      shortcut.allowInModal,
+      shortcut.allowInVisit,
+      shortcut.repeat,
+    ].some((value) => value !== undefined && typeof value !== "boolean") ||
     (shortcut.order !== undefined && typeof shortcut.order !== "number")
   )
     throw new Error("A shortcut needs an id, title, binding and run function");
@@ -72,7 +79,7 @@ export function isKeyBinding(value: unknown): value is KeyBinding {
 /** Same chord under the dispatcher's rules: case-insensitive key, exact modifiers. */
 export function sameBinding(a: KeyBinding, b: KeyBinding) {
   return (
-    a.key.toLowerCase() === b.key.toLowerCase() &&
+    bindingKey(a.key).toLowerCase() === bindingKey(b.key).toLowerCase() &&
     !!a.mod === !!b.mod &&
     !!a.ctrl === !!b.ctrl &&
     !!a.shift === !!b.shift &&
@@ -91,9 +98,10 @@ export function matches(
   event: KeyboardEvent,
   apple: boolean,
 ) {
+  const key = keyboardKey(event).toLowerCase();
   return bindings.some(
     (binding) =>
-      binding.key.toLowerCase() === event.key.toLowerCase() &&
+      bindingKey(binding.key).toLowerCase() === key &&
       !!binding.mod === (apple ? event.metaKey : event.ctrlKey) &&
       (apple
         ? !!binding.ctrl === event.ctrlKey

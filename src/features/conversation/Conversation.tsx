@@ -1,6 +1,10 @@
+import { hostComposerProvenance } from "../messages/mention-draft";
+import { ActivityIndicatorPresentation } from "./typing-presentation";
 import {
   createContext,
+  useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -22,6 +26,8 @@ import {
 } from "../messages/MessageManagement";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
+import { ComposerScopeProvider } from "../messages/composer-overlay";
+import { useListedChannel } from "../relay/listed-channel";
 import { ownSolo } from "../solo/labels";
 import { useSoloHasPeople } from "../solo/people";
 import {
@@ -57,30 +63,35 @@ export type MediaReview = Pick<
   | "close"
 >;
 
-/** A review that opens over its page and returns focus to its opener. */
+/** A fullscreen review that opens over its page and returns focus to its
+ * opener. */
 export function useMediaReview() {
   const [media, setMedia] =
     useState<Omit<MediaReview, "restoreFocus" | "close">>();
   const trigger = useRef<HTMLElement | null>(null);
-  const open: ConversationInteractions["onOpenMediaReview"] = (
-    messageId,
-    attachment,
-    initialTime,
-    hasComments = false,
-    initialAttachments,
-  ) => {
-    trigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    setMedia({
+  // Stable, so memoized rows reading it do not re-render with the page.
+  const open = useCallback<ConversationInteractions["onOpenMediaReview"]>(
+    (
       messageId,
       attachment,
       initialTime,
-      hasComments,
+      hasComments = false,
       initialAttachments,
-    });
-  };
+    ) => {
+      trigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      setMedia({
+        messageId,
+        attachment,
+        initialTime,
+        hasComments,
+        initialAttachments,
+      });
+    },
+    [],
+  );
   const review: MediaReview | undefined = media && {
     ...media,
     restoreFocus: trigger,
@@ -134,6 +145,23 @@ type ChannelProps = Pick<Conversation, "session" | "scope" | "extensions"> & {
 export function ConversationChannel(props: ChannelProps) {
   const { session, scope, extensions, channel, active, children } = props;
   const channelName = props.channelName ?? channel?.name ?? "";
+  // While the channel is open the profile cache keeps room for its whole roster
+  // on top of its base; leaving gives the room back after a short hold. A
+  // retained tab in the background and a preview that does not visit the
+  // channel hold none.
+  const members = useListedChannel(
+    session.channels,
+    channel?.id,
+    (listed) => listed?.members?.length ?? 0,
+  );
+  const held = active === false ? 0 : members;
+  const { profiles } = session;
+  // A layout effect runs before every passive effect in the commit, so a child
+  // such as the mention menu reads the grown limit when the roster arrives.
+  useLayoutEffect(
+    () => (held ? profiles.reserve?.(held) : undefined),
+    [profiles, held],
+  );
   // One stable element, so selecting a channel never remounts the page below.
   const provide = (
     interactions: ConversationInteractions,
@@ -146,6 +174,7 @@ export function ConversationChannel(props: ChannelProps) {
       channel={channel}
       channelName={channelName}
       interactions={interactions}
+      shown={active !== false}
     >
       {children}
       {review && <ConversationMediaReview {...review} />}
@@ -191,9 +220,12 @@ function Provider({
   channel,
   channelName,
   interactions: { onOpenLink, canOpenLink, onOpenMediaReview },
+  shown,
 }: Pick<ChannelProps, "session" | "scope" | "extensions" | "channel"> & {
   channelName: string;
   interactions: ConversationInteractions;
+  /** Whether the conversation is on screen, for the dialogs its rows open. */
+  shown: boolean;
   children: ReactNode;
 }) {
   const id = channel?.id;
@@ -228,7 +260,16 @@ function Provider({
       onOpenMediaReview,
     ],
   );
-  return <Context.Provider value={value}>{children}</Context.Provider>;
+  return (
+    <Context.Provider value={value}>
+      {/* The conversation's own view; a thread view starts its own. */}
+      <ComposerScopeProvider shown={shown}>
+        <ActivityIndicatorPresentation>
+          {children}
+        </ActivityIndicatorPresentation>
+      </ComposerScopeProvider>
+    </Context.Provider>
+  );
 }
 
 function ConversationMediaReview(props: MediaReview) {
@@ -282,13 +323,13 @@ export function ConversationComposer(props: Own<MessageComposerProps>) {
   );
   return (
     <MessageComposer
+      evidenceOwner={hostComposerProvenance}
       {...shared}
       {...(shared.soloConversation
         ? {
             label: withPeople
               ? "Message this conversation"
               : "Message your agents",
-            activityClickOpensPanel: true,
           }
         : {})}
       chatPresentation={shared.ownSoloConversation}

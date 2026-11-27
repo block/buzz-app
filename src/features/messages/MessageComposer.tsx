@@ -1,25 +1,58 @@
+import { createPortal } from "react-dom";
+import { ForwardDisclosure } from "./ForwardDisclosure";
+import { pastedForward } from "./forward-clipboard";
+import { ComposerForward, useComposerForward } from "./ComposerForward";
+import { draftEditorId, traceDraft } from "../../shared/draft-diagnostics";
+import {
+  soloModelPicksKey,
+  parseSoloModelPicks,
+  readSoloModelPicks,
+  updateSoloModelPicks,
+} from "./solo-model-picks";
+import { subscribeModelPicks } from "./solo-model-picks-storage";
+import { useChatLinkSharing } from "./useChatLinkSharing";
+import {
+  draftGif,
+  useGifDraftPreview,
+} from "../../bundled/emoji/GifDraftPreview";
 import { accentButtonStyle } from "../../shared/theme/accent";
-import { stageSessionCards } from "./composer-session-cards";
-import { sessionReferenceIds } from "../sessions/shared-session-marker";
-import { ComposerSessionCards } from "./ComposerSessionCards";
+import { restoreChatLinks } from "./composer-chat-cards";
+import { pastedFiles } from "./composer-clipboard";
+import { chatLinkIds } from "./chat-cards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
+import { TypingIndicator } from "./TypingIndicator";
+import { useComposerDockRef, useComposerScope } from "./composer-overlay";
+import { useComposerWrites } from "./composer-writes";
+import { LayerAddressContext, layerInView } from "./view-layer";
+import { retireReplyTarget, threadDraftKey } from "./reply-target";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
+import { selectNewestMessage } from "./message-selection";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
-import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import { SelectedMentionContext } from "./selected-mention-context";
+import {
+  ToastNotice,
+  useToastNotification,
+} from "../../shared/design-system/ui/Toast";
+import { writeClipboardText } from "../../shared/clipboard";
+import {
+  AddressedAgentsContext,
+  SelectedMentionContext,
+} from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
-  archivedMention,
+  outsideMentionReferences,
+  pickedAgents,
   mentionAdmission,
+  mentionChannel,
   pastedMentionRecipient,
 } from "./mention-admission";
 import { rememberMention } from "./mention-history";
 import {
+  composerChips,
   readComposerSnapshot,
   composerMarkdownContext,
   markdownRanges,
@@ -27,29 +60,55 @@ import {
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
+import { useListedChannel } from "../relay/listed-channel";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { useBringAgents } from "./useBringAgents";
 import { useNonmemberMentions } from "./useNonmemberMentions";
+import { useOldAgentMentions } from "./useOldAgentMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { knownAgentPubkeys } from "../agents/known";
-import { rememberedMentions } from "./remembered-mentions";
+import {
+  latestOwnMessage,
+  rememberedMentions,
+  seedAgents,
+  seedEvidenceSettled,
+  seedMentions,
+} from "./remembered-mentions";
+import { rememberAgentsPreference } from "./mention-preferences";
+import { useSendWithModEnterPreference } from "./send-key-preference";
+import { useEditWithUpArrowPreference } from "./edit-key-preference";
+import { matches } from "../shortcuts/bindings";
+import { isApplePlatform } from "../shortcuts/format";
+import { useChosenAgent } from "../solo/default-agent";
+import { soloAudience } from "../solo/recipients";
+import { agentUnavailable } from "../agents/choices";
 import { useAgentChoices } from "../agents/use-choices";
-import { ownSolo } from "../solo/labels";
-import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
-import { TypingIndicator } from "./TypingIndicator";
+import {
+  soloAgentsOnly,
+  soloHasPeople,
+  soloRoster,
+  useSoloMembers,
+} from "../solo/people";
 import {
   ArrowUpIcon,
+  ChatCircleIcon,
+  LockIcon,
   PaperclipIcon,
   PencilSimpleIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../channels/channel-icon";
+import { channelIconClass } from "../../shared/inline-reference";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
   attachmentDraft,
+  unsupportedTypes,
   useAttachmentDraft,
   type AttachmentDraft,
 } from "./attachment-draft";
@@ -70,40 +129,77 @@ import {
   useMemo,
   useSyncExternalStore,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { fullSession, type ComposerSession } from "./composer-session";
+import { sendWithOwnerMentions } from "../relay/owner-mentions";
+import {
+  draftTokens,
+  messageTokenTags,
+  signMessageTokens,
+} from "./message-tokens";
 import type { RelaySession } from "../relay/session";
 import {
+  conflictDraftKey,
+  draftRetirementCursor,
+  draftWasRetired,
+  parseDraftView,
   readView,
   writeView,
   viewRevision,
+  viewScopePurgeToken,
   replaceView,
+  replaceViewRevision,
+  retireViewDraft,
   subscribeView,
 } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
+  legacyFollowupDraft,
+  MAX_DRAFT_GIFS,
+  mentionBoundary,
   mentionDraft,
+  editorMention,
+  hasHumanMentionSelection,
+  hostComposerProvenance,
+  stageableGif,
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
+import { useShowingDraft } from "./draft-places";
+import { normalizeName } from "../search/person-match";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
+import { useMarkdownAsTypedPreference } from "./markdown-input-preference";
 import { AgentsContext, useSessionState } from "../agents/react";
-import { ComposerModels } from "./ComposerModels";
+import { ComposerModels, type DraftPicks } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import type {
   ConversationExtensions,
-  CompletionEdit,
+  CompletionPending,
   CompletionQuery,
+  CompletionResolution,
   ComposerObservation,
   ComposerResource,
 } from "../conversation/contracts";
 import { ComposerCompletions } from "../conversation/ComposerCompletions";
+import {
+  chosenWorkspace,
+  WorkspaceCompletion,
+  type WorkspaceCompletionTarget,
+} from "../conversation/workspace-completion";
+import {
+  MENTION_RESOLVE_TIMEOUT_MS,
+  type HostCompletionEdit,
+} from "../conversation/completion";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
+import { ComposerAnnotators } from "../conversation/ComposerAnnotators";
+import { AnnotationMenu } from "./AnnotationMenu";
+import type { AnnotationMenuRequest } from "./composer-dom";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
@@ -114,21 +210,53 @@ import type {
   ComposerFormat,
 } from "./composer-dom";
 import { TargetOpenerProvider } from "../conversation/opener";
+import { channelText } from "../channels/channel-icon";
 import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
+import { followUpMessage } from "./follow-up-message";
+import { heldBySendGate } from "./outgoing-message";
 import { QueuedFollowUps } from "./QueuedFollowUps";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
   channels: [],
 };
-const noChannelSnapshot = () => noChannels;
-const noChannelSubscription = () => () => {};
+const noSubscription = () => () => {};
+const noAgents: readonly string[] = [];
+const cannotOpen = () => false;
+
+type DraftSaveResult = "saved" | "changed" | "failed";
+type FlushDraft = () => DraftSaveResult | undefined;
+const pendingDraftSaves = new Map<string, Set<FlushDraft>>();
+
+function registerDraftSave(key: string, flush: FlushDraft) {
+  let pending = pendingDraftSaves.get(key);
+  if (!pending) {
+    pending = new Set();
+    pendingDraftSaves.set(key, pending);
+  }
+  pending.add(flush);
+  return () => {
+    pending.delete(flush);
+    if (!pending.size) pendingDraftSaves.delete(key);
+  };
+}
+
+/** Operations that retire or replace a saved draft must see pending edits. */
+export function flushPendingDraft(scope: string, key: string) {
+  for (const flush of pendingDraftSaves.get(`${scope}:${key}`) ?? []) {
+    const result = flush();
+    if (result === "changed" || result === "failed") return false;
+  }
+  return true;
+}
 
 type AcceptedDraft = {
   next: MentionDraft;
   revision: string | null | undefined;
+  retirementCursor: number | undefined;
+  retiredByOwner?: boolean;
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
@@ -138,7 +266,7 @@ const acceptedDrafts = new WeakMap<
 >();
 type RecoveredSend = {
   draft: MentionDraft;
-  picks?: MentionPicks;
+  picks?: DraftPicks;
   preparationError?: unknown;
 };
 const recoveryListeners = new WeakMap<
@@ -179,6 +307,28 @@ function errorForRecovery(reason: unknown) {
       ? String(reason)
       : undefined;
 }
+/** What `MentionRecipient` promises, checked where one arrives from a
+ * contribution: a 64-hex pubkey and a non-empty name. */
+function wellFormedRecipient(
+  recipient: unknown,
+): recipient is MentionRecipient {
+  if (typeof recipient !== "object" || recipient === null) return false;
+  const { pubkey, name } = recipient as { pubkey?: unknown; name?: unknown };
+  return (
+    typeof pubkey === "string" &&
+    /^[0-9a-f]{64}$/.test(pubkey) &&
+    typeof name === "string" &&
+    !!name.trim()
+  );
+}
+/** Why a pending mention returned to prose, as the send it held tells it. */
+const pendingRefusals = {
+  unresolved: "could not be confirmed as one person or agent",
+  unavailable: "could not be tagged here",
+  limit: "could not be tagged: a message can tag at most 32 recipients",
+  length: "could not be tagged: the message would be too long",
+} as const;
+type PendingRefusal = { name: string; reason: keyof typeof pendingRefusals };
 function subscribeRecovery(
   session: ComposerSession,
   key: string,
@@ -215,21 +365,35 @@ export type MessageComposerProps = {
   session: ComposerSession | RelaySession;
   channelId: string;
   channelName: string;
+  forwardAudience?: string;
   label?: string | undefined;
   placeholder?: string | undefined;
   soloConversation?: boolean | undefined;
   ownSoloConversation?: boolean | undefined;
-  /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
+  /** Seeds an empty draft, or an unaddressed submission that requires a recipient. */
   defaultMention?: MentionRecipient | undefined;
+  /** Whether a retained tab shows this composer, apart from its read policy.
+   * A composer shown again may reseed its remembered agents (see seedMentions). */
+  shown?: boolean | undefined;
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
   chatPresentation?: boolean | undefined;
-  activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
+  /** Only while the chat is new: `#` then offers its workspaces first. */
+  workspace?: WorkspaceCompletionTarget | undefined;
   inviteAgents?: boolean | undefined;
+  /** Narrows a submission's agents to those its owner accepts. */
+  agentFilter?: ((pubkey: string) => boolean) | undefined;
   onSend?: (id: string) => void;
+  /** A plain slash command with no recipients or attachments may be consumed by
+   * its conversation owner. Return false to send it as an ordinary message. */
+  onCommand?:
+    | ((command: string, signal: AbortSignal) => boolean | Promise<boolean>)
+    | undefined;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
   onDraftSaved?: (() => void) | undefined;
+  /** Before a focused form detaches, its host can hand focus to retained content. */
+  onFocusedRemoval?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
   onOpenLink?:
@@ -237,12 +401,20 @@ export type MessageComposerProps = {
     | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  /** Physical source thread when threadRootId is a task anchor. */
+  sourceRootId?: string | undefined;
+  /** The viewer's latest message in this thread, once the thread has loaded.
+   * An empty thread composer starts with the agents it notified (see
+   * seedMentions); other composers read their own channel window. */
+  threadSeed?: Pick<ChannelMessage, "id" | "mentions"> | undefined;
   replyParentId?: string | undefined;
+  /** Bind a timecoded reply to the selected gallery attachment. */
+  mediaTargetUrl?: string | undefined;
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
-  /** Focus once when this conversation mounts, not when overlays close. */
-  autoFocus?: boolean;
+  /** Focus once on entry; an owner can cancel its target before a delayed mount. */
+  autoFocus?: boolean | RefObject<HTMLElement | null>;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
@@ -256,12 +428,34 @@ export type MessageComposerProps = {
     disabled: boolean;
     /** Files upload before the conversation exists; submit sends them. */
     attachments?: boolean;
-    submit: (draft: MentionDraft, attachments: AttachmentDraft) => void;
+    /** DMs can start with files alone; named Solo chats still require text. */
+    allowAttachmentOnly?: boolean;
+    /** New Solo chats keep their picks on the stable draft until creation. */
+    modelPicksKey?: string;
+    /** Told after each save whether the editor holds a draft it could not
+     * save, which view state then misses. */
+    unsaved?: ((held: boolean) => void) | undefined;
+    /** Hears each edit, whether or not saving it succeeded. */
+    onDraftChange?: ((draft: MentionDraft) => void) | undefined;
+    /** `addressed`: the toolbar's agents, when they are held apart from the text. */
+    submit: (
+      draft: MentionDraft,
+      attachments: AttachmentDraft,
+      addressed?: readonly MentionRecipient[],
+      picks?: MentionPicks,
+      draftPicks?: DraftPicks,
+      draftPicksRevision?: string | null,
+      explicitRecipientIds?: readonly string[],
+    ) => void;
   };
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
-export function MessageComposer(props: MessageComposerProps) {
+export function MessageComposer({
+  evidenceOwner,
+  ...props
+}: MessageComposerProps & { evidenceOwner?: typeof hostComposerProvenance }) {
+  const ownerProvenance = evidenceOwner === hostComposerProvenance;
   const key = `${props.submission?.draftKey ?? ""}:${messageViewKey(
     props.session,
     props.scope,
@@ -272,35 +466,37 @@ export function MessageComposer(props: MessageComposerProps) {
     <TypingPresentation active key={key}>
       <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
         {props.ownSoloConversation ? (
-          <PersonalComposer {...props} />
+          <PersonalComposer {...props} ownerProvenance={ownerProvenance} />
         ) : (
-          <Composer {...props} />
+          <Composer {...props} ownerProvenance={ownerProvenance} />
         )}
       </TargetOpenerProvider>
     </TypingPresentation>
   );
 }
 
-function PersonalComposer(props: MessageComposerProps) {
-  const { session, channelId, submission } = props;
+type OwnedComposerProps = MessageComposerProps & { ownerProvenance: boolean };
+function PersonalComposer(props: OwnedComposerProps) {
+  const { session, channelId, submission, agentFilter } = props;
   const choices = useAgentChoices(session, true, true);
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
-  );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
-  const members = list.channels.find((c) => c.id === channelId)?.members;
+  const members = useListedChannel(
+    session.channels,
+    channelId,
+    (channel) => channel?.members,
+  );
   // A saved chat keeps its people; agents are only the owner's available ones.
   const roster = useMemo(
     () =>
       submission
-        ? choices.selectable
+        ? agentFilter
+          ? choices.selectable.filter((agent) => agentFilter(agent.pubkey))
+          : choices.selectable
         : soloRoster(
             members,
             session.viewer,
@@ -310,6 +506,7 @@ function PersonalComposer(props: MessageComposerProps) {
           ),
     [
       submission,
+      agentFilter,
       choices.selectable,
       members,
       agentPubkeys,
@@ -317,20 +514,60 @@ function PersonalComposer(props: MessageComposerProps) {
       session.viewer,
     ],
   );
+  // The agents still loading may include the name a Space was typed for. That
+  // pending mention resolves against the first roster committed once they
+  // settle. Each loading period has its own promise: a Retry after a failed
+  // read must not hand out the one the failure settled with an empty roster.
+  const loading = choices.pending && choices.status !== "ready";
+  const settling = useRef<{
+    promise: Promise<readonly MentionRecipient[]>;
+    resolve: (roster: readonly MentionRecipient[]) => void;
+  }>(undefined);
+  if (loading && !settling.current) {
+    let resolve!: (roster: readonly MentionRecipient[]) => void;
+    const promise = new Promise<readonly MentionRecipient[]>((done) => {
+      resolve = done;
+    });
+    settling.current = { promise, resolve };
+  }
+  const pending = loading ? settling.current?.promise : undefined;
+  useLayoutEffect(() => {
+    if (loading || !settling.current) return;
+    settling.current.resolve(roster);
+    settling.current = undefined;
+  }, [loading, roster]);
+  const value = useMemo(
+    () => ({ recipients: roster, ...(pending ? { pending } : {}) }),
+    [roster, pending],
+  );
 
   return (
-    <DraftMentionRoster.Provider value={roster}>
+    <DraftMentionRoster.Provider value={value}>
       <Composer {...props} />
-      {choices.error && (
-        <p role="alert">
-          {choices.error}{" "}
-          <Button onClick={() => void props.session.agentChoices.refresh()}>
-            Retry agents
-          </Button>
-        </p>
-      )}
     </DraftMentionRoster.Provider>
   );
+}
+
+function routedKey(agents: readonly MentionRecipient[]) {
+  return agents.map((agent) => agent.pubkey).join(",");
+}
+
+/** No text, mention, chat card or GIF: nothing the user has put in yet. */
+function untouchedDraft(draft: MentionDraft) {
+  return (
+    !draft.text &&
+    !draft.recipients.length &&
+    !draft.chatCards?.length &&
+    !draft.gifs?.length &&
+    !draft.forward
+  );
+}
+
+/** The link that opens a conversation, or a thread in it. */
+function conversationLink(channelId: string, threadRootId?: string) {
+  return threadRootId
+    ? `buzz://message?${new URLSearchParams({ channel: channelId, id: threadRootId, thread: threadRootId })}`
+    : `buzz://channel/${encodeURIComponent(channelId)}`;
 }
 
 function sameAttachmentSelection(
@@ -349,15 +586,21 @@ function Composer({
   scope,
   channelId,
   channelName,
+  forwardAudience,
   label: customLabel,
   placeholder,
   onSend,
+  onCommand,
   onDraftSaved,
+  onFocusedRemoval,
   editMessages,
   onOpenLink,
   canOpenLink,
   threadRootId,
+  sourceRootId,
+  threadSeed,
   replyParentId,
+  mediaTargetUrl,
   replyContext,
   mediaTimeSeconds,
   clearMediaTime,
@@ -369,33 +612,30 @@ function Composer({
   soloConversation,
   ownSoloConversation = false,
   defaultMention,
+  shown = true,
   requireMention = false,
   chatPresentation = false,
-  activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
-}: MessageComposerProps) {
+  workspace,
+  ownerProvenance,
+}: OwnedComposerProps) {
   const active = useConversationPresentation();
-  const list = useSyncExternalStore(
-    session.channels?.get || soloConversation
-      ? session.channels.subscribeList
-      : noChannelSubscription,
-    session.channels?.get || soloConversation
-      ? session.channels.list
-      : noChannelSnapshot,
-    session.channels?.get || soloConversation
-      ? session.channels.list
-      : noChannelSnapshot,
+  // Previews replace the list on every message; subscribe to this channel's facts.
+  const listed =
+    session.channels?.get || soloConversation ? session.channels : undefined;
+  const channels = () => (listed?.list() ?? noChannels).channels;
+  const writable = useListedChannel(
+    listed,
+    channelId,
+    (channel) => !!channel && !channel.readOnly && !channel.archived,
   );
-  const readOnly =
-    !submission &&
-    !!session.channels?.get &&
-    !list.channels.some(
-      (channel) =>
-        channel.id === channelId && !channel.readOnly && !channel.archived,
-    );
-  const cached = !!list.channels.find((channel) => channel.id === channelId)
-    ?.cached;
+  const readOnly = !submission && !!session.channels?.get && !writable;
+  const { cached, readingOnly } = useComposerWrites(
+    session,
+    channelId,
+    soloConversation,
+  );
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
@@ -404,13 +644,16 @@ function Composer({
     if (disabled || !active) sendAttempt.current?.abort();
   }, [disabled, active]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
-  useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
+  useLayoutEffect(
+    () => () => sendAttempt.current?.abort(),
+    [replyParentId, mediaTargetUrl],
+  );
   const inputId = useId();
-  const draftKey =
-    submission?.draftKey ??
-    (threadRootId
-      ? `draft:${channelId}:thread:${threadRootId}`
-      : `draft:${channelId}`);
+  const forwardDisclosureId = useId();
+  const threadKey = threadRootId
+    ? threadDraftKey(channelId, threadRootId, sourceRootId)
+    : undefined;
+  const draftKey = submission?.draftKey ?? threadKey ?? `draft:${channelId}`;
   const [admitting, setAdmitting] = useState(false);
   const admission = useRef(false);
   const live = useRef(true);
@@ -422,12 +665,25 @@ function Composer({
       live.current = false;
     };
   }, []);
-  const mentionRoster = useContext(DraftMentionRoster);
+  const mentionRoster = useContext(DraftMentionRoster)?.recipients;
+  // A pending mention settles after later renders; admit it against the roster then.
+  const currentRoster = useRef(mentionRoster);
+  currentRoster.current = mentionRoster;
   const solo = !!soloConversation || ownSoloConversation;
   // Only a saved Solo chat subscribes; other composers never read this.
-  const withPeople = useSoloHasPeople(session, channelId, solo && !submission);
-  const channel = list.channels.find((channel) => channel.id === channelId);
-  const channelType = channel?.channelType;
+  const { withPeople, agentsOnly } = useSoloMembers(
+    session,
+    channelId,
+    solo && !submission,
+  );
+  const channelType = useListedChannel(
+    listed,
+    channelId,
+    (channel) => channel?.channelType,
+  );
+  const dmMembers = useListedChannel(listed, channelId, (channel) =>
+    channel?.channelType === "dm" ? channel.members : undefined,
+  );
   // A DM or Solo chat is one conversation; elsewhere a top-level message
   // starts a thread of its own.
   const startsThread =
@@ -447,37 +703,225 @@ function Composer({
     }
     return pending;
   });
-  const revision = useRef(viewRevision(scope, draftKey));
+  const [initialRevision] = useState(() => viewRevision(scope, draftKey));
+  const [purgeToken] = useState(() => viewScopePurgeToken(scope));
+  const revision = useRef(initialRevision);
+  const [initialCursor] = useState(() =>
+    draftRetirementCursor(scope, draftKey),
+  );
+  const savedCursor = useRef(initialCursor);
+  // A losing edit belongs to this window until the user resolves it.
+  const conflictKey = useMemo(
+    () => conflictDraftKey(scope, draftKey),
+    [scope, draftKey],
+  );
+  const [conflictOnOpen] = useState(() => {
+    if (submission || accepted || purgeToken === undefined) return;
+    try {
+      const raw = sessionStorage.getItem(conflictKey);
+      if (!raw) return;
+      const split = raw.indexOf("\n");
+      if (split < 0) return { stale: raw };
+      const savedRevision = raw.slice(split + 1);
+      const [savedPurgeToken, savedCursor] = JSON.parse(raw.slice(0, split));
+      const cursor = typeof savedCursor === "number" ? savedCursor : undefined;
+      if (
+        savedRevision === initialRevision ||
+        savedPurgeToken !== purgeToken ||
+        draftWasRetired(scope, draftKey, savedRevision, cursor)
+      )
+        return { stale: raw };
+      const saved = parseDraftView(savedRevision);
+      if (saved && saved !== "oversized")
+        return {
+          draft: mentionDraft(saved.value),
+          revision: savedRevision,
+          cursor,
+        };
+    } catch {
+      // The canonical draft remains available if session storage is blocked.
+    }
+  });
+  const reopenedConflict = conflictOnOpen?.draft;
+  const staleConflict = conflictOnOpen?.stale;
+  useLayoutEffect(() => {
+    if (!staleConflict) return;
+    try {
+      if (sessionStorage.getItem(conflictKey) === staleConflict)
+        sessionStorage.removeItem(conflictKey);
+    } catch {
+      // The discarded backup cannot be recovered.
+    }
+  }, [conflictKey, staleConflict]);
+  const conflictDraft = useRef<
+    | {
+        draft: MentionDraft;
+        saved?: {
+          draft: MentionDraft;
+          revision: string;
+          cursor: number | undefined;
+        };
+      }
+    | undefined
+  >(
+    conflictOnOpen?.draft
+      ? { draft: conflictOnOpen.draft, saved: conflictOnOpen }
+      : undefined,
+  );
+  const flushConflict = useCallback(() => {
+    const pending = conflictDraft.current;
+    if (!pending || pending.draft === pending.saved?.draft) return;
+    if (purgeToken === undefined || viewScopePurgeToken(scope) !== purgeToken)
+      return;
+    try {
+      const saved =
+        pending.draft === draftAtRevision.current
+          ? revision.current
+          : undefined;
+      const raw = saved ?? JSON.stringify(pending.draft);
+      const cursor =
+        saved == null
+          ? draftRetirementCursor(scope, draftKey)
+          : savedCursor.current;
+      sessionStorage.setItem(
+        conflictKey,
+        `${JSON.stringify([purgeToken, cursor])}\n${raw}`,
+      );
+      pending.saved = { draft: pending.draft, revision: raw, cursor };
+    } catch {
+      // Keep the edit available in the mounted editor if storage fails.
+    }
+  }, [conflictKey, draftKey, purgeToken, scope]);
+  function forgetConflict() {
+    if (!conflictDraft.current) return;
+    conflictDraft.current = undefined;
+    try {
+      sessionStorage.removeItem(conflictKey);
+    } catch {
+      // A successful canonical save also supersedes an identical backup.
+    }
+  }
+  const [diagnosticEditor] = useState(draftEditorId);
+  function diagnose(
+    operation: Parameters<typeof traceDraft>[2],
+    expected: string | null | undefined,
+    current: string | null | undefined,
+    next = JSON.stringify(valueRef.current),
+  ) {
+    traceDraft(scope, draftKey, operation, diagnosticEditor, {
+      expected,
+      current,
+      next,
+      flags:
+        Number(dirty.current) |
+        (Number(writing.current) << 1) |
+        (Number(!!sendAttempt.current) << 2),
+    });
+  }
   // Whether this mount seeded the shortcut's initial text, rather than
   // restoring a saved draft that may already have had its tag removed.
   const [seededKey] = useState(() =>
     !accepted?.next &&
+    !reopenedConflict &&
     !submission?.recoveredDraft &&
     (revision.current === null || revision.current === "null")
       ? draftKey
       : undefined,
   );
-  const dirty = useRef(false);
+  // `dirty`: an edit that is not in storage. `edited`: typed in since the
+  // draft was last loaded, saved or not.
+  const dirty = useRef(!!reopenedConflict);
+  const edited = useRef(!!reopenedConflict);
   const writing = useRef(false);
-  const [conflict, setConflict] = useState(false);
+  const [conflict, setConflict] = useState(!!reopenedConflict);
+  // A shown conflict protects the text until the user resolves it, whatever
+  // the draft's saved state was when it was raised.
+  function reportConflict(draft = valueRef.current) {
+    dirty.current = true;
+    // Only a distinct edit needs a backup when the shared draft is absent.
+    if (
+      !conflictDraft.current &&
+      (viewRevision(scope, draftKey) !== null ||
+        JSON.stringify(draft) !== revision.current)
+    ) {
+      conflictDraft.current = { draft };
+      flushConflict();
+    }
+    setConflict(true);
+  }
   const [storageFailed, setStorageFailed] = useState(false);
-  const [value, updateDraft] = useState(() =>
-    stageSessionCards(
-      mentionDraft(
-        accepted?.next ??
-          submission?.recoveredDraft ??
-          readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
-      ),
-      list.channels,
-    ),
+  // A composer with nothing saved starts with the agents the viewer's latest
+  // message in its conversation notified, in memory only: a draft is saved
+  // once the user types, removes a mention or sends here, and relay history,
+  // not that draft, is what every device seeds from. ThreadPanel supplies a
+  // thread's message; the other composers read their channel window. The
+  // seed is this mount's initial draft, not an editor reset: a StrictMode
+  // remount between effects would undo one.
+  const seedsFromWindow = !submission && !threadRootId && !defaultMention;
+  const windowSeed = () => {
+    const window = session.channels.window?.(channelId);
+    return window?.status === "ready" && session.viewer
+      ? latestOwnMessage(session.viewer, window.rows)
+      : undefined;
+  };
+  const seedKey = (source: Pick<ChannelMessage, "id">) =>
+    `${draftKey}\n${source.id}`;
+  const [initial] = useState(() => {
+    if (reopenedConflict)
+      return { value: reopenedConflict, applied: undefined, automatic: false };
+    const stored = mentionDraft(
+      accepted?.next ??
+        submission?.recoveredDraft ??
+        readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+    );
+    // A follow-up an earlier release saved is this composer's prefill, not
+    // the user's draft: history seeds it now, and the first save replaces it.
+    const saved = restoreChatLinks(
+      legacyFollowupDraft(stored) ? mentionDraft("") : stored,
+    );
+    // An own Solo chat alone with agents seeds its toolbar, not the text.
+    const source =
+      threadSeed ??
+      (seedsFromWindow && !(ownSoloConversation && agentsOnly && !withPeople)
+        ? windowSeed()
+        : undefined);
+    if (!source || submission || !untouchedDraft(saved))
+      return { value: saved, applied: undefined, automatic: false };
+    // A seed from settled evidence is final; one taken while agent evidence
+    // is partial stays provisional, replaced as names resolve (see the seed
+    // effect below).
+    const applied = seedEvidenceSettled(session, source)
+      ? seedKey(source)
+      : undefined;
+    const seed = seedMentions(session, source);
+    return seed.recipients.length
+      ? { value: seed, applied, automatic: true }
+      : { value: saved, applied, automatic: false };
+  });
+  const [value, updateDraft] = useState(initial.value);
+  // The seed applied, or settled by the user's edit, for this draft key and
+  // message, and whether content the user put in has closed seeding, each
+  // until the composer is shown again.
+  const seedApplied = useRef<string | undefined>(initial.applied);
+  const seedClosed = useRef(false);
+  // The draft as this composer last prefilled it; the user's edits clear it.
+  const automaticTag = useRef<string | undefined>(
+    initial.automatic ? JSON.stringify(initial.value) : undefined,
   );
-  const sessionCards = value.sessionCards;
+  const chatCards = value.chatCards;
+  const gifs = value.gifs;
   const editorDraft = useMemo(() => {
-    if (!value.sessionCards) return value;
-    const { sessionCards: _cards, ...caption } = value;
+    if (!value.chatCards && !value.gifs) return value;
+    const { chatCards: _cards, gifs: _gifs, ...caption } = value;
     return caption;
   }, [value]);
   const draft = value.text;
+  const forwarded = useComposerForward(
+    session,
+    value.forward,
+    channelId,
+    draft,
+  );
   const recipientKey = JSON.stringify(
     value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
   );
@@ -486,10 +930,210 @@ function Composer({
     [recipientKey],
   );
   const valueRef = useRef(value);
-  // Model and effort picked for mentioned agents' next run; cleared by each send.
-  const [picks, setPicks] = useState<MentionPicks>({});
-  const resolvedPicks = useRef<MentionPicks>({});
+  const draftAtRevision = useRef(value);
+  // Only a composer holding nothing but its own prefill reads its window, so
+  // typing never rescans the history and the always-mounted composers
+  // subscribe only while they could seed. Nothing is loaded here: the host
+  // owns the window.
+  const presented = active && shown;
+  useShowingDraft(scope, draftKey, presented);
+  const seeking =
+    seedsFromWindow &&
+    presented &&
+    ((!value.recipients.length && !value.text.trim()) ||
+      (automaticTag.current !== undefined &&
+        automaticTag.current === JSON.stringify(value)));
+  const subscribeRows = useCallback(
+    (listener: () => void) =>
+      seeking
+        ? (session.channels.subscribeWindow?.(channelId, listener) ??
+          noSubscription())
+        : noSubscription(),
+    [seeking, session.channels, channelId],
+  );
+  const windowSource = useSyncExternalStore(subscribeRows, () =>
+    seeking ? windowSeed() : undefined,
+  );
+  const seedSource = threadSeed ?? windowSource;
+  // Agent evidence (profiles, the inventory) re-runs the seed effect below
+  // while a seed is pending, so no composer re-renders per profile batch or
+  // library transition once it has seeded or holds the user's content.
+  const seedPending =
+    !!seedSource &&
+    !seedClosed.current &&
+    seedApplied.current !== seedKey(seedSource);
+  useSyncExternalStore(
+    seedPending ? session.profiles.subscribe : noSubscription,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  useSyncExternalStore(
+    seedPending ? session.agentChoices.subscribe : noSubscription,
+    session.agentChoices.snapshot,
+    session.agentChoices.snapshot,
+  );
+  // A Solo chat keeps its explicit model/effort picks across turns and mounts.
+  const stickyPicks = !!ownSoloConversation;
+  const stickyPicksKey =
+    submission?.modelPicksKey ?? soloModelPicksKey(channelId);
+  const [picksSnapshot, setPicksSnapshot] = useState<{
+    picks: DraftPicks;
+    revision: string | null | undefined;
+  }>({ picks: {}, revision: stickyPicks ? undefined : null });
+  const [pickReadFailed, setPickReadFailed] = useState(false);
+  const [picksLoaded, setPicksLoaded] = useState(!stickyPicks);
+  const [pickReadPending, setPickReadPending] = useState(stickyPicks);
+  const committedPicks = useRef(picksSnapshot);
+  const awaitingPickCommit = useRef<typeof picksSnapshot | undefined>(
+    undefined,
+  );
+  useLayoutEffect(() => {
+    committedPicks.current = picksSnapshot;
+    if (awaitingPickCommit.current === picksSnapshot)
+      awaitingPickCommit.current = undefined;
+  }, [picksSnapshot]);
+  const { picks } = picksSnapshot;
+  const picksRevision = useRef(picksSnapshot.revision);
+  const setPicks = useCallback((next: DraftPicks, acknowledgeSave = false) => {
+    const snapshot = { picks: next, revision: picksRevision.current };
+    if (acknowledgeSave || awaitingPickCommit.current)
+      awaitingPickCommit.current = snapshot;
+    setPicksSnapshot(snapshot);
+  }, []);
+  const unsavedDraft = useRef(false);
+  const unsavedPicks = useRef(
+    new Map<
+      string,
+      { pick: DraftPicks[string] | undefined; pending: boolean }
+    >(),
+  );
+  const pendingPickSaves = useRef(0);
+  const [pickStorageFailed, setPickStorageFailed] = useState(false);
+  const pickReadRequest = useRef(0);
+  const refreshPicks = useCallback(async () => {
+    const request = ++pickReadRequest.current;
+    picksRevision.current = undefined;
+    setPickReadPending(true);
+    try {
+      const { revision, version } = await readSoloModelPicks(
+        scope,
+        stickyPicksKey,
+      );
+      if (!live.current || request !== pickReadRequest.current) return;
+      picksRevision.current = version;
+      const merged = { ...parseSoloModelPicks(revision) };
+      for (const [pubkey, { pick }] of unsavedPicks.current) {
+        if (pick) merged[pubkey] = pick;
+        else delete merged[pubkey];
+      }
+      setPicks(merged, true);
+      setPickReadFailed(false);
+      setPicksLoaded(true);
+      setPickReadPending(false);
+      setPickStorageFailed(
+        [...unsavedPicks.current.values()].some((intent) => !intent.pending),
+      );
+    } catch {
+      if (live.current && request === pickReadRequest.current) {
+        setPickReadFailed(true);
+        setPickReadPending(false);
+      }
+    }
+  }, [scope, stickyPicksKey, setPicks]);
+  useEffect(() => {
+    if (!stickyPicks) return;
+    const stop = subscribeModelPicks(scope, () => void refreshPicks());
+    void refreshPicks();
+    return () => {
+      stop();
+      pickReadRequest.current++;
+    };
+  }, [scope, stickyPicks, refreshPicks]);
+  const changePicks = (
+    next: DraftPicks,
+    resetPubkeys: readonly string[] = [],
+  ) => {
+    const before = picks;
+    const changedKeys = new Set([...Object.keys(before), ...Object.keys(next)]);
+    for (const pubkey of [...changedKeys])
+      if (JSON.stringify(before[pubkey]) === JSON.stringify(next[pubkey]))
+        changedKeys.delete(pubkey);
+    for (const pubkey of resetPubkeys) changedKeys.add(pubkey);
+    if (!stickyPicks) {
+      setPicks(next);
+      return;
+    }
+    // Each queued action owns only its mutations, plus previously failed edits.
+    // Replaying another pending action here could undo a later cross-window edit.
+    const edits = new Map(
+      [...unsavedPicks.current].filter(([, intent]) => !intent.pending),
+    );
+    for (const pubkey of changedKeys) {
+      const intent = { pick: next[pubkey], pending: true };
+      unsavedPicks.current.set(pubkey, intent);
+      edits.set(pubkey, intent);
+    }
+    for (const intent of edits.values()) intent.pending = true;
+    setPicks(next);
+    submission?.unsaved?.(true);
+    pendingPickSaves.current++;
+    void updateSoloModelPicks(
+      scope,
+      stickyPicksKey,
+      new Map([...edits].map(([pubkey, { pick }]) => [pubkey, pick])),
+    )
+      .then(async () => {
+        for (const [pubkey, intent] of edits)
+          if (unsavedPicks.current.get(pubkey) === intent)
+            unsavedPicks.current.delete(pubkey);
+        // Reread after commit: a peer may already have committed another edit.
+        await refreshPicks();
+      })
+      .catch(() => {
+        for (const intent of edits.values()) intent.pending = false;
+      })
+      .finally(() => {
+        pendingPickSaves.current--;
+        if (live.current) {
+          setPickStorageFailed(
+            [...unsavedPicks.current.values()].some(
+              (intent) => !intent.pending,
+            ),
+          );
+          submission?.unsaved?.(
+            unsavedDraft.current || unsavedPicks.current.size > 0,
+          );
+        }
+      });
+  };
+  // Solo, alone with agents: the toolbar holds who hears the message unless
+  // its text opens with a tag, and keeps at least one agent unless a tag
+  // addresses the draft.
+  const [routed, setRouted] = useState<readonly MentionRecipient[]>([]);
+  // Removing the toolbar's last agent while tags address the draft sets the
+  // remembered agents aside for it: the main agent stands in if the tags go.
+  const [replacedKey, setReplacedKey] = useState<string>();
+  const replaced = replacedKey === draftKey;
+  const resolvedPicks = useRef<
+    | {
+        source: typeof picksSnapshot;
+        pubkeys: readonly string[];
+        value: MentionPicks | null;
+        error: string | undefined;
+      }
+    | undefined
+  >(undefined);
   const agents = useContext(AgentsContext);
+  /** Who a draft may address here now, the owner's agents from their other
+   * communities included. */
+  const admits = () =>
+    mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      currentRoster.current,
+      new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
+    );
   const sessionPlace = useMemo(
     () => ({
       channelId,
@@ -505,32 +1149,41 @@ function Composer({
   // A one-to-one DM wakes its other member without an explicit mention.
   // Include that session in both the rendered state and late send rechecks.
   const sessionTargets = (pubkeys: readonly string[]) =>
-    channel?.channelType === "dm" && channel.members?.length === 2
+    dmMembers?.length === 2
       ? [
           ...new Set([
             ...pubkeys,
-            ...channel.members.filter((key) => key !== session.viewer),
+            ...dmMembers.filter((key) => key !== session.viewer),
           ]),
         ]
       : pubkeys;
-  const sessionState = useSessionState(
-    agents,
-    sessionTargets(value.recipients.map((item) => item.pubkey)),
-    sessionPlace,
-  );
-  const compacting = sessionState === "compacting";
+  // Read at send time, as `addressed` is rendered. A reference addresses
+  // nobody, so it goes along with whoever the message is for.
+  const sendRecipients = () => {
+    const { text, recipients: typed } = valueRef.current;
+    return routing
+      ? soloAudience(text, typed, routed, (key) => !referenced(key)).recipients
+      : typed;
+  };
   const compactingNow = (
-    recipients = valueRef.current.recipients.map((item) => item.pubkey),
+    recipients = sendRecipients().map((item) => item.pubkey),
   ) =>
-    sessionTargets(recipients).some(
-      (pubkey) => agents?.sessionState(pubkey, sessionPlace) === "compacting",
-    );
+    sessionTargets(recipients).some((pubkey) => {
+      const key = agents?.find(pubkey)?.key;
+      return !!key && agents?.sessionState(key, sessionPlace) === "compacting";
+    });
 
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const hasFocused = useRef(false);
+  const focusFromControl = useRef(
+    typeof autoFocus === "object" ? autoFocus : undefined,
+  );
   const focusOnMount = useRef(
     autoFocus && typeof document !== "undefined"
-      ? document.activeElement
+      ? typeof autoFocus === "boolean"
+        ? document.activeElement
+        : autoFocus.current
       : undefined,
   );
   useEffect(() => {
@@ -556,11 +1209,18 @@ function Composer({
     }
     if (!focusOnMount.current) return;
     const focus = () => {
+      const handoff = focusFromControl.current;
+      if (handoff && !handoff.current) return;
       const previous = focusOnMount.current;
+      // A responsive draft detail hides its opening row while the thread loads.
+      // That browser blur may leave body focused; a later focusin still cancels.
       if (
         !previous ||
         (previous !== document.activeElement &&
-          (previous.isConnected || document.activeElement !== document.body))
+          (document.activeElement !== document.body ||
+            (previous.isConnected &&
+              (!focusFromControl.current ||
+                previous.getClientRects().length > 0))))
       )
         return;
       const editor = input.current;
@@ -574,6 +1234,8 @@ function Composer({
       );
       if (owner && !owner.contains(editor)) return;
       const end = editor.value.length;
+      // Let the visit's listener recognize its own successful focus handoff.
+      if (handoff) handoff.current = editor;
       editor.focus();
       if (document.activeElement !== editor) return;
       editor.setSelectionRange(end, end);
@@ -601,59 +1263,192 @@ function Composer({
     }
     focus();
   }, [disabled]);
+  const linkSharing = useChatLinkSharing(
+    fullSession(session),
+    channelId,
+    () => {
+      if (permitted.current) input.current?.focus();
+    },
+  );
+  const bringing = useBringAgents(session, agents, channelId, () => {
+    if (permitted.current) input.current?.focus();
+  });
   const nonmembers = useNonmemberMentions(session, channelId, () => {
+    if (permitted.current) input.current?.focus();
+  });
+  const oldAgents = useOldAgentMentions(agents, () => {
     if (permitted.current) input.current?.focus();
   });
   useEffect(() => {
     const editor = input.current;
     if (!focusRequest || !editor) return;
+    // A new editor starts after its saved draft; a retained editor owns its caret.
+    if (!hasFocused.current)
+      editor.setSelectionRange(editor.value.length, editor.value.length);
     editor.focus();
-    editor.setSelectionRange(editor.value.length, editor.value.length);
   }, [focusRequest]);
   const restoreSelection = useRef<{ start: number; end: number } | undefined>(
     undefined,
   );
   const [linkEdit, setLinkEdit] = useState<ComposerLinkEdit | null>(null);
   if (!active && linkEdit) setLinkEdit(null);
+  const { enabled: markdownAsTyped } = useMarkdownAsTypedPreference();
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
-  const saveDraft = (next: MentionDraft) => {
-    next = stageSessionCards(
-      {
+  const sendWithModEnter = useSendWithModEnterPreference();
+  const editWithUpArrow = useEditWithUpArrowPreference();
+  const pendingDraftSave = useRef<{
+    timer: ReturnType<typeof setTimeout>;
+    draft: MentionDraft;
+    save(): DraftSaveResult;
+  }>(null);
+  const cancelDraftSave = useCallback(() => {
+    const pending = pendingDraftSave.current;
+    if (!pending) return;
+    pendingDraftSave.current = null;
+    clearTimeout(pending.timer);
+    return pending;
+  }, []);
+  const flushDraft = useCallback(() => {
+    const result = cancelDraftSave()?.save();
+    flushConflict();
+    return result ?? (conflictDraft.current ? "changed" : undefined);
+  }, [cancelDraftSave, flushConflict]);
+  useLayoutEffect(() => {
+    if (!presented) flushDraft();
+  }, [presented, flushDraft]);
+  useLayoutEffect(() => {
+    const unregister = registerDraftSave(recoveryKey, flushDraft);
+    const hide = () => {
+      if (document.visibilityState === "hidden") flushDraft();
+    };
+    const unload = () => flushDraft();
+    document.addEventListener("visibilitychange", hide);
+    window.addEventListener("pagehide", unload);
+    return () => {
+      document.removeEventListener("visibilitychange", hide);
+      window.removeEventListener("pagehide", unload);
+      unregister();
+      flushDraft();
+    };
+  }, [flushDraft, recoveryKey]);
+
+  const saveDraft = (
+    next: MentionDraft,
+    source: "action" | "editor" | "prefill" = "action",
+  ) => {
+    const { chatCards, forward, gifs } = valueRef.current;
+    if (chatCards || forward !== undefined || gifs)
+      next = restoreChatLinks({
         ...next,
-        ...((next.sessionCards ?? valueRef.current.sessionCards)
-          ? {
-              sessionCards:
-                next.sessionCards ?? valueRef.current.sessionCards ?? [],
-            }
+        ...(chatCards ? { chatCards: next.chatCards ?? chatCards } : {}),
+        ...(forward !== undefined
+          ? { forward: next.forward !== undefined ? next.forward : forward }
           : {}),
-      },
-      list.channels,
-    );
-    if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
+        ...(gifs ? { gifs: next.gifs ?? gifs } : {}),
+      });
+    else next = restoreChatLinks(next);
+    if (
+      source === "action" &&
+      JSON.stringify(next) === JSON.stringify(valueRef.current)
+    )
+      return;
     valueRef.current = next;
     updateDraft(next);
-    if (!editing.target) {
-      if (submission) writeView(scope, draftKey, next);
-      else {
-        dirty.current = true;
-        if (!conflict && !accepted) persist(next);
-      }
+    if (source === "prefill" || editing.target) return;
+
+    if (submission) {
+      // Submission recovery checks the durable prompt before restoring a
+      // rejected send. It must see newer edits made in another window.
+      unsavedDraft.current = !writeView(scope, draftKey, next);
+      submission.unsaved?.(
+        unsavedDraft.current || unsavedPicks.current.size > 0,
+      );
+      submission.onDraftChange?.(next);
+      return;
     }
-    return true;
+    cancelDraftSave();
+    dirty.current = true;
+    edited.current = true;
+    if (conflictDraft.current) conflictDraft.current.draft = next;
+    else if (conflict && !accepted) reportConflict(next);
+    if (conflict || conflictDraft.current || accepted) return;
+    if (source === "editor")
+      pendingDraftSave.current = {
+        timer: setTimeout(flushDraft, 300),
+        draft: next,
+        save: () => persist(next),
+      };
+    else persist(next);
   };
-  function persist(next: MentionDraft, expected = revision.current) {
+  function persist(
+    next: MentionDraft,
+    expected = revision.current,
+    acceptedDraft?: AcceptedDraft,
+  ) {
+    const currentPurgeToken = viewScopePurgeToken(scope);
+    if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken)
+      return "changed";
+    const serialized = JSON.stringify(next);
+    const current = viewRevision(scope, draftKey);
+    diagnose("persist", expected, current, serialized);
+    if (acceptedDraft?.retiredByOwner && current === undefined) {
+      setStorageFailed(true);
+      return "failed";
+    }
     writing.current = true;
-    const result = replaceView(scope, draftKey, expected, next);
+    // Another writer can already have saved the same draft.
+    let result = acceptedDraft?.retiredByOwner
+      ? current === serialized
+        ? "saved"
+        : "changed"
+      : acceptedDraft
+        ? retireViewDraft(
+            scope,
+            draftKey,
+            expected,
+            serialized,
+            acceptedDraft.retirementCursor,
+          )
+        : current === serialized
+          ? "saved"
+          : replaceViewRevision(scope, draftKey, expected, serialized);
     writing.current = false;
-    if (result === "saved") revision.current = JSON.stringify(next);
-    setConflict(result === "changed");
+    const observed = viewRevision(scope, draftKey);
+    if (
+      result === "failed" &&
+      observed !== undefined &&
+      observed !== expected &&
+      observed !== serialized
+    )
+      result = "changed";
+    diagnose(result, expected, observed, serialized);
+    if (result === "saved") {
+      revision.current = serialized;
+      draftAtRevision.current = next;
+      savedCursor.current = draftRetirementCursor(scope, draftKey);
+      forgetConflict();
+      // Saved text has no unsaved edits left to protect: a later change made
+      // elsewhere is loaded unless the user is in this composer.
+      dirty.current = false;
+    }
+    if (result === "changed" && next === valueRef.current && dirty.current)
+      reportConflict(next);
+    else
+      setConflict((alreadyConflicted) =>
+        result === "saved" ? false : alreadyConflicted || result === "changed",
+      );
     setStorageFailed(result === "failed");
     return result;
   }
   const [error, setError] = useState<string>();
-  const [attachmentError, setAttachmentError] = useState<string>();
+  const [pasteTooLong, setPasteTooLong] = useState(false);
+  const [attachmentError, setAttachmentError] =
+    useState<Readonly<{ title: string; description: string }>>();
+  /** Nothing was attached, for this one reason. */
+  const refuseAttachment = (description: string) =>
+    setAttachmentError({ title: "Could not attach file", description });
   const focusRestoredDraft = useRef(false);
   const beforeEdit = useRef<
     { value: MentionDraft; restore(): void } | undefined
@@ -671,6 +1466,13 @@ function Composer({
     setLinkEdit(null);
     completion.invalidate();
   });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A changed draft or edit target retires feedback about the previous paste.
+  useEffect(() => {
+    // Clear only shown feedback. Even an unchanged value schedules a render
+    // here, inside each keystroke's commit, so fast typing would never let
+    // React's nested-update count reset (React error #185).
+    if (pasteTooLong) setPasteTooLong(false);
+  }, [draft, editing.target]);
   const editScope = useMessageEditScope();
   const editableRows = () =>
     editMessages ??
@@ -679,10 +1481,211 @@ function Composer({
       ? []
       : (session.channels.window?.(channelId).rows ?? [])
     ).filter((row) => !row.threadRootId);
-  const editDisabled =
-    disabled ||
-    !!list.channels.find((channel) => channel.id === channelId)?.archived ||
-    !!list.channels.find((channel) => channel.id === channelId)?.readOnly;
+  // A member not yet known to be an agent (say, an unloaded profile) is a
+  // person: routing stays off and mentions in the text decide.
+  const routing = solo && !withPeople && agentsOnly && !editing.target;
+  /** A Solo chat only references a person outside it: that tag notifies
+   * nobody, so it neither replaces the toolbar's agents nor joins them. Until
+   * the session has read all its agents, an outside name may be the viewer's
+   * agent, so it is named, not a reference: the send reads again. */
+  function referenced(pubkey: string) {
+    if (!solo) return false;
+    const chat = mentionChannel(session, channelId);
+    const agents = pickedAgents(session.agentChoices);
+    return (
+      !!agents &&
+      !chat?.members?.includes(pubkey) &&
+      outsideMentionReferences(chat, agents, pubkey)
+    );
+  }
+  const named = routing
+    ? recipients.filter((person) => !referenced(person.pubkey))
+    : recipients;
+  /** Who hears this message: a draft that opens with a tag is for whoever it
+   * tags; otherwise its tags join the toolbar's agents. */
+  const routedAudience = routing
+    ? soloAudience(
+        draft,
+        value.recipients.filter((person) => !referenced(person.pubkey)),
+        routed,
+        () => true,
+      )
+    : undefined;
+  // True while the text's tags alone decide, so menu picks edit those tags.
+  const tagsDecide = !routing || !!routedAudience?.opensWithTag;
+  const addressed = routedAudience
+    ? routedAudience.recipients.map(({ pubkey, name }) => ({ pubkey, name }))
+    : named;
+  // The agents a send addresses: model, effort and session controls are
+  // offered for each, so a one-to-one DM with an agent always has them.
+  const addressedKeys = sessionTargets(addressed.map((item) => item.pubkey));
+  const sessionState = useSessionState(agents, addressedKeys, sessionPlace);
+  const compacting = sessionState === "compacting";
+  // An explicit pick stays with its draft across remounts. Saved chats clear
+  // it on send and then seed from history; SoloDraft consumes it when a new
+  // chat starts.
+  const pillKey = `${draftKey}:agents`;
+  const keepPick = (people: readonly MentionRecipient[] | null) => {
+    writeView(scope, pillKey, people?.length ? people : null);
+  };
+  const choose = (people: readonly MentionRecipient[]) => {
+    seededRoute.current = undefined;
+    setReplacedKey(undefined);
+    setRouted(people);
+    keepPick(people);
+  };
+  // The viewer emptied the toolbar while other tags address the draft. Saved
+  // as an empty pick, so the draft reopens without those agents.
+  const setAside = () => {
+    seededRoute.current = undefined;
+    setRouted([]);
+    writeView(scope, pillKey, []);
+    setReplacedKey(draftKey);
+  };
+  const audience = routing
+    ? {
+        recipients: addressed,
+        named: tagsDecide,
+        only(people: readonly MentionRecipient[]) {
+          if (!people.length) return;
+          const team = people.map(({ pubkey, name }) => ({ pubkey, name }));
+          // While tags in the text decide, a team replaces those tags, as a
+          // pick edits them. Otherwise it replaces the toolbar's agents, and
+          // tags further in the text still join them.
+          if (!tagsDecide) choose(team);
+          else {
+            if (
+              !replaceRecipients([
+                ...team,
+                ...recipients.filter((person) => referenced(person.pubkey)),
+              ])
+            )
+              return;
+            // Once the team's tags no longer open the text, they would join
+            // the toolbar's agents; the team becomes those agents, so the
+            // pick still reaches the team alone.
+            const now = valueRef.current;
+            if (
+              !soloAudience<MentionRecipient>(
+                now.text,
+                now.recipients.filter((person) => !referenced(person.pubkey)),
+                [],
+                () => true,
+              ).opensWithTag
+            )
+              choose(team);
+          }
+          // Typing resumes in the draft, at its caret.
+          input.current?.focus();
+        },
+        toggle({ pubkey, name }: MentionRecipient) {
+          // The menu offers agents only: a reference never joins the route.
+          if (referenced(pubkey)) return;
+          // A tag in the text is removed from the text, wherever it is, and
+          // from the toolbar's agents if it is there too.
+          if (!tagsDecide && named.some((person) => person.pubkey === pubkey)) {
+            // The toolbar keeps at least one agent: with no other tag to
+            // address the draft, its only agent stays, and so does its tag.
+            if (
+              routed.length === 1 &&
+              routed[0]?.pubkey === pubkey &&
+              !named.some((person) => person.pubkey !== pubkey)
+            )
+              return;
+            if (
+              !input.current?.replaceRecipients(
+                recipients.filter((person) => person.pubkey !== pubkey),
+              )
+            )
+              return;
+            completion.invalidate();
+            if (routed.some((person) => person.pubkey === pubkey)) {
+              if (routed.length > 1)
+                choose(routed.filter((person) => person.pubkey !== pubkey));
+              else if (named.some((person) => person.pubkey !== pubkey))
+                setAside();
+            }
+            return;
+          }
+          // While tags in the text decide, a pick edits those tags, so it
+          // always changes who gets the message. Focus and the caret stay
+          // put, and only an added agent must be admissible.
+          if (tagsDecide) {
+            if (!recipients.some((person) => person.pubkey === pubkey)) {
+              keepProseCaret(
+                (at) =>
+                  insert(`@${name} `, { pubkey, name }, at, undefined, false),
+                false,
+              );
+              return;
+            }
+            const others = named.filter((person) => person.pubkey !== pubkey);
+            // Without another tag the toolbar's agents address the draft
+            // again, so its only agent stays, and so does its tag.
+            if (
+              !others.length &&
+              routed.length === 1 &&
+              routed[0]?.pubkey === pubkey
+            )
+              return;
+            if (
+              !input.current?.replaceRecipients(
+                recipients.filter((person) => person.pubkey !== pubkey),
+              )
+            )
+              return;
+            completion.invalidate();
+            // Once no tag opens the text, the tags left would join the
+            // toolbar's agents; set those aside, so the message still goes
+            // to whoever was shown, less the removed agent.
+            const now = valueRef.current;
+            const stillNamed = now.recipients.filter(
+              (person) => !referenced(person.pubkey),
+            );
+            if (
+              stillNamed.length &&
+              !soloAudience<MentionRecipient>(
+                now.text,
+                stillNamed,
+                [],
+                () => true,
+              ).opensWithTag
+            )
+              setAside();
+            else if (routed.some((person) => person.pubkey === pubkey)) {
+              // The tags left still open the text, but the pill must lose
+              // the agent too, or a word typed before them brings it back.
+              if (routed.length > 1)
+                choose(routed.filter((person) => person.pubkey !== pubkey));
+              else if (stillNamed.length) setAside();
+            }
+            return;
+          }
+          if (!routed.some((person) => person.pubkey === pubkey)) {
+            // An added agent replaces any the message can no longer reach,
+            // which the menu cannot uncheck.
+            const admitted = admits();
+            const reachable = routed.filter(
+              (person) => admitted(person.pubkey) && !referenced(person.pubkey),
+            );
+            if (reachable.length < 32) choose([...reachable, { pubkey, name }]);
+          } else if (routed.length > 1)
+            choose(routed.filter((person) => person.pubkey !== pubkey));
+          // Tags still address the draft, so its last agent can go.
+          else if (named.length) setAside();
+        },
+      }
+    : undefined;
+  const editLocked = useListedChannel(
+    listed,
+    channelId,
+    (channel) => !!channel?.archived || !!channel?.readOnly,
+  );
+  const editDisabled = disabled || editLocked;
+  const chips = useMemo(
+    () => composerChips(readComposerSnapshot(value.document)),
+    [value.document],
+  );
   const editingDisabled =
     disabled ||
     admitting ||
@@ -697,30 +1700,132 @@ function Composer({
     threadRootId,
     active && !editingDisabled && !editing.target && !submission && !cached,
   );
-  const label = editing.target
-    ? "Edit message"
-    : (customLabel ??
-      (threadRootId ? "Reply to thread" : `Message #${channelName}`));
+  // The editor's placeholder is text, so a channel's own placeholder is drawn
+  // over it with its sidebar icon; DMs, threads and edits keep their text.
+  const ChannelIcon = useListedChannel(listed, channelId, channelIcon);
+  const channelLabel =
+    !editing.target && customLabel === undefined && !threadRootId;
+  const iconPlaceholder =
+    channelLabel && placeholder === undefined && ChannelIcon !== ChatCircleIcon;
+  const label = channelLabel
+    ? `Message ${ChannelIcon === LockIcon ? "" : "#"}${channelName}`
+    : editing.target
+      ? "Edit message"
+      : (customLabel ?? "Reply to thread");
+  const gifPreview = useGifDraftPreview(extensions?.tools);
   const attachments = useAttachmentDraft(
     session,
     `${scope}:${draftKey}`,
     channelId,
     !!submission?.attachments,
+    host ? [scope, `${draftKey}:files`] : undefined,
+  );
+  // The relay refuses a type only at upload, after the file's chip is shown.
+  // Its notice names the files refused while this composer held them, until
+  // dismissed. A file that arrives already refused is left to its chip: its
+  // draft returned with it, or a failed send restored it under that send's
+  // own notice.
+  const held = useRef(attachments.items);
+  const [refusedTypes, setRefusedTypes] = useState<readonly string[]>([]);
+  useEffect(() => {
+    const before = held.current;
+    held.current = attachments.items;
+    const refused = attachments.items.filter(
+      (item) =>
+        item.unsupported &&
+        before.some((prior) => prior.id === item.id && !prior.unsupported),
+    );
+    if (refused.length)
+      setRefusedTypes((ids) => [...ids, ...refused.map((item) => item.id)]);
+  }, [attachments.items]);
+  const unsupported = attachments.items.filter((item) =>
+    refusedTypes.includes(item.id),
   );
   const picker = useRef<HTMLInputElement>(null);
+  const pickerFocus = useRef<
+    { ids: readonly string[]; owner: Element | null } | undefined
+  >(undefined);
   const form = useRef<HTMLFormElement>(null);
+  const composerView = useComposerScope();
+  // Rows above draw their readers in this dock, around the form.
+  const dockRef = useComposerDockRef();
+  const layerAddress = useContext(LayerAddressContext);
+  const [announcementHost, setAnnouncementHost] = useState<Element | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    const node = form.current;
+    if (node)
+      setAnnouncementHost(
+        node.closest('[role="dialog"][aria-modal="true"]') ??
+          node.ownerDocument.body,
+      );
+  }, []);
+  const notify = useToastNotification();
+  const handOffFocus = useEffectEvent(() => {
+    if (!form.current?.contains(document.activeElement)) return;
+    const text = input.current?.value ?? "";
+    onFocusedRemoval?.();
+    if (!text.trim() || !session.channels?.get?.(channelId)?.archived) return;
+    const copy = async () => {
+      try {
+        await writeClipboardText(text);
+        notify("Text copied", "success");
+      } catch {
+        notify("Couldn’t copy text", "error", {
+          label: "Try again",
+          onClick: () => void copy(),
+          timeout: Infinity,
+        });
+      }
+    };
+    notify(`${solo ? "Chat" : "Channel"} archived: ${channelName}`, "info", {
+      label: "Copy text",
+      onClick: () => void copy(),
+      timeout: Infinity,
+    });
+  });
+  useLayoutEffect(() => () => handOffFocus(), []);
   const canAttach = submission
     ? !!submission.attachments && !!session.attachments?.uploadForNewChat
     : !!session.attachments;
   const voice = useVoiceCapture(
     attachments.store,
     !active || editingDisabled || !!editing.target || !canAttach,
-    setAttachmentError,
+    refuseAttachment,
   );
   useEffect(() => {
     if (disabled) attachments.store.cancel();
     else attachments.store.resume();
   }, [disabled, attachments.store]);
+  useEffect(() => {
+    const pending = pickerFocus.current;
+    if (!pending) return;
+    const selected = pending.ids.map((id) =>
+      attachments.items.find((item) => item.id === id),
+    );
+    if (
+      !presented ||
+      editingDisabled ||
+      editing.target ||
+      document.activeElement !== pending.owner ||
+      selected.some((item) => !item || item.status === "error")
+    ) {
+      pickerFocus.current = undefined;
+      return;
+    }
+    if (selected.every((item) => item?.status === "ready")) {
+      pickerFocus.current = undefined;
+      input.current?.focus();
+      return;
+    }
+    // A later upload must not undo a deliberate focus move, even a round trip.
+    const moved = (event: FocusEvent) => {
+      if (event.target !== pending.owner) pickerFocus.current = undefined;
+    };
+    document.addEventListener("focusin", moved, true);
+    return () => document.removeEventListener("focusin", moved, true);
+  }, [attachments.items, presented, editingDisabled, editing.target]);
   const dragging = useFileDrop(
     form,
     active &&
@@ -730,7 +1835,7 @@ function Composer({
       !voice.capturing,
     attachFiles,
   );
-  function attachFiles(files: readonly File[]) {
+  function attachFiles(files: readonly File[], folders?: ReadonlySet<File>) {
     if (
       !permitted.current ||
       editingDisabled ||
@@ -739,24 +1844,48 @@ function Composer({
     )
       return;
     if (editing.target) {
-      setAttachmentError("Finish editing before attaching new files.");
+      refuseAttachment("Finish editing before attaching new files.");
       return;
     }
     if (!canAttach) {
-      setAttachmentError(
+      refuseAttachment(
         submission
           ? "Create this conversation before attaching files."
           : "Uploads are unavailable on this connection.",
       );
       return;
     }
+    // A drop can hold folders, which the notice must not call files.
+    const kind = !folders?.size
+      ? "file"
+      : folders.size === files.length
+        ? "folder"
+        : "item";
     try {
-      attachments.store.add(files);
-      setAttachmentError(undefined);
-    } catch (reason) {
+      const before = attachments.store.snapshot().length;
+      const left = attachments.store.add(files, undefined, folders);
+      const added = attachments.store
+        .snapshot()
+        .slice(before)
+        .map((item) => item.id);
+      const refused = files.length - added.length;
       setAttachmentError(
-        reason instanceof Error ? reason.message : "Could not attach files.",
+        left.length
+          ? {
+              title: added.length
+                ? `Could not attach ${refused} of ${files.length} ${kind}s`
+                : `Could not attach ${refused} ${kind}s`,
+              description: left.join(" "),
+            }
+          : undefined,
       );
+      return added;
+    } catch (reason) {
+      setAttachmentError({
+        title: `Could not attach ${kind}`,
+        description:
+          reason instanceof Error ? reason.message : "Could not attach files.",
+      });
     }
   }
   const outbox = session.outbox;
@@ -773,18 +1902,26 @@ function Composer({
     input,
     active && !editingDisabled && !!outbox?.supports(9),
   );
+  const [annotationMenu, setAnnotationMenu] = useState<AnnotationMenuRequest>();
+  const closeAnnotationMenu = useCallback(
+    () => setAnnotationMenu(undefined),
+    [],
+  );
   function loadSaved(raw: string | null) {
+    diagnose("load", revision.current, raw);
     let next: MentionDraft;
     try {
-      next = stageSessionCards(
-        mentionDraft(JSON.parse(raw ?? "null")),
-        list.channels,
-      );
+      next = restoreChatLinks(mentionDraft(JSON.parse(raw ?? "null")));
     } catch {
       next = mentionDraft("");
     }
+    cancelDraftSave();
+    forgetConflict();
     revision.current = raw;
+    draftAtRevision.current = next;
+    savedCursor.current = draftRetirementCursor(scope, draftKey);
     dirty.current = false;
+    edited.current = false;
     valueRef.current = next;
     updateDraft(next);
     input.current?.reset(next);
@@ -795,11 +1932,40 @@ function Composer({
     setConflict(false);
     setStorageFailed(false);
   }
-  // Picks belong to the recovered revision alone. They return whenever the
-  // composer holds it unedited, never to a later edit that keeps a conflict.
+  function visibleDraftWasRetired(current: string | null, removed?: string) {
+    const backup = conflictDraft.current?.saved;
+    const local = valueRef.current;
+    const unchangedBackup = backup?.draft === local;
+    const raw = unchangedBackup
+      ? backup.revision
+      : draftAtRevision.current === local
+        ? revision.current
+        : undefined;
+    const cursor = unchangedBackup ? backup.cursor : savedCursor.current;
+    return (
+      raw != null &&
+      current !== raw &&
+      (raw === removed || draftWasRetired(scope, draftKey, raw, cursor))
+    );
+  }
+  // Message-local picks return with their recovered draft. Solo preferences
+  // remain the chat's current choices, including edits made during an upload.
   const reconcileDraft = useEffectEvent(
-    (restored?: MentionDraft, recoveredPicks?: MentionPicks) => {
+    (
+      restored?: MentionDraft,
+      recoveredPicks?: DraftPicks,
+      deletedRevision?: string,
+      // The draft was hidden until now, behind a message edit.
+      hidden = false,
+    ) => {
+      traceDraft(scope, draftKey, "reconcile", diagnosticEditor);
       if (submission || editing.target || writing.current) return;
+      const currentPurgeToken = viewScopePurgeToken(scope);
+      if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken) {
+        setAccepted(undefined);
+        loadSaved(null);
+        return;
+      }
       if (accepted) {
         // The recovered revision can precede attachment adoption. The explicit
         // recovery notification below reconciles the mounted owner afterward.
@@ -808,55 +1974,98 @@ function Composer({
         if (current !== undefined) {
           setAccepted(undefined);
           loadSaved(current);
-          if (restored && current === JSON.stringify(restored))
+          if (!stickyPicks && restored && current === JSON.stringify(restored))
             setPicks(recoveredPicks ?? {});
         }
         return;
       }
       const current = viewRevision(scope, draftKey);
       if (current === undefined) return;
+      if (visibleDraftWasRetired(current, deletedRevision)) {
+        loadSaved(current);
+        return;
+      }
+      diagnose("reconcile", revision.current, current);
       const recovering = !!restored && current === JSON.stringify(restored);
       if (current === revision.current) {
         // The storage listener usually loads the recovered revision before
         // its notification arrives.
-        if (recovering && !dirty.current) setPicks(recoveredPicks ?? {});
+        if (!stickyPicks && recovering && !dirty.current)
+          setPicks(recoveredPicks ?? {});
         return;
       }
-      // An explicit successful recovery may replace only the cleared follow-up,
-      // never a meaningful unsaved edit. Ordinary external revisions keep their
-      // conflict behavior.
-      if (
-        recovering &&
+      const empty =
         !valueRef.current.text.trim() &&
         !valueRef.current.recipients.length &&
-        !composerMarkdown(valueRef.current).trim() &&
-        !sendAttempt.current
-      )
-        loadSaved(current);
-      else if (dirty.current || sendAttempt.current) {
-        setConflict(true);
+        !composerMarkdown(valueRef.current).trim();
+      // An explicit successful recovery may replace only the cleared follow-up,
+      // never a meaningful unsaved edit. Ordinary external revisions keep their
+      // conflict behavior. The storage notification may have just backed up
+      // that empty follow-up before the explicit recovery reaches this editor.
+      if (recovering && empty && !sendAttempt.current) loadSaved(current);
+      else if (
+        dirty.current ||
+        sendAttempt.current ||
+        // Loading closes an open link dialog and discards what it holds.
+        linkEdit ||
+        // Text typed here is never replaced under the user: storage can lose
+        // a save that read back, and another window can write mid-typing. The
+        // user is here while focus is in this composer, its controls included.
+        // A composer holding nothing has nothing to offer back.
+        (edited.current &&
+          !(empty && !valueRef.current.forward) &&
+          !hidden &&
+          form.current?.contains(document.activeElement) &&
+          document.hasFocus())
+      ) {
+        const pending = cancelDraftSave();
+        // Two windows can independently arrive at the same draft before saving.
+        if (pending && current === JSON.stringify(pending.draft)) {
+          revision.current = current;
+          draftAtRevision.current = pending.draft;
+          savedCursor.current = draftRetirementCursor(scope, draftKey);
+          setStorageFailed(false);
+        } else {
+          diagnose("changed", revision.current, current);
+          reportConflict();
+        }
         return;
       } else loadSaved(current);
-      if (recovering) setPicks(recoveredPicks ?? {});
+      if (!stickyPicks && recovering) setPicks(recoveredPicks ?? {});
     },
   );
   const editingDraft = !!editing.target;
   const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
+  const wasEditing = useRef(false);
   useEffect(() => {
     if (submission) return;
-    const stop = subscribeView(scope, () => reconcileDraft());
+    const stop = subscribeView(
+      scope,
+      (_key, removed) =>
+        reconcileDraft(
+          undefined,
+          undefined,
+          removed?.find(({ key }) => key === draftKey)?.revision,
+        ),
+      draftKey,
+    );
     // Reconcile changes while message-edit mode or mounting paused this listener.
+    // The draft restored on leaving an edit was hidden throughout it, so a
+    // fully saved one follows wherever focus lands afterwards.
     reconcileDraft(
       deferredRecovery.current?.draft,
       deferredRecovery.current?.picks,
+      undefined,
+      wasEditing.current && !editingDraft,
     );
+    wasEditing.current = editingDraft;
     if (!editingDraft && deferredRecovery.current) {
       takeMissedRecovery(session, recoveryKey);
       setError(errorForRecovery(deferredRecovery.current.preparationError));
       deferredRecovery.current = undefined;
     }
     return stop;
-  }, [scope, submission, editingDraft, session, recoveryKey]);
+  }, [scope, submission, editingDraft, session, recoveryKey, draftKey]);
   const receiveRecovery = useEffectEvent((recovered: RecoveredSend) => {
     if (editing.target) deferredRecovery.current = recovered;
     reconcileDraft(recovered.draft, recovered.picks);
@@ -881,12 +2090,14 @@ function Composer({
     return stop;
   }, [session, recoveryKey, scope, draftKey]);
   function resolveDraft(keep: boolean) {
+    cancelDraftSave();
     const current = viewRevision(scope, draftKey);
+    diagnose(keep ? "keep" : "use-saved", revision.current, current);
     if (current === undefined) {
       setStorageFailed(true);
       return;
     }
-    if (keep) {
+    if (keep && !visibleDraftWasRetired(current)) {
       dirty.current = true;
       persist(valueRef.current, current);
     } else loadSaved(current);
@@ -896,25 +2107,27 @@ function Composer({
       reconcileDraft();
       return;
     }
-    const result = persist(pending.next, pending.revision);
+    const result = persist(pending.next, pending.revision, pending);
     // No stale sent text needs cleanup if nothing was saved and absence is
-    // still readable. Keep the normal save attempt for remembered-agent drafts.
+    // still readable.
     if (
       result === "failed" &&
       (pending.revision !== null || viewRevision(scope, draftKey) !== null)
     )
       return;
+    const peerRevision =
+      result === "changed" ? viewRevision(scope, draftKey) : undefined;
+    if (result === "changed" && peerRevision === undefined) return;
     recoveryFor(session).delete(recoveryKey);
     setAccepted(undefined);
-    if (result === "changed") {
-      // Another editor owns this revision. Acceptance cannot erase its work.
-      const current = viewRevision(scope, draftKey);
-      if (current !== undefined) loadSaved(current);
+    // Another editor owns this revision. Acceptance cannot erase its work.
+    if (peerRevision !== undefined) {
+      loadSaved(peerRevision);
       return;
     }
-    dirty.current = result === "failed" && !!pending.next.text.trim();
-    // An unsaved prefill stays editable here with the ordinary save warning.
-    if (!dirty.current) onDraftSaved?.();
+    dirty.current = false;
+    edited.current = false;
+    onDraftSaved?.();
   }
   useEffect(() => {
     if (outbox?.supports(9)) void session.emoji.ensure();
@@ -958,20 +2171,14 @@ function Composer({
       input.current.focus();
       return;
     }
+    flushDraft();
     completion.invalidate();
     beforeEdit.current = {
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    const next = stageSessionCards(
-      mentionDraft(
-        editing.start(current, (body) =>
-          composerMarkdown(
-            stageSessionCards(mentionDraft(body), list.channels),
-          ),
-        ),
-      ),
-      list.channels,
+    const next = mentionDraft(
+      editing.start(current, (body) => composerMarkdown(mentionDraft(body))),
     );
     valueRef.current = next;
     updateDraft(next);
@@ -980,6 +2187,51 @@ function Composer({
     caret.current = next.text.length;
     setError(undefined);
   });
+  const startQueuedEdit = (id: string) => {
+    if (
+      !host ||
+      !permitted.current ||
+      editingDisabled ||
+      submission ||
+      !input.current
+    )
+      return;
+    if (editing.target) {
+      setError("Finish or cancel your current edit first.");
+      input.current.focus();
+      return;
+    }
+    try {
+      const queue = followUpQueue(host);
+      const entry = queue
+        .snapshot()
+        .find((entry) => entry.id === id && entry.channelId === channelId);
+      if (!entry?.message)
+        throw new Error("This queued message is no longer available to edit.");
+      const lease = queue.edit(id);
+      flushDraft();
+      completion.invalidate();
+      beforeEdit.current = {
+        value: valueRef.current,
+        restore: input.current.checkpoint(),
+      };
+      const body = editing.startDraft({
+        id,
+        content: entry.text,
+        saveDraft: lease.save,
+        cancelDraft: lease.cancel,
+      });
+      const next = mentionDraft(body);
+      valueRef.current = next;
+      updateDraft(next);
+      input.current.reset(next);
+      setLinkEdit(null);
+      caret.current = next.text.length;
+      setError(undefined);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
   useEffect(() => {
     if (!editScope) return;
     const start = (row: ChannelMessage) => startEdit(row);
@@ -992,39 +2244,37 @@ function Composer({
       }
     };
   }, [editScope]);
-  function insert(
+  // DOM props are committed before child layout effects; closures can still
+  // carry the preceding render's enabled state during that interval.
+  const editable = () =>
+    permitted.current &&
+    !editingDisabled &&
+    !!outbox?.supports(9) &&
+    !!input.current?.isConnected &&
+    !input.current.disabled &&
+    !input.current.readOnly;
+  /** Like `insertTerminated`, counting a typed terminator alone as inserted. */
+  function insert(...args: Parameters<typeof insertTerminated>) {
+    return !!insertTerminated(...args);
+  }
+  function insertTerminated(
     text: string,
     recipient?: MentionRecipient,
     range?: CompletionQuery,
-    terminator?: ":",
+    /** The typed key that ended the query: a closing emoji colon, or the key
+     * that follows a mention in place of its space. */
+    terminator?: string,
     focus = true,
   ) {
-    if (
-      !permitted.current ||
-      editingDisabled ||
-      !outbox?.supports(9) ||
-      !input.current?.isConnected ||
-      // DOM props are committed before child layout effects; closures can still
-      // carry the preceding render's enabled state during that interval.
-      input.current.disabled ||
-      input.current.readOnly ||
-      typeof text !== "string"
-    )
-      return false;
+    const field = input.current;
+    if (!editable() || !field || typeof text !== "string") return false;
     // Edits replace prose; they do not change the original notification recipients.
     if (editing.target && recipient) {
-      text = editMentionText(recipient);
+      text = editMentionText(recipient, terminator);
       recipient = undefined;
+      terminator = undefined;
     }
-    if (
-      recipient &&
-      !mentionAdmission(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-      )(recipient.pubkey)
-    ) {
+    if (recipient && !admits()(recipient.pubkey)) {
       setError(
         "This recipient is no longer available. Remove it or refresh choices.",
       );
@@ -1035,23 +2285,282 @@ function Composer({
       return false;
     }
     completion.invalidate();
-    if (!input.current.insertText(text, recipient, range, terminator, focus)) {
+    const selected = recipient && editorMention(recipient);
+    const inserted = field.insertText(text, selected, range, terminator, focus);
+    if (!inserted) {
       setError("Message is too long to insert text");
       return false;
     }
     if (recipient) rememberMention(session, channelId, recipient.pubkey);
     setError(undefined);
+    return inserted;
+  }
+  /** Completed and picked emoji are followed by a space, so typing continues
+   * as a new word. A space or tab already at `at` is reused: the caret moves
+   * past it instead of doubling it. */
+  function insertEmoji(
+    text: string,
+    at: number,
+    range?: CompletionQuery,
+    terminator?: string,
+  ) {
+    const separated = /^[ \t]/.test(valueRef.current.text.slice(at));
+    const start = range?.start ?? input.current?.selectionStart ?? at;
+    const value =
+      /^:\d{1,64}:/.test(text) &&
+      /\d/.test(valueRef.current.text[start - 1] ?? "")
+        ? ` ${text}`
+        : text;
+    const inserted = insertTerminated(
+      separated ? value : `${value} `,
+      undefined,
+      range,
+      terminator,
+    );
+    if (!inserted) return false;
+    const field = input.current;
+    const end = field?.selectionEnd ?? 0;
+    // A typed colon can land without conversion at the length limit; the
+    // caret then stays after the literal colon.
+    if (separated && field?.value.slice(end - text.length, end) === text)
+      field.setSelectionRange(end + 1, end + 1);
+    return inserted;
+  }
+  function insertToolText(text: string) {
+    const end = input.current?.selectionEnd;
+    return (
+      attachGif(text) ??
+      (end !== undefined && isEmojiOnly(text, emojiCatalog.entries)
+        ? !!insertEmoji(text, end)
+        : insert(text))
+    );
+  }
+  /** A tool's lone GIF joins the attachment row, sent after the caption like
+   * the row's other media, rather than sitting in prose at the caret. An edit
+   * has no attachment row, so its GIF stays in the text. */
+  function attachGif(text: string) {
+    if (
+      !gifPreview ||
+      editing.target ||
+      !stageableGif(text) ||
+      !draftGif(text, session.media)
+    )
+      return;
+    if (!editable()) return false;
+    const current = valueRef.current.gifs ?? [];
+    if (!current.includes(text)) {
+      if (current.length >= MAX_DRAFT_GIFS) {
+        setError(`Attach at most ${MAX_DRAFT_GIFS} GIFs per message.`);
+        return false;
+      }
+      const next = { ...valueRef.current, gifs: [...current, text] };
+      if (composerMarkdown(next).length > 16000) {
+        setError("Message is too long to attach this GIF");
+        return false;
+      }
+      saveDraft(next);
+    }
+    setError(undefined);
+    input.current?.focus();
     return true;
   }
-  function insertMention(recipient: MentionRecipient) {
-    if (
-      !recipient ||
-      typeof recipient.pubkey !== "string" ||
-      !/^[0-9a-f]{64}$/.test(recipient.pubkey) ||
-      typeof recipient.name !== "string" ||
-      !recipient.name.trim()
+  // A Space typed before the chooser could decide holds its name as a chip
+  // with no recipient; the provider's resolver settles it off-screen. The
+  // chip's id keys its resolver here, and the draft says which chips exist.
+  const pendingMentions = useRef(
+    new Map<
+      string,
+      {
+        resolve: CompletionPending["resolve"];
+        explicit?: true;
+        controller?: AbortController | undefined;
+        /** Settles with the typed name and why when the chip returned to prose. */
+        settled?: Promise<PendingRefusal | undefined> | undefined;
+      }
+    >(),
+  );
+  function settlePendingMention(
+    id: string,
+    recipient: MentionRecipient | null,
+    signal: AbortSignal,
+  ) {
+    const entry = pendingMentions.current.get(id);
+    if (!entry || signal.aborted) return;
+    // Exactly what Tab would have inserted: well formed (the resolution is a
+    // provider's answer), admitted now, within the cap.
+    const reason: PendingRefusal["reason"] | undefined = !wellFormedRecipient(
+      recipient,
     )
-      return false;
+      ? "unresolved"
+      : !admits()(recipient.pubkey)
+        ? "unavailable"
+        : valueRef.current.recipients.length >= 32
+          ? "limit"
+          : undefined;
+    const accepted =
+      recipient && !reason
+        ? {
+            pubkey: recipient.pubkey,
+            name: recipient.name,
+            ...(entry.explicit ? { explicit: true as const } : {}),
+          }
+        : null;
+    const name = valueRef.current.pending?.find((chip) => chip.id === id)?.name;
+    // Held through an IME composition, the outcome is a promise: the chip is
+    // still pending until the replay, so the entry stays until it lands.
+    return Promise.resolve(
+      input.current?.settlePendingMention(id, accepted) ?? false,
+    ).then((applied) => settled(id, accepted, applied, name ?? "", reason));
+  }
+  function settled(
+    id: string,
+    accepted: MentionRecipient | null,
+    applied: boolean,
+    name: string,
+    reason: PendingRefusal["reason"] | undefined,
+  ): PendingRefusal | undefined {
+    const entry = pendingMentions.current.get(id);
+    if (!entry) return;
+    if (!applied) {
+      // The chip left the draft in the commit before the effect below could
+      // abort this resolution. Keep its resolver: redo restores the chip under
+      // the same id, and the effect starts it again.
+      entry.controller = undefined;
+      entry.settled = undefined;
+      return;
+    }
+    pendingMentions.current.delete(id);
+    if (
+      accepted &&
+      valueRef.current.recipients.some((p) => p.pubkey === accepted.pubkey)
+    ) {
+      rememberMention(session, channelId, accepted.pubkey);
+      return;
+    }
+    // Accepted but written as text: its current name overran the length limit.
+    return { name, reason: reason ?? "length" };
+  }
+  function resolvePendingMention(id: string) {
+    const entry = pendingMentions.current.get(id);
+    if (!entry) return;
+    if (!entry.controller) {
+      const controller = new AbortController();
+      entry.controller = controller;
+      entry.settled = resolveChip(
+        id,
+        (s) => bounded(entry.resolve, s),
+        controller.signal,
+      );
+    }
+    return entry.settled;
+  }
+  /** One resolution per chip, through the longer names it continues into:
+   * a chip whose name only longer known names kept from selecting extends
+   * over the words typed after it when they complete one, and that name is
+   * resolved under the same signal. Anything else returns it to prose, and
+   * the promise settles with the typed name it returned and why. */
+  async function resolveChip(
+    id: string,
+    resolve: CompletionPending["resolve"],
+    signal: AbortSignal,
+  ): Promise<PendingRefusal | undefined> {
+    const outcome = await resolve(signal).catch(() => null);
+    if (signal.aborted) return;
+    if (!outcome || !("continued" in outcome))
+      return settlePendingMention(id, outcome, signal);
+    const next = typedContinuation(id, outcome.continued);
+    const extended =
+      next &&
+      (await Promise.resolve(
+        input.current?.extendPendingMention(id, next.remainder) ?? false,
+      ));
+    if (signal.aborted) return;
+    if (next && extended)
+      return resolveChip(id, (s) => bounded(next.resolve, s), signal);
+    return settlePendingMention(id, null, signal);
+  }
+  /** `resolve` held to `MENTION_RESOLVE_TIMEOUT_MS`. The contract does not
+   * ask a provider to time itself, so the host bounds every link: the first
+   * resolution and each longer name a chip extends into. The bundled resolver
+   * races its first resolution against the same constant, redundant under
+   * this but harmless, and answers a chained resolve at once over the page it
+   * already read. Expiry is null, prose, as the resolver's own bound is.
+   * The provider gets its own signal, which follows the chip's and is also
+   * aborted at expiry, so work that outlives the bound is told to stop; and
+   * the chip's abort clears the timer, so a provider that ignores it leaves
+   * nothing running after Backspace or unmount. */
+  function bounded(
+    resolve: CompletionPending["resolve"],
+    signal: AbortSignal,
+  ): Promise<CompletionResolution> {
+    return new Promise((settle) => {
+      const own = new AbortController();
+      const timer = setTimeout(() => {
+        settle(null);
+        end();
+      }, MENTION_RESOLVE_TIMEOUT_MS);
+      const end = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", end);
+        own.abort();
+      };
+      signal.addEventListener("abort", end, { once: true });
+      resolve(own.signal)
+        .then(settle, () => settle(null))
+        .finally(end);
+    });
+  }
+  /** The longest of `continued` that the chip's name plus the words typed
+   * after it, up to a name boundary, spell: the name Space would have needed
+   * typed in full. None when the words complete no name or stop mid-word.
+   * The remainder ends on the name's last character: `normalizeName` trims,
+   * so `Example ` spells the same name as `Example`, and extending over the
+   * separator would join the chip to whatever is typed after it. */
+  function typedContinuation(
+    id: string,
+    continued: readonly CompletionPending[],
+  ) {
+    const chip = valueRef.current.pending?.find((item) => item.id === id);
+    if (!chip) return undefined;
+    const { text } = valueRef.current;
+    const names = new Map(continued.map((c) => [normalizeName(c.name), c]));
+    const longest = Math.max(...[...names.keys()].map((n) => n.length));
+    let found:
+      | { remainder: string; resolve: CompletionPending["resolve"] }
+      | undefined;
+    for (let end = chip.end + 1; end <= text.length; end++) {
+      const remainder = text.slice(chip.end, end);
+      const name = normalizeName(chip.name + remainder);
+      if (name.length > longest) break;
+      if (/\s$/u.test(remainder) || !mentionBoundary(text, end)) continue;
+      const next = names.get(name);
+      if (next) found = { remainder, resolve: next.resolve };
+    }
+    return found;
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reconciles resolvers against the chips in the draft; the helpers read current refs.
+  useEffect(() => {
+    const alive = new Set(value.pending?.map((chip) => chip.id));
+    for (const [id, entry] of pendingMentions.current) {
+      if (alive.has(id)) resolvePendingMention(id);
+      else if (entry.controller) {
+        // Backspace, undo or Clear removed the chip. Redo brings it back under
+        // the same id, and this effect starts its resolution again.
+        entry.controller.abort();
+        entry.controller = undefined;
+        entry.settled = undefined;
+      }
+    }
+  }, [value.pending]);
+  useEffect(
+    () => () => {
+      for (const entry of pendingMentions.current.values())
+        entry.controller?.abort();
+    },
+    [],
+  );
+  function insertMention(recipient: MentionRecipient) {
+    if (!wellFormedRecipient(recipient)) return false;
     if (!solo || editing.target)
       return insert(`@${recipient.name} `, recipient);
     return keepProseCaret((at) =>
@@ -1061,7 +2570,7 @@ function Composer({
   /** Solo chats address agents up front: a picked tag joins the leading tags,
    * wherever the caret is. The insertion maps the caret, so the caret and its
    * Undo both stay in the prose it was in. */
-  function keepProseCaret(add: (at: CompletionQuery) => boolean) {
+  function keepProseCaret(add: (at: CompletionQuery) => boolean, focus = true) {
     const before = valueRef.current;
     let start = 0;
     for (const tag of [...before.recipients].sort(
@@ -1080,7 +2589,7 @@ function Composer({
         valueRef.current.text.length,
         valueRef.current.text.length,
       );
-    input.current?.focus();
+    if (focus) input.current?.focus();
     return true;
   }
   function insertMentions(
@@ -1101,7 +2610,9 @@ function Composer({
     )
       return false;
     const unique = [
-      ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
+      ...new Map(
+        recipients.map((person) => [person.pubkey, editorMention(person)]),
+      ).values(),
     ];
     if (unique.length > 32) {
       setError("Choose at most 32 recipients");
@@ -1118,14 +2629,13 @@ function Composer({
       return false;
     // Message edits only add references, never new notification intent.
     if (editing.target)
-      return insert(unique.map(editMentionText).join(""), undefined, range);
-    const admits = mentionAdmission(
-      session,
-      channelId,
-      agentChoices,
-      mentionRoster,
-    );
-    if (unique.some((person) => !admits(person.pubkey))) {
+      return insert(
+        unique.map((person) => editMentionText(person)).join(""),
+        undefined,
+        range,
+      );
+    const admitted = admits();
+    if (unique.some((person) => !admitted(person.pubkey))) {
       setError(
         "A team member is no longer available. Refresh choices before trying again.",
       );
@@ -1174,18 +2684,24 @@ function Composer({
     const unique = [
       ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
     ];
-    const admits = mentionAdmission(
-      session,
-      channelId,
-      agentChoices,
-      mentionRoster,
-    );
-    if (unique.length > 32 || unique.some((person) => !admits(person.pubkey)))
+    const admitted = admits();
+    if (unique.length > 32 || unique.some((person) => !admitted(person.pubkey)))
       return false;
-    if (!input.current.replaceRecipients(unique)) return false;
+    if (!input.current.replaceRecipients(unique.map(editorMention)))
+      return false;
     completion.invalidate();
     setError(undefined);
     return true;
+  }
+  function replaceRecipientsIfEmpty(recipients: readonly MentionRecipient[]) {
+    const current = valueRef.current;
+    const prose = [...current.recipients]
+      .sort((a, b) => b.start - a.start)
+      .reduce(
+        (text, tag) => text.slice(0, tag.start) + text.slice(tag.end),
+        current.text,
+      );
+    return !prose.trim() && replaceRecipients(recipients);
   }
   function insertResource(resource: ComposerResource): true | string {
     if (
@@ -1199,7 +2715,7 @@ function Composer({
     return input.current.insertResource(resource);
   }
   function replaceCompletion(
-    edit: CompletionEdit,
+    edit: HostCompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
     key?: string,
@@ -1209,8 +2725,10 @@ function Composer({
       valueRef.current.text !== observation.text
     )
       return false;
-    // A typed terminator (Space, the closing emoji colon) stays literal in code.
-    if (key === " " || key === ":") {
+    // A typed terminator (Space, closing punctuation after a name, the closing
+    // emoji colon) stays literal in code. Tab, Enter and a click are not typed.
+    const typed = key?.length === 1 ? key : undefined;
+    if (typed) {
       const doc = readComposerSnapshot(valueRef.current.document);
       const context = doc
         ? composerMarkdownContext(doc)
@@ -1222,19 +2740,43 @@ function Composer({
       )
         return false;
     }
+    const chosen = chosenWorkspace(edit);
+    if (chosen !== undefined) {
+      // The chat's workspace leaves no text behind; the control shows it.
+      if (!workspace || editing.target || !insert("", undefined, query))
+        return false;
+      workspace.choose(chosen);
+      return true;
+    }
+    if ("pending" in edit && edit.pending) {
+      // Edits replace prose and add no recipients, so a chip that may become
+      // one has no place there: the typed key stays literal.
+      const field = input.current;
+      if (editing.target || !editable() || !field) return false;
+      completion.invalidate();
+      const id = field.insertPendingMention(edit.pending.name, query, typed);
+      if (!id) return false;
+      pendingMentions.current.set(id, {
+        resolve: edit.pending.resolve,
+        ...(hasHumanMentionSelection() ? { explicit: true } : {}),
+      });
+      setError(undefined);
+      return true;
+    }
     if ("mentions" in edit && edit.mentions)
       return insertMentions(edit.mentions, query);
     if ("mention" in edit && edit.mention)
-      return insert(`@${edit.mention.name} `, edit.mention, query);
-    return (
-      typeof edit.text === "string" &&
-      insert(
-        `${edit.text}${isEmojiOnly(edit.text, emojiCatalog.entries) ? "" : " "}`,
-        undefined,
-        query,
-        key === ":" ? key : undefined,
-      )
-    );
+      return insert(`@${edit.mention.name} `, edit.mention, query, typed);
+    if ("token" in edit && edit.token) {
+      if (editing.target) return false;
+      completion.invalidate();
+      return input.current?.insertToken(edit.token, query) ?? false;
+    }
+    if (typeof edit.text !== "string") return false;
+    const terminator = key === ":" ? key : undefined;
+    return isEmojiOnly(edit.text, emojiCatalog.entries)
+      ? insertEmoji(edit.text, query.end, query, terminator)
+      : insertTerminated(`${edit.text} `, undefined, query, terminator);
   }
   const currentAdmission = () =>
     live.current &&
@@ -1243,49 +2785,186 @@ function Composer({
     (!ownSoloConversation ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
-  // Only a fresh chat is seeded with the default. Once it has content, respect
-  // edits and removals; accepted sends use the shared remembered-mention draft.
-  const autoTagged = useRef<string | undefined>(undefined);
-  const automaticTag = useRef<string | undefined>(undefined);
-  useEffect(() => {
+  // A new Solo chat is seeded with its default agent each time it is shown,
+  // while its draft is empty and untagged; a saved chat seeds from its window
+  // like every other composer. Once it has content, respect edits and
+  // removals until the composer is shown again. Like the window's seed, the
+  // tag is this composer's own prefill and isn't saved until the viewer edits
+  // the draft, so showing the chat again tags the current default agent.
+  const seedMention = defaultMention;
+  // Alone with agents, the toolbar holds every agent of the viewer's latest
+  // message instead, keys joined so the snapshot keeps its identity.
+  const seekingAgents =
+    routing && presented && !submission && !threadRootId && !routed.length;
+  const subscribeAgents = useCallback(
+    (listener: () => void) => {
+      if (!seekingAgents) return noSubscription();
+      const rows = session.channels.subscribeWindow?.(channelId, listener);
+      const choices = session.agentChoices.subscribe(listener);
+      return () => {
+        rows?.();
+        choices();
+      };
+    },
+    [seekingAgents, session.channels, session.agentChoices, channelId],
+  );
+  const chosenAgent = useChosenAgent(scope);
+  const lastAgents = useSyncExternalStore(subscribeAgents, () => {
+    if (!seekingAgents || defaultMention) return undefined;
+    const history = session.channels.window?.(channelId);
+    // The history decides before any stand-in does.
     if (
-      !defaultMention ||
-      !active ||
+      !replaced &&
+      (history?.status === "idle" || history?.status === "loading")
+    )
+      return undefined;
+    // Once the viewer set the remembered agents aside for tags, the history
+    // is skipped. A reference is never a remembered agent.
+    const admitted = mentionAdmission(
+      session,
+      channelId,
+      agentChoices,
+      mentionRoster,
+    );
+    return seedAgents(
+      session,
+      channelId,
+      replaced ? [] : (history?.rows ?? []),
+      (key) => admitted(key) && !referenced(key),
+      session.agentChoices
+        .snapshot()
+        .selectable.some((choice) => choice.pubkey === chosenAgent)
+        ? chosenAgent
+        : undefined,
+    ).join(",");
+  });
+  const seededAgents: readonly MentionRecipient[] = !routing
+    ? []
+    : defaultMention
+      ? mentionAdmission(
+          session,
+          channelId,
+          agentChoices,
+          mentionRoster,
+        )(defaultMention.pubkey)
+        ? [defaultMention]
+        : []
+      : (lastAgents?.split(",") ?? []).flatMap(
+          (key) =>
+            pastedMentionRecipient(
+              session,
+              channelId,
+              key,
+              agentChoices,
+              mentionRoster,
+            ) ?? [],
+        );
+  const autoTagged = useRef<string | undefined>(undefined);
+  const seeding = useRef(false);
+  const prefill = (apply: () => boolean) => {
+    seeding.current = true;
+    try {
+      if (!apply()) return false;
+    } finally {
+      seeding.current = false;
+    }
+    automaticTag.current = JSON.stringify(valueRef.current);
+    return true;
+  };
+  const seededRoute = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!presented) {
+      autoTagged.current = undefined;
+      // Hidden untouched, the pill refills for the current default when shown.
+      if (
+        seededRoute.current === routedKey(routed) &&
+        untouchedDraft(valueRef.current) &&
+        !attachments.store.snapshot().length
+      )
+        setRouted([]);
+      seededRoute.current = undefined;
+    }
+    if (
+      !presented ||
+      conflict ||
       sendPending ||
       completion.composing.current ||
-      editing.target ||
-      autoTagged.current === draftKey
+      editing.target
     )
       return;
-    // A shortcut may seed an ordinary editable link. Still add the default
-    // agent once while that freshly seeded text is untouched; a restored draft
-    // keeps its recipients as saved, so a removed tag never returns.
+    // Alone with agents, the agent joins the toolbar, never the text. An empty
+    // pill is always refilled, even after a send, so removed mentions fall back.
+    if (routing) {
+      if (routed.length || (named.length && replaced)) return;
+      // A saved pick is restored whole, however discovery stands; the send
+      // checks each agent and asks the viewer about any it can't reach.
+      const chosen = readView<unknown>(scope, pillKey, null);
+      // An empty pick: the viewer set the agents aside for the draft's tags.
+      // Reopened, it stays aside while they remain; once they are gone, the
+      // main agent stands in.
+      if (Array.isArray(chosen) && !chosen.length) {
+        if (!replaced) {
+          setReplacedKey(draftKey);
+          return;
+        }
+        writeView(scope, pillKey, null);
+      }
+      const kept = Array.isArray(chosen)
+        ? chosen
+            .filter(wellFormedRecipient)
+            .map(({ pubkey, name }) => ({ pubkey, name }))
+        : [];
+      if (kept.length) {
+        setRouted(kept);
+        return;
+      }
+      if (seededAgents.length) {
+        setRouted(seededAgents.map(({ pubkey, name }) => ({ pubkey, name })));
+        seededRoute.current = routedKey(seededAgents);
+      }
+      return;
+    }
+    if (autoTagged.current === draftKey) return;
+    // Shown again untouched, the prefill retags for the current default. A
+    // saved draft is the viewer's, however it was addressed.
+    if (
+      automaticTag.current !== undefined &&
+      automaticTag.current === JSON.stringify(valueRef.current)
+    ) {
+      // Until the default can be tagged, as when its evidence is loading.
+      if (
+        seedMention &&
+        (seedMention.pubkey === valueRef.current.recipients[0]?.pubkey ||
+          prefill(() => replaceRecipients([seedMention])))
+      )
+        autoTagged.current = draftKey;
+      return;
+    }
+    // Required submissions can restore prose or receive a default after typing.
+    // Other drafts keep their saved recipients, including an absent tag.
     const untouchedInitial =
       seededKey === draftKey &&
       typeof submission?.initialDraft === "string" &&
       draft === submission.initialDraft;
-    if (value.recipients.length || (draft.trim() && !untouchedInitial)) {
+    if (
+      value.recipients.length ||
+      (draft.trim() && !untouchedInitial && !(submission && requireMention))
+    ) {
       autoTagged.current = draftKey;
       return;
     }
-    if (
-      mentionAdmission(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-      )(defaultMention.pubkey)
-    ) {
+    if (seedMention && admits()(seedMention.pubkey)) {
       if (
-        insert(
-          `@${defaultMention.name} `,
-          defaultMention,
-          { start: 0, end: 0, query: "" },
-          undefined,
-          false,
+        prefill(() =>
+          insert(
+            `@${seedMention.name} `,
+            seedMention,
+            { start: 0, end: 0, query: "" },
+            undefined,
+            false,
+          ),
         )
       ) {
-        automaticTag.current = JSON.stringify(valueRef.current);
         input.current?.setSelectionRange(
           valueRef.current.text.length,
           valueRef.current.text.length,
@@ -1293,18 +2972,135 @@ function Composer({
       }
     }
   });
+  // The seed's message or the evidence classifying its agents may arrive
+  // after mount (the window or thread page lands; mentioned profiles are
+  // ensured on open; the library is idle until a chooser runs), and each send
+  // changes the viewer's latest message. The seed then fills an empty
+  // composer, or replaces its own earlier prefill, once per message and
+  // showing (an edit of the user's settles it): a removed chip stays removed
+  // until the composer is shown again, a newer message of the viewer's
+  // lands, or a send here replaces the draft with the composer's own
+  // follow-up. reset() replaces the editor without a change event, so
+  // nothing persists; focus stays with its current owner, and the caret
+  // follows the prefill.
+  useEffect(() => {
+    if (!presented) {
+      seedApplied.current = undefined;
+      seedClosed.current = false;
+      return;
+    }
+    if (conflict || editing.target || completion.composing.current) return;
+    // Content the user put in, unlike this effect's own prefill, closes the
+    // seed until the composer is shown again, even once it is cleared.
+    const automatic =
+      automaticTag.current !== undefined &&
+      automaticTag.current === JSON.stringify(valueRef.current);
+    // Alone with agents, the toolbar holds them, never the text: a prefill
+    // made before that was known is withdrawn.
+    if (routing) {
+      if (automatic && valueRef.current.recipients.length) {
+        const empty = mentionDraft("");
+        valueRef.current = empty;
+        updateDraft(empty);
+        input.current?.reset(empty);
+        automaticTag.current = undefined;
+      }
+      return;
+    }
+    if (!untouchedDraft(valueRef.current) && !automatic) {
+      seedClosed.current = true;
+      return;
+    }
+    if (
+      seedClosed.current ||
+      !seedSource ||
+      submission ||
+      sendPending ||
+      accepted ||
+      attachments.items.length
+    )
+      return;
+    const key = seedKey(seedSource);
+    if (seedApplied.current === key) return;
+    if (!rememberAgentsPreference()) {
+      // Opting out changes future prefills, not the current draft.
+      seedApplied.current = key;
+      return;
+    }
+    // Partial agent evidence may name a subset of the agents: that seed shows
+    // now and is replaced as names resolve, final once the evidence settles.
+    // An empty seed waits for settled evidence before ending a prefilled
+    // chain; settled, it ends one whether the message tagged people or no one.
+    const seed = seedMentions(session, seedSource);
+    const settled = seedEvidenceSettled(session, seedSource);
+    if (settled) seedApplied.current = key;
+    if (!seed.recipients.length && !settled) return;
+    if (JSON.stringify(seed) === JSON.stringify(valueRef.current)) return;
+    valueRef.current = seed;
+    updateDraft(seed);
+    input.current?.reset(seed);
+    automaticTag.current = seed.recipients.length
+      ? JSON.stringify(seed)
+      : undefined;
+    // reset() leaves the caret at the start. Put it after the prefill even
+    // while unfocused: a retained editor keeps its caret when focused later.
+    input.current?.setSelectionRange(seed.text.length, seed.text.length);
+  });
   // Alone in a Solo chat, a send addresses agents; with people it is a conversation.
   const needsRecipient = (requireMention || solo) && !withPeople;
-  const recipientHint = submission
-    ? "Tag an agent to send"
-    : "Tag a person or agent to send";
+  const recipientHint = routing
+    ? "Choose an agent to send"
+    : submission
+      ? "Tag an agent to send"
+      : "Tag a person or agent to send";
+  // A pending mention may yet become the recipient; sending waits for it.
   const untagged =
-    needsRecipient && !editing.target && !value.recipients.length;
-  async function prepareRecipients(explicit: readonly string[]) {
+    needsRecipient &&
+    !editing.target &&
+    !addressed.length &&
+    !value.pending?.length;
+  async function prepareRecipients(
+    explicit: readonly string[],
+    fromPill = false,
+  ) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
-    const recipients = [...explicit];
+    // The pill stands in only while the chat is the viewer and agents; a
+    // person who joined since needs the agents tagged by name.
+    if (
+      fromPill &&
+      !soloAgentsOnly(
+        channel.members,
+        session.viewer,
+        knownAgentPubkeys(
+          session.profiles.snapshot(),
+          session.agentChoices.snapshot(),
+        ),
+      )
+    )
+      throw new Error("Someone joined this chat. Tag an agent to send.");
+    let references: readonly string[] = [];
+    if (explicit.some((key) => !channel.members?.includes(key))) {
+      // Only your agents join. Anyone else outside the chat is a reference,
+      // as in a DM; only a complete agent read can tell a name is not yours.
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      const agents = session.agentChoices.snapshot();
+      references = explicit.filter(
+        (key) =>
+          !channel.members?.includes(key) &&
+          outsideMentionReferences(channel, agents.identities, key),
+      );
+      if (references.length && !agents.complete)
+        throw new Error("Could not load your agents. Retry.");
+    }
+    const recipients = explicit.filter((key) => !references.includes(key));
+    // Membership may have changed since the render's check: a reference that
+    // joined in the meantime notifies too, so check the cap again here,
+    // before anyone is added or the message queues.
+    if (recipients.length > 32) throw new Error("Choose at most 32 recipients");
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against
       // the fresh roster and agent inventory, not the rendered snapshot.
@@ -1324,10 +3120,6 @@ function Composer({
     }
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
-      // Classification no longer depends on inventory; refresh before admission.
-      await session.agentChoices.refresh();
-      if (!currentAdmission())
-        throw new Error("The session changed. Review its channel and retry.");
       if (
         missing.some(
           (key) =>
@@ -1347,15 +3139,19 @@ function Composer({
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
     }
-    return recipients;
+    return { recipients, references };
   }
-  async function send() {
-    if (!permitted.current || voice.isCapturing()) return;
+  async function send(human = false) {
+    if (!permitted.current || voice.isCapturing() || forwarded.blocked) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
+      if ("saveDraft" in editing.target) {
+        editing.save(composerMarkdown(valueRef.current), undefined);
+        return;
+      }
       if (
         !valueRef.current.text.trim() &&
-        !valueRef.current.sessionCards?.length
+        !valueRef.current.chatCards?.length
       ) {
         if (editing.target.attachments.length) {
           setError(
@@ -1393,15 +3189,91 @@ function Composer({
       !outbox
     )
       return;
-    if (needsRecipient && !valueRef.current.recipients.length) {
+    if (valueRef.current.pending?.length) {
+      // Enter straight after Space is the case a pending mention exists for.
+      // Wait for its recipient rather than send prose; the composer shows
+      // its sending state meanwhile. The wait is bounded: `resolveChip`
+      // holds each link of a resolution, the first and each longer name the
+      // chip extends into, to `MENTION_RESOLVE_TIMEOUT_MS` (the contract
+      // lets a provider's resolve do I/O without timing itself); plus an IME
+      // composition that was already open when Send was clicked, since a
+      // settle landing under it is held until the composition ends.
+      const wait = new AbortController();
+      sendAttempt.current = wait;
+      setSending(true);
+      setError(undefined);
+      let outcomes:
+        | PromiseSettledResult<PendingRefusal | undefined>[]
+        | undefined;
+      try {
+        outcomes =
+          (await Promise.race([
+            Promise.allSettled(
+              valueRef.current.pending.map((chip) =>
+                resolvePendingMention(chip.id),
+              ),
+            ),
+            new Promise<void>((resolve) => {
+              wait.signal.addEventListener("abort", () => resolve(), {
+                once: true,
+              });
+            }),
+          ])) || undefined;
+      } finally {
+        if (sendAttempt.current === wait) {
+          sendAttempt.current = null;
+          if (live.current) setSending(false);
+        }
+      }
+      if (wait.signal.aborted || !live.current || !permitted.current) return;
+      // A chip this send waited on that returned to prose would go out as a
+      // name that notifies no one, after the user saw it held. Keep the
+      // draft and say why, so the user can fix it (a recipient over the cap)
+      // or send again to send it as text, since nothing is pending by then.
+      const prose = (outcomes ?? []).flatMap((outcome) =>
+        outcome.status === "fulfilled" && outcome.value ? [outcome.value] : [],
+      );
+      if (prose.length) {
+        const why = Object.entries(pendingRefusals).flatMap(
+          ([reason, says]) => {
+            const names = prose
+              .filter((chip) => chip.reason === reason)
+              .map((chip) => `@${chip.name}`);
+            return names.length ? [`${names.join(", ")} ${says}.`] : [];
+          },
+        );
+        setError(
+          [
+            ...why,
+            needsRecipient && !sendRecipients().length
+              ? `${recipientHint}.`
+              : `Send again to send ${prose.length > 1 ? "them" : "it"} as text.`,
+          ].join(" "),
+        );
+        return;
+      }
+    }
+    const recipientsNow = sendRecipients();
+    if (needsRecipient && !recipientsNow.length) {
       setError(recipientHint);
       return;
     }
-    // A new conversation is named from its message, so files alone cannot start it.
+    // Tags further in the text join the toolbar's agents; together they
+    // still notify at most 32, checked before anyone joins or it queues.
+    if (
+      routing &&
+      recipientsNow.filter((person) => !referenced(person.pubkey)).length > 32
+    ) {
+      setError("Choose at most 32 recipients");
+      return;
+    }
+    // Named conversations require text unless their owner explicitly permits files alone.
     if (
       !draft.trim() &&
-      !sessionCards?.length &&
-      (!!submission || !attachments.items.length)
+      !value.forward &&
+      !chatCards?.length &&
+      ((!!submission && !submission.allowAttachmentOnly) ||
+        (!attachments.items.length && !gifs?.length))
     )
       return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
@@ -1412,48 +3284,140 @@ function Composer({
       input.current?.reset(recovering.next);
       return;
     }
-    if (!submission && viewRevision(scope, draftKey) !== revision.current) {
-      setConflict(true);
+    const flushed = flushDraft();
+    if (!submission) {
+      const current = viewRevision(scope, draftKey);
+      diagnose("send-start", revision.current, current);
+      if (flushed === "changed" || current !== revision.current) {
+        diagnose("send-start-conflict", revision.current, current);
+        reportConflict();
+        return;
+      }
+    }
+    const choicesNow = resolvedPicks.current;
+    const picksNow = choicesNow?.source ?? committedPicks.current;
+    if (pickReadFailed) return;
+    if (pendingPickSaves.current || awaitingPickCommit.current) {
+      setError(
+        "Model and effort choices are still saving. Try sending again shortly.",
+      );
+      return;
+    }
+    // A failed save acknowledgement revokes Send before its error render commits.
+    if (stickyPicks && picksRevision.current === undefined) return;
+    if (
+      stickyPicks &&
+      (choicesNow?.value === null ||
+        sessionTargets(recipientsNow.map((item) => item.pubkey)).some(
+          (pubkey) => {
+            const saved = picksNow.picks[pubkey];
+            return (
+              (saved?.model || saved?.effort) &&
+              !choicesNow?.pubkeys.includes(pubkey)
+            );
+          },
+        ))
+    ) {
+      setError(
+        choicesNow?.error ??
+          "Saved model and effort choices are still loading. Try sending again shortly.",
+      );
       return;
     }
     const savedRevision = revision.current;
+    const retirementCursor = draftRetirementCursor(scope, draftKey);
+    let retiredByOwner = false;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
+    const explicit =
+      human && ownerProvenance
+        ? captured.recipients
+            .filter((person) => person.explicit)
+            .map((person) => person.pubkey)
+        : undefined;
+    const capturedRecipients = routing ? recipientsNow : captured.recipients;
     const capturedAttachments = attachments.store.snapshot();
-    const capturedPicks = picks;
-    const capturedRunPicks = { ...picks, ...resolvedPicks.current };
-    // A send is an agent follow-up unless it addresses a confirmed person
-    // (a loaded, non-agent profile). Those, and untagged conversation in a
-    // shared chat, go out now; recipients still being classified keep the
-    // owner's queue preference.
-    const profileSnapshot = session.profiles.snapshot();
-    const agentKeys = knownAgentPubkeys(
-      profileSnapshot,
-      session.agentChoices.snapshot(),
-    );
-    const queueFollowUp =
+    // Mention resolution can update recipients before their picker commits.
+    // Capture only a snapshot validated for the saved choices being sent.
+    const capturedPicks = picksNow.picks;
+    const capturedPicksRevision = picksNow.revision;
+    const capturedRunPicks = stickyPicks
+      ? { ...(choicesNow?.value ?? {}) }
+      : { ...capturedPicks, ...(choicesNow?.value ?? {}) };
+    const command =
+      onCommand &&
+      !captured.recipients.length &&
+      !captured.pending?.length &&
+      !captured.forward &&
+      !captured.chatCards?.length &&
+      !captured.gifs?.length &&
+      !capturedAttachments.length &&
+      captured.text.trim().startsWith("/")
+        ? captured.text.trim()
+        : undefined;
+    // The toolbar's agents go along unless the text opens with a tag.
+    const fromPill =
+      routing &&
+      capturedRecipients.some(
+        (person) =>
+          !captured.recipients.some((item) => item.pubkey === person.pubkey),
+      );
+    const queueable =
       !!host &&
       ownSoloConversation &&
       !threadRootId &&
-      followUpBehaviorPreference() === "queue" &&
-      captured.recipients.length > 0 &&
-      !soloHasPeople(
-        captured.recipients.map(({ pubkey }) => pubkey),
-        session.viewer,
-        profileSnapshot,
-        agentKeys,
-      );
+      followUpBehaviorPreference() === "queue";
     try {
-      if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
+      const tokens = draftTokens(captured);
+      messageTokenTags(tokens);
+      if (command && onCommand) {
+        const handled = onCommand(command, attempt.signal);
+        if (handled !== false) {
+          setSending(true);
+          if (await handled) {
+            attempt.signal.throwIfAborted();
+            if (valueRef.current !== captured) return;
+            const current = viewRevision(scope, draftKey);
+            if (current !== savedRevision) {
+              diagnose("send-upload-conflict", savedRevision, current);
+              reportConflict();
+              return;
+            }
+            const next = mentionDraft("");
+            saveDraft(next);
+            completion.invalidate();
+            caret.current = undefined;
+            input.current?.reset(next);
+            input.current?.focus();
+            setError(undefined);
+            automaticTag.current = undefined;
+            seedClosed.current = false;
+            return;
+          }
+        }
+      }
+      const bringable = new Set(
+        (agents?.joinable() ?? []).map((agent) => agent.pubkey),
+      );
+      if (
+        capturedRecipients.some((p) =>
+          agentUnavailable(session, p.pubkey, bringable),
+        )
+      )
         throw new Error(
-          "A selected recipient is archived. Remove it before sending.",
+          fromPill
+            ? "An agent you're sending to is archived or being deleted. Choose another agent to send."
+            : "A selected recipient is archived or being deleted. Remove it before sending.",
         );
+      // Until agents are known, the new chat's start reads them and decides.
       if (
         ownSoloConversation &&
         submission &&
-        captured.recipients.some(
+        pickedAgents(session.agentChoices) &&
+        capturedRecipients.some(
           (person) =>
+            !referenced(person.pubkey) &&
             !session.agentChoices
               .snapshot()
               .selectable.some((agent) => agent.pubkey === person.pubkey),
@@ -1463,22 +3427,86 @@ function Composer({
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
-        submission.submit(captured, attachments.store);
+        // SoloDraft filters the captured choices against its final recipient set.
+        submission.submit(
+          captured,
+          attachments.store,
+          routing ? capturedRecipients : undefined,
+          ownSoloConversation ? capturedRunPicks : undefined,
+          ownSoloConversation ? capturedPicks : undefined,
+          ownSoloConversation ? capturedPicksRevision : undefined,
+          ...(explicit ? [explicit] : []),
+        );
         return;
       }
       let references: readonly string[] = [];
-      let recipients = captured.recipients.map((item) => item.pubkey);
+      let recipients = capturedRecipients.map((item) => item.pubkey);
+      let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
-        recipients = await prepareRecipients(recipients);
+        ({ recipients, references } = await prepareRecipients(
+          recipients,
+          fromPill,
+        ));
       } else if (recipients.length) {
+        // An agent only an earlier Buzz runs would not answer; offer it here first.
+        const lookup = oldAgents.find(captured.recipients);
+        const old = lookup instanceof Promise ? await lookup : lookup;
+        if (old.length) {
+          setSending(true);
+          setError(undefined);
+          const decision = await oldAgents.ask(
+            old,
+            attempt.signal,
+            () =>
+              valueRef.current === captured &&
+              sameAttachmentSelection(
+                attachments.store.snapshot(),
+                capturedAttachments,
+              ) &&
+              permitted.current,
+          );
+          if (decision === null) return;
+          declinedImports = decision;
+        }
         const channel = session.channels
           .list()
           .channels.find((item) => item.id === channelId);
         if (channel?.members && allowsOutsideMentions(channel)) {
+          const current = () =>
+            valueRef.current === captured &&
+            sameAttachmentSelection(
+              attachments.store.snapshot(),
+              capturedAttachments,
+            ) &&
+            permitted.current;
+          // The owner's agents from their other communities join first.
+          let added: readonly string[] = [];
+          const elsewhere = new Map(
+            (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
+          );
+          const bring = captured.recipients.flatMap((person) => {
+            const agent = elsewhere.get(person.pubkey);
+            return agent && !channel.members?.includes(person.pubkey)
+              ? [agent]
+              : [];
+          });
+          if (bring.length && channel.channelType !== "dm") {
+            setSending(true);
+            setError(undefined);
+            const brought = await bringing.prepare(
+              bring,
+              attempt.signal,
+              current,
+            );
+            if (brought === null) return;
+            added = brought;
+          }
           const missing = captured.recipients.filter(
-            (person) => !channel.members?.includes(person.pubkey),
+            (person) =>
+              !channel.members?.includes(person.pubkey) &&
+              !added.includes(person.pubkey),
           );
           if (missing.length && channel?.channelType === "dm") {
             // Nobody can be added to a DM, so there is no choice to offer:
@@ -1491,13 +3519,7 @@ function Composer({
             const decision = await nonmembers.prepare(
               missing,
               attempt.signal,
-              () =>
-                valueRef.current === captured &&
-                sameAttachmentSelection(
-                  attachments.store.snapshot(),
-                  capturedAttachments,
-                ) &&
-                permitted.current,
+              current,
             );
             if (decision === null) return;
             references = decision;
@@ -1516,28 +3538,63 @@ function Composer({
         )
       )
         return;
-      if (viewRevision(scope, draftKey) !== savedRevision) {
-        setConflict(true);
+      const preparedRevision = viewRevision(scope, draftKey);
+      if (preparedRevision !== savedRevision) {
+        diagnose("send-prepare-conflict", savedRevision, preparedRevision);
+        reportConflict();
         return;
       }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
-      const next = rememberedMentions(session, captured, recipients);
-      // Only agents still notified by this message are asked for a model or effort.
+      const explicitRecipientIds = explicit?.filter((id) =>
+        recipients.includes(id),
+      );
+      // Alone with agents, the toolbar keeps the agents; the next draft starts empty.
+      const next = routing
+        ? mentionDraft("")
+        : rememberedMentions(session, captured, recipients);
+      // Only agents this message still addresses are asked for a model or effort.
+      const addressedNow = sessionTargets(recipients);
       const sentPicks: MentionPicks = Object.fromEntries(
         Object.entries(capturedRunPicks).filter(([key]) =>
-          recipients.includes(key),
+          addressedNow.includes(key),
         ),
       );
       const tuned = Object.keys(sentPicks).length > 0;
-      const stagedSessions = new Set(
-        sessionReferenceIds((captured.sessionCards ?? []).join("\n\n")),
-      );
-      const sharedSessions = sessionReferenceIds(content).filter((id) =>
-        stagedSessions.has(id),
-      );
+      const linkedChats = chatLinkIds(content, channels());
+      if (linkedChats.length) {
+        setSending(true);
+        setError(undefined);
+        const current = () =>
+          permitted.current &&
+          valueRef.current === captured &&
+          viewRevision(scope, draftKey) === savedRevision &&
+          sameAttachmentSelection(
+            attachments.store.snapshot(),
+            capturedAttachments,
+          );
+        if (!(await linkSharing.prepare(linkedChats, attempt.signal, current)))
+          return;
+        attempt.signal.throwIfAborted();
+        const publishRevision = viewRevision(scope, draftKey);
+        if (publishRevision !== savedRevision) {
+          diagnose("send-publish-conflict", savedRevision, publishRevision);
+          reportConflict();
+          return;
+        }
+        if (!current()) return;
+      }
+      // Every prompt passed, so this message goes out to who was declined.
+      oldAgents.decline(declinedImports);
+      // The reader keeps the reply this draft is aimed at beside the draft. A
+      // send that lands once this composer is gone, where its reader cannot
+      // hear of it, still answers that reply.
+      const answered = () => {
+        if (threadKey)
+          retireReplyTarget(session, scope, threadKey, replyParentId);
+      };
       // Destination and content are fixed here; a background send never retargets.
       function publishNow(
         uploaded: readonly UploadedAttachment[],
@@ -1553,48 +3610,91 @@ function Composer({
       ) {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        const destination = session.channels
-          .list()
-          .channels.find((channel) => channel.id === channelId);
-        if (
-          queueFollowUp &&
-          (!destination || destination.archived || destination.readOnly)
-        )
-          throw new Error("This chat is no longer available for sending.");
-        if (
-          queueFollowUp &&
-          (!ownSolo(destination, session.viewer) ||
-            recipients.some(
-              (key) =>
-                archivedMention(session, key) ||
-                !session.agentChoices
-                  .snapshot()
-                  .selectable.some((agent) => agent.pubkey === key),
-            ))
-        )
-          throw new Error(
-            "This Solo chat or its recipients are no longer available.",
+        const publish = () =>
+          sendWithOwnerMentions(
+            sender,
+            explicitRecipientIds,
+            () => publishMessage(uploaded, sender),
+            sourceRootId && threadRootId
+              ? { anchorId: threadRootId, threadId: sourceRootId }
+              : undefined,
           );
-        return threadRootId
-          ? sender.messages.reply(
-              channelId,
-              threadRootId,
+        if (!tokens.length) return publish();
+        // A detached window's relay connection would drop the chips.
+        const main = fullSession(sender);
+        if (!main) throw new Error("Send chips from the main window.");
+        return signMessageTokens(tokens, publish);
+      }
+      function publishMessage(
+        uploaded: readonly UploadedAttachment[],
+        sender: ComposerSession,
+      ) {
+        if (sender.sendDraft && !threadRootId) {
+          return sender
+            .sendDraft({
+              text: content,
+              ...(captured.forward ? { forward: captured.forward } : {}),
+              draft: savedRevision ?? "null",
+              retirementCursor,
+              mentions: recipients,
+              attachments: uploaded,
+              references,
+              picks: sentPicks,
+            })
+            .then(({ id, retirement }) => {
+              retiredByOwner = retirement !== "failed";
+              return id;
+            });
+        }
+        if (captured.forward) {
+          const main = fullSession(sender);
+          if (!main && sender.forwarding)
+            return sender.forwarding.send(
+              captured.forward,
               content,
               recipients,
               uploaded,
-              ...(replyParentId ||
-              references.length ||
-              tuned ||
-              sharedSessions.length
+              references,
+              sentPicks,
+            );
+          if (!main || !forwarded.row || forwarded.blocked)
+            throw new Error(
+              "Couldn't load this message. Remove it or try pasting again.",
+            );
+          return main.messages.forward(
+            channelId,
+            forwarded.row,
+            forwarded.name,
+            content,
+            undefined,
+            {
+              ...(threadRootId ? { rootId: sourceRootId ?? threadRootId } : {}),
+              ...(replyParentId ? { parentId: replyParentId } : {}),
+              ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
+              mentions: recipients,
+              references,
+              attachments: uploaded,
+              picks: sentPicks,
+            },
+          );
+        }
+        return threadRootId
+          ? sender.messages.reply(
+              channelId,
+              sourceRootId ?? threadRootId,
+              content,
+              recipients,
+              uploaded,
+              ...(replyParentId || references.length || tuned || mediaTargetUrl
                 ? [replyParentId]
                 : []),
-              ...(references.length || tuned || sharedSessions.length
+              ...(references.length || tuned || mediaTargetUrl
                 ? [references]
                 : []),
-              ...(tuned || sharedSessions.length ? [sentPicks] : []),
-              ...(sharedSessions.length ? [sharedSessions] : []),
+              ...(tuned || mediaTargetUrl ? [sentPicks] : []),
+              ...(mediaTargetUrl ? [mediaTargetUrl] : []),
             )
-          : references.length || tuned || sharedSessions.length
+          : references.length || tuned
             ? sender.messages.send(
                 channelId,
                 content,
@@ -1602,8 +3702,7 @@ function Composer({
                 uploaded,
                 undefined,
                 references,
-                ...(tuned || sharedSessions.length ? [sentPicks] : []),
-                ...(sharedSessions.length ? [sharedSessions] : []),
+                ...(tuned ? [sentPicks] : []),
               )
             : sender.messages.send(channelId, content, recipients, uploaded);
       }
@@ -1613,49 +3712,133 @@ function Composer({
       ) => {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        return queueFollowUp && host
-          ? followUpQueue(host).submit(
+        // A send is an agent follow-up unless it addresses a confirmed person
+        // (a loaded, non-agent profile). Those, and untagged conversation in
+        // a shared chat, go out now; recipients still being classified keep
+        // the owner's queue preference. The recipients are the fresh ones,
+        // without references: someone may have joined or left since.
+        const profiles = session.profiles.snapshot();
+        if (
+          !queueable ||
+          !host ||
+          !recipients.length ||
+          soloHasPeople(
+            recipients,
+            session.viewer,
+            profiles,
+            knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
+          )
+        ) {
+          const gate =
+            host &&
+            !captured.forward &&
+            heldBySendGate(
+              extensions?.sendGates,
               {
                 channelId,
+                ...(threadRootId
+                  ? { threadRootId: sourceRootId ?? threadRootId }
+                  : {}),
+                ...(threadRootId && replyParentId
+                  ? { parentId: replyParentId }
+                  : {}),
                 text: content,
                 recipients,
-                beforeRelease: async () => {
-                  const channel =
-                    await session.channelWrites.refreshMembership(channelId);
-                  if (recipients.some((key) => !channel.members?.includes(key)))
-                    throw new Error(
-                      "A queued recipient is no longer a member of this chat.",
-                    );
-                },
-                publish: () => publishNow(uploaded, host),
-                onSend: (id) => {
-                  if (live.current) onSend?.(id);
-                },
+                references,
+                attachments: uploaded,
+                picks: sentPicks,
+                ...(threadRootId && mediaTargetUrl
+                  ? { mediaTarget: mediaTargetUrl }
+                  : {}),
+                ...(tokens.length ? { tokens } : {}),
               },
-              validated,
-            )
-          : publishNow(uploaded, session);
+              host,
+            );
+          if (gate === true) return undefined;
+          if (gate) throw new Error(gate.refuse);
+          return publishNow(uploaded, session);
+        }
+        const message = {
+          channelId,
+          ...(captured.forward ? { forward: captured.forward } : {}),
+          text: content,
+          recipients,
+          attachments: uploaded,
+          references,
+          picks: sentPicks,
+          ...(explicitRecipientIds ? { explicitRecipientIds } : {}),
+          ...(tokens.length ? { tokens } : {}),
+        };
+        const send = followUpMessage(
+          host,
+          message,
+          captured.forward && forwarded.row
+            ? { row: forwarded.row, name: forwarded.name }
+            : undefined,
+        );
+        return followUpQueue(host).submit(
+          {
+            ...message,
+            message,
+            beforeRelease: send.beforeRelease,
+            ready: send.ready,
+            publish: (recovery) => {
+              if (compactingNow(recipients))
+                throw new Error(
+                  "Wait for compaction to finish, or interrupt it.",
+                );
+              return send.publish(recovery);
+            },
+            onSend: (id) => {
+              answered();
+              if (live.current) onSend?.(id);
+            },
+          },
+          validated,
+        );
       };
       let id: string | undefined;
       if (capturedAttachments.length && !fullSession(session)) {
         setSending(true);
         const uploaded = await attachments.store.prepareForSend(attempt.signal);
         attempt.signal.throwIfAborted();
+        // The detached owner receives the revision captured for this send.
+        const current = viewRevision(scope, draftKey);
+        if (current !== savedRevision) {
+          diagnose("send-publish-conflict", savedRevision, current);
+          reportConflict();
+          return;
+        }
         id = await publish(uploaded);
       } else if (capturedAttachments.length) {
-        const followup = JSON.stringify(next);
+        // The revision acceptance saves; remembered agents are not a draft.
+        const followup = JSON.stringify(mentionDraft(""));
+        // Name it as the sidebar does; a thread link opens the thread.
+        const listed = channels().find((channel) => channel.id === channelId);
+        const name = channelText({ ...listed, name: channelName });
         sendInBackground(
           session,
           recoveryKey,
           channelId,
+          {
+            name: threadRootId ? `thread in ${name}` : name,
+            // A huddle opens from its entry point, never by its room's link.
+            ...(listed?.huddle
+              ? {}
+              : { link: conversationLink(channelId, threadRootId) }),
+          },
           capturedAttachments,
           async (uploaded) => {
-            const sent = await publish(uploaded);
+            // Report a synchronous publication before the new row can render.
+            const result = publish(uploaded);
+            const sent = typeof result === "string" ? result : await result;
+            if (sent) answered();
             if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {
             // Only the original saved draft or the untouched follow-up can be
             // restored. A later edit belongs to its author, not this job.
+            if (!flushPendingDraft(scope, draftKey)) return "conflict";
             const current = viewRevision(scope, draftKey);
             const capturedRevision = JSON.stringify(captured);
             const cleared = (raw: string | null | undefined) => {
@@ -1665,6 +3848,7 @@ function Composer({
                 return (
                   !draft.text.trim() &&
                   !draft.recipients.length &&
+                  !draft.forward &&
                   !composerMarkdown(draft).trim()
                 );
               } catch {
@@ -1677,8 +3861,12 @@ function Composer({
               (valueRef.current.text !== next.text ||
                 JSON.stringify(valueRef.current.recipients) !==
                   JSON.stringify(next.recipients) ||
-                JSON.stringify(valueRef.current.sessionCards ?? []) !==
-                  JSON.stringify(next.sessionCards ?? [])) &&
+                JSON.stringify(valueRef.current.chatCards ?? []) !==
+                  JSON.stringify(next.chatCards ?? []) ||
+                JSON.stringify(valueRef.current.forward) !==
+                  JSON.stringify(next.forward) ||
+                JSON.stringify(valueRef.current.gifs ?? []) !==
+                  JSON.stringify(next.gifs ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
             )
               return "conflict";
@@ -1696,12 +3884,22 @@ function Composer({
                 valueRef.current.text === next.text &&
                 JSON.stringify(valueRef.current.recipients) ===
                   JSON.stringify(next.recipients) &&
-                JSON.stringify(valueRef.current.sessionCards ?? []) ===
-                  JSON.stringify(next.sessionCards ?? [])
+                JSON.stringify(valueRef.current.chatCards ?? []) ===
+                  JSON.stringify(next.chatCards ?? []) &&
+                JSON.stringify(valueRef.current.forward) ===
+                  JSON.stringify(next.forward) &&
+                JSON.stringify(valueRef.current.gifs ?? []) ===
+                  JSON.stringify(next.gifs ?? [])
               )
             )
               return "conflict";
-            const target = attachmentDraft(session, recoveryKey, channelId);
+            const target = attachmentDraft(
+              session,
+              recoveryKey,
+              channelId,
+              false,
+              host ? [scope, `${draftKey}:files`] : undefined,
+            );
             if (target.snapshot().length) return "conflict";
             if (
               current !== capturedRevision &&
@@ -1727,28 +3925,69 @@ function Composer({
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
       }
-      const pending = { next, revision: savedRevision };
+      // Nothing is saved for the remembered agents: this composer shows them
+      // in memory, and any composer here, on any device, seeds them from the
+      // sent message once it lands (see seedMentions).
+      const followUp = next;
+      const pending = {
+        next: mentionDraft(""),
+        revision: savedRevision,
+        retirementCursor,
+        retiredByOwner,
+      };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
+      // A send answers the details read over this composer, as ✕ closes them.
+      // It names the details it was sent under: by now the reader may have
+      // opened another layer, which stays.
+      const details = layerAddress?.open;
+      if (
+        composerView &&
+        details?.messageId &&
+        layerInView(details, channelId, composerView)
+      )
+        layerAddress?.dismiss(details);
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();
-      const changed = JSON.stringify(next) !== JSON.stringify(valueRef.current);
-      valueRef.current = next;
-      updateDraft(next);
-      setPicks({});
+      const changed =
+        JSON.stringify(followUp) !== JSON.stringify(valueRef.current);
+      valueRef.current = followUp;
+      updateDraft(followUp);
+      // The toolbar keeps whoever heard this message for the follow-up; a
+      // reference named only this message.
+      if (routing) {
+        setRouted(
+          capturedRecipients.filter((person) =>
+            recipients.includes(person.pubkey),
+          ),
+        );
+        setReplacedKey(undefined);
+        keepPick(null);
+      }
+      if (!stickyPicks) setPicks({});
       // An unchanged prefill may not render. Do not leave a caret command for
       // the next keystroke to consume after inserting its first character.
-      caret.current = changed ? next.text.length : undefined;
-      input.current?.reset(next);
+      caret.current = changed ? followUp.text.length : undefined;
+      input.current?.reset(followUp);
       input.current?.focus();
       if (!changed)
-        input.current?.setSelectionRange(next.text.length, next.text.length);
+        input.current?.setSelectionRange(
+          followUp.text.length,
+          followUp.text.length,
+        );
       setError(undefined);
       autoTagged.current = draftKey;
-      automaticTag.current = next.recipients.length
-        ? JSON.stringify(next)
+      automaticTag.current = followUp.recipients.length
+        ? JSON.stringify(followUp)
         : undefined;
+      // The typed draft that closed seeding is gone: the follow-up is this
+      // composer's own, settled for the message on screen like an edit, so a
+      // newer message of the viewer's seeds over it once it lands. The typed
+      // draft was not seeking, so the window is read here, not from render.
+      seedClosed.current = false;
+      const latest = threadSeed ?? (seedsFromWindow ? windowSeed() : undefined);
+      if (latest) seedApplied.current = seedKey(latest);
       if (id) onSend?.(id);
       finishDraft(pending);
     } catch (reason) {
@@ -1757,6 +3996,9 @@ function Composer({
     } finally {
       admission.current = false;
       if (sendAttempt.current === attempt) {
+        // A change saved elsewhere during an attempt that did not send is a
+        // conflict even if its notification arrives after the attempt ends.
+        reconcileDraft();
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);
@@ -1765,11 +4007,23 @@ function Composer({
       }
     }
   }
-  const readingOnly = !outbox?.supports(9) && !cached;
+  const isEmptyForShortcuts = () =>
+    !editingDisabled &&
+    !editDisabled &&
+    !submission &&
+    !editing.target &&
+    ((valueRef.current.text === "" &&
+      !valueRef.current.recipients.length &&
+      composerMarkdown(valueRef.current) === "") ||
+      automaticTag.current === JSON.stringify(valueRef.current)) &&
+    !valueRef.current.chatCards?.length &&
+    !valueRef.current.forward &&
+    !valueRef.current.gifs?.length &&
+    !attachments.items.length;
   // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
   // An edit unmounts the section at once, so no exit completes during one.
-  const hasAttachments = attachments.items.length > 0;
+  const hasAttachments = attachments.items.length > 0 || !!gifs?.length;
   const [attachmentsExiting, setAttachmentsExiting] = useState(false);
   const [hadAttachments, setHadAttachments] = useState(hasAttachments);
   if (hadAttachments !== hasAttachments) {
@@ -1777,16 +4031,37 @@ function Composer({
     setAttachmentsExiting(!hasAttachments);
   }
   if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
+  // Keystrokes re-render the composer; stable commands let contributed tools
+  // and accessories skip those renders while still calling the latest code.
+  const toolCommands = useLatestCallbacks({
+    insertText: insertToolText,
+    insertMention,
+    insertMentions,
+    replaceRecipients,
+    replaceRecipientsIfEmpty,
+    insertResource,
+    focus: () => input.current?.focus(),
+  });
+  const voiceCommands = useLatestCallbacks({ capture: voice.begin });
+  // Each keystroke projects new arrays; equal ones keep mention consumers still.
+  const selectedRecipients = useEqualList(
+    value.recipients,
+    (a, b) => a.pubkey === b.pubkey && a.name === b.name,
+  );
+  const addressedAgents = useEqualList(addressedKeys, Object.is);
+  // Availability is read during render, so it stays a prop that changes with
+  // the host's panels; dispatch goes through the latest handler.
+  const accessoryCommands = useLatestCallbacks({
+    open: (target: string) => onOpenLink?.(target) ?? false,
+  });
   const context = (
     <div className={styles.composerContext}>
       {!cached && !submission && (
         <TypingIndicator
-          clickOpensPanel={activityClickOpensPanel}
+          audience="humans"
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}
-          canOpenActivity={canOpenLink}
-          openActivity={onOpenLink}
         />
       )}
       {host && extensions?.accessories && (
@@ -1796,23 +4071,45 @@ function Composer({
           scope={scope}
           channelId={channelId}
           threadRootId={threadRootId}
-          canOpen={(target) => canOpenLink?.(target) ?? false}
-          open={(target) => onOpenLink?.(target) ?? false}
+          canOpen={canOpenLink ?? cannotOpen}
+          open={accessoryCommands.open}
+          onFocusedRemoval={toolCommands.focus}
         />
       )}
     </div>
   );
+  // Several agents show as avatars that remove on hover, ahead of the
+  // toolbar's agent menu; one stays, since a message always goes to someone.
+  const severalAddressed = routing && addressed.length > 1;
   const renderLeadingTools = (tools: ReactNode) => (
     <>
       <div
         className={styles.composerLeadingTools}
-        data-recipients={!!value.recipients.length || undefined}
+        data-recipients={
+          (routing ? severalAddressed : !!value.recipients.length) || undefined
+        }
       >
+        {severalAddressed && (
+          <RecipientAvatars
+            session={session}
+            recipients={addressed}
+            mentions={named.map((person) => person.pubkey)}
+            disabled={editingDisabled}
+            remove={(pubkey) => {
+              const person = addressed.find((item) => item.pubkey === pubkey);
+              if (!person) return;
+              audience?.toggle(person);
+              // The removed avatar took focus with it; typing resumes in the draft.
+              input.current?.focus();
+            }}
+          />
+        )}
         {tools}
-        {!!value.recipients.length && (
+        {!routing && !!value.recipients.length && (
           <RecipientAvatars
             session={session}
             recipients={value.recipients}
+            mentions
             disabled={editingDisabled}
             remove={(pubkey) => input.current?.removeRecipient(pubkey)}
           />
@@ -1827,11 +4124,16 @@ function Composer({
             hidden
             aria-label="Choose attachments"
             onChange={(event) => {
-              attachFiles(Array.from(event.currentTarget.files ?? []));
+              const ids = attachFiles(
+                Array.from(event.currentTarget.files ?? []),
+              );
+              if (ids?.length)
+                pickerFocus.current = { ids, owner: document.activeElement };
               event.currentTarget.value = "";
             }}
           />
           <IconButton
+            hint="familiar"
             size="sm"
             type="button"
             aria-label="Attach files"
@@ -1844,485 +4146,746 @@ function Composer({
       )}
     </>
   );
+  const disclosure =
+    !editing.target && forwarded.disclosure ? (
+      <ForwardDisclosure
+        audience={
+          forwardAudience ??
+          (channelType === "dm" || channelType === "solo" || solo
+            ? "The recipients"
+            : `Everyone in #${channelName}`)
+        }
+      />
+    ) : null;
   if (readingOnly)
     return (
       <>
         {context}
-        <footer className={styles.composer}>
+        <footer className={styles.composer} data-composer-surface="">
           This relay connection supports reading only.
         </footer>
       </>
     );
   return (
-    <SelectedMentionContext.Provider value={value.recipients}>
+    <SelectedMentionContext.Provider value={selectedRecipients}>
       {context}
+      {active && bringing.dialog}
       {active && nonmembers.dialog}
+      {active && oldAgents.dialog}
+      {active && linkSharing.dialog}
       {!submission && !threadRootId && host && (
         <QueuedFollowUps
           session={host}
           channelId={channelId}
-          disabled={disabled || !active}
+          disabled={disabled || !active || !!editing.target}
+          onEdit={startQueuedEdit}
           focusComposer={() => input.current?.focus()}
         />
       )}
-      <form
-        ref={form}
-        className={styles.composer}
-        data-chat-presentation={chatPresentation || undefined}
-        data-file-drag={dragging || undefined}
-        data-editing={!!editing.target || undefined}
-        data-conversation-controls={
-          (active && !editing.target && !!trailingTool) || undefined
-        }
-        data-attachments={
-          (!editing.target && (hasAttachments || attachmentsExiting)) ||
-          undefined
-        }
-        onKeyDown={(event) => {
-          if (
-            editing.target &&
-            event.key === "Escape" &&
-            !event.defaultPrevented &&
-            !event.nativeEvent.isComposing &&
-            event.nativeEvent.keyCode !== 229 &&
-            !completion.composing.current
-          ) {
+      {/* Stay inside a modal host, but outside workspace modal-isolation boundaries. */}
+      {announcementHost &&
+        createPortal(
+          <div
+            id={`${inputId}-forward-announcement`}
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {presented ? disclosure : null}
+          </div>,
+          announcementHost,
+        )}
+      <ComposerDockSlot dockRef={composerView ? dockRef : undefined}>
+        <form
+          ref={form}
+          className={styles.composer}
+          data-composer-surface=""
+          data-message-composer=""
+          data-chat-presentation={chatPresentation || undefined}
+          data-file-drag={dragging || undefined}
+          data-editing={!!editing.target || undefined}
+          data-conversation-controls={
+            (active && !editing.target && !!trailingTool) || undefined
+          }
+          data-attachments={
+            (!editing.target && (hasAttachments || attachmentsExiting)) ||
+            undefined
+          }
+          onKeyDown={(event) => {
+            if (
+              editing.target &&
+              event.key === "Escape" &&
+              !event.defaultPrevented &&
+              !event.nativeEvent.isComposing &&
+              event.nativeEvent.keyCode !== 229 &&
+              !completion.composing.current
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!editing.busy) editing.close();
+            }
+          }}
+          onPasteCapture={(event) => {
+            const files = pastedFiles(event.clipboardData);
+            if (!files.length) return;
             event.preventDefault();
             event.stopPropagation();
-            if (!editing.busy) editing.close();
+            attachFiles(files);
+          }}
+          aria-label={
+            editing.target
+              ? "Edit message"
+              : threadRootId
+                ? "Reply to thread"
+                : `Send a message to ${channelName}`
           }
-        }}
-        onPasteCapture={(event) => {
-          const files = Array.from(event.clipboardData.items)
-            .filter((item) => item.kind === "file")
-            .map((item) => item.getAsFile())
-            .filter((file): file is File => file !== null);
-          if (!files.length) return;
-          event.preventDefault();
-          event.stopPropagation();
-          attachFiles(files);
-        }}
-        aria-label={
-          editing.target
-            ? "Edit message"
-            : threadRootId
-              ? "Reply to thread"
-              : `Send a message to ${channelName}`
-        }
-        onSubmit={(event) => {
-          event.preventDefault();
-          send();
-        }}
-      >
-        {editing.target && (
-          <div className={styles.composerEditHeader}>
-            <PencilSimpleIcon size={18} />
-            <span>Editing message</span>
-            <IconButton
-              type="button"
-              size="sm"
-              aria-label={editing.locked ? "Close edit" : "Cancel edit"}
-              disabled={editing.busy}
-              onClick={editing.close}
-              icon={<XIcon size={18} />}
-            />
-          </div>
-        )}
-        <label className="sr-only" htmlFor={inputId}>
-          {label}
-        </label>
-        {active && extensions?.completions && (
-          <ComposerCompletions
-            registry={extensions.completions}
-            editor={completion}
-            input={input}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            threadRootId={threadRootId}
-            inviteAgents={agentChoices && !editing.target}
-            replace={replaceCompletion}
-            resolved={value}
-          />
-        )}
-        <BackgroundUploadStatus session={session} focusTarget={input} />
-        {dragging && <FileDropOverlay composer={form} />}
-        {attachmentError && (
-          <ToastNotice
-            title="Could not attach file"
-            description={attachmentError}
-            onDismiss={() => setAttachmentError(undefined)}
-          />
-        )}
-        <ComposerReplyContext>
-          {!editing.target && replyContext}
-        </ComposerReplyContext>
-        <div className={styles.composerContent}>
-          {!editing.target && (
-            <ComposerAttachments
-              media={session.media}
-              renderers={extensions?.attachments}
-              items={attachments.items}
-              disabled={editingDisabled}
-              onExitComplete={() => setAttachmentsExiting(false)}
-              remove={(id) => {
-                const item = attachments.items.find(
-                  (candidate) => candidate.id === id,
-                );
-                attachments.store.remove(id);
-                if (item?.status === "error" && item.error === error)
-                  setError(undefined);
-              }}
-              retry={(id) => {
-                const item = attachments.items.find(
-                  (candidate) => candidate.id === id,
-                );
-                attachments.store.retry(id);
-                if (item?.status === "error" && item.error === error)
-                  setError(undefined);
-              }}
-            />
+          onSubmit={(event) => {
+            event.preventDefault();
+            send();
+          }}
+        >
+          <label className="sr-only" htmlFor={inputId}>
+            {label}
+          </label>
+          {active && extensions?.completions && (
+            <WorkspaceCompletion.Provider
+              value={editing.target ? undefined : workspace}
+            >
+              <AddressedAgentsContext.Provider
+                value={editing.target ? noAgents : addressedAgents}
+              >
+                <ComposerCompletions
+                  registry={extensions.completions}
+                  identityMarks={extensions.identityMarks}
+                  editor={completion}
+                  input={input}
+                  session={session}
+                  scope={scope}
+                  channelId={channelId}
+                  threadRootId={threadRootId}
+                  inviteAgents={agentChoices && !editing.target}
+                  replace={replaceCompletion}
+                  resolved={chips.length ? { ...value, tokens: chips } : value}
+                />
+              </AddressedAgentsContext.Provider>
+            </WorkspaceCompletion.Provider>
           )}
-          <ComposerSessionCards
-            cards={sessionCards ?? []}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            extensions={extensions}
-            disabled={editingDisabled}
-            remove={(index) => {
-              saveDraft({
-                ...valueRef.current,
-                sessionCards:
-                  valueRef.current.sessionCards?.filter(
-                    (_, i) => i !== index,
-                  ) ?? [],
-              });
-              input.current?.focus();
-            }}
-          />
-          <div className={styles.composerInput}>
-            <RichComposerInput
-              ref={input}
-              id={inputId}
-              disabled={editingDisabled}
-              value={draft}
-              draft={editorDraft}
+          {extensions?.annotators && (
+            // Annotators see exactly what completion providers may observe.
+            <ComposerAnnotators
+              registry={extensions.annotators}
+              input={input}
+              enabled={active && !editingDisabled && !!outbox?.supports(9)}
+              epoch={[
+                scope,
+                channelId,
+                threadRootId ?? "",
+                editing.target?.id ?? "",
+              ].join("\n")}
               session={session}
               scope={scope}
               channelId={channelId}
-              extensions={extensions}
-              emoji={emojiCatalog.entries}
-              onDraftChange={(next) => {
-                const textChanged = next.text !== valueRef.current.text;
-                if (!editing.target) automaticTag.current = undefined;
-                saveDraft(next);
-                completion.observe(true);
-                if (textChanged && next.text.trim()) notifyTyping();
-              }}
-              onFormatsChange={setActiveFormats}
-              onEditLink={setLinkEdit}
-              // Pasted identity links notify admitted recipients under their
-              // current names; edits never add recipients. Send still asks
-              // before adding someone outside the channel.
-              acceptRecipient={(pubkey) =>
-                editing.target
-                  ? null
-                  : pastedMentionRecipient(
-                      session,
-                      channelId,
-                      pubkey,
-                      agentChoices,
-                      mentionRoster,
-                    )
+              threadRootId={threadRootId}
+              inviteAgents={agentChoices && !editing.target}
+            />
+          )}
+          {annotationMenu && (
+            <AnnotationMenu
+              key={`${annotationMenu.revision}:${annotationMenu.mark.start}`}
+              request={annotationMenu}
+              input={input}
+              onClose={closeAnnotationMenu}
+            />
+          )}
+          <BackgroundUploadStatus
+            session={session}
+            focusTarget={input}
+            here={
+              presented ? conversationLink(channelId, threadRootId) : undefined
+            }
+            onOpenLink={onOpenLink}
+          />
+          {dragging && <FileDropOverlay composer={form} />}
+          {attachmentError && (
+            <ToastNotice
+              title={attachmentError.title}
+              description={attachmentError.description}
+              onDismiss={() => setAttachmentError(undefined)}
+            />
+          )}
+          {/* A composer under a covering tab keeps uploading. This notice
+            names no conversation, so it waits until its own is shown. */}
+          {presented && unsupported.length > 0 && (
+            <ToastNotice
+              title={
+                unsupported.length === 1
+                  ? "Could not attach file"
+                  : `Could not attach ${unsupported.length} files`
               }
-              data-single-emoji={largeEmojiDraft || undefined}
-              data-emoji-images-only={
-                (largeEmojiDraft &&
-                  /^\s*(?::[a-z0-9_-]{1,64}:\s*)+$/i.test(draft)) ||
-                undefined
-              }
-              // Choosing this conversation's tab resumes typing here.
-              data-tab-focus=""
-              maxLength={Math.max(
-                0,
-                16000 -
-                  (sessionCards?.reduce(
-                    (size, card) => size + card.length + 2,
-                    0,
-                  ) ?? 0),
+              description={unsupportedTypes(
+                unsupported.map((item) => item.file.name),
               )}
-              aria-label={label}
-              placeholder={placeholder ?? label}
-              onFocus={() => completion.observe(true)}
-              onBlur={() => {
-                completion.invalidate();
-              }}
-              onSelect={() => {
-                completion.observe();
-              }}
-              onCompositionStart={() => {
-                completion.composing.current = true;
-                completion.invalidate();
-              }}
-              onCompositionEnd={() => {
-                completion.composing.current = false;
-                completion.observe(true);
-              }}
-              onKeyDown={(event) => {
-                if (
-                  event.nativeEvent.isComposing ||
-                  event.nativeEvent.keyCode === 229 ||
-                  completion.composing.current
-                )
-                  return;
-                if (
-                  event.shiftKey &&
-                  ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
-                ) {
-                  completion.invalidate();
-                  return;
-                }
-                if (completion.keys.current?.(event)) return;
-                if (
-                  event.key === "ArrowUp" &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.repeat &&
-                  !event.defaultPrevented &&
-                  !editingDisabled &&
-                  !editDisabled &&
-                  !submission &&
-                  !editing.target &&
-                  ((event.currentTarget.value === "" &&
-                    !valueRef.current.recipients.length) ||
-                    automaticTag.current ===
-                      JSON.stringify(valueRef.current)) &&
-                  !valueRef.current.sessionCards?.length &&
-                  !attachments.items.length
-                ) {
-                  const target = lastEditableMessage(session, editableRows());
-                  if (target) {
-                    event.preventDefault();
-                    startEdit(target);
+              onDismiss={() => setRefusedTypes([])}
+            />
+          )}
+          <ComposerContext key={editing.target ? "edit" : "reply"}>
+            {editing.target ? (
+              <div className={styles.replyContext}>
+                <PencilSimpleIcon size={18} aria-hidden="true" />
+                <div>Editing message</div>
+                <IconButton
+                  type="button"
+                  size="sm"
+                  aria-label={editing.locked ? "Close edit" : "Cancel edit"}
+                  disabled={editing.busy}
+                  onClick={editing.close}
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              </div>
+            ) : (
+              replyContext
+            )}
+          </ComposerContext>
+          <div className={styles.composerContent}>
+            {!editing.target && value.forward && (
+              <ComposerForward
+                session={host}
+                state={forwarded}
+                scope={scope}
+                onRemove={() => {
+                  saveDraft({ ...valueRef.current, forward: null });
+                  setError(undefined);
+                  input.current?.focus();
+                }}
+              />
+            )}
+            {!editing.target && (
+              <ComposerAttachments
+                media={session.media}
+                renderers={extensions?.attachments}
+                items={attachments.items}
+                gifs={gifs?.map((markdown) => ({
+                  markdown,
+                  // The alt text names the tile even when its media is unavailable.
+                  title: markdown.slice(2, markdown.indexOf("](")) || "GIF",
+                  source: draftGif(markdown, session.media)?.source,
+                }))}
+                removeGif={(markdown) => {
+                  saveDraft({
+                    ...valueRef.current,
+                    gifs:
+                      valueRef.current.gifs?.filter(
+                        (item) => item !== markdown,
+                      ) ?? [],
+                  });
+                  input.current?.focus();
+                }}
+                disabled={editingDisabled}
+                onExitComplete={() => setAttachmentsExiting(false)}
+                remove={(id) => {
+                  const item = attachments.items.find(
+                    (candidate) => candidate.id === id,
+                  );
+                  attachments.store.remove(id);
+                  if (item?.status === "error" && item.error === error)
+                    setError(undefined);
+                  input.current?.focus();
+                }}
+                retry={(id) => {
+                  const item = attachments.items.find(
+                    (candidate) => candidate.id === id,
+                  );
+                  attachments.store.retry(id);
+                  if (item?.status === "error" && item.error === error)
+                    setError(undefined);
+                }}
+              />
+            )}
+            <div className={styles.composerInput}>
+              <RichComposerInput
+                isEmptyForShortcuts={isEmptyForShortcuts}
+                ref={input}
+                id={inputId}
+                disabled={editingDisabled}
+                value={draft}
+                draft={editorDraft}
+                session={session}
+                scope={scope}
+                channelId={channelId}
+                extensions={extensions}
+                emoji={emojiCatalog.entries}
+                onSemanticPaste={(data) => {
+                  const reference = pastedForward(data);
+                  if (reference) {
+                    if (editing.target || submission) {
+                      setError(
+                        "Finish this edit before pasting a forwarded message.",
+                      );
+                      return true;
+                    }
+                    if (valueRef.current.forward) {
+                      setError(
+                        "Only one forwarded message can be attached. Remove it before pasting another.",
+                      );
+                      return true;
+                    }
+                    const { note, ...source } = reference;
+                    if (note && !insert(note)) return true;
+                    saveDraft({ ...valueRef.current, forward: source });
+                    return true;
                   }
-                  return;
+                  return false;
+                }}
+                onPasteTooLong={() => setPasteTooLong(true)}
+                aria-describedby={
+                  pasteTooLong ? `${inputId}-paste-error` : undefined
                 }
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.metaKey
-                ) {
-                  event.preventDefault();
-                  // Holding Enter must not send after an empty list item exits.
-                  if (event.repeat) return;
+                onDraftChange={(next) => {
+                  // Remounting the editor can replay our own prefill as a change.
                   if (
-                    activeFormats.includes("bullet_list") ||
-                    activeFormats.includes("ordered_list")
-                  ) {
-                    event.currentTarget.insertLineBreak();
+                    automaticTag.current !== undefined &&
+                    automaticTag.current === JSON.stringify(next)
+                  )
+                    return;
+                  setPasteTooLong(false);
+                  const textChanged = next.text !== valueRef.current.text;
+                  // The default tag's prefill shows without being saved.
+                  if (seeding.current) {
+                    saveDraft(next, "prefill");
                     return;
                   }
-                  send();
+                  if (!editing.target) {
+                    // The user's edit settles the seed on screen, as settled
+                    // evidence does: clearing it lasts until the composer is
+                    // shown again, while a newer message of the viewer's, sent
+                    // elsewhere, still seeds.
+                    if (seedSource) seedApplied.current = seedKey(seedSource);
+                    automaticTag.current = undefined;
+                  }
+                  saveDraft(next, "editor");
+                  completion.observe(true);
+                  if (textChanged && next.text.trim()) notifyTyping();
+                }}
+                onFormatsChange={setActiveFormats}
+                onEditLink={setLinkEdit}
+                onAnnotationMenu={
+                  extensions?.annotators ? setAnnotationMenu : undefined
                 }
-              }}
-            />
+                // Pasted identity links notify admitted recipients under their
+                // current names; edits never add recipients. Send still asks
+                // before adding someone outside the channel.
+                acceptRecipient={(pubkey) =>
+                  editing.target
+                    ? null
+                    : pastedMentionRecipient(
+                        session,
+                        channelId,
+                        pubkey,
+                        agentChoices,
+                        mentionRoster,
+                      )
+                }
+                data-single-emoji={largeEmojiDraft || undefined}
+                data-emoji-images-only={
+                  (largeEmojiDraft &&
+                    /^\s*(?::[a-z0-9_-]{1,64}:\s*)+$/i.test(draft)) ||
+                  undefined
+                }
+                // Choosing this conversation's tab resumes typing here.
+                data-tab-focus=""
+                maxLength={Math.max(
+                  0,
+                  16000 -
+                    [...(chatCards ?? []), ...(gifs ?? [])].reduce(
+                      (size, card) => size + card.length + 2,
+                      0,
+                    ),
+                )}
+                aria-label={label}
+                placeholder={placeholder ?? label}
+                onFocus={() => {
+                  hasFocused.current = true;
+                  completion.observe(true);
+                }}
+                onBlur={() => {
+                  flushDraft();
+                  completion.invalidate();
+                }}
+                onSelect={() => {
+                  completion.observe();
+                }}
+                onCompositionStart={() => {
+                  completion.composing.current = true;
+                  completion.invalidate();
+                }}
+                onCompositionEnd={() => {
+                  completion.composing.current = false;
+                  completion.observe(true);
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    event.nativeEvent.isComposing ||
+                    event.nativeEvent.keyCode === 229 ||
+                    completion.composing.current
+                  )
+                    return;
+                  if (
+                    event.shiftKey &&
+                    ["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                      event.key,
+                    )
+                  ) {
+                    completion.invalidate();
+                    return;
+                  }
+                  if (completion.keys.current?.(event)) return;
+                  if (
+                    event.key === "ArrowUp" &&
+                    !event.shiftKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.repeat &&
+                    !event.defaultPrevented &&
+                    isEmptyForShortcuts()
+                  ) {
+                    // The default selects the newest message; the preference
+                    // and ⌘↑ edit using the same conversation-scoped lookup.
+                    if (
+                      !event.metaKey &&
+                      !editWithUpArrow &&
+                      selectNewestMessage(editScope?.list.current)
+                    ) {
+                      event.preventDefault();
+                      return;
+                    }
+                    const target = lastEditableMessage(session, editableRows());
+                    if (target) {
+                      event.preventDefault();
+                      startEdit(target);
+                    }
+                    return;
+                  }
+                  // With ⌘/Ctrl+Enter chosen, plain Enter falls through to the editor's line break.
+                  if (
+                    sendWithModEnter &&
+                    matches(
+                      [{ key: "Enter", mod: true }],
+                      event.nativeEvent,
+                      isApplePlatform(navigator.platform),
+                    )
+                  ) {
+                    event.preventDefault();
+                    if (!event.repeat) send(event.nativeEvent.isTrusted);
+                    return;
+                  }
+                  if (
+                    !sendWithModEnter &&
+                    event.key === "Enter" &&
+                    !event.shiftKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.metaKey
+                  ) {
+                    event.preventDefault();
+                    // Holding Enter must not send after an empty list item exits.
+                    if (event.repeat) return;
+                    if (
+                      activeFormats.includes("bullet_list") ||
+                      activeFormats.includes("ordered_list")
+                    ) {
+                      event.currentTarget.insertLineBreak();
+                      return;
+                    }
+                    send(event.nativeEvent.isTrusted);
+                  }
+                }}
+              />
+              {iconPlaceholder && (
+                // Its words are drawn by CSS, like the editor's own placeholder,
+                // so find-in-page and copying skip them.
+                <span
+                  className={styles.channelPlaceholder}
+                  aria-hidden="true"
+                  data-lead="Message"
+                  data-name={channelName}
+                >
+                  <ChannelIcon className={channelIconClass(ChannelIcon)} />
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-        {!editing.target &&
-          threadRootId &&
-          mediaTimeSeconds !== undefined &&
-          !hideMediaTimeIndicator && (
-            <div className={styles.mediaComposerAnchor}>
-              <span>Commenting at {formatMediaTime(mediaTimeSeconds)}</span>
+          {!editing.target &&
+            threadRootId &&
+            mediaTimeSeconds !== undefined &&
+            !hideMediaTimeIndicator && (
+              <div className={styles.mediaComposerAnchor}>
+                <span>Commenting at {formatMediaTime(mediaTimeSeconds)}</span>
+                <IconButton
+                  size="compact"
+                  type="button"
+                  onClick={clearMediaTime}
+                  aria-label="Remove video time"
+                  icon={<XIcon size={13} />}
+                />
+              </div>
+            )}
+          {disclosure && (
+            <div id={forwardDisclosureId} className="text-subtle">
+              {disclosure}
+            </div>
+          )}
+          {voice.element}
+          <div className={styles.composerActions} hidden={voice.capturing}>
+            <div className={styles.composerToolRow}>
+              {active && (
+                <ComposerFormattingTools
+                  formatting={!markdownAsTyped}
+                  disabled={editingDisabled}
+                  singleRow={chatPresentation || !!trailingTool}
+                  // Conversation controls (Berd's project) follow the tools.
+                  trailing={!editing.target ? trailingTool : undefined}
+                  activeFormats={activeFormats}
+                  toggleFormat={(format) => input.current?.toggleFormat(format)}
+                  editLink={() => {
+                    const edit = input.current?.editLink();
+                    if (edit) setLinkEdit(edit);
+                  }}
+                >
+                  {extensions ? (
+                    <ComposerTools
+                      registry={extensions.tools}
+                      {...(canAttach && !editing.target
+                        ? { capture: voiceCommands.capture }
+                        : {})}
+                      renderLeading={renderLeadingTools}
+                      session={session}
+                      scope={scope}
+                      channelId={channelId}
+                      threadRootId={threadRootId}
+                      disabled={editingDisabled}
+                      inviteAgents={agentChoices && !editing.target}
+                      recipients={recipients}
+                      audience={audience}
+                      {...toolCommands}
+                    />
+                  ) : (
+                    renderLeadingTools(null)
+                  )}
+                </ComposerFormattingTools>
+              )}
+              {active &&
+                !editing.target &&
+                (!submission || ownSoloConversation) &&
+                !!addressedKeys.length && (
+                  <ComposerModels
+                    profiles={session.profiles}
+                    media={session.media}
+                    pubkeys={addressedKeys}
+                    value={picks}
+                    disabled={editingDisabled || pickReadFailed || !picksLoaded}
+                    resettable={stickyPicks}
+                    explicitOnly={!!submission && stickyPicks}
+                    onChange={changePicks}
+                    focusAfterPickerRemoval={() => input.current?.focus()}
+                    onResolved={(next, error) => {
+                      resolvedPicks.current =
+                        next === undefined
+                          ? undefined
+                          : {
+                              source: picksSnapshot,
+                              pubkeys: addressedKeys,
+                              value: next,
+                              error,
+                            };
+                    }}
+                    onRetryInventory={() => void session.agentChoices.refresh()}
+                    startsThread={startsThread}
+                    place={sessionPlace}
+                  />
+                )}
               <IconButton
-                size="compact"
-                type="button"
-                onClick={clearMediaTime}
-                aria-label="Remove video time"
-                icon={<XIcon size={13} />}
+                variant={
+                  draft.trim() ||
+                  value.forward ||
+                  chatCards?.length ||
+                  gifs?.length ||
+                  attachments.items.length
+                    ? "primary"
+                    : "ghost"
+                }
+                size="toolbar"
+                type="submit"
+                onClick={(event) => {
+                  if (!event.nativeEvent.isTrusted) return;
+                  event.preventDefault();
+                  void send(true);
+                }}
+                style={editing.target ? undefined : accentButtonStyle}
+                aria-label={editing.target ? "Save changes" : "Send message"}
+                aria-describedby={
+                  !editing.target && forwarded.disclosure
+                    ? forwardDisclosureId
+                    : undefined
+                }
+                title={
+                  editing.target
+                    ? "Save changes"
+                    : compacting
+                      ? "Wait for compaction to finish, or interrupt it."
+                      : untagged
+                        ? recipientHint
+                        : "Send message"
+                }
+                focusableWhenDisabled={
+                  untagged || (!editing.target && compacting) || undefined
+                }
+                disabled={
+                  disabled ||
+                  (!editing.target &&
+                    stickyPicks &&
+                    (pickReadPending || pickReadFailed)) ||
+                  untagged ||
+                  (!editing.target && compacting) ||
+                  (!editing.target &&
+                    (!!accepted || conflict || sendPending)) ||
+                  (!!editing.target && (editing.locked || editDisabled)) ||
+                  admitting ||
+                  sending ||
+                  submission?.disabled ||
+                  (!editing.target && forwarded.blocked) ||
+                  (!editing.target && attachments.blocked) ||
+                  (!draft.trim() &&
+                    !value.forward &&
+                    !chatCards?.length &&
+                    ((!!submission && !submission.allowAttachmentOnly) ||
+                      (!attachments.items.length && !gifs?.length)) &&
+                    !(
+                      editing.target &&
+                      requestDeletion &&
+                      session.outbox?.supports(5)
+                    ))
+                }
+                icon={<ArrowUpIcon size={16} />}
               />
             </div>
-          )}
-        {voice.element}
-        <div className={styles.composerActions} hidden={voice.capturing}>
-          <div className={styles.composerToolRow}>
-            {active && (
-              <ComposerFormattingTools
-                disabled={editingDisabled}
-                singleRow={chatPresentation || !!trailingTool}
-                // Conversation controls (Berd's project) follow the tools.
-                trailing={!editing.target ? trailingTool : undefined}
-                activeFormats={activeFormats}
-                toggleFormat={(format) => input.current?.toggleFormat(format)}
-                editLink={() => {
-                  const edit = input.current?.editLink();
-                  if (edit) setLinkEdit(edit);
-                }}
-              >
-                {extensions ? (
-                  <ComposerTools
-                    registry={extensions.tools}
-                    {...(canAttach && !editing.target
-                      ? { capture: voice.begin }
-                      : {})}
-                    renderLeading={renderLeadingTools}
-                    session={session}
-                    scope={scope}
-                    channelId={channelId}
-                    threadRootId={threadRootId}
-                    disabled={editingDisabled}
-                    inviteAgents={agentChoices && !editing.target}
-                    recipients={recipients}
-                    insertText={(text) => insert(text)}
-                    insertMention={insertMention}
-                    insertMentions={insertMentions}
-                    replaceRecipients={replaceRecipients}
-                    insertResource={insertResource}
-                    focus={() => input.current?.focus()}
-                  />
-                ) : (
-                  renderLeadingTools(null)
-                )}
-              </ComposerFormattingTools>
-            )}
-            {active &&
-              !editing.target &&
-              !submission &&
-              !!value.recipients.length && (
-                <ComposerModels
-                  profiles={session.profiles}
-                  media={session.media}
-                  pubkeys={value.recipients.map((item) => item.pubkey)}
-                  value={picks}
-                  disabled={editingDisabled}
-                  onChange={setPicks}
-                  onResolved={(next) => {
-                    resolvedPicks.current = next;
-                  }}
-                  startsThread={startsThread}
-                  place={sessionPlace}
-                />
-              )}
-            <IconButton
-              variant={
-                draft.trim() || sessionCards?.length || attachments.items.length
-                  ? "primary"
-                  : "ghost"
-              }
-              size="toolbar"
-              type="submit"
-              style={editing.target ? undefined : accentButtonStyle}
-              aria-label={editing.target ? "Save changes" : "Send message"}
-              title={
-                editing.target
-                  ? "Save changes"
-                  : compacting
-                    ? "Wait for compaction to finish, or interrupt it."
-                    : untagged
-                      ? recipientHint
-                      : "Send message"
-              }
-              focusableWhenDisabled={
-                untagged || (!editing.target && compacting) || undefined
-              }
-              disabled={
-                disabled ||
-                untagged ||
-                (!editing.target && compacting) ||
-                (!editing.target && (!!accepted || conflict || sendPending)) ||
-                (!!editing.target && (editing.locked || editDisabled)) ||
-                admitting ||
-                sending ||
-                submission?.disabled ||
-                (!editing.target && attachments.blocked) ||
-                (!draft.trim() &&
-                  !sessionCards?.length &&
-                  (!!submission || !attachments.items.length) &&
-                  !(
-                    editing.target &&
-                    requestDeletion &&
-                    session.outbox?.supports(5)
-                  ))
-              }
-              icon={<ArrowUpIcon size={16} />}
-            />
           </div>
-        </div>
-        {!editing.target && compacting && (
-          <p className={styles.composerStatus} role="status">
-            Compacting session…
-          </p>
-        )}
-        {(error || editing.error) && (
-          <p role="alert">{error ?? editing.error}</p>
-        )}
-        {!editing.target &&
-          !submission &&
-          (accepted || conflict || storageFailed) && (
-            <div>
-              <p role="alert">
-                {accepted
-                  ? "Message accepted. Could not update the saved draft. Retry cleanup before sending again."
-                  : conflict
-                    ? "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."
-                    : "Could not save this draft on this device. Your edits are kept here."}
-              </p>
-              {accepted ? (
-                <Button type="button" onClick={() => finishDraft(accepted)}>
-                  Retry draft cleanup
-                </Button>
-              ) : conflict ? (
-                <>
-                  <Button type="button" onClick={() => resolveDraft(false)}>
-                    Load saved draft
-                  </Button>
-                  <Button type="button" onClick={() => resolveDraft(true)}>
-                    Keep my draft
-                  </Button>
-                </>
-              ) : (
-                <Button type="button" onClick={() => persist(valueRef.current)}>
-                  Retry draft save
-                </Button>
-              )}
+          {!editing.target && compacting && (
+            <p className={styles.composerStatus} role="status">
+              Compacting session…
+            </p>
+          )}
+          {pasteTooLong && (
+            <p id={`${inputId}-paste-error`} role="alert">
+              This paste would make your message too long.{" "}
+              {canAttach && !editing.target
+                ? "Shorten it or attach the text as a file."
+                : "Shorten the text and try again."}
+            </p>
+          )}
+          {(error || editing.error) && (
+            <p role="alert">{error ?? editing.error}</p>
+          )}
+          {stickyPicks && (pickReadPending || pickReadFailed) && (
+            <div className={pickReadFailed ? undefined : "sr-only"}>
+              <LoadingRegion
+                pending={pickReadPending}
+                label="Loading saved model and effort…"
+                statusVisibility="screen-reader"
+                feedback={
+                  pickReadFailed ? (
+                    <div>
+                      <p role="alert">
+                        Could not read saved model and effort for this chat on
+                        this device. Retry before sending.
+                      </p>
+                      <Button
+                        type="button"
+                        disabled={pickReadPending}
+                        onClick={() => void refreshPicks()}
+                      >
+                        Retry saved choices
+                      </Button>
+                    </div>
+                  ) : undefined
+                }
+              >
+                {null}
+              </LoadingRegion>
             </div>
           )}
-        {editing.retryable && (
-          <>
-            <p role="status">Your edit is still in the outbox.</p>
+          {pickStorageFailed && (
+            <p role="alert">
+              Could not save model and effort for this chat on this device. The
+              current choices remain until this composer closes.
+            </p>
+          )}
+          {!editing.target &&
+            !submission &&
+            (accepted || conflict || storageFailed) && (
+              <div>
+                <p role="alert">
+                  {accepted
+                    ? "Message accepted. Could not update the saved draft. Retry cleanup before sending again."
+                    : storageFailed
+                      ? "Could not save this draft on this device. Your edits are kept here."
+                      : "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."}
+                </p>
+                {accepted ? (
+                  <Button type="button" onClick={() => finishDraft(accepted)}>
+                    Retry draft cleanup
+                  </Button>
+                ) : conflict ? (
+                  <>
+                    <Button type="button" onClick={() => resolveDraft(false)}>
+                      Load saved draft
+                    </Button>
+                    <Button type="button" onClick={() => resolveDraft(true)}>
+                      Keep my draft
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={() => persist(valueRef.current)}
+                  >
+                    Retry draft save
+                  </Button>
+                )}
+              </div>
+            )}
+          {editing.retryable && (
+            <>
+              <p role="status">Your edit is still in the outbox.</p>
+              <Button
+                type="button"
+                disabled={editDisabled}
+                onClick={editing.retry}
+              >
+                Retry edit
+              </Button>
+            </>
+          )}
+          {(error || editing.error) && emojiCatalog.status === "error" && (
             <Button
               type="button"
-              disabled={editDisabled}
-              onClick={editing.retry}
+              disabled={editingDisabled}
+              onClick={() => {
+                void session.emoji.refresh().then(() => {
+                  if (
+                    input.current?.isConnected &&
+                    session.emoji.snapshot().status === "ready"
+                  ) {
+                    setError(undefined);
+                    editing.clearError();
+                  }
+                });
+              }}
             >
-              Retry edit
+              Retry message preparation
             </Button>
-          </>
-        )}
-        {(error || editing.error) && emojiCatalog.status === "error" && (
-          <Button
-            type="button"
-            disabled={editingDisabled}
-            onClick={() => {
-              void session.emoji.refresh().then(() => {
-                if (
-                  input.current?.isConnected &&
-                  session.emoji.snapshot().status === "ready"
-                ) {
-                  setError(undefined);
-                  editing.clearError();
-                }
-              });
-            }}
-          >
-            Retry message preparation
-          </Button>
-        )}
-      </form>
+          )}
+        </form>
+      </ComposerDockSlot>
       {active && linkEdit && (
         <ComposerLinkDialog
           edit={linkEdit}
@@ -2336,8 +4899,45 @@ function Composer({
   );
 }
 
-/** Retain the last preview for collapse; reply semantics clear immediately. */
-function ComposerReplyContext({ children }: { children: ReactNode }) {
+/** Stable functions that call the latest of `callbacks`, which must keep the same keys. */
+function useLatestCallbacks<
+  T extends { [K in keyof T]: (...args: never[]) => unknown },
+>(callbacks: T): T {
+  const latest = useRef(callbacks);
+  useLayoutEffect(() => {
+    latest.current = callbacks;
+  });
+  const [stable] = useState(
+    () =>
+      Object.fromEntries(
+        (Object.keys(callbacks) as (keyof T)[]).map((key) => [
+          key,
+          (...args: never[]) => latest.current[key](...args),
+        ]),
+      ) as T,
+  );
+  return stable;
+}
+
+/** The previous list while `list` holds the same entries, else `list`. */
+function useEqualList<T>(
+  list: readonly T[],
+  same: (a: T, b: T) => boolean,
+): readonly T[] {
+  const [kept, setKept] = useState(list);
+  if (
+    kept !== list &&
+    (kept.length !== list.length ||
+      kept.some((item, index) => !same(item, list[index] as T)))
+  ) {
+    setKept(list);
+    return list;
+  }
+  return kept;
+}
+
+/** Retain the last preview for collapse; context semantics clear immediately. */
+function ComposerContext({ children }: { children: ReactNode }) {
   const open = !!children;
   const [lastContext, setLastContext] = useState(children);
   if (open && children !== lastContext) setLastContext(children);
@@ -2361,11 +4961,15 @@ function ComposerReplyContext({ children }: { children: ReactNode }) {
 function RecipientAvatars({
   session,
   recipients,
+  mentions,
   disabled,
   remove,
 }: {
   session: ComposerSession | RelaySession;
   recipients: readonly MentionRecipient[];
+  /** Which come from mentions in the text rather than the agents menu: all
+   * of them, or these keys. */
+  mentions: boolean | readonly string[];
   disabled: boolean;
   remove(pubkey: string): void;
 }) {
@@ -2396,13 +5000,20 @@ function RecipientAvatars({
   const unique = [
     ...new Map(recipients.map((item) => [item.pubkey, item])).values(),
   ];
+  const mentioned = (pubkey: string) =>
+    typeof mentions === "boolean" ? mentions : mentions.includes(pubkey);
   return (
     <section
       className={styles.mentionRecipients}
-      aria-label="Explicit mentions"
+      aria-label={
+        unique.every((item) => mentioned(item.pubkey))
+          ? "Explicit mentions"
+          : "Sending to"
+      }
     >
       {unique.map((recipient) => {
         const profile = profiles.get(recipient.pubkey);
+        const mention = mentioned(recipient.pubkey);
         return (
           <IconButton
             key={recipient.pubkey}
@@ -2413,8 +5024,8 @@ function RecipientAvatars({
             data-avatar-shape={
               agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
             }
-            title={`Remove explicit mention of ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
-            aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
+            title={`Remove ${mention ? "explicit mention of " : ""}${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
+            aria-label={`Remove ${mention ? "mention" : "agent"} ${recipient.name} ${recipient.pubkey}`}
             disabled={disabled}
             onClick={() => remove(recipient.pubkey)}
             icon={
@@ -2443,5 +5054,23 @@ function RecipientAvatars({
         );
       })}
     </section>
+  );
+}
+
+/** In a view, the composer sits in a dock that sheets opened from its rows
+ * are drawn inside, around it; elsewhere it stands alone. */
+function ComposerDockSlot({
+  dockRef,
+  children,
+}: {
+  dockRef: ((element: HTMLElement | null) => void) | undefined;
+  children: ReactNode;
+}) {
+  return dockRef ? (
+    <div ref={dockRef} className={styles.composerDock} data-composer-dock="">
+      {children}
+    </div>
+  ) : (
+    children
   );
 }

@@ -79,7 +79,8 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   ).toContainText("is typing");
   await expect(indicator).toHaveCount(1);
   await expect(
-    composer
+    page
+      .locator("[data-composer-dock]", { has: composer })
       .locator("..")
       .getByRole("status", { name: "Conversation activity" }),
   ).toBeEmpty();
@@ -156,7 +157,9 @@ for (const scope of ["channel", "thread"]) {
       name: scope === "thread" ? "Reply to thread" : "Send a message to Alpha",
       exact: true,
     });
-    const indicator = composer
+    // Activity floats beside the composer's dock, not inside it.
+    const indicator = page
+      .locator("[data-composer-dock]", { has: composer })
       .locator("..")
       .locator('[aria-hidden="true"]')
       .filter({ hasText: /is typing$/ });
@@ -216,6 +219,7 @@ for (const scope of ["channel", "thread"]) {
     await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
     await history.focus();
     await keyScroll(page, "PageUp", history);
+    await expect(history).toBeFocused();
     expect(await gap()).toBeGreaterThan(100);
     expect(await history.boundingBox()).toEqual(idle);
     expect(await composer.boundingBox()).toEqual(idleComposer);
@@ -231,7 +235,10 @@ for (const scope of ["channel", "thread"]) {
         );
       }),
     ).toBe(true);
+    // End must keep the reader's focus, even after the reply editor has held
+    // a native caret. WebKit must not route it back into that blurred editor.
     await keyScroll(page, "End", history);
+    await expect(history).toBeFocused();
     await expect.poll(gap).toBeLessThan(2);
     await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
     await page.screenshot({

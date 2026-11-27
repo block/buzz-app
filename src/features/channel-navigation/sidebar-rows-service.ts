@@ -1,0 +1,213 @@
+import { Service, type Context } from "@deepseek-ai/cordis";
+import { isValidElement, type ReactElement } from "react";
+import type { ChannelSummary } from "../relay/contracts";
+import type { UnreadSnapshot } from "../relay/unread";
+import {
+  createContributions,
+  type Contribution,
+} from "../../plugins/contributions";
+import { isSidebarSortMode, type SidebarSortMode } from "../relay/sidebar-sort";
+import type { SidebarSectionAction } from "./sidebar-sections-service";
+
+export type SidebarRow = Readonly<{
+  id: string;
+  kind: "team" | "dm" | "solo";
+  label: string;
+  /** Team section key, or Solo workspace id ("" for unfiled chats). */
+  sectionKey: string;
+  channel: ChannelSummary;
+  unread: UnreadSnapshot;
+}>;
+export type SidebarRowSortMode = Readonly<{
+  id: string;
+  label: string;
+  compare: (a: SidebarRow, b: SidebarRow) => number;
+}>;
+export type SidebarRowContribution = Readonly<{
+  version: 1;
+  id: string;
+  render?: (
+    row: SidebarRow,
+    Default: ReactElement | null,
+  ) => ReactElement | null;
+  sortModes?: readonly SidebarRowSortMode[];
+  /** Items for a row's menu, after Mute, in the sidebar and the channel
+   * header. Asked each time the menu renders. */
+  menuItems?: (row: SidebarRow) => readonly SidebarSectionAction[];
+}>;
+export type RegisteredSidebarRows = Contribution<SidebarRowContribution>;
+export type SidebarRows = Readonly<{
+  version: 1;
+  snapshot: () => readonly RegisteredSidebarRows[];
+  subscribe: (listener: () => void) => () => void;
+  settled?: () => boolean;
+  register: (contribution: SidebarRowContribution) => void;
+}>;
+
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    /** Read through reflect for compatibility with hosts without row contributions. */
+    sidebarRows?: SidebarRows;
+  }
+}
+
+const idPattern = /^[a-z0-9][a-z0-9._-]*$/;
+
+export class SidebarRowsService extends Service implements SidebarRows {
+  readonly version = 1 as const;
+  private readonly contributions;
+  private source: readonly RegisteredSidebarRows[] = [];
+  private ordered: readonly RegisteredSidebarRows[] = [];
+
+  constructor(ctx: Context) {
+    super(ctx, "sidebarRows");
+    this.contributions = createContributions<SidebarRowContribution>(ctx);
+  }
+
+  snapshot = () => {
+    const source = this.contributions.snapshot();
+    if (source !== this.source) {
+      this.source = source;
+      this.ordered = Object.freeze(
+        [...source].sort((a, b) =>
+          a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
+        ),
+      );
+    }
+    return this.ordered;
+  };
+  settled = () => this.ctx.pluginStatus.settled?.() ?? true;
+  subscribe = (listener: () => void) => {
+    const contributions = this.contributions.subscribe(listener);
+    // A failed plugin can settle without changing the contribution snapshot.
+    const status = this.ctx.pluginStatus.subscribe(listener);
+    return () => {
+      contributions();
+      status();
+    };
+  };
+
+  register(value: SidebarRowContribution) {
+    if (value?.version !== 1) {
+      console.warn("Ignoring unsupported sidebar row contribution version");
+      return;
+    }
+    if (
+      typeof value.id !== "string" ||
+      !idPattern.test(value.id) ||
+      (value.render !== undefined && typeof value.render !== "function") ||
+      (value.menuItems !== undefined &&
+        typeof value.menuItems !== "function") ||
+      (value.sortModes !== undefined &&
+        (!Array.isArray(value.sortModes) ||
+          new Set(value.sortModes.map((mode) => mode?.id)).size !==
+            value.sortModes.length ||
+          value.sortModes.some(
+            (mode) =>
+              !mode ||
+              typeof mode.id !== "string" ||
+              !idPattern.test(mode.id) ||
+              typeof mode.label !== "string" ||
+              !mode.label.trim() ||
+              typeof mode.compare !== "function",
+          )))
+    )
+      throw new Error("Invalid sidebar row contribution");
+    for (const mode of value.sortModes ?? []) {
+      if (
+        !isSidebarSortMode(
+          `plugin:${this.ctx.pluginOwner?.id}/${value.id}/${mode.id}`,
+        )
+      )
+        throw new Error("Invalid sidebar row sort id");
+    }
+    this.contributions.register(this.ctx, value);
+  }
+}
+
+export function sidebarRow(
+  channel: ChannelSummary,
+  sectionKey: string,
+  unread: UnreadSnapshot,
+): SidebarRow {
+  return {
+    id: channel.id,
+    kind:
+      channel.channelType === "dm"
+        ? "dm"
+        : channel.channelType === "solo"
+          ? "solo"
+          : "team",
+    label: channel.name,
+    sectionKey,
+    channel,
+    unread,
+  };
+}
+
+export function pluginRowSectionKey(
+  channel: ChannelSummary,
+  sectionKey: string,
+) {
+  if (channel.channelType !== "solo") return sectionKey;
+  return sectionKey.startsWith("group:") ? sectionKey.slice(6) : "";
+}
+
+/** Each contribution's valid menu items for a row; a throwing or invalid
+ * contribution adds none. */
+export function sidebarRowMenuItems(
+  entries: readonly RegisteredSidebarRows[],
+  row: SidebarRow,
+) {
+  return entries.flatMap((entry) => {
+    try {
+      const items = entry.menuItems?.(row) ?? [];
+      return Array.isArray(items)
+        ? items
+            .filter(
+              (item) =>
+                typeof item?.id === "string" &&
+                idPattern.test(item.id) &&
+                typeof item.label === "string" &&
+                !!item.label.trim() &&
+                isValidElement(item.icon) &&
+                typeof item.onSelect === "function",
+            )
+            .filter(
+              (item, index, valid) =>
+                valid.findIndex((other) => other.id === item.id) === index,
+            )
+            .map((item) => ({ ...item, key: `${entry.key}/${item.id}` }))
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+export function sidebarRowSortModes(entries: readonly RegisteredSidebarRows[]) {
+  return entries.flatMap((entry) =>
+    (entry.sortModes ?? []).map((mode) => ({
+      ...mode,
+      id: `plugin:${entry.key}/${mode.id}` as SidebarSortMode,
+    })),
+  );
+}
+
+export function sortSidebarRows<T>(
+  rows: readonly T[],
+  mode: SidebarRowSortMode | undefined,
+  data: (row: T) => SidebarRow,
+): readonly T[] {
+  if (!mode) return rows;
+  try {
+    return [...rows].sort((a, b) => {
+      const order = mode.compare(data(a), data(b));
+      if (!Number.isFinite(order))
+        throw new Error("Invalid sidebar row comparison");
+      return order;
+    });
+  } catch {
+    return rows;
+  }
+}

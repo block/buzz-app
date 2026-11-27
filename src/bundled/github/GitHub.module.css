@@ -34,6 +34,10 @@
 .identity > div {
   min-width: 0;
 }
+.identityAction {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
 .repository {
   font-size: var(--text-label);
   font-weight: var(--text-label--font-weight);
@@ -213,64 +217,24 @@
 .body {
   overflow-wrap: anywhere;
 }
+/* GitHub links keep the body's ink, as on GitHub. */
 .body a {
   color: var(--text-standard);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .plainBody {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .paragraph,
-.body ul,
-.body ol,
-.body blockquote,
-.body pre,
 .attachment {
   margin: var(--space-3) 0;
-}
-.body :is(h1, h2, h3, h4, h5, h6) {
-  margin: var(--space-4) 0 var(--space-2);
-  font-size: var(--text-body-lg);
-  line-height: var(--text-body-lg--line-height);
-  letter-spacing: var(--text-body-lg--letter-spacing);
-}
-.body ul,
-.body ol {
-  padding-left: var(--space-5);
-}
-.body ul {
-  list-style: disc;
-}
-.body ol {
-  list-style: decimal;
 }
 .body [class~="contains-task-list"] {
   list-style: none;
 }
-.body blockquote {
-  margin-left: 0;
-  padding-left: var(--space-3);
-  border-left: 2px solid var(--border-standard);
-  color: var(--text-subtle);
-}
-.body pre,
 .tableScroll {
   max-width: 100%;
   overflow-x: auto;
-}
-.body pre {
-  padding: var(--space-3);
-  background: var(--surface-panel);
-}
-.body table {
-  border-collapse: collapse;
-}
-.body th,
-.body td {
-  padding: var(--space-2);
-  border: 1px solid var(--border-standard);
 }
 .attachment > a {
   display: block;
@@ -280,6 +244,11 @@
   margin-top: var(--space-6);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-standard);
+}
+/* GitHub gives an image's authored width but not its height; holding the
+   frame to that width keeps it near its final size before the image loads. */
+.attachment [data-media-preview] {
+  max-width: min(100%, var(--attachment-width, 100%));
 }
 /* Paint above the image: matching-color content cannot cover its edge. */
 .attachment [data-image-preview]::after {
@@ -293,6 +262,7 @@
 }
 
 .checklist {
+  container-type: inline-size;
   list-style: none;
   margin: var(--space-4) 0 0;
   padding: var(--space-1) var(--space-3);
@@ -350,7 +320,7 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.pullActions > :last-child:is([aria-haspopup]) {
+.pullActions > [aria-haspopup="menu"] {
   margin-left: auto;
 }
 .pullActionError {
@@ -358,7 +328,39 @@
   color: var(--text-danger);
   overflow-wrap: anywhere;
 }
+.review {
+  display: grid;
+  gap: var(--space-4);
+}
+.review p {
+  margin: 0;
+}
+.reviewNotice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.reviewActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
 .description {
+  margin-top: var(--space-4);
+}
+.views {
+  margin-top: var(--space-4);
+}
+.tabCounts {
+  margin-inline-start: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+.files {
+  display: grid;
+  gap: var(--space-3);
   margin-top: var(--space-4);
 }
 /* A Solo chat's linked pull request, in the sidebar's chat icon slot. */
@@ -368,10 +370,25 @@
   justify-content: center;
   width: var(--space-5);
   flex: 0 0 var(--space-5);
+}
+/* The sidebar's icon and a message link's icon take one colour per state, as
+   the panel's chip above does; a link's text stays a link. Open, merged and
+   an issue completed use the icon-tier roles: the chip's step-12 text inks are
+   indistinguishable from a bubble's own ink. Draft, closed, an issue not
+   planned and not yet read are quiet: closed is not red here. Only the
+   sidebar shows an open one's checks and conflicts.
+   The sidebar's quiet icon is the row's subtle ink, which a hovered or
+   selected row rebinds; a message's icons take the pair the bubble hands
+   them, if any. */
+.soloPull {
   color: var(--text-subtle);
 }
-.soloPull[data-tone="open"] {
-  color: var(--text-success);
+.pullState {
+  color: var(--message-icon-subtle, var(--icon-subtle));
+}
+.soloPull[data-tone="open"],
+.pullState[data-pr-state="open"] {
+  color: var(--message-icon-success, var(--icon-success));
 }
 .soloPull[data-tone="failure"] {
   color: var(--text-danger);
@@ -379,8 +396,10 @@
 .soloPull[data-tone="pending"] {
   color: var(--text-warning);
 }
-.soloPull[data-tone="merged"] {
-  color: var(--text-categorical-purple);
+.soloPull[data-tone="merged"],
+.pullState[data-pr-state="merged"],
+.pullState[data-pr-state="completed"] {
+  color: var(--message-icon-categorical-purple, var(--icon-categorical-purple));
 }
 .soloLink {
   display: flex;
@@ -392,4 +411,37 @@
 }
 .soloLink > [role="alert"] {
   flex-basis: 100%;
+}
+
+.checklistContent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.checklistContent > .checklistValue {
+  flex: 1 1 auto;
+  width: max-content;
+  max-width: 100%;
+}
+.checklistAction {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.resolutionAction {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.checklistDetails {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.checklistDetails ul {
+  margin: 0;
+  padding-inline-start: var(--space-6);
 }

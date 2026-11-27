@@ -77,11 +77,6 @@ async function harness(discovered = true) {
           self: viewer,
           ...(discovered
             ? {
-                audience_authority: {
-                  version: 1,
-                  community_id: community,
-                  max_sources: 100,
-                },
                 read_state_snapshot: {
                   version: 1,
                   community_id: community,
@@ -179,7 +174,6 @@ it("real broker discovery -> reader snapshot and scoped encrypted signing/public
   const h = await harness(),
     signal = new AbortController().signal;
   expect(h.transport.readState.communityId).toBe(community);
-  expect(h.transport.audienceAuthorityCommunity).toBe(community);
   expect(await h.reader.readStateSnapshot()).toEqual([]);
   const blob = { v: 1, client_id: "fixture", contexts: { room: 12 } };
   const event = await h.transport.readState.sign(
@@ -210,7 +204,7 @@ it("recovers expired saved state through broker HTTP, socket refusal and fresh c
     {
       slot: "b".repeat(32),
       createdAt: past,
-      blob: { v: 1, client_id: "fixture", contexts: { room: 12 } },
+      blob: { v: 1, client_id: "fixture", contexts: { room: past } },
     },
     h.key,
     past,
@@ -223,7 +217,7 @@ it("recovers expired saved state through broker HTTP, socket refusal and fresh c
       version: 1,
       slot: "b".repeat(32),
       clientId: "fixture",
-      state: { frontiers: { room: 13 }, overrides: {} },
+      state: { frontiers: { room: past + 1 }, overrides: {} },
       localUnread: {},
       revision: 2,
       acceptedRevision: 0,
@@ -258,7 +252,7 @@ it("recovers expired saved state through broker HTTP, socket refusal and fresh c
     (
       await h.transport.readState.decode(observed, new AbortController().signal)
     )[0].blob.contexts.room,
-  ).toBe(13);
+  ).toBe(past + 1);
 });
 it.each([false, true])(
   "reconciles legacy maximum-size NIP-44 records without widening writes (snapshot: %s)",
@@ -476,4 +470,44 @@ it("broker stops an oversized streamed snapshot before forwarding or parsing it"
   );
   expect(cancelled).toBe(true);
   expect(pulls).toBeLessThanOrEqual(10);
+});
+it("thread-follows routes sign and admit only their own exact shape", async () => {
+  const h = await harness();
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    v: 1,
+    client_id: "fixture",
+    threads: { [`room:${"1".repeat(64)}`]: { follow: true, at: now } },
+  };
+  const signed = await h.post("thread-follows-sign", {
+    slot: "b".repeat(32),
+    createdAt: now,
+    payload,
+  });
+  expect(signed.status).toBe(200);
+  const event = await signed.json();
+  expect(event.tags[0]).toEqual(["d", `thread-follows:${"b".repeat(32)}`]);
+  const decoded = await h.post("thread-follows-decode", [event]);
+  expect(await decoded.json()).toEqual([{ eventId: event.id, payload }]);
+  // Neither route accepts the other shape, and the window is enforced.
+  expect((await h.post("read-state-publish", event)).status).toBe(400);
+  expect((await h.post("read-state-decode", [event])).status).toBe(400);
+  const read = await h.post("read-state-sign", {
+    slot: "a".repeat(32),
+    createdAt: now,
+    blob: { v: 1, client_id: "fixture", contexts: {} },
+  });
+  expect(
+    (await h.post("thread-follows-publish", await read.json())).status,
+  ).toBe(400);
+  expect(
+    (
+      await h.post("thread-follows-sign", {
+        slot: "b".repeat(32),
+        createdAt: now + 120,
+        payload,
+      })
+    ).status,
+  ).toBe(400);
+  expect(h.calls).toEqual([]);
 });

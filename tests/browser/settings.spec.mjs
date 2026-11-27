@@ -1,3 +1,4 @@
+import { animationsSettled } from "./animations.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
 import {
   closeSettings,
@@ -64,6 +65,42 @@ test("Settings opens over the retained workspace and closing restores the prior 
   await expect(button(page, "Your profile")).toBeFocused();
 });
 
+test("long Settings sections end with the dialog padding at every width", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Profile");
+  const content = page.getByRole("region", { name: "Profile", exact: true });
+  // Measure the gap between the section's end and the end of whichever pane
+  // scrolls it: the detail beside the navigation, or the stacked layout.
+  const endGap = () =>
+    content.evaluate((section) => {
+      let port = section.parentElement;
+      while (
+        !/auto|scroll/.test(getComputedStyle(port).overflowY) ||
+        port.scrollHeight <= port.clientHeight
+      )
+        port = port.parentElement;
+      port.scrollTop = port.scrollHeight;
+      const padding = Number.parseFloat(
+        getComputedStyle(section.closest(".buzz-dialog-navigation-detail"))
+          .paddingBottom,
+      );
+      const gap =
+        port.getBoundingClientRect().top +
+        port.clientTop +
+        port.clientHeight -
+        section.getBoundingClientRect().bottom;
+      return { padding, gap: Math.round(gap) };
+    });
+  await expect.poll(endGap).toEqual({ padding: 32, gap: 32 });
+  await page.setViewportSize({ width: 480, height: 600 });
+  await expect.poll(endGap).toEqual({ padding: 16, gap: 16 });
+});
+
 test("short narrow Settings keeps plugin copy and controls reachable at 200% interface size", async ({
   page,
   app,
@@ -114,6 +151,9 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   await expect(toggle).toBeEnabled();
   await toggle.press("Space");
   await expect(toggle).toHaveAccessibleName("Disable GitHub");
+  // Re-enabling GitHub adds its settings card to the stacked navigation above,
+  // which pushes the toggle down.
+  await toggle.scrollIntoViewIfNeeded();
   await expect(toggle).toBeInViewport({ ratio: 1 });
   // Narrow Settings stacks its own navigation above the detail, reachable by
   // scrolling the modal; wide Settings keeps it beside the detail.
@@ -220,15 +260,27 @@ for (const action of ["Remove from this device", "Leave community"]) {
       page.getByRole("heading", { name: "Profile", exact: true }),
     ).toBeVisible();
     await expect(page.locator("#settings-content")).toBeFocused();
-    await expect(
-      page.getByText("This destination couldn’t open", { exact: true }),
-    ).toHaveCount(0);
+    await expect(page.locator('.page-status[role="alert"]')).toHaveCount(0);
     expect(leaveRequests).toHaveLength(action === "Leave community" ? 1 : 0);
   });
 }
 
 test.describe("community administration permissions", () => {
-  test("shows Membership to a verified owner", async ({ page, app }) => {
+  test("shows Membership to a verified owner", async ({
+    page,
+    app,
+    browserName,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        value: {
+          writeText: async (text) => {
+            window.copiedInvite = text;
+          },
+        },
+        configurable: true,
+      });
+    });
     let rosterGate;
     let rosterStarted = () => {};
     await page.route("**/api/relay/primary/query", async (route) => {
@@ -258,24 +310,67 @@ test.describe("community administration permissions", () => {
     await expect(
       page.getByRole("heading", { name: "Membership", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Invite members" }).click();
-    const dialog = page.getByRole("dialog", { name: "Add or invite people" });
+    const dialog = settingsDialog(page);
+    await page.getByRole("tab", { name: "Invite", exact: true }).click();
     await expect(
-      dialog.getByRole("heading", { name: "Add directly" }),
-    ).toBeVisible();
+      page.getByRole("tab", { name: "Invite", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await page.goBack();
     await expect(
-      dialog.getByRole("heading", { name: "Invite with a link" }),
+      page.getByRole("tab", { name: "Members", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await page.goForward();
+    await expect(
+      page.getByRole("tab", { name: "Invite", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(
+      dialog.getByRole("textbox", { name: "Community invite link" }),
     ).toBeVisible();
+    const inviteLink = dialog.getByRole("textbox", {
+      name: "Community invite link",
+    });
+    await expect(inviteLink).toHaveValue(
+      "https://primary.example/invite/fixture",
+    );
+    const copy = dialog.getByRole("button", { name: /^(Copy link|Copied)$/ });
+    await copy.click();
+    await expect(copy).toHaveText("Copied");
+    await expect
+      .poll(() => page.evaluate(() => window.copiedInvite))
+      .toBe("https://primary.example/invite/fixture");
+    await expect(
+      dialog.getByText("Invite link copied.", { exact: true }),
+    ).toHaveCount(0);
+    await expect(copy).not.toBeFocused();
+    await expect(copy).toHaveCSS("outline-style", "none");
+    await expect(inviteLink.locator("..")).toHaveCSS(
+      "border-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    // Keyboard copying still focuses the action and keeps its visible ring.
+    await inviteLink.focus();
+    await page.keyboard.press(
+      `${browserName === "webkit" && process.platform === "darwin" ? "Alt+" : ""}Tab`,
+    );
+    await expect(copy).toBeFocused();
+    await expect(copy).toHaveCSS("outline-style", "solid");
+    await copy.press("Enter");
+    await expect(copy).toHaveText("Copied");
+    await expect(copy).toBeFocused();
+    await expect(
+      page.getByRole("tab", { name: "Add directly", exact: true }),
+    ).toHaveCount(0);
     await expect(
       dialog.getByRole("textbox", { name: "Public identity" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
+    await page.getByRole("tab", { name: "Members", exact: true }).click();
     await expect(
-      dialog.getByRole("combobox", { name: /Search people/ }),
+      dialog.getByRole("button", { name: "Refresh", exact: true }),
     ).toHaveCount(0);
 
     // Keep browser history/reload, real roster verification, and host wiring real.
     // A held response proves this route cannot fall through to Profile or failure.
-    await page.keyboard.press("Escape");
     let releaseRoster;
     rosterGate = new Promise((resolve) => {
       releaseRoster = resolve;
@@ -286,12 +381,10 @@ test.describe("community administration permissions", () => {
     try {
       await page.reload();
       await started;
-      await expect(
-        page.getByText("Opening destination…", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByText("This destination couldn’t open", { exact: true }),
-      ).toHaveCount(0);
+      await expect(page.locator(".page-status").getByRole("status")).toHaveText(
+        "Loading…",
+      );
+      await expect(page.locator('.page-status[role="alert"]')).toHaveCount(0);
       await expect(
         sections.getByRole("button", { name: "Membership", exact: true }),
       ).toHaveCount(0);
@@ -304,9 +397,13 @@ test.describe("community administration permissions", () => {
   });
 });
 
+// The Builderlab section applies only in FI builds. With no native host its
+// session stays signed out, and hosted communities use the fixture broker.
+const fiBuild = test.extend({ federatedIdentity: true });
+
 // Only this journey requires a confirmed Online badge/radio. Keep unrelated
 // Settings fixtures on their existing synthetic broker.
-const confirmedPresence = test.extend({ productionBroker: true });
+const confirmedPresence = fiBuild.extend({ productionBroker: true });
 confirmedPresence(
   "avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   async ({ page, app, browserName }, testInfo) => {
@@ -383,11 +480,13 @@ confirmedPresence(
       await avatar.click();
       await expect(account).toBeHidden();
       await avatar.click();
-      // The account popup may cover main’s top-left on narrow layouts.
-      // Click the lower content area, genuinely outside the popup.
+      // The dock account popup opens beside the bottom controls.
+      // Click exposed content above it to exercise outside dismissal.
       const main = page.getByRole("main");
       const bounds = await main.boundingBox();
-      await main.click({ position: { x: 24, y: bounds.height - 5 } });
+      await main.click({
+        position: { x: bounds.width / 2, y: bounds.height / 3 },
+      });
       await expect(account).toBeHidden();
       await avatar.focus();
       await page.keyboard.press("Enter");
@@ -418,6 +517,13 @@ confirmedPresence(
       await tab(true);
       await expect(
         page.getByRole("button", { name: /^Community switcher:/ }),
+      ).toBeFocused();
+      await tab(true);
+      await expect(
+        page
+          .getByRole("navigation", { name: "Apps dock" })
+          .getByRole("tab")
+          .and(page.locator('[tabindex="0"]')),
       ).toBeFocused();
       await tab(true);
       await expect(button(page, "Search Buzz")).toBeFocused();
@@ -509,7 +615,7 @@ confirmedPresence(
       for (const name of [
         "Local settings",
         "Custom emoji",
-        "Pair mobile",
+        "Mobile app",
         "Leave or remove",
         "Identity",
         "Appearance",
@@ -528,7 +634,7 @@ confirmedPresence(
       await expect(profileContent).toHaveCount(0);
       await expect(pluginContent).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "Disable Workflows", exact: true }),
+        page.getByRole("button", { name: "Enable Workflows", exact: true }),
       ).toBeVisible();
       const dialog = settingsDialog(page);
       await expect(dialog).toHaveCSS("background-color", "rgb(255, 255, 255)");
@@ -581,7 +687,7 @@ confirmedPresence(
       for (const name of [
         "Local settings",
         "Custom emoji",
-        "Pair mobile",
+        "Mobile app",
         "Leave or remove",
         "Identity",
         "Appearance",
@@ -589,11 +695,12 @@ confirmedPresence(
         "Shortcuts",
         "Agent setup",
         "Decisions API",
+        "Speech to text",
         "Channel templates",
         "Software updates",
         "Manage plugins",
-        "Builderlab agents",
-        "Builderlab hosting",
+        "Builderlab",
+        "GitHub",
       ]) {
         await tab();
         await expect(
@@ -624,199 +731,211 @@ const savedCommunity = (page, viewer) =>
       );
   }, viewer);
 
-test("hosted deletion reload keeps the UUID until an enabled manual replay", async ({
-  page,
-  app,
-}) => {
-  const owner = "a".repeat(64);
-  const request = {
-    community_id: "11111111-1111-4111-8111-111111111111",
-    host: "North.communities.buzz.xyz",
-    request_id: "22222222-2222-4222-8222-222222222222",
-    acknowledgement_version: 1,
-  };
-  const calls = [];
-  const deletionBodies = [];
-  let canDelete = false;
-  await page.route("**/api/relay/identity", (route) =>
-    route.fulfill({ json: { viewer: owner } }),
-  );
-  await savedCommunity(page, owner);
-  await page.route("**/api/builderlab/**", async (route) => {
-    const action = new URL(route.request().url()).pathname.split("/").at(-1);
-    calls.push(action);
-    if (action === "auth")
-      return route.fulfill({
-        json: {
-          auth: {
-            email: "owner@example.com",
-            expiresAt: "2030",
-            capabilities: { can_delete_buzz_communities: canDelete },
+fiBuild(
+  "hosted deletion reload keeps the UUID until an enabled manual replay",
+  async ({ page, app }) => {
+    const owner = "a".repeat(64);
+    const request = {
+      community_id: "11111111-1111-4111-8111-111111111111",
+      host: "North.communities.buzz.xyz",
+      request_id: "22222222-2222-4222-8222-222222222222",
+      acknowledgement_version: 1,
+    };
+    const calls = [];
+    const deletionBodies = [];
+    let canDelete = false;
+    await page.route("**/api/relay/identity", (route) =>
+      route.fulfill({ json: { viewer: owner } }),
+    );
+    await savedCommunity(page, owner);
+    await page.route("**/api/builderlab/**", async (route) => {
+      const action = new URL(route.request().url()).pathname.split("/").at(-1);
+      calls.push(action);
+      if (action === "auth")
+        return route.fulfill({
+          json: {
+            auth: {
+              email: "owner@example.com",
+              expiresAt: "2030",
+              capabilities: { can_delete_buzz_communities: canDelete },
+            },
           },
-        },
-      });
-    if (action === "identity")
-      return route.fulfill({ json: { identity: { pubkey_hex: owner } } });
-    if (action === "list")
-      return route.fulfill({
-        json: {
-          communities: [],
-          quota_used: 1,
-          quota_limit: 5,
-          can_create: false,
-        },
-      });
-    if (action === "delete") {
-      deletionBodies.push(route.request().postDataJSON());
-      return route.fulfill({
-        status: 202,
-        json: { ...request, status: "submitted" },
-      });
-    }
-    return route.fulfill({ status: 404, json: { error: "unexpected" } });
-  });
+        });
+      if (action === "identity")
+        return route.fulfill({ json: { identity: { pubkey_hex: owner } } });
+      if (action === "list")
+        return route.fulfill({
+          json: {
+            communities: [],
+            quota_used: 1,
+            quota_limit: 5,
+            can_create: false,
+          },
+        });
+      if (action === "delete") {
+        deletionBodies.push(route.request().postDataJSON());
+        return route.fulfill({
+          status: 202,
+          json: { ...request, status: "submitted" },
+        });
+      }
+      return route.fulfill({ status: 404, json: { error: "unexpected" } });
+    });
 
-  await page.goto(app.origin);
-  await page.evaluate(
-    ({ owner, request }) =>
-      localStorage.setItem(
-        "buzz.hosted-community-deletion.v1",
-        JSON.stringify({
-          version: 1,
-          owner_pubkey: owner,
-          backend_origin: window.location.origin,
-          request,
-        }),
+    // Boot with the saved deletion rather than reloading over a booting app,
+    // which WebKit can fail with an internal error. Seed only the first
+    // document, so the reload below sees just what the app kept.
+    await page.addInitScript(
+      ({ owner, request }) => {
+        if (sessionStorage.getItem("test.seeded-deletion")) return;
+        sessionStorage.setItem("test.seeded-deletion", "1");
+        localStorage.setItem(
+          "buzz.hosted-community-deletion.v1",
+          JSON.stringify({
+            version: 1,
+            owner_pubkey: owner,
+            backend_origin: window.location.origin,
+            request,
+          }),
+        );
+      },
+      { owner, request },
+    );
+    await page.goto(app.origin);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await button(page, "Builderlab").click();
+    await button(page, "Open Communities").click();
+    await expect(
+      page.getByText("Deletion status is unknown", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(request.request_id, { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(/will not check automatically/i)).toBeVisible();
+    expect(calls.filter((action) => action === "delete")).toHaveLength(0);
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem("buzz.hosted-community-deletion.v1"),
       ),
-    { owner, request },
-  );
-  await page.reload();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Builderlab hosting").click();
-  await expect(
-    page.getByText("Deletion status is unknown", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(request.request_id, { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText(/will not check automatically/i)).toBeVisible();
-  expect(calls.filter((action) => action === "delete")).toHaveLength(0);
-  expect(
-    await page.evaluate(() =>
-      localStorage.getItem("buzz.hosted-community-deletion.v1"),
-    ),
-  ).not.toBeNull();
-  await expect(button(page, "Check deletion status")).toBeDisabled();
-  canDelete = true;
-  // Reload restores the open Settings modal over its workspace.
-  await page.reload();
-  await expect(settingsDialog(page)).toBeVisible();
-  await button(page, "Builderlab hosting").click();
-  await expect(button(page, "Check deletion status")).toBeEnabled();
-  await button(page, "Check deletion status").click();
-  await expect(
-    page.getByText("Deletion started", { exact: true }),
-  ).toBeVisible();
-  expect(calls.filter((action) => action === "delete")).toHaveLength(1);
-  expect(deletionBodies).toEqual([request]);
-  await expect(button(page, "Delete")).toHaveCount(0);
-  expect(
-    await page.evaluate(() =>
-      localStorage.getItem("buzz.hosted-community-deletion.v1"),
-    ),
-  ).toBeNull();
-});
-
-test("hosted deletion keeps a foreign owner's full npub inside the dialog and notice", async ({
-  page,
-  app,
-}) => {
-  const owner = "a".repeat(64);
-  const community = {
-    id: "11111111-1111-4111-8111-111111111111",
-    name: "north",
-    normalized_host: "North.communities.buzz.xyz",
-    archived_at: "2026-09-24",
-  };
-  const deletes = [];
-  await page.route("**/api/relay/identity", (route) =>
-    route.fulfill({ json: { viewer: owner } }),
-  );
-  await savedCommunity(page, owner);
-  await page.route("**/api/builderlab/**", async (route) => {
-    const action = new URL(route.request().url()).pathname.split("/").at(-1);
-    if (action === "auth")
-      return route.fulfill({
-        json: {
-          auth: {
-            email: "owner@example.com",
-            expiresAt: "2030",
-            capabilities: { can_delete_buzz_communities: true },
-          },
-        },
-      });
-    if (action === "identity")
-      return route.fulfill({ json: { identity: { pubkey_hex: owner } } });
-    if (action === "list")
-      return route.fulfill({
-        json: {
-          communities: [community],
-          quota_used: 1,
-          quota_limit: 5,
-          can_create: true,
-        },
-      });
-    if (action === "delete") deletes.push(route.request().postDataJSON());
-    return route.fulfill({ status: 404, json: { error: "unexpected" } });
-  });
-  const contained = (locator) =>
-    locator.evaluate((node) => node.scrollWidth <= node.clientWidth);
-
-  await page.goto(app.origin);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Builderlab hosting").click();
-  await button(page, "Delete").click();
-  const dialog = page.getByRole("dialog", { name: /Permanently delete north/ });
-  await dialog
-    .getByLabel("Type the exact host")
-    .fill(community.normalized_host);
-  await dialog
-    .getByRole("checkbox", { name: /I understand this cannot be canceled/ })
-    .check();
-  // Another tab claims the slot while this dialog is open.
-  await page.evaluate(
-    (community) =>
-      localStorage.setItem(
-        "buzz.hosted-community-deletion.v1",
-        JSON.stringify({
-          version: 1,
-          owner_pubkey: "b".repeat(64),
-          backend_origin: window.location.origin,
-          request: {
-            community_id: community.id,
-            host: community.normalized_host,
-            request_id: "33333333-3333-4333-8333-333333333333",
-            acknowledgement_version: 1,
-          },
-        }),
+    ).not.toBeNull();
+    await expect(button(page, "Check deletion status")).toBeDisabled();
+    canDelete = true;
+    // Reload restores the open Settings modal over its workspace.
+    await page.reload();
+    await expect(settingsDialog(page)).toBeVisible();
+    await button(page, "Builderlab").click();
+    await button(page, "Open Communities").click();
+    await expect(button(page, "Check deletion status")).toBeEnabled();
+    await button(page, "Check deletion status").click();
+    await expect(
+      page.getByText("Deletion started", { exact: true }),
+    ).toBeVisible();
+    expect(calls.filter((action) => action === "delete")).toHaveLength(1);
+    expect(deletionBodies).toEqual([request]);
+    await expect(button(page, "Delete")).toHaveCount(0);
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem("buzz.hosted-community-deletion.v1"),
       ),
-    community,
-  );
-  await dialog.getByRole("button", { name: "Start deletion" }).click();
-  const alert = dialog.getByRole("alert");
-  await expect(alert).toContainText("is already pending on this device");
-  expect(await contained(dialog)).toBe(true);
-  await dialog.getByRole("button", { name: "Cancel" }).click();
-  // The global paragraph rule already wraps this notice; this guards regressions.
-  const notice = page
-    .getByRole("status")
-    .filter({ hasText: "is still pending" });
-  await expect(notice).toBeVisible();
-  expect(await contained(notice)).toBe(true);
-  expect(deletes).toHaveLength(0);
-});
+    ).toBeNull();
+  },
+);
+
+fiBuild(
+  "hosted deletion keeps a foreign owner's full npub inside the dialog and notice",
+  async ({ page, app }) => {
+    const owner = "a".repeat(64);
+    const community = {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "north",
+      normalized_host: "North.communities.buzz.xyz",
+      archived_at: "2026-09-24",
+    };
+    const deletes = [];
+    await page.route("**/api/relay/identity", (route) =>
+      route.fulfill({ json: { viewer: owner } }),
+    );
+    await savedCommunity(page, owner);
+    await page.route("**/api/builderlab/**", async (route) => {
+      const action = new URL(route.request().url()).pathname.split("/").at(-1);
+      if (action === "auth")
+        return route.fulfill({
+          json: {
+            auth: {
+              email: "owner@example.com",
+              expiresAt: "2030",
+              capabilities: { can_delete_buzz_communities: true },
+            },
+          },
+        });
+      if (action === "identity")
+        return route.fulfill({ json: { identity: { pubkey_hex: owner } } });
+      if (action === "list")
+        return route.fulfill({
+          json: {
+            communities: [community],
+            quota_used: 1,
+            quota_limit: 5,
+            can_create: true,
+          },
+        });
+      if (action === "delete") deletes.push(route.request().postDataJSON());
+      return route.fulfill({ status: 404, json: { error: "unexpected" } });
+    });
+    const contained = (locator) =>
+      locator.evaluate((node) => node.scrollWidth <= node.clientWidth);
+
+    await page.goto(app.origin);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await button(page, "Builderlab").click();
+    await button(page, "Open Communities").click();
+    await page.getByRole("tab", { name: "Archived", exact: true }).click();
+    await button(page, "More actions for north").click();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    const dialog = page.getByRole("dialog", {
+      name: /Permanently delete north/,
+    });
+    await dialog
+      .getByLabel("Type the exact host")
+      .fill(community.normalized_host);
+    await dialog
+      .getByRole("checkbox", { name: /I understand this cannot be canceled/ })
+      .check();
+    // Another tab claims the slot while this dialog is open.
+    await page.evaluate(
+      (community) =>
+        localStorage.setItem(
+          "buzz.hosted-community-deletion.v1",
+          JSON.stringify({
+            version: 1,
+            owner_pubkey: "b".repeat(64),
+            backend_origin: window.location.origin,
+            request: {
+              community_id: community.id,
+              host: community.normalized_host,
+              request_id: "33333333-3333-4333-8333-333333333333",
+              acknowledgement_version: 1,
+            },
+          }),
+        ),
+      community,
+    );
+    await dialog.getByRole("button", { name: "Start deletion" }).click();
+    const alert = dialog.getByRole("alert");
+    await expect(alert).toContainText("is already pending on this device");
+    expect(await contained(dialog)).toBe(true);
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    // The global paragraph rule already wraps this notice; this guards regressions.
+    const notice = page
+      .getByRole("status")
+      .filter({ hasText: "is still pending" });
+    await expect(notice).toBeVisible();
+    expect(await contained(notice)).toBe(true);
+    expect(deletes).toHaveLength(0);
+  },
+);
 
 test("Settings loads and publishes the selected community profile", async ({
   page,
@@ -901,9 +1020,10 @@ test("Settings loads and publishes the selected community profile", async ({
     exact: true,
   });
   await picture.fill("http://example.com/avatar.png");
-  await expect(
-    avatarEditor.getByRole("button", { name: "Done", exact: true }),
-  ).toBeDisabled();
+  // Done reveals the URL error instead of applying it.
+  await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(picture).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+  await expect(avatarEditor).toBeVisible();
   await picture.fill("");
   await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
   await expect(avatarEditor).toBeHidden();
@@ -948,10 +1068,19 @@ test("Settings loads and publishes the selected community profile", async ({
     }),
   ).toBeFocused();
   await expect(save()).toHaveCount(0);
-  await expect(
-    page.getByRole("dialog", { name: "Profile updated" }),
-  ).toBeVisible();
+  const updated = page.getByRole("dialog", { name: "Profile updated" });
+  await expect(updated).toBeVisible();
   await expect(reopenedName).toHaveValue("Updated community profile");
+  // The notice lands over Close Settings, and a pointer resting on it holds
+  // its expiry. Dismiss it so the click below cannot arrive as it slides in.
+  const toast = page.locator("[data-sonner-toast]").filter({ has: updated });
+  await expect(toast).toHaveAttribute("data-mounted", "true");
+  await animationsSettled(toast, { subtree: true });
+  await toast.hover();
+  await updated
+    .getByRole("button", { name: "Dismiss notification", exact: true })
+    .click();
+  await expect(updated).toHaveCount(0);
   // The account avatar is behind the modal; check it from the workspace. The
   // pointer left on Close can briefly open a tooltip for the control beneath it.
   await closeSettings(page);
@@ -1024,11 +1153,11 @@ test("discarding community setup leaves the published profile unchanged", async 
     .fill("wss://primary.example");
   await button(page, "Continue").click();
   await expect(
-    page.getByRole("heading", { name: "Your profile in Primary", exact: true }),
+    page.getByRole("heading", { name: "Your profile", exact: true }),
   ).toBeVisible();
   const setup = page.getByRole("dialog").filter({
     has: page.getByRole("heading", {
-      name: "Your profile in Primary",
+      name: "Your profile",
       exact: true,
     }),
   });
@@ -1037,7 +1166,7 @@ test("discarding community setup leaves the published profile unchanged", async 
     exact: true,
   });
   await expect(name).toHaveValue("Fixture Reader");
-  await expect(button(page, "Open community")).toBeEnabled();
+  await expect(button(page, "Continue")).toBeEnabled();
   await name.fill("Community-only draft");
   await setup.getByRole("button", { name: "Edit avatar" }).click();
   const avatarEditor = page.getByRole("dialog", { name: "Edit avatar" });
@@ -1046,9 +1175,10 @@ test("discarding community setup leaves the published profile unchanged", async 
     exact: true,
   });
   await picture.fill("http://example.com/avatar.png");
-  await expect(
-    avatarEditor.getByRole("button", { name: "Done", exact: true }),
-  ).toBeDisabled();
+  // Done reveals the URL error instead of applying it.
+  await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(picture).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+  await expect(avatarEditor).toBeVisible();
   await picture.fill("https://example.com/avatar.png");
   await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
   await expect(button(page, "Publish profile & open")).toBeEnabled();
@@ -1150,6 +1280,75 @@ test("plugin details preserves the catalog scroll position on open and close", a
   await expect(button(page, "More actions for Usage")).toHaveCount(0);
 });
 
+// WebKit keeps the offset it clamps to when a shorter pane replaces a longer
+// one, which jsdom cannot show.
+test("each Settings section keeps its own scroll place while Settings is open", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Shortcuts");
+  const port = settingsDialog(page).locator(".buzz-dialog-navigation-detail");
+  const offset = (scroller) =>
+    scroller.evaluate((element) => element.scrollTop);
+  // WebKit animates wheel scrolling: wait until two reads agree.
+  const settled = async (scroller = port) => {
+    let last;
+    await expect
+      .poll(
+        async () => {
+          const previous = last;
+          last = await offset(scroller);
+          return last === previous;
+        },
+        { intervals: [200] },
+      )
+      .toBe(true);
+    return last;
+  };
+  const near = (place, scroller = port) =>
+    expect
+      .poll(async () => Math.abs((await offset(scroller)) - place))
+      .toBeLessThanOrEqual(1);
+  // Wheel over the port's own padding, so no nested scroller takes it.
+  const box = await port.boundingBox();
+  await page.mouse.move(box.x + 8, box.y + box.height / 2);
+  for (let notch = 0; notch < 6; notch++) await page.mouse.wheel(0, 120);
+  const shortcuts = await settled();
+  expect(shortcuts).toBeGreaterThan(400);
+  await selectSettingsSection(page, "Appearance");
+  await near(0);
+  await port.evaluate((element) => {
+    element.scrollTop = 120;
+  });
+  const appearance = await settled();
+  expect(appearance).toBeGreaterThan(0);
+  await selectSettingsSection(page, "Shortcuts");
+  await near(shortcuts);
+  await page.goBack();
+  await expect(
+    page.getByRole("region", { name: "Appearance", exact: true }),
+  ).toBeVisible();
+  await near(appearance);
+  // Side by side, the plugin catalog scrolls in the detail, not the port.
+  await selectSettingsSection(page, "Manage plugins");
+  const catalog = settingsDialog(page).locator(".buzz-settings-page");
+  await catalog.evaluate((element) => {
+    element.scrollTop = 240;
+  });
+  const plugins = await settled(catalog);
+  expect(plugins).toBeGreaterThan(0);
+  await selectSettingsSection(page, "Appearance");
+  await near(appearance);
+  await selectSettingsSection(page, "Manage plugins");
+  await near(plugins, catalog);
+  await closeSettings(page);
+  await openSettings(page);
+  await selectSettingsSection(page, "Shortcuts");
+  await near(0);
+});
+
 // Real shell + shared presentation + browser storage across reload. State/error
 // permutations stay in the communities and Local settings component tests.
 test("Local settings saves a device name without changing the community identity", async ({
@@ -1185,9 +1384,11 @@ test("Local settings saves a device name without changing the community identity
   ).toHaveValue("https://primary.example");
   await name.fill("My work");
   await name.press("Enter");
-  await expect(region.getByRole("status")).toHaveText(
-    "Display name saved on this device.",
-  );
+  await expect(
+    region
+      .getByRole("status")
+      .filter({ hasText: "Display name saved on this device." }),
+  ).toBeVisible();
   await closeSettings(page);
   await expect(button(page, "Community switcher: My work")).toBeVisible();
   await openSettings(page);
@@ -1214,4 +1415,44 @@ test("Local settings saves a device name without changing the community identity
   await expect(
     button(page, "Community switcher: Published community"),
   ).toBeVisible();
+});
+
+// Native popstate cannot be covered by the controller's memory-driver test.
+test("native Back warns before discarding Profile edits and Keep editing retains the draft", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Alpha").click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  await openSettings(page);
+  await selectSettingsSection(page, "Profile");
+  const name = page
+    .getByRole("region", { name: "Profile", exact: true })
+    .getByRole("textbox", { name: "Display name", exact: true });
+  await expect(name).toHaveValue("Fixture Reader");
+  await name.fill("Keep this draft");
+  // Skip the section-only stops to leave Settings, as a native multi-step Back does.
+  await page.evaluate(() => history.go(-2));
+  const warning = page.getByRole("alertdialog", {
+    name: "Discard changes?",
+    exact: true,
+  });
+  await expect(warning).toBeVisible();
+  await warning
+    .getByRole("button", { name: "Keep editing", exact: true })
+    .click();
+  await expect(name).toHaveValue("Keep this draft");
+  await page.evaluate(() => history.go(-2));
+  await expect(warning).toBeVisible();
+  await warning
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await page.goForward();
+  await expect(settingsDialog(page)).toBeVisible();
+  await selectSettingsSection(page, "Profile");
+  await expect(name).toHaveValue("Fixture Reader");
 });

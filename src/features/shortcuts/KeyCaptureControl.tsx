@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import { Input } from "../../shared/design-system/ui/Input";
+import { keyboardKey } from "../../shared/keyboard-key";
 import type { KeyBinding } from "./bindings";
 import styles from "./KeyCaptureControl.module.css";
 
@@ -7,6 +8,8 @@ export type CapturedChord = Readonly<{
   binding: KeyBinding;
   /** The Windows/Command key off Apple platforms: the dispatcher never matches it. */
   otherPrimary: boolean;
+  /** Physical key, for chords whose `key` varies by layout. */
+  code: string;
 }>;
 
 const MODIFIER_KEYS = new Set([
@@ -92,15 +95,18 @@ export function KeyCaptureControl({
           // AltGr can report Control+Alt, but the dispatcher always ignores it.
           if (event.getModifierState("AltGraph")) return;
           const mod = apple ? event.metaKey : event.ctrlKey;
+          // Saved under the key the dispatcher matches, not WebKit's control character.
+          const key = keyboardKey(event);
           onCapture({
             binding: {
-              key: event.key.length === 1 ? event.key.toLowerCase() : event.key,
+              key: key.length === 1 ? key.toLowerCase() : key,
               ...(mod && { mod }),
               ...(apple && event.ctrlKey && { ctrl: true }),
               ...(event.shiftKey && { shift: true }),
               ...(event.altKey && { alt: true }),
             },
             otherPrimary: !apple && event.metaKey,
+            code: event.code,
           });
         }}
       />

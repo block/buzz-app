@@ -1,14 +1,80 @@
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { expect, it, vi } from "vitest";
+import { eventDto, type RelayEvent } from "./events";
 import { selectProfiles } from "./profile-selection";
 import { foldProfiles } from "./profiles";
+import { PROFILE_CACHE_BASE, PROFILE_ENTRY_BYTES } from "./budget";
 import { createProfileDirectory } from "./profile-directory";
 import {
   createRelayReader,
   type RelayReader,
   type ReadOptions,
 } from "./reader";
-import { keypair, profile, scriptedTransport, signed } from "./testing";
+import {
+  keypair,
+  profile,
+  scriptedTransport,
+  signed,
+  unsignedProfiles,
+} from "./testing";
 const user = keypair();
+it.each([
+  [" Alice ", "Alice"],
+  ["\u00a0Alice\u3000", "Alice"],
+  ["\tAlice\n", "Alice"],
+  ["\ufeffAlice\ufeff", "Alice"],
+  ["Al\u200bice", "Al\u200bice"],
+  ["Alice\u200d", "Alice\u200d"],
+  ["Alice\ufe0f", "Alice\ufe0f"],
+  ["Alice\u202e", undefined],
+  ["\u202eecilA\u202c", undefined],
+  ["\u2066Alice\u2069", undefined],
+  ["Alice\ufff9", undefined],
+  ["Alice\ufffa", undefined],
+  ["Alice\ufffb", undefined],
+  ["Al\u0000ice", undefined],
+  ["Al\u001bice", undefined],
+  ["Al\nIce", undefined],
+  ["Al\u2028ice", undefined],
+  ["Al\u2029ice", undefined],
+  ["Al\u00adice", "Al\u00adice"],
+  ["Al\u034fice", "Al\u034fice"],
+  ["Alice\u{e0061}", "Alice\u{e0061}"],
+  ["علی\u200cرضا", "علی\u200cرضا"],
+  ["葛\u{e0100}", "葛\u{e0100}"],
+  ["\u1820\u180b", "\u1820\u180b"],
+  ["Alice 👩🏽‍💻", "Alice 👩🏽‍💻"],
+  ["Zoë 愛麗絲", "Zoë 愛麗絲"],
+  ["Alice  Smith", "Alice  Smith"],
+])("projects the public name %j without layout controls", (name, expected) => {
+  const head = profile(user, { display_name: name, name, about: "Kept" });
+  const original = JSON.stringify(head);
+  const parsed = foldProfiles([head]).get(user.pubkey);
+  expect(parsed?.name).toBe(expected ?? user.pubkey.slice(0, 10));
+  expect(parsed?.nameIsFallback).toBe(expected ? undefined : true);
+  expect(parsed?.username).toBeUndefined();
+  expect(parsed?.about).toBe("Kept");
+  expect(JSON.stringify(head)).toBe(original);
+});
+
+it("falls back to a safe handle without exposing a control-bearing username", () => {
+  expect(
+    foldProfiles([
+      profile(user, {
+        display_name: "\u202eecilA\u202c",
+        name: " alice-helper ",
+      }),
+    ]).get(user.pubkey),
+  ).toEqual({ name: "alice-helper" });
+  expect(
+    foldProfiles([
+      profile(user, { display_name: "Alice Helper", name: "Al\nIce" }),
+    ]).get(user.pubkey),
+  ).toEqual({ name: "Alice Helper" });
+});
+
 it("projects about safely and publishes an about-only replacement/removal", () => {
   const wire = scriptedTransport(user.pubkey, keypair().pubkey);
   const reader = createRelayReader(wire.transport);
@@ -160,6 +226,71 @@ it("publishes owner-only changes and removal without treating profile claims as 
   }
 });
 
+it("notifies once for a batch of verified owner attestations", async () => {
+  const wire = scriptedTransport(user.pubkey, keypair().pubkey);
+  const reader = createRelayReader(wire.transport);
+  const directory = createProfileDirectory(reader.reader);
+  const owner = keypair();
+  const agents = [keypair(), keypair(), keypair()];
+  const changed = vi.fn();
+  directory.queries.subscribe(changed);
+  try {
+    directory.accept(
+      agents.map((agent) => {
+        const digest = createHash("sha256")
+          .update(`nostr:agent-auth:${agent.pubkey}:`)
+          .digest();
+        const sig = schnorr.sign(new Uint8Array(digest), owner.secret);
+        return eventDto(
+          signed(agent, {
+            kind: 0,
+            content: JSON.stringify({ name: "Agent", is_agent: true }),
+            tags: [["auth", owner.pubkey, "", bytesToHex(sig)]],
+          }),
+        );
+      }),
+    );
+    expect(changed).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(
+        agents.map((agent) => directory.queries.owner?.(agent.pubkey)),
+      ).toEqual(agents.map(() => owner.pubkey)),
+    );
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+  } finally {
+    directory.dispose();
+    reader.dispose();
+  }
+});
+
+it("reacts to time-zone-only replacements and drops unknown zones", () => {
+  const wire = scriptedTransport(user.pubkey, keypair().pubkey);
+  const reader = createRelayReader(wire.transport);
+  const directory = createProfileDirectory(reader.reader);
+  const selection = selectProfiles(directory.queries, [user.pubkey]);
+  const changed = vi.fn();
+  const unsubscribe = selection.subscribe(changed);
+  try {
+    directory.accept([profile(user, { name: "Mic", tz: "Asia/Kolkata" }, 1)]);
+    expect(selection.snapshot().get(user.pubkey)?.tz).toBe("Asia/Kolkata");
+    changed.mockClear();
+    directory.accept([
+      profile(user, { name: "Mic", tz: "America/Los_Angeles" }, 2),
+    ]);
+    expect(selection.snapshot().get(user.pubkey)?.tz).toBe(
+      "America/Los_Angeles",
+    );
+    expect(changed).toHaveBeenCalledTimes(1);
+    directory.accept([profile(user, { name: "Mic", tz: "Mars/Olympus" }, 3)]);
+    expect(selection.snapshot().get(user.pubkey)).toEqual({ name: "Mic" });
+    expect(changed).toHaveBeenCalledTimes(2);
+  } finally {
+    unsubscribe();
+    directory.dispose();
+    reader.dispose();
+  }
+});
+
 it("reacts to NIP-05-only replacements and removal without asserting verification", () => {
   const wire = scriptedTransport(user.pubkey, keypair().pubkey);
   const reader = createRelayReader(wire.transport);
@@ -215,6 +346,14 @@ it("retains safe inline profile pictures through parsing and media routing", asy
     if (parsed?.picture)
       expect(mediaUrl(parsed.picture, undefined, undefined)).toBe(picture);
   }
+});
+
+it("reuses one event's projection across folds", () => {
+  const head = profile(user, { name: "Mic" }, 1);
+  const parsed = foldProfiles([head]).get(user.pubkey);
+  expect(foldProfiles([head]).get(user.pubkey)).toBe(parsed);
+  const next = foldProfiles([head, profile(user, { name: "Mike" }, 2)]);
+  expect(next.get(user.pubkey)?.name).toBe("Mike");
 });
 
 it("refreshes retained profiles in the background without rolling back signed heads", async () => {
@@ -282,5 +421,606 @@ it("retires pending profile reads before reconnect and fences cache clear/dispos
     expect(directory.queries.snapshot().size).toBe(0);
   } finally {
     directory.dispose();
+  }
+});
+
+it("promotes a queued background profile read when foreground demand joins it", async () => {
+  const wire = scriptedTransport(user.pubkey, keypair().pubkey);
+  const reader = createRelayReader(wire.transport);
+  const directory = createProfileDirectory(reader.reader);
+  try {
+    // Unrelated background work holds the reader's only background slot.
+    const held = reader.reader.read([{ kinds: [3], limit: 1 }], {
+      priority: "background",
+    });
+    const enrichment = directory.ensure([user.pubkey], "background");
+    expect(wire.pending).toHaveLength(1);
+    const demanded = directory.ensure([user.pubkey], "foreground");
+    expect(wire.pending).toHaveLength(2);
+    wire.pending[1]?.respond([profile(user, { name: "Mic" })]);
+    await Promise.all([enrichment, demanded]);
+    expect(directory.queries.snapshot().get(user.pubkey)?.name).toBe("Mic");
+    wire.next().respond([]);
+    await held;
+  } finally {
+    directory.dispose();
+    reader.dispose();
+  }
+});
+
+it("records identities a completed read found no profile for, until one arrives", async () => {
+  const other = keypair();
+  const third = keypair();
+  const read = vi.fn(async () => [profile(user, { name: "Mic" })]);
+  const directory = createProfileDirectory({ read });
+  const listener = vi.fn();
+  directory.queries.subscribe(listener);
+  try {
+    await directory.ensure([user.pubkey, other.pubkey]);
+    const absent = directory.queries.unnamed?.();
+    expect(absent).toEqual(new Set([other.pubkey]));
+    // Once for the profile, once for the absence.
+    expect(listener).toHaveBeenCalledTimes(2);
+    // A failed read is not evidence.
+    read.mockRejectedValueOnce(new Error("offline"));
+    await expect(directory.ensure([third.pubkey])).rejects.toThrow("offline");
+    expect(directory.queries.unnamed?.()).toBe(absent);
+    // A profile that arrives later outranks the absence.
+    directory.accept([profile(other, { name: "Nu" })]);
+    expect(directory.queries.snapshot().get(other.pubkey)?.name).toBe("Nu");
+    expect(directory.queries.unnamed?.()).toEqual(new Set());
+    // Clearing forgets the evidence and tells subscribers so.
+    await directory.ensure([third.pubkey]);
+    expect(directory.queries.unnamed?.()).toEqual(new Set([third.pubkey]));
+    listener.mockClear();
+    directory.clear();
+    expect(directory.queries.unnamed?.()).toEqual(new Set());
+    expect(listener).toHaveBeenCalled();
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("background enrichment does not reread a known absence until reconnect", async () => {
+  const other = keypair();
+  const read = vi.fn(async () => [profile(user, { name: "Mic" })]);
+  const directory = createProfileDirectory({ read });
+  try {
+    await directory.ensure([user.pubkey, other.pubkey], "background");
+    expect(directory.queries.unnamed?.()).toEqual(new Set([other.pubkey]));
+    await directory.ensure([user.pubkey, other.pubkey], "background");
+    expect(read).toHaveBeenCalledTimes(1);
+    // A demanded read still asks again.
+    await directory.ensure([other.pubkey], "foreground");
+    expect(read).toHaveBeenCalledTimes(2);
+    // A kind 0 that arrives later ends the absence, so eviction rereads it.
+    directory.accept([profile(other, { name: "Nu" })]);
+    const filler = profile(user, { name: "Filler" });
+    directory.accept(
+      Array.from({ length: 1024 }, (_, i) => ({
+        ...filler,
+        pubkey: i.toString(16).padStart(64, "0"),
+      })),
+    );
+    expect(directory.queries.snapshot().has(other.pubkey)).toBe(false);
+    await directory.ensure([other.pubkey], "background");
+    expect(read).toHaveBeenCalledTimes(3);
+    // The live route may have missed a kind 0 while offline.
+    await directory.reconnect();
+    read.mockClear();
+    await directory.ensure([other.pubkey], "background");
+    expect(read).toHaveBeenCalledTimes(1);
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("records no absence for a returned profile the cache evicted", async () => {
+  // A short response can still outgrow the directory's byte budget.
+  const big = profile(user, { name: "Big", about: "x".repeat(5 * 1024) });
+  const ids = Array.from({ length: 450 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  const first = "0".repeat(64);
+  const read = vi.fn(async () => ids.map((pubkey) => ({ ...big, pubkey })));
+  const directory = createProfileDirectory({ read });
+  try {
+    await directory.ensure(ids, "background");
+    expect(directory.queries.snapshot().has(first)).toBe(false);
+    // Returned, so not known unnamed either.
+    expect(directory.queries.unnamed?.().has(first)).toBe(false);
+    await directory.ensure([first], "background");
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("a background skip never leaves an identity neither named nor unnamed", async () => {
+  const ids = Array.from({ length: 1024 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  const first = "0".repeat(64);
+  const later = "f".repeat(64);
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read });
+  try {
+    await directory.ensure(ids, "background");
+    // Unnamed survives the reconnect; the absence does not.
+    await directory.reconnect();
+    await directory.ensure([first], "background");
+    // A new absence trims the oldest unnamed identity.
+    await directory.ensure([later], "background");
+    expect(directory.queries.unnamed?.().has(first)).toBe(false);
+    read.mockClear();
+    await directory.ensure([first], "background");
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(directory.queries.unnamed?.().has(first)).toBe(true);
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("records no absence from a read that filled its page", async () => {
+  const other = keypair();
+  // A relay that keeps every kind 0 can fill the page from one author. The
+  // directory does not verify events, so older versions are cheap copies.
+  const head = profile(user, { name: "Mic" }, 1_700_000_500);
+  const versions = Array.from({ length: 500 }, (_, i) => ({
+    ...head,
+    id: i.toString(16).padStart(64, "0"),
+    created_at: head.created_at - i,
+  }));
+  const read = vi.fn(async () => versions);
+  const directory = createProfileDirectory({ read });
+  try {
+    await directory.ensure([user.pubkey, other.pubkey]);
+    expect(directory.queries.snapshot().get(user.pubkey)?.name).toBe("Mic");
+    expect(directory.queries.unnamed?.()).toEqual(new Set());
+    // One short of the limit is complete.
+    read.mockResolvedValueOnce(versions.slice(1));
+    await directory.ensure([other.pubkey]);
+    expect(directory.queries.unnamed?.()).toEqual(new Set([other.pubkey]));
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("moves the purge generation and notifies on every clear, even with nothing loaded", () => {
+  const wire = scriptedTransport(user.pubkey, keypair().pubkey);
+  const reader = createRelayReader(wire.transport);
+  const directory = createProfileDirectory(reader.reader);
+  const changed = vi.fn();
+  const unsubscribe = directory.queries.subscribe(changed);
+  try {
+    expect(directory.queries.generation?.()).toBe(0);
+    directory.clear();
+    expect(directory.queries.generation?.()).toBe(1);
+    expect(changed).toHaveBeenCalledTimes(1);
+    directory.accept([profile(user, { name: "Mic" }, 1)]);
+    changed.mockClear();
+    directory.clear();
+    expect(directory.queries.snapshot().size).toBe(0);
+    expect(directory.queries.generation?.()).toBe(2);
+    expect(changed).toHaveBeenCalledTimes(1);
+  } finally {
+    unsubscribe();
+    directory.dispose();
+    reader.dispose();
+  }
+});
+
+it("evicts the least recently ensured profile, not the oldest stored one", async () => {
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read });
+  try {
+    const people = unsignedProfiles(1024);
+    directory.accept(people);
+    expect(directory.queries.snapshot().size).toBe(1024);
+    const [oldest, next] = people as [RelayEvent, RelayEvent];
+    await directory.ensure([oldest.pubkey]);
+    expect(read).not.toHaveBeenCalled();
+    directory.accept([profile(keypair(), { name: "Newcomer" })]);
+    const snapshot = directory.queries.snapshot();
+    expect(snapshot.size).toBe(1024);
+    expect(snapshot.get(oldest.pubkey)?.name).toBe("P0");
+    expect(snapshot.has(next.pubkey)).toBe(false);
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("keeps protected DM partners through eviction and lists them last", () => {
+  const directory = createProfileDirectory({ read: vi.fn(async () => []) });
+  try {
+    const people = unsignedProfiles(1024);
+    const [partner, next] = people as [RelayEvent, RelayEvent];
+    directory.protect([partner.pubkey]);
+    directory.accept(people);
+    directory.accept([profile(keypair(), { name: "Newcomer" })]);
+    const snapshot = directory.queries.snapshot();
+    expect(snapshot.size).toBe(1024);
+    expect(snapshot.get(partner.pubkey)?.name).toBe("P0");
+    expect(snapshot.has(next.pubkey)).toBe(false);
+    expect(directory.recent(1).map((event) => event.pubkey)).toEqual([
+      partner.pubkey,
+    ]);
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("still holds the byte limit when protected profiles exceed it", () => {
+  const directory = createProfileDirectory({ read: vi.fn(async () => []) });
+  try {
+    // 512 protected profiles of ~5 KiB each exceed the 2 MiB base budget.
+    const about = "x".repeat(5 * 1024);
+    const people = unsignedProfiles(512).map((event, index) => ({
+      ...event,
+      content: JSON.stringify({ name: `P${index}`, about }),
+    }));
+    directory.protect(people.map((event) => event.pubkey));
+    directory.accept(people);
+    expect(directory.stats().bytes).toBeLessThanOrEqual(
+      PROFILE_CACHE_BASE * PROFILE_ENTRY_BYTES,
+    );
+    // The newest protected profiles stay.
+    expect(directory.queries.snapshot().has(people[511]?.pubkey ?? "")).toBe(
+      true,
+    );
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("holds an open channel's roster on top of the base and shrinks back when released", async () => {
+  vi.useFakeTimers();
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read });
+  const changed = vi.fn();
+  const unsubscribe = directory.queries.subscribe(changed);
+  try {
+    const people = unsignedProfiles(1524);
+    const ids = people.map((event) => event.pubkey);
+    let release = directory.queries.reserve?.(500);
+    expect(directory.queries.limit?.()).toBe(1524);
+    // A whole roster fits in one request while the room is reserved.
+    await directory.ensure(ids.slice(0, 1100));
+    expect(read).toHaveBeenCalled();
+    directory.accept(people);
+    expect(directory.queries.snapshot().size).toBe(1524);
+    expect(directory.queries.evictions?.()).toBe(0);
+    // A larger reservation wins at once; giving it back keeps the smaller one.
+    const larger = directory.queries.reserve?.(20_000);
+    expect(directory.queries.limit?.()).toBe(10_240);
+    larger?.();
+    await vi.runAllTimersAsync();
+    expect(directory.queries.limit?.()).toBe(1524);
+    // A view that releases and reserves again in one commit, as an effect
+    // does when the member count changes, keeps the roster it loaded.
+    release?.();
+    release = directory.queries.reserve?.(500);
+    await vi.runAllTimersAsync();
+    expect(directory.queries.limit?.()).toBe(1524);
+    expect(directory.queries.snapshot().size).toBe(1524);
+    await directory.ensure([ids[0] as string]);
+    changed.mockClear();
+    release?.();
+    release?.();
+    // The shrink waits for the end of the task.
+    expect(directory.queries.limit?.()).toBe(1524);
+    await vi.runAllTimersAsync();
+    expect(directory.queries.limit?.()).toBe(1024);
+    const snapshot = directory.queries.snapshot();
+    expect(snapshot.size).toBe(1024);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(directory.queries.evictions?.()).toBe(500);
+    // The least recently used go first: P0 was just ensured, P1..P500 were not.
+    expect(snapshot.get(ids[0] as string)?.name).toBe("P0");
+    expect(snapshot.has(ids[1] as string)).toBe(false);
+    expect(snapshot.has(ids[500] as string)).toBe(false);
+    expect(snapshot.get(ids[501] as string)?.name).toBe("P501");
+    await expect(directory.ensure(ids.slice(0, 1100))).rejects.toThrow(
+      "exceeds the directory budget",
+    );
+  } finally {
+    unsubscribe();
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a closed channel's roster room for a while, so switching back reads no names again", async () => {
+  vi.useFakeTimers();
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read });
+  try {
+    const people = unsignedProfiles(1524);
+    const release = directory.queries.reserve?.(500);
+    directory.accept(people);
+    release?.();
+    // A smaller channel opens; the larger one's names stay for now. Closing a
+    // smaller view does not extend the hold.
+    directory.queries.reserve?.(10);
+    await vi.advanceTimersByTimeAsync(20_000);
+    directory.queries.reserve?.(5)?.();
+    await vi.advanceTimersByTimeAsync(9_000);
+    // Reads size by the open views' room; the hold only keeps the names.
+    expect(directory.queries.limit?.()).toBe(1034);
+    expect(directory.queries.snapshot().size).toBe(1524);
+    expect(directory.queries.evictions?.()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(directory.queries.limit?.()).toBe(1034);
+    expect(directory.queries.snapshot().size).toBe(1034);
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("cancels a departing view's background reads after the task while its room is held", async () => {
+  vi.useFakeTimers();
+  const read = vi.fn(
+    (_filters: unknown, options?: { signal?: AbortSignal }) =>
+      new Promise<RelayEvent[]>((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
+      }),
+  );
+  const directory = createProfileDirectory({ read });
+  try {
+    const release = directory.queries.reserve?.(500);
+    directory.accept(unsignedProfiles(1524));
+    const departing = directory.ensure(["departing"], "background");
+    release?.();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(departing).resolves.toBeUndefined();
+    expect(directory.queries.evictions?.()).toBe(1);
+    expect(directory.queries.limit?.()).toBe(1024);
+    // A read asked for while the room is held survives the shrink.
+    directory.ensure(["next"], "background").catch(() => {});
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(directory.queries.limit?.()).toBe(1024);
+    expect(directory.queries.evictions?.()).toBe(501);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read.mock.calls[1]?.[1]?.signal?.aborted).toBe(false);
+    directory.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("cancels background reads still in flight when it shrinks, but not foreground ones", async () => {
+  vi.useFakeTimers();
+  const answers: {
+    authors: readonly string[];
+    resolve: (events: RelayEvent[]) => void;
+  }[] = [];
+  const read = vi.fn(
+    (
+      filters: readonly { authors?: readonly string[] | undefined }[],
+      options?: { signal?: AbortSignal },
+    ) =>
+      new Promise<RelayEvent[]>((resolve, reject) => {
+        answers.push({ authors: filters[0]?.authors ?? [], resolve });
+        options?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
+      }),
+  );
+  const directory = createProfileDirectory({ read });
+  try {
+    const roster = unsignedProfiles(600, "R");
+    const onScreen = unsignedProfiles(1, "S");
+    const release = directory.queries.reserve?.(600);
+    const menu = directory.ensure(
+      roster.map((event) => event.pubkey),
+      "background",
+    );
+    const row = directory.ensure([onScreen[0]?.pubkey as string]);
+    expect(answers).toHaveLength(3);
+    const before = directory.queries.evictions?.() ?? 0;
+    release?.();
+    await vi.runAllTimersAsync();
+    // The menu's two pages were cancelled quietly; its requester asks again.
+    await expect(menu).resolves.toBeUndefined();
+    expect(directory.queries.evictions?.()).toBe(before + 2);
+    for (const answer of answers.slice(0, 2))
+      answer.resolve(
+        roster.filter((event) => answer.authors.includes(event.pubkey)),
+      );
+    answers[2]?.resolve(onScreen);
+    await row;
+    await vi.runAllTimersAsync();
+    expect(
+      directory.queries.snapshot().has(onScreen[0]?.pubkey as string),
+    ).toBe(true);
+    expect(directory.queries.snapshot().has(roster[0]?.pubkey as string)).toBe(
+      false,
+    );
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps background reads asked for after a release when the shrink runs", async () => {
+  vi.useFakeTimers();
+  const answers: {
+    authors: readonly string[];
+    resolve: (events: RelayEvent[]) => void;
+  }[] = [];
+  const read = vi.fn(
+    (
+      filters: readonly { authors?: readonly string[] | undefined }[],
+      options?: { signal?: AbortSignal },
+    ) =>
+      new Promise<RelayEvent[]>((resolve, reject) => {
+        answers.push({ authors: filters[0]?.authors ?? [], resolve });
+        options?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
+      }),
+  );
+  const directory = createProfileDirectory({ read });
+  try {
+    const profiles = unsignedProfiles(4, "N");
+    const [stale, joined, other, fresh] = profiles as [
+      RelayEvent,
+      RelayEvent,
+      RelayEvent,
+      RelayEvent,
+    ];
+    const release = directory.queries.reserve?.(1);
+    // The departing view's reads, both asked for before its release.
+    const departing = Promise.all([
+      directory.ensure([stale.pubkey], "background"),
+      directory.ensure([joined.pubkey, other.pubkey], "background"),
+    ]);
+    const before = directory.queries.evictions?.() ?? 0;
+    release?.();
+    // The next view mounts before the shrink runs: one new author, and one
+    // on the departing view's pending page.
+    const next = directory.ensure([fresh.pubkey, joined.pubkey], "background");
+    expect(answers.map((answer) => answer.authors)).toEqual([
+      [stale.pubkey],
+      [joined.pubkey, other.pubkey],
+      [fresh.pubkey, joined.pubkey],
+    ]);
+    await vi.runAllTimersAsync();
+    expect(directory.queries.limit?.()).toBe(1024);
+    // Both departing reads were cancelled.
+    expect(directory.queries.evictions?.()).toBe(before + 2);
+    for (const answer of answers) answer.resolve(profiles);
+    await Promise.all([departing, next]);
+    const snapshot = directory.queries.snapshot();
+    expect(snapshot.has(fresh.pubkey)).toBe(true);
+    expect(snapshot.has(joined.pubkey)).toBe(true);
+    expect(snapshot.has(stale.pubkey)).toBe(false);
+    expect(snapshot.has(other.pubkey)).toBe(false);
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("returns known-unnamed identities past the base when it shrinks", async () => {
+  vi.useFakeTimers();
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read });
+  try {
+    const ids = unsignedProfiles(1500).map((event) => event.pubkey);
+    const release = directory.queries.reserve?.(500);
+    await directory.ensure(ids);
+    expect(directory.queries.unnamed?.().size).toBe(1500);
+    const changed = vi.fn();
+    const unsubscribe = directory.queries.subscribe(changed);
+    release?.();
+    await vi.runAllTimersAsync();
+    unsubscribe();
+    expect(directory.queries.unnamed?.().size).toBe(1024);
+    expect(directory.queries.unnamed?.().has(ids[1499] as string)).toBe(true);
+    expect(directory.queries.unnamed?.().has(ids[0] as string)).toBe(false);
+    expect(changed).toHaveBeenCalledTimes(1);
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("publishes a background read's pages once, also when the session accepts each page first", async () => {
+  vi.useFakeTimers();
+  const answers: {
+    authors: readonly string[];
+    signal: AbortSignal | undefined;
+    resolve: (events: RelayEvent[]) => void;
+  }[] = [];
+  const read = vi.fn(
+    (
+      filters: readonly { authors?: readonly string[] | undefined }[],
+      options?: { signal?: AbortSignal },
+    ) =>
+      new Promise<RelayEvent[]>((resolve) => {
+        answers.push({
+          authors: filters[0]?.authors ?? [],
+          signal: options?.signal,
+          resolve,
+        });
+      }),
+  );
+  const directory = createProfileDirectory({ read });
+  try {
+    const roster = unsignedProfiles(1500, "R");
+    const row = unsignedProfiles(1, "S");
+    const release = directory.queries.reserve?.(1500);
+    const changed = vi.fn();
+    const unsubscribe = directory.queries.subscribe(changed);
+    const menu = directory.ensure(
+      roster.map((event) => event.pubkey),
+      "background",
+    );
+    const shown = directory.ensure([row[0]?.pubkey as string]);
+    expect(answers).toHaveLength(4);
+    // The session accepts every read's events, with the read's signal, before
+    // the read returns them.
+    const answer = (index: number, events: RelayEvent[]) => {
+      const page = events.filter((event) =>
+        answers[index]?.authors.includes(event.pubkey),
+      );
+      directory.accept(page, answers[index]?.signal);
+      answers[index]?.resolve(page);
+    };
+    answer(0, roster);
+    await vi.runAllTimersAsync();
+    expect(changed).not.toHaveBeenCalled();
+    expect(directory.queries.snapshot().has(roster[0]?.pubkey as string)).toBe(
+      false,
+    );
+    // An accepted page counts as loaded before its publish: asking again
+    // for it reads nothing, and that caller gets its names when it resolves.
+    await directory.ensure(
+      roster.slice(0, 500).map((event) => event.pubkey),
+      "background",
+    );
+    await vi.runAllTimersAsync();
+    expect(answers).toHaveLength(4);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(directory.queries.snapshot().has(roster[0]?.pubkey as string)).toBe(
+      true,
+    );
+    changed.mockClear();
+    // A foreground read still publishes its page at once.
+    answer(3, row);
+    await shown;
+    await vi.runAllTimersAsync();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(directory.queries.snapshot().has(row[0]?.pubkey as string)).toBe(
+      true,
+    );
+    changed.mockClear();
+    answer(1, roster);
+    await vi.runAllTimersAsync();
+    expect(changed).not.toHaveBeenCalled();
+    // Live traffic for a member still being read publishes at once.
+    const live = roster[1400] as RelayEvent;
+    directory.accept([
+      { ...live, id: "f".repeat(64), created_at: live.created_at + 1 },
+    ]);
+    await vi.runAllTimersAsync();
+    expect(changed).toHaveBeenCalledTimes(1);
+    changed.mockClear();
+    answer(2, roster);
+    await menu;
+    await vi.runAllTimersAsync();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(directory.queries.snapshot().size).toBe(1501);
+    unsubscribe();
+    release?.();
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
   }
 });

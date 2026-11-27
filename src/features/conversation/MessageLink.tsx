@@ -1,6 +1,8 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useConversationPresentation } from "./ConversationPresentation";
 import {
   useContext,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -20,11 +22,8 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import {
   BrowserIcon,
-  ChatCircleIcon,
   CopyIcon,
-  CaretRightIcon,
-  MessageReplyIcon,
-  LockIcon,
+  ThreadIcon,
 } from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
@@ -34,17 +33,30 @@ import {
   type ComposerSession,
 } from "../messages/composer-session";
 import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
+import { safeLinkUrl } from "../relay/message-content";
+import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import {
-  LinkChannelPrivateContext,
+  LinkChannelKindContext,
+  LinkDescriptionContext,
+  LinkAccessibleNameContext,
+  LinkInteractiveContext,
   LinkLabelContext,
   LinkContentContext,
+  LinkPreviewContext,
   LinkThreadTabContext,
+  type LinkPreview,
 } from "./LinkLabelContext";
-import { BuzzLinkPreview, ChannelLinkPreview } from "./BuzzLinkPreview";
-import { useChannelReference } from "./channel-reference";
+import {
+  BuzzLinkPreview,
+  ChannelLinkPreview,
+  previewFailures,
+} from "./BuzzLinkPreview";
+import { namedChannel, useChannelReference } from "./channel-reference";
+import { useLinkedMessageByline } from "./linked-message";
 import { messageViewKey } from "../messages/view-key";
-import { soloChatLinkName } from "../solo/labels";
+import { linkedSoloChatName } from "../solo/labels";
 import styles from "./LinkPreview.module.css";
+import { writeClipboardText } from "../../shared/clipboard";
 
 const empty: readonly Contribution<LinkRenderer>[] = [];
 const snapshot = () => empty;
@@ -57,22 +69,41 @@ export const resolveLink = (
   renderers: readonly Contribution<LinkRenderer>[],
 ) => resolveMatch(renderers, url);
 
+const previewGap = 8;
+
+/** Lift a preview above the hovered message's actions, not over them. */
+function clearMessageActions(link: HTMLElement | null) {
+  const actions = link
+    ?.closest("[data-actions-revealed]")
+    ?.querySelector("[data-message-actions]");
+  if (!link || !actions) return previewGap;
+  return Math.max(
+    previewGap,
+    link.getBoundingClientRect().top -
+      actions.getBoundingClientRect().top +
+      previewGap,
+  );
+}
+
 export function MessageLink({
   url,
   children,
   registry,
   onOpenLink,
+  canOpenLink,
   label,
   directoryLabel,
   session,
   scope,
   interactive = true,
   channelPrivate = false,
+  channelSolo = false,
 }: {
   url: string;
   children?: ReactNode;
   registry: ContributionReader<LinkRenderer> | undefined;
   onOpenLink(url: string): boolean;
+  canOpenLink?: ((url: string) => boolean) | undefined;
   label?: string | undefined;
   /** The receiving community's name for a raw destination. Display only: a raw
    * link copies as its URL. */
@@ -81,6 +112,8 @@ export function MessageLink({
   scope?: string | undefined;
   interactive?: boolean;
   channelPrivate?: boolean;
+  /** The joined list holds the destination as a Solo chat, confirmed or not. */
+  channelSolo?: boolean;
 }) {
   const active = useConversationPresentation();
   const renderers = useSyncExternalStore(
@@ -91,69 +124,114 @@ export function MessageLink({
   const renderer = resolveLink(url, renderers);
   const [unavailable, setUnavailable] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [description, setDescription] = useState<string>();
+  const [accessibleName, setAccessibleName] = useState<string>();
+  // A renderer's own hover card, such as an agent card's Add to Buzz.
+  const [offered, setOffered] = useState<LinkPreview>();
+  const offeredAction = useRef<HTMLDivElement>(null);
   if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
-  const internal = isBuzzLink(url);
+  // Entering the card hides the row's actions; keep its lift while it's open.
+  const lift = useRef(previewGap);
+  const panelTarget = !safeLinkUrl(url) && !isBuzzLink(url) && !!canOpenLink;
+  const internal = isBuzzLink(url) || panelTarget;
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination = parsed?.format === "legacy" ? parsed : undefined;
   const host = fullSession(session);
-  // Channel-only links name a channel the reader may not have joined. A
-  // composer decoration is the writer's own draft: it never looks one up.
+  // Any Buzz link names a channel the reader may not have joined. A composer
+  // decoration is the writer's own draft: it never looks one up.
+  const lookedUp = interactive ? destination?.channelId : undefined;
+  // Only a channel-only link presents the channel itself; a message or thread
+  // link keeps its own text and preview, and uses the answer only to stay
+  // inert while the channel is withheld.
   const referenced =
-    interactive &&
-    destination &&
-    !destination.messageId &&
-    !destination.threadRootId
-      ? destination.channelId
+    destination && !destination.messageId && !destination.threadRootId
+      ? lookedUp
       : undefined;
-  const reference = useChannelReference(host?.channels, referenced);
+  const reference = useChannelReference(host?.channels, lookedUp);
   // Subscribe to the session's presentation, including chosen-name provenance.
   // A string snapshot stays stable when unrelated channel activity changes.
-  const sessionName = useSyncExternalStore(
-    host?.channels.subscribeList ?? subscribe,
-    () => {
-      if (!destination || destination.messageId || destination.threadRootId)
-        return "";
-      const channel = host?.channels
-        .list()
-        .channels.find((item) => item.id === destination.channelId);
-      return channel?.channelType === "solo" && !channel.cached
-        ? soloChatLinkName(channel)
-        : "";
-    },
+  const channels = session?.channels;
+  const chatName = useSyncExternalStore(
+    channels?.subscribeList ?? subscribe,
+    () =>
+      destination
+        ? linkedSoloChatName(destination, channels?.list().channels)
+        : "",
     () => "",
   );
-  // Authored Session labels survive access loss; they are presentation only.
-  const sentSessionName = label?.match(
-    /^(?:Session|Chat)(?::| ·)\s+(.+)$/s,
-  )?.[1];
-  const sessionChip = !!(
-    destination &&
-    !destination.messageId &&
-    !destination.threadRootId &&
-    (sessionName ||
-      (reference.state === "found" && reference.channelType === "solo") ||
-      (reference.state !== "found" && sentSessionName))
-  );
-  const chipName =
-    sessionName || sentSessionName || destination?.channelId.slice(0, 8);
-  const sessionLabel = sessionChip ? `Chat: ${chipName}` : undefined;
-  // DMs and sessions keep their existing presentation.
-  const named =
-    reference.state === "found" &&
-    !reference.hidden &&
-    reference.channelType !== "dm" &&
-    reference.channelType !== "solo"
-      ? reference
-      : undefined;
+  const named = referenced ? namedChannel(reference) : undefined;
   const withheld = reference.state === "withheld";
-  // The authored label is message text, so it stays; the lock marks it. A raw
-  // destination has no name to show.
-  const shown = withheld && label === undefined ? "Private channel" : children;
+  const withheldChannel = withheld && !!referenced;
+  // A card focused while the lookup was pending stops being a link once the
+  // channel is withheld, and its focused node is replaced: return focus to
+  // the link the reader came from.
+  const cardFocused = useRef(false);
+  useLayoutEffect(() => {
+    if (!withheld || !cardFocused.current) return;
+    cardFocused.current = false;
+    const focused = document.activeElement;
+    if (!focused || focused === document.body)
+      trigger.current?.focus({ preventScroll: true });
+  }, [withheld]);
+  const soloChat =
+    !!chatName ||
+    (!!referenced &&
+      reference.state === "found" &&
+      reference.channelType === "solo");
+  const channelKind = withheldChannel
+    ? "private"
+    : soloChat
+      ? "chat"
+      : channelPrivate || named?.private
+        ? "private"
+        : "channel";
+  const channelName = withheldChannel
+    ? undefined
+    : (directoryLabel ?? (named ? `#${named.name}` : undefined));
+  // The `#` completion writes a channel's name of the moment as its Markdown
+  // link's text. Text that is only `#` and a channel name, which may hold
+  // spaces, therefore follows the channel's current name once known, as a
+  // profile link follows its person's. `#name` prose has no children: its
+  // author wrote that name. A listed channel whose metadata has not arrived
+  // is called by the start of its ID, which is no name to show instead, and
+  // a Solo chat's title is not a channel name. The length is checked first:
+  // it keeps the canonical-name scan, quadratic in whitespace, off an
+  // arbitrary label.
+  const written =
+    !channelSolo &&
+    channelName?.startsWith("#") &&
+    channelName !== `#${destination?.channelId.slice(0, 8)}` &&
+    typeof children === "string" &&
+    children.startsWith("#")
+      ? children.slice(1)
+      : "";
+  const current =
+    written &&
+    [...written].length <= 120 &&
+    written === canonicalDetailsName(written)
+      ? channelName
+      : undefined;
+  // Any other authored label is message text, so it stays; the lock marks it.
+  // A raw destination has no name to show.
+  const shown =
+    withheldChannel && label === undefined
+      ? "Private channel"
+      : (current ?? children);
+  // A raw message destination names its author once read; a draft never reads.
+  const byline = useLinkedMessageByline(
+    interactive && label === undefined && children === undefined
+      ? host
+      : undefined,
+    destination?.channelId,
+    destination?.messageId,
+  );
   const display =
+    current ??
     label ??
-    directoryLabel ??
-    (named ? `#${named.name}` : withheld ? "Private channel" : undefined);
+    (withheldChannel
+      ? "Private channel"
+      : (byline ?? (chatName || undefined) ?? channelName));
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLAnchorElement>();
   const [copying, setCopying] = useState(false);
@@ -178,7 +256,7 @@ export function MessageLink({
     setCopying(true);
     setNotice(undefined);
     try {
-      await navigator.clipboard.writeText(url);
+      await writeClipboardText(url);
       setNotice({ text: "Link copied", error: false });
     } catch {
       setNotice({
@@ -197,7 +275,7 @@ export function MessageLink({
   const openInternal = () => {
     if (trigger.current?.isConnected)
       trigger.current.focus({ preventScroll: true });
-    const opened = onOpenLink(url);
+    const opened = (!panelTarget || !!canOpenLink?.(url)) && onOpenLink(url);
     setUnavailable(!opened);
     if (opened) setPreviewOpen(false);
   };
@@ -205,13 +283,26 @@ export function MessageLink({
     target: "_blank",
     rel: "noopener noreferrer",
     onClick: (event: MouseEvent<HTMLAnchorElement>) => {
-      if (!active) {
+      // A withheld link has nowhere to go until its recheck admits it.
+      if (!active || withheld) {
         event.preventDefault();
         return;
       }
       if (internal) {
         event.preventDefault();
         openInternal();
+        return;
+      }
+      // Tauri's automatic external-link opener skips Command-clicks.
+      if (external && event.metaKey && event.button === 0 && isTauri()) {
+        event.preventDefault();
+        setNotice(undefined);
+        void invoke("plugin:opener|open_url", { url }).catch(() => {
+          setNotice({
+            text: "Couldn’t open the link in your browser.",
+            error: true,
+          });
+        });
         return;
       }
       if (
@@ -225,7 +316,7 @@ export function MessageLink({
     },
     onAuxClick: internal
       ? (event: MouseEvent<HTMLAnchorElement>) => {
-          if (!active) {
+          if (!active || withheld) {
             event.preventDefault();
             return;
           }
@@ -238,70 +329,36 @@ export function MessageLink({
   };
   const anchor = (entry?: Contribution<LinkRenderer>) => {
     const Content = entry?.component;
-    const content =
-      sessionChip && destination ? (
-        <span className={styles.soloChip}>
-          <span className={styles.soloIcon}>
-            <ChatCircleIcon size={16} aria-hidden="true" />
-          </span>
-          <span className={styles.soloPrefix}>Chat:</span>
-          <span className={styles.soloName}>{chipName}</span>
-          {withheld ? (
-            <LockIcon
-              className={styles.soloLock}
-              size={12}
-              aria-hidden="true"
-            />
-          ) : reference.state === "found" ? (
-            <CaretRightIcon size={16} aria-hidden="true" />
-          ) : null}
-        </span>
-      ) : Content ? (
-        <Content url={url} />
-      ) : (
-        (shown ?? display ?? url)
-      );
+    const content = Content ? <Content url={url} /> : (shown ?? display ?? url);
     // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a
         ref={trigger}
         href={url}
-        aria-label={
-          sessionLabel
-            ? withheld
-              ? `${sessionLabel}, unavailable`
-              : `Open ${sessionLabel}`
-            : display
-        }
+        aria-label={accessibleName ?? display}
         aria-description={
-          sessionChip && withheld
-            ? "Chat unavailable. You don’t have access, or it no longer exists."
-            : undefined
+          // A withheld message link has no title; its preview says why.
+          description ??
+          (withheld && !referenced ? previewFailures.withheld : undefined)
         }
-        data-link-label={label ?? ""}
-        data-solo-link={sessionChip ? "" : undefined}
+        aria-disabled={withheld || undefined}
+        data-link-label={current ?? label ?? ""}
+        data-panel-target={panelTarget ? url : undefined}
         title={
-          sessionLabel
-            ? withheld
-              ? `${sessionLabel}. Chat unavailable. You don’t have access, or it no longer exists.`
-              : sessionLabel
-            : withheld
-              ? "Private channel. You aren’t a member, or it no longer exists."
-              : !preview && !named
-                ? url
-                : undefined
+          withheld && !preview
+            ? previewFailures.withheld
+            : !preview && !named
+              ? url
+              : undefined
         }
-        className={sessionChip ? styles.soloLink : entry?.className}
+        className={entry?.className}
         data-link-renderer={entry?.key}
         {...navigation}
       >
         {content}
       </a>
     ) : (
-      <span
-        className={sessionChip ? styles.soloLink : entry?.className}
-        data-link-renderer={entry?.key}
-      >
+      <span className={entry?.className} data-link-renderer={entry?.key}>
         {content}
       </span>
     );
@@ -344,21 +401,73 @@ export function MessageLink({
                 label: "Channel preview",
                 body: <ChannelLinkPreview channel={named} />,
               }
-            : undefined;
+            : offered
+              ? {
+                  label: offered.label,
+                  body: (
+                    <div ref={offeredAction} tabIndex={-1}>
+                      {offered.render((target) => {
+                        if (!active) return false;
+                        const opened = onOpenLink(target);
+                        setUnavailable(!opened);
+                        if (opened) setPreviewOpen(false);
+                        return opened;
+                      })}
+                    </div>
+                  ),
+                  controls: true,
+                }
+              : undefined;
     // A channel-only link keeps one root while its name resolves, so a link
     // focused during the lookup keeps its focus. Its card opens once found.
+    // A renderer that may offer its own card keeps one root too: wrapping
+    // the link when the card arrives would remount the renderer offering it.
     const root =
       card ??
       (active && interactive && session && referenced
         ? { label: "Channel preview", body: null }
-        : undefined);
+        : active && interactive && host && entry
+          ? { label: "Link preview", body: null }
+          : undefined);
+    // A card with its own controls is not itself the link's destination.
+    const controls = !!card && "controls" in card;
     const linked = root ? (
       <PreviewCard
         trigger={menuTrigger}
-        link={<a href={url} {...navigation} />}
+        // A withheld destination's card only explains why; it isn't a link
+        // until a recheck admits the reader.
+        {...(controls
+          ? { actionRef: offeredAction }
+          : withheld
+            ? {}
+            : {
+                link: (
+                  <a
+                    href={url}
+                    {...navigation}
+                    onFocus={() => {
+                      cardFocused.current = true;
+                    }}
+                    onBlur={() => {
+                      cardFocused.current = false;
+                    }}
+                  />
+                ),
+              })}
         open={previewOpen && !!card && !menuOpen}
-        onOpenChange={setPreviewOpen}
+        onOpenChange={(next) => {
+          if (next) lift.current = previewGap;
+          setPreviewOpen(next);
+        }}
         side="top"
+        sideOffset={({ side }) => {
+          if (side !== "top") return previewGap;
+          lift.current = Math.max(
+            lift.current,
+            clearMessageActions(trigger.current),
+          );
+          return lift.current;
+        }}
         className={styles.popup ?? ""}
         aria-label={root.label}
       >
@@ -374,8 +483,9 @@ export function MessageLink({
         <MenuPopup size="compact" anchor={menuAnchor} finalFocus={trigger}>
           {thread ? (
             <MenuItem
+              disabled={withheld}
               onClick={() => {
-                if (!active) return;
+                if (!active || withheld) return;
                 // The host records the focused link as the tab's return target.
                 if (trigger.current?.isConnected)
                   trigger.current.focus({ preventScroll: true });
@@ -392,7 +502,7 @@ export function MessageLink({
               }}
             >
               <MenuIcon>
-                <MessageReplyIcon size={16} />
+                <ThreadIcon size={16} />
               </MenuIcon>
               Open link
             </MenuItem>
@@ -446,12 +556,26 @@ export function MessageLink({
     </>
   );
   return (
-    <LinkChannelPrivateContext
-      value={channelPrivate || withheld || !!named?.private}
-    >
+    <LinkChannelKindContext value={channelKind}>
       <LinkLabelContext value={display}>
-        <LinkContentContext value={shown}>{result}</LinkContentContext>
+        <LinkContentContext value={shown}>
+          <LinkInteractiveContext value={interactive}>
+            <LinkDescriptionContext
+              value={interactive ? setDescription : undefined}
+            >
+              <LinkPreviewContext
+                value={interactive && host ? setOffered : undefined}
+              >
+                <LinkAccessibleNameContext
+                  value={interactive ? setAccessibleName : undefined}
+                >
+                  {result}
+                </LinkAccessibleNameContext>
+              </LinkPreviewContext>
+            </LinkDescriptionContext>
+          </LinkInteractiveContext>
+        </LinkContentContext>
       </LinkLabelContext>
-    </LinkChannelPrivateContext>
+    </LinkChannelKindContext>
   );
 }

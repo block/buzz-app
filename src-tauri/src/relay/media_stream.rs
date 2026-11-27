@@ -10,7 +10,8 @@
 //! - It binds only `127.0.0.1`. A random 256-bit token per process, given
 //!   only to the main window over IPC, authorizes every request; `Host` must
 //!   name the bound address and `Origin`, when sent, the app. Nothing is
-//!   logged.
+//!   logged. Responses let any origin read them, so the page can draw a
+//!   CORS-mode video into a canvas; the `Origin` check decides who gets one.
 //! - At most `CONNECTIONS` are accepted at once, before any per-connection
 //!   work, and a request head must arrive within `HEAD_TIMEOUT`.
 //! - Each connection answers one request and closes. Bodies are written a
@@ -24,6 +25,7 @@
 //!   spool expires after `media_spool`'s idle time.
 
 use super::{media_blocks, media_spool, media_url, WHOLE_VIDEO_MAX};
+use crate::federated_identity::FederatedIdentity;
 use crate::identity::IdentityHost;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use std::{net::Ipv4Addr, sync::Arc, time::Duration};
@@ -45,10 +47,10 @@ const CONNECTIONS: usize = 32;
 const HEAD_LIMIT: usize = 8192;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 /// Page origins a media request may name: the app on macOS and Linux, on
-/// Windows, and the development server in debug builds.
-fn app_origin(origin: &str) -> bool {
+/// Windows, and the development server a development build loads.
+fn app_origin(server: &Server, origin: &str) -> bool {
     matches!(origin, "tauri://localhost" | "http://tauri.localhost")
-        || (cfg!(debug_assertions) && origin == "http://localhost:1430")
+        || server.dev_origin.as_deref() == Some(origin)
 }
 
 /// The running listener; dropping it stops the listener and its connections.
@@ -64,12 +66,22 @@ impl Drop for MediaStream {
 }
 
 impl MediaStream {
-    pub(crate) fn start(host: IdentityHost) -> std::io::Result<Self> {
-        Self::serve(host, media_url)
+    /// `dev` is the development server's URL, only in a development build.
+    pub(crate) fn start(
+        host: IdentityHost,
+        fi: FederatedIdentity,
+        dev: Option<&Url>,
+    ) -> std::io::Result<Self> {
+        Self::serve(host, Some(fi), dev, media_url)
     }
 
     /// `target` validates the decoded relay URL; it is `media_url` outside tests.
-    fn serve(host: IdentityHost, target: fn(&str) -> Option<Url>) -> std::io::Result<Self> {
+    fn serve(
+        host: IdentityHost,
+        fi: Option<FederatedIdentity>,
+        dev: Option<&Url>,
+        target: fn(&str) -> Option<Url>,
+    ) -> std::io::Result<Self> {
         // Bound synchronously, so the address is known before any page loads.
         let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
@@ -81,8 +93,10 @@ impl MediaStream {
         let stop = CancellationToken::new();
         let server = Arc::new(Server {
             host,
+            fi,
             authority,
             token,
+            dev_origin: dev.map(|url| url.origin().ascii_serialization()),
             target,
         });
         tauri::async_runtime::spawn(accept(listener, server, stop.clone()));
@@ -108,8 +122,10 @@ pub(crate) fn media_stream_base<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> 
 
 struct Server {
     host: IdentityHost,
+    fi: Option<FederatedIdentity>,
     authority: String,
     token: String,
+    dev_origin: Option<String>,
     target: fn(&str) -> Option<Url>,
 }
 
@@ -239,7 +255,7 @@ fn parse(server: &Server, head: &[u8]) -> std::result::Result<Request, u16> {
         let value = value.trim_matches([' ', '\t']);
         match name.to_ascii_lowercase().as_str() {
             "host" if host.replace(value).is_some() => return Err(400),
-            "origin" if !app_origin(value) => return Err(403),
+            "origin" if !app_origin(server, value) => return Err(403),
             // A request body has no meaning here and would desynchronize framing.
             "content-length" if value != "0" => return Err(400),
             "transfer-encoding" => return Err(400),
@@ -305,7 +321,15 @@ async fn read(
     end: u64,
 ) -> std::result::Result<(Part, tauri::http::HeaderMap), u16> {
     let end = end.min(start.saturating_add(media_blocks::BLOCK - 1));
-    let response = media_blocks::read(&server.host, url, start, end, WHOLE_VIDEO_MAX).await?;
+    let response = media_blocks::read(
+        &server.host,
+        server.fi.as_ref(),
+        url,
+        start,
+        end,
+        WHOLE_VIDEO_MAX,
+    )
+    .await?;
     if response.status() != 206 {
         let headers = response.headers().clone();
         return Ok((Part::Whole(response), headers));
@@ -358,7 +382,10 @@ async fn respond(
     let status = if request.range.is_some() { 206 } else { 200 };
     let mut head = status_line(status);
     for (name, value) in &headers {
-        if !matches!(name.as_str(), "content-range" | "content-length") {
+        if !matches!(
+            name.as_str(),
+            "content-range" | "content-length" | "access-control-allow-origin"
+        ) {
             head.push_str(&format!(
                 "{name}: {}\r\n",
                 value.to_str().unwrap_or_default()
@@ -369,7 +396,7 @@ async fn respond(
         head.push_str(&format!("Content-Range: bytes {start}-{end}/{total}\r\n"));
     }
     head.push_str(&format!(
-        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        "{ALLOW_ORIGIN}Content-Length: {}\r\nConnection: close\r\n\r\n",
         end - start + 1
     ));
     writer.write_all(head.as_bytes()).await?;
@@ -404,7 +431,10 @@ async fn write_whole(
 ) -> std::io::Result<()> {
     let mut head = status_line(response.status().as_u16());
     for (name, value) in response.headers() {
-        if !matches!(name.as_str(), "content-range" | "content-length") {
+        if !matches!(
+            name.as_str(),
+            "content-range" | "content-length" | "access-control-allow-origin"
+        ) {
             head.push_str(&format!(
                 "{name}: {}\r\n",
                 value.to_str().unwrap_or_default()
@@ -412,7 +442,7 @@ async fn write_whole(
         }
     }
     head.push_str(&format!(
-        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        "{ALLOW_ORIGIN}Content-Length: {}\r\nConnection: close\r\n\r\n",
         response.body().len()
     ));
     writer.write_all(head.as_bytes()).await?;
@@ -434,6 +464,11 @@ async fn write_status(
     head.push_str("Content-Length: 0\r\nConnection: close\r\n\r\n");
     writer.write_all(head.as_bytes()).await
 }
+
+/// `parse` already refused any other page's `Origin`. Sent on every body,
+/// not only to CORS requests, so a response cached for a plain `<video>`
+/// still serves a CORS one.
+const ALLOW_ORIGIN: &str = "Access-Control-Allow-Origin: *\r\n";
 
 fn status_line(status: u16) -> String {
     let reason = tauri::http::StatusCode::from_u16(status)

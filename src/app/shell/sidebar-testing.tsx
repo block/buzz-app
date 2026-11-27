@@ -1,21 +1,37 @@
+import { useState, type ReactNode } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import type { SidebarScope } from "../../features/channel-navigation/sidebar-scope-service";
 import { act, render } from "@testing-library/react";
 import { vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelaySession } from "../../features/relay/session";
+import type { ReadTransport } from "../../features/relay/transport";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
-import type { Navigation } from "../../features/navigation/controller";
-import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
+import type {
+  Navigation,
+  NavigationOpenOptions,
+} from "../../features/navigation/controller";
+import type { ChannelList } from "../../features/relay/contracts";
+import {
+  ChannelNavigationProvider,
+  useChannelNavigation,
+} from "../../features/channel-navigation/ChannelNavigationState";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { NewMenu } from "./NewMenu";
 import type { Agents } from "../../features/agents/service";
-import { PrimarySidebar } from "./PrimarySidebar";
+import { PrimarySidebar } from "./sidebar-section-testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
-import { conversationTarget } from "../../features/channel-navigation/routes";
+import { SoloInventory } from "../../bundled/channels/SoloInventory";
+import {
+  conversationTarget,
+  sidebarTarget,
+} from "../../features/channel-navigation/routes";
 import type { ContributionReader } from "../../features/conversation/contracts";
-import type { ChatIcon } from "../../features/conversation/service";
+import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
+import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
+import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 
 export const owners: ReturnType<typeof createRelaySession>[] = [];
 export const id = "11111111-1111-4111-8111-111111111111";
@@ -33,11 +49,20 @@ export function fixture(
   /** Newer, read Solo chats ahead of Planning and Other; only Planning is unread. */
   newer = 0,
   chatIcons?: ContributionReader<ChatIcon>,
+  chatMenus?: ContributionReader<ChatMenu>,
+  host: {
+    transport?: ReadTransport;
+    federatedIdentity?: FederatedIdentity;
+    sidebarScope?: SidebarScope;
+    sidebarRows?: SidebarRows;
+    sidebarSections?: SidebarSections;
+  } = {},
 ) {
-  const owner = createRelaySession(null);
+  const owner = createRelaySession(host.transport ?? null);
   owners.push(owner);
   const base = owner.session;
   const listeners = new Set<() => void>();
+  const rosterListeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
     return () => {
@@ -71,7 +96,7 @@ export function fixture(
     durability: "saved" as const,
     sync: "pending" as const,
   }));
-  const list = {
+  let list: ChannelList = {
     status: "ready" as const,
     channels: [
       {
@@ -79,6 +104,7 @@ export function fixture(
         name: "Planning",
         channelType: "solo" as const,
         creator: viewer,
+        ...(combined ? { cached: true } : {}),
       },
       {
         id: other,
@@ -112,9 +138,17 @@ export function fixture(
     scope,
     viewer,
     channelCreation: { ...base.channelCreation, available: canCreate },
-    channels: { ...base.channels, list: () => list, ensureList() {} },
-    soloPreferences: {
-      ...base.soloPreferences,
+    channels: {
+      ...base.channels,
+      list: () => list,
+      subscribeList(listener) {
+        rosterListeners.add(listener);
+        return () => rosterListeners.delete(listener);
+      },
+      ensureList() {},
+    },
+    sidebarPreferences: {
+      ...base.sidebarPreferences,
       sectionCreationWritable: canCreate,
       snapshot: () => preferences,
       ensure: async () => {},
@@ -162,27 +196,45 @@ export function fixture(
     session,
     generation: 1,
     scope,
+    viewer,
   };
   const relay: RelayData = {
     snapshot: () => snapshot,
     subscribe,
     retry() {},
+    tryAgain() {},
     disconnect() {},
     async clearCache() {},
   };
   let attempt = 0;
-  const open = vi.fn(async (next: OpenTarget) => {
+  let visit = new AbortController();
+  let sidebar: NavigationOpenOptions["sidebar"];
+  // Each opening ends the previous attempt's visit, as the controller does.
+  const begin = (next: OpenTarget, options?: NavigationOpenOptions) => {
+    sidebar = options?.sidebar;
     target = next;
     attempt++;
-    rendered.rerender(tree());
-    publish();
-    return { status: "opened" as const };
-  });
+    visit.abort();
+    visit = new AbortController();
+  };
+  const open = vi.fn(
+    async (next: OpenTarget, options?: NavigationOpenOptions) => {
+      begin(next, options);
+      rendered.rerender(tree());
+      publish();
+      return { status: "opened" as const };
+    },
+  );
   const navigator = {
     open,
     subscribe,
     snapshot: () => ({
-      attempt: { id: String(attempt), signal: new AbortController().signal },
+      entry: { target },
+      attempt: {
+        id: String(attempt),
+        signal: visit.signal,
+        sidebar,
+      },
     }),
   } as unknown as Navigation;
   let target: OpenTarget = conversationTarget(scope, other);
@@ -190,23 +242,42 @@ export function fixture(
   const publish = () => {
     for (const listener of listeners) listener();
   };
+  let handoff: ReturnType<typeof useChannelNavigation>;
+  const HandoffProbe = () => {
+    handoff = useChannelNavigation();
+    return null;
+  };
   const tree = () => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
+        <HandoffProbe />
         {combined ? (
-          <>
-            <NewMenu relay={relay} navigator={navigator} agents={agents} />
-            {sidebarVisible && (
-              <PrimarySidebar
-                relay={relay}
-                navigator={navigator}
-                target={target}
-                chatIcons={chatIcons}
-              >
-                <button type="button">Inbox</button>
-              </PrimarySidebar>
-            )}
-          </>
+          <SidebarCreationHost
+            relay={relay}
+            navigator={navigator}
+            agents={agents}
+          >
+            {(creationAction) =>
+              sidebarVisible && (
+                <PrimarySidebar
+                  creationAction={creationAction}
+                  relay={relay}
+                  navigator={navigator}
+                  target={sidebarTarget(target)}
+                  chatIcons={chatIcons}
+                  chatMenus={chatMenus}
+                  sidebarRows={host.sidebarRows}
+                  sidebarSections={host.sidebarSections}
+                  sidebarScope={host.sidebarScope}
+                  {...(host.federatedIdentity
+                    ? { federatedIdentity: host.federatedIdentity }
+                    : {})}
+                >
+                  <button type="button">Inbox</button>
+                </PrimarySidebar>
+              )
+            }
+          </SidebarCreationHost>
         ) : (
           <SoloInventory
             session={snapshot.session}
@@ -214,6 +285,8 @@ export function fixture(
             navigator={navigator}
             target={target}
             chatIcons={chatIcons}
+            chatMenus={chatMenus}
+            sidebarRows={host.sidebarRows}
           />
         )}
       </ChannelNavigationProvider>
@@ -222,6 +295,7 @@ export function fixture(
   const rendered = render(tree());
   return {
     session,
+    relay,
     navigate(next: OpenTarget) {
       target = next;
       rendered.rerender(tree());
@@ -243,6 +317,15 @@ export function fixture(
       });
     },
     open,
+    /** A navigation the shell does not render the sidebar for, as a thread move. */
+    navigateWithin(next: OpenTarget) {
+      act(() => {
+        begin(next);
+        publish();
+      });
+    },
+    /** The sidebar's hand-off to the conversation page it opens. */
+    handoff: () => handoff,
     markThrough,
     listeners,
     typing(next: typeof typing) {
@@ -263,6 +346,13 @@ export function fixture(
         publish();
       });
     },
+    /** A roster update, as the relay delivers one: a new list of channels. */
+    roster(update: (channels: typeof list.channels) => typeof list.channels) {
+      act(() => {
+        list = { ...list, channels: update(list.channels) };
+        for (const listener of rosterListeners) listener();
+      });
+    },
     clearUnread() {
       act(() => {
         unread = { ...unread, observedCount: 0, attentionCount: 0 };
@@ -271,4 +361,19 @@ export function fixture(
     },
     activitySnapshot: activity,
   };
+}
+
+function SidebarCreationHost({
+  children,
+  ...props
+}: Parameters<typeof NewMenu>[0] & {
+  children: (action: ReactNode) => ReactNode;
+}) {
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  return (
+    <>
+      <NewMenu {...props} triggerContainer={container} />
+      {children(<div ref={setContainer} />)}
+    </>
+  );
 }

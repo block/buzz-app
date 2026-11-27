@@ -1,9 +1,76 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { clickSidebarHeadingAction, openPage } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
+import { createHash } from "node:crypto";
 
 test.use({ productionBroker: true, dmLabels: true, developmentReact: true });
+
+// Browser boundary: the real file chooser and ProseMirror selection must allow
+// typing immediately at the retained caret after a successful picker upload.
+test("a successful picker image upload returns focus with the existing caret", async ({
+  page,
+  app,
+}) => {
+  // A metadata-free GIF keeps the upload bytes identical in both engines.
+  const bytes = Buffer.from(
+    "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+    "base64",
+  );
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  let release;
+  let started;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const uploading = new Promise((resolve) => {
+    started = resolve;
+  });
+  await page.route("**/api/relay/**/upload", async (route) => {
+    started();
+    await held;
+    await route.fulfill({
+      json: {
+        name: "pixel.gif",
+        url: `https://primary.example/media/${sha256}.gif`,
+        sha256,
+        type: "image/gif",
+        size: bytes.length,
+      },
+    });
+  });
+  await page.route("**/api/relay/**/media?**", (route) =>
+    route.fulfill({ contentType: "image/gif", body: bytes }),
+  );
+  try {
+    await open(page, app);
+    const form = page.getByRole("form", {
+      name: "Send a message to Alpha",
+      exact: true,
+    });
+    const input = form.getByRole("textbox");
+    await input.fill("hello world");
+    await input.press("End");
+    for (let i = 0; i < 5; i++) await input.press("ArrowLeft");
+    const choosing = page.waitForEvent("filechooser");
+    await form
+      .getByRole("button", { name: "Attach files", exact: true })
+      .click();
+    await (await choosing).setFiles({
+      name: "pixel.gif",
+      mimeType: "image/gif",
+      buffer: bytes,
+    });
+    await uploading;
+    release();
+    await expect(form.getByText(/Ready$/)).toHaveCount(1);
+    await expect(input).toBeFocused();
+    await page.keyboard.type("picked ");
+    await expect(input).toHaveText("hello picked world");
+  } finally {
+    release();
+  }
+});
 
 // Browser boundary: real sidebar navigation must hand focus to the mounted
 // ProseMirror editor, including after a warm return; typing must need no click.
@@ -136,7 +203,8 @@ test.describe("retained agent focus", () => {
         .click();
       await page
         .getByRole("dialog", { name: "Mention a member or agent" })
-        .getByRole("button", { name: new RegExp(pubkey) })
+        .getByRole("button")
+        .and(page.locator(`[data-mention-choice="${pubkey}"]`))
         .click();
     }
     await page.keyboard.type("First request");
@@ -207,10 +275,31 @@ test.describe("text field focus appearance", () => {
         .getByRole("article", { name: "Conversation" })
         .getByRole("textbox");
       await input.click();
+      // ProseMirror repairs the DOM selection in a 20 ms timer after focus.
+      // A busy renderer can run it after a later caret key has moved the
+      // native caret but before the editor observes the move, which puts
+      // the caret back. Timers run in deadline order, so one queued now with
+      // the same delay resolves after that repair.
+      await input.evaluate(
+        () => new Promise((resolve) => setTimeout(resolve, 20)),
+      );
       await page.keyboard.type("A draft");
+      await expect(input).toHaveText("A draft");
+      const caret = () =>
+        input.evaluate((element) => {
+          const selection = document.getSelection();
+          return selection?.isCollapsed &&
+            element.contains(selection.anchorNode)
+            ? selection.anchorOffset
+            : -1;
+        });
+      // Observe each native selection move before sending the next key.
+      await expect.poll(caret).toBe(7);
       await expect(input).toHaveCSS("outline-style", "none");
       await page.keyboard.press("ArrowLeft");
+      await expect.poll(caret).toBe(6);
       await page.keyboard.press("ArrowRight");
+      await expect.poll(caret).toBe(7);
       await expect(page.locator("html")).toHaveAttribute(
         "data-keyboard-navigation",
         "",
@@ -239,9 +328,11 @@ test.describe("text field focus appearance", () => {
       await page.setViewportSize({ width: 1440, height: 950 });
 
       // The same shared recipe must reach ordinary fields, not just composers.
-      await page
-        .getByRole("button", { name: "Create channel", exact: true })
-        .click();
+      await clickSidebarHeadingAction(
+        page
+          .locator('[data-sidebar-section="channels"]')
+          .getByRole("button", { name: "Create channel", exact: true }),
+      );
       const dialog = page.getByRole("dialog");
       const name = dialog.getByRole("textbox", { name: "Name", exact: true });
       const description = dialog.getByRole("textbox", {

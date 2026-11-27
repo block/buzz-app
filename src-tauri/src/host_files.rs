@@ -50,6 +50,17 @@ async fn bounded<T: Send + 'static>(
     .map_err(|error| error.to_string())?
 }
 
+/// Lists a folder with directory resolution's limit on blocking work, and
+/// answers its caller with `late` after the read timeout.
+pub(crate) async fn bounded_listing<T: Send + 'static>(
+    late: &'static str,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tokio::time::timeout(READ_TIMEOUT, bounded(&DIRECTORIES, work))
+        .await
+        .map_err(|_| late.to_string())?
+}
+
 /// `path`, absolute or `~/…` (`~\…` too on Windows), or else relative to
 /// `cwd`, which is one of those.
 fn locate(path: &str, cwd: Option<&str>) -> Result<PathBuf, String> {
@@ -104,13 +115,19 @@ fn read(path: &str, cwd: Option<&str>) -> Result<Vec<u8>, String> {
 }
 
 /// `path`, absolute or `~/…`, as an absolute directory without symbolic
-/// links, created if missing.
-fn directory(path: &str) -> Result<String, String> {
+/// links, created if missing unless `create` is false.
+fn directory(path: &str, create: bool) -> Result<String, String> {
     let full = expand_home(path)?;
-    std::fs::create_dir_all(&full).map_err(|error| format!("Could not create {path}: {error}"))?;
+    if create {
+        std::fs::create_dir_all(&full)
+            .map_err(|error| format!("Could not create {path}: {error}"))?;
+    }
     // `dunce` keeps Windows paths in their ordinary `C:\…` form, which agents
     // and the programs they run expect, rather than `\\?\C:\…`.
     let resolved = dunce::canonicalize(&full).map_err(|_| format!("Could not find {path}"))?;
+    if !Path::new(&resolved).is_dir() {
+        return Err(format!("{path} is not a directory"));
+    }
     resolved
         .into_os_string()
         .into_string()
@@ -127,11 +144,16 @@ pub(crate) async fn plugin_host_read_file(
     path: String,
     cwd: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
+    // Reserve before any await; a delete racing an admitted attachment read refuses.
+    let lease = FileReadLease::new()?;
     granted(manager, id, revision).await?;
     let late = format!("Reading {path} took too long");
     tokio::time::timeout(
         READ_TIMEOUT,
-        bounded(&READS, move || read(&path, cwd.as_deref())),
+        bounded(&READS, move || {
+            let _lease = lease;
+            read(&path, cwd.as_deref())
+        }),
     )
     .await
     .map_err(|_| late)?
@@ -139,16 +161,962 @@ pub(crate) async fn plugin_host_read_file(
 }
 
 /// Resolves a directory for a plugin that declares `host.files`, creating it
-/// if missing, as a process's `cwd` is.
+/// if missing, as a process's `cwd` is, unless `create` is false.
 #[tauri::command]
 pub(crate) async fn plugin_host_resolve_directory(
     manager: tauri::State<'_, PluginManager>,
     id: String,
     revision: String,
     path: String,
+    create: Option<bool>,
 ) -> Result<String, String> {
     granted(manager, id, revision).await?;
-    bounded(&DIRECTORIES, move || directory(&path)).await
+    bounded(&DIRECTORIES, move || {
+        directory(&path, create.unwrap_or(true))
+    })
+    .await
+}
+
+/// Lists the repositories folder for a plugin that declares `host.files`,
+/// checking that grant before touching the filesystem. The app's renderer
+/// supplies the folder its community and account configured; the plugin never
+/// chooses `path`.
+#[tauri::command]
+pub(crate) async fn plugin_host_repository_folders<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    manager: tauri::State<'_, PluginManager>,
+    id: String,
+    revision: String,
+    path: String,
+) -> Result<Vec<crate::repositories_folder::RepositoryFolder>, String> {
+    use tauri::Manager as _;
+    granted(manager, id, revision).await?;
+    let home = app.path().home_dir().ok();
+    bounded_listing(crate::repositories_folder::LATE, move || {
+        crate::repositories_folder::folders(&path, home.as_deref())
+    })
+    .await
+}
+
+// One admitted byte operation; waiting never clones a raw save body. Tokio's
+// semaphore preserves FIFO order. At most 16 callers can wait, within their own deadline.
+pub(crate) static BYTE_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+pub(crate) static BYTE_WAITERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
+pub(crate) async fn byte_admission(
+    deadline: tokio::time::Instant,
+) -> Result<tokio::sync::SemaphorePermit<'static>, String> {
+    if tokio::time::Instant::now() >= deadline {
+        return Err("Byte operation timed out in admission".into());
+    }
+    let _waiting = BYTE_WAITERS
+        .try_acquire()
+        .map_err(|_| "Byte operation queue is full")?;
+    let permit = tokio::time::timeout_at(deadline, BYTE_WORK.acquire())
+        .await
+        .map_err(|_| "Byte operation timed out in admission")?
+        .map_err(|_| "Byte admission unavailable")?;
+    if tokio::time::Instant::now() >= deadline {
+        return Err("Byte operation timed out in admission".into());
+    }
+    Ok(permit)
+}
+
+// App-wide, conservative deletion exclusion: any plugin's host.readFile call or
+// process named read/read-protected blocks every plugin's managed deletion.
+// Leases outlive async waiters until the actual blocking/process work completes.
+static FILE_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const READ_EXCLUSIVE: usize = usize::MAX;
+pub(crate) struct FileReadLease(());
+impl FileReadLease {
+    pub(crate) fn new() -> Result<Self, String> {
+        FILE_READS
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |reads| (reads < READ_EXCLUSIVE - 1).then(|| reads + 1),
+            )
+            .map_err(|reads| {
+                if reads == READ_EXCLUSIVE {
+                    "File reads are busy; try again later"
+                } else {
+                    "Too many file reads"
+                }
+            })?;
+        Ok(Self(()))
+    }
+}
+impl Drop for FileReadLease {
+    fn drop(&mut self) {
+        FILE_READS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+// A single nonblocking transition excludes new readers only when no real work
+// holds a lease. Pinned rustc E0277 confirms std::sync::RwLockReadGuard is !Send;
+// these leases must move into actual blocking-read/process-monitor work and outlive
+// timed-out waiters. No mutex in async admission.
+struct FileReadExclusion(());
+impl FileReadExclusion {
+    fn new() -> Result<Self, String> {
+        FILE_READS
+            .compare_exchange(
+                0,
+                READ_EXCLUSIVE,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .map_err(|_| "Managed file is in use by a file read")?;
+        Ok(Self(()))
+    }
+}
+impl Drop for FileReadExclusion {
+    fn drop(&mut self) {
+        FILE_READS.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+const MAX_SAVE_BYTES: usize = 16 * 1024 * 1024;
+const ROOT_BYTES: u64 = 64 * 1024 * 1024;
+const ROOT_FILES: usize = 16;
+const SAVE_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+const RETENTION_MS: u64 = 86_430_000; // 24 hours plus the save window.
+const LOCK_NAME: &str = ".ownership";
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavedBytes {
+    path: String,
+    size: usize,
+    sha256: String,
+    expires_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_after_send: Option<bool>,
+}
+
+fn managed_granted(
+    manager: &buzzodz_plugins::Manager,
+    id: &str,
+    revision: &str,
+) -> Result<(), String> {
+    if !manager.host_grants(id, revision)?.managed_files {
+        return Err("Managed files are not declared".into());
+    }
+    Ok(())
+}
+
+fn save_header(
+    request: &tauri::ipc::Request<'_>,
+    name: &str,
+    max: usize,
+) -> Result<String, String> {
+    let value = request
+        .headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty() && s.len() <= max)
+        .ok_or("Invalid managed save metadata")?;
+    Ok(value.to_owned())
+}
+
+#[tauri::command]
+pub(crate) async fn plugin_host_save_bytes<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    manager: tauri::State<'_, PluginManager>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<SavedBytes, String> {
+    use tauri::Manager as _;
+    let deadline = std::time::Instant::now() + SAVE_WINDOW;
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err("Managed save body must be raw bytes; outcome may be unknown".into());
+    };
+    let id = save_header(&request, "x-buzz-plugin-id", 256)?;
+    let revision = save_header(&request, "x-buzz-plugin-revision", 128)?;
+    let hash = save_header(&request, "x-buzz-sha256", 64)?;
+    let release = match request.headers().get("x-buzz-release-after-send") {
+        None => false,
+        Some(value) if value.as_bytes() == b"1" => true,
+        _ => return Err("Invalid managed save release flag".into()),
+    };
+    validate_save(body, &hash)?;
+    let registry = app.state::<ManagedFiles>().inner().clone();
+    let identity = release.then(|| app.state::<crate::identity::IdentityHost>().inner().clone());
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("plugin-artifacts");
+    // The outer future owns this guard before its first await. Renderer disposal
+    // is not a native cancellation signal; timeout/drop here is.
+    let eligibility = SaveEligibility::default();
+    let operation = async {
+        let owner = match identity.as_ref() {
+            Some(identity) => Some(identity.viewer().await?),
+            None => None,
+        };
+        #[cfg(test)]
+        if let Some(entered) = registry.1.lock().unwrap().captured.take() {
+            let _ = entered.send(());
+        }
+        let place = byte_admission(tokio::time::Instant::from_std(deadline)).await?;
+        let manager = manager.0.clone()?;
+        let bytes = body.clone();
+        let consent = identity.zip(owner).map(|(identity, owner)| SaveConsent {
+            identity,
+            owner,
+            registry: registry.clone(),
+            eligibility: eligibility.0.clone(),
+        });
+        managed_writer(place, move || {
+            save_managed(ManagedSave {
+                root: &root,
+                bytes: &bytes,
+                hash: &hash,
+                deadline,
+                manager: &manager,
+                id: &id,
+                revision: &revision,
+                registry: Some(&registry),
+                consent: consent.as_ref(),
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), operation)
+        .await
+        .map_err(|_| "Managed save timed out; outcome unknown")?
+}
+
+// Command-owned cancellation races atomically with the short identity/map commit.
+// Neither a lost reply nor JS-local retirement is evidence this guard was dropped.
+#[derive(Default)]
+struct SaveEligibility(std::sync::Arc<std::sync::atomic::AtomicU8>);
+impl Drop for SaveEligibility {
+    fn drop(&mut self) {
+        let _ = self.0.compare_exchange(
+            0,
+            2,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }
+}
+struct SaveConsent {
+    identity: crate::identity::IdentityHost,
+    owner: String,
+    registry: ManagedFiles,
+    eligibility: std::sync::Arc<std::sync::atomic::AtomicU8>,
+}
+
+// One actual app owns one root and at most ROOT_FILES compact process-local records.
+// Never adopt a filename after restart. No bytes, sidecars, timers or public release command.
+#[derive(Clone, Default)]
+pub(crate) struct ManagedFiles(
+    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Consent>>>,
+    #[cfg(test)] std::sync::Arc<std::sync::Mutex<ManagedGates>>,
+);
+#[cfg(test)]
+#[derive(Default)]
+struct ManagedGates {
+    released: Option<tokio::sync::oneshot::Sender<()>>,
+    captured: Option<tokio::sync::oneshot::Sender<()>>,
+    save: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        std::sync::mpsc::Receiver<()>,
+    )>,
+    hash: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        std::sync::mpsc::Receiver<()>,
+    )>,
+}
+#[cfg(test)]
+fn gated_work(
+    gate: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        std::sync::mpsc::Receiver<()>,
+    )>,
+) {
+    if let Some((entered, release)) = gate {
+        let _ = entered.send(());
+        release
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("managed work barrier watchdog");
+    }
+}
+#[derive(Clone)]
+struct Consent {
+    root: PathBuf,
+    saver: String,
+    owner: String,
+    hash: String,
+    size: u64,
+    identity: Option<(u64, u64)>,
+}
+fn file_identity(metadata: &std::fs::Metadata) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        Some((metadata.dev(), metadata.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
+    }
+}
+impl ManagedFiles {
+    // Only called inside admitted work with the root lock held. No map -> root/identity order.
+    fn removed(&self, path: &Path) {
+        if let Ok(mut records) = self.0.try_lock() {
+            records.remove(path);
+        }
+    }
+    fn prune(&self, root: &Path) -> Result<(), String> {
+        let stale: Vec<_> = {
+            let records = self.0.try_lock().map_err(|_| "Managed consent is busy")?;
+            records
+                .keys()
+                .filter(|path| path.parent() == Some(root))
+                .cloned()
+                .collect()
+        };
+        // Filesystem I/O never holds the map mutex.
+        for path in stale {
+            if std::fs::symlink_metadata(&path)
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            {
+                self.removed(&path);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManagedAttachment {
+    path: String,
+    sha256: String,
+    size: u64,
+    url: String,
+}
+fn confirmed_candidates(
+    signed: &serde_json::Value,
+    hints: Option<serde_json::Value>,
+) -> Vec<ManagedAttachment> {
+    if signed.get("kind").and_then(serde_json::Value::as_u64) != Some(9) {
+        return vec![];
+    }
+    let Some(serde_json::Value::Array(hints)) = hints else {
+        return vec![];
+    };
+    if hints.len() > ROOT_FILES {
+        return vec![];
+    }
+    let Some(tags) = signed.get("tags").and_then(serde_json::Value::as_array) else {
+        return vec![];
+    };
+    let mut candidates: Vec<Option<ManagedAttachment>> = vec![];
+    let mut paths = std::collections::HashMap::new();
+    for hint in hints {
+        let Ok(candidate) = serde_json::from_value::<ManagedAttachment>(hint) else {
+            return vec![];
+        };
+        if candidate.path.is_empty()
+            || candidate.path.len() > 4096
+            || candidate.path.contains('\0')
+            || candidate.url.is_empty()
+            || candidate.url.len() > 8192
+            || candidate.size == 0
+            || candidate.size > MAX_SAVE_BYTES as u64
+            || validate_save(&[1], &candidate.sha256).is_err()
+        {
+            return vec![];
+        }
+        let matches = tags.iter().any(|tag| {
+            let Some(tag) = tag.as_array() else {
+                return false;
+            };
+            tag.first().and_then(serde_json::Value::as_str) == Some("imeta")
+                && [
+                    format!("url {}", candidate.url),
+                    format!("x {}", candidate.sha256),
+                    format!("size {}", candidate.size),
+                ]
+                .iter()
+                .all(|field| tag.iter().any(|value| value.as_str() == Some(field)))
+        });
+        if let Some(&index) = paths.get(&candidate.path) {
+            let previous: &mut Option<ManagedAttachment> = &mut candidates[index];
+            if !matches
+                || previous.as_ref().is_none_or(|previous| {
+                    previous.sha256 != candidate.sha256 || previous.size != candidate.size
+                })
+            {
+                *previous = None;
+            }
+        } else {
+            paths.insert(candidate.path.clone(), candidates.len());
+            candidates.push(matches.then_some(candidate));
+        }
+    }
+    candidates.into_iter().flatten().collect()
+}
+
+/// Called only after the full evidence-wrapped exact-ID post has succeeded.
+/// Invalid hints and every cleanup failure preserve that original send success.
+pub(crate) fn release_after_send(
+    registry: ManagedFiles,
+    root: PathBuf,
+    owner: String,
+    signed: serde_json::Value,
+    hints: Option<serde_json::Value>,
+) -> impl std::future::Future<Output = ()> + Send + 'static {
+    // Capture before detaching: scheduling never grants a fresh 30-second budget.
+    let deadline = tokio::time::Instant::now() + SAVE_WINDOW;
+    async move {
+        let candidates = confirmed_candidates(&signed, hints);
+        if candidates.is_empty() {
+            return;
+        }
+        let budget = SaveEligibility::default();
+        let active = budget.0.clone();
+        #[cfg(test)]
+        let completion = registry.clone();
+        let _ = delete_with_admission(deadline, move || {
+            release_batch(
+                &registry,
+                &root,
+                &owner,
+                &candidates,
+                deadline.into_std(),
+                &active,
+            )
+        })
+        .await;
+        #[cfg(test)]
+        {
+            let released = completion.1.lock().unwrap().released.take();
+            if let Some(released) = released {
+                let _ = released.send(());
+            }
+        }
+    }
+}
+
+fn release_batch(
+    registry: &ManagedFiles,
+    root: &Path,
+    owner: &str,
+    candidates: &[ManagedAttachment],
+    deadline: std::time::Instant,
+    active: &std::sync::atomic::AtomicU8,
+) -> Result<(), String> {
+    use sha2::{Digest as _, Sha256};
+    let _lock = managed_lock(root)?;
+    let _reads = FileReadExclusion::new()?;
+    for candidate in candidates {
+        if std::time::Instant::now() >= deadline
+            || active.load(std::sync::atomic::Ordering::SeqCst) != 0
+        {
+            break;
+        }
+        // One refusal never authorizes another path or prevents later safe candidates.
+        let _ = (|| -> Result<(), String> {
+            let path = Path::new(&candidate.path);
+            if path.parent() != Some(root)
+                || path
+                    .file_name()
+                    .is_none_or(|name| root.join(name).as_os_str() != path.as_os_str())
+            {
+                return Err("Invalid managed attachment path".into());
+            }
+            let record = registry
+                .0
+                .try_lock()
+                .map_err(|_| "Managed consent is busy")?
+                .get(path)
+                .cloned();
+            let Some(record) = record else {
+                return Ok(());
+            };
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("Invalid managed attachment name")?;
+            if record.root != root
+                || record.owner != owner
+                || record.hash != candidate.sha256
+                || record.size != candidate.size
+                || artifact_expiry(name).is_none()
+                || !name.ends_with(&format!("-{}", managed_owner(&record.saver)))
+            {
+                return Err("Managed attachment consent mismatch".into());
+            }
+            let metadata = private_metadata(path, false)?;
+            let mut file = private_options().open(path).map_err(|e| e.to_string())?;
+            let opened = file.metadata().map_err(|e| e.to_string())?;
+            if record.identity.is_none()
+                || record.identity != file_identity(&metadata)
+                || record.identity != file_identity(&opened)
+                || opened.len() != record.size
+            {
+                return Err("Managed attachment changed".into());
+            }
+            #[cfg(test)]
+            {
+                let gate = registry.1.lock().unwrap().hash.take();
+                gated_work(gate);
+            }
+            let mut hash = Sha256::new();
+            let mut buffer = [0; 64 * 1024];
+            let mut size = 0u64;
+            loop {
+                let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
+                if count == 0 {
+                    break;
+                }
+                size += count as u64;
+                if size > record.size {
+                    return Err("Managed attachment grew".into());
+                }
+                hash.update(&buffer[..count]);
+            }
+            if size != record.size || format!("{:x}", hash.finalize()) != record.hash {
+                return Err("Managed attachment content changed".into());
+            }
+            // Keep the descriptor, root and reader exclusion through final identity/unlink.
+            let final_metadata = private_metadata(path, false)?;
+            let final_opened = file.metadata().map_err(|e| e.to_string())?;
+            if file_identity(&final_metadata) != record.identity
+                || file_identity(&final_opened) != record.identity
+                || final_metadata.len() != size
+                || final_opened.len() != size
+            {
+                return Err("Managed attachment changed".into());
+            }
+            // This is already-dispatched work. Timeout may have answered the sender,
+            // but the writer retains all admission until actual completion.
+            std::fs::remove_file(path).map_err(|e| e.to_string())?;
+            registry.removed(path);
+            Ok(())
+        })();
+    }
+    Ok(())
+}
+
+/// The writer owns admission until actual completion, not merely until await ends.
+fn managed_writer<T: Send + 'static>(
+    place: tokio::sync::SemaphorePermit<'static>,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> tauri::async_runtime::JoinHandle<Result<T, String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _place = place;
+        work()
+    })
+}
+
+fn validate_save(bytes: &[u8], hash: &str) -> Result<(), String> {
+    if bytes.is_empty()
+        || bytes.len() > MAX_SAVE_BYTES
+        || hash.len() != 64
+        || !hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("Invalid managed save bytes or SHA256".into());
+    }
+    Ok(())
+}
+
+fn wall_ms() -> Result<u64, String> {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    u64::try_from(ms).map_err(|_| "Invalid managed file clock".into())
+}
+
+fn private_metadata(path: &Path, directory: bool) -> Result<std::fs::Metadata, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if metadata.file_type().is_symlink()
+        || (if directory {
+            !metadata.is_dir()
+        } else {
+            !metadata.is_file()
+        })
+    {
+        return Err("Managed storage must not contain links or unexpected file kinds".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o077 != 0
+            || (!directory && metadata.nlink() != 1)
+        {
+            return Err("Managed storage is not private to this user".into());
+        }
+    }
+    Ok(metadata)
+}
+
+fn private_options() -> std::fs::OpenOptions {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    options
+}
+
+// Explicit unlock matters when a concurrent fork temporarily inherits an open
+// file description: close alone would leave flock held until that child execs.
+struct ManagedLock(std::fs::File);
+impl std::ops::Deref for ManagedLock {
+    type Target = std::fs::File;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl Drop for ManagedLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
+/// One verified fixed lock covers accounting through final eligibility/cleanup.
+fn managed_lock(root: &Path) -> Result<ManagedLock, String> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    match builder.create(root) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e.to_string()),
+    }
+    private_metadata(root, true)?;
+    if dunce::canonicalize(root).map_err(|e| e.to_string())? != root {
+        return Err("Managed storage path contains a link or alias".into());
+    }
+    let path = root.join(LOCK_NAME);
+    let lock = match private_options().create_new(true).open(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            private_metadata(&path, false)?;
+            private_options().open(&path).map_err(|e| e.to_string())?
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    let metadata = private_metadata(&path, false)?;
+    let opened = lock.metadata().map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.dev() != opened.dev() || metadata.ino() != opened.ino() {
+            return Err("Managed storage ownership changed".into());
+        }
+    }
+    if metadata.len() != 0 || !opened.is_file() {
+        return Err("Invalid managed storage ownership file".into());
+    }
+    fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| "Managed storage is busy")?;
+    Ok(ManagedLock(lock))
+}
+
+fn artifact_expiry(name: &str) -> Option<u64> {
+    let (expiry, id) = name.split_once('-')?;
+    let expiry: u64 = expiry.parse().ok()?;
+    let (id, owner) = if id.len() == 36 {
+        (id, None)
+    } else {
+        let (id, owner) = id.split_at_checked(36)?;
+        let owner = owner.strip_prefix('-')?;
+        if owner.len() != 64
+            || !owner
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return None;
+        }
+        (id, Some(owner))
+    };
+    let uuid = uuid::Uuid::parse_str(id).ok()?;
+    let canonical = match owner {
+        Some(owner) => format!("{expiry}-{uuid}-{owner}"),
+        None => format!("{expiry}-{uuid}"),
+    };
+    (name == canonical).then_some(expiry)
+}
+
+fn managed_owner(id: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    format!("{:x}", Sha256::digest(id.as_bytes()))
+}
+
+/// Deletes only host-named files owned by this plugin; legacy unowned files refuse.
+fn delete_managed(
+    root: &Path,
+    path: &str,
+    manager: &buzzodz_plugins::Manager,
+    id: &str,
+    revision: &str,
+    registry: Option<&ManagedFiles>,
+) -> Result<(), String> {
+    managed_granted(manager, id, revision)?;
+    let path = Path::new(path);
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid managed file")?;
+    if path.parent() != Some(root)
+        || artifact_expiry(name).is_none()
+        || !name.ends_with(&format!("-{}", managed_owner(id)))
+    {
+        return Err("Managed file is not owned by this plugin".into());
+    }
+    let _lock = managed_lock(root)?;
+    let _reads = FileReadExclusion::new()?;
+    private_metadata(path, false)?;
+    managed_granted(manager, id, revision)?;
+    std::fs::remove_file(path).map_err(|e| e.to_string())?;
+    if let Some(registry) = registry {
+        registry.removed(path);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn plugin_host_delete_managed_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    manager: tauri::State<'_, PluginManager>,
+    id: String,
+    revision: String,
+    path: String,
+) -> Result<(), String> {
+    use tauri::Manager as _;
+    let deadline = tokio::time::Instant::now() + SAVE_WINDOW;
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("plugin-artifacts");
+    let manager = manager.0.clone()?;
+    let registry = app.state::<ManagedFiles>().inner().clone();
+    delete_with_admission(deadline, move || {
+        delete_managed(&root, &path, &manager, &id, &revision, Some(&registry))
+    })
+    .await
+}
+
+async fn delete_with_admission(
+    deadline: tokio::time::Instant,
+    work: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
+    // Same ordering as saves: byte permit, root lock, then nonblocking reader
+    // exclusion. No filesystem work has started if admission refuses or expires.
+    let place = byte_admission(deadline)
+        .await
+        .map_err(|error| format!("{error}; managed file not deleted"))?;
+    let writer = managed_writer(place, work);
+    // Once handed to the blocking pool, cancellation cannot prove no unlink.
+    tokio::time::timeout_at(deadline, writer)
+        .await
+        .map_err(|_| "Managed deletion timed out; outcome unknown")?
+        .map_err(|e| e.to_string())?
+}
+
+fn managed_capacity(root: &Path, now: u64, incoming: usize) -> Result<(), String> {
+    let mut seen = 0;
+    let (mut count, mut bytes) = (0, 0u64);
+    for entry in std::fs::read_dir(root).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_name() == LOCK_NAME {
+            continue;
+        }
+        seen += 1;
+        if seen > ROOT_FILES {
+            return Err("Managed storage has too many entries".into());
+        }
+        let metadata = std::fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err("Managed storage contains an unexpected entry".into());
+        }
+        if entry
+            .file_name()
+            .to_str()
+            .and_then(artifact_expiry)
+            .is_some_and(|t| t <= now)
+            && std::fs::remove_file(entry.path()).is_ok()
+        {
+            continue;
+        }
+        count += 1;
+        bytes = bytes
+            .checked_add(metadata.len())
+            .ok_or("Managed storage accounting overflow")?;
+    }
+    if count >= ROOT_FILES
+        || bytes
+            .checked_add(incoming as u64)
+            .is_none_or(|n| n > ROOT_BYTES)
+    {
+        return Err("Managed storage is full".into());
+    }
+    Ok(())
+}
+
+fn save_managed(input: ManagedSave<'_>) -> Result<SavedBytes, String> {
+    use std::io::Write as _;
+    save_managed_with_io(
+        input,
+        |file, bytes| file.write_all(bytes),
+        std::fs::File::sync_all,
+        |root| {
+            #[cfg(unix)]
+            std::fs::File::open(root)?.sync_all()?;
+            #[cfg(not(unix))]
+            let _ = root;
+            Ok(())
+        },
+    )
+}
+
+struct ManagedSave<'a> {
+    root: &'a Path,
+    bytes: &'a [u8],
+    hash: &'a str,
+    deadline: std::time::Instant,
+    manager: &'a buzzodz_plugins::Manager,
+    id: &'a str,
+    revision: &'a str,
+    registry: Option<&'a ManagedFiles>,
+    consent: Option<&'a SaveConsent>,
+}
+
+// Keep OS operations private and local; admission, result and cleanup stay in one sequence.
+fn save_managed_with_io(
+    input: ManagedSave<'_>,
+    write: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
+    sync_file: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+    sync_directory: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<SavedBytes, String> {
+    use sha2::{Digest as _, Sha256};
+    let ManagedSave {
+        root,
+        bytes,
+        hash,
+        deadline,
+        manager,
+        id,
+        revision,
+        registry,
+        consent,
+    } = input;
+    validate_save(bytes, hash)?;
+    managed_granted(manager, id, revision)?;
+    let _lock = managed_lock(root)?;
+    let now = wall_ms()?;
+    let expiry = now
+        .checked_add(RETENTION_MS)
+        .filter(|n| *n <= 9_007_199_254_740_991)
+        .ok_or("Invalid managed file expiry")?;
+    let capacity = managed_capacity(root, now, bytes.len());
+    if let Some(registry) = registry {
+        registry.prune(root)?;
+    }
+    capacity?;
+    let path = root.join(format!(
+        "{expiry}-{}-{}",
+        uuid::Uuid::new_v4(),
+        managed_owner(id)
+    ));
+    let path_text = path
+        .to_str()
+        .ok_or("Managed file path is not UTF-8")?
+        .to_owned();
+    if std::time::Instant::now() >= deadline {
+        return Err("Managed save expired".into());
+    }
+    // Exclusive final names: a collision is a refusal, never adoption/overwrite.
+    let mut file = private_options()
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        write(&mut file, bytes).map_err(|e| e.to_string())?;
+        if format!("{:x}", Sha256::digest(bytes)) != hash {
+            return Err("Managed save SHA256 mismatch".into());
+        }
+        sync_file(&file).map_err(|e| e.to_string())?;
+        sync_directory(root).map_err(|e| e.to_string())?;
+        managed_granted(manager, id, revision)?;
+        if std::time::Instant::now() >= deadline {
+            return Err("Managed save expired".into());
+        }
+        #[cfg(test)]
+        if let Some(registry) = registry {
+            let gate = registry.1.lock().unwrap().save.take();
+            gated_work(gate);
+        }
+        if let Some(consent) = consent {
+            let metadata = private_metadata(&path, false)?;
+            let opened = file.metadata().map_err(|e| e.to_string())?;
+            if file_identity(&metadata) != file_identity(&opened)
+                || metadata.len() != bytes.len() as u64
+            {
+                return Err("Managed file changed before consent".into());
+            }
+            let record = Consent {
+                root: root.to_owned(),
+                saver: id.into(),
+                owner: consent.owner.clone(),
+                hash: hash.into(),
+                size: bytes.len() as u64,
+                identity: file_identity(&opened),
+            };
+            consent
+                .identity
+                .try_commit_managed_consent(&consent.owner, || {
+                    let mut records = consent
+                        .registry
+                        .0
+                        .try_lock()
+                        .map_err(|_| "Managed consent is busy")?;
+                    if records.len() >= ROOT_FILES || std::time::Instant::now() >= deadline {
+                        return Err("Managed consent expired or full".into());
+                    }
+                    consent
+                        .eligibility
+                        .compare_exchange(
+                            0,
+                            1,
+                            std::sync::atomic::Ordering::SeqCst,
+                            std::sync::atomic::Ordering::SeqCst,
+                        )
+                        .map_err(|_| "Managed save cancelled")?;
+                    records.insert(path.clone(), record);
+                    Ok(())
+                })?;
+        }
+        Ok(SavedBytes {
+            path: path_text,
+            size: bytes.len(),
+            sha256: hash.into(),
+            expires_at: expiry,
+            release_after_send: consent.map(|_| true),
+        })
+    })();
+    drop(file);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&path);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -203,13 +1171,93 @@ mod tests {
     fn resolves_and_creates_directories() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("new").join("workspace");
-        let resolved = directory(path.to_str().unwrap()).unwrap();
+        let resolved = directory(path.to_str().unwrap(), true).unwrap();
         assert!(Path::new(&resolved).is_dir());
         assert!(Path::new(&resolved).is_absolute());
         assert_eq!(
             resolved,
             dunce::canonicalize(&path).unwrap().to_str().unwrap()
         );
-        assert!(directory("relative").is_err());
+        assert!(directory("relative", true).is_err());
+    }
+
+    #[test]
+    fn resolves_only_existing_directories_without_creating() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("missing");
+        assert!(directory(missing.to_str().unwrap(), false)
+            .unwrap_err()
+            .contains("Could not find"));
+        assert!(!missing.exists());
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        assert!(directory(file.to_str().unwrap(), false)
+            .unwrap_err()
+            .contains("not a directory"));
+        assert_eq!(
+            directory(root.path().to_str().unwrap(), false).unwrap(),
+            dunce::canonicalize(root.path()).unwrap().to_str().unwrap()
+        );
+        assert!(directory("relative", false).is_err());
+    }
+
+    #[test]
+    fn repository_folders_check_the_file_grant_before_listing() {
+        let list = |fixture: &managed_tests::Fixture, command: &str, body: serde_json::Value| {
+            fixture
+                .ipc(
+                    command,
+                    tauri::ipc::InvokeBody::Json(body),
+                    Default::default(),
+                )
+                .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+        };
+        let granted = managed_tests::Fixture::new(false, true);
+        let root = dunce::canonicalize(granted.temp.path())
+            .unwrap()
+            .join("repos");
+        std::fs::create_dir_all(root.join("checkout")).unwrap();
+        let path = root.to_str().unwrap();
+        let expected = serde_json::json!([{
+            "name": "checkout",
+            "path": root.join("checkout").to_str().unwrap(),
+            "displayPath": root.join("checkout").to_str().unwrap(),
+        }]);
+        let plugin = |fixture: &managed_tests::Fixture, revision: &str, path: &str| {
+            let body =
+                serde_json::json!({ "id": "example.bytes", "revision": revision, "path": path });
+            list(fixture, "plugin_host_repository_folders", body)
+        };
+        assert_eq!(plugin(&granted, &granted.revision, path).unwrap(), expected);
+        assert!(plugin(&granted, "stale", path).is_err());
+        assert_eq!(
+            list(
+                &granted,
+                "repositories_folder_list",
+                serde_json::json!({ "path": path })
+            )
+            .unwrap(),
+            expected
+        );
+        // Refused before any filesystem work: a missing folder reports the grant.
+        let ungranted = managed_tests::Fixture::new(false, false);
+        let missing = root.join("absent");
+        assert_eq!(
+            plugin(&ungranted, &ungranted.revision, missing.to_str().unwrap()).unwrap_err(),
+            "\"Files are not declared\""
+        );
+        assert_eq!(
+            plugin(&ungranted, &ungranted.revision, path).unwrap_err(),
+            "\"Files are not declared\""
+        );
+        assert!(
+            plugin(&granted, &granted.revision, missing.to_str().unwrap())
+                .unwrap_err()
+                .contains("unavailable")
+        );
     }
 }
+
+#[cfg(test)]
+#[path = "host_files/managed_tests.rs"]
+pub(crate) mod managed_tests;

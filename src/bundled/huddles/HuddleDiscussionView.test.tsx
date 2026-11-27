@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, expect, it, vi, assert } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import { invoke } from "@tauri-apps/api/core";
@@ -88,9 +94,11 @@ it.each(["failed", "unknown"] as const)(
     );
     const { rerender } = render(view());
     if (delivery === "unknown")
-      expect(screen.getByRole("status").textContent).toContain(
-        "Retry sends the same message",
-      );
+      expect(
+        screen.getByText(/Retry sends the same message/, {
+          selector: '[role="status"]',
+        }),
+      ).toBeDefined();
     const editor = screen.getByRole("textbox");
     const retry = screen.getByRole("button", { name: "Retry" });
     retry.focus();
@@ -165,7 +173,7 @@ it("keeps a surviving focus target across load retry success and failure", () =>
   expect(document.activeElement).toBe(log);
 });
 
-it("renders Markdown and downloads the resolved attachment, without falling back when media is unavailable", () => {
+it("renders Markdown and downloads the resolved attachment, without falling back when media is unavailable", async () => {
   const value = discussion("failed");
   const url = `https://relay.example/media/${"a".repeat(64)}`;
   const source = `http://buzz-media.localhost/${encodeURIComponent(url)}`;
@@ -199,10 +207,13 @@ it("renders Markdown and downloads the resolved attachment, without falling back
   const { rerender } = render(view());
   expect(screen.getByText("Notes").tagName).toBe("STRONG");
   fireEvent.click(screen.getByRole("button", { name: "Download notes.txt" }));
-  expect(invoke).toHaveBeenCalledWith("media_download", {
-    source,
-    name: "notes.txt",
-  });
+  // The card first hears from the host that no copy is saved.
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("media_download", {
+      source,
+      name: "notes.txt",
+    }),
+  );
   const attachment = value.rows[0].attachments[0];
   assert(attachment);
   attachment.source = null;
@@ -237,10 +248,14 @@ it("routes internal links and signed mentions while leaving unbound or edited na
   const mounted = render(view());
   fireEvent.click(screen.getByRole("link", { name: "Channel" }));
   expect(openLink).toHaveBeenCalledWith("buzz://channel/test");
-  expect(screen.getByText("Taylor").getAttribute("data-mention-kind")).toBe(
-    "person",
-  );
+  // A chip splits its first character from the rest of the name.
+  const chip = () =>
+    [...document.querySelectorAll("[data-mention-kind]")].find(
+      (element) => element.textContent === "Taylor",
+    );
+  expect(chip()?.getAttribute("data-mention-kind")).toBe("person");
   value.rows[0] = { ...value.rows[0], edited: true };
   mounted.rerender(view());
-  expect(screen.queryByText("Taylor")).toBeNull();
+  expect(chip()).toBeUndefined();
+  expect(screen.getByText(/@Taylor/)).toBeTruthy();
 });

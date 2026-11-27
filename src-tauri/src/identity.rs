@@ -1,6 +1,10 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine as _,
+};
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
+use buzz_agent_controller::LegacyHumanError;
 use buzz_credential_store as credentials;
 use nostr::{
     event::Event,
@@ -10,12 +14,17 @@ use nostr::{
 use secp256k1::{Keypair, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, String>;
 const INVALID: &str = "Enter a valid nsec private key";
+// The renderer matches this text (`MALFORMED_IDENTITY` in
+// src/features/identity/service.ts) to offer removing the key.
 const MALFORMED: &str = "Saved identity is malformed; nothing was changed. Keep your key backup and contact support before changing secure storage.";
+// Keyring only. Not MALFORMED: deleting refuses too, so removing the key can't work here.
+#[cfg(not(test))]
+const AMBIGUOUS: &str = "More than one saved identity matches in secure storage, so Buzz can't tell which to use; nothing was changed. Remove the extra Buzz entries with your keyring app, then retry.";
 
 // Batch-local conversation keys avoid repeating ECDH for every self-encrypted slot.
 // Callers enforce their encoded-payload budget before reaching this helper.
@@ -36,7 +45,9 @@ fn decrypt_with_conversation(
 }
 
 // No Debug/Serialize: only deliberate export may return the secret to the main UI.
-struct Key(Zeroizing<[u8; 32]>);
+/// The secret, and its public key derived once: socket frames and HTTP
+/// requests read it.
+struct Key(Zeroizing<[u8; 32]>, OnceLock<String>);
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -119,7 +130,7 @@ impl Key {
         if values.next().is_some() {
             return Err(INVALID.into());
         }
-        let key = Self(bytes);
+        let key = Self::new(bytes);
         key.viewer()?;
         Ok(key)
     }
@@ -127,20 +138,26 @@ impl Key {
         loop {
             let mut bytes = Zeroizing::new([0; 32]);
             getrandom::fill(bytes.as_mut()).map_err(|_| "Could not create an identity")?;
-            let key = Self(bytes);
+            let key = Self::new(bytes);
             if key.viewer().is_ok() {
                 return Ok(key);
             }
         }
     }
+    fn new(secret: Zeroizing<[u8; 32]>) -> Self {
+        Self(secret, OnceLock::new())
+    }
     fn viewer(&self) -> Result<String> {
+        if let Some(public) = self.1.get() {
+            return Ok(public.clone());
+        }
         let mut key = SecretKey::from_byte_array(*self.0).map_err(|_| INVALID)?;
         let public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key)
             .x_only_public_key()
             .0
             .to_string();
         key.non_secure_erase();
-        Ok(public)
+        Ok(self.1.get_or_init(|| public).clone())
     }
     fn nsec(&self) -> Result<String> {
         bech32::encode::<Bech32>(Hrp::parse("nsec").map_err(|_| INVALID)?, self.0.as_ref())
@@ -152,37 +169,48 @@ trait Store: Send + Sync {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     fn add(&self, value: &[u8]) -> Result<()>;
     /// The key installed old Buzz saved, read-only, after the person asks for it.
-    fn legacy(&self) -> Result<Zeroizing<String>>;
+    fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError>;
     /// Only Sign out may call this, from the next launch; an absent item is success.
     fn delete(&self) -> Result<()>;
+    /// The key saved under its service from before 1.0, which reads copy.
+    fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
+    /// Sign out removes the key under both services; an absent item is success.
+    fn delete_previous(&self) -> Result<()>;
+    /// The key under this build's own service, which Sign out removes. It differs
+    /// from `read` only when `just desktop me` signs in with the release key.
+    fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        self.read()
+    }
 }
 struct OsStore;
 #[cfg(not(test))]
-fn read_saved() -> Result<Option<Zeroizing<Vec<u8>>>> {
-    match credentials::read_human() {
+fn read_saved(
+    read: fn() -> std::result::Result<Zeroizing<Vec<u8>>, credentials::Error>,
+) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    match read() {
         Ok(value) => Ok(Some(value)),
         Err(credentials::Error::Absent) => Ok(None),
-        Err(credentials::Error::Denied) => Err("Secure storage access was denied. Allow access and retry; no identity was created.".into()),
+        Err(credentials::Error::Denied) => Err("Secure storage access was denied. Allow access and retry; nothing was changed.".into()),
         Err(credentials::Error::Busy) => Err("Another Buzz app is accessing secure storage. Retry shortly.".into()),
         Err(credentials::Error::Corrupt) => Err(MALFORMED.into()),
+        Err(credentials::Error::Ambiguous) => Err(AMBIGUOUS.into()),
         Err(_) => Err("Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.".into()),
     }
 }
 #[cfg(not(test))]
-fn read_legacy() -> Result<Zeroizing<String>> {
+fn read_legacy() -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
     buzz_agent_controller::PlatformCredentials::default()
         .read_legacy_human(buzz_agent_controller::LegacySource::Installed)
 }
 #[cfg(all(target_os = "macos", not(test)))]
 mod platform {
     use super::*;
-    use security_framework::os::macos::keychain::SecKeychain;
-    fn error(error: security_framework::base::Error) -> String {
-        match error.code() {
-            -25299 => {
+    fn error(error: credentials::Error) -> String {
+        match error {
+            credentials::Error::Occupied => {
                 "An identity is already saved; nothing was overwritten. Restart to restore it."
             }
-            -128 | -25293 | -25308 => {
+            credentials::Error::Denied => {
                 "Keychain access was denied. Allow access and retry; no identity was created."
             }
             _ => "Your identity could not be accessed in Keychain. Retry without changing keys.",
@@ -191,33 +219,47 @@ mod platform {
     }
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
-            read_saved()
+            read_saved(credentials::read_human)
         }
-        fn legacy(&self) -> Result<Zeroizing<String>> {
+        fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_own_human)
+        }
+        fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_previous_human)
+        }
+        fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
             read_legacy()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
-            SecKeychain::default()
-                .map_err(error)?
-                .add_generic_password(
-                    credentials::HUMAN_SERVICE,
-                    credentials::HUMAN_ACCOUNT,
-                    value,
-                )
-                .map_err(error)
+            credentials::add(
+                credentials::HUMAN_SERVICE,
+                credentials::HUMAN_ACCOUNT,
+                value,
+            )
+            .map_err(error)
         }
         fn delete(&self) -> Result<()> {
-            match SecKeychain::default()
-                .map_err(error)?
-                .find_generic_password(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT)
-            {
-                Ok((_, item)) => {
-                    item.delete();
-                    Ok(())
-                }
-                Err(e) if e.code() == -25300 => Ok(()),
-                Err(e) => Err(error(e)),
+            delete(credentials::HUMAN_SERVICE)
+        }
+        fn delete_previous(&self) -> Result<()> {
+            delete(credentials::PREVIOUS_HUMAN_SERVICE)
+        }
+    }
+    // Under the lock reads copy under, confirmed gone.
+    fn delete(service: &str) -> Result<()> {
+        match credentials::delete(service, credentials::HUMAN_ACCOUNT) {
+            Ok(()) | Err(credentials::Error::Absent) => Ok(()),
+            Err(credentials::Error::Busy) => {
+                Err("Another Buzz app is accessing secure storage. Retry shortly.".into())
             }
+            Err(credentials::Error::Denied) => Err(
+                "Keychain access was denied. Allow access and open Buzz again to finish signing out."
+                    .into(),
+            ),
+            Err(_) => Err(
+                "Your identity could not be accessed in Keychain. Retry without changing keys."
+                    .into(),
+            ),
         }
     }
 }
@@ -231,14 +273,21 @@ mod keyring_platform {
             Error::Denied => "Secure storage access was denied. Allow access and retry; no identity was created.",
             Error::Busy => "Another Buzz app is accessing secure storage. Retry shortly.",
             Error::Corrupt => MALFORMED,
+            Error::Ambiguous => AMBIGUOUS,
             _ => "Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.",
         }.into()
     }
     impl Store for OsStore {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
-            read_saved()
+            read_saved(credentials::read_human)
         }
-        fn legacy(&self) -> Result<Zeroizing<String>> {
+        fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_own_human)
+        }
+        fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_previous_human)
+        }
+        fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
             read_legacy()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
@@ -250,10 +299,16 @@ mod keyring_platform {
             .map_err(error)
         }
         fn delete(&self) -> Result<()> {
-            match credentials::delete(credentials::HUMAN_SERVICE, credentials::HUMAN_ACCOUNT) {
-                Ok(()) | Err(Error::Absent) => Ok(()),
-                Err(e) => Err(error(e)),
-            }
+            delete(credentials::HUMAN_SERVICE)
+        }
+        fn delete_previous(&self) -> Result<()> {
+            delete(credentials::PREVIOUS_HUMAN_SERVICE)
+        }
+    }
+    fn delete(service: &str) -> Result<()> {
+        match credentials::delete(service, credentials::HUMAN_ACCOUNT) {
+            Ok(()) | Err(Error::Absent) => Ok(()),
+            Err(e) => Err(error(e)),
         }
     }
 }
@@ -269,25 +324,40 @@ impl Store for OsStore {
     fn add(&self, _: &[u8]) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
     }
-    fn legacy(&self) -> Result<Zeroizing<String>> {
-        Err("Secure identity storage is not available on this platform yet".into())
+    fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
+        Err(LegacyHumanError {
+            message: "Secure identity storage is not available on this platform yet".into(),
+            transient: false,
+        })
     }
     fn delete(&self) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
     }
+    fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        Err("Secure identity storage is not available on this platform yet".into())
+    }
+    fn delete_previous(&self) -> Result<()> {
+        Err("Secure identity storage is not available on this platform yet".into())
+    }
 }
 
-/// Delete the saved human key and confirm a fresh read finds nothing.
+/// Delete the saved human key under both services and confirm fresh reads find
+/// nothing. The previous item goes first: reads copy it while the current one is absent.
 fn remove_key(store: &dyn Store) -> Result<()> {
+    store.delete_previous()?;
     store.delete()?;
-    match store.read()? {
-        None => Ok(()),
-        Some(_) => Err("Your key is still saved in secure storage".into()),
+    match (store.own()?, store.previous()?) {
+        (None, None) => Ok(()),
+        _ => Err("Your key is still saved in secure storage".into()),
     }
 }
 /// Sign out's next-launch step; never reachable from the webview.
 pub(crate) fn remove_saved_key() -> Result<()> {
     remove_key(&OsStore)
+}
+/// Delete only the current key, after an older build signed out of the previous one.
+pub(crate) fn remove_current_key() -> Result<()> {
+    OsStore.delete()
 }
 
 #[derive(Default)]
@@ -303,6 +373,10 @@ enum State {
 struct Identity {
     state: State,
     store: Box<dyn Store>,
+    /// Old Buzz's key as `sign_legacy` read it, held only in memory so the
+    /// import that follows a link saves that same key without a second read
+    /// (and a second OS prompt).
+    legacy: Option<Key>,
 }
 impl Identity {
     fn restore(&mut self) -> Result<Option<String>> {
@@ -336,19 +410,54 @@ impl Identity {
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
+        self.legacy = None;
         Ok(viewer)
     }
     /// Adopts the key installed old Buzz saved, exactly as a pasted import would.
-    fn import_legacy(&mut self) -> Result<String> {
+    /// With `expected`, only when it is that key: another key is kept in memory,
+    /// unsaved, and nothing is returned.
+    fn import_legacy(&mut self, expected: Option<&str>) -> Result<Option<String>> {
         if self.restore()?.is_some() {
             return Err("An identity is already saved; nothing was overwritten".into());
         }
-        let nsec = self.store.legacy()?;
-        let nsec = nsec.trim();
-        if Key::parse(nsec).is_err() {
-            return Err("The earlier Buzz app's identity is malformed; nothing was changed".into());
+        let key = match self.legacy.take() {
+            Some(key) => key,
+            None => Key::parse(self.store.legacy().map_err(|error| error.message)?.trim())
+                .map_err(|_| "The earlier Buzz app's identity is malformed; nothing was changed")?,
+        };
+        if let Some(expected) = expected {
+            if key.viewer()? != expected {
+                self.legacy = Some(key);
+                return Ok(None);
+            }
         }
-        self.save(Some(nsec))
+        let nsec = Zeroizing::new(key.nsec()?);
+        self.save(Some(&nsec)).map(Some)
+    }
+    /// Signs with the key installed old Buzz saved, read from its storage and
+    /// never saved here, so first run can link it before adopting it: a key
+    /// that can't be linked never lands on this device. `None` when no usable
+    /// key is there (absent, denied or malformed), so first run makes a new
+    /// one; any other failure, a busy or locked store included, is an error,
+    /// so a retry still links old Buzz's.
+    fn sign_legacy(&mut self, event: EventTemplate) -> Result<Option<serde_json::Value>> {
+        if self.restore()?.is_some() {
+            return Err("An identity is already saved; nothing was signed".into());
+        }
+        let key = match self.legacy.take() {
+            Some(key) => key,
+            None => match self.store.legacy() {
+                Ok(nsec) => match Key::parse(nsec.trim()) {
+                    Ok(key) => key,
+                    Err(_) => return Ok(None),
+                },
+                Err(error) if error.transient => return Err(error.message),
+                Err(_) => return Ok(None),
+            },
+        };
+        let signed = key.sign(event);
+        self.legacy = Some(key);
+        signed.map(Some)
     }
     fn require_missing(&mut self) -> Result<()> {
         if self.restore()?.is_some() || self.store.read()?.is_some() {
@@ -358,7 +467,7 @@ impl Identity {
     }
     fn install_recovered(&mut self, secret: Zeroizing<[u8; 32]>, expected: &str) -> Result<String> {
         self.require_missing()?;
-        let key = Key(secret);
+        let key = Key::new(secret);
         let viewer = key.viewer()?;
         if viewer != expected {
             return Err("The recovered identity could not be verified".into());
@@ -366,10 +475,12 @@ impl Identity {
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key);
+        self.legacy = None;
         Ok(viewer)
     }
     fn close(&mut self) {
         self.state = State::Closed;
+        self.legacy = None;
     }
     fn export(&mut self) -> Result<String> {
         self.restore()?;
@@ -377,6 +488,25 @@ impl Identity {
             State::Ready(key) => key.nsec(),
             _ => Err("Set up your identity first".into()),
         }
+    }
+}
+
+fn valid_compact_workspace_id(row: &str) -> bool {
+    if let Some(escaped) = row.strip_prefix("~~") {
+        escaped.encode_utf16().count() < 256
+    } else if let Some(packed) = row.strip_prefix('~') {
+        packed.len() == 43
+            && STANDARD_NO_PAD
+                .decode(packed)
+                .is_ok_and(|bytes| bytes.len() == 32)
+    } else {
+        row != "__proto__"
+            && !row.trim().is_empty()
+            && row.encode_utf16().count() <= 256
+            && !(row.len() == 64
+                && row
+                    .bytes()
+                    .all(|c| c.is_ascii_digit() || matches!(c, b'a'..=b'f')))
     }
 }
 
@@ -391,18 +521,120 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
         v.as_str()
             .is_some_and(|s| !s.trim().is_empty() && s.encode_utf16().count() <= max)
     };
+    let workspace_choices = matches!(
+        coordinate,
+        "channel-workspace-sort" | "channel-workspace-filter"
+    );
+    let choice_limit = if workspace_choices { 205 } else { 104 };
+    let coordinate = match coordinate {
+        "channel-workspace-sort" => "channel-sort",
+        "channel-workspace-filter" => "channel-filter",
+        _ => coordinate,
+    };
     match coordinate {
-        "channel-sections" => {
+        "channel-sections" | "channel-workspaces" => {
+            let workspaces = coordinate == "channel-workspaces";
             let sections = data
                 .get("sections")
                 .and_then(|v| v.as_array())
                 .ok_or_else(invalid)?;
-            let assignments = data
-                .get("assignments")
-                .and_then(|v| v.as_object())
-                .ok_or_else(invalid)?;
-            if sections.len() > 100 || assignments.len() > 1000 {
+            let (section_limit, assignment_limit) =
+                if workspaces { (200, 2000) } else { (100, 1000) };
+            if sections.len() > section_limit {
                 return Err(invalid());
+            }
+            if workspaces {
+                if data.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "version"
+                            | "sections"
+                            | "assignments"
+                            | "filings"
+                            | "sectionOrder"
+                            | "legacyTemplates"
+                            | "removedSections"
+                            | "unfiled"
+                            | "packedUnfiled"
+                            | "unifiedOnly"
+                            | "legacyImportClosed"
+                    )
+                }) {
+                    return Err(invalid());
+                }
+                let order = data
+                    .get("sectionOrder")
+                    .and_then(|order| order.as_array())
+                    .ok_or_else(invalid)?;
+                let mut keys = std::collections::HashSet::new();
+                if order.len() > section_limit + 6
+                    || order.iter().any(|key| {
+                        let Some(key) = key.as_str() else {
+                            return true;
+                        };
+                        !keys.insert(key)
+                            || (!matches!(
+                                key,
+                                "pages" | "starred" | "solo" | "channels" | "forums" | "dms"
+                            ) && !key.strip_prefix("group:").is_some_and(|id| {
+                                !id.trim().is_empty() && id.encode_utf16().count() <= 256
+                            }))
+                    })
+                {
+                    return Err(invalid());
+                }
+                for key in ["removedSections", "unfiled"] {
+                    if let Some(value) = data.get(key) {
+                        let list = value.as_array().ok_or_else(invalid)?;
+                        let mut unique = std::collections::HashSet::new();
+                        if list.iter().any(|id| {
+                            !text(id, 256) || id == "__proto__" || !unique.insert(id.as_str())
+                        }) {
+                            return Err(invalid());
+                        }
+                    }
+                }
+                if let Some(value) = data.get("legacyImportClosed") {
+                    if value.as_bool() != Some(true)
+                        || ["removedSections", "unfiled", "packedUnfiled", "unifiedOnly"]
+                            .iter()
+                            .any(|key| data.contains_key(*key))
+                    {
+                        return Err(invalid());
+                    }
+                }
+                if let Some(value) = data.get("packedUnfiled") {
+                    if !data.contains_key("filings") || data.contains_key("unfiled") {
+                        return Err(invalid());
+                    }
+                    let list = value.as_array().ok_or_else(invalid)?;
+                    let mut unique = std::collections::HashSet::new();
+                    if list.iter().any(|id| {
+                        !id.as_str()
+                            .is_some_and(|id| valid_compact_workspace_id(id) && unique.insert(id))
+                    }) {
+                        return Err(invalid());
+                    }
+                }
+                if let Some(templates) = data.get("legacyTemplates") {
+                    let templates = templates.as_object().ok_or_else(invalid)?;
+                    if templates.len() > section_limit
+                        || templates.iter().any(|(id, template)| {
+                            id.trim().is_empty()
+                                || id.encode_utf16().count() > 256
+                                || !template.as_str().is_some_and(|template| {
+                                    !template.is_empty()
+                                        && template.len() <= 128
+                                        && template.bytes().all(|byte| {
+                                            byte.is_ascii_alphanumeric()
+                                                || matches!(byte, b'_' | b'-')
+                                        })
+                                })
+                        })
+                    {
+                        return Err(invalid());
+                    }
+                }
             }
             let mut ids = std::collections::HashSet::new();
             for section in sections {
@@ -420,14 +652,50 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     return Err(invalid());
                 }
             }
-            if assignments.iter().any(|(id, section)| {
-                id.trim().is_empty()
-                    || id.encode_utf16().count() > 256
-                    || !section
-                        .as_str()
-                        .is_some_and(|v| !v.trim().is_empty() && v.encode_utf16().count() <= 256)
-            }) {
-                return Err(invalid());
+            let assignment_count = if workspaces && data.contains_key("filings") {
+                let filings = data["filings"].as_object().ok_or_else(invalid)?;
+                if data.contains_key("assignments") {
+                    return Err(invalid());
+                }
+                let mut conversations = std::collections::HashSet::new();
+                for (workspace, rows) in filings {
+                    let rows = rows.as_array().ok_or_else(invalid)?;
+                    if rows.is_empty() || !ids.contains(workspace.as_str()) {
+                        return Err(invalid());
+                    }
+                    for row in rows {
+                        let row = row.as_str().ok_or_else(invalid)?;
+                        if !valid_compact_workspace_id(row)
+                            || !conversations.insert(row)
+                            || conversations.len() > assignment_limit
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                }
+                conversations.len()
+            } else {
+                let assignments = data["assignments"].as_object().ok_or_else(invalid)?;
+                if assignments.len() > assignment_limit
+                    || assignments.iter().any(|(id, section)| {
+                        id.trim().is_empty()
+                            || id.encode_utf16().count() > 256
+                            || !text(section, 256)
+                    })
+                {
+                    return Err(invalid());
+                }
+                assignments.len()
+            };
+            if let Some(value) = data.get("unifiedOnly").filter(|_| workspaces) {
+                let count = sections.len() + assignment_count;
+                let bits = value.as_str().ok_or_else(invalid)?;
+                let bytes = STANDARD_NO_PAD.decode(bits).map_err(|_| invalid())?;
+                if bytes.len() != count.div_ceil(8)
+                    || (count % 8 != 0 && bytes.last().is_some_and(|last| last >> (count % 8) != 0))
+                {
+                    return Err(invalid());
+                }
             }
         }
         "channel-stars" | "channel-mutes" => {
@@ -465,7 +733,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             if coordinate == "channel-filter" {
                 if let Some(windows) = data.get("activeWindowSeconds") {
                     let windows = windows.as_object().ok_or_else(invalid)?;
-                    if windows.len() > 104
+                    if windows.len() > choice_limit
                         || windows.iter().any(|(group, value)| {
                             group.trim().is_empty()
                                 || group.encode_utf16().count() > 264
@@ -478,7 +746,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     }
                 }
             }
-            if groups.len() > 104
+            if groups.len() > choice_limit
                 || groups.iter().any(|(group, mode)| {
                     group.encode_utf16().count() > 264
                         || !mode.is_string()
@@ -490,6 +758,19 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             }
         }
 
+        "main-agent" => {
+            let agent = data.get("agent").ok_or_else(invalid)?;
+            if data.len() != 2
+                || !(agent.is_null()
+                    || agent.as_str().is_some_and(|v| {
+                        v.len() == 64
+                            && v.bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    }))
+            {
+                return Err(invalid());
+            }
+        }
         _ => return Err(invalid()),
     }
     if let Some(meta) = data.get("meta") {
@@ -497,7 +778,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             coordinate,
             "channel-sections" | "channel-sort" | "channel-filter"
         ) {
-            validate_sidebar_meta(coordinate, meta)?;
+            validate_sidebar_meta(coordinate, meta, false)?;
             let projection = project_sidebar_meta(coordinate, meta);
             let projected = projection.as_object().ok_or_else(invalid)?;
             if projected
@@ -508,12 +789,28 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             }
         }
     }
+    if coordinate == "channel-sort" {
+        if let Some(choices) = data.get("pluginSort") {
+            if !choices
+                .get("g")
+                .and_then(|v| v.as_object())
+                .is_some_and(|g| g.len() <= choice_limit)
+            {
+                return Err(invalid());
+            }
+            validate_sidebar_meta(coordinate, choices, true)?;
+        }
+    }
     Ok(())
 }
 
 // The signer admits only the bounded Desktop register schema, not arbitrary
 // renderer-controlled trees. Retained tombstones share the plaintext byte budget.
-fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<()> {
+fn validate_sidebar_meta(
+    coordinate: &str,
+    value: &serde_json::Value,
+    plugin_sort: bool,
+) -> Result<()> {
     use serde_json::Value;
     const MAX_SAFE: u64 = 9_007_199_254_740_991;
     fn text(value: &Value, max: usize) -> bool {
@@ -560,12 +857,16 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
     let valid = if matches!(coordinate, "channel-sort" | "channel-filter") {
         map(meta.get("g"), 264, |v| {
             reg(v, |v| {
-                v.is_null()
-                    || if coordinate == "channel-filter" {
-                        matches!(v.as_str(), Some("unreads" | "active"))
-                    } else {
-                        matches!(v.as_str(), Some("alpha" | "recent"))
-                    }
+                if plugin_sort {
+                    v.as_str().is_some_and(valid_plugin_sidebar_sort_mode)
+                } else {
+                    v.is_null()
+                        || if coordinate == "channel-filter" {
+                            matches!(v.as_str(), Some("unreads" | "active"))
+                        } else {
+                            matches!(v.as_str(), Some("alpha" | "recent"))
+                        }
+                }
             })
         })
     } else {
@@ -589,6 +890,22 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
         return Err(invalid());
     }
     Ok(())
+}
+
+fn valid_plugin_sidebar_sort_mode(value: &str) -> bool {
+    let Some(value) = value.strip_prefix("plugin:").filter(|_| value.len() <= 512) else {
+        return false;
+    };
+    let parts: Vec<_> = value.split('/').collect();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            part.as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+        })
 }
 
 // Called only after shape validation. Requiring these exact fields also binds
@@ -640,27 +957,55 @@ fn project_sidebar_meta(coordinate: &str, meta: &serde_json::Value) -> serde_jso
 pub(crate) fn sidebar_coordinate(value: &str) -> bool {
     matches!(
         value,
-        "channel-sections" | "channel-stars" | "channel-mutes" | "channel-sort" | "channel-filter"
+        "channel-sections"
+            | "channel-workspaces"
+            | "channel-stars"
+            | "channel-mutes"
+            | "channel-sort"
+            | "channel-filter"
+            | "channel-workspace-sort"
+            | "channel-workspace-filter"
+            | "main-agent"
     )
 }
 
-fn valid_read_coordinate(value: &str) -> bool {
-    value.strip_prefix("read-state:").is_some_and(|slot| {
-        slot.len() == 32
-            && slot
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+/// The two exact read-state shapes: version 1 read positions and the version 2
+/// expiring unread record. Each pairs its d prefix with its own t tag.
+fn read_namespace(version: u64) -> &'static str {
+    if version == 2 {
+        "read-state-unread-v2"
+    } else {
+        "read-state"
+    }
+}
+
+/// The blob version a coordinate holds, or None when it is neither shape.
+fn read_coordinate_version(value: &str) -> Option<u64> {
+    [1, 2].into_iter().find(|&version| {
+        value
+            .strip_prefix(read_namespace(version))
+            .and_then(|rest| rest.strip_prefix(':'))
+            .is_some_and(valid_read_slot)
     })
 }
 
-fn validate_read_blob(blob: &serde_json::Value) -> Result<()> {
+fn valid_read_slot(slot: &str) -> bool {
+    slot.len() == 32
+        && slot
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Returns the blob's version, 1 or 2.
+fn validate_read_blob(blob: &serde_json::Value) -> Result<u64> {
     let contexts = blob["contexts"]
         .as_object()
         .ok_or("Unsupported read-state blob")?;
     let client = blob["client_id"]
         .as_str()
         .ok_or("Unsupported read-state blob")?;
-    if blob["v"] != 1
+    let version = blob["v"].as_u64().filter(|v| *v == 1 || *v == 2);
+    if version.is_none()
         || client.is_empty()
         || client.chars().count() > 64
         || contexts.len() > 10_000
@@ -671,6 +1016,49 @@ fn validate_read_blob(blob: &serde_json::Value) -> Result<()> {
     {
         return Err("Unsupported read-state blob".into());
     }
+    Ok(version.unwrap_or(1))
+}
+
+// Buzz Thread Follow Choices: a second exact own-slot shape, checked on its own
+// so the read-state checks above stay as strict as they were.
+fn valid_follow_coordinate(value: &str) -> bool {
+    value.strip_prefix("thread-follows:").is_some_and(|slot| {
+        slot.len() == 32
+            && slot
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
+fn valid_follow_key(key: &str) -> bool {
+    key.split_once(':').is_some_and(|(channel, root)| {
+        (1..=128).contains(&channel.len())
+            && channel
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            && root.len() == 64
+            && root
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
+fn validate_follow_payload(payload: &serde_json::Value) -> Result<()> {
+    let threads = payload["threads"]
+        .as_object()
+        .ok_or("Unsupported thread-follows payload")?;
+    let valid = payload["v"] == 1
+        && payload["client_id"]
+            .as_str()
+            .is_some_and(|id| (1..=64).contains(&id.chars().count()))
+        && threads.iter().all(|(key, entry)| {
+            valid_follow_key(key)
+                && entry["follow"].is_boolean()
+                && entry["at"].as_u64().is_some_and(|at| at <= u32::MAX as u64)
+        });
+    if !valid {
+        return Err("Unsupported thread-follows payload".into());
+    }
     Ok(())
 }
 
@@ -679,19 +1067,51 @@ pub struct IdentityHost(Arc<Mutex<Identity>>);
 impl IdentityHost {
     #[cfg(test)]
     pub(crate) fn fixture() -> Self {
+        Self::fixture_in(State::Ready(Key::new(Zeroizing::new([1; 32]))))
+    }
+    /// No saved key, or a key that cannot be read (a signing-out host refuses every read).
+    #[cfg(test)]
+    pub(crate) fn fixture_without_key(readable: bool) -> Self {
+        Self::fixture_in(if readable {
+            State::Missing
+        } else {
+            State::Closed
+        })
+    }
+    #[cfg(test)]
+    fn fixture_in(state: State) -> Self {
         Self(Arc::new(Mutex::new(Identity {
-            state: State::Ready(Key(Zeroizing::new([1; 32]))),
+            state,
             store: Box::new(OsStore),
+            legacy: None,
         })))
     }
 
+    /// The saved key's public key, or `None` when secure storage confirms none.
+    pub(crate) async fn saved_viewer(&self) -> Result<Option<String>> {
+        with_identity(self.clone(), Identity::restore).await
+    }
     pub(crate) async fn viewer(&self) -> Result<String> {
-        with_identity(self.clone(), |identity| {
-            identity
-                .restore()?
-                .ok_or_else(|| "Set up your identity first".into())
-        })
-        .await
+        self.saved_viewer()
+            .await?
+            .ok_or_else(|| "Set up your identity first".into())
+    }
+
+    /// Short creation-time consent fence. Never restores secure storage or waits.
+    /// Close uses this same mutex; callers must not perform I/O in `commit`.
+    pub(crate) fn try_commit_managed_consent<T>(
+        &self,
+        expected: &str,
+        commit: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let identity = self
+            .0
+            .try_lock()
+            .map_err(|_| "Managed save identity is busy")?;
+        match &identity.state {
+            State::Ready(key) if key.viewer()? == expected => commit(),
+            _ => Err("Managed save identity is unavailable or changed".into()),
+        }
     }
 
     pub(crate) async fn require_missing(&self) -> Result<()> {
@@ -881,14 +1301,16 @@ impl IdentityHost {
                 // Inspect raw tag arrays before deserialization; normalization must not discard duplicate selectors.
                 let tags = raw["tags"].as_array().ok_or("Invalid read-state event")?;
                 let ds: Vec<_> = tags.iter().filter(|tag| tag[0] == "d").collect();
+                let version = match ds.as_slice() {
+                    [d] => d[1].as_str().and_then(read_coordinate_version),
+                    _ => None,
+                }
+                .ok_or("Invalid read-state event")?;
                 let ts: Vec<_> = tags
                     .iter()
-                    .filter(|tag| tag[0] == "t" && tag[1] == "read-state")
+                    .filter(|tag| tag[0] == "t" && tag[1] == read_namespace(version))
                     .collect();
-                if ds.len() != 1
-                    || ts.len() != 1
-                    || !ds[0][1].as_str().is_some_and(valid_read_coordinate)
-                {
+                if ts.len() != 1 {
                     return Err("Invalid read-state event".into());
                 }
                 let event: Event =
@@ -904,7 +1326,9 @@ impl IdentityHost {
                 }
                 let blob: serde_json::Value =
                     serde_json::from_str(&plaintext).map_err(|_| "Invalid read-state event")?;
-                validate_read_blob(&blob)?;
+                if validate_read_blob(&blob)? != version {
+                    return Err("Invalid read-state event".into());
+                }
                 result.push(serde_json::json!({"eventId": event.id.to_hex(), "blob": blob}));
             }
             Ok(serde_json::Value::Array(result))
@@ -928,13 +1352,13 @@ impl IdentityHost {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| "System clock is unavailable")?
                 .as_secs();
-            if !valid_read_coordinate(&format!("read-state:{slot}"))
+            if !valid_read_slot(&slot)
                 || created_at > u32::MAX as u64
                 || now.abs_diff(created_at) > 60
             {
                 return Err("Invalid read-state signing intent".into());
             }
-            validate_read_blob(&blob)?;
+            let namespace = read_namespace(validate_read_blob(&blob)?);
             let plaintext =
                 serde_json::to_string(&blob).map_err(|_| "Invalid read-state signing intent")?;
             if plaintext.len() > 40 * 1024 {
@@ -955,8 +1379,143 @@ impl IdentityHost {
                 kind: 30078,
                 content,
                 tags: vec![
-                    vec!["d".into(), format!("read-state:{slot}")],
-                    vec!["t".into(), "read-state".into()],
+                    vec!["d".into(), format!("{namespace}:{slot}")],
+                    vec!["t".into(), namespace.into()],
+                ],
+            })
+        })
+        .await
+    }
+
+    /// Decrypt only verified, self-authored thread-follows slots. An own event
+    /// whose payload can't be read decodes to `payload: null`: unknown, not absent.
+    pub(crate) async fn decode_thread_follows(
+        &self,
+        events: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            let State::Ready(key) = &identity.state else {
+                return Err("Set up your identity first".into());
+            };
+            if events.len() > 16
+                || serde_json::to_vec(&events)
+                    .map_err(|_| "Thread-follows decode capacity exceeded")?
+                    .len()
+                    > 512 * 1024
+            {
+                return Err("Thread-follows decode capacity exceeded".into());
+            }
+            let secret = NostrSecretKey::from_slice(key.0.as_ref())
+                .map_err(|_| "Invalid thread-follows event")?;
+            let public = Keys::new(secret.clone()).public_key();
+            let conversation = nip44::v2::ConversationKey::derive(&secret, &public)
+                .map_err(|_| "Invalid thread-follows event")?;
+            let mut result = Vec::new();
+            for raw in events {
+                if serde_json::to_vec(&raw)
+                    .map_err(|_| "Invalid thread-follows event")?
+                    .len()
+                    > 96 * 1024
+                {
+                    return Err("Invalid thread-follows event".into());
+                }
+                let tags = raw["tags"]
+                    .as_array()
+                    .ok_or("Invalid thread-follows event")?;
+                let ds: Vec<_> = tags.iter().filter(|tag| tag[0] == "d").collect();
+                let ts: Vec<_> = tags
+                    .iter()
+                    .filter(|tag| tag[0] == "t" && tag[1] == "thread-follows")
+                    .collect();
+                if ds.len() != 1
+                    || ts.len() != 1
+                    || !ds[0][1].as_str().is_some_and(valid_follow_coordinate)
+                {
+                    return Err("Invalid thread-follows event".into());
+                }
+                let event: Event =
+                    serde_json::from_value(raw).map_err(|_| "Invalid thread-follows event")?;
+                event.verify().map_err(|_| "Invalid thread-follows event")?;
+                if event.kind.as_u16() != 30078 || event.pubkey != public {
+                    return Err("Invalid thread-follows event".into());
+                }
+                let payload = decrypt_with_conversation(&conversation, &event.content)
+                    .ok()
+                    .filter(|plaintext| plaintext.len() <= 40 * 1024)
+                    .and_then(|plaintext| {
+                        serde_json::from_str::<serde_json::Value>(&plaintext).ok()
+                    })
+                    .filter(|payload| validate_follow_payload(payload).is_ok())
+                    .unwrap_or(serde_json::Value::Null);
+                result.push(serde_json::json!({"eventId": event.id.to_hex(), "payload": payload}));
+            }
+            Ok(serde_json::Value::Array(result))
+        })
+        .await
+    }
+
+    /// Sign only bounded thread-follows intent, never caller-supplied ciphertext.
+    pub(crate) async fn sign_thread_follows(
+        &self,
+        slot: String,
+        created_at: u64,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let system_clock: fn() -> Result<u64> = || {
+            Ok(std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "System clock is unavailable")?
+                .as_secs())
+        };
+        self.sign_thread_follows_at(slot, created_at, payload, system_clock)
+            .await
+    }
+
+    /// `sign_thread_follows` against `clock`, so a test can hold the instant
+    /// the 60-second window is measured from.
+    pub(crate) async fn sign_thread_follows_at(
+        &self,
+        slot: String,
+        created_at: u64,
+        payload: serde_json::Value,
+        clock: fn() -> Result<u64>,
+    ) -> Result<serde_json::Value> {
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            let State::Ready(key) = &identity.state else {
+                return Err("Set up your identity first".into());
+            };
+            let now = clock()?;
+            if !valid_follow_coordinate(&format!("thread-follows:{slot}"))
+                || created_at > u32::MAX as u64
+                || now.abs_diff(created_at) > 60
+            {
+                return Err("Invalid thread-follows signing intent".into());
+            }
+            validate_follow_payload(&payload)?;
+            let plaintext = serde_json::to_string(&payload)
+                .map_err(|_| "Invalid thread-follows signing intent")?;
+            if plaintext.len() > 40 * 1024 {
+                return Err("Thread-follows publication capacity exceeded".into());
+            }
+            let secret = NostrSecretKey::from_slice(key.0.as_ref())
+                .map_err(|_| "Invalid thread-follows signing intent")?;
+            let public = Keys::new(secret.clone()).public_key();
+            let content = nostr::nips::nip44::encrypt(
+                &secret,
+                &public,
+                plaintext,
+                nostr::nips::nip44::Version::V2,
+            )
+            .map_err(|_| "Thread-follows signing failed")?;
+            key.sign(EventTemplate {
+                created_at,
+                kind: 30078,
+                content,
+                tags: vec![
+                    vec!["d".into(), format!("thread-follows:{slot}")],
+                    vec!["t".into(), "thread-follows".into()],
                 ],
             })
         })
@@ -1023,6 +1582,7 @@ impl Default for IdentityHost {
         Self(Arc::new(Mutex::new(Identity {
             state: State::Unread,
             store: Box::new(OsStore),
+            legacy: None,
         })))
     }
 }
@@ -1065,8 +1625,9 @@ pub struct BuilderlabChallenge {
 }
 impl BuilderlabChallenge {
     /// block/buzz's `nostr_bind` checks and kind 24243 tags, pinned to production
-    /// Builderlab or the `BUZZ_BUILDERLAB_URL` build origin; never another origin.
-    fn template(self, now: u64, configured: &str) -> Result<EventTemplate> {
+    /// Builderlab or a configured origin (the `BUZZ_BUILDERLAB_URL` build origin,
+    /// each sign-in server's identity origin); never another origin.
+    fn template(self, now: u64, configured: &[String]) -> Result<EventTemplate> {
         let nonce_ok = self.nonce.len() == 43
             && self
                 .nonce
@@ -1080,8 +1641,7 @@ impl BuilderlabChallenge {
             || !nonce_ok
             || self.verification_code.len() != 6
             || !self.verification_code.bytes().all(|b| b.is_ascii_digit())
-            || (self.origin != BUILDERLAB_ORIGIN
-                && (configured.is_empty() || self.origin != configured))
+            || (self.origin != BUILDERLAB_ORIGIN && !configured.contains(&self.origin))
             || expires <= i64::try_from(now).unwrap_or(i64::MAX)
         {
             return Err("Invalid Nostr identity challenge".into());
@@ -1106,17 +1666,34 @@ impl BuilderlabChallenge {
     }
 }
 /// Signs only a valid Builderlab binding challenge; never a general event signer.
+/// `legacy` signs with installed old Buzz's key instead, only while no key is
+/// saved here, and saves nothing; it answers null when that key can't be read.
 #[tauri::command]
 pub async fn identity_sign_builderlab_binding(
     host: tauri::State<'_, IdentityHost>,
+    federated_identity: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
     challenge: BuilderlabChallenge,
+    legacy: Option<bool>,
 ) -> Result<serde_json::Value> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "System clock is before 1970")?
         .as_secs();
-    host.sign(challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?)
+    let mut configured = federated_identity.identity_origins();
+    if !buzzodz_plugins::BUILDERLAB_ORIGIN.is_empty() {
+        configured.push(buzzodz_plugins::BUILDERLAB_ORIGIN.into());
+    }
+    let event = challenge.template(now, &configured)?;
+    if legacy == Some(true) {
+        with_identity(host.inner().clone(), move |identity| {
+            identity
+                .sign_legacy(event)
+                .map(|signed| signed.unwrap_or(serde_json::Value::Null))
+        })
         .await
+    } else {
+        host.sign(event).await
+    }
 }
 #[tauri::command]
 pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Option<String>> {
@@ -1147,15 +1724,23 @@ pub fn identity_legacy_available<R: tauri::Runtime>(app: tauri::AppHandle<R>) ->
             .is_dir()
     })
 }
+/// `expected` saves old Buzz's key only when it is that key, as setup does for
+/// the key an account already holds; otherwise nothing is saved or returned.
 #[tauri::command]
 pub async fn identity_import_legacy(
     host: tauri::State<'_, IdentityHost>,
     backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
-) -> Result<String> {
-    let public = with_identity(host.inner().clone(), Identity::import_legacy).await?;
-    let backup = backup.inner().clone();
-    let identity = host.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    expected: Option<String>,
+) -> Result<Option<String>> {
+    let public = with_identity(host.inner().clone(), move |identity| {
+        identity.import_legacy(expected.as_deref())
+    })
+    .await?;
+    if public.is_some() {
+        let backup = backup.inner().clone();
+        let identity = host.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    }
     Ok(public)
 }
 #[tauri::command]

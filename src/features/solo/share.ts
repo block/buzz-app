@@ -1,19 +1,14 @@
+import { viewerMember } from "../relay/membership";
 import {
   sameLabels,
   type ChannelDetailsDraft,
+  type ChannelDetails,
 } from "../relay/channel-details-protocol";
-import {
-  addChannelMember,
-  canAddMembers,
-  canShareSoloChat,
-} from "../channel-members/members";
-import { archiveHides } from "../relay/identity-archives";
+import { canAddMembers, canShareSoloChat } from "../channel-members/members";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import type { OutgoingEvent } from "../relay/outbox";
-import type { MemberAdditionIntent } from "../channel-members/members";
-import { messageLinkParts } from "../messages/message-link-parts";
-import { soloChatLinkName } from "./labels";
+import { ownSolo, soloLabels } from "./labels";
+import { generalAccessPolicy } from "../channels/general-access";
 
 /** Sharing changes access, never presentation or Solo placement. */
 export function canShareConversation(
@@ -29,7 +24,7 @@ export function canShareConversation(
       !channel.cached &&
       !channel.readOnly &&
       !channel.archived &&
-      channel.members?.includes(session.viewer ?? "") &&
+      viewerMember(channel, session.viewer) &&
       canAddMembers(session, channel)
     )
   );
@@ -38,85 +33,30 @@ export function canShareConversation(
 export const soloChatLink = (id: string) =>
   `buzz://channel/${encodeURIComponent(id)}`;
 export const soloChatLinkMessage = (id: string, name = id.slice(0, 8)) =>
-  `[Chat: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
+  `[${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
 
-/** A saved share keeps its original label even when the chat is renamed. */
-function matchesSoloChatLink(content: string, id: string) {
-  const parts = messageLinkParts(content).filter((part) => part.text !== "");
-  return (
-    parts.length === 1 &&
-    parts[0]?.url === soloChatLink(id) &&
-    /^(?:Session|Chat)(?:: | · )/.test(parts[0]?.label ?? "")
-  );
-}
-
-/** Outbox can finish a delivered link even after its in-process share was reset. */
-export function isSoloChatLinkReceipt(item: OutgoingEvent) {
-  const match = /^solo-share-link:([^:]+):([^:]+)$/.exec(
-    item.recovery?.key ?? "",
-  );
-  return !!(
-    match?.[1] &&
-    match[2] &&
-    item.recovery?.value === "1" &&
-    item.event.kind === 9 &&
-    matchesSoloChatLink(item.event.content, match[1]) &&
-    item.event.tags.some(([name, value]) => name === "h" && value === match[2])
-  );
-}
-
-/** Exact selected people are grants to the chat, not the destination or its parent. */
-export async function grantSoloChatAccess(
-  session: RelaySession,
-  channelId: string,
-  people: readonly string[],
-  intents: Map<string, MemberAdditionIntent>,
-  signal: AbortSignal,
-  onConfirmed: (key: string) => void,
-  includeAgents = false,
-  soloParticipant = true,
-  skipArchived = false,
+/** Link sharing is available in channels, their threads and DMs. */
+export function chatShareDestination(
+  destination: Pick<ChannelSummary, "channelType"> | undefined,
 ) {
-  if (people.length > 100 || new Set(people).size !== people.length)
-    throw new Error("Choose at most 100 distinct recipients.");
-  for (const key of people) {
-    signal.throwIfAborted();
-    // Channel audiences omit archived identities; direct selections still fail explicitly.
-    if (skipArchived && archiveHides(session.archives, key, session.viewer))
-      continue;
-    const intent = intents.get(key) ?? {};
-    intents.set(key, intent);
-    await addChannelMember(
-      session,
-      channelId,
-      key,
-      signal,
-      intent,
-      session.outbox,
-      soloParticipant,
-      includeAgents,
-    );
-    onConfirmed(key);
-  }
+  return ["stream", "forum", "dm"].includes(destination?.channelType ?? "");
 }
 
-/** Capture validated destination keys, including oversized rosters. The share
- * attempt freezes them before its combined 100-recipient admission check, so a
- * retry cannot adopt a smaller or changed audience without explicit Start over. */
-export async function destinationShareAudience(
+/** Check the destination before opening community reading; never enroll its members. */
+export async function checkShareDestination(
   session: RelaySession,
-  destinationId: string,
+  id: string,
   signal: AbortSignal,
 ) {
   signal.throwIfAborted();
-  const fresh = await session.channels.refreshRoster?.(destinationId, {
+  const fresh = await session.channels.refreshRoster?.(id, {
     consistency: "strong",
     signal,
   });
   signal.throwIfAborted();
   const destination = session.channels
     .list()
-    .channels.find((item) => item.id === destinationId);
+    .channels.find((item) => item.id === id);
   if (
     !fresh ||
     !destination ||
@@ -125,185 +65,84 @@ export async function destinationShareAudience(
     destination.cached ||
     destination.archived ||
     destination.readOnly ||
-    !destination.members?.includes(session.viewer ?? "") ||
-    !["stream", "forum"].includes(destination.channelType ?? "")
+    !viewerMember(destination, session.viewer) ||
+    !chatShareDestination(destination)
   )
     throw new Error(
       "Destination membership could not be confirmed. Retry to share.",
     );
-  const keys = [
-    ...new Set(destination.members.filter((key) => key !== session.viewer)),
-  ];
-  if (keys.some((key) => !/^[0-9a-f]{64}$/.test(key)))
-    throw new Error("Destination membership contains an invalid identity.");
-  return keys.filter(
-    (key) => !archiveHides(session.archives, key, session.viewer),
-  );
 }
 
-/** Recheck the exact destination after grants: confirmed additions do not imply
- * the viewer can still post to another channel. The Outbox owns actual delivery. */
-export async function publishSoloChatLink(
+/** Both share entry points confirm Private and View only chats. Public stays intact.
+ * Return the signed snapshot for consent; confirmed Private writes use the existing
+ * details owner and retain its exact uncertain attempt for explicit checking. */
+export async function shareSoloChatAccess(
   session: RelaySession,
-  sourceId: string,
-  destinationId: string,
-  previousId: string | undefined,
-  signal: AbortSignal,
-  onQueued: (id: string) => void,
-) {
-  const source = await session.channelWrites.refreshMembership(sourceId);
-  const destination =
-    await session.channelWrites.refreshMembership(destinationId);
-  const eligible = (channel: ChannelSummary, soloChat: boolean) =>
-    !!session.viewer &&
-    !channel.huddle &&
-    !channel.metadataPending &&
-    !channel.cached &&
-    !channel.readOnly &&
-    !channel.archived &&
-    !!channel.members?.includes(session.viewer) &&
-    (soloChat
-      ? canShareConversation(session, channel)
-      : channel.channelType === "stream" || channel.channelType === "forum");
-  if (!eligible(source, true) || !eligible(destination, false))
-    throw new Error("Chat or destination access changed. Refresh and retry.");
-  signal.throwIfAborted();
-  const outbox = session.outbox;
-  if (!outbox?.supports(9)) throw new Error("Message posting is unavailable.");
-  await outbox.ready();
-  signal.throwIfAborted();
-  if (
-    !eligible(
-      session.channels.list().channels.find((item) => item.id === sourceId) ??
-        source,
-      true,
-    ) ||
-    !eligible(
-      session.channels
-        .list()
-        .channels.find((item) => item.id === destinationId) ?? destination,
-      false,
-    )
-  )
-    throw new Error("Chat or destination access changed. Refresh and retry.");
-  const existing = previousId
-    ? outbox.snapshot().find((item) => item.event.id === previousId)
-    : undefined;
-  if (previousId && !existing) {
-    const found = await session.read(
-      [{ ids: [previousId], limit: 1, consistency: "strong" }],
-      { signal, fresh: true },
-    );
-    if (
-      found.some(
-        (event) =>
-          event.id === previousId &&
-          event.kind === 9 &&
-          event.pubkey === session.viewer &&
-          matchesSoloChatLink(event.content, sourceId) &&
-          event.tags.some(
-            ([name, value]) => name === "h" && value === destinationId,
-          ),
-      )
-    )
-      return previousId;
-    throw new Error(
-      "Link delivery is unconfirmed. Check Outbox and the channel before posting again.",
-    );
-  }
-  if (
-    existing &&
-    (existing.event.kind !== 9 ||
-      existing.event.pubkey !== session.viewer ||
-      !matchesSoloChatLink(existing.event.content, sourceId) ||
-      !existing.event.tags.some(
-        ([name, value]) => name === "h" && value === destinationId,
-      ))
-  )
-    throw new Error(
-      "Saved link does not match this share. Check Outbox before retrying.",
-    );
-  if (existing?.delivery === "accepted" || existing?.delivery === "seen") {
-    await outbox.acknowledge(existing.event.id);
-    return existing.event.id;
-  }
-  const recovery = {
-    key: `solo-share-link:${sourceId}:${destinationId}`,
-    value: "1",
-  };
-  // A submitted operation saved before this caller owned recovery can still be
-  // in flight. Protect its exact ID before an echo moves it out of snapshot().
-  if (existing && !existing.recovery)
-    await outbox.recover(existing.event.id, recovery);
-  // Keep this one link operation visible when a relay echo precedes its HTTP
-  // receipt. Ordinary messages leave Outbox.snapshot() on echo; this caller
-  // needs terminal evidence before releasing its submitted share attempt.
-  const id =
-    existing?.event.id ??
-    session.messages.send(
-      destinationId,
-      soloChatLinkMessage(sourceId, soloChatLinkName(source)),
-      [],
-      [],
-      recovery,
-      [],
-      {},
-      [sourceId],
-    );
-  onQueued(id);
-  if (existing?.delivery === "failed" || existing?.delivery === "unknown")
-    outbox.retry(id);
-  await new Promise<void>((resolve, reject) => {
-    let stop = () => {};
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      stop();
-      clearTimeout(timer);
-      signal.removeEventListener("abort", cancelled);
-      error ? reject(error) : resolve();
-    };
-    const cancelled = () =>
-      finish(
-        new Error(
-          "Sharing interrupted. Check Outbox and the channel before retrying.",
-        ),
+  id: string,
+  {
+    signal,
+    confirmed,
+    attempts,
+    check = () => signal.throwIfAborted(),
+    onAccessChanged,
+  }: {
+    signal: AbortSignal;
+    confirmed?: ChannelDetails | undefined;
+    attempts: Map<string, ChannelDetailsDraft>;
+    check?: () => void;
+    /** Only after this share's save or exact uncertain attempt is confirmed. */
+    onAccessChanged?: () => void;
+  },
+): Promise<ChannelDetails | undefined> {
+  check();
+  const details = session.channelDetails;
+  const pending = details.snapshot(id);
+  if (pending) {
+    if (pending.status !== "unconfirmed" || pending.draft !== attempts.get(id))
+      throw new Error(
+        "Finish the existing General access change before sharing.",
       );
-    const timer = setTimeout(
-      () =>
-        finish(
-          new Error(
-            "Link delivery is unconfirmed. Check Outbox before retrying.",
-          ),
-        ),
-      15_000,
+    await details.check(id, signal);
+    check();
+    onAccessChanged?.();
+  }
+  const base = await details.load(id, signal);
+  check();
+  if (confirmed && confirmed.channelId !== id)
+    throw new Error("Chat selection changed. Try sharing again.");
+  if (base.visibility === "public")
+    return base.joinRole === "guest" && !confirmed ? base : undefined;
+  const source = session.channels
+    .list()
+    .channels.find((item) => item.id === id);
+  if (
+    !base.canEdit ||
+    !soloLabels(base.labels) ||
+    !ownSolo(source, session.viewer)
+  )
+    throw new Error("You can no longer change this chat’s general access.");
+  if (!confirmed) return base;
+  if (confirmed.visibility !== "private")
+    throw new Error(
+      "The chat is now Private. Close this dialog and share again to confirm the access change.",
     );
-    const inspect = () => {
-      const item = outbox.snapshot().find((entry) => entry.event.id === id);
-      if (!item)
-        finish(
-          new Error(
-            "Link delivery is unconfirmed. Check the channel before retrying.",
-          ),
-        );
-      else if (item.delivery === "accepted" || item.delivery === "seen")
-        finish();
-      else if (item.delivery === "failed" || item.delivery === "unknown")
-        finish(
-          new Error(
-            item.error ??
-              "Link delivery is unconfirmed. Retry the saved message.",
-          ),
-        );
-    };
-    stop = outbox.subscribe(inspect);
-    signal.addEventListener("abort", cancelled, { once: true });
-    if (signal.aborted) cancelled();
-    else inspect();
-  });
-  await outbox.acknowledge(id);
-  return id;
+  const saving = details.save(
+    confirmed,
+    {
+      ...confirmed,
+      ...generalAccessPolicy("view-only", confirmed.joinRole),
+    },
+    signal,
+    () => {
+      check();
+      return true;
+    },
+  );
+  const draft = details.snapshot(id)?.draft;
+  if (draft) attempts.set(id, draft);
+  await saving;
+  check();
+  onAccessChanged?.();
 }
 
 /** Promote in place through the existing signed details owner. A retry checks an
@@ -320,6 +159,7 @@ export async function applySharedChannelDetails(
     value.name === draft.name &&
     value.description === draft.description &&
     value.visibility === draft.visibility &&
+    (draft.joinRole === undefined || value.joinRole === draft.joinRole) &&
     value.ttlSeconds === draft.ttlSeconds &&
     (draft.labels === undefined ||
       sameLabels(value.labels ?? [], draft.labels));
@@ -339,6 +179,7 @@ export async function applySharedChannelDetails(
       base.name !== expected.name ||
       base.description !== expected.description ||
       base.visibility !== expected.visibility ||
+      base.joinRole !== expected.joinRole ||
       base.ttlSeconds !== expected.ttlSeconds ||
       (draft.labels !== undefined &&
         !sameLabels(base.labels ?? [], expected.labels ?? []))

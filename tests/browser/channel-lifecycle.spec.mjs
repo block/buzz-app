@@ -1,5 +1,7 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import { animationsSettled } from "./animations.mjs";
+import { openPage, settlePanelMotion } from "./navigation.mjs";
+import { frames } from "./timeline.mjs";
 import { test, expect } from "./fixture.mjs";
 async function openLifecycle(page, app) {
   await page.goto(app.origin);
@@ -14,6 +16,7 @@ async function openLifecycle(page, app) {
 }
 
 test.use({
+  enabledPlugins: ["buzz.workflows"],
   productionBroker: true,
   channelLifecycle: true,
   historyCounts: { alpha: 2, beta: 1 },
@@ -41,64 +44,33 @@ test("archive confirmation returns focus on cancel and retains the conversation 
       exact: true,
     }),
   ).toBeVisible();
-  // Hold the real permission request: the composed row menu must have no
-  // orphan divider or unchecked actions.
-  let release;
-  let intercepted;
-  const held = new Promise((resolve) => {
-    release = resolve;
-  });
-  const seen = new Promise((resolve) => {
-    intercepted = resolve;
-  });
+  // Lifecycle actions come from the live roster, so the composed row menu is
+  // complete when it opens and opening it reads no channel permissions.
+  const permissionReads = [];
   const permissionRoute = async (route) => {
     const filters = route.request().postDataJSON();
-    if (
-      !filters.some(
-        (filter) =>
-          filter.kinds?.includes(39001) &&
-          filter["#d"]?.includes("11111111-1111-4111-8111-111111111111"),
-      )
-    )
-      return route.continue();
-    intercepted();
-    await held;
+    if (filters.some((filter) => filter.kinds?.includes(39001)))
+      permissionReads.push(filters);
     await route.continue();
   };
-  await page.route("**/api/relay/**/query", permissionRoute);
+  await page.route("**/api/relay/primary/query", permissionRoute);
   const menu = page.getByRole("menu", {
     name: "Actions for Lifecycle channel",
   });
-  try {
-    await row.focus();
-    await page.keyboard.press("Shift+F10");
-    await seen;
-    await expect(menu).toBeVisible();
-    // Attention actions remain usable while lifecycle permissions are held;
-    // the menu stays divider-free before and after permission resolution.
-    await expect(menu.getByRole("separator")).toHaveCount(0);
-    await expect(menu.getByRole("menuitem")).toHaveText([
-      "Move channel",
-      "Mute",
-      "Mark as Unread",
-      "Copy link",
-    ]);
-    await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
-  } finally {
-    release();
-  }
-  await expect(
-    menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
-  ).toBeVisible();
-  await expect(menu.getByRole("separator")).toHaveCount(0);
+  await row.focus();
+  await page.keyboard.press("Shift+F10");
   await expect(menu.getByRole("menuitem")).toHaveText([
-    "Move channel",
+    "Move to…",
     "Mute",
-    "Mark as Unread",
+    "Mark as unread",
     "Copy link",
     "Archive channel",
     "Delete channel",
   ]);
+  await expect(menu.getByRole("separator")).toHaveCount(0);
+  await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
+  // The rendered lifecycle items are the barrier: a read would precede them.
+  expect(permissionReads).toEqual([]);
   await expect(
     page.getByRole("button", { name: /More options for/ }),
   ).toHaveCount(0);
@@ -109,7 +81,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
         .locator(".buzz-menu-icon svg"),
     ).toHaveCount(1);
   }
-  await page.unroute("**/api/relay/**/query", permissionRoute);
+  await page.unroute("**/api/relay/primary/query", permissionRoute);
   await expect(
     menu.getByRole("menuitem", { name: /^Leave channel/ }),
   ).toHaveCount(0);
@@ -124,9 +96,15 @@ test("archive confirmation returns focus on cancel and retains the conversation 
     name: "Archive channel: Lifecycle channel",
   });
   await expect(dialog).toBeVisible();
+  const cancel = dialog.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeFocused();
+  // Pointer entry still shows what Enter will activate without swapping emphasis.
+  await expect(cancel).toHaveCSS("outline-style", "solid");
+  await expect(cancel).toHaveCSS("outline-width", "2px");
+  await expect(cancel).toHaveAttribute("data-variant", "subtle");
   await expect(
-    dialog.getByRole("button", { name: "Archive channel" }),
-  ).toBeFocused();
+    dialog.getByRole("button", { name: "Archive channel", exact: true }),
+  ).toHaveAttribute("data-variant", "prominent");
   await dialog.screenshot({
     path: testInfo.outputPath("lifecycle-confirmation.png"),
   });
@@ -136,7 +114,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
-  await openPage(page, "Workflows");
+  await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
   await row.click({ button: "right" });
   await menu
     .getByRole("menuitem", { name: "Archive channel", exact: true })
@@ -146,7 +124,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   await expect(
-    page.getByRole("heading", { name: "Workflows", exact: true }),
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await row.click();
   await row.click({ button: "right" });
@@ -160,6 +138,44 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
   await expect(page).toHaveURL(conversationUrl);
+  // Archive recovery lives in the lower pill beside its status.
+  const archived = page.getByRole("region", {
+    name: "Archived channel",
+    exact: true,
+  });
+  const unarchive = archived.getByRole("button", {
+    name: "Unarchive",
+    exact: true,
+  });
+  await expect(unarchive).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Archived · view only", exact: true }),
+  ).toHaveCount(0);
+  // The wrapping pill must leave empty history readable at enlarged text.
+  await page.setViewportSize({ width: 480, height: 950 });
+  await page.evaluate(() => localStorage.setItem("buzz-font-scale.v1", "2"));
+  await page.reload();
+  await expect(unarchive).toBeInViewport();
+  const emptyTitle = page.getByRole("heading", {
+    name: "No messages yet.",
+    exact: true,
+  });
+  await expect(emptyTitle).toBeVisible();
+  await expect
+    .poll(async () => {
+      const title = await emptyTitle.boundingBox();
+      const pill = await archived.locator('[data-ready="true"]').boundingBox();
+      return !!title && !!pill && title.y + title.height < pill.y;
+    })
+    .toBe(true);
+  await unarchive.click();
+  const restore = page.getByRole("dialog", {
+    name: "Unarchive channel: Lifecycle channel",
+  });
+  await restore.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(restore).toHaveCount(0);
+  await expect(unarchive).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 950 });
   await openChannelDetails(page);
   await expect(
     page.getByRole("button", { name: "Unarchive channel", exact: true }),
@@ -169,10 +185,87 @@ test("archive confirmation returns focus on cancel and retains the conversation 
       name: "Message #Lifecycle channel",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   expect(app.report.lifecyclePublications).toHaveLength(1);
   expect(app.report.lifecyclePublications[0].kind).toBe(9002);
   expect(app.report.unexpected).toEqual([]);
+});
+
+test.describe("cold archived channel", () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  test.use({ lifecycleVisibility: { archived: [channelId], hidden: [] } });
+
+  // Exercise Search, the broker's first timeline read, and the modal focus
+  // handoff together. The archived channel has never been opened in this visit.
+  test("offers Unarchive from Search while the first history read is pending", async ({
+    page,
+    app,
+  }) => {
+    let historyRequested = false;
+    const historyRelease = Promise.withResolvers();
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (
+        filters.some(
+          (filter) => filter.top_level && filter["#h"]?.includes(channelId),
+        )
+      ) {
+        historyRequested = true;
+        await historyRelease.promise;
+      }
+      await route.continue();
+    });
+
+    const archived = page.getByRole("region", {
+      name: "Archived channel",
+      exact: true,
+    });
+    const unarchive = archived.getByRole("button", {
+      name: "Unarchive",
+      exact: true,
+    });
+    try {
+      await openLifecycle(page, app);
+      await page
+        .getByRole("button", { name: "Search Buzz", exact: true })
+        .click();
+      const search = page.getByRole("dialog", {
+        name: "Search Buzz",
+        exact: true,
+      });
+      await search.getByRole("combobox").fill("Lifecycle channel");
+      await search
+        .getByRole("option", {
+          name: "Lifecycle channel Archived channel · 1 member",
+          exact: true,
+        })
+        .click();
+      await expect.poll(() => historyRequested).toBe(true);
+      await expect(
+        archived.getByText(
+          "This channel is archived. It's read-only and hidden from your sidebar.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await unarchive.click();
+      const confirmation = page.getByRole("dialog", {
+        name: "Unarchive channel: Lifecycle channel",
+        exact: true,
+      });
+      await expect(confirmation).toBeVisible();
+      await confirmation
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+      await expect(unarchive).toBeFocused();
+      expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+    } finally {
+      historyRelease.resolve();
+    }
+    await expect(
+      page.getByRole("heading", { name: "No messages yet.", exact: true }),
+    ).toBeVisible();
+    await expect(unarchive).toBeFocused();
+  });
 });
 
 // The production page must project the separate per-viewer visibility snapshot
@@ -232,6 +325,29 @@ test("DM hide is per-viewer visibility, survives reload and never sends Leave or
     page.getByRole("textbox", { name: composerName, exact: true }),
   ).toBeVisible();
   await expect(row).toHaveCount(0);
+  // Someone else's message resurfaces it once the relay clears the hide, read
+  // from the relay's writer, while another conversation is open.
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+  const readsBefore = app.report.queries.length;
+  app.append(
+    "primary",
+    "22222222-2222-4222-8222-222222222222",
+    "Still there?",
+    true,
+    false,
+  );
+  await expect(row).toBeVisible();
+  expect(
+    app.report.queries
+      .slice(readsBefore)
+      .some(
+        ({ filter }) =>
+          filter.kinds?.includes(30622) && filter.consistency === "strong",
+      ),
+  ).toBe(true);
   expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual([
     41012,
   ]);
@@ -344,8 +460,7 @@ for (const action of ["archive", "hide"]) {
       await expect(destination).toBeVisible();
       if (action === "archive") await expect(page).toHaveURL(exactUrl);
       await expect(rows).toHaveCount(0);
-      if (action === "archive") await expect(composer).toBeDisabled();
-      else await expect(composer).toHaveCount(0);
+      await expect(composer).toHaveCount(0);
       await page.reload();
       await expect(destination).toBeVisible();
       if (action === "archive") {
@@ -356,8 +471,7 @@ for (const action of ["archive", "hide"]) {
         ).toBeVisible();
       }
       await expect(rows).toHaveCount(0);
-      if (action === "archive") await expect(composer).toBeDisabled();
-      else await expect(composer).toHaveCount(0);
+      await expect(composer).toHaveCount(0);
       expect(
         app.report.lifecyclePublications.map((event) => event.kind),
       ).toEqual([action === "archive" ? 9002 : 41012]);
@@ -434,6 +548,7 @@ test("pending toast in narrow navigation preserves visible recovery after uncert
   await expect(
     failure.getByRole("button", { name: "Archive channel", exact: true }),
   ).toHaveCount(0);
+  await failure.hover();
   await failure.getByRole("button", { name: "Dismiss notification" }).click();
   await expect(failure).toHaveCount(0);
   // Recovery must leave the page usable, not silently inert under a hidden modal.
@@ -469,7 +584,7 @@ test.describe("Solo chat lifecycle", () => {
     });
     await expect(composer).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Share", exact: true }),
+      page.getByRole("button", { name: /^Share access to /, exact: true }),
     ).toBeVisible();
     const url = page.url();
     await row.focus();
@@ -493,25 +608,30 @@ test.describe("Solo chat lifecycle", () => {
       exact: true,
     });
     await header.click();
-    await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
-    const archive = page.getByRole("dialog", {
-      name: "Archive chat: Lifecycle channel",
-    });
-    await archive
-      .getByRole("button", { name: "Archive chat", exact: true })
+    await page
+      .getByRole("menuitem", { name: "Archive chat", exact: true })
       .click();
-    await expect(archive).toHaveCount(0);
+    // Archiving a chat needs no confirmation; its result toast offers Undo.
+    await expect(
+      page.getByRole("dialog", { name: "Chat archived: Lifecycle channel" }),
+    ).toBeVisible();
     await expect(row).toHaveCount(0);
     // Archiving an open Solo conversation now hands off to a new Solo draft.
     await expect(page).not.toHaveURL(url);
     // The retained address must still support archived-history recovery.
     await page.goto(url);
-    await expect(composer).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Share", exact: true }),
+      page.getByRole("region", { name: "Archived chat", exact: true }),
+    ).toHaveText("This chat is archived");
+    await expect(composer).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /^Share access to /, exact: true }),
     ).toHaveCount(0);
     await page.reload();
-    await expect(composer).toBeDisabled();
+    await expect(
+      page.getByRole("region", { name: "Archived chat", exact: true }),
+    ).toHaveText("This chat is archived");
+    await expect(composer).toHaveCount(0);
     await expect(page).toHaveURL(url);
     await page
       .getByRole("navigation", { name: "Subscribed channels" })
@@ -535,7 +655,10 @@ test.describe("Solo chat lifecycle", () => {
     await result.click();
     await expect(search).toHaveCount(0);
     await expect(page).toHaveURL(url);
-    await expect(composer).toBeDisabled();
+    await expect(
+      page.getByRole("region", { name: "Archived chat", exact: true }),
+    ).toHaveText("This chat is archived");
+    await expect(composer).toHaveCount(0);
     await header.click();
     await expect(
       page.getByRole("button", { name: "View members" }),
@@ -553,7 +676,7 @@ test.describe("Solo chat lifecycle", () => {
     await expect(row).toBeVisible();
     await expect(composer).toBeEnabled();
     await expect(
-      page.getByRole("button", { name: "Share", exact: true }),
+      page.getByRole("button", { name: /^Share access to /, exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(url);
     await header.click();
@@ -584,6 +707,324 @@ test.describe("Solo chat lifecycle", () => {
       ],
       [9008, [["h", "11111111-1111-4111-8111-111111111111"]]],
     ]);
+    expect(app.report.unexpected).toEqual([]);
+  });
+});
+
+// Native focus after a signed remote update removes a form is a browser contract.
+// Each surface exercises editor, toolbar and unrelated focus in one lifecycle.
+test.describe("remote archive focus", () => {
+  test.use({ readState: true, threadUnread: true });
+  for (const surface of ["channel", "thread"]) {
+    test(`remote archive preserves ${surface} focus and offers active unsent text for copying`, async ({
+      page,
+      app,
+    }, testInfo) => {
+      // Intercept only the OS clipboard boundary; the app uses its shared owner.
+      await page.addInitScript(() => {
+        window.copiedArchiveText = [];
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: {
+            writeText: async (text) => window.copiedArchiveText.push(text),
+          },
+        });
+      });
+      await page.goto(app.origin);
+      await openPage(page, "Messages");
+      await page
+        .getByRole("navigation", { name: "Subscribed channels" })
+        .locator('button[data-channel-id="alpha"]')
+        .click();
+      const panel = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      if (surface === "thread") {
+        const root = app.histories
+          .get("primary/alpha")
+          .find((event) => event.content === "Thread root 0");
+        await page
+          .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+          .getByRole("button", { name: /^View thread:/ })
+          .click();
+      }
+      const owner =
+        surface === "thread" ? panel : page.locator("[data-channel-history]");
+      const history = owner.getByRole("region", {
+        name:
+          surface === "thread" ? "Thread messages" : "Channel message history",
+        exact: true,
+      });
+      const editor =
+        surface === "thread"
+          ? panel.getByRole("textbox", { name: "Reply to thread", exact: true })
+          : page.getByRole("textbox", { name: "Message #Alpha", exact: true });
+      const form = (surface === "thread" ? panel : page).locator(
+        "[data-composer-surface]",
+      );
+      const notice = owner.getByRole("region", {
+        name: "Archived channel",
+        exact: true,
+      });
+      const elsewhere = page.getByRole("button", {
+        name: "Search Buzz",
+        exact: true,
+      });
+      if (surface === "thread") {
+        await settlePanelMotion(page);
+        await expect(history).toHaveAttribute("aria-busy", "false");
+      }
+      let timestamp = Math.floor(Date.now() / 1000);
+      for (const focus of ["editor", "toolbar", "empty", "elsewhere"]) {
+        await expect(editor).toBeVisible();
+        const draft =
+          focus === "empty" ? "" : `Unsent ${surface} **${focus}** text`;
+        await editor.fill(draft);
+        await expect(editor).toHaveJSProperty("value", draft);
+        const target =
+          focus === "elsewhere"
+            ? elsewhere
+            : focus === "toolbar"
+              ? form.getByRole("button", { name: "Attach files", exact: true })
+              : editor;
+        await target.focus();
+        await expect(target).toBeFocused();
+        app.relay.publish(
+          "primary",
+          app.signRelay({
+            kind: 39000,
+            tags: [
+              ["d", "alpha"],
+              ["name", "Alpha"],
+              ["t", "stream"],
+              ["archived", "true"],
+            ],
+            content: "",
+            created_at: ++timestamp,
+          }),
+        );
+        await expect(
+          notice.getByText(/^This channel is archived\b/),
+        ).toBeVisible();
+        if (surface === "channel" && focus === "editor") {
+          await expect(
+            owner
+              .locator("..")
+              .getByRole("status")
+              .getByText(
+                "This channel is archived. It's read-only and hidden from your sidebar.",
+                {
+                  exact: true,
+                },
+              ),
+          ).toHaveCount(1);
+        }
+        await expect(editor).toHaveCount(0);
+        await frames(page);
+        await expect(focus === "elsewhere" ? elsewhere : history).toBeFocused();
+        const copy = page.getByRole("button", {
+          name: "Copy text",
+          exact: true,
+        });
+        if (draft && focus !== "elsewhere") {
+          await expect(copy).toBeInViewport({ ratio: 1 });
+          if (focus === "editor") {
+            const toast = page
+              .locator("[data-sonner-toast]")
+              .filter({ has: copy });
+            await expect(toast).toHaveAttribute("data-mounted", "true");
+            await toast.evaluate((node) =>
+              Promise.all(
+                node
+                  .getAnimations({ subtree: true })
+                  .map((animation) => animation.finished.catch(() => {})),
+              ),
+            );
+            await page.screenshot({
+              path: testInfo.outputPath(`${surface}-archive-copy.png`),
+            });
+            // The toast action remains reachable with the keyboard after handoff.
+            await copy.focus();
+            await copy.press("Enter");
+          } else {
+            await copy.click();
+          }
+          await expect
+            .poll(() => page.evaluate(() => window.copiedArchiveText.at(-1)))
+            .toBe(draft);
+          const success = page.getByRole("dialog", {
+            name: "Text copied",
+            exact: true,
+          });
+          await expect(success).toBeVisible();
+          const successToast = page
+            .locator("[data-sonner-toast]")
+            .filter({ has: success });
+          await expect(successToast).toHaveAttribute("data-mounted", "true");
+          await animationsSettled(successToast, { subtree: true });
+          await success.hover();
+          await success
+            .getByRole("button", { name: "Dismiss notification", exact: true })
+            .click();
+        } else {
+          await expect(copy).toHaveCount(0);
+        }
+        const retainedFocus = focus === "elsewhere" ? elsewhere : history;
+        await retainedFocus.focus();
+        await expect(retainedFocus).toBeFocused();
+        app.relay.publish(
+          "primary",
+          app.signRelay({
+            kind: 39000,
+            tags: [
+              ["d", "alpha"],
+              ["name", "Alpha"],
+              ["t", "stream"],
+            ],
+            content: "",
+            created_at: ++timestamp,
+          }),
+        );
+        await expect(notice).toHaveCount(0);
+        await expect(editor).toHaveJSProperty("value", draft);
+        await frames(page);
+        await expect(retainedFocus).toBeFocused();
+      }
+      expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+      expect(app.report.unexpected).toEqual([]);
+    });
+  }
+});
+
+// A fresh composer must not override native focus in an already-open archived Solo visit.
+test.describe("remote Solo unarchive", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  test.use({
+    soloChannels: [id],
+    lifecycleVisibility: { archived: [id], hidden: [] },
+  });
+  test("retains history and outside focus when remote unarchive restores composition", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    await page
+      .getByRole("button", { name: "Search Buzz", exact: true })
+      .click();
+    const search = page.getByRole("dialog", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    await search
+      .getByRole("combobox", { name: "Search Buzz" })
+      .fill("Lifecycle channel");
+    await search
+      .getByRole("group", { name: "Chats" })
+      .getByRole("option", { name: /Lifecycle channel/ })
+      .click();
+    const notice = page.getByRole("region", {
+      name: "Archived chat",
+      exact: true,
+    });
+    await expect(notice).toHaveText("This chat is archived");
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+      exact: true,
+    });
+    // This minimal archived chat is empty; its settled empty state ends startup.
+    await expect(
+      history.getByRole("heading", { name: "No messages yet.", exact: true }),
+    ).toBeVisible();
+    await expect(history).not.toHaveAttribute(
+      "data-buzz-launch-pending",
+      "settling",
+    );
+    const outside = page.getByRole("button", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    const editor = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    const tags = [
+      ["d", id],
+      ["name", "Lifecycle channel"],
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+      ["private"],
+      ["P", app.channelMetadata(id, []).pubkey],
+    ];
+    let timestamp = Math.floor(Date.now() / 1000);
+    for (const target of [history, outside]) {
+      await target.focus();
+      await expect(target).toBeFocused();
+      app.relay.publish(
+        "primary",
+        app.signRelay({
+          kind: 39000,
+          tags,
+          content: "",
+          created_at: ++timestamp,
+        }),
+      );
+      await expect(notice).toHaveCount(0);
+      await expect(editor).toBeVisible();
+      await frames(page);
+      await expect(target).toBeFocused();
+      await outside.focus();
+      app.relay.publish(
+        "primary",
+        app.signRelay({
+          kind: 39000,
+          tags: [...tags, ["archived", "true"]],
+          content: "",
+          created_at: ++timestamp,
+        }),
+      );
+      await expect(notice).toHaveText("This chat is archived");
+    }
+    expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
+});
+
+// Browser-only: Playwright clicks scroll items into view, so only layout shows
+// whether the shared menu clips a permitted action behind a hidden scrollbar.
+test.describe("Solo chat owned through its agent", () => {
+  test.use({
+    soloChannels: ["11111111-1111-4111-8111-111111111111"],
+    lifecycleRole: "member",
+    lifecycleOwnerAgent: true,
+    readState: true,
+  });
+  test("shows every lifecycle action without scrolling the menu", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    const row = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .getByRole("button", { name: "Lifecycle channel", exact: true });
+    await row.focus();
+    await page.keyboard.press("Shift+F10");
+    const menu = page.getByRole("menu", {
+      name: "Actions for Lifecycle channel",
+    });
+    // The owner-agent grant offers all three to a plain member.
+    for (const name of ["Leave chat", "Archive chat", "Delete chat"])
+      await expect(
+        menu.getByRole("menuitem", { name, exact: true }),
+      ).toBeInViewport({ ratio: 1 });
+    // At the default text scale, the old 24rem cap clipped this menu by its
+    // fixed-pixel parts; larger text grows rows and a rem cap alike.
+    expect(
+      await menu.evaluate((popup) => popup.scrollHeight - popup.clientHeight),
+    ).toBe(0);
+    expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
     expect(app.report.unexpected).toEqual([]);
   });
 });

@@ -1,0 +1,6 @@
+/* A block grid avoids an inline baseline below the dock tile's center. */
+.badge {
+  display: grid;
+  place-items: center;
+  padding-inline-end: var(--space-1);
+}

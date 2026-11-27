@@ -3,11 +3,14 @@ import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { PagesService } from "../pages/service";
 import { PanelsService } from "./service";
+import { PanelWorkspace, usePanelTabTitle } from "./PanelWorkspace";
+import { usePluginPanelSplit } from "./usePanelSplit";
 import { ConversationService } from "../conversation/service";
 import { SettingsCardsService } from "../settings/service";
 import { ShortcutsService } from "../shortcuts/service";
 import { provideRelay } from "../relay/service";
 import { provideNavigation } from "../navigation/service";
+import { emptySync } from "../communities/known-communities";
 import * as channelsPlugin from "../../bundled/channels";
 import * as githubPlugin from "../../bundled/github";
 import { flush } from "../relay/testing";
@@ -33,12 +36,26 @@ it("independently unloads panels without removing the page or shared data", asyn
   new SettingsCardsService(root);
   // Channels owns the New conversation and Archive chat shortcuts.
   new ShortcutsService(root);
-  // Channels adds teams of agents from the members dialog; GitHub adds a tool.
+  // Channels adds agent teams; GitHub registers tools and an Attention source.
   root.provide("agents", {
     subscribe: () => () => {},
     snapshot: () => undefined,
     addTool: () => {},
+    addAttentionSource: () => {},
   });
+  root.provide("communityReader", {
+    subscribe: () => () => {},
+    snapshot: () => ({
+      status: "unavailable",
+      relayAvailable: false,
+      profile: { name: "", picture: "" },
+      memberships: [],
+      selected: null,
+      sync: emptySync(),
+    }),
+  });
+  // Channels hands community membership to its page for auto-join settings.
+  root.provide("adminAccess", { membership: undefined });
   // GitHub reads through gh where the host can run it; here it cannot.
   root.provide("host", {});
   provideNavigation(root);
@@ -51,21 +68,30 @@ it("independently unloads panels without removing the page or shared data", asyn
     expect(panels.resolve("https://github.com/block/buzz/pull/23")?.title).toBe(
       "GitHub",
     );
+    expect(
+      panels.resolve("https://github.com/block/buzz/pull/23")?.deferUntilShown,
+    ).toBe(true);
+    const channelPanels = panels
+      .snapshot()
+      .filter((panel) => panel.pluginId === "channels");
+    expect(channelPanels.length).toBeGreaterThan(0);
     const queries = relay.snapshot().session;
     runtime.reconcile(desired(["channels"]));
     await flush();
-    expect(panels.snapshot().map((panel) => panel.id)).toEqual([
-      "shared-sessions",
-    ]);
+    expect(panels.snapshot()).toEqual(channelPanels);
     expect(pages.snapshot()).toHaveLength(1);
     expect(relay.snapshot().session).toBe(queries);
     runtime.reconcile(desired(["channels", "github"]));
     await flush();
-    expect(panels.snapshot()).toHaveLength(2);
+    expect(
+      panels.resolve("https://github.com/block/buzz/pull/23"),
+    ).toBeDefined();
     runtime.reconcile(desired(["github"]));
     await flush();
     expect(pages.snapshot()).toHaveLength(0);
-    expect(panels.resolve("buzz:shared-sessions:alpha")).toBeUndefined();
+    expect(
+      panels.snapshot().some((panel) => panel.pluginId === "channels"),
+    ).toBe(false);
     expect(
       panels.resolve("https://github.com/block/buzz/pull/23"),
     ).toBeDefined();
@@ -246,6 +272,11 @@ it("validates and freezes launcher metadata without changing target resolution",
         "order",
       );
     }
+    for (const deferUntilShown of [null, "true", 1, {}]) {
+      expect(() =>
+        ctx.panels.register({ ...base, deferUntilShown } as never),
+      ).toThrow("deferUntilShown");
+    }
     for (const channelMenu of [
       null,
       {},
@@ -274,4 +305,73 @@ it("validates and freezes launcher metadata without changing target resolution",
   await fiber.dispose();
   expect(panels.snapshot()).toEqual([]);
   await root.fiber.dispose();
+});
+
+it("opens a requested target only through a page showing its channel", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const panels = new PanelsService(root);
+  await root
+    .extend({ pluginOwner: { id: "apps", revision: "one" } })
+    .plugin((ctx) => {
+      ctx.panels.register({
+        id: "app",
+        title: "App",
+        matches: (target) => target.startsWith("https://app.example/"),
+        component: () => null,
+      });
+    })
+    .await();
+  const request = { target: "https://app.example/", channelId: "c1" };
+  // No page shows a conversation.
+  expect(panels.requestOpen(request)).toBe(false);
+  const seen: unknown[] = [];
+  const stop = panels.handleOpenRequests((next) => {
+    seen.push(next);
+    return next.channelId === "c1";
+  });
+  expect(panels.requestOpen(request)).toBe(true);
+  expect(panels.requestOpen({ ...request, channelId: "c2" })).toBe(false);
+  // A target no panel handles never reaches the page.
+  expect(
+    panels.requestOpen({ ...request, target: "https://other.example/" }),
+  ).toBe(false);
+  expect(seen).toHaveLength(2);
+  stop();
+  expect(panels.requestOpen(request)).toBe(false);
+});
+
+it("injects the host workspace and hooks into installed plugins", async () => {
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => ({
+    inject: ["panels"],
+    apply(ctx) {
+      expect(ctx.panels.ui).toBe(panels.ui);
+      expect(ctx.panels.ui.Workspace).toBe(PanelWorkspace);
+      expect(ctx.panels.ui.useSplit).toBe(usePluginPanelSplit);
+      ctx.panels.register({
+        id: "reader",
+        title: "Reader",
+        matches: () => true,
+        component: () => null,
+      });
+    },
+  }));
+  const panels = new PanelsService(root);
+  try {
+    expect(panels.useTabTitle).toBe(usePanelTabTitle);
+    runtime.reconcile([{ ...plugin("example.reader"), source: "external" }]);
+    await flush();
+    expect(panels.snapshot()).toHaveLength(1);
+    runtime.reconcile([]);
+    await flush();
+    expect(panels.snapshot()).toHaveLength(0);
+    expect(panels.ui.Workspace).toBe(PanelWorkspace);
+  } finally {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  }
 });

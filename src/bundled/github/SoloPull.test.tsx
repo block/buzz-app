@@ -1,6 +1,7 @@
+import { MenuRoot, MenuPopup } from "../../shared/design-system/ui/Menu";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelayData } from "../../features/relay/service";
@@ -8,10 +9,35 @@ import type { RelaySession } from "../../features/relay/session";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { apply } from "./index";
+import { setOpenGitHubLinksInBuzz } from "./link-preference";
 import type { SoloPull, SoloPulls } from "./solo-pull";
-import { SoloPullIcon, SoloPullLink } from "./SoloPull";
+import {
+  SoloPullIcon,
+  SoloPullLink,
+  SoloPullMenu,
+  SessionPullLauncher,
+  SoloPullLauncher,
+} from "./SoloPull";
 
-afterEach(cleanup);
+// Signed NIP-OA attestations name these agents' owners.
+const attested = vi.hoisted(() => new Map<string, string>());
+vi.mock("../../features/profiles/useAgentOwnerEvidence", () => ({
+  useAgentOwnerEvidence: (_: unknown, pubkey: string | undefined) => {
+    const owner = pubkey ? attested.get(pubkey) : undefined;
+    return {
+      status: owner ? "ready" : "unavailable",
+      owner,
+      failed: false,
+      settled: !!owner,
+    };
+  },
+}));
+
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+  attested.clear();
+});
 
 const chat = "11111111-1111-4111-8111-111111111111";
 const team = "22222222-2222-4222-8222-222222222222";
@@ -78,7 +104,9 @@ it("stands in for the chat icon with the pull request's state, in words too", ()
   expect(container).toHaveTextContent(/^bubble$/);
 });
 
-function relayWith(channels: { id: string; channelType: string }[]) {
+function relayWith(
+  channels: { id: string; channelType: string; creator?: string }[],
+) {
   const sign = vi.fn(async (template: object) => ({
     ...template,
     id: "f".repeat(64),
@@ -89,9 +117,9 @@ function relayWith(channels: { id: string; channelType: string }[]) {
   const list = {
     status: "ready" as const,
     channels: channels.map((channel) => ({
-      ...channel,
       name: channel.id,
       creator: viewer,
+      ...channel,
     })),
   };
   const session = {
@@ -154,27 +182,40 @@ it("links the pull request to the Solo chat it was opened from, and unlinks it",
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-it("gives agents a link_pr tool for the Solo chat they work in", async () => {
+it("gives agents a github_link_pr tool for the Solo chat they work in", async () => {
   const { relay, sign } = relayWith([
     { id: chat, channelType: "solo" },
     { id: team, channelType: "stream" },
   ]);
   let tool: AddedTool | undefined;
+  const inject = vi.fn();
   apply({
     host: {},
     panels: { register: () => {} },
-    conversation: { registerChatIcon: () => {} },
+    conversation: {
+      registerChatIcon: () => {},
+      registerChatMenu: () => {},
+      registerLink: () => {},
+    },
     relay,
     agents: {
       addTool: (added: AddedTool) => {
-        tool = added;
+        if (added.name === "github_link_pr") tool = added;
       },
       relay: () => relay,
     },
-    inject: () => {},
+    inject,
+    provide: () => {},
   } as never);
-  const client = { pubkey: "a".repeat(64) } as BuzzClient;
-  expect(tool?.name).toBe("link_pr");
+  const client = {
+    key: "a".repeat(64),
+    pubkey: "a".repeat(64),
+  } as BuzzClient;
+  expect(inject).toHaveBeenCalledWith(
+    ["agents", "host", "navigation"],
+    expect.any(Function),
+  );
+  expect(tool?.name).toBe("github_link_pr");
   await expect(
     tool?.call(client, { channel: chat }, { url: "https://github.com/block" }),
   ).rejects.toThrow("url must be a GitHub pull request URL");
@@ -188,4 +229,272 @@ it("gives agents a link_pr tool for the Solo chat they work in", async () => {
   expect(await tool?.call(client, { channel: chat }, { unlink: true })).toBe(
     "Unlinked this chat's pull request.",
   );
+});
+
+it("lets github_link_pr link a Solo chat its agent started for the owner", async () => {
+  const agent = "a".repeat(64);
+  const started = "33333333-3333-4333-8333-333333333333";
+  const someone = "44444444-4444-4444-8444-444444444444";
+  const { relay, sign } = relayWith([
+    { id: started, channelType: "solo", creator: agent },
+    { id: someone, channelType: "solo", creator: "d".repeat(64) },
+  ]);
+  let tool: AddedTool | undefined;
+  apply({
+    host: {},
+    panels: { register: () => {} },
+    conversation: {
+      registerChatIcon: () => {},
+      registerChatMenu: () => {},
+      registerLink: () => {},
+    },
+    relay,
+    agents: {
+      addTool: (added: AddedTool) => {
+        if (added.name === "github_link_pr") tool = added;
+      },
+      relay: () => relay,
+    },
+    inject: vi.fn(),
+    provide: () => {},
+  } as never);
+  const client = { key: agent, pubkey: agent } as BuzzClient;
+  expect(await tool?.call(client, { channel: started }, { url: pull })).toBe(
+    `Linked ${pull}. The sidebar shows its state for this chat.`,
+  );
+  expect(sign).toHaveBeenCalledOnce();
+  // Someone else's Solo chat stays theirs.
+  await expect(
+    tool?.call(client, { channel: someone }, { url: pull }),
+  ).rejects.toThrow("Only a Solo chat can be linked");
+});
+
+it("offers unlink only for a linked owned chat and clears the link after publication", async () => {
+  const { session: baseSession, publish } = relayWith([
+    { id: chat, channelType: "solo" },
+  ]);
+  const pulls = fakePulls({ [chat]: { url: pull } });
+  const session = {
+    ...baseSession,
+    snapshotRead: vi.fn(async () => [
+      {
+        kind: 45010,
+        id: "a".repeat(64),
+        content: JSON.stringify({ url: pull }),
+        tags: [["type", "buzz.solo.pr"]],
+      },
+    ]),
+  } as unknown as RelaySession;
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu session={session} pulls={pulls} channelId={chat} />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Unlink pull request" }),
+  );
+  expect(publish).toHaveBeenCalledOnce();
+  expect(pulls.linked).toHaveBeenCalledWith(chat, null);
+  expect(
+    screen.queryByRole("menuitem", { name: "Unlink pull request" }),
+  ).not.toBeInTheDocument();
+});
+
+it("lets the owner manage the link of a Solo chat their agent started", async () => {
+  const agent = "a".repeat(64);
+  const stranger = "d".repeat(64);
+  const started = "33333333-3333-4333-8333-333333333333";
+  const theirs = "44444444-4444-4444-8444-444444444444";
+  attested.set(agent, viewer);
+  attested.set(stranger, "e".repeat(64));
+  const { relay, session } = relayWith([
+    { id: started, channelType: "solo", creator: agent },
+    { id: theirs, channelType: "solo", creator: stranger },
+  ]);
+  const pulls = fakePulls({
+    [started]: { url: pull },
+    [theirs]: { url: pull },
+  });
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu session={session} pulls={pulls} channelId={started} />
+        <SoloPullMenu session={session} pulls={pulls} channelId={theirs} />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  expect(
+    screen.getAllByRole("menuitem", { name: "Unlink pull request" }),
+  ).toHaveLength(1);
+  cleanup();
+  render(
+    <>
+      <SoloPullLink
+        relay={relay}
+        pullsFor={() => pulls}
+        channelId={started}
+        url={pull}
+      />
+      <SoloPullLink
+        relay={relay}
+        pullsFor={() => pulls}
+        channelId={theirs}
+        url={pull}
+      />
+    </>,
+  );
+  expect(screen.getAllByRole("button", { name: "Unlink" })).toHaveLength(1);
+});
+
+it("hides unlink for unlinked chats and team channels", () => {
+  const { session } = relayWith([
+    { id: chat, channelType: "solo" },
+    { id: team, channelType: "stream" },
+  ]);
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu session={session} pulls={fakePulls()} channelId={chat} />
+        <SoloPullMenu
+          session={session}
+          pulls={fakePulls({ [team]: { url: pull } })}
+          channelId={team}
+        />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  expect(
+    screen.queryByRole("menuitem", { name: "Unlink pull request" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps unlink visible but disabled when the connection cannot sign link updates", async () => {
+  const { session: base } = relayWith([{ id: chat, channelType: "solo" }]);
+  const session = {
+    ...base,
+    configArtifactWriter: undefined,
+  } as unknown as RelaySession;
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu
+          session={session}
+          pulls={fakePulls({ [chat]: { url: pull } })}
+          channelId={chat}
+        />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  const action = await screen.findByRole("menuitem", {
+    name: "Unlink pull request",
+  });
+  expect(action).toHaveAttribute("aria-disabled", "true");
+  expect(action).toHaveAttribute(
+    "title",
+    "Unlinking needs a native desktop relay connection.",
+  );
+});
+
+it("opens the current linked PR from the header and removes the shortcut on unlink", async () => {
+  const pulls = fakePulls({
+    [chat]: { url: pull, state: { state: "merged" } },
+  });
+  const open = vi.fn(() => true);
+  const { rerender } = render(
+    <SessionPullLauncher
+      pulls={pulls}
+      channelId={chat}
+      open={open}
+      canOpen={() => true}
+    />,
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Open linked pull request, merged" }),
+  );
+  expect(open).toHaveBeenCalledWith(pull);
+  expect(screen.getByRole("button").querySelector("[data-tone]")).toBeNull();
+  act(() => pulls.linked(chat, `${pull}8`));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Open linked pull request" }),
+  );
+  expect(open).toHaveBeenLastCalledWith(`${pull}8`);
+  rerender(
+    <SessionPullLauncher
+      pulls={pulls}
+      channelId={chat}
+      open={open}
+      canOpen={() => false}
+    />,
+  );
+  expect(screen.getByRole("button")).toBeDisabled();
+  act(() => pulls.linked(chat, null));
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+});
+
+it("keeps the linked PR shortcut usable in browser mode and switches back live", () => {
+  setOpenGitHubLinksInBuzz(false);
+  const open = vi.fn(() => true);
+  render(
+    <SessionPullLauncher
+      pulls={fakePulls({ [chat]: { url: pull } })}
+      channelId={chat}
+      open={open}
+      canOpen={() => true}
+    />,
+  );
+  const link = screen.getByRole("link", { name: "Open linked pull request" });
+  expect(link).toHaveAttribute("href", pull);
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  expect(open).not.toHaveBeenCalled();
+  act(() => setOpenGitHubLinksInBuzz(true));
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Open linked pull request" }),
+  ).toBeEnabled();
+});
+
+it("only mounts the PR shortcut for a Solo in the current community", () => {
+  const { relay, session } = relayWith([
+    { id: chat, channelType: "solo" },
+    { id: team, channelType: "stream" },
+  ]);
+  const state = { ...relay.snapshot(), viewer };
+  const activeRelay = { ...relay, snapshot: () => state };
+  const pullsFor = vi.fn(() => fakePulls({ [chat]: { url: pull } }));
+  const context = {
+    scope: "s",
+    viewer,
+    channelId: team,
+    channelName: "Chat",
+    relayUrl: "wss://example.com",
+  };
+  const props = {
+    relay: activeRelay,
+    pullsFor,
+    context,
+    pressed: false,
+    available: () => true,
+    open: () => true,
+    canOpen: () => true,
+    toggle() {},
+  };
+  const view = render(<SoloPullLauncher {...props} />);
+  expect(pullsFor).not.toHaveBeenCalled();
+  view.rerender(
+    <SoloPullLauncher
+      {...props}
+      context={{ ...context, channelId: chat, scope: "another" }}
+    />,
+  );
+  expect(pullsFor).not.toHaveBeenCalled();
+  view.rerender(
+    <SoloPullLauncher {...props} context={{ ...context, channelId: chat }} />,
+  );
+  expect(pullsFor).toHaveBeenCalledWith(session);
+  expect(
+    screen.getByRole("button", { name: "Open linked pull request" }),
+  ).toBeVisible();
 });

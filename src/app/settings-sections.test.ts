@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { expect, it } from "vitest";
+import { isTauri } from "@tauri-apps/api/core";
+import { expect, it, vi } from "vitest";
 import type { SettingsCard } from "../features/settings/service";
 import type { Contribution } from "../plugins/contributions";
 import {
@@ -32,15 +33,13 @@ const cards = [
   card("other/groups"),
   card("example/membership", { section: "administration" }),
   card("example/hosted", { group: "Communities" }),
-  card("block.hosted-communities/hosted", {
-    group: "Plugins",
-    title: "Builderlab hosting",
-  }),
   card("block.builderlab/login", {
     group: "Plugins",
-    title: "Builderlab agents",
+    title: "Builderlab",
   }),
 ];
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => false) }));
+
 const primary = { id: "primary", name: "Primary" };
 const app = [
   "identity",
@@ -49,15 +48,12 @@ const app = [
   "shortcuts",
   "agents",
   "decisions",
+  "speech",
   "buzz.channels/templates",
   "updates",
   ...(developerMode ? ["developer"] : []),
 ];
-const plugins = [
-  "plugins",
-  "block.builderlab/login",
-  "block.hosted-communities/hosted",
-];
+const plugins = ["plugins", "block.builderlab/login"];
 const outline = (model: ReturnType<typeof settingsSections>) =>
   model.groups.map((group) => [
     group.id,
@@ -144,4 +140,16 @@ it("keeps Local settings after Profile under the host’s Community heading", ()
   expect(
     model.groups[0]?.sections.slice(0, 2).map((section) => section.id),
   ).toEqual(["profile", "local-settings"]);
+});
+
+it("lists Security after Identity only in the desktop app", () => {
+  const ids = () =>
+    settingsSections([], undefined)
+      .groups.find((group) => group.id === "app")
+      ?.sections.map((section) => section.id)
+      .slice(0, 2);
+  expect(ids()).toEqual(["identity", "appearance"]);
+  vi.mocked(isTauri).mockReturnValue(true);
+  expect(ids()).toEqual(["identity", "security"]);
+  vi.mocked(isTauri).mockReturnValue(false);
 });

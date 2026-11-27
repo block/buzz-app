@@ -2,7 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { useSyncExternalStore } from "react";
 import { Context } from "@deepseek-ai/cordis";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
@@ -10,6 +17,15 @@ import { createCommunities } from "../features/communities/service";
 import { localCommunityNameKey } from "../features/communities/names";
 import { flush } from "../features/relay/testing";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
+import { readDefaultLifetime } from "../features/solo/default-lifetime";
+
+const mediaUsage = vi.hoisted(() =>
+  vi.fn(async (): Promise<number | undefined> => undefined),
+);
+vi.mock("../features/relay/native", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../features/relay/native")>()),
+  nativeMediaUsage: mediaUsage,
+}));
 
 const viewer = "a".repeat(64);
 const origin = "https://community.example";
@@ -56,6 +72,8 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await root.fiber.dispose();
   localStorage.clear();
   vi.restoreAllMocks();
+  mediaUsage.mockReset();
+  vi.useRealTimers();
 });
 
 it("saves an explicit device name and resets to the default without changing the community address", async () => {
@@ -69,7 +87,9 @@ it("saves an explicit device name and resets to the default without changing the
   expect(input).toHaveAttribute("placeholder", "Published");
   await user.type(input, "Work");
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(screen.getByRole("status")).toHaveTextContent("saved on this device");
+  expect(
+    screen.getByText(/saved on this device/, { selector: '[role="status"]' }),
+  ).toBeVisible();
   expect(communities.snapshot().memberships[0]?.localName).toBe("Work");
   await user.click(screen.getByRole("button", { name: "Reset name" }));
   expect(input).toHaveValue("");
@@ -90,7 +110,7 @@ it("retains the draft when storage is denied and lets the same Save retry", asyn
     });
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(screen.getByRole("alert")).toHaveTextContent("Couldn’t save");
-  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.queryByText(/saved on this device/)).toBeNull();
   expect(input).toHaveValue("Work");
   expect(communities.snapshot().memberships[0]?.localName).toBeUndefined();
   write.mockRestore();
@@ -130,7 +150,9 @@ it("copies the exact community URL, keeps it selectable on clipboard failure, an
   expect(screen.getByLabelText("Community address")).toHaveAttribute(
     "readonly",
   );
-  expect(screen.queryByText("Community URL copied.")).toBeNull();
+  const copy = screen.getByRole("button", { name: "Copy URL" });
+  expect(copy).toHaveTextContent(/^Copy URL$/);
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
   let finish!: () => void;
   write.mockReturnValueOnce(
     new Promise<void>((resolve) => {
@@ -151,7 +173,123 @@ it("copies the exact community URL, keeps it selectable on clipboard failure, an
       finish();
     });
   }
-  expect(await screen.findByText("Community URL copied.")).toBeVisible();
+  // The button shows the copy itself, under the name it always has.
+  await waitFor(() => expect(copy).toHaveTextContent(/^Copied$/));
+  expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
+  expect(copy).toHaveAccessibleName("Copy URL");
+  expect(screen.getByRole("status")).toHaveTextContent(/^Copied$/);
   expect(screen.queryByRole("alert")).toBeNull();
   expect(communities.snapshot().selected).toBe(origin);
+});
+
+it("clears this community's cached data, reports a failure inline, and allows retry", async () => {
+  const { user, communities } = await setup();
+  const clear = vi
+    .spyOn(communities.relay, "clearCache")
+    .mockRejectedValueOnce(new Error("busy"));
+  const button = () => screen.getByRole("button", { name: "Clear cache" });
+  await user.click(button());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t clear the cache.",
+  );
+  let finish!: () => void;
+  clear.mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      finish = resolve;
+    }),
+  );
+  await user.click(button());
+  try {
+    expect(button()).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(button());
+    expect(clear).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => {
+      finish();
+    });
+  }
+  expect(await screen.findByText("Cache cleared.")).toBeVisible();
+});
+
+it("shows the space this community's saved data uses and measures again after clearing", async () => {
+  const MB = 1024 * 1024;
+  mediaUsage.mockResolvedValueOnce(14 * MB);
+  const { user, communities } = await setup();
+  expect(await screen.findByText(/Uses 14 MB on this device\./)).toBeVisible();
+  expect(mediaUsage).toHaveBeenCalledWith(origin);
+  vi.spyOn(communities.relay, "clearCache").mockResolvedValueOnce();
+  mediaUsage.mockResolvedValueOnce(0);
+  await user.click(screen.getByRole("button", { name: "Clear cache" }));
+  expect(await screen.findByText(/Uses 0 MB on this device\./)).toBeVisible();
+});
+
+it("shows a copied URL in the Copy URL button for 1.5 seconds, with no toast", async () => {
+  await setup();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
+  const copy = screen.getByRole("button", { name: "Copy URL" });
+  vi.useFakeTimers();
+  await act(async () => fireEvent.click(copy));
+  expect(copy).toHaveTextContent(/^Copied$/);
+
+  act(() => vi.advanceTimersByTime(1499));
+  expect(copy).toHaveTextContent(/^Copied$/);
+  // The clock a toast mounts on has run: the button and its status are all.
+  expect(screen.getAllByText(/copied/i)).toHaveLength(2);
+  expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+  act(() => vi.advanceTimersByTime(1));
+  expect(copy).toHaveTextContent(/^Copy URL$/);
+  expect(copy.querySelector("svg")).toBeNull();
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
+});
+
+it("saves the lifetime new Solo chats start with for this community and account only", async () => {
+  const { user } = await setup();
+  const scope = `${origin}:${viewer}`;
+  const lifetime = () =>
+    screen.getByRole("combobox", { name: "New Solo chats" });
+  const choose = async (name: RegExp) => {
+    await user.click(lifetime());
+    await user.click(await screen.findByRole("option", { name }));
+  };
+  expect(lifetime()).toHaveTextContent("Ongoing");
+  await choose(/^Temporary, 7 days/);
+  expect(readDefaultLifetime(scope)).toBe(604800);
+  expect(lifetime()).toHaveTextContent("Temporary, 7 days");
+  expect(readDefaultLifetime(`${origin}:${"b".repeat(64)}`)).toBeUndefined();
+  await choose(/^Temporary, 2 weeks/);
+  expect(readDefaultLifetime(scope)).toBe(1209600);
+  await choose(/^Ongoing/);
+  expect(readDefaultLifetime(scope)).toBeUndefined();
+});
+
+it("says so when this device can't save the lifetime, and keeps the saved one", async () => {
+  const { user } = await setup();
+  const scope = `${origin}:${viewer}`;
+  const setItem = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("quota");
+    });
+  await user.click(screen.getByRole("combobox", { name: "New Solo chats" }));
+  await user.click(
+    await screen.findByRole("option", { name: /^Temporary, 1 day/ }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn’t save this on this device. Try again.",
+  );
+  expect(readDefaultLifetime(scope)).toBeUndefined();
+  expect(
+    screen.getByRole("combobox", { name: "New Solo chats" }),
+  ).toHaveTextContent("Ongoing");
+  setItem.mockRestore();
+  await user.click(screen.getByRole("combobox", { name: "New Solo chats" }));
+  await user.click(
+    await screen.findByRole("option", { name: /^Temporary, 1 day/ }),
+  );
+  expect(readDefaultLifetime(scope)).toBe(86400);
+  expect(screen.queryByRole("alert")).toBeNull();
 });

@@ -7,13 +7,24 @@ import type { ReadFilter, RelayEvent } from "./events";
 import type { ReadTransport } from "./transport";
 import { byteSize } from "./budget";
 import { ReadError } from "./errors";
+import type { AgentLibrary } from "../agents/library";
 
+/** Reads running at once; at most one of them is background. Below the API
+ * lane's `API_ACTIVE_LIMIT` of ten, so writes keep three slots. */
+export const ACTIVE_READS = 7;
 export type Priority = "foreground" | "background";
 export type ReadOptions = {
   signal?: AbortSignal;
   priority?: Priority;
   /** A write preflight must start after its intent, never join an older in-flight read. */
   fresh?: boolean;
+  /** Replaces the reader's deadline for new work; a joining read keeps the
+   * deadline of the read it joins. */
+  deadlineMs?: number;
+  /** A read of every channel resolves the channels its events name first,
+   * whatever their kinds, so a readable one the session does not know yet is
+   * not dropped. It waits for discovery: before it, the read fails. */
+  resolveChannels?: boolean;
 };
 /** Finite, verified event reads. No retained event cache or claim of live freshness. */
 export type RelayReader = {
@@ -32,8 +43,9 @@ export type RelayReader = {
     options?: ReadOptions,
   ): Promise<readonly RelayEvent[]>;
 };
+type ReadValue = readonly RelayEvent[] | AgentLibrary;
 type Consumer = {
-  resolve(events: readonly RelayEvent[]): void;
+  resolve(value: ReadValue): void;
   reject(error: unknown): void;
 };
 type Job = {
@@ -48,11 +60,20 @@ type Job = {
   timer: ReturnType<typeof setTimeout>;
   running: boolean;
   snapshot: boolean;
+  library: boolean;
   /** Set for a name-only profile search; `filters` then hold the equivalent
    * NIP-50 filter, so invalidation treats both searches alike. */
   profiles?: { query: string; limit: number; page: number };
 };
 const cancelled = () => new DOMException("Relay read cancelled", "AbortError");
+
+/** The most serialized events one read may return. */
+export const RELAY_READ_BYTES = 8 * 1024 * 1024;
+/** For reads whose result can approach RELAY_READ_BYTES: the native
+ * transport's per-request ceiling (src-tauri/src/relay.rs). Ten seconds needs
+ * about 800 KB/s for such a result, so a slow relay link would fail the read
+ * on every retry rather than finish it. */
+export const LARGE_READ_DEADLINE_MS = 30_000;
 
 /** Session-owned scheduling and cancellation. Equal concurrent reads share work;
  * cancelling one consumer never cancels another. Completion releases all request state. */
@@ -123,7 +144,7 @@ export function createRelayReader(
     }
     finish(job, undefined, error);
   }
-  function finish(job: Job, events?: readonly RelayEvent[], error?: unknown) {
+  function finish(job: Job, events?: ReadValue, error?: unknown) {
     if (jobs.get(job.key) !== job) return;
     job.queued(error ? "error" : "ok");
     job.fetched?.(error ? "error" : "ok");
@@ -141,7 +162,7 @@ export function createRelayReader(
     if (closed || suspended || recovering || !transport) return;
     while (!closed && !suspended && !recovering) {
       const active = [...jobs.values()].filter((job) => job.running);
-      if (active.length >= 3) return;
+      if (active.length >= ACTIVE_READS) return;
       const background = active.some((job) => job.priority === "background");
       const queued = [...jobs.values()].filter((job) => !job.running);
       const job =
@@ -153,6 +174,16 @@ export function createRelayReader(
       job.fetched = profiling.start("read.fetch", job.id);
       // Catch synchronous adapter failures as well as rejected promises.
       try {
+        if (job.library) {
+          if (!transport.readAgentLibrary)
+            throw new Error("Local agent library unavailable");
+          // Local display data is not a signed relay-event response.
+          void transport
+            .readAgentLibrary(job.controller.signal)
+            .then((library) => finish(job, library))
+            .catch((error) => failed(job, error));
+          continue;
+        }
         if (job.snapshot && !transport.readStateSnapshot)
           throw new Error("Read-state snapshots unavailable");
         if (job.profiles && !transport.searchProfiles)
@@ -180,7 +211,7 @@ export function createRelayReader(
                 );
         void query
           .then(async (events) => {
-            if (byteSize(events) > 8 * 1024 * 1024)
+            if (byteSize(events) > RELAY_READ_BYTES)
               throw new ReadError(
                 "invalid-response",
                 "Relay response exceeds the read budget",
@@ -202,9 +233,28 @@ export function createRelayReader(
   }
   function read(
     filters: readonly ReadFilter[],
-    { signal, priority = "foreground", fresh = false }: ReadOptions = {},
+    options?: ReadOptions,
+    snapshot?: boolean,
+    profiles?: Job["profiles"],
+  ): Promise<readonly RelayEvent[]>;
+  function read(
+    filters: readonly ReadFilter[],
+    options: ReadOptions,
+    snapshot: false,
+    profiles: undefined,
+    library: true,
+  ): Promise<AgentLibrary>;
+  function read(
+    filters: readonly ReadFilter[],
+    {
+      signal,
+      priority = "foreground",
+      fresh = false,
+      deadlineMs = timeoutMs,
+    }: ReadOptions = {},
     snapshot = false,
     profiles?: Job["profiles"],
+    library = false,
   ) {
     if (closed || signal?.aborted) return Promise.reject(cancelled());
     if (!transport)
@@ -214,7 +264,7 @@ export function createRelayReader(
     let key: string;
     try {
       if (
-        !filters.length ||
+        (!filters.length && !library) ||
         (filters.length > 4 &&
           !isWorkflowDefinitionBatch(filters) &&
           !isSidebarPreferencesBatch(filters))
@@ -262,6 +312,7 @@ export function createRelayReader(
       return Promise.reject(error);
     }
     const requestFilters = JSON.parse(key);
+    if (library) key = "agent-library";
     if (snapshot) {
       if (!transport.readStateSnapshot)
         return Promise.reject(
@@ -288,6 +339,7 @@ export function createRelayReader(
         consumers: new Set(),
         running: false,
         snapshot,
+        library,
         ...(profiles ? { profiles } : {}),
         timer: setTimeout(
           () =>
@@ -296,14 +348,14 @@ export function createRelayReader(
               undefined,
               new ReadError("unavailable", "Relay read timed out"),
             ),
-          timeoutMs,
+          deadlineMs,
         ),
       };
       jobs.set(key, job);
     } else if (!job.running && priority === "foreground")
       job.priority = priority;
     const owned = job;
-    return new Promise<readonly RelayEvent[]>((resolve, reject) => {
+    return new Promise<ReadValue>((resolve, reject) => {
       const release = () => signal?.removeEventListener("abort", abort);
       const consumer: Consumer = {
         resolve(events) {
@@ -330,7 +382,7 @@ export function createRelayReader(
     readStateSnapshot: (options?: ReadOptions) =>
       read(
         [{ kinds: [30078], authors: [transport?.viewer ?? ""], limit: 500 }],
-        options,
+        { ...options, deadlineMs: LARGE_READ_DEADLINE_MS },
         true,
       ),
     ...(transport?.searchProfiles
@@ -360,6 +412,9 @@ export function createRelayReader(
   });
   return {
     reader,
+    /** The session's local inventory shares navigation admission and read lifetime. */
+    readAgentLibrary: (signal: AbortSignal) =>
+      read([], { signal }, false, undefined, true),
     /** Promote existing queued work without creating a consumer or a new deadline. */
     promote(matches: (filters: readonly ReadFilter[]) => boolean) {
       for (const job of jobs.values())
@@ -373,7 +428,8 @@ export function createRelayReader(
       const previous = closed;
       closed = true;
       for (const job of [...jobs.values()])
-        if (matches(job.filters)) finish(job, undefined, cancelled());
+        if (!job.library && matches(job.filters))
+          finish(job, undefined, cancelled());
       closed = previous;
       pump();
     },

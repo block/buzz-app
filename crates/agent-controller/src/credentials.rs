@@ -13,10 +13,22 @@ mod platform;
 #[cfg(test)]
 mod tests;
 
-const SERVICE: &str = "dev.local.buzz.foundation.agents";
+const SERVICE: &str = "xyz.block.buzz.desktop.agents";
+/// The service before 1.0. Reads copy a key found only there; deletes remove it too.
+const PREVIOUS_SERVICE: &str = "dev.local.buzz.foundation.agents";
 const MAX_BLOB: usize = 2 * 1024 * 1024;
 /// Another operation, in this app or another, holds the store; it may be retried.
 pub const BUSY: &str = "Credentials are busy; retry after the current operation finishes";
+
+/// Why the earlier app's human key could not be read.
+#[derive(Debug)]
+pub struct LegacyHumanError {
+    pub message: String,
+    /// The store was busy or unavailable, as when it is locked, so a later read
+    /// may succeed. Otherwise no usable key is there: none, access was denied,
+    /// or it is malformed.
+    pub transient: bool,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Failure {
@@ -57,6 +69,11 @@ trait Keychain: Send + Sync {
     ) -> std::result::Result<Zeroizing<Vec<u8>>, Failure>;
     fn add(&self, service: &str, account: &str, value: &[u8]) -> std::result::Result<(), Failure>;
     fn delete(&self, service: &str, account: &str) -> std::result::Result<(), Failure>;
+    /// Copy an item create-only under the lock deleting it takes; see
+    /// `buzz_credential_store::copy`. The macOS bundle has its own lock.
+    fn copy(&self, _: &str, _: &str, _: &str) -> std::result::Result<(), Failure> {
+        Err(Failure::Unavailable)
+    }
     #[cfg(any(target_os = "macos", test))]
     fn replace(&self, _: &str, _: &str, _: &[u8]) -> std::result::Result<(), Failure> {
         Err(Failure::Unavailable)
@@ -103,16 +120,27 @@ impl PlatformCredentials {
     }
     /// The human key the selected earlier app saved, for a person's explicit
     /// bring-over. Read-only; the caller validates and persists it.
-    pub fn read_legacy_human(&self, source: LegacySource) -> Result<Zeroizing<String>> {
+    pub fn read_legacy_human(
+        &self,
+        source: LegacySource,
+    ) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
         match self.legacy_map(source) {
             Ok(map) => map
                 .0
                 .get("identity")
                 .map(|value| Zeroizing::new(value.clone())),
             Err(Failure::Absent) => None,
-            Err(failure) => return Err(failure.message()),
+            Err(failure) => {
+                return Err(LegacyHumanError {
+                    transient: matches!(failure, Failure::Busy | Failure::Unavailable),
+                    message: failure.message(),
+                })
+            }
         }
-        .ok_or_else(|| "No identity from the earlier Buzz app was found".into())
+        .ok_or_else(|| LegacyHumanError {
+            message: "No identity from the earlier Buzz app was found".into(),
+            transient: false,
+        })
     }
 }
 
@@ -143,17 +171,24 @@ impl Credentials for PlatformCredentials {
         if let Some(bundle) = &self.bundle {
             return bundle.read(self.keychain.as_ref(), &account, pubkey);
         }
-        match self.keychain.saved(SERVICE, &account) {
-            Ok(bytes) => {
-                if bytes.len() > 64 {
-                    return Err(Failure::Corrupt.message());
-                }
-                let text = std::str::from_utf8(&bytes).map_err(|_| Failure::Corrupt.message())?;
-                Secret::parse(text, pubkey).map(Some)
-            }
+        let saved = |service| match self.keychain.saved(service, &account) {
+            Ok(bytes) => Ok(Some(bytes)),
             Err(Failure::Absent) => Ok(None),
-            Err(error) => Err(error.message()),
+            Err(error) => Err(error),
+        };
+        let bytes = buzz_credential_store::read_or_copy(
+            || saved(SERVICE),
+            || self.keychain.copy(PREVIOUS_SERVICE, SERVICE, &account),
+        )
+        .map_err(Failure::message)?;
+        let Some(bytes) = bytes else {
+            return Ok(None);
+        };
+        if bytes.len() > 64 {
+            return Err(Failure::Corrupt.message());
         }
+        let text = std::str::from_utf8(&bytes).map_err(|_| Failure::Corrupt.message())?;
+        Secret::parse(text, pubkey).map(Some)
     }
     fn add(&self, id: &str, key: &Secret) -> Result<()> {
         let account = account(id)?;
@@ -178,10 +213,14 @@ impl Credentials for PlatformCredentials {
         if let Some(bundle) = &self.bundle {
             return bundle.delete(self.keychain.as_ref(), &account);
         }
-        match self.keychain.delete(SERVICE, &account) {
-            Ok(()) | Err(Failure::Absent) => Ok(()),
-            Err(error) => Err(error.message()),
+        // The previous item first: reads copy it while the current one is absent.
+        for service in [PREVIOUS_SERVICE, SERVICE] {
+            match self.keychain.delete(service, &account) {
+                Ok(()) | Err(Failure::Absent) => {}
+                Err(error) => return Err(error.message()),
+            }
         }
+        Ok(())
     }
 }
 

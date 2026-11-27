@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { RelaySession } from "../relay/session";
-import { currentActivity } from "./current-activity";
+import { currentActivity, workingRequests } from "./current-activity";
 
 type Snapshot = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
 const agent = "a".repeat(64),
@@ -78,6 +78,7 @@ it("projects safe brief tool status from exact current owner-visible work only",
   const live = snapshot();
   expect(project(live).get(agent)).toEqual({
     label: "Editing index.html",
+    detailAvailability: "available",
     roots: [root],
   });
   expect(project(live, root).get(agent)?.label).toBe("Editing index.html");
@@ -95,7 +96,11 @@ it("drops owner-only work when not listening without hiding valid public typing"
     currentActivity(live, entries, new Set([agent]), "channel", root).get(
       agent,
     ),
-  ).toEqual({ label: "Working", roots: [root] });
+  ).toEqual({
+    label: "Working",
+    detailAvailability: "typing-only",
+    roots: [root],
+  });
   expect(currentActivity(live, entries, new Set(), "channel").size).toBe(0);
 });
 
@@ -105,8 +110,18 @@ it.each([
     "Running a command",
   ],
   [{ title: "unknown", kind: "other" }, "Running a tool"],
+  [{ title: "mcp__buzz__channel_list", kind: "other" }, "List channels"],
+  [{ title: "buzz: send", kind: "other" }, "Send message"],
+  [{ title: "buzz.search", kind: "other" }, "Search messages"],
+  [{ title: "channel_list", kind: "other" }, "Running a tool"],
+  [{ title: "search", kind: "other" }, "Running a tool"],
+  [{ title: "docs.search", kind: "other" }, "Running a tool"],
+  [{ title: "mcp__other__read", kind: "other" }, "Running a tool"],
+  [{ title: "other: send", kind: "other" }, "Running a tool"],
+  [{ title: "search", kind: "search" }, "Searching"],
+  [{ title: "channel_list", status: "pending" }, "Preparing a tool"],
   [{ status: "pending" }, "Preparing a tool"],
-  [{ status: "completed" }, "Working"],
+  [{ status: "completed" }, "Working", "no-current-step"],
   [
     { rawInput: { path: "C:\\private\\report\u202e.txt" } },
     "Editing report.txt",
@@ -119,9 +134,15 @@ it.each([
     },
     "Reading report.txt",
   ],
-])("keeps compact labels safe: %j", (tool, expected) => {
-  expect(project(snapshot(tool)).get(agent)?.label).toBe(expected);
-});
+])(
+  "keeps compact labels safe: %j",
+  (tool, expected, unavailable = "available") => {
+    expect(project(snapshot(tool)).get(agent)).toMatchObject({
+      label: expected,
+      detailAvailability: unavailable,
+    });
+  },
+);
 
 it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
   "treats inherited dictionary key %s as telemetry, not a label mapping",
@@ -151,7 +172,11 @@ it("does not merge labels or ownership across roots or expired turns", () => {
     currentActivity(live, entries, new Set([agent]), "channel", otherRoot).get(
       agent,
     ),
-  ).toEqual({ label: "Working", roots: [otherRoot] });
+  ).toEqual({
+    label: "Working",
+    detailAvailability: "typing-only",
+    roots: [otherRoot],
+  });
   expect(
     project({
       ...live,
@@ -207,4 +232,154 @@ it("does not resurrect a transcript's terminal turn from stale working evidence"
       records: [{ ...record, plaintext: JSON.stringify(batch) }],
     }).size,
   ).toBe(0);
+});
+
+it("keeps known thread work out of the channel flow without hiding channel work", () => {
+  const thread = snapshot();
+  expect(
+    currentActivity(thread, [], new Set(), "channel", undefined, false).size,
+  ).toBe(0);
+  expect(
+    currentActivity(thread, [], new Set(), "channel", root, false).has(agent),
+  ).toBe(true);
+  expect(
+    currentActivity(
+      snapshot({}, null),
+      [],
+      new Set(),
+      "channel",
+      undefined,
+      false,
+    ).has(agent),
+  ).toBe(true);
+  const local = {
+    scope: "test",
+    agent,
+    channelId: "channel",
+    messageId: root,
+    threadRootId: root,
+    state: "working" as const,
+    startedAt: 1,
+  };
+  expect(
+    currentActivity(
+      { ...base, local: [{ ...local, thread: true }] },
+      [],
+      new Set(),
+      "channel",
+      undefined,
+      false,
+    ).size,
+  ).toBe(0);
+  expect(
+    currentActivity(
+      { ...base, local: [local] },
+      [],
+      new Set(),
+      "channel",
+      undefined,
+      false,
+    ).has(agent),
+  ).toBe(true);
+});
+
+it("moves channel-started local work into its observed reply thread", () => {
+  const live = {
+    ...base,
+    local: [
+      {
+        scope: "test",
+        agent,
+        channelId: "channel",
+        messageId: root,
+        threadRootId: root,
+        state: "working" as const,
+        startedAt: 1,
+      },
+    ],
+  };
+  expect(
+    currentActivity(
+      live,
+      [],
+      new Set(),
+      "channel",
+      undefined,
+      false,
+      new Set([root]),
+    ).size,
+  ).toBe(0);
+  expect(
+    currentActivity(
+      live,
+      [],
+      new Set(),
+      "channel",
+      root,
+      false,
+      new Set([root]),
+    ).has(agent),
+  ).toBe(true);
+});
+
+it("lists each working request here by its exact triggers, local work superseding remote turns", () => {
+  const turn = (turnId: string, triggers: string[], threadRootId = root) => ({
+    agent,
+    turnId,
+    channelId: "channel",
+    threadRootId,
+    timestamp: now,
+    state: "working" as const,
+    triggeringEventIds: triggers,
+  });
+  const remote: Snapshot = {
+    ...base,
+    turns: [
+      // One batched turn answers both of its triggers.
+      turn("batch", ["h1", "h2"]),
+      turn("next", ["h3"]),
+      turn("elsewhere", ["h4"], otherRoot),
+      { ...turn("done", ["h5"]), state: "ended" },
+    ],
+  };
+  expect(workingRequests(remote, agent, "channel", root)).toEqual([
+    ["h1", "h2"],
+    ["h3"],
+  ]);
+  expect(workingRequests(remote, "other", "channel", root)).toEqual([]);
+  expect(
+    workingRequests(
+      { ...remote, status: "connecting" },
+      agent,
+      "channel",
+      root,
+    ),
+  ).toEqual([]);
+  const local = (messageId: string, state: "working" | "done") => ({
+    scope: "test",
+    agent,
+    channelId: "channel",
+    messageId,
+    threadRootId: root,
+    thread: true as const,
+    state,
+    startedAt: 1,
+  });
+  // A settled local request is not resurrected by an older remote turn.
+  expect(
+    workingRequests(
+      { ...remote, local: [local("l1", "done")] },
+      agent,
+      "channel",
+      root,
+    ),
+  ).toEqual([]);
+  expect(
+    workingRequests(
+      { ...remote, local: [local("l1", "working"), local("l2", "working")] },
+      agent,
+      "channel",
+      root,
+    ),
+  ).toEqual([["l1"], ["l2"]]);
 });

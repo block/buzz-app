@@ -2,6 +2,21 @@ import { avatarSource } from "../../shared/avatar-source";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import type { Profile } from "./contracts";
+import { profileTimeZone } from "../profiles/local-time";
+
+// Events are immutable; the directory refolds every retained profile per change.
+const projected = new WeakMap<EventData, Profile>();
+
+/** Display projection only; signed content stays intact. */
+function profileName(value: unknown): string | undefined {
+  if (typeof value !== "string") return;
+  const name = value.trim();
+  // Reordering and layout controls cannot be handled by collision comparison.
+  // Preserve script joiners and variation selectors in the displayed name.
+  if (!name || /[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}\ufff9-\ufffb]/u.test(name))
+    return;
+  return name;
+}
 
 /** Kind 0 metadata. Only the author's own latest event counts. */
 export function foldProfiles(
@@ -15,6 +30,11 @@ export function foldProfiles(
   }
   const profiles = new Map<string, Profile>();
   for (const [pubkey, event] of latest) {
+    const cached = projected.get(event);
+    if (cached) {
+      profiles.set(pubkey, cached);
+      continue;
+    }
     const auth = event.tags.find(
       (tag) =>
         tag.length === 4 &&
@@ -32,22 +52,20 @@ export function foldProfiles(
         picture?: unknown;
         about?: unknown;
         nip05?: unknown;
+        tz?: unknown;
         is_agent?: unknown;
         isAgent?: unknown;
       };
-      const name = [body.display_name, body.name].find(
-        (value): value is string =>
-          typeof value === "string" && value.trim().length > 0,
-      );
-      const handle =
-        typeof body.name === "string" ? body.name.trim() : undefined;
+      const handle = profileName(body.name);
+      const name = profileName(body.display_name) ?? handle;
       const picture = avatarSource(body.picture);
+      const tz = profileTimeZone(body.tz);
       profiles.set(
         pubkey,
         Object.freeze({
           name: name ?? pubkey.slice(0, 10),
           ...(!name ? { nameIsFallback: true as const } : {}),
-          ...(handle && handle !== name?.trim() ? { username: handle } : {}),
+          ...(handle && handle !== name ? { username: handle } : {}),
           ...agent,
           ...(picture ? { picture } : {}),
           ...(typeof body.about === "string" && body.about.trim()
@@ -56,6 +74,7 @@ export function foldProfiles(
           ...(typeof body.nip05 === "string" && body.nip05.trim()
             ? { nip05: body.nip05.trim() }
             : {}),
+          ...(tz ? { tz } : {}),
           ...(body.is_agent === true || body.isAgent === true
             ? { isAgent: true as const }
             : {}),
@@ -71,6 +90,7 @@ export function foldProfiles(
         }),
       );
     }
+    projected.set(event, profiles.get(pubkey) as Profile);
   }
   return profiles;
 }

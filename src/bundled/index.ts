@@ -1,17 +1,22 @@
+import meshManifest from "./mesh-compute/manifest.json";
+import * as mesh from "./mesh-compute";
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
+
+import draftsSentManifest from "./drafts-sent/manifest.json";
+import * as draftsSent from "./drafts-sent";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
-import todosManifest from "./todos/manifest.json";
 import huddlesManifest from "./huddles/manifest.json";
 import * as huddles from "./huddles";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
-import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import mermaidManifest from "./mermaid/manifest.json";
 import * as mermaid from "./mermaid";
+import chartsManifest from "./charts/manifest.json";
+import * as charts from "./charts";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -22,14 +27,13 @@ import terminalManifest from "./terminal/manifest.json";
 import * as terminal from "./terminal";
 import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
-import mentionsManifest from "./mentions/manifest.json";
-import * as mentions from "./mentions";
-import emojiManifest from "./emoji/manifest.json";
-import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
+import watchingManifest from "./watching/manifest.json";
+import * as watching from "./watching";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
+import { leadsHarnesses as claudeLeadsHarnesses } from "./claude-code/auth";
 import codexManifest from "./codex/manifest.json";
 import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
@@ -46,29 +50,52 @@ import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
+import focusManifest from "./focus/manifest.json";
+import finderManifest from "./finder/manifest.json";
+import * as finder from "./finder";
+import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
 import * as repos from "./repos";
+import changesetsManifest from "./changesets/manifest.json";
+import * as changesets from "./changesets";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
+import { orgPlugins } from "./org";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
-import hostedManifest from "./hosted-communities/manifest.json";
-import * as hosted from "./hosted-communities";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
+import typesafeManifest from "./typesafe/manifest.json";
+import * as typesafe from "./typesafe";
+import pluginDevelopmentManifest from "./plugin-development/manifest.json";
+import * as pluginDevelopment from "./plugin-development";
+import performanceDiagnosticsManifest from "./performance-diagnostics/manifest.json";
+import * as performanceDiagnostics from "./performance-diagnostics";
 
-import relayNotesManifest from "./relay-notes/manifest.json";
-import * as relayNotes from "./relay-notes";
+import docsManifest from "./docs/manifest.json";
+import * as docs from "./docs";
+
+const codexHarness: BundledPlugin = {
+  manifest: { ...codexManifest, apiVersion: 1 },
+  module: codex,
+  enabledByDefault: true,
+};
+const claudeHarness: BundledPlugin = {
+  manifest: { ...claudeCodeManifest, apiVersion: 1 },
+  module: claudeCode,
+  enabledByDefault: true,
+};
 
 export const bundledPlugins: readonly BundledPlugin[] = [
   {
-    manifest: { ...relayNotesManifest, apiVersion: 1 },
-    module: relayNotes,
+    manifest: { ...meshManifest, apiVersion: 1 },
+    module: mesh,
+    // Opt-in: it reads community membership in the background once enabled.
     enabledByDefault: false,
   },
   {
@@ -87,6 +114,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...draftsSentManifest, apiVersion: 1 },
+    module: draftsSent,
+    // Opt-in until it is ready for everyone.
+    enabledByDefault: false,
+  },
+  {
     manifest: { ...pairingManifest, apiVersion: 1 },
     module: pairing,
     enabledByDefault: true,
@@ -97,11 +130,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...todosManifest, apiVersion: 1 },
-    module: todos,
-    enabledByDefault: false,
-  },
-  {
     manifest: { ...diffsManifest, apiVersion: 1 },
     module: diffs,
     enabledByDefault: true,
@@ -110,6 +138,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...mermaidManifest, apiVersion: 1 },
     module: mermaid,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...chartsManifest, apiVersion: 1 },
+    module: charts,
+    enabledByDefault: false,
   },
   {
     manifest: { ...namingManifest, apiVersion: 1 },
@@ -137,19 +170,14 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...mentionsManifest, apiVersion: 1 },
-    module: mentions,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...emojiManifest, apiVersion: 1 },
-    module: emoji,
-    enabledByDefault: true,
-  },
-  {
     manifest: { ...channelsManifest, apiVersion: 1 },
     module: channels,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...docsManifest, apiVersion: 1 },
+    module: docs,
+    enabledByDefault: false,
   },
   {
     manifest: { ...githubManifest, apiVersion: 1 },
@@ -159,7 +187,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...bestieManifest, apiVersion: 1 },
     module: bestie,
-    enabledByDefault: false,
+    enabledByDefault: true,
   },
   {
     manifest: { ...usageManifest, apiVersion: 1 },
@@ -174,7 +202,17 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...remindersManifest, apiVersion: 1 },
     module: reminders,
-    enabledByDefault: true,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...focusManifest, apiVersion: 1 },
+    module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...finderManifest, apiVersion: 1 },
+    module: finder,
+    enabledByDefault: false,
   },
   {
     manifest: { ...reposManifest, apiVersion: 1 },
@@ -187,15 +225,15 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...claudeCodeManifest, apiVersion: 1 },
-    module: claudeCode,
+    manifest: { ...watchingManifest, apiVersion: 1 },
+    module: watching,
     enabledByDefault: true,
   },
-  {
-    manifest: { ...codexManifest, apiVersion: 1 },
-    module: codex,
-    enabledByDefault: true,
-  },
+  // The first of Codex and Claude leads the Harness list and is new agents'
+  // default: Codex, unless Claude's auth seam says Claude may.
+  ...(claudeLeadsHarnesses
+    ? [claudeHarness, codexHarness]
+    : [codexHarness, claudeHarness]),
   {
     manifest: { ...gooseManifest, apiVersion: 1 },
     module: goose,
@@ -207,14 +245,14 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: false,
   },
   {
-    manifest: { ...workflowsManifest, apiVersion: 1 },
-    module: workflows,
-    enabledByDefault: true,
+    manifest: { ...changesetsManifest, apiVersion: 1 },
+    module: changesets,
+    enabledByDefault: false,
   },
   {
-    manifest: { ...hostedManifest, apiVersion: 1 },
-    module: hosted,
-    enabledByDefault: true,
+    manifest: { ...workflowsManifest, apiVersion: 1 },
+    module: workflows,
+    enabledByDefault: false,
   },
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
@@ -226,4 +264,21 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: relayStaff,
     enabledByDefault: true,
   },
+  {
+    manifest: { ...typesafeManifest, apiVersion: 1 },
+    module: typesafe,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...pluginDevelopmentManifest, apiVersion: 1 },
+    module: pluginDevelopment,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...performanceDiagnosticsManifest, apiVersion: 1 },
+    module: performanceDiagnostics,
+    enabledByDefault: false,
+  },
+  // An organization's own build may bundle plugins here (org.ts).
+  ...orgPlugins,
 ];

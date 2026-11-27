@@ -40,7 +40,7 @@ export function ChannelReadMenuItem({
     <MenuItem
       closeOnClick={closeOnClick}
       disabled={pending}
-      title={hasUnread ? undefined : "Mark unread on this device only"}
+      title={hasUnread ? undefined : "Mark as unread"}
       onClick={() =>
         void run(() =>
           hasUnread
@@ -56,7 +56,7 @@ export function ChannelReadMenuItem({
           <EnvelopeIcon size={14} />
         )}
       </MenuIcon>
-      {hasUnread ? "Mark as Read" : "Mark as Unread"}
+      {hasUnread ? "Mark as read" : "Mark as unread"}
     </MenuItem>
   );
 }

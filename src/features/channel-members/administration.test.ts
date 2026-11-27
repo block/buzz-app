@@ -9,11 +9,18 @@ import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
 import { SOLO_LABEL } from "../solo/labels";
-import { createMemberAdministration } from "./administration";
 import {
+  administerMember,
+  createMemberAdministration,
+  type MemberAdministrationState,
+} from "./administration";
+import {
+  authorizeMemberChange,
+  canTransferOwnership,
   memberAuthority,
   validateMemberAdministrationTemplate,
   type MemberChange,
+  type MemberRole,
 } from "./administration-protocol";
 
 const key = new Uint8Array(32).fill(2);
@@ -39,7 +46,11 @@ function deferred() {
   });
   return { promise, resolve };
 }
-function harness(actor = "owner", role: string | undefined = "member") {
+function harness(
+  actor = "owner",
+  role: string | undefined = "member",
+  soloMemberRoleUpdates = false,
+) {
   let clock = 100;
   const record = (kind: number, tags: string[][]) =>
     finalizeEvent({ kind, tags, content: "", created_at: clock++ }, relayKey);
@@ -76,20 +87,26 @@ function harness(actor = "owner", role: string | undefined = "member") {
     finalizeEvent(structuredClone(template), key),
   );
   const publish = vi.fn(async (event: RelayEvent) => {
+    const named = (pubkey: string) =>
+      event.tags.find(([tag, key]) => tag === "p" && key === pubkey)?.[2];
     events = [
       required(events[0]),
       ...roster(
-        actor,
+        named(viewer) ?? actor,
         event.kind === 9001
           ? undefined
-          : event.tags.find(([tag]) => tag === "role")?.[1],
+          : (named(target) ?? event.tags.find(([tag]) => tag === "role")?.[1]),
       ),
     ];
   });
   const acceptDiscovery = vi.fn();
   const owner = createMemberAdministration({
     reader: { read },
-    writer: { sign, publish },
+    writer: {
+      sign,
+      publish,
+      ...(soloMemberRoleUpdates ? { soloMemberRoleUpdates: true } : {}),
+    },
     viewer,
     relayAuthor: author,
     canAccess: () => access,
@@ -131,6 +148,74 @@ it.each(["admin", "remove"] as const)(
     expect(h.publish).toHaveBeenCalledOnce();
   },
 );
+
+it.each(["guest", "admin", "member"] as const)(
+  "adds an absent person directly as %s with exact signed readback",
+  async (role) => {
+    const h = harness();
+    h.setRoles("owner");
+    await h.owner.capability.run(id, {
+      ...change,
+      expectedRole: "absent",
+      role,
+    });
+    expect(h.publish).toHaveBeenCalledOnce();
+    expect(h.publish.mock.calls[0]?.[0].tags).toEqual([
+      ["h", id],
+      ["p", target],
+      ["role", role],
+    ]);
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+    expect(h.owner.capability.snapshot(id).authority.roles[target]).toBe(role);
+  },
+);
+
+it.each(["member", "guest", "bot", "unknown"])(
+  "refuses explicit-role additions by a %s",
+  async (actor) => {
+    const h = harness(actor);
+    h.setRoles(actor);
+    await h.owner.capability.run(id, { ...change, expectedRole: "absent" });
+    expect(h.sign).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["guest", "member", "admin", "owner", "bot", "unknown"])(
+  "never treats an existing %s as an absent addition",
+  async (role) => {
+    const h = harness("owner", role);
+    await h.owner.capability.run(id, { ...change, expectedRole: "absent" });
+    expect(h.sign).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["membership", "authority"])(
+  "rechecks %s after signing an explicit-role addition",
+  async (changed) => {
+    const h = harness();
+    h.setRoles("owner");
+    const sign = required(h.sign.getMockImplementation());
+    h.sign.mockImplementationOnce(async (template) => {
+      if (changed === "membership") h.setRoles("owner", "member");
+      else h.setRoles("member");
+      return sign(template);
+    });
+    await h.owner.capability.run(id, { ...change, expectedRole: "absent" });
+    expect(h.sign).toHaveBeenCalledOnce();
+    expect(h.publish).not.toHaveBeenCalled();
+  },
+);
+
+it("rejects removal with an absent expectation", async () => {
+  const h = harness();
+  await h.owner.capability.run(id, {
+    ...change,
+    expectedRole: "absent",
+    role: "remove",
+  });
+  expect(h.sign).not.toHaveBeenCalled();
+});
 
 it.each(["admin", "member", "guest", "remove"] as const)(
   "confirms %s from exact fresh signed state, never acknowledgement alone",
@@ -213,6 +298,70 @@ it.each(["admin", "guest"] as const)(
     expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
   },
 );
+it("publishes no member change once the caller's guard turns false during signing", async () => {
+  const h = harness();
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    eligible = false;
+    return sign(template);
+  });
+  await h.owner.capability.run(id, change, undefined, active);
+  expect(active).toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id)).toMatchObject({
+    operation: { status: "failed" },
+    error: "Member change cancelled",
+  });
+  // Nothing reached the relay, so a later eligible change is not fenced as uncertain.
+  await h.owner.capability.run(id, change);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+});
+it("checks the guard only after the final re-authorization read settles", async () => {
+  const h = harness();
+  let eligible = true;
+  const active = vi.fn(() => eligible);
+  const started = deferred(),
+    gate = deferred();
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    h.read.mockImplementationOnce(async () => {
+      started.resolve();
+      await gate.promise;
+      return h.events();
+    });
+    return sign(template);
+  });
+  const running = h.owner.capability.run(id, change, undefined, active);
+  try {
+    await started.promise;
+    expect(active).not.toHaveBeenCalled();
+    eligible = false;
+  } finally {
+    gate.resolve();
+  }
+  await running;
+  expect(active).toHaveBeenCalledOnce();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
+  eligible = true;
+  await h.owner.capability.run(id, change, undefined, active);
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+});
+it("publishes nothing when the caller's signal aborts during signing", async () => {
+  const h = harness();
+  const controller = new AbortController();
+  const sign = required(h.sign.getMockImplementation());
+  h.sign.mockImplementationOnce(async (template) => {
+    controller.abort();
+    return sign(template);
+  });
+  await h.owner.capability.run(id, change, controller.signal);
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
+});
 it.each(["owner", "bot", "unknown"])(
   "never coerces %s target roles",
   async (role) => {
@@ -264,17 +413,44 @@ it("protects all owners and self even when co-owners exist", async () => {
   }
   expect(h.sign).not.toHaveBeenCalled();
 });
-it.each(["dm", "archived", "solo"])("excludes %s channels", async (kind) => {
+it.each(["dm", "archived"])("excludes %s channels", async (kind) => {
   const h = harness();
   h.setEvents([
     h.record(39000, [
       ["d", id],
       ["t", kind === "dm" ? "dm" : "stream"],
       ...(kind === "archived" ? [["archived", "true"]] : []),
-      ...(kind === "solo" ? [["t", SOLO_LABEL]] : []),
     ]),
     ...h.events().slice(1),
   ]);
+  await h.owner.capability.run(id, change);
+  expect(h.sign).not.toHaveBeenCalled();
+});
+function soloHarness() {
+  const h = harness();
+  h.setEvents([
+    h.record(39000, [
+      ["d", id],
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+    ]),
+    ...h.events().slice(1),
+  ]);
+  return h;
+}
+it("lets a Solo chat owner remove a participant", async () => {
+  const h = soloHarness();
+  await h.owner.capability.run(id, { ...change, role: "remove" });
+  expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+    kind: 9001,
+    tags: [
+      ["h", id],
+      ["p", target],
+    ],
+  });
+});
+it("never lets a Solo chat owner change a person's role", async () => {
+  const h = soloHarness();
   await h.owner.capability.run(id, change);
   expect(h.sign).not.toHaveBeenCalled();
 });
@@ -381,7 +557,14 @@ it.each(["ack", "lost", "read"])(
     });
     h.owner.clear();
     expect(h.owner.capability.snapshot(id)).toMatchObject({
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canManageSolo: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
       operation: { change, status: "uncertain" },
     });
     await expect(h.owner.capability.run(id, change)).rejects.toThrow(
@@ -416,7 +599,14 @@ it.each(["access", "invalid ID"])(
     await h.owner.capability.refresh(channelId);
     expect(h.owner.capability.snapshot(channelId)).toMatchObject({
       status: "error",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canManageSolo: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
       error:
         failure === "access"
           ? "Channel access unavailable; refresh membership."
@@ -437,7 +627,14 @@ it.each(["clear", "dispose"] as const)(
     await pending;
     expect(h.owner.capability.snapshot(id)).toMatchObject({
       status: "idle",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canManageSolo: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+        system: false,
+      },
     });
   },
 );
@@ -619,7 +816,14 @@ it.each(["cache", "access"] as const)(
       await clear();
       expect(admin.snapshot(id)).toMatchObject({
         status: "idle",
-        authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+        authority: {
+          roles: {},
+          canManage: false,
+          canManageSolo: false,
+          canRemove: false,
+          canRemoveOwnedAgent: false,
+          system: false,
+        },
         operation: { change, status: "uncertain" },
       });
       await recoverAccess();
@@ -631,7 +835,10 @@ it.each(["cache", "access"] as const)(
       expect(admin.snapshot(id).authority).toEqual({
         roles: {},
         canManage: false,
+        canManageSolo: false,
+        canRemove: false,
         canRemoveOwnedAgent: false,
+        system: false,
       });
       await recoverAccess();
       await expect(admin.run(id, change)).rejects.toThrow(/not be sent again/);
@@ -739,8 +946,12 @@ function agentProfile(ownerKey = key, created_at = 200, valid = true) {
     new Uint8Array(32).fill(4),
   );
 }
-function ownedAgent(actor = "member", role = "bot") {
-  const h = harness(actor, role);
+function ownedAgent(
+  actor = "member",
+  role = "bot",
+  soloMemberRoleUpdates = false,
+) {
+  const h = harness(actor, role, soloMemberRoleUpdates);
   let profiles = [agentProfile()];
   h.read.mockImplementation(async (filters) =>
     filters.some((filter) => filter.kinds?.includes(0)) ? profiles : h.events(),
@@ -823,7 +1034,6 @@ it.each([
   "unknown actor",
   "owner target",
   "unknown target",
-  "dm",
   "archived",
   "solo",
   "role edit",
@@ -843,11 +1053,11 @@ it.each([
   if (failure === "unknown actor") h.setRoles("unknown", "bot");
   if (failure === "owner target") h.setRoles("member", "owner");
   if (failure === "unknown target") h.setRoles("member", "unknown");
-  if (["dm", "archived", "solo"].includes(failure))
+  if (["archived", "solo"].includes(failure))
     h.setEvents([
       h.record(39000, [
         ["d", id],
-        ["t", failure === "dm" ? "dm" : "stream"],
+        ["t", "stream"],
         ...(failure === "archived" ? [["archived", "true"]] : []),
         ...(failure === "solo" ? [["t", SOLO_LABEL]] : []),
       ]),
@@ -859,6 +1069,47 @@ it.each([
     failure === "role edit" ? change : removeAgent,
   );
   expect(h.sign).not.toHaveBeenCalled();
+});
+function ownedAgentInDm(actor = "member") {
+  const h = ownedAgent(actor);
+  h.setEvents([
+    h.record(39000, [
+      ["d", id],
+      ["t", "dm"],
+    ]),
+    ...h.events().slice(1),
+  ]);
+  return h;
+}
+it.each(["member", "owner"])(
+  "lets a DM %s remove their own verified agent",
+  async (actor) => {
+    const h = ownedAgentInDm(actor);
+    await h.owner.capability.run(id, removeAgent);
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+    expect(h.sign.mock.calls[0]?.[0]).toMatchObject({
+      kind: 9001,
+      tags: [
+        ["h", id],
+        ["p", target],
+      ],
+    });
+  },
+);
+it("lets no one remove another's agent or a person from a DM", async () => {
+  const notMine = ownedAgentInDm("owner");
+  notMine.setProfiles([]);
+  await notMine.owner.capability.run(id, removeAgent);
+  const person = ownedAgentInDm("owner");
+  person.setRoles("owner", "member");
+  person.setProfiles([]);
+  await person.owner.capability.run(id, {
+    pubkey: target,
+    expectedRole: "member",
+    role: "remove",
+  });
+  expect(notMine.sign).not.toHaveBeenCalled();
+  expect(person.sign).not.toHaveBeenCalled();
 });
 it.each(["actor left", "target promoted", "access lost"])(
   "rechecks %s before publishing an owned-agent removal",
@@ -946,10 +1197,370 @@ it("retains uncertain owned-agent removal for explicit readback, never replay", 
 });
 
 it("shares exact native/broker command admission fixtures", () => {
-  for (const { event } of contract.accepted)
+  const signedBy = (event: EventTemplate): EventTemplate =>
+    JSON.parse(JSON.stringify(event).replaceAll("$viewer", viewer));
+  for (const { event } of [
+    ...contract.accepted,
+    ...contract.transfer.accepted.map((c) => ({ event: signedBy(c.event) })),
+  ])
     expect(() =>
       validateMemberAdministrationTemplate(event, viewer),
     ).not.toThrow();
-  for (const { event } of contract.rejected)
+  for (const { event } of [
+    ...contract.rejected,
+    ...contract.transfer.rejected.map((c) => ({ event: signedBy(c.event) })),
+  ])
     expect(() => validateMemberAdministrationTemplate(event, viewer)).toThrow();
+});
+
+const transfer: MemberChange = {
+  pubkey: target,
+  expectedRole: "member",
+  role: "owner",
+};
+const personProfile = () =>
+  finalizeEvent(
+    { kind: 0, created_at: 200, content: "{}", tags: [] },
+    new Uint8Array(32).fill(4),
+  );
+function transferHarness(
+  actor = "owner",
+  role = "member",
+  profiles: RelayEvent[] = [personProfile()],
+) {
+  const h = ownedAgent(actor, role);
+  h.setProfiles(profiles);
+  return h;
+}
+function soloAgent(
+  actor = "owner",
+  role = "bot",
+  profiles = [agentProfile()],
+  soloMemberRoleUpdates = true,
+  visibilityTags = [["private"]],
+) {
+  const h = ownedAgent(actor, role, soloMemberRoleUpdates);
+  h.setProfiles(profiles);
+  const setVisibility = (tags: string[][]) =>
+    h.setEvents([
+      h.record(39000, [["d", id], ["t", "stream"], ["t", SOLO_LABEL], ...tags]),
+      ...h.events().slice(1),
+    ]);
+  setVisibility(visibilityTags);
+  return { ...h, setVisibility };
+}
+it.each([
+  { name: "an older relay", supported: false, tags: [["private"]] },
+  {
+    name: "a View only chat",
+    supported: true,
+    tags: [["public"], ["join_role", "guest"]],
+  },
+  { name: "unknown visibility", supported: true, tags: [] },
+  {
+    name: "contradictory visibility",
+    supported: true,
+    tags: [["private"], ["public"]],
+  },
+])(
+  "refuses a Solo role update before signing with $name and still allows removal",
+  async ({ supported, tags }) => {
+    const h = soloAgent("owner", "bot", [agentProfile()], supported, tags);
+    const capability = h.owner.capability;
+    await capability.refresh(id);
+    expect(capability.snapshot(id).authority.canManageSolo).toBe(false);
+    await capability.run(id, { ...change, expectedRole: "bot", role: "guest" });
+    expect(capability.snapshot(id).operation?.status).toBe("failed");
+    expect(h.sign).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+    await capability.run(id, removeAgent);
+    expect(capability.snapshot(id).operation?.status).toBe("confirmed");
+    expect(h.publish.mock.calls[0]?.[0].kind).toBe(9001);
+  },
+);
+it("discards a Solo role edit if the chat becomes View only during signing", async () => {
+  const h = soloAgent();
+  h.sign.mockImplementationOnce(async (template) => {
+    h.setVisibility([["public"], ["join_role", "guest"]]);
+    return finalizeEvent(structuredClone(template), key);
+  });
+  await h.owner.capability.run(id, {
+    ...change,
+    expectedRole: "bot",
+    role: "guest",
+  });
+  expect(h.sign).toHaveBeenCalledOnce();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
+});
+it.each([
+  ["admin", "member", personProfile()],
+  ["admin", "guest", personProfile()],
+  ["member", "guest", personProfile()],
+  ["admin", "member", agentProfile(relayKey)],
+  ["bot", "guest", agentProfile(relayKey)],
+  ["guest", "member", agentProfile(relayKey)],
+  ["bot", "admin", agentProfile()],
+] as const)(
+  "lets a Solo owner change access from %s to %s when permitted",
+  async (before, role, profile) => {
+    const h = soloAgent("owner", before, [profile]);
+    await h.owner.capability.run(id, { ...change, expectedRole: before, role });
+    expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+      kind: 9050,
+      tags: [
+        ["h", id],
+        ["p", target],
+        ["role", role],
+        ["expected_role", before],
+      ],
+    });
+    expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
+  },
+);
+it.each([
+  ["member", "admin", agentProfile(relayKey)],
+  ["member", "admin", agentProfile(key, 200, false)],
+  ["guest", "member", agentProfile(key, 200, false)],
+  ["guest", "member", personProfile()],
+] as const)(
+  "refuses an unauthorized Solo promotion from %s to %s",
+  async (before, role, profile) => {
+    const h = soloAgent("owner", before, [profile]);
+    await h.owner.capability.run(id, { ...change, expectedRole: before, role });
+    expect(h.sign).not.toHaveBeenCalled();
+  },
+);
+it.each(["admin", "member", "guest"])(
+  "denies a Solo %s an agent role edit",
+  async (actor) => {
+    const h = soloAgent(actor);
+    await h.owner.capability.run(id, { ...change, expectedRole: "bot" });
+    expect(h.sign).not.toHaveBeenCalled();
+  },
+);
+it.each(["person", "missing", "transfer", "addition"])(
+  "keeps Solo %s restrictions",
+  async (failure) => {
+    const h = soloAgent(
+      "owner",
+      "member",
+      failure === "person"
+        ? [personProfile()]
+        : failure === "missing"
+          ? []
+          : [agentProfile()],
+    );
+    await h.owner.capability.run(id, {
+      ...change,
+      ...(failure === "transfer" ? { role: "owner" } : {}),
+      ...(failure === "addition"
+        ? { pubkey: author, expectedRole: "absent" }
+        : {}),
+    });
+    expect(h.sign).not.toHaveBeenCalled();
+  },
+);
+it("rechecks the Solo target profile after signing", async () => {
+  const h = soloAgent();
+  h.sign.mockImplementationOnce(async (template) => {
+    h.setProfiles([personProfile()]);
+    return finalizeEvent(structuredClone(template), key);
+  });
+  await h.owner.capability.run(id, { ...change, expectedRole: "bot" });
+  expect(h.sign).toHaveBeenCalledOnce();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+it("discards a standard role write if the channel becomes Solo while signing", async () => {
+  const h = harness("owner", "admin");
+  h.sign.mockImplementationOnce(async (template) => {
+    h.setEvents([
+      h.record(39000, [
+        ["d", id],
+        ["t", "stream"],
+        ["t", SOLO_LABEL],
+      ]),
+      ...h.events().slice(1),
+    ]);
+    return finalizeEvent(structuredClone(template), key);
+  });
+  await h.owner.capability.run(id, {
+    ...change,
+    expectedRole: "admin",
+    role: "guest",
+  });
+  expect(h.sign).toHaveBeenCalledOnce();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+it("transfers ownership in one event that steps the viewer down to admin", async () => {
+  const h = transferHarness();
+  await h.owner.capability.run(id, transfer);
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.publish.mock.calls[0]?.[0].tags).toEqual([
+    ["h", id],
+    ["p", target, "owner"],
+    ["p", viewer, "admin"],
+  ]);
+  const { operation, authority } = h.owner.capability.snapshot(id);
+  expect(operation?.status).toBe("confirmed");
+  expect(authority.roles).toEqual({ [viewer]: "admin", [target]: "owner" });
+});
+it.each([
+  ["the viewer is an admin", "admin", "member", [personProfile()]],
+  ["the heir is a bot", "owner", "bot", [personProfile()]],
+  ["the heir has no profile", "owner", "member", []],
+  ["the heir's profile is an agent's", "owner", "member", [agentProfile()]],
+] as const)("refuses a transfer when %s", async (_, actor, role, profiles) => {
+  const h = transferHarness(actor, role, [...profiles]);
+  await h.owner.capability.run(id, { ...transfer, expectedRole: role });
+  expect(h.sign).not.toHaveBeenCalled();
+});
+it("never offers a transfer to a co-owner", () => {
+  const state = {
+    roles: { [viewer]: "owner" as const, [target]: "owner" as const },
+    canManage: true,
+    canManageSolo: false,
+    canRemove: true,
+    canRemoveOwnedAgent: false,
+    system: false,
+  };
+  expect(canTransferOwnership(state, viewer, target, false)).toBe(false);
+});
+it("refuses a transfer in a system channel", async () => {
+  const h = transferHarness();
+  h.setEvents([
+    h.record(39000, [
+      ["d", id],
+      ["t", "system"],
+    ]),
+    ...h.events().slice(1),
+  ]);
+  await h.owner.capability.run(id, transfer);
+  expect(h.sign).not.toHaveBeenCalled();
+});
+it("leaves a transfer uncertain when only the heir's promotion lands", async () => {
+  const h = transferHarness();
+  h.publish.mockImplementationOnce(async () => h.setRoles("owner", "owner"));
+  await h.owner.capability.run(id, transfer);
+  expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
+});
+
+it("authorizes a system-channel add only for a non-member other than the viewer with an editable role", () => {
+  const state = {
+    roles: { [viewer]: "owner" as const, [author]: "member" as const },
+    canManage: true,
+    canManageSolo: false,
+    canRemove: true,
+    canRemoveOwnedAgent: false,
+    system: true,
+  };
+  const add = (change: Partial<MemberChange>) => () =>
+    authorizeMemberChange(state, viewer, {
+      pubkey: target,
+      expectedRole: "none",
+      role: "member",
+      ...change,
+    } as MemberChange);
+
+  expect(add({})).not.toThrow();
+  expect(add({ pubkey: author })).toThrow(/Membership or permissions changed/);
+  expect(add({ pubkey: viewer })).toThrow(/Membership or permissions changed/);
+  expect(add({ role: "remove" })).toThrow(/Membership or permissions changed/);
+  expect(add({ role: "owner" as never })).toThrow(
+    /Membership or permissions changed/,
+  );
+});
+
+it("administers one member change from a fresh roster read", async () => {
+  const roles: Record<string, string> = { [target]: "member" };
+  let after: object = {};
+  const state = (value: object) => value as MemberAdministrationState;
+  const admin = {
+    refresh: vi.fn(async () => {}),
+    run: vi.fn(async () => {}),
+    snapshot: vi.fn(() =>
+      state(
+        admin.run.mock.calls.length
+          ? { status: "ready", authority: { roles }, ...after }
+          : { status: "ready", authority: { roles } },
+      ),
+    ),
+  };
+  const remove = (role: MemberRole | undefined) =>
+    role ? ({ expectedRole: role, role: "remove" } as const) : undefined;
+  const settled = (status: string, error?: string) => {
+    after = {
+      operation: { change: { pubkey: target, role: "remove" }, status },
+      ...(error ? { error } : {}),
+    };
+  };
+
+  settled("confirmed");
+  await expect(administerMember(admin, id, target, remove)).resolves.toEqual({
+    status: "confirmed",
+  });
+  expect(admin.refresh).toHaveBeenCalledWith(id);
+  expect(admin.run).toHaveBeenCalledWith(id, {
+    pubkey: target,
+    expectedRole: "member",
+    role: "remove",
+  });
+
+  // The roster already shows the result: nothing is sent.
+  admin.run.mockClear();
+  await expect(administerMember(admin, id, otherId, remove)).resolves.toEqual({
+    status: "confirmed",
+  });
+  expect(admin.run).not.toHaveBeenCalled();
+
+  settled("failed", "Rejected");
+  await expect(administerMember(admin, id, target, remove)).resolves.toEqual({
+    status: "failed",
+    error: "Rejected",
+  });
+  settled("uncertain", "May have taken effect");
+  await expect(administerMember(admin, id, target, remove)).resolves.toEqual({
+    status: "uncertain",
+    error: "May have taken effect",
+  });
+  // A pending, or someone else's, operation is no confirmation.
+  settled("pending");
+  await expect(administerMember(admin, id, target, remove)).resolves.toEqual({
+    status: "uncertain",
+  });
+  after = {
+    operation: {
+      change: { pubkey: otherId, role: "remove" },
+      status: "confirmed",
+    },
+  };
+  await expect(administerMember(admin, id, target, remove)).resolves.toEqual({
+    status: "uncertain",
+  });
+
+  admin.run.mockRejectedValueOnce(new Error("Offline"));
+  await expect(administerMember(admin, id, target, remove)).resolves.toEqual({
+    status: "failed",
+    error: "Offline",
+  });
+
+  admin.snapshot.mockReturnValue(
+    state({ status: "error", authority: { roles } }),
+  );
+  admin.run.mockClear();
+  await expect(administerMember(admin, id, target, remove)).resolves.toEqual({
+    status: "failed",
+    error: "Roles unavailable",
+  });
+  await expect(
+    administerMember(admin, id, target, remove, "Try again."),
+  ).resolves.toEqual({ status: "failed", error: "Try again." });
+  admin.snapshot.mockReturnValue(
+    state({ status: "error", authority: { roles }, error: "Read failed" }),
+  );
+  await expect(administerMember(admin, id, target, remove)).resolves.toEqual({
+    status: "failed",
+    error: "Read failed",
+  });
+  expect(admin.run).not.toHaveBeenCalled();
 });

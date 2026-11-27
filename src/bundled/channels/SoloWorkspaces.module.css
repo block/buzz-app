@@ -51,20 +51,26 @@
   border-radius: var(--radius-row);
   background: var(--affordance-panel-hover);
 }
-.projectHeading {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  text-align: start;
-  /* Like NavigationItem, this disclosure is navigation, not document text. */
-  -webkit-user-select: none;
-  user-select: none;
+/* A composed workspace header's primary target spans its blank space. A header
+   too narrow for both of its controls keeps only Actions, whose menu also
+   offers New task. */
+.workspaceHeader {
+  position: relative;
+  container: solo-workspace-header / inline-size;
 }
-.projectHeading span {
-  overflow-wrap: anywhere;
+@media (hover: none) {
+  .workspaceHeader [data-solo-workspace-new-task] {
+    display: none;
+  }
 }
-.projectHeading svg {
-  flex-shrink: 0;
+@container solo-workspace-header (max-width: 12rem) {
+  .workspaceHeader [data-solo-workspace-new-task]:not(:focus) {
+    display: none;
+  }
+
+  .workspaceHeader [data-solo-workspace-accessory] > * {
+    min-inline-size: 0;
+  }
 }
 .organizedRow {
   display: flex;
@@ -79,8 +85,8 @@
   flex: 1;
   min-width: 0;
 }
-/* Show more and Show less are text actions sharing one row: Show more aligns
-   with the chat icons and titles; Show less ends on the row inset. */
+/* Show more and Show fewer are text actions sharing one row: Show more aligns
+   with the chat icons and titles; Show fewer ends on the row inset. */
 .showMore {
   display: flex;
   align-items: center;
@@ -110,7 +116,7 @@
 .sidebarContents {
   --project-icon-size: 0.9375rem;
   /* Rows and project headers share one height and one trailing slot. */
-  /* The compact sidebar row height (Channels' .sidebar rows), as in Berd. */
+  /* The compact sidebar row height (SidebarFrame’s .sidebar rows), as in Berd. */
   --session-action-size: calc(var(--space-6) + var(--space-1));
   /* Match the channel sidebar's leading and trailing content inset. */
   --session-row-inset: var(--space-2);
@@ -136,12 +142,12 @@
   margin-inline-end: var(--session-trailing-end);
 }
 .organizedRow:is(
-    :hover,
     [data-context-menu-present],
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
-  [data-solo-row-action] {
+  > [data-solo-row-action],
+.organizedRow > [data-solo-row-action]:hover {
   opacity: 1;
   pointer-events: auto;
 }
@@ -173,11 +179,20 @@
   [data-context-menu-present],
   :has(:focus-visible),
   :has([aria-expanded="true"][aria-haspopup="menu"])
-):not(:has([aria-current="page"]))::before {
+):not(:has([aria-current="page"], [data-spring-loaded="on"]))::before {
   background: var(--affordance-panel-hover);
 }
-.organizedRow:has([aria-current="page"])::before {
+/* A spring-loaded file drag selects the row until it opens or blinks off. */
+.organizedRow:has([aria-current="page"], [data-spring-loaded="on"])::before {
   background: var(--surface-sidebar-selected);
+}
+/* A composed chat has no row fill, so its button keeps the drag's fill. */
+.organizedRow:not(.composedChat *) [data-spring-loaded] {
+  background-color: transparent;
+}
+/* Composed workspace chats share the task card's complete interaction surface. */
+.composedChat .organizedRow::before {
+  display: none;
 }
 /* Bold is Solo's only unread cue, as on Team rows. */
 .organizedRow [data-channel-unread-title="true"] {
@@ -240,7 +255,7 @@
   pointer-events: none;
 }
 .organizedRow:is(
-    :hover,
+    :has(> :is([data-solo-row-action], [data-solo-shared]):hover),
     [data-context-menu-present],
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
@@ -252,23 +267,6 @@
   .organizedRow [data-channel-activity] {
     opacity: 0;
   }
-}
-
-/* Project menus share the channel header's trailing action slots. */
-.projectHeader > [data-solo-overflow-action] {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  inset-inline-end: calc(var(--space-1) + var(--size-control-sm));
-}
-.projectHeader:is(
-    :hover,
-    [data-context-menu-present],
-    :focus-within,
-    :has([aria-expanded="true"][aria-haspopup="menu"])
-  )
-  > [data-solo-overflow-action] {
-  opacity: 1;
 }
 
 /* Working flows in the row, so the title reserves exactly the pill. */
@@ -295,10 +293,11 @@
   color: var(--text-row-selected-subtle);
 }
 
-/* Pointer rows show one trailing occupant: working, then thread activity,
-   then Shared at rest; the menu replaces it on hover, focus or open. Nothing
-   reserves title width unless it is visible. Touch keeps status and the menu
-   side by side in the flow above. */
+/* Pointer rows show one trailing occupant at rest: working, then thread
+   activity, then Shared. With the action revealed, Shared stays in place as the
+   access control and the menu takes the slot before it. Nothing reserves
+   title width unless it is visible. Touch keeps status and the menu side by
+   side in the flow above. */
 @media (hover: hover) {
   .organizedRow :is([data-solo-row-action], [data-solo-shared]) {
     position: absolute;
@@ -307,19 +306,38 @@
     inset-inline-end: var(--session-trailing-end);
     margin: 0;
   }
-  .organizedRow:has([data-channel-activity]) [data-solo-shared],
+  /* Separate rules: the build wraps a list of :has() selectors in :is(), and
+     WebKit restyles the whole document for each change under a non-subject
+     :has() inside :is(). */
+  .organizedRow:has([data-channel-activity]) [data-solo-shared] {
+    opacity: 0;
+  }
   .organizedRow:has([data-solo-working-indicator]:not(:empty))
     :is([data-channel-activity], [data-solo-shared]) {
     opacity: 0;
   }
-  /* The menu takes Shared's slot; touch keeps both in flow instead. */
+  /* Hidden Shared takes no clicks or focus meant for what shows instead. */
+  .organizedRow:has(
+    [data-channel-activity],
+    [data-solo-working-indicator]:not(:empty)
+  ) [data-solo-shared] {
+    visibility: hidden;
+  }
+  /* Shared never moves under the pointer; the menu opens beside it. */
   .organizedRow:is(
-    :hover,
+    :has(> :is([data-solo-row-action], [data-solo-shared]):hover),
     [data-context-menu-present],
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   ) [data-solo-shared] {
-    opacity: 0;
+    opacity: 1;
+    visibility: visible;
+  }
+  .organizedRow:has([data-solo-shared]) [data-solo-row-action] {
+    inset-inline-end: calc(
+      var(--session-trailing-end) +
+      var(--session-action-size)
+    );
   }
   .sidebarContents
     .organizedRow:has([data-channel-activity], [data-solo-shared])
@@ -342,7 +360,7 @@
   }
   .sidebarContents
     .organizedRow:is(
-      :hover,
+      :has(> :is([data-solo-row-action], [data-solo-shared]):hover),
       [data-context-menu-present],
       :has(:focus-visible),
       :has([aria-expanded="true"][aria-haspopup="menu"])
@@ -354,8 +372,23 @@
       var(--session-trailing-offset)
     );
   }
+  .sidebarContents
+    .organizedRow:has([data-solo-shared]):is(
+      :has(> :is([data-solo-row-action], [data-solo-shared]):hover),
+      [data-context-menu-present],
+      :has(:focus-visible),
+      :has([aria-expanded="true"][aria-haspopup="menu"])
+    )
+    > div
+    > [data-variant="row"] {
+    padding-inline-end: calc(
+      var(--session-action-size) *
+      2 +
+      var(--session-trailing-offset)
+    );
+  }
   .organizedRow:is(
-      :hover,
+      :has(> :is([data-solo-row-action], [data-solo-shared]):hover),
       [data-context-menu-present],
       :has(:focus-visible),
       :has([aria-expanded="true"][aria-haspopup="menu"])

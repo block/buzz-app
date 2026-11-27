@@ -20,6 +20,7 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 function setup(current?: UserStatus) {
   const owner = createRelaySession(null);
@@ -52,8 +53,8 @@ it("calculates the selected preset at save time after a quick choice is edited",
   });
   await user.click(screen.getByRole("button", { name: "Duration: Today" }));
   expect(
-    screen.queryByRole("menuitemradio", { name: "Don’t clear" }),
-  ).not.toBeInTheDocument();
+    await screen.findByRole("menuitemradio", { name: "Don’t clear" }),
+  ).toBeVisible();
   await user.click(
     await screen.findByRole("menuitemradio", { name: "8 hours" }),
   );
@@ -66,7 +67,21 @@ it("calculates the selected preset at save time after a quick choice is edited",
     expiresAt: now / 1000 + 28800,
   });
 });
+it("saves a new status without an expiry when Don’t clear is chosen", async () => {
+  const user = userEvent.setup();
+  const { save, close } = setup();
+  await user.click(screen.getByRole("button", { name: "Working remotely" }));
+  await user.click(screen.getByRole("button", { name: /^Duration:/ }));
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Don’t clear" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save status" }));
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(save).toHaveBeenCalledWith({ text: "Working remotely", emoji: "🏠" });
+});
 it("prefills and preserves an existing deadline, and validates a custom date before saving", async () => {
+  // Mid-month so the prefilled next-day deadline opens the calendar on today's month.
+  vi.useFakeTimers({ toFake: ["Date"], now: new Date(2026, 5, 15, 12) });
   const user = userEvent.setup();
   const now = Date.now();
   const expiresAt = Math.floor(now / 1000) + 86400;
@@ -191,6 +206,65 @@ it.each(["🏠", ":party:"])(
     );
   },
 );
+
+it("names the custom code an unresolved emoji trigger will save", async () => {
+  setup({
+    userId: "a".repeat(64),
+    text: "Remote",
+    emoji: ":bee-intensifies:",
+    updatedAt: Date.now() / 1000,
+  });
+  const trigger = screen.getByRole("button", { name: "Choose a status emoji" });
+  act(() => trigger.focus());
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    ":bee-intensifies:",
+  );
+  expect(trigger).toHaveAccessibleDescription(":bee-intensifies:");
+});
+
+it("keeps the focused emoji trigger and renames its hint when a refresh replaces its custom code", async () => {
+  const owner = createRelaySession(null);
+  owners.push(owner);
+  const cached: UserStatus = {
+    userId: "a".repeat(64),
+    text: "Remote",
+    emoji: ":bee:",
+    updatedAt: 1,
+  };
+  let resolve!: (value: UserStatus) => void;
+  const current = () =>
+    new Promise<UserStatus>((done) => {
+      resolve = done;
+    });
+  render(
+    <StatusEditor
+      session={{
+        ...owner.session,
+        statuses: { ...owner.session.statuses, current },
+      }}
+      viewer={cached.userId}
+      scope="https://status.test"
+      current={cached}
+      close={() => {}}
+      finalFocus={{ current: null }}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("Status message")).toHaveFocus(),
+  );
+  const trigger = screen.getByRole("button", { name: "Choose a status emoji" });
+  act(() => trigger.focus());
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(":bee:");
+  await act(async () => resolve({ ...cached, emoji: "🏠", updatedAt: 2 }));
+  expect(screen.getByRole("button", { name: "Choose a status emoji" })).toBe(
+    trigger,
+  );
+  expect(trigger).toHaveFocus();
+  await waitFor(() =>
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/^:house:$/),
+  );
+  expect(trigger).toHaveAccessibleDescription(":house:");
+});
 
 it("shows non-expiring status honestly and preserves it until a duration is selected", async () => {
   const user = userEvent.setup();
@@ -347,11 +421,14 @@ it.each([
           screen.getByRole("button", { name: "Choose a status emoji" }),
         );
         const choice = await waitFor(() => {
-          const button = document
-            .querySelector("em-emoji-picker")
-            ?.shadowRoot?.querySelector<HTMLButtonElement>(
-              'button[title="Grinning Face"]',
-            );
+          // The picker's preview replaces button titles; match the glyph.
+          const button = [
+            ...(document
+              .querySelector("em-emoji-picker")
+              ?.shadowRoot?.querySelectorAll<HTMLButtonElement>(
+                "button[aria-label]",
+              ) ?? []),
+          ].find((element) => element.getAttribute("aria-label") === "😀");
           if (!button) throw new Error("Emoji choice has not rendered");
           return button;
         });

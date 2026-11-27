@@ -1,8 +1,22 @@
+import type { ProtectionAction } from "../features/agent-protection/service";
 // What the Buzz tools need from whoever holds the agent's key: the app's native
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
 import type { GitAuth } from "../features/agents/native";
-import type { AgentAttention } from "../features/agents/service";
+import type {
+  AgentAttention,
+  WorkspaceAudience,
+  WorkspaceChat,
+  WorkspaceDefaults,
+  WorkspacePlacement,
+  AgentReadout,
+  AgentUpdateInput,
+  TeamReadout,
+  TeamUpdateInput,
+} from "../features/agents/service";
+import type { DefaultAgentControl } from "../features/solo/default-agent";
+import type { AgentPlugins } from "../plugins/requests";
+import type { SettingState } from "../shared/device-settings";
 
 export type BuzzEvent = Readonly<{
   id: string;
@@ -17,6 +31,17 @@ export type Template = Readonly<{
   kind: number;
   content: string;
   tags: readonly (readonly string[])[];
+}>;
+/** Trusted app read/upload hints, never independent deletion authority.
+ * Native requires creation-time consent and exact confirmed event/file matches. */
+export type ManagedAttachment = Readonly<{
+  path: string;
+  sha256: string;
+  size: number;
+  url: string;
+}>;
+export type PublishOptions = Readonly<{
+  managedAttachments?: readonly ManagedAttachment[];
 }>;
 export type Filter = Readonly<Record<string, unknown>>;
 /** The community's description of an uploaded blob. */
@@ -49,6 +74,8 @@ export type ChannelTemplate = Readonly<{
  * limit, a deadline or the relay's rate limit. */
 export type Memories = Readonly<{
   entries: readonly Memory[];
+  /** Deleted entries' tombstones, which a write recreating one must follow. */
+  deleted?: readonly Readonly<{ slug: string; createdAt: number }>[];
   partial: boolean;
 }>;
 
@@ -75,19 +102,75 @@ export type Memory = Readonly<{
 }>;
 
 export interface BuzzClient {
+  /** Cancellation for this call, or its owning turn or connection when the
+   * host only supplies a lifetime signal. Keep it across waits. */
+  readonly signal?: AbortSignal;
+  protect?(action: ProtectionAction): Promise<void>;
+  /** Waits while the agent's community reloads in place; a call built from a
+   * client builder is built again after it. */
+  settle?(): Promise<void>;
+  /** The runtime reviews each tool call itself before Buzz dispatches it. */
+  readonly nativeToolGate?: true;
   readonly pubkey: string;
+  /** The agent's membership key in this client's community: its pubkey in
+   * its home community, which is the only one a standalone client has. */
+  readonly key: string;
+  /** Owner-reviewed creation requests, bound by the app to the caller's owner/community. */
+  agentTypes?(): Promise<readonly Readonly<{ key: string; title: string }>[]>;
+  createAgent?(
+    input: Readonly<{
+      type: string;
+      name: string;
+      instructions?: string;
+      /** Uploads the picture once the request is valid: its URL. */
+      picture?: () => Promise<string>;
+    }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  updateAgent?(
+    input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  readAgents?(agent?: string): Promise<AgentReadout | readonly AgentReadout[]>;
+  readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;
+  updateTeam?(
+    input: TeamUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** This device's plugins, where the host has them: read directly, changed
+   * by owner-confirmed request. */
+  plugins?: AgentPlugins;
+  /** Wakes the agent in another of its conversations here, `from` this one. */
+  handoff?(
+    handoff: Readonly<{
+      channel: string;
+      root?: string;
+      text: string;
+      from: Readonly<{ channel?: string; root?: string }>;
+    }>,
+  ): void;
+  /** Whether the agent's threads in `channel` have sessions of their own,
+   * apart from its channel-level conversation there; undefined while the host
+   * cannot tell yet. Unless it says yes, a conversation with no thread is the
+   * whole channel. */
+  threadsApart?(channel: string): boolean | undefined;
+  /** An exact, saved task anchor for this agent. */
+  isTaskThread?(channel: string, root: string): boolean;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;
-  readonly signingAuthority?: string | undefined;
-  /** Host-bound current server decision, never a model-supplied assertion. */
-  authorizeAudience?(
-    destination: string,
-    sources: readonly string[],
-  ): Promise<ReadonlySet<string>>;
+  /** Without `relayAuthor`: learns the relay's key when a people search first
+   * needs it for verified names, so no other tool waits for it. `undefined`
+   * when the relay has no key; rejects when the key cannot be learned. */
+  readonly relayAuthorLookup?: () => Promise<string | undefined>;
+  /** The relay's NIP-11 self key as the app host knows it: `null` when the
+   * relay advertises none; absent when the host can't tell. */
+  readonly signingAuthority?: string | null;
+  /** The posting session's context size: the tokens of its last model call;
+   * undefined when unknown. Each message it posts carries it. */
+  contextTokens?(): number | undefined;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
+  /** Latest live attachment state, read as this agent from a primary snapshot. */
+  effectiveEdit?(id: string, channel: string): Promise<BuzzEvent>;
   /** Finds profiles whose `name` or `display_name` matches `query`, best
    * match first. `undefined` when the community has no profile name search;
    * NIP-50 search, which matches the whole profile, is the fallback. */
@@ -96,9 +179,12 @@ export interface BuzzClient {
     limit: number,
   ): Promise<readonly BuzzEvent[] | undefined>;
   /** Signs `event` as the agent and posts it. */
-  publish(event: Template): Promise<BuzzEvent>;
+  publish(event: Template, options?: PublishOptions): Promise<BuzzEvent>;
   /** Uploads a file; `mime` is a hint, and the community decides the type. */
   upload(data: Uint8Array, mime: string): Promise<Upload>;
+  /** Uploads an image for an avatar, without its metadata, as the owner's
+   * own avatar upload prepares it. Only where the host can prepare images. */
+  uploadPicture?(data: Uint8Array, mime: string): Promise<Upload>;
   /** Saves a community media blob of any type, by its URL or
    * `sha256[.ext]`, to a local file. */
   media(url: string): Promise<Media>;
@@ -110,8 +196,25 @@ export interface BuzzClient {
   read(path: string): Promise<Uint8Array>;
   /** The agent's memory entries, decrypted; only entry `slug` when given. */
   memories(slug?: string): Promise<Memories>;
-  /** Writes entry `slug`, newer than the one it replaces (`after`, or 0). */
-  remember(slug: string, body: string, after: number): Promise<void>;
+  /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
+   * a `null` body deletes it. */
+  remember(slug: string, body: string | null, after: number): Promise<void>;
+  /** The owner's sidebar workspaces, in a local run: their list, defaults,
+   * one-use placement of a newly published conversation, and moves. */
+  workspaces?: Readonly<{
+    list(): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+    defaults(
+      workspace: string,
+      chat: WorkspaceChat,
+    ): Promise<WorkspaceDefaults>;
+    prepare(
+      workspace: string,
+      audience: WorkspaceAudience,
+      channelId: string,
+    ): Promise<(id: string) => Promise<WorkspacePlacement>>;
+    /** Files conversation `id` in `workspace`, or unfiles it without one. */
+    move(id: string, workspace?: string): Promise<WorkspacePlacement>;
+  }>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
   /** The agent's attention, where its host keeps one. Without it the
@@ -119,12 +222,27 @@ export interface BuzzClient {
   readonly attention?: AgentAttention;
   /** The owner's thread tabs, where the host shows them. */
   tabs?: ThreadTabs;
+  /** Buzz settings on this device, in an agent's own run. Each call checks
+   * the turn first, as the other tools do. */
+  settings?: Readonly<{
+    list(): readonly SettingState[];
+    get(key: unknown): SettingState;
+    set(key: unknown, value: unknown): SettingState;
+  }>;
+  /** The owner's Bestie in the agent's community, in an agent's own run. */
+  bestie?: DefaultAgentControl;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps
- * this channel's messages out of threads. */
+ * this channel's messages out of threads. With no `root`, or with
+ * `wholeChannel`, its session is the whole channel, unless the client's
+ * `threadsApart` says the channel's threads have sessions of their own. */
 export type Context = Readonly<{
+  session?: import("../features/agents/session-admission").AgentSessionAssociation;
   channel?: string;
   root?: string;
+  /** The physical thread when root is an invocation subthread. */
+  sourceRoot?: string;
   topLevel?: boolean;
+  wholeChannel?: boolean;
 }>;

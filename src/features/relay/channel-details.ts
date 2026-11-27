@@ -1,5 +1,8 @@
+import { regionLabels } from "../solo/region-labels";
 import { getEventHash, verifyEvent } from "nostr-tools";
 import type { RelayReader } from "./reader";
+import type { ChannelQueries, ChannelSummary } from "./contracts";
+import { retryRead } from "./read-retry";
 import type { RelayWriter } from "./transport";
 import type { RelayEvent } from "./events";
 import { PublishRejected } from "./outbox";
@@ -9,6 +12,8 @@ import {
   detailsTemplate,
   sameLabels,
   validateDetailsDraft,
+  summaryAccess,
+  type ChannelAccess,
   type ChannelDetails,
   type ChannelDetailsDraft,
 } from "./channel-details-protocol";
@@ -19,14 +24,25 @@ export type DetailsAttempt = Readonly<{
   draft: ChannelDetailsDraft;
   status: "saving" | "unconfirmed";
 }>;
+type ChannelNames = Pick<ChannelQueries, "get" | "subscribeList">;
+
 export interface ChannelDetailsCapability {
   readonly available: boolean;
   load(id: string, signal?: AbortSignal): Promise<ChannelDetails>;
+  /** Present when this capability's edit rule matches the summary's, so access
+   * can show without a read. Absent, callers read details. */
+  summaryAccess?(channel: ChannelSummary): ChannelAccess | undefined;
   save(
     base: ChannelDetails,
     draft: ChannelDetailsDraft,
     signal?: AbortSignal,
+    /** Checked synchronously right before publishing; false publishes nothing. */
+    active?: () => boolean,
+    /** Present only for name edits initiated by this app's Solo editor. */
+    manualRename?: ChannelNames,
   ): Promise<void>;
+  /** An in-memory revision of a matching title change initiated here. */
+  localRename?(id: string, name: string): number | undefined;
   check(id: string, signal?: AbortSignal): Promise<void>;
   snapshot(id: string): DetailsAttempt | undefined;
   subscribe(listener: () => void): () => void;
@@ -55,10 +71,40 @@ export function createChannelDetails({
 }) {
   let closed = false;
   const attempts = new Map<string, DetailsAttempt>();
+  const manualNames = new Map<
+    string,
+    { name: string; previous?: string | undefined; revision: number }
+  >();
+  let renameRevision = 0;
+  let unsubscribeNames: (() => void) | undefined;
   const controllers = new Set<AbortController>();
   const listeners = new Set<() => void>();
   function emit() {
     for (const listener of listeners) listener();
+  }
+  function forgetManualName(id: string) {
+    manualNames.delete(id);
+    if (!manualNames.size) {
+      unsubscribeNames?.();
+      unsubscribeNames = undefined;
+    }
+  }
+  function rememberManualName(
+    channels: ChannelNames,
+    id: string,
+    previous: string,
+    name: string,
+  ) {
+    if (channels.get?.(id)?.name !== previous) return;
+    manualNames.set(id, { name, previous, revision: ++renameRevision });
+    unsubscribeNames ??= channels.subscribeList(() => {
+      for (const [id, rename] of manualNames) {
+        const current = channels.get?.(id)?.name;
+        if (current === rename.name) rename.previous = undefined;
+        else if (current === undefined || current !== rename.previous)
+          forgetManualName(id);
+      }
+    });
   }
   function assertAccess(id: string) {
     if (closed || !canAccess(id))
@@ -119,6 +165,7 @@ export function createChannelDetails({
       details.description !== draft.description ||
       details.visibility !== draft.visibility ||
       details.ttlSeconds !== draft.ttlSeconds ||
+      (draft.joinRole !== undefined && details.joinRole !== draft.joinRole) ||
       (draft.labels !== undefined &&
         JSON.stringify([...new Set(draft.labels)].sort()) !==
           JSON.stringify([...(details.labels ?? [])].sort()))
@@ -129,7 +176,12 @@ export function createChannelDetails({
   }
   const capability: ChannelDetailsCapability = Object.freeze({
     available: !!reader && !!writer,
+    localRename(id: string, name: string) {
+      const rename = manualNames.get(id);
+      return rename?.name === name ? rename.revision : undefined;
+    },
     snapshot: (id: string) => attempts.get(id),
+    summaryAccess,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -140,7 +192,10 @@ export function createChannelDetails({
       return owned(
         id,
         async (signal) => {
-          const { details, metadata } = await read(id, signal);
+          const { details, metadata } = await retryRead(
+            () => read(id, signal),
+            signal,
+          );
           acceptDiscovery([metadata]);
           signal.throwIfAborted();
           return details;
@@ -164,6 +219,8 @@ export function createChannelDetails({
       base: ChannelDetails,
       input: ChannelDetailsDraft,
       caller?: AbortSignal,
+      active?: () => boolean,
+      manualRename?: ChannelNames,
     ) {
       const id = lifecycleChannelId(base.channelId);
       if (!writer || !reader)
@@ -179,11 +236,19 @@ export function createChannelDetails({
       if (chosenName && !labels) throw channelIdentityUnsupported();
       const draft = Object.freeze({
         ...input,
+        ...(input.labels !== undefined
+          ? {
+              labels: [
+                ...new Set([...input.labels, ...regionLabels(base.labels)]),
+              ],
+            }
+          : {}),
         ...(chosenName && labels
           ? {
               labels: [
                 ...new Set([
                   ...(input.labels ?? base.labels ?? []),
+                  ...regionLabels(base.labels),
                   SOLO_NAMED_LABEL,
                 ]),
               ],
@@ -198,6 +263,7 @@ export function createChannelDetails({
       )
         throw channelIdentityUnsupported();
       let publicationStarted = false;
+      let phase = "Could not verify current channel access";
       attempts.set(id, Object.freeze({ draft, status: "saving" }));
       emit();
       try {
@@ -217,6 +283,7 @@ export function createChannelDetails({
             };
             await authorize();
             const template = detailsTemplate(id, draft, base);
+            phase = "Could not sign the channel change";
             const signed = await writer.sign(structuredClone(template), signal);
             signal.throwIfAborted();
             if (
@@ -229,8 +296,13 @@ export function createChannelDetails({
               !verifyEvent(signed)
             )
               throw new Error("Signer changed the channel details command.");
+            phase = "Could not recheck channel access after signing";
             await authorize();
             signal.throwIfAborted();
+            if (active?.() === false)
+              throw new DOMException("Channel edit cancelled", "AbortError");
+            if (manualRename && chosenName)
+              rememberManualName(manualRename, id, base.name, draft.name);
             publicationStarted = true;
             await writer.publish(signed, signal);
             await confirm(id, draft, signal);
@@ -243,7 +315,15 @@ export function createChannelDetails({
             attempts.set(id, Object.freeze({ draft, status: "unconfirmed" }));
           throw new Error(uncertain);
         }
+        if (publicationStarted && manualRename && chosenName)
+          forgetManualName(id);
         attempts.delete(id);
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        if (!publicationStarted)
+          throw new Error(
+            `${phase}: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          );
         throw error;
       } finally {
         emit();
@@ -262,6 +342,8 @@ export function createChannelDetails({
       closed = true;
       cancel();
       attempts.clear();
+      unsubscribeNames?.();
+      manualNames.clear();
       listeners.clear();
     },
   };

@@ -1,5 +1,16 @@
-import { audienceAuthorityCommunity } from "../sessions/audience-authority";
+import {
+  artifactIncrementalCapability,
+  artifactIncrementalFailure,
+  createArtifactIncrementalReader,
+} from "./artifact-incremental-reader";
+import {
+  verifiedProfileAuthority,
+  verifiedProfileDiscovery,
+} from "./verified-profile";
+import { nativeSocket } from "./native-socket";
+import { nativeIdentityEnabled } from "../identity/service";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import {
@@ -17,14 +28,20 @@ import {
   validateUploadResult,
   type UploadProgress,
 } from "./attachments";
-import { eventDto, type RelayEvent } from "./events";
+import {
+  createEventVerifier,
+  eventDto,
+  type RelayEvent,
+  type SignatureVerifier,
+} from "./events";
 import {
   privateTag,
   privateCoordinate,
   parsePrivateRecord,
   type PrivateRecord,
 } from "../channel-templates/model";
-import type { RelayWriter } from "./transport";
+import { parseEvents, type RelayWriter } from "./transport";
+import type { ChannelMedia } from "./store";
 import { communityGitRepository } from "../repos/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
@@ -34,10 +51,15 @@ import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
 import { repoGitHost } from "../repos/git";
 
-import { PublishRejected } from "./outbox";
+import { OLD_EVENT_NOT_FOUND, PublishNotSent, PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
-import { readStateRefusal, type ReadStateSigning } from "./read-state-host";
+import {
+  followCoordinate,
+  readStateRefusal,
+  type ReadStateSigning,
+  type ThreadFollowsSigning,
+} from "./read-state-host";
 import {
   readSnapshotCommunity,
   readSnapshotFilter,
@@ -62,7 +84,7 @@ import {
   type Signer,
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
-import { readApiFailure } from "./http-admission";
+import { readApiFailure, type CommunityRefusal } from "./http-admission";
 
 async function nativeReadInvoke<T>(
   command: string,
@@ -77,6 +99,7 @@ async function nativeReadInvoke<T>(
 }
 
 export const nativeWriteKinds = [
+  48103,
   30078,
   7,
   9,
@@ -89,13 +112,25 @@ export const nativeWriteKinds = [
   30178,
   30315,
   40003,
+  // Pin commands: NIP-PM is not advertised; a relay without it refuses them.
+  40010,
+  40011,
   40100,
   42000,
   45010,
   ...WORKFLOW_KINDS,
 ] as const;
 
-/** Cancellation fences JS results; a dispatched native write may still complete. */
+/** Searches and reads native code may abandon. Mirrors `cancellable_read` in
+ * `src-tauri/src/relay.rs`. */
+const CANCELLABLE_READS = new Set([
+  "/query",
+  "/profiles/search",
+  "/gifs/search",
+]);
+
+/** Cancellation stops a native read at once; a dispatched native write may
+ * still complete, so it only fences the JS result. */
 export async function nativeRelayRequest(
   community: string,
   path: string,
@@ -107,20 +142,41 @@ export async function nativeRelayRequest(
     AbortSignal.timeout(30_000),
   ]);
   bounded.throwIfAborted();
-  const result = await invoke<{
-    status: number;
-    headers: Record<string, string>;
-    body: string;
-  }>("relay_http", {
-    community: communityDestination(community).url,
-    path,
-    method: body === undefined ? "GET" : "POST",
-    body: body === undefined ? null : JSON.stringify(body),
-  });
-  // IPC cannot abort reqwest. Retain the shared admission slot until native work
-  // settles (bounded by its timeout), then reject any obsolete result.
-  bounded.throwIfAborted();
-  return nativeResponse(result);
+  const id =
+    body !== undefined && CANCELLABLE_READS.has(path)
+      ? crypto.randomUUID()
+      : undefined;
+  const cancel = () => {
+    invoke("relay_http_cancel", { id }).catch(() => {});
+  };
+  if (id) bounded.addEventListener("abort", cancel, { once: true });
+  try {
+    const result = await invoke<{
+      status: number;
+      headers: Record<string, string>;
+      body: string;
+    }>("relay_http", {
+      community: communityDestination(community).url,
+      path,
+      method: body === undefined ? "GET" : "POST",
+      body: body === undefined ? null : JSON.stringify(body),
+      ...(id ? { id } : {}),
+    });
+    // The shared admission slot stays held until native work settles: at
+    // once for a cancelled read, otherwise within its timeout.
+    bounded.throwIfAborted();
+    const response = nativeResponse(result);
+    // Only a signed request speaks for the session, as native decides (`send`
+    // in relay.rs signs only POST): a refused GET says nothing about it.
+    if (
+      body !== undefined &&
+      (response.status === 401 || response.status === 403)
+    )
+      await announceRefusal(community, response);
+    return response;
+  } finally {
+    if (id) bounded.removeEventListener("abort", cancel);
+  }
 }
 
 function nativeResponse(result: {
@@ -135,9 +191,41 @@ function nativeResponse(result: {
 }
 
 /** Relay media through the native `buzz-media` scheme (`src-tauri/src/relay.rs`),
- * which signs each Blossom `get`, including every `Range` request. */
-export function nativeMediaUrl(url: string): string {
-  return convertFileSrc(url, "buzz-media");
+ * which signs each Blossom `get`, including every `Range` request. An image is
+ * saved with its `channel`, which forgets it when the channel's messages go. */
+export function nativeMediaUrl(url: string, channel?: string): string {
+  const source = convertFileSrc(url, "buzz-media");
+  return channel ? `${source}?channel=${encodeURIComponent(channel)}` : source;
+}
+
+/** Forgets the images the native `buzz-media` scheme saved for a community. */
+export async function clearNativeMedia(community: string) {
+  if (!nativeIdentityEnabled()) return;
+  await nativeReadInvoke("media_cache_clear", { community });
+}
+
+/** Forgets the images the native `buzz-media` scheme saved from a community's
+ * channels; undefined where images are not saved. */
+export function nativeChannelMedia(
+  community: string,
+): ChannelMedia | undefined {
+  if (!nativeIdentityEnabled()) return undefined;
+  const forget = (
+    channels: { only: readonly string[] } | { allExcept: readonly string[] },
+  ) => nativeReadInvoke<void>("media_cache_forget", { community, channels });
+  return {
+    forget: (only) => forget({ only }),
+    retain: (allExcept) => forget({ allExcept }),
+  };
+}
+
+/** Bytes of images saved for one community. Undefined where images aren't
+ * saved by the app. */
+export async function nativeMediaUsage(community: string) {
+  if (!nativeIdentityEnabled()) return undefined;
+  return nativeReadInvoke<number>("media_cache_usage", {
+    community,
+  });
 }
 
 /** Bounded IPC chunks; native code spools, hashes, signs and streams to `PUT /upload`.
@@ -309,16 +397,88 @@ export function nativeRelaySigner(community: string): Signer {
     },
     upload: (file, signal) => nativeUpload(origin, file, signal),
     media: nativeMediaUrl,
+    verifySignatures: verifyNativeSignatures,
   };
 }
+
+export const verifyNativeSignatures: SignatureVerifier = (claims) =>
+  nativeReadInvoke<boolean[]>("relay_verify_signatures", { claims });
+
+/** Device evidence can be verified before any relay connection exists. */
+export function verifyNativeStored(values: readonly unknown[]) {
+  return parseEvents(
+    values,
+    createEventVerifier(undefined, verifyNativeSignatures),
+  );
+}
+
+export const NOT_A_COMMUNITY_ERROR =
+  "That URL didn't look like a Buzz community. Enter a community URL like wss://communities.buzz.xyz.";
 
 export async function nativeRelayInfo(community: string, signal?: AbortSignal) {
   const response = await nativeRelayRequest(community, "/", undefined, signal);
   if (!response.ok) throw new Error("Community discovery failed");
-  const info: unknown = await response.json();
+  // A website's HTML would otherwise surface WebKit's opaque JSON parse error.
+  const info: unknown = await response.json().catch(() => undefined);
   if (!info || typeof info !== "object" || Array.isArray(info))
-    throw new Error("Invalid community information");
+    throw new Error(NOT_A_COMMUNITY_ERROR);
   return info as Record<string, unknown>;
+}
+
+/** The relay's own key as NIP-11 `self` publishes it: 64 lowercase hex, else absent. */
+export function relaySelf(info: Record<string, unknown>): string | undefined {
+  const self = info.self;
+  return typeof self === "string" && /^[a-f0-9]{64}$/.test(self)
+    ? self
+    : undefined;
+}
+
+type RefusalListener = (kind: CommunityRefusal) => void;
+const refusalListeners = new Map<string, Set<RefusalListener>>();
+let refusalEvents: Promise<unknown> | undefined;
+function notifyRefusal(community: string, kind: CommunityRefusal) {
+  for (const listener of [...(refusalListeners.get(community) ?? [])])
+    listener(kind);
+}
+/** The response itself also reports a refusal, so the community's owner hears
+ * it even when the window event never arrives (its listener failed to
+ * install). The owner takes the first report; a repeat changes nothing. */
+async function announceRefusal(community: string, response: Response) {
+  const { admission } = await readApiFailure(response.clone());
+  if (admission)
+    notifyRefusal(
+      new URL(communityDestination(community).url).origin,
+      admission,
+    );
+}
+/** Native reports a community's refusal from whichever signed request met it
+ * (`observe_refusal` in relay.rs), so no command needs its own check. One
+ * window listener serves every connection; it is ready before any connects. */
+async function nativeRefusals(origin: string) {
+  refusalEvents ??= listen<{ community: string; refusal: string }>(
+    "relay-refusal",
+    ({ payload }) => {
+      const kind = payload.refusal;
+      if (kind !== "sign-in" && kind !== "access") return;
+      notifyRefusal(payload.community, kind);
+    },
+  ).catch(() => {
+    // Without it the failed response still reports the refusal (see
+    // announceRefusal); the next connect retries the listener.
+    refusalEvents = undefined;
+  });
+  await refusalEvents;
+  const community = new URL(origin).origin;
+  return (listener: RefusalListener) => {
+    const listeners = refusalListeners.get(community) ?? new Set();
+    refusalListeners.set(community, listeners);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size && refusalListeners.get(community) === listeners)
+        refusalListeners.delete(community);
+    };
+  };
 }
 
 export async function connectNativeTransport(
@@ -326,23 +486,34 @@ export async function connectNativeTransport(
   signal?: AbortSignal,
 ): Promise<ReadTransport> {
   const origin = communityDestination(community).url;
+  const observeRefusal = await nativeRefusals(origin);
   const info = await nativeRelayInfo(origin, signal);
-  const author = info.self;
-  if (typeof author !== "string" || !/^[a-f0-9]{64}$/.test(author))
-    throw new Error("Relay did not advertise its identity");
+  const author = relaySelf(info);
+  if (!author) throw new Error("Relay did not advertise its identity");
   const creation =
     Array.isArray(info.supported_nips) && info.supported_nips.includes(29);
   // NIP-CL: the relay keeps channel labels and answers label lookups.
   const channelIdentity =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-cl");
+  const soloMemberRoleUpdates =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-solo-member-role");
+  const artifactSupport =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("nip-ar");
   const searchSort =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
+  const artifacts = info.artifacts as
+    | { sync?: { version?: unknown } }
+    | undefined;
+  const artifactSync = artifacts?.sync?.version === 1;
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
     author,
+    nativeSocket,
   );
   signal?.throwIfAborted();
   const writer = transport.writer;
@@ -395,9 +566,22 @@ export async function connectNativeTransport(
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
-    audienceAuthorityCommunity: audienceAuthorityCommunity(
-      info.audience_authority,
-    ),
+    observeRefusal,
+    ...(artifactIncrementalCapability(info)
+      ? {
+          artifactIncremental: createArtifactIncrementalReader(
+            (filter, signal) =>
+              admitSignedRequest(
+                origin,
+                transport.viewer,
+                () => nativeRelayRequest(origin, "/query", [filter]),
+                signal,
+                "background",
+                artifactIncrementalFailure,
+              ),
+          ),
+        }
+      : {}),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);
@@ -459,9 +643,14 @@ export async function connectNativeTransport(
       validateLifecycleTemplate,
     ),
     channelDetails: commandWriter("channel-details", validateDetailsTemplate),
-    memberAdministration: commandWriter("member-administration", (event) =>
-      validateMemberAdministrationTemplate(event, transport.viewer ?? ""),
-    ),
+    memberAdministration: {
+      ...commandWriter("member-administration", (event) =>
+        validateMemberAdministrationTemplate(event, transport.viewer ?? ""),
+      ),
+      ...(soloMemberRoleUpdates
+        ? { soloMemberRoleUpdates: true as const }
+        : {}),
+    },
     identityArchive: commandWriter(
       "identity-archive",
       validateArchiveRequestTemplate,
@@ -469,26 +658,52 @@ export async function connectNativeTransport(
     // Artifact saves go straight to the relay, which accepts a replay of an
     // already-accepted revision, so they skip `writer`'s 15-minute retry
     // block below. Signing applies the artifact size bound.
-    configArtifacts: {
-      kinds: [ARTIFACT_KIND],
-      async sign(event, signal) {
-        if (event.kind !== ARTIFACT_KIND) throw new Error("Not an artifact");
-        const signed = await writer.sign(event, signal);
-        if (signed.kind !== ARTIFACT_KIND || signed.pubkey !== transport.viewer)
-          throw new Error("Invalid artifact signature");
-        return signed;
-      },
-      async publish(event, signal) {
-        if (event.kind !== ARTIFACT_KIND || event.pubkey !== transport.viewer)
-          throw new Error("Not this viewer's artifact");
-        return (await writer.publish(event, signal)) ?? "";
-      },
-    },
-    async openDirectMessage(pubkeys, signal) {
+    ...(artifactSupport
+      ? {
+          configArtifacts: {
+            kinds: [ARTIFACT_KIND],
+            isNotSent: (error: unknown) => error instanceof PublishNotSent,
+            async sign(event: EventTemplate, signal: AbortSignal) {
+              if (event.kind !== ARTIFACT_KIND)
+                throw new Error("Not an artifact");
+              const signed = await writer.sign(event, signal);
+              if (
+                signed.kind !== ARTIFACT_KIND ||
+                signed.pubkey !== transport.viewer
+              )
+                throw new Error("Invalid artifact signature");
+              return signed;
+            },
+            async publish(event: RelayEvent, signal: AbortSignal) {
+              if (
+                event.kind !== ARTIFACT_KIND ||
+                event.pubkey !== transport.viewer
+              )
+                throw new Error("Not this viewer's artifact");
+              return (await writer.publish(event, signal)) ?? "";
+            },
+          },
+        }
+      : {}),
+    async openDirectMessage(pubkeys, signal, history) {
       signal.throwIfAborted();
       const id = await invoke<string>("relay_direct_message", {
         community: origin,
         pubkeys,
+        ...(history
+          ? {
+              channel: history.channelId,
+              history:
+                history.includeHistory === "ask"
+                  ? "ask"
+                  : history.includeHistory
+                    ? "include"
+                    : undefined,
+            }
+          : {}),
+      }).catch((error: unknown) => {
+        // The command rejects with its refusal's words; callers expect an Error.
+        throw typeof error === "string" ? new Error(error) : error;
       });
       signal.throwIfAborted();
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))
@@ -603,7 +818,9 @@ export async function connectNativeTransport(
     },
     async readAgentLibrary(signal) {
       signal.throwIfAborted();
-      const result = await invoke<AgentLibrary>("relay_agent_library");
+      const result = await invoke<AgentLibrary>("relay_agent_library", {
+        community: origin,
+      });
       signal.throwIfAborted();
       return result;
     },
@@ -611,25 +828,54 @@ export async function connectNativeTransport(
       agent: string,
       signal: AbortSignal,
       slug?: string,
+      onPage?: (page: MemoryListing) => void,
     ): Promise<MemoryListing> {
       if (!memoryAgent(agent, transport.viewer))
         throw new Error("Invalid memory target");
-      const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+      // A streamed read has no overall deadline: its pages arrive as they
+      // decode, and native code bounds each one.
+      const bounded = onPage
+        ? signal
+        : AbortSignal.any([signal, AbortSignal.timeout(10000)]);
       bounded.throwIfAborted();
+      // Aborting stops native paging and drops what it decoded.
+      const id = crypto.randomUUID();
+      const cancel = () => {
+        invoke("relay_http_cancel", { id }).catch(() => {});
+      };
+      bounded.addEventListener("abort", cancel, { once: true });
       let result: unknown;
       try {
         result = await invoke<unknown>("relay_agent_memories_read", {
           community: origin,
           agent,
           slug: slug ?? null,
+          id,
+          onPage: onPage
+            ? new Channel<unknown>((page) => {
+                if (bounded.aborted) return;
+                let listing: MemoryListing;
+                try {
+                  listing = memoryListing(page);
+                } catch {
+                  // The result is validated in full; an invalid page only
+                  // goes unshown.
+                  return;
+                }
+                onPage(listing);
+              })
+            : null,
         });
       } catch (reason) {
+        bounded.throwIfAborted();
         if (reason === "MemoryDenied") {
           const denied = new Error("Memory read failed");
           denied.name = "MemoryDenied";
           throw denied;
         }
         throw reason;
+      } finally {
+        bounded.removeEventListener("abort", cancel);
       }
       bounded.throwIfAborted();
       return memoryListing(result);
@@ -728,6 +974,49 @@ export async function connectNativeTransport(
         signal.throwIfAborted();
         await acceptReadStatePublish(response, event.id);
       },
+      async decodeFollows(events: readonly RelayEvent[], signal: AbortSignal) {
+        signal.throwIfAborted();
+        const decoded = await nativeReadInvoke<
+          { eventId: string; payload: unknown }[]
+        >("relay_decode_thread_follows", { community: origin, events });
+        signal.throwIfAborted();
+        return decoded;
+      },
+      async signFollows(intent: ThreadFollowsSigning, signal: AbortSignal) {
+        signal.throwIfAborted();
+        const event = eventDto(
+          await nativeReadInvoke("relay_sign_thread_follows", {
+            community: origin,
+            intent,
+          }),
+        );
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !followCoordinate(event))
+          throw new Error("Invalid thread-follows event");
+        return event;
+      },
+      async publishFollows(event: RelayEvent, signal: AbortSignal) {
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !followCoordinate(event))
+          throw new Error("Invalid thread-follows event");
+        const response = await admitSignedRequest(
+          origin,
+          transport.viewer,
+          async () => {
+            const result = await nativeReadInvoke<{
+              status: number;
+              headers: Record<string, string>;
+              body: string;
+            }>("relay_publish_thread_follows", { community: origin, event });
+            return nativeResponse(result);
+          },
+          signal,
+          "foreground",
+          readStateRefusal,
+        );
+        signal.throwIfAborted();
+        await acceptReadStatePublish(response, event.id);
+      },
     },
     ...(readCommunity
       ? {
@@ -778,9 +1067,14 @@ export async function connectNativeTransport(
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
+    ...(artifactSync ? { artifactSync: true as const } : {}),
+    verifiedProfiles: verifiedProfileAuthority(info),
+    async readVerifiedProfileAuthority(signal) {
+      return verifiedProfileDiscovery(await nativeRelayInfo(origin, signal));
+    },
     writer: {
       ...writer,
-      kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,
+      kinds: [...nativeWriteKinds, ...(creation ? [9007] : [])],
       async publish(event, signal) {
         // The relay rejects old events before deduplication. An explicit retry
         // can confirm the original ID, but must never silently re-date it.
@@ -798,9 +1092,7 @@ export async function connectNativeTransport(
             signal,
           );
           if (found.some((value) => value.id === event.id)) return "";
-          throw new PublishRejected(
-            "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.",
-          );
+          throw new PublishRejected(OLD_EVENT_NOT_FOUND);
         }
         return (await writer.publish(event, signal)) ?? "";
       },

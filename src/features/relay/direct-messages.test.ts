@@ -1,18 +1,70 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import { createRelaySession } from "./session";
-import { keypair, profile, roster, signed } from "./testing";
+import { createDirectMessages, NeedsHistoryChoice } from "./direct-messages";
+import type { RelayReader } from "./reader";
+import type { VerifiedProfileAuthority } from "./verified-profile";
+import { keypair, profile, roster, signed, type Key } from "./testing";
+import { bindNames, type IdentityNames } from "../identity-names/service";
+import { agentDirectory } from "../identity-names/testing";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { PublishRejected } from "./outbox";
-import type { ReadFilter, RelayEvent } from "./events";
+import { eventDto, type ReadFilter, type RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
 
 const id = "11111111-1111-4111-8111-111111111111";
+const namingDirectory: IdentityNames = {
+  bind: (source) =>
+    bindNames(source, {
+      snapshot: () => [agentDirectory],
+      subscribe: () => () => {},
+    }),
+  register() {},
+};
+/** An agent's signed profile, its owner attested (NIP-OA). Newer than
+ * `setup`'s profiles, so it replaces one. */
+async function agentProfile(agent: Key, name: string, owner: Key) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${agent.pubkey}:kind=0`),
+  );
+  return signed(agent, {
+    kind: 0,
+    content: JSON.stringify({ name, is_agent: true }),
+    tags: [
+      [
+        "auth",
+        owner.pubkey,
+        "kind=0",
+        bytesToHex(schnorr.sign(new Uint8Array(digest), owner.secret)),
+      ],
+    ],
+    created_at: 1_700_000_001,
+  });
+}
 function setup(
-  options: { badRoster?: boolean; untrusted?: boolean; lagging?: boolean } = {},
+  options: {
+    badRoster?: boolean;
+    untrusted?: boolean;
+    lagging?: boolean;
+    human?: boolean;
+    /** A member the DM holds that the viewer did not name: one of its
+     * people's agents, as only the relay knows, with no agent profile. */
+    extra?: boolean;
+    /** Other profiles the relay holds, beside these people's. A newer one
+     * for `other` replaces its profile. */
+    profiles?: (keys: { other: Key; agentOwner: Key }) => Promise<RelayEvent[]>;
+    /** Label identities as the app does, telling namesakes apart. */
+    names?: boolean;
+  } = {},
 ) {
   const viewer = keypair(),
     other = keypair(),
+    agentOwner = keypair(),
     relay = keypair(),
-    stranger = keypair();
+    stranger = keypair(),
+    unnamed = keypair();
   const authority = options.untrusted ? stranger : relay;
   const discovery = [
     signed(authority, {
@@ -26,23 +78,34 @@ function setup(
     roster(authority, id, [
       viewer.pubkey,
       options.badRoster ? stranger.pubkey : other.pubkey,
+      ...(options.extra ? [unnamed.pubkey] : []),
     ]),
   ];
   const query = vi.fn(async (filters: readonly ReadFilter[]) => {
     if (filters.some((f) => f.kinds?.includes(0)))
       return [
         profile(viewer, { name: "Me" }),
-        profile(other, {
-          name: "Other",
-          picture: "https://example.com/avatar.png",
-          is_agent: true,
-          about: "Unused biography",
-        }),
+        options.human
+          ? profile(other, { name: "Other" })
+          : signed(other, {
+              kind: 0,
+              content: JSON.stringify({
+                name: "Other",
+                picture: "https://example.com/avatar.png",
+                is_agent: true,
+                about: "Unused biography",
+              }),
+              tags: [["auth", agentOwner.pubkey, "", "a".repeat(128)]],
+            }),
+        ...(options.extra ? [profile(unnamed, { name: "Unnamed" })] : []),
+        ...((await options.profiles?.({ other, agentOwner })) ?? []),
       ];
     return options.lagging &&
       !filters.every((filter) => filter.consistency === "strong")
       ? []
-      : discovery;
+      : discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        );
   });
   const publish = vi.fn<RelayWriter["publish"]>(async () => {});
   const openDirectMessage = vi.fn(async () => id);
@@ -59,12 +122,16 @@ function setup(
         publish,
       },
     },
-    { outboxStorage: { load: () => [], save: () => {} } },
+    {
+      outboxStorage: { load: () => [], save: () => {} },
+      ...(options.names ? { identityNames: namingDirectory } : {}),
+    },
   );
   return {
     owner,
     viewer,
     other,
+    agentOwner,
     query,
     publish,
     openDirectMessage,
@@ -104,6 +171,30 @@ it("opens using signed exact membership, then confirms the regular outbox messag
     t.owner.dispose();
   }
 });
+it.each([
+  { human: false, tagged: true },
+  { human: true, tagged: false },
+])(
+  "a first plain message to a fresh 1:1 DM wakes only an agent partner: %j",
+  async ({ human, tagged }) => {
+    // New Message reads people outside the shared profile cache, so open is
+    // the first point that can classify the partner before the first send.
+    const t = setup({ human });
+    try {
+      expect(t.owner.session.profiles.snapshot().has(t.other.pubkey)).toBe(
+        false,
+      );
+      await t.dm.open([t.other.pubkey], new AbortController().signal);
+      t.owner.session.messages.send(id, "hello", []);
+      await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+      const tags = t.publish.mock.calls[0]?.[0].tags ?? [];
+      expect(tags.some(([name]) => name === "p")).toBe(tagged);
+      if (tagged) expect(tags).toContainEqual(["p", t.other.pubkey]);
+    } finally {
+      t.owner.dispose();
+    }
+  },
+);
 it("opens a DM before its signed discovery reaches the replica", async () => {
   const t = setup({ lagging: true });
   try {
@@ -113,7 +204,7 @@ it("opens a DM before its signed discovery reaches the replica", async () => {
     expect(t.owner.session.channels.get?.(id)?.members).toEqual(
       [t.viewer.pubkey, t.other.pubkey].sort(),
     );
-    expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
+    expect(t.query.mock.calls.map(([filters]) => filters)).toContainEqual([
       expect.objectContaining({ consistency: "strong", "#d": [id] }),
     ]);
   } finally {
@@ -137,6 +228,162 @@ it.each([{ badRoster: true }, { untrusted: true }])(
     }
   },
 );
+it("opens the DM of these people when it also holds an agent with no agent profile", async () => {
+  const t = setup({ extra: true });
+  try {
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).resolves.toBe(id);
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("adds to a DM through the host and confirms the signed membership", async () => {
+  const t = setup();
+  const opened = vi.fn();
+  t.dm.subscribeOpened(opened);
+  try {
+    await expect(
+      t.dm.add(id, [t.other.pubkey], true, new AbortController().signal),
+    ).resolves.toBe(id);
+    expect(t.openDirectMessage).toHaveBeenCalledWith(
+      [t.other.pubkey],
+      expect.any(AbortSignal),
+      { channelId: id, includeHistory: true },
+    );
+    // Growing in place is not opening another conversation.
+    expect(opened).not.toHaveBeenCalled();
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("a refusal that needs the history choice is told apart from other refusals", async () => {
+  const t = setup();
+  try {
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error("needs-choice: history"),
+    );
+    await expect(
+      t.dm.add(id, [t.other.pubkey], "ask", new AbortController().signal),
+    ).rejects.toBeInstanceOf(NeedsHistoryChoice);
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error("Couldn’t add them. Try again."),
+    );
+    await expect(
+      t.dm.add(id, [t.other.pubkey], "ask", new AbortController().signal),
+    ).rejects.not.toBeInstanceOf(NeedsHistoryChoice);
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("names the agent whose add policy refused an open or an addition", async () => {
+  const t = setup();
+  try {
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:owner_only (agent ${t.other.pubkey})`),
+    );
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).rejects.toThrow("Only the owner of Other can add it to a DM.");
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:nobody (agent ${t.other.pubkey})`),
+    );
+    const refused = t.dm.add(
+      id,
+      [t.other.pubkey],
+      "ask",
+      new AbortController().signal,
+    );
+    await expect(refused).rejects.toThrow(
+      "Couldn’t add them. Other can’t be added to a DM.",
+    );
+    await expect(refused).rejects.not.toBeInstanceOf(NeedsHistoryChoice);
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("names the agent's verified owner as the one to ask", async () => {
+  const t = setup({
+    profiles: async ({ other, agentOwner }) => [
+      eventDto(await agentProfile(other, "Other", agentOwner)),
+      profile(agentOwner, { name: "Morgan" }),
+    ],
+  });
+  try {
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:owner_only (agent ${t.other.pubkey})`),
+    );
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).rejects.toThrow("Only Morgan can add Other to a DM.");
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("tells a refused agent apart from another agent of its name", async () => {
+  const namesake = keypair(),
+    wes = keypair();
+  const t = setup({
+    names: true,
+    profiles: async ({ agentOwner }) => [
+      profile(agentOwner, { name: "Morgan" }),
+      profile(wes, { name: "Wes" }),
+      await agentProfile(namesake, "Other", wes),
+    ],
+  });
+  try {
+    // Other's own owner claim is unverified, so it names no one to ask.
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:owner_only (agent ${t.other.pubkey})`),
+    );
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).rejects.toThrow("Only the owner of Morgan’s Other can add it to a DM.");
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("tells a refused agent apart from a person of its name", async () => {
+  const person = keypair();
+  const t = setup({
+    names: true,
+    profiles: async () => [profile(person, { name: "Other" })],
+  });
+  try {
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:nobody (agent ${t.other.pubkey})`),
+    );
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).rejects.toThrow("Other (agent) can’t be added to a DM.");
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("refuses without the agent's name when its profile cannot be read", async () => {
+  const t = setup();
+  try {
+    const unknown = "e".repeat(64);
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:owner_only (agent ${unknown})`),
+    );
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).rejects.toThrow("Only the owner of this agent can add it to a DM.");
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("refuses an addition the signed membership does not show", async () => {
+  const t = setup({ badRoster: true });
+  try {
+    await expect(
+      t.dm.add(id, [t.other.pubkey], false, new AbortController().signal),
+    ).rejects.toThrow("participants");
+  } finally {
+    t.owner.dispose();
+  }
+});
 it("rejects self, duplicate, empty and over-limit recipients before contacting the host", async () => {
   const t = setup();
   try {
@@ -186,6 +433,7 @@ it("reads paginated verified profiles, excludes the viewer, and cancels with the
           name: "Other",
           picture: "https://example.com/avatar.png",
           isAgent: true,
+          ownerPubkey: t.agentOwner.pubkey,
         },
       ],
       hasMore: false,
@@ -208,29 +456,42 @@ it("reads paginated verified profiles, excludes the viewer, and cancels with the
   }
 });
 
-it("reads an exact public-key profile without widening directory search", async () => {
-  const t = setup();
-  try {
-    const result = await t.dm.people(
-      t.other.pubkey,
-      1,
-      new AbortController().signal,
-    );
-    expect(result.people).toEqual([
-      expect.objectContaining({ pubkey: t.other.pubkey, name: "Other" }),
-    ]);
-    expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
-      {
-        kinds: [0],
-        authors: [t.other.pubkey],
-        limit: 30,
-        page: 1,
-      },
-    ]);
-  } finally {
-    t.owner.dispose();
-  }
-});
+it.each([
+  ["hex", (pubkey: string) => pubkey],
+  ["uppercase hex", (pubkey: string) => pubkey.toUpperCase()],
+  ["an npub", (pubkey: string) => npubEncode(pubkey)],
+  ["a nostr: npub", (pubkey: string) => `nostr:${npubEncode(pubkey)}`],
+])(
+  "reads an exact public-key profile from %s without widening directory search",
+  async (_case, typed) => {
+    const t = setup();
+    try {
+      const result = await t.dm.people(
+        typed(t.other.pubkey),
+        1,
+        new AbortController().signal,
+      );
+      expect(result.people).toEqual([
+        expect.objectContaining({ pubkey: t.other.pubkey, name: "Other" }),
+      ]);
+      expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
+        {
+          kinds: [0],
+          authors: [t.other.pubkey],
+          limit: 30,
+          page: 1,
+        },
+      ]);
+      expect(
+        t.query.mock.calls.some(([filters]) =>
+          filters.some((filter) => filter.search !== undefined),
+        ),
+      ).toBe(false);
+    } finally {
+      t.owner.dispose();
+    }
+  },
+);
 
 it.each(["", "C"])(
   "keeps large-profile pages within the read budget without skipping matches: %s",
@@ -308,4 +569,246 @@ describe("directory browsing beyond the shared profile budget", () => {
       t.owner.dispose();
     }
   });
+});
+
+describe("verified names for a search page", () => {
+  const assertion = (
+    author: ReturnType<typeof keypair>,
+    subject: string,
+    names: { display: string; full?: string },
+    created_at = 1_000_000,
+  ) =>
+    signed(author, {
+      kind: 30382,
+      created_at,
+      content: "",
+      tags: [
+        ["d", subject],
+        ["p", subject],
+        ["active", "true"],
+        ["display_name", names.display],
+        ["username", names.display],
+        ["issuer_label", "Example"],
+        ["verified_at", String(created_at)],
+        ...(names.full ? [["full_name", names.full]] : []),
+      ],
+    });
+  function verifiedSetup(advertised: boolean) {
+    const viewer = keypair(),
+      relay = keypair(),
+      stranger = keypair(),
+      fake = keypair(),
+      renamed = keypair(),
+      unasked = keypair();
+    const events = [
+      assertion(relay, fake.pubkey, {
+        display: "fname",
+        full: "Fake Name",
+      }),
+      assertion(
+        stranger,
+        fake.pubkey,
+        { display: "forged", full: "Forged" },
+        2_000_000,
+      ),
+      assertion(relay, renamed.pubkey, { display: "old", full: "Old Name" }),
+      // A newer malformed head hides the older name at its address.
+      signed(relay, {
+        kind: 30382,
+        created_at: 2_000_000,
+        content: "",
+        tags: [
+          ["d", renamed.pubkey],
+          ["p", renamed.pubkey],
+        ],
+      }),
+      assertion(relay, unasked.pubkey, { display: "unasked" }),
+    ];
+    // Transports admit signed events; the relay key decides, not the signature alone.
+    const query = vi.fn(async (_filters: readonly ReadFilter[]) =>
+      events.map((event) => eventDto(event)),
+    );
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query,
+      ...(advertised
+        ? { verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false } }
+        : {}),
+    });
+    return { owner, query, relay, fake, renamed };
+  }
+
+  it("reads one bounded filter by the relay and keeps only its valid newest heads", async () => {
+    const t = verifiedSetup(true);
+    try {
+      const verified = await t.owner.session.directMessages.verified(
+        [t.fake.pubkey, t.renamed.pubkey],
+        new AbortController().signal,
+      );
+      expect(t.query).toHaveBeenCalledOnce();
+      expect(t.query.mock.calls[0]?.[0]).toEqual([
+        {
+          kinds: [30382],
+          authors: [t.relay.pubkey],
+          // The reader canonicalizes value order.
+          "#d": [t.fake.pubkey, t.renamed.pubkey].sort(),
+          limit: 2,
+        },
+      ]);
+      expect(verified?.authority.pubkey).toBe(t.relay.pubkey);
+      expect([...(verified?.profiles.keys() ?? [])]).toEqual([t.fake.pubkey]);
+      expect(verified?.profiles.get(t.fake.pubkey)).toMatchObject({
+        displayName: "fname",
+        username: "fname",
+        fullName: "Fake Name",
+      });
+      // The shared profile views are not filled by a search read.
+      expect(
+        t.owner.session.profiles.snapshot().get(t.fake.pubkey),
+      ).toBeUndefined();
+    } finally {
+      t.owner.dispose();
+    }
+  });
+
+  it("reads nothing where the community advertises no verified names", async () => {
+    const t = verifiedSetup(false);
+    try {
+      const verified = await t.owner.session.directMessages.verified(
+        [t.fake.pubkey],
+        new AbortController().signal,
+      );
+      // Nothing was checked, so a caller must not remember it as absent.
+      expect(verified).toBeUndefined();
+      expect(t.query).not.toHaveBeenCalled();
+    } finally {
+      t.owner.dispose();
+    }
+  });
+
+  it("cancels with the caller", async () => {
+    const t = verifiedSetup(true);
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await expect(
+        t.owner.session.directMessages.verified(
+          [t.fake.pubkey],
+          controller.signal,
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      t.owner.dispose();
+    }
+  });
+
+  it.each([true, false])(
+    "names a searched page without a read where the relay is searchable (%s)",
+    async (searchable) => {
+      const viewer = keypair(),
+        relay = keypair(),
+        fake = keypair(),
+        plain = keypair();
+      const head = assertion(relay, fake.pubkey, {
+        display: "fname",
+        full: "Fake Name",
+      });
+      const query = vi.fn(async (_filters: readonly ReadFilter[]) => [
+        eventDto(head),
+      ]);
+      const owner = createRelaySession({
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        media: () => undefined,
+        query,
+        searchProfiles: async () =>
+          [
+            profile(fake, { name: "Fak" }),
+            head,
+            profile(plain, { name: "Plain" }),
+          ].map((event) => eventDto(event)),
+        verifiedProfiles: {
+          pubkey: relay.pubkey,
+          multipleIssuers: false,
+          ...(searchable ? { searchable: true as const } : {}),
+        },
+      });
+      try {
+        const signal = new AbortController().signal;
+        const { people } = await owner.session.directMessages.people(
+          "fname",
+          1,
+          signal,
+        );
+        expect(people.map(({ pubkey }) => pubkey)).toEqual([
+          fake.pubkey,
+          plain.pubkey,
+        ]);
+        const verified = await owner.session.directMessages.verified(
+          [fake.pubkey, plain.pubkey],
+          signal,
+        );
+        expect(query).toHaveBeenCalledTimes(searchable ? 0 : 1);
+        expect([...(verified?.profiles.keys() ?? [])]).toEqual([fake.pubkey]);
+        expect(verified?.profiles.get(fake.pubkey)).toMatchObject({
+          displayName: "fname",
+          fullName: "Fake Name",
+        });
+        // The search answered once; asking again reads.
+        await owner.session.directMessages.verified([fake.pubkey], signal);
+        expect(query).toHaveBeenCalledTimes(searchable ? 1 : 2);
+      } finally {
+        owner.dispose();
+      }
+    },
+  );
+
+  const changes: [string, () => VerifiedProfileAuthority | undefined][] = [
+    ["withdrawn", () => undefined],
+    ["rotated", () => ({ pubkey: keypair().pubkey, multipleIssuers: false })],
+  ];
+  it.each(changes)(
+    "checks nothing when the authority is %s during the read",
+    async (_change, next) => {
+      const relay = keypair(),
+        fake = keypair();
+      let authority: VerifiedProfileAuthority | undefined = {
+        pubkey: relay.pubkey,
+        multipleIssuers: false,
+      };
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const directoryReader = {
+        async read() {
+          await held;
+          return [
+            assertion(relay, fake.pubkey, {
+              display: "fname",
+              full: "Fake Name",
+            }),
+          ];
+        },
+      } as unknown as RelayReader;
+      const directMessages = createDirectMessages(
+        null,
+        directoryReader,
+        undefined as never,
+        undefined,
+        undefined,
+        new AbortController().signal,
+        directoryReader,
+        { verifiedHeads: () => new Map() } as never,
+        () => authority,
+      );
+      const pending = directMessages.verified(
+        [fake.pubkey],
+        new AbortController().signal,
+      );
+      authority = next();
+      release();
+      await expect(pending).resolves.toBeUndefined();
+    },
+  );
 });

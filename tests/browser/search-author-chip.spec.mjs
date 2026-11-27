@@ -21,7 +21,10 @@ test("selected author remains a removable chip through typing and date completio
     name: "Remove author Fixture Reader",
   });
   await expect(chip).toHaveCount(1);
-  await expect(chip).toHaveAttribute("title", npubEncode(app.viewer));
+  // The npub is the chip's hover hint, not its text.
+  await chip.hover();
+  await expect(page.getByRole("tooltip")).toHaveText(npubEncode(app.viewer));
+  await page.mouse.move(0, 0);
   await expect(input).toHaveValue("");
   await expect(input).toBeFocused();
   await expect(
@@ -43,8 +46,12 @@ test("selected author remains a removable chip through typing and date completio
     .getByRole("option", { name: /Yesterday/ })
     .click();
   await expect(chip).toBeVisible();
-  await expect(input).toHaveValue(/deploy before:\d{4}-\d{2}-\d{2}/);
-  await expect(input).not.toHaveValue(new RegExp(app.viewer));
+  await expect(
+    dialog.getByRole("button", {
+      name: /^Remove date before:\d{4}-\d{2}-\d{2}$/,
+    }),
+  ).toBeVisible();
+  await expect(input).toHaveValue("deploy ");
   await expect
     .poll(() =>
       app.report.queries.some(
@@ -65,7 +72,7 @@ test("selected author remains a removable chip through typing and date completio
   await page.emulateMedia({ colorScheme: "dark" });
   await verifyLayout();
   await chip.hover();
-  await expect(chip).toHaveAttribute("title", npubEncode(app.viewer));
+  await expect(page.getByRole("tooltip")).toHaveText(npubEncode(app.viewer));
   await chip.click();
   await expect(chip).toHaveCount(0);
   await expect(input).toHaveValue("deploy");

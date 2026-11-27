@@ -37,7 +37,9 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   page,
   app,
 }) => {
-  await open(page, app);
+  // The read ahead stays pending: the old root is not in the loaded window.
+  await open(page, app, { hold: true });
+  const [ahead] = app.pending;
   const initialHeadQueries = app.report.queries.filter(
     (q) => q.filter.top_level,
   ).length;
@@ -101,7 +103,11 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     app.report.queries.some((q) => q.filter.thread_cursor !== undefined),
     "the exact reply requires a second thread page",
   ).toBe(true);
-  expect(app.report.queries.filter((q) => q.filter.until)).toHaveLength(0);
+  expect(
+    app.report.queries.filter(
+      (q) => q.filter.until && q.filter !== ahead?.filter,
+    ),
+  ).toHaveLength(0);
   // Settings temporarily takes the rail without disposing the routed thread.
   const threadElement = page.locator('[aria-label="Thread"]');
   await threadElement.evaluate((element) => {
@@ -175,7 +181,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   ).toBe(true);
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   // Closing the profile returns to its retained thread tab.
@@ -183,7 +189,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   await page
     .locator(
-      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "], button[aria-label="Close thread"]',
     )
     .click();
   await expect(
@@ -192,7 +198,31 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   await expect(
     page.locator(`[data-message-id="${app.exact.target.id}"]`),
   ).toHaveCount(0);
+  // Local tab removal precedes the dismissal's native return. Let that land
+  // before Back, so neither pending traversal can supersede the fresh open.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => window.fixtureNavigation.snapshot().entry.target.messageId,
+      ),
+    )
+    .toBeUndefined();
+  await expect.poll(() => status(page)).toBe("opened");
+  const closedVisit = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().entry.id,
+  );
   await page.getByRole("button", { name: "Go back", exact: true }).click();
+  // The thread was already absent before Back. Wait for the traversal itself
+  // before issuing a fresh open, or its late pop can supersede that intent.
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.fixtureNavigation.snapshot().entry.id),
+    )
+    .not.toBe(closedVisit);
+  await expect.poll(() => status(page)).toBe("opened");
+  // Explicit close retires the thread's visits; reopening is a fresh intent.
+  await expect(thread(page)).toHaveCount(0);
+  expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   await expect(
     thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
   ).toBeFocused();
@@ -350,7 +380,7 @@ for (const nested of [false, true])
             intercepted = resolve;
           });
           let first = true;
-          await page.route("**/api/relay/**/query", async (route) => {
+          await page.route("**/api/relay/primary/query", async (route) => {
             if (
               !first ||
               !route
@@ -368,7 +398,7 @@ for (const nested of [false, true])
             `[data-message-id="${app.exact.target.id}"]`,
           );
           const close = page.locator(
-            '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+            '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "], button[aria-label="Close thread"]',
           );
           let originalRow;
           try {
@@ -379,13 +409,14 @@ for (const nested of [false, true])
             await expect.poll(() => status(page)).toBe("opened");
             await expect(row).toBeFocused();
             await expect(row).toBeInViewport();
+            // The held read may still bring the parent: nothing calls it gone.
             if (nested)
               await expect(
                 thread(page).getByText(
                   "Earlier reply unavailable in loaded history.",
                   { exact: true },
                 ),
-              ).toBeVisible();
+              ).toHaveCount(0);
             originalRow = await row.elementHandle();
             if (moveFocus) await close.focus();
           } finally {
@@ -438,17 +469,32 @@ test("unknown target fails without channel-head success and retries in the same 
   expect(await openTarget(page, target(app, "e".repeat(64)))).toEqual({
     status: "failed",
     reason: "not-found",
+    presented: true,
   });
+  // The thread shows the failure in place; the conversation stays open.
   await expect(
-    page.getByRole("heading", { name: "This destination couldn’t open" }),
+    thread(page).getByText("This message isn’t available."),
   ).toBeVisible();
   const visit = await page.evaluate(
     () => window.fixtureNavigation.snapshot().entry.id,
   );
-  await page
-    .getByRole("button", { name: "Retry navigation", exact: true })
+  // The failure is presented, so status stays failed; the reads prove retry.
+  const targetReads = () =>
+    app.report.queries.filter(({ filter }) =>
+      [filter.ids, filter["#e"]].some((ids) =>
+        ids?.some((id) => id === "e".repeat(64) || id === "f".repeat(64)),
+      ),
+    ).length;
+  const before = targetReads();
+  expect(before).toBeGreaterThan(0);
+  await thread(page)
+    .getByRole("button", { name: "Try again", exact: true })
     .click();
-  await expect.poll(() => status(page)).toBe("failed");
+  await expect.poll(targetReads).toBeGreaterThan(before);
+  await expect(
+    thread(page).getByText("This message isn’t available."),
+  ).toBeVisible();
+  expect(await status(page)).toBe("failed");
   expect(
     await page.evaluate(() => window.fixtureNavigation.snapshot().entry.id),
   ).toBe(visit);
@@ -468,7 +514,7 @@ test("superseding a held exact read cancels it; a late response cannot steal foc
   const held = new Promise((resolve) => {
     release = resolve;
   });
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (!filters?.some((filter) => filter.ids?.includes(app.exact.target.id)))
       return route.continue();
@@ -502,7 +548,8 @@ for (const selected of ["reply", "root"]) {
     page,
     app,
   }) => {
-    await open(page, app);
+    // The read ahead stays pending: the old root is not in the loaded window.
+    await open(page, app, { hold: true });
     const id = selected === "root" ? app.exact.root.id : app.exact.target.id;
     const destination = {
       ...target(app, id),
@@ -523,7 +570,7 @@ for (const selected of ["reply", "root"]) {
     let reconnecting = false;
     let rosterRequested = false;
     let exactReads = 0;
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       const filters = route.request().postDataJSON();
       if (
         reconnecting &&
@@ -602,7 +649,7 @@ test("post-success membership loss removes the thread and live updates do not sn
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   const region = thread(page);
   const channelButton = page.locator(
-    '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "], button[aria-label="Close thread"]',
   );
   await expect(region.locator("[data-message-id]")).toHaveCount(81);
   // A shorter edit can legitimately clamp a bottom-aligned scroll offset.
@@ -744,7 +791,7 @@ readingTest(
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
       await page
         .locator(
-          '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+          '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "], button[aria-label="Close thread"]',
         )
         .click();
       await expect(history).toBeVisible();
@@ -808,6 +855,11 @@ test.describe("fractional row geometry", () => {
 readTest(
   "exact reveal uses ordinary dwell rather than marking read at open",
   async ({ page, app }) => {
+    // The revealed target starts its 300 ms dwell as navigation completes, so
+    // only a paused clock keeps "nothing read at open" from racing that dwell.
+    // Pause at a fixed offset, not the page's already-ticking clock.
+    const base = Date.now();
+    await page.clock.install({ time: base });
     await open(page, app);
     await page.evaluate(() =>
       window.fixtureRelay.snapshot().session.unread.ensure(),
@@ -820,7 +872,7 @@ readTest(
     const seen = new Promise((resolve) => {
       intercepted = resolve;
     });
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       if (
         !route
           .request()
@@ -833,23 +885,42 @@ readTest(
       await route.continue().catch(() => {});
     });
     const before = app.report.readPublications.length;
+    const frontiers = async () =>
+      (await readJournal(page))?.state.frontiers ?? {};
+    await page.clock.pauseAt(base + 20_000);
     try {
-      expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+      const opening = openTarget(page, target(app));
+      // Exact reveal requires real focus for two animation frames. Advance one
+      // frame at a time until its owner completes, without earning reading dwell.
+      await expect
+        .poll(async () => {
+          await page.clock.runFor(16);
+          return status(page);
+        })
+        .toBe("opened");
+      expect(await opening).toEqual({ status: "opened" });
       await seen;
+      // Opening marks nothing read locally, so nothing can have been published.
+      expect(await frontiers()).toEqual({});
       expect(app.report.readPublications.length).toBe(before);
       await expect(
         thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
       ).toBeFocused();
+      // Dwell then marks the target, the only row shown while its context is
+      // held, read locally before the publish debounce even starts; the
+      // debounced, signed publication itself is covered by unread.spec.mjs.
+      await page.clock.runFor(300);
+      await expect.poll(frontiers).toEqual({
+        [`msg:${app.exact.target.id}`]: app.exact.target.created_at,
+      });
     } finally {
       release();
     }
+    await page.clock.resume();
     await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
     await expect(
       thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
     ).toBeFocused();
-    await expect
-      .poll(() => app.report.readPublications.length)
-      .toBeGreaterThan(before);
   },
 );
 
@@ -992,7 +1063,7 @@ for (const movedFocus of [false, true])
       await row.getByRole("button", { name: "Reveal spoiler" }).click();
       const original = await row.elementHandle();
       const close = page.locator(
-        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "], button[aria-label="Close thread"]',
       );
       const focusTarget = movedFocus ? close : row;
       await focusTarget.focus();
@@ -1086,7 +1157,7 @@ liveTest(
         .postDataJSON()
         .some((filter) => filter.ids?.includes(app.exact.target.id));
     let first = true;
-    await page.route("**/api/relay/**/query", async (route) => {
+    await page.route("**/api/relay/primary/query", async (route) => {
       if (!first || !isExactQuery(route.request())) return route.continue();
       first = false;
       seen.resolve();
@@ -1101,6 +1172,14 @@ liveTest(
       // retained-range repair finished, not merely that its first lookup returned.
       app.relay.disconnect("primary");
       const missedReply = app.reply(app.exact.root.id, false, false);
+      // A busy gap: the replay reaches its limit without the reply, so only
+      // the thread's repair read can restore it.
+      const channel = app.exact.root.tags.find(([key]) => key === "h")[1];
+      app.relay.replayNext(
+        "primary",
+        channel,
+        Array.from({ length: 500 }, () => app.exact.root),
+      );
       await seen.promise;
       await expect
         .poll(() => app.relay.hasRoute("primary", "alpha"))
@@ -1175,7 +1254,7 @@ liveTest(
     await expect(region).toHaveAttribute("tabindex", "0");
     await page
       .locator(
-        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "]',
       )
       .focus();
     await page.keyboard.press("Tab");
@@ -1193,7 +1272,7 @@ liveTest(
       0,
     );
     await expect(
-      region.getByRole("button", { name: "Retry thread", exact: true }),
+      region.getByRole("button", { name: "Try again", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("textbox", { name: "Reply to thread", exact: true }),

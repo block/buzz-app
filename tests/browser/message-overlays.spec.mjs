@@ -1,14 +1,26 @@
 import { hoverMessage } from "./message-actions.mjs";
+import { settleDialogMotion } from "./navigation.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { settle } from "./timeline.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 // Browser-only: real nested hover, deferred toolbar mounting, and top-layer
 // visibility must agree with the production reaction row and preview wiring.
 test("reaction previews and the inline picker do not reveal message hover actions", async ({
   page,
 }) => {
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"/>',
+    }),
+  );
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&narrow");
   const row = page.locator("[data-message-id]").first();
+  // Failed emoji retries rewrap the prose and move reactions off a still pointer.
+  await expect(
+    row.locator('p img[data-copy-emoji=":party:"]'),
+  ).toHaveJSProperty("naturalWidth", 22);
   const reaction = row.locator('button[data-reaction="👍"]');
   const actions = row.getByRole("group", { name: "Message actions" });
   const body = row.locator("[data-message-action-anchor]").first();
@@ -119,28 +131,20 @@ test("video speed options escape the thread and restore focus after selection an
   // Mark this as a reader gesture and capture the resized viewport before
   // assigning the exact clipping geometry used by this paint-order test.
   await scroller.dispatchEvent("wheel", { deltaY: -1 });
-  await trigger.evaluate((button) => {
+  const scrollTop = await trigger.evaluate((button) => {
     const scroller = button.closest("[data-message-scroller]");
-    // WebKit truncates fractional scroll requests. Round the final position so
-    // fractional message heights still reach the same constrained-menu setup.
-    scroller.scrollTop = Math.round(
+    // WebKit truncates fractional scroll requests. Control the whole-pixel
+    // scroll offset; the text-driven trigger position can still be fractional.
+    const target = Math.round(
       scroller.scrollTop +
         button.getBoundingClientRect().top -
         scroller.getBoundingClientRect().top -
         40,
     );
+    scroller.scrollTop = target;
+    return target;
   });
-  await expect
-    .poll(() =>
-      trigger.evaluate((button) => {
-        const scroller = button.closest("[data-message-scroller]");
-        return (
-          button.getBoundingClientRect().top -
-          scroller.getBoundingClientRect().top
-        );
-      }),
-    )
-    .toBeCloseTo(40, 0);
+  await expect(scroller).toHaveJSProperty("scrollTop", scrollTop);
   // The scroll event commits reading intent after geometry changes. Opening
   // the menu first can let a pending render follow the old bottom position.
   await expect(
@@ -457,6 +461,8 @@ test("destination previews yield to modals they are outside", async ({
   // A trigger inside the active modal keeps its preview above the backdrop.
   await page.mouse.move(0, 0);
   await page.getByRole("button", { name: "Open modal" }).click();
+  // A pointer-opened modal animates in; hover once the trigger stops moving.
+  await settleDialogMotion(dialog);
   await dialog.getByRole("link", { name: "Open Inside" }).hover();
   const inside = preview("Inside");
   await expect(inside).toBeVisible();
@@ -667,9 +673,7 @@ test("comment actions revealed while the drawer slides realign when it settles",
       };
     });
   // Keep the drawer held while the toolbar's own entrance settles.
-  await actions.evaluate((bar) =>
-    Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-  );
+  await animationsSettled(actions);
   // The animated gap queues a resize-observer positioning frame after entry.
   await expect.poll(anchoring).toMatchObject({ anchored: true });
   const moving = await anchoring();
@@ -690,44 +694,74 @@ test("comment actions revealed while the drawer slides realign when it settles",
 });
 
 // Real pointer hit testing and preview transitions cannot be proved in jsdom.
-test("a counted reaction toggles my contribution while its preview is open", async ({
+test("a grouped reaction toggles my contribution while its preview is open", async ({
   page,
 }) => {
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"/>',
+    }),
+  );
   await page.goto("/tests/fixtures/emoji.html?reactions&repeated");
   const row = page.locator("[data-message-id]").first();
+  // Failed emoji retries rewrap the prose and move reactions off a still pointer.
+  await expect(
+    row.locator('p img[data-copy-emoji=":party:"]'),
+  ).toHaveJSProperty("naturalWidth", 22);
   const button = row.locator('button[data-reaction="😂"]');
+  const matching = row.locator('button[data-reaction="😂"]');
   await expect(button).toHaveCount(1);
-  await expect(button).toContainText("2");
+  await expect(matching).toHaveCount(1);
+  await expect(button).toHaveAccessibleName("😂: 2 people");
   for (let cycle = 0; cycle < 2; cycle++) {
+    await page.mouse.move(0, 0);
+    // Each cycle starts after the previous click-dismissed preview has exited.
+    await expect(page.locator(".buzz-preview-card")).toHaveCount(0);
     await button.hover();
     const preview = page.locator(".buzz-preview-card[data-open]");
     await expect(preview).toBeVisible();
     await expect(preview).toContainText("Fixture Member");
     await button.click();
     await expect(button).toHaveAttribute("aria-pressed", "true");
-    await expect(button).toContainText("3");
+    await expect(matching).toHaveCount(1);
+    await expect(button).toHaveAccessibleName("😂: 3 people");
     await expect(button).toHaveAttribute("aria-disabled", "false");
     await button.click();
     await expect(button).toHaveAttribute("aria-pressed", "false");
-    await expect(button).toContainText("2");
+    await expect(matching).toHaveCount(1);
+    await expect(button).toHaveAccessibleName("😂: 2 people");
     await expect(button).toHaveCount(1);
     await expect(button).toHaveAttribute("aria-disabled", "false");
   }
 });
 
 // A direct pointer click does not wait for preview handoff animations to settle.
-test("clicking a counted reaction during preview handoff toggles it", async ({
+test("clicking a grouped reaction during preview handoff toggles it", async ({
   page,
 }) => {
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"/>',
+    }),
+  );
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated&narrow");
   const row = page.locator("[data-message-id]").first();
+  // Failed emoji retries rewrap the prose and move reactions off a still pointer.
+  await expect(
+    row.locator('p img[data-copy-emoji=":party:"]'),
+  ).toHaveJSProperty("naturalWidth", 22);
   const button = row.locator('button[data-reaction="😂"]');
+  const matching = row.locator('button[data-reaction="😂"]');
   await expect(button).toHaveCount(1);
-  await expect(button).toContainText("2");
+  await expect(matching).toHaveCount(1);
+  await expect(button).toHaveAccessibleName("😂: 2 people");
   await row.locator('button[data-reaction="👍"]').hover();
   await expect(page.locator(".buzz-preview-card[data-open]")).toBeVisible();
   const box = await button.boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(button).toHaveAttribute("aria-pressed", "true");
-  await expect(button).toContainText("3");
+  await expect(matching).toHaveCount(1);
+  await expect(button).toHaveAccessibleName("😂: 3 people");
 });

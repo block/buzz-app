@@ -38,6 +38,20 @@ describe("validateObject", () => {
         instructions: "x",
       }),
     ).toBeUndefined();
+    expect(
+      validateObject("interest/default", {
+        type: "interest",
+        instructions: "x",
+        paused: true,
+      }),
+    ).toBeUndefined();
+    expect(
+      validateObject("interest/default", {
+        type: "interest",
+        instructions: "x",
+        paused: "yes",
+      }),
+    ).toMatch(/paused must be/);
     expect(validateObject("watch/w", watch)).toBeUndefined();
     expect(
       validateObject("watch/t", {
@@ -86,6 +100,28 @@ describe("validateObject", () => {
     expect(validateObject("watch/w", { ...watch, is_reply: "yes" })).toMatch(
       /is_reply/,
     );
+  });
+  it("accepts an Interest's optional title and summary, but not empty or multiline titles", () => {
+    const interest = { type: "interest", instructions: "x" };
+    expect(
+      validateObject("interest/x", {
+        ...interest,
+        title: "Release checks",
+        summary: "Wakes on CI.\nReports failures to John.",
+      }),
+    ).toBeUndefined();
+    expect(validateObject("interest/x", { ...interest, title: " " })).toMatch(
+      /title is empty/,
+    );
+    expect(
+      validateObject("interest/x", { ...interest, title: "Two\nlines" }),
+    ).toMatch(/single line/);
+    expect(validateObject("interest/x", { ...interest, summary: "" })).toMatch(
+      /summary is empty/,
+    );
+    expect(
+      validateObject("interest/x", { ...interest, summary: "x".repeat(1025) }),
+    ).toMatch(/1,024 bytes/);
   });
   it("refuses values over the spec's limits", () => {
     expect(
@@ -140,6 +176,11 @@ describe("validateObject", () => {
 });
 
 describe("matching", () => {
+  it("rejects the removed keywords selector", () => {
+    expect(
+      validateObject("watch/w", { ...watch, keywords: ["build failed"] }),
+    ).toBe("Unknown field: keywords");
+  });
   it("matches enabled watches by since, channel, kind and tags", () => {
     expect(watchMatches(watch, event())).toBe(true);
     expect(watchMatches({ ...watch, enabled: false }, event())).toBe(false);
@@ -188,7 +229,7 @@ describe("matching", () => {
       expect(watchMatches({ ...watch, is_reply: false }, input)).toBe(!isReply);
     }
   });
-  it("treats mentions, DMs and reactions to the agent, not replies, as addressed", () => {
+  it("treats mentions and DMs to the agent, not replies or reactions, as addressed", () => {
     expect(addressedTo(event({ tags: [["p", agent]] }), agent)).toBe(true);
     expect(addressedTo(event({ kind: 1, tags: [["p", agent]] }), agent)).toBe(
       false,
@@ -202,21 +243,12 @@ describe("matching", () => {
     // A reply in its thread is not addressed unless it names the agent; only a
     // watch can wake it for one.
     expect(
-      addressedTo(
-        event({ tags: [["e", "mine", "", "reply"]] }),
-        agent,
-        (id) => id === "mine",
-      ),
+      addressedTo(event({ tags: [["e", "mine", "", "reply"]] }), agent),
     ).toBe(false);
-    // A reaction to its message is addressed, so no watch sees it, but only a
-    // chat p-tag pulls it into a conversation.
-    expect(
-      addressedTo(
-        event({ kind: 7, tags: [["e", "mine"]] }),
-        agent,
-        (id) => id === "mine",
-      ),
-    ).toBe(true);
+    // Nor is a reaction to its message: only a watch hears one.
+    expect(addressedTo(event({ kind: 7, tags: [["e", "mine"]] }), agent)).toBe(
+      false,
+    );
     expect(addressedTo(event({ kind: 7, tags: [["p", agent]] }), agent)).toBe(
       false,
     );
@@ -247,4 +279,56 @@ describe("matching", () => {
     expect(timerSpent(timer, { ...state, used: 1 }, 0)).toBe(true);
     expect(timerSpent({ ...timer, expires_at: 50 }, state, 50)).toBe(true);
   });
+});
+
+it("validates delivery addresses independently of subscription selectors", () => {
+  const subscriptions = [
+    watch,
+    {
+      type: "timer",
+      interest_id: "default",
+      enabled: true,
+      prompt: "tick",
+      armed_at: 0,
+      interval_secs: 60,
+      max_occurrences: 1,
+      expires_at: null,
+    },
+    {
+      type: "source",
+      interest_id: "default",
+      enabled: true,
+      provider: "example/check",
+      config: {},
+    },
+  ];
+  for (const subscription of subscriptions) {
+    expect(validateObject("watch/delivery", subscription)).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", { ...subscription, channel }),
+    ).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        channel,
+        root: "e".repeat(64),
+      }),
+    ).toBeUndefined();
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        root: "e".repeat(64),
+      }),
+    ).toMatch(/requires a channel/);
+    expect(
+      validateObject("watch/delivery", { ...subscription, channel: "invalid" }),
+    ).toMatch(/channel/);
+    expect(
+      validateObject("watch/delivery", {
+        ...subscription,
+        channel,
+        root: "invalid",
+      }),
+    ).toMatch(/root/);
+  }
 });

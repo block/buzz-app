@@ -2,6 +2,7 @@ import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { PluginModule } from "./api";
 import type { PluginInfo } from "./types";
 import { withTimeout } from "./timeout.ts";
+import { bundledOwner } from "./provenance";
 import type {} from "./status";
 
 export type PluginState = {
@@ -39,12 +40,31 @@ export class PluginRuntime {
     root: Context,
     load: (plugin: PluginInfo) => Promise<PluginModule>,
     timeoutMs = 10_000,
+    /** Whether the manager is still reading which plugins to run. */
+    configuring = () => false,
   ) {
     this.root = root;
     this.load = load;
     root.provide("pluginStatus", {
       isActive: this.isActive,
+      promptSections: (id) => {
+        const entry = this.entries.get(id);
+        return entry && this.isActive(id, entry.plugin.revision)
+          ? entry.plugin.manifest.host?.agentPromptSections
+          : undefined;
+      },
+      on: (id) => id in this.states,
       subscribe: this.subscribe,
+      settled: () =>
+        !configuring() &&
+        Object.values(this.states).every(({ status }) => status !== "starting"),
+      bundledSettled: () =>
+        !configuring() &&
+        [...this.entries].every(
+          ([id, { plugin }]) =>
+            plugin.source !== "bundled" ||
+            this.states[id]?.status !== "starting",
+        ),
     });
     this.timeoutMs = timeoutMs;
   }
@@ -104,6 +124,8 @@ export class PluginRuntime {
       this.update(entry, "starting", null);
       void this.start(entry);
     }
+    // Configuration can settle without changing the desired activations.
+    this.publish();
   }
 
   private update(
@@ -144,11 +166,23 @@ export class PluginRuntime {
         this.timeoutMs,
       );
       if (entry.cancelled) return;
+      const owner = Object.freeze({
+        id: entry.plugin.manifest.id,
+        revision: entry.plugin.revision,
+        agentHooks: Object.freeze([
+          ...(entry.plugin.manifest.host?.agentHooks ?? []),
+        ]),
+        agentExecution: Object.freeze([
+          ...(entry.plugin.manifest.host?.agentExecution ?? []),
+        ]),
+        agentPromptSections: Object.freeze([
+          ...(entry.plugin.manifest.host?.agentPromptSections ?? []),
+        ]),
+      });
+      // The loader runs only the host's own module for a bundled source.
       const scope = this.root.extend({
-        pluginOwner: Object.freeze({
-          id: entry.plugin.manifest.id,
-          revision: entry.plugin.revision,
-        }),
+        pluginOwner:
+          entry.plugin.source === "bundled" ? bundledOwner(owner) : owner,
       });
       const fiber = scope.plugin({
         name: entry.plugin.manifest.id,

@@ -7,11 +7,17 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AvatarEditor } from "./AvatarEditor";
-import { uploadAvatar } from "./avatar-upload";
+import {
+  emojiAvatar,
+  emojiAvatarScale,
+  paintEmojiAvatar,
+  uploadAvatar,
+} from "./avatar-upload";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 
 stubAvatarBrowserApis();
@@ -19,6 +25,7 @@ stubAvatarBrowserApis();
 vi.mock("./avatar-upload", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./avatar-upload")>()),
   uploadAvatar: vi.fn(),
+  emojiAvatar: vi.fn(),
   paintEmojiAvatar: vi.fn(),
 }));
 afterEach(() => {
@@ -187,11 +194,48 @@ it("rejects unsafe URLs before selecting the draft", async () => {
     fireEvent.change(screen.getByLabelText("Picture URL (optional)"), {
       target: { value },
     });
-    expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
     expect(
       screen.getByLabelText("Picture URL (optional)"),
     ).toHaveAccessibleDescription(/Use an HTTPS image URL/);
   }
+});
+
+it("shows a URL error after blur or an attempt, then keeps it current", async () => {
+  render(<Form />);
+  await open();
+  const url = screen.getByLabelText("Picture URL (optional)");
+  const message = /Use an HTTPS image URL/;
+  fireEvent.change(url, { target: { value: "h" } });
+  expect(url).not.toHaveAccessibleDescription(message);
+  // Enter is an attempt: it shows the error and applies nothing.
+  fireEvent.keyDown(url, { key: "Enter" });
+  expect(url).toHaveAccessibleDescription(message);
+  expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
+  fireEvent.change(url, { target: { value: next } });
+  expect(url).not.toHaveAccessibleDescription(message);
+  fireEvent.change(url, { target: { value: "http://images.example/a.png" } });
+  expect(url).toHaveAccessibleDescription(message);
+  fireEvent.change(url, { target: { value: "" } });
+  expect(url).not.toHaveAccessibleDescription(message);
+
+  close();
+  await open();
+  const fresh = screen.getByLabelText("Picture URL (optional)");
+  fireEvent.change(fresh, { target: { value: "ftp://x" } });
+  expect(fresh).not.toHaveAccessibleDescription(message);
+  fireEvent.blur(fresh);
+  expect(fresh).toHaveAccessibleDescription(message);
+
+  close();
+  await open();
+  const attempt = screen.getByLabelText("Picture URL (optional)");
+  fireEvent.change(attempt, { target: { value: "ftp://x" } });
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(attempt).toHaveAccessibleDescription(message);
+  expect(attempt).toHaveFocus();
+  expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
 });
 
 it("accepts equivalent HTTPS spellings without a misleading validation error", async () => {
@@ -215,20 +259,14 @@ it("previews emoji colors without selecting a draft, and restores the image when
   fireEvent.click(
     screen.getByRole("button", { name: "Use #476CFF background" }),
   );
-  expect(screen.getByRole("img", { name: "Emoji avatar preview" })).toHaveStyle(
-    { backgroundColor: "#476CFF" },
-  );
   expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
   fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
-  expect(screen.getByRole("img", { name: "Emoji avatar preview" })).toHaveStyle(
-    { backgroundColor: "#476CFF" },
-  );
   fireEvent.click(screen.getByRole("tab", { name: "Image" }));
   expect(screen.getByLabelText("Picture URL (optional)")).toHaveValue(original);
   close();
   await waitFor(() =>
     expect(
-      screen.queryByRole("img", { name: "Emoji avatar preview" }),
+      screen.queryByRole("slider", { name: "Emoji position" }),
     ).not.toBeInTheDocument(),
   );
   expect(screen.getByLabelText("Draft picture")).toHaveTextContent(original);
@@ -287,6 +325,47 @@ it("opens the shared image flow from a text trigger and applies its URL", async 
   expect(onChange).toHaveBeenCalledWith(next);
 });
 
+it("keeps a Buzz mobile emoji avatar for a personal profile, never for an agent", async () => {
+  const emoji = `data:image/svg+xml,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="256" fill="#FFB84D"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">🛹</text></svg>',
+  )}`;
+  const change = vi.fn();
+  // The agent editor: native saving takes HTTPS pictures only.
+  const agent = render(
+    <AvatarEditor
+      triggerStyle="dotted-squircle"
+      inlinePicker
+      shape="squircle"
+      value=""
+      name="Agent"
+      community={community}
+      onChange={change}
+    />,
+  );
+  const url = screen.getByLabelText("Picture URL (optional)");
+  fireEvent.change(url, { target: { value: emoji } });
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(url).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+  expect(change).not.toHaveBeenCalled();
+  agent.unmount();
+
+  render(
+    <AvatarEditor
+      personal
+      value={original}
+      name="Human"
+      community={community}
+      onChange={change}
+    />,
+  );
+  await open();
+  fireEvent.change(screen.getByLabelText("Picture URL (optional)"), {
+    target: { value: emoji },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(change).toHaveBeenCalledExactlyOnceWith(emoji);
+});
+
 it("previews an inline agent emoji and its background with Done in the form footer", async () => {
   const footer = document.createElement("div");
   document.body.append(footer);
@@ -303,17 +382,17 @@ it("previews an inline agent emoji and its background with Done in the form foot
     />,
   );
   fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
-  expect(
-    screen.getByRole("img", { name: "Emoji avatar preview" }),
-  ).toBeVisible();
+  const position = screen.getByRole("slider", { name: "Emoji position" });
+  expect(position).toBeVisible();
+  // Only the artwork inside takes the avatar mask, which would clip focus.
+  expect(position).not.toHaveAttribute("data-avatar-shape");
+  expect(position.querySelector("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
   fireEvent.click(screen.getByRole("tab", { name: "Background" }));
   fireEvent.click(
     screen.getByRole("button", { name: "Use #476CFF background" }),
-  );
-  expect(screen.getByRole("img", { name: "Emoji avatar preview" })).toHaveStyle(
-    {
-      backgroundColor: "#476CFF",
-    },
   );
   expect(footer).toContainElement(screen.getByRole("button", { name: "Done" }));
   expect(
@@ -323,4 +402,60 @@ it("previews an inline agent emoji and its background with Done in the form foot
   expect(change).not.toHaveBeenCalled();
   view.unmount();
   footer.remove();
+});
+
+it("sizes and moves the emoji in its preview and its uploaded avatar", async () => {
+  vi.mocked(emojiAvatar).mockResolvedValue(
+    new File([], "avatar.png", { type: "image/png" }),
+  );
+  vi.mocked(uploadAvatar).mockResolvedValue(next);
+  const change = vi.fn();
+  render(
+    <AvatarEditor
+      triggerStyle="dotted-squircle"
+      inlinePicker
+      value=""
+      name="Agent"
+      community={community}
+      onChange={change}
+    />,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
+  const size = screen.getByRole("slider", { name: "Emoji size" });
+  expect(size).toHaveValue("1");
+  fireEvent.change(size, { target: { value: "1.5" } });
+  expect(paintEmojiAvatar).toHaveBeenLastCalledWith(
+    expect.any(HTMLCanvasElement),
+    "😀",
+    undefined,
+    emojiAvatarScale * 1.5,
+    0,
+    undefined,
+  );
+  expect(
+    within(screen.getByRole("group", { name: "Avatar picker" })).queryByRole(
+      "slider",
+      { name: "Emoji size" },
+    ),
+  ).toBeNull();
+  const position = screen.getByRole("slider", { name: "Emoji position" });
+  for (let step = 0; step < 5; step++)
+    fireEvent.keyDown(position, { key: "ArrowDown" });
+  expect(position).toHaveAttribute("aria-valuetext", "10% down");
+  expect(paintEmojiAvatar).toHaveBeenLastCalledWith(
+    expect.any(HTMLCanvasElement),
+    "😀",
+    undefined,
+    emojiAvatarScale * 1.5,
+    0.1,
+    undefined,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith(next));
+  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith(
+    "😀",
+    "#FFF4CC",
+    emojiAvatarScale * 1.5,
+    0.1,
+  );
 });

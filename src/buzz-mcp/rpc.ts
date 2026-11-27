@@ -2,13 +2,16 @@
 // JSON-RPC message at a time, as Claude sends them over its stream-json
 // pipe to an in-process (`sdk`) server, or goose over loopback HTTP. Holds no
 // state between messages.
-import type { BuzzClient, Context } from "./client";
+import type { Context } from "./client";
 import {
   type AddedTool,
+  type ClientSource,
   callSessionTool,
   type SessionTool,
   sessionTools,
 } from "./session-tools";
+import { isBestieTool } from "./bestie";
+import { isSettingsTool } from "./settings";
 import type { Reply } from "./tools";
 
 type Message = Readonly<{
@@ -27,7 +30,7 @@ export type Listing = Readonly<{
 /** Answers `input`, listing the session's Buzz tools and the `added` ones
  * plugins add. Without a client, tools are listed but cannot be called. */
 export async function respond(
-  client: BuzzClient | undefined,
+  source: ClientSource,
   context: Context,
   input: unknown,
   added: readonly AddedTool[] = [],
@@ -38,6 +41,7 @@ export async function respond(
   if (id === undefined || id === null)
     return { jsonrpc: "2.0", id: 0, result: {} };
   const result = (value: unknown) => ({ jsonrpc: "2.0", id, result: value });
+  const client = typeof source === "function" ? source() : source;
   switch (method) {
     case "initialize":
       return result({
@@ -52,15 +56,33 @@ export async function respond(
       return result({});
     case "tools/list":
       return result({
-        tools: sessionTools(added).map(
-          listing.tool ?? (({ load: _, ...tool }) => tool),
-        ),
+        // A connection keeps its client, so its list stays the same. One
+        // whose client can't change settings or the Bestie, such as a
+        // plugin's, lacks their tools.
+        tools: sessionTools(added)
+          .filter(
+            ({ name }) =>
+              !client ||
+              ((client.settings || !isSettingsTool(name)) &&
+                (client.bestie || !isBestieTool(name))),
+          )
+          .map(listing.tool ?? (({ load: _, ...tool }) => tool)),
       });
     case "tools/call":
       try {
         const name = String(params.name);
-        const args = (params.arguments ?? {}) as Record<string, unknown>;
-        const reply = await callSessionTool(client, context, name, args, added);
+        const args = params.arguments === undefined ? {} : params.arguments;
+        // Anything but an object would reach a tool as no arguments, and act
+        // on its defaults, such as the current channel.
+        if (typeof args !== "object" || args === null || Array.isArray(args))
+          throw new Error("arguments must be an object.");
+        const reply = await callSessionTool(
+          source,
+          context,
+          name,
+          args as Record<string, unknown>,
+          added,
+        );
         return result({ content: content(reply) });
       } catch (error) {
         return result({

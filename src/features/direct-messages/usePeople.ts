@@ -3,8 +3,24 @@ import type { RelaySession } from "../relay/session";
 import type { Profile } from "../relay/contracts";
 import { peopleOrder } from "../profiles/people-order";
 import { matchPerson } from "../search/person-match";
+import { typedPublicKey } from "../../shared/identity/public-key";
+import {
+  searchDebounce,
+  SEARCH_DEBOUNCE_MS,
+  searchable,
+} from "../../shared/search-debounce";
 
 export type Recipient = Profile & { pubkey: string };
+// Persist identity and a bounded label, never the directory's full metadata.
+export const recipientView = ({
+  pubkey,
+  name,
+  isAgent,
+}: Recipient): Recipient => ({
+  pubkey,
+  name: name.slice(0, 500),
+  ...(isAgent === true ? { isAgent: true } : {}),
+});
 
 type PeopleState = {
   session: RelaySession;
@@ -32,11 +48,10 @@ function empty(session: RelaySession, query: string): PeopleState {
   };
 }
 function matching(people: Recipient[], query: string) {
-  const key = query.trim().toLowerCase();
+  const key = typedPublicKey(query);
   return people.filter(
     (person) =>
-      matchPerson(person.name, query) !== undefined ||
-      (/^[0-9a-f]{64}$/.test(key) && person.pubkey === key),
+      matchPerson(person.name, query) !== undefined || person.pubkey === key,
   );
 }
 export function usePeople(session: RelaySession, query: string) {
@@ -55,7 +70,8 @@ export function usePeople(session: RelaySession, query: string) {
     // a reopened picker searches again for people added since.
     const exhausted = (entry?: PeopleState) =>
       entry?.hasMore === false && entry.visit === visit;
-    const complete = exhausted(cache.get(""));
+    // Text too short to search shows only people already read.
+    const complete = exhausted(cache.get("")) || !searchable(query);
     const resumed = cached?.hasMore || exhausted(cached) ? cached : undefined;
     const known = new Map(
       [...cache.values()]
@@ -150,12 +166,15 @@ export function usePeople(session: RelaySession, query: string) {
     request.current = owned;
     setState(initial);
     // Returning to a completed query resumes its pages without reshuffling.
-    const timer =
+    const cancel =
       initial.page || !initial.hasMore
         ? undefined
-        : setTimeout(() => void load(1, owned), query ? 150 : 0);
+        : searchDebounce(
+            () => void load(1, owned),
+            query ? SEARCH_DEBOUNCE_MS : 0,
+          );
     return () => {
-      clearTimeout(timer);
+      cancel?.();
       owned.controller.abort();
     };
   }, [load, query, initial]);
@@ -179,11 +198,17 @@ export function usePeople(session: RelaySession, query: string) {
   }, [state, session, query, load]);
   const visible =
     state.session === session && state.query === query ? state : initial;
+  const browsed = cache.get("");
   return {
     people: visible.people,
     loading: visible.loading || (visible.hasMore && !visible.error),
     error: visible.error,
     hasMore: visible.hasMore,
+    /** Text too short to search, so people not yet read may still match. */
+    tooShort:
+      !!query.trim() &&
+      !searchable(query) &&
+      !(browsed?.hasMore === false && browsed.visit === visit),
     loadMore() {
       if (
         state.session === session &&

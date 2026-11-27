@@ -1,11 +1,57 @@
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import {
   isChannelUuid,
   isHexPubkey,
+  isViewerHandle,
   normalizeFromHandle,
   normalizeInChannel,
   parseSearchOperators,
+  searchTextSyntax,
 } from "./parseSearchOperators";
+
+const conformance = JSON.parse(
+  readFileSync(
+    new URL("./search-operators.fixtures.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  now: string;
+  cases: {
+    name: string;
+    query: string;
+    text: string;
+    from: string | null;
+    in: string | null;
+    since: string | null;
+    until: string | null;
+    fullText: boolean;
+    positive: boolean;
+  }[];
+};
+/** A fixture's zone-less local time, in unix seconds. */
+const localSeconds = (time: string | null) =>
+  time === null ? null : Math.floor(new Date(time).getTime() / 1000);
+
+it.each(conformance.cases)("conforms to the portable grammar: $name", (row) => {
+  const parsed = parseSearchOperators(row.query, new Date(conformance.now));
+  expect({ ...parsed, ...searchTextSyntax(parsed.text) }).toEqual({
+    text: row.text,
+    from: row.from,
+    in: row.in,
+    since: localSeconds(row.since),
+    until: localSeconds(row.until),
+    fullText: row.fullText,
+    positive: row.positive,
+  });
+});
+
+it("recognizes me as the viewer, in any case, with or without @", () => {
+  for (const value of ["me", "@me", "ME", "@Me"])
+    assert.equal(isViewerHandle(value), true);
+  for (const value of ["meg", "@m", "", "@"])
+    assert.equal(isViewerHandle(value), false);
+});
 
 const assert = {
   equal: (actual: unknown, expected: unknown) =>
@@ -55,8 +101,8 @@ it("before: excludes the named day's exact local midnight", () => {
 });
 
 it("keeps invalid date operators in the FTS text", () => {
-  const parsed = parseSearchOperators("notes after:yesterday before:soon");
-  assert.equal(parsed.text, "notes after:yesterday before:soon");
+  const parsed = parseSearchOperators("notes after:soon before:later");
+  assert.equal(parsed.text, "notes after:soon before:later");
   assert.equal(parsed.since, null);
   assert.equal(parsed.until, null);
 });
@@ -119,4 +165,21 @@ it("helpers recognize hex pubkeys and channel uuids", () => {
   assert.equal(isChannelUuid("11111111-1111-1111-1111-111111111111"), true);
   assert.equal(normalizeFromHandle("@alice"), "alice");
   assert.equal(normalizeInChannel("#general"), "general");
+  assert.equal(normalizeInChannel("@alice"), "@alice");
+  assert.equal(normalizeInChannel("@"), "");
 });
+
+it.each([
+  ["2025-03-31T12:00:00", "1m", "2025-02-28T00:00:00"],
+  ["2024-03-31T12:00:00", "1m", "2024-02-29T00:00:00"],
+  ["2025-01-31T12:00:00", "2m", "2024-11-30T00:00:00"],
+  ["2024-02-29T12:00:00", "1y", "2023-02-28T00:00:00"],
+  ["2025-03-31T12:00:00", "7d", "2025-03-24T00:00:00"],
+])(
+  "on %s, during:%s starts on the target month's day, or its last day",
+  (now, period, since) => {
+    expect(
+      parseSearchOperators(`notes during:${period}`, new Date(now)).since,
+    ).toBe(localSeconds(since));
+  },
+);

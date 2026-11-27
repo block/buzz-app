@@ -1,6 +1,8 @@
 // A fake Pi host for tests: each process it spawns answers the plugin's
 // requests with the test's handlers, one JSON message a line, as host.mjs
 // does, and can call the plugin's tools and send it events.
+import type { GatewayDescriptor } from "../../features/agents/gateway/descriptor";
+import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -22,19 +24,24 @@ export type FakeProcess = {
   requests: Request[];
   ended: boolean;
   killed: boolean;
+  /** Whether it has exited. */
+  gone: boolean;
   /** The launcher's line: the host source and the packages it installs. */
   launched?: { host: string; package: string; lock: string };
   /** Sends the plugin one message, as stdout. */
   send(message: object): void;
   /** Calls one of the plugin's tools and resolves with its answer. */
-  tool(params: object): Promise<{ result?: unknown; error?: string }>;
+  tool(
+    params: object,
+    method?: string,
+  ): Promise<{ result?: unknown; error?: string }>;
   /** Exits, saying `stderr` last. */
   exit(code: number | null, stderr?: string): void;
 };
 
 export function fakeHost(
   handlers: Readonly<Record<string, Handler>> = {},
-  options: Readonly<{ ready?: boolean }> = {},
+  options: Readonly<{ ready?: boolean; close?: boolean }> = {},
 ) {
   const processes: FakeProcess[] = [];
   const spawn = async (
@@ -58,19 +65,21 @@ export function fakeHost(
       requests: [],
       ended: false,
       killed: false,
+      gone: false,
       send: (message) => {
         if (!gone) spawnOptions.onStdout?.(`${JSON.stringify(message)}\n`);
       },
-      tool: (params) =>
+      tool: (params, method = "tool") =>
         new Promise((resolve) => {
           const id = `h${++called}`;
           answers.set(id, resolve);
-          process.send({ id, method: "tool", params });
+          process.send({ id, method, params });
         }),
       exit: (code, stderr) => {
         if (gone) return;
         if (stderr) spawnOptions.onStderr?.(stderr);
         gone = true;
+        process.gone = true;
         exit(code);
       },
     };
@@ -99,7 +108,8 @@ export function fakeHost(
         buffer = buffer.slice(newline + 1);
         newline = buffer.indexOf("\n");
         // The first line is the launcher's: what it installs and runs.
-        if (!process.launched) process.launched = message;
+        if (!process.launched && !spawnOptions.protection)
+          process.launched = message;
         else if (message.method) void handle(message);
         else {
           answers.get(message.id)?.(message);
@@ -113,6 +123,7 @@ export function fakeHost(
       write,
       end: async () => {
         process.ended = true;
+        if (options.close) process.exit(0);
       },
       kill: async () => {
         process.killed = true;
@@ -142,3 +153,23 @@ export function deferred<T = void>() {
   });
   return { promise, resolve, reject };
 }
+
+/** The build's Pi upstream base in tests: synthetic, like every value here. */
+export const PI_UPSTREAM = Object.freeze({ base: "/upstream/pi" });
+
+/** A synthetic version 2 gateway descriptor listing `community` at
+ * `origin`, with the shared vectors' header profile and a Pi upstream. */
+export const piGatewayDescriptor = (
+  community: string,
+  origin: string,
+): GatewayDescriptor =>
+  Object.freeze({
+    version: 2,
+    gateway: "https://gateway.test",
+    communities: [{ id: community, origin }],
+    access_path: "/v9/access",
+    launcher_client: VECTOR_PROFILE.launcher_client,
+    headers: VECTOR_PROFILE.headers,
+    reserved_prefixes: VECTOR_PROFILE.reserved_prefixes,
+    upstreams: { pi: PI_UPSTREAM },
+  });

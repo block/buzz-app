@@ -1,24 +1,50 @@
+import {
+  COMMUNITY_SESSION,
+  sessionScope,
+} from "../../features/agent-harness/session-scope";
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 // goose's New agent choices and agent settings. Providers, their keys and
 // their models are goose's own: listed from it, and saved into its config.
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
-import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
+import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
+import {
+  AgentSaveButton,
+  ClearModelOverrides,
+} from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
+import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
+import { CompactionField } from "../../features/agents/Compaction";
+import { withCompactAt } from "../../features/agents/compact-at";
+import {
+  candidatesFor,
+  offRecommended,
+  onRecommended,
+  type RecommendedRun,
+  recommendedRun,
+  withRecommended,
+} from "../../features/agents/recommended";
 import {
   type ModelChoice,
   ModelPicker,
 } from "../../features/agents/ModelPicker";
 import {
+  activeRoute,
+  routeModel,
+  routeOf,
+  useInitialRoute,
+  useModelRoutes,
+} from "../../features/agents/model-routes";
+import {
   OpenedConversation,
-  useOpenedSession,
   useOpenTranscript,
 } from "../../features/agents/OpenedConversation";
 import type {
@@ -33,6 +59,9 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { Select } from "../../shared/design-system/ui/Select";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { validWorkspace } from "../codex/config";
@@ -41,6 +70,7 @@ import {
   DEFAULT_CONFIG,
   type GooseRuntime,
   config as readConfig,
+  running,
 } from "./runtime";
 import {
   type GooseSetup,
@@ -51,7 +81,6 @@ import {
 } from "./setup";
 import {
   type GooseHistory,
-  type GooseTranscript,
   type Place,
   RECENT_LIMIT,
   TURN_LIMIT,
@@ -66,6 +95,7 @@ const SCOPES = [
     options: [
       { value: "thread", label: "One session per thread" },
       { value: "channel", label: "One session per channel" },
+      { value: "community", label: "One session per community" },
     ],
   },
 ];
@@ -116,17 +146,104 @@ type Row = Readonly<{
   sessionId: string;
   title: string;
   channelId: string;
+  community?: true;
   root?: string;
   at?: number;
+  /** The goose sessions saved for its place. */
+  sessions?: readonly string[];
+  /** Its channel's name, when the community lists it. */
+  name?: string;
+  /** Started outside any conversation, such as a watch's or timer's turn. */
+  standalone?: true;
 }>;
-const modelLabel = (provider: string | undefined, model: string | undefined) =>
-  provider?.startsWith("databricks")
-    ? model?.replace(/^(?:databricks|goose)-/i, "")
-    : model;
 const placeOf = (key: string): Place => {
   const [channelId = key, root] = key.split("/");
   return { channelId, ...(root ? { root } : {}) };
 };
+/** Each conversation's row, from its saved sessions and any still running,
+ * read by id with no search of goose, newest first; and the sessions started
+ * outside any conversation, newest first. */
+export function activityRows(
+  saved: readonly { key: string; at: number; sessions: readonly string[] }[],
+  live: readonly { key: string; sessionId?: string; at?: number }[],
+  starts: readonly {
+    id: string;
+    at?: number;
+    title?: string;
+    conversation?: string | null;
+  }[],
+  label: (channelId: string) => { name?: string } | undefined = () => undefined,
+  source: (key: string) => Place = placeOf,
+) {
+  const running = new Map(
+    live.flatMap((session) =>
+      session.sessionId ? [[session.key, session] as const] : [],
+    ),
+  );
+  const byKey = new Map(
+    saved.map(({ key, at, sessions }) => [key, { at, sessions }]),
+  );
+  for (const [key, session] of running)
+    if (!byKey.has(key))
+      byKey.set(key, { at: session.at ?? Date.now(), sessions: [] });
+  const conversations = [...byKey]
+    .sort(([, a], [, b]) => b.at - a.at)
+    .map(([key, { at, sessions }]): Row => {
+      const id = running.get(key)?.sessionId;
+      const ids = [...new Set([...(id ? [id] : []), ...sessions])];
+      const place = source(key);
+      return {
+        key,
+        sessionId: ids[0] ?? "",
+        title: "",
+        ...place,
+        at,
+        sessions: ids,
+        ...label(place.channelId),
+      };
+    });
+  // A session started outside any conversation, such as a watch's or
+  // timer's turn, by what it saved as it started. One saved before that was
+  // kept is never taken as one.
+  const standalone = starts
+    .flatMap(({ id, at, title = "", conversation }): Row[] =>
+      conversation === null && at !== undefined
+        ? [
+            {
+              key: id,
+              sessionId: id,
+              title,
+              at,
+              channelId: "",
+              standalone: true as const,
+            },
+          ]
+        : [],
+    )
+    .reverse()
+    .slice(0, RECENT_LIMIT);
+  return { conversations, standalone };
+}
+/** The recent rows: the opened conversation's channel first and the rest
+ * newest first, each kind then kept to its own limit so neither crowds out
+ * the other, and the opened conversation left out. */
+export function recentRows(
+  kinds: readonly (readonly Row[])[],
+  here: string | undefined,
+  channel: string | undefined,
+) {
+  const order = (a: Row, b: Row) =>
+    Number(b.channelId === channel) - Number(a.channelId === channel) ||
+    (b.at ?? 0) - (a.at ?? 0);
+  return kinds
+    .flatMap((rows) =>
+      rows
+        .filter((row) => row.key !== here)
+        .sort(order)
+        .slice(0, RECENT_LIMIT),
+    )
+    .sort(order);
+}
 /** Buzz titles a session `Agent · place · root`; the agent's name is the
  * profile's own. */
 const titled = (name: string, title: string) =>
@@ -136,11 +253,26 @@ export function createTabs({
   setup,
   runtime,
   history,
+  recommended = recommendedRun("goose", (candidate) => setup.offers(candidate)),
 }: Readonly<{
   setup: GooseSetup;
   runtime: GooseRuntime;
   history: GooseHistory;
+  /** What agents on Recommended run on; the plugin shares its runtime's. */
+  recommended?: RecommendedRun;
 }>) {
+  /** What an agent on Recommended runs on, found once it is shown on it. */
+  function useRecommended(on: boolean) {
+    const resolved = useSyncExternalStore(
+      recommended.subscribe,
+      recommended.current,
+    );
+    useEffect(() => {
+      if (on) void recommended.find();
+    }, [on]);
+    return resolved;
+  }
+
   function DefaultControl({ onConfigure }: { onConfigure(): void }) {
     const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
     const [listing, reload] = useRead(
@@ -162,6 +294,8 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
+          // Shown only when ready, so its provider is set up. A recheck could
+          // settle on attention, and the host would unmount this, focus and all.
           retry={reloadModels}
         >
           <ModelPicker
@@ -182,8 +316,9 @@ export function createTabs({
                 : undefined
             }
             defaultLabel="Provider default"
-            disabled={saving || !!state.blocking || !id}
+            disabled={!id}
             loading={models.status === "loading"}
+            pending={saving || !!state.blocking}
             onConfigure={onConfigure}
             onChange={(model) => {
               setSaving(true);
@@ -439,6 +574,7 @@ export function createTabs({
         {!hideModel && provider && (provider.configured || rows) && (
           <ModelPicker
             key={`models:${id}`}
+            harness="goose"
             groupByFamily
             modelLabelPrefixes={
               id.startsWith("databricks")
@@ -450,7 +586,8 @@ export function createTabs({
             models={models.value ?? []}
             loading={models.status === "loading"}
             value={value.model}
-            defaultLabel={modelLabel(id, modelDefault) || "Provider model"}
+            defaultModel={modelDefault}
+            defaultLabel={modelDefault || "Provider model"}
             {...(!provider.configured
               ? { description: `Available once ${provider.name} is set up.` }
               : models.status === "error"
@@ -540,39 +677,67 @@ export function createTabs({
     revision = 0,
     choice,
     value,
+    compact = false,
+    disabled = false,
     onChange,
   }: Readonly<{
     choice: Choice;
     revision?: number;
     value: string;
+    /** A trailing choice in a host's row, as Create agent places it. */
+    compact?: boolean;
+    disabled?: boolean;
     onChange(effort: string): void;
   }>) {
-    const [efforts] = useRead(
-      () => setup.efforts(choice),
+    // A route picks each turn's level itself.
+    const routed = Boolean(routeOf(choice.model));
+    const [efforts, retry] = useRead(
+      () =>
+        routed
+          ? Promise.resolve({ current: "", levels: [] })
+          : setup.efforts(choice),
       `${choice.provider}\u0000${choice.model.trim()}:${revision}`,
     );
+    const failed =
+      efforts.status === "error"
+        ? `Could not read goose's levels: ${efforts.error}`
+        : undefined;
     const levels = efforts.value?.levels ?? [];
     const named = (level: string) =>
       level.charAt(0).toUpperCase() + level.slice(1);
-    const fallback = efforts.value?.current
-      ? named(efforts.value.current)
-      : "Automatic";
-    return (
+    // goose reports "off" both for a level set to off and for none set. With
+    // none set it often sends no level, leaving the model on its own default,
+    // so "off" cannot name what turns run on; any other level can.
+    const current = efforts.value?.current;
+    const fallback = current && current !== "off" ? named(current) : undefined;
+    const select = (
       <Select
         label="Thinking"
-        variant="preference"
+        variant={compact ? "compact" : "preference"}
+        {...(compact && { align: "end" as const })}
         value={value}
-        {...(!value ? { valueLabel: fallback } : {})}
-        {...(efforts.status === "error"
-          ? { description: `Could not read goose's levels: ${efforts.error}` }
-          : {})}
+        {...(routed
+          ? {
+              valueLabel: "Auto",
+              ...(!compact && {
+                description: "Chosen for each conversation's turns",
+              }),
+            }
+          : !value
+            ? {
+                valueLabel: fallback ?? "Default",
+                ...(compact && fallback ? { valueSuffix: " · Default" } : {}),
+              }
+            : {})}
+        disabled={routed || disabled}
+        {...(failed && !compact ? { description: failed } : {})}
         groups={[
           {
             label: "",
             options: [
               {
                 value: "",
-                label: `${fallback} · Default`,
+                label: fallback ? `${fallback} · Default` : "Default",
               },
               // A saved level the model does not offer, or not yet read.
               ...(value && !levels.includes(value)
@@ -592,6 +757,20 @@ export function createTabs({
         ]}
         onValueChange={onChange}
       />
+    );
+    // A compact choice shows no description, so a failed read says so beside
+    // it and offers another try, as the model field does.
+    return compact ? (
+      <ModelDiscoveryRecovery
+        error={failed}
+        loading={efforts.status === "loading"}
+        retry={retry}
+        disabled={disabled}
+      >
+        {select}
+      </ModelDiscoveryRecovery>
+    ) : (
+      select
     );
   }
 
@@ -707,8 +886,8 @@ export function createTabs({
     );
   }
 
-  /** One session's turns, or a place's across its sessions, read on open and
-   * on Refresh. A refresh keeps the last result until the new one arrives. */
+  /** One session's turns, or a place's across its sessions, kept current
+   * while goose works. */
   function TranscriptView({
     agent,
     row,
@@ -719,84 +898,77 @@ export function createTabs({
     working?: string | undefined;
   }) {
     const workspace = readConfig(agent.config).workspace;
-    const [read, setRead] = useState<
-      | { status: "ready"; transcript: GooseTranscript }
-      | { status: "missing" }
-      | { status: "error"; error: string }
-    >();
-    const [loading, setLoading] = useState(true);
-    const [attempt, setAttempt] = useState(0);
-    // A turn ending rereads, so its last steps show without a Refresh.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit Refresh.
-    useEffect(() => {
-      const abort = new AbortController();
-      setLoading(true);
-      history
-        .transcript(
-          {
-            agent: agent.pubkey,
-            workspace,
-            sessionId: row.sessionId,
-            ...(row.channelId ? { place: placeOf(row.key) } : {}),
-            ...(working ? { working } : {}),
-          },
-          abort.signal,
-        )
-        .then(
-          (transcript) =>
-            transcript
-              ? ({ status: "ready", transcript } as const)
-              : ({ status: "missing" } as const),
-          (reason: unknown) =>
-            ({ status: "error", error: message(reason) }) as const,
-        )
-        .then((next) => {
-          if (abort.signal.aborted) return;
-          setRead(next);
-          setLoading(false);
-        });
-      return () => abort.abort();
-    }, [row, workspace, working, attempt]);
+    // Read again when the conversation saves or opens another session.
+    const ids = [row.sessionId, ...(row.sessions ?? [])].join(" ");
+    /** With `reuse`, sessions that aren't working keep their last export. */
+    const read = async (signal: AbortSignal, reuse = false) => {
+      const transcript = await history.transcript(
+        {
+          agent: agent.key,
+          // Where the conversation's sessions ran.
+          workspace: runtime.folders(agent.key).get(row.key) ?? workspace,
+          ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+          ...(row.sessions ? { sessions: row.sessions } : {}),
+          ...(row.channelId
+            ? {
+                place: {
+                  channelId: row.channelId,
+                  ...(row.root ? { root: row.root } : {}),
+                  ...(row.community ? { community: true } : {}),
+                },
+              }
+            : {}),
+          ...(working ? { working } : {}),
+        },
+        signal,
+        (pubkey) => runtime.name(agent.key, pubkey),
+        reuse,
+        runtime.notices(agent.key),
+      );
+      return (
+        transcript && {
+          ...transcript,
+          turns: runtime.prompts(agent.key).shown(
+            row.standalone
+              ? transcript.turns
+              : // Without a known place, each turn shows only by its own source.
+                runtime.readableTurns(
+                  agent.key,
+                  row.channelId
+                    ? row
+                    : { ...row, channelId: "", community: true },
+                  transcript.turns,
+                ),
+          ),
+        }
+      );
+    };
     return (
-      <div className="grid gap-4">
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            loading={loading}
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Refresh
-          </Button>
-        </div>
-        {!read ? (
-          <p role="status" className="m-0">
-            Reading the goose session…
-          </p>
-        ) : read.status === "missing" ? (
+      <TranscriptPanel
+        agent={agent}
+        read={read}
+        // Automatic reads while working; open, Refresh and a turn starting
+        // or ending export every session.
+        readLatest={async (signal) => (await read(signal, true))?.turns}
+        readKey={`${row.key}\u0000${workspace}`}
+        readAgain={ids}
+        working={Boolean(working)}
+        reading="Reading the goose session…"
+        failed="Could not read the goose session"
+        missing={
           <p className="m-0 text-body-sm text-subtle">
             goose has no session for this conversation on this computer. It may
             have been deleted, or it ran in a different workspace.
           </p>
-        ) : read.status === "error" ? (
-          <p role="alert" className="m-0">
-            Could not read the goose session: {read.error}
-          </p>
-        ) : (
-          <ActivityTranscript
-            transcript={read.transcript}
-            agentName={agent.name}
-            state={() => (working ? "working" : undefined)}
-            before={
-              read.transcript.more && (
-                <p className="m-0 text-body-sm text-subtle">
-                  Showing the latest {TURN_LIMIT} turns.
-                </p>
-              )
-            }
-          />
-        )}
-      </div>
+        }
+        notes={(transcript) =>
+          transcript.more && (
+            <p className="m-0 text-body-sm text-subtle">
+              Showing the latest {TURN_LIMIT} turns.
+            </p>
+          )
+        }
+      />
     );
   }
 
@@ -805,52 +977,75 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
+    close,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    close?: AgentViewProps<Config>["close"];
   }) {
-    const workspace = readConfig(agent.config).workspace;
+    useClockFormat();
     const live = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
-      () => runtime.sessions(agent.pubkey),
+      () => runtime.sessions(agent.key),
     );
-    const running = live.map(
-      (session): Row => ({
-        key: session.key,
-        sessionId: session.sessionId ?? "",
-        title: "",
-        ...placeOf(session.key),
-      }),
+    // Each read again only when a session changes.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: a session change can save one.
+    const saved = useMemo(
+      () => runtime.conversations(agent.key),
+      [agent.key, live],
     );
-    const {
-      session: here,
-      searching,
-      error: lookupError,
-    } = useOpenedSession(
-      running.filter((row) => row.sessionId),
-      conversation,
-      async (place, signal) => {
-        const found = await history.find(
-          agent.pubkey,
-          workspace,
-          place,
-          signal,
-        );
-        return (
-          found && {
-            ...found,
-            ...place,
-            key: place.root
-              ? `${place.channelId}/${place.root}`
-              : place.channelId,
-          }
-        );
-      },
+    // biome-ignore lint/correctness/useExhaustiveDependencies: a session change can save one.
+    const starts = useMemo(
+      () => runtime.prompts(agent.key).sessions(),
+      [agent.key, live],
     );
-    const [recent, reload] = useRead(() => {
-      const abort = new AbortController();
-      return history.recent(agent.pubkey, workspace, abort.signal);
-    }, `${agent.pubkey}\u0000${workspace}`);
+    const { conversations: all, standalone } = activityRows(
+      saved,
+      live,
+      starts,
+      (id) => runtime.channelLabel(agent.key, id),
+      (key) => runtime.source(agent.key, key),
+    );
+    const conversations = runtime.readableRows(agent.key, all);
+    // The opened conversation's session: a thread's saved or live one, else
+    // its channel's, read again each render so a first save is picked up.
+    // With neither, its transcript finds the place's sessions by their goose
+    // tags, in the place the agent keeps its sessions.
+    const match = (channelId: string, root?: string) =>
+      conversations.find(
+        (row) =>
+          !row.community &&
+          row.sessionId &&
+          row.channelId === channelId &&
+          row.root === root,
+      );
+    const here =
+      conversation &&
+      (() => {
+        const { channelId, rootId } = conversation;
+        const shared = readConfig(agent.config).scope === "community";
+        const found = shared
+          ? conversations.find((row) => row.community)
+          : (rootId && match(channelId, rootId)) || match(channelId);
+        if (found) return found;
+        const root =
+          readConfig(agent.config).scope !== "thread" ? undefined : rootId;
+        return {
+          key: shared
+            ? COMMUNITY_SESSION
+            : root
+              ? `${channelId}/${root}`
+              : channelId,
+          ...(shared ? { community: true as const } : {}),
+          sessionId: "",
+          title: "",
+          channelId,
+          ...(root && { root }),
+          ...runtime.channelLabel(agent.key, channelId),
+        } satisfies Row;
+      })();
     const busy = (sessionId: string) =>
       live.find((session) => session.sessionId === sessionId)?.busy;
     const status = (sessionId: string) => {
@@ -858,88 +1053,98 @@ export function createTabs({
       return working === undefined ? undefined : working ? "Working" : "Idle";
     };
     const label = (row: Row) =>
-      row.title
-        ? titled(agent.name, row.title)
-        : `${row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
-    const { open, show, back } = useOpenTranscript(conversation, label);
-    const rows = (recent.value ?? [])
-      .filter((row) => row.sessionId !== here?.sessionId)
-      .slice(0, RECENT_LIMIT)
-      .map((row): Row => ({ ...row, key: row.sessionId, channelId: "" }));
+      row.community
+        ? "Community session"
+        : row.title
+          ? titled(agent.name, row.title)
+          : `${row.name || row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
+    const { open, show, back } = useOpenTranscript(
+      conversation,
+      label,
+      initialTranscript && { initial: here, ...initialTranscript },
+      close,
+    );
+    const rows = recentRows(
+      [conversations, standalone],
+      here?.key,
+      conversation?.channelId,
+    );
+    // The open transcript follows its conversation's current sessions.
+    const shown =
+      open &&
+      ([...conversations, ...standalone, ...(here ? [here] : [])].find(
+        (row) => row.key === open.key,
+      ) ??
+        open);
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
             harness="goose"
             session={here}
-            searching={searching}
-            error={lookupError}
             status={here && status(here.sessionId)}
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="m-0 text-body">Recent sessions</h3>
-            <Button
-              type="button"
-              variant="ghost"
-              loading={recent.status === "loading"}
-              onClick={reload}
-            >
-              Refresh
-            </Button>
-          </div>
-          {recent.status === "error" ? (
-            <p role="alert" className="buzz-field-error m-0">
-              Could not list goose's sessions: {recent.error}
-            </p>
-          ) : rows.length ? (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {rows.map((row) => (
-                <li
-                  key={row.sessionId}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{label(row)}</span>
-                    <span className="block text-body-sm text-subtle">
-                      {[
-                        status(row.sessionId),
-                        row.at && new Date(row.at).toLocaleString(),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`View transcript: ${label(row)}`}
-                    onClick={() => show(row)}
-                  >
-                    View transcript
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          ) : recent.status === "ready" ? (
+        <section className={activityStyles.section}>
+          <InlineHeader title="Recent sessions" />
+          {rows.length ? (
+            <SettingsGroup layout="form">
+              <ul className={activityStyles.list}>
+                {rows.map((row) => (
+                  <li key={row.key} className={activityStyles.entry}>
+                    <div className={activityStyles.row}>
+                      <span className={activityStyles.copy}>
+                        <span
+                          className="block truncate text-label-sm"
+                          title={label(row)}
+                        >
+                          {label(row)}
+                        </span>
+                        <span className="block text-body-sm text-subtle">
+                          {[
+                            status(row.sessionId),
+                            row.at &&
+                              formatItemTimestamp(row.at / 1000, {
+                                withTime: true,
+                              }),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        aria-label={`View transcript: ${label(row)}`}
+                        onClick={() => show(row)}
+                      >
+                        View transcript
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </SettingsGroup>
+          ) : (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation's session starts when the agent is mentioned.
             </p>
-          ) : null}
+          )}
         </section>
-        {open && (
+        {shown && (
           <PanelSubview
-            title={label(open)}
+            title={label(shown)}
             backLabel="Back to profile"
             onBack={back}
           >
             <TranscriptView
+              key={shown.key}
               agent={agent}
-              row={open}
-              working={busy(open.sessionId) ? open.sessionId : undefined}
+              row={shown}
+              working={busy(shown.sessionId) ? shown.sessionId : undefined}
             />
           </PanelSubview>
         )}
@@ -1035,12 +1240,23 @@ export function createTabs({
   }
 
   function CreateModel({
+    agent,
     config,
     onChange,
+    onReadyChange,
     disabled,
     modelAppearance,
+    showEffort = true,
   }: AgentCreateProps<Config>) {
-    const current = readConfig(config);
+    // A pick here takes the agent off Recommended, from what it runs on.
+    const resolved = useRecommended(onRecommended(config));
+    const current = offRecommended(running(config, resolved));
+    useInitialRoute(
+      "goose",
+      !agent && !onRecommended(config),
+      current.model,
+      (model) => onChange({ ...current, model, effort: "" }),
+    );
     const [open, setOpen] = useState(false);
     const [listing, reload] = useRead(() => setup.providers(), "providers");
     const provider = current.provider || listing.value?.defaults.provider || "";
@@ -1048,15 +1264,24 @@ export function createTabs({
       () => (provider ? setup.models(provider) : Promise.resolve([])),
       provider,
     );
+    const refresh = () => {
+      reload();
+      reloadModels();
+    };
     const fallback =
       (current.provider
         ? listing.value?.providers.find((item) => item.id === provider)
             ?.defaultModel
         : listing.value?.defaults.model) || "";
     const selectedModel = current.model || fallback;
+    const ready =
+      listing.status === "ready" &&
+      !!listing.value.providers.find((item) => item.id === provider) &&
+      !!selectedModel.trim();
+    useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const [thinking] = useRead(
       () =>
-        provider && selectedModel
+        provider && selectedModel && !routeOf(selectedModel)
           ? setup.efforts({ provider, model: selectedModel })
           : Promise.resolve({ current: "", levels: [] }),
       `${provider}\u0000${selectedModel}`,
@@ -1081,30 +1306,38 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
-          retry={reloadModels}
+          // `goose configure` can set it up meanwhile, on another default
+          // model. The check starts a fresh read at once, which these share.
+          retry={() => {
+            void setup.check();
+            refresh();
+          }}
           disabled={disabled}
         >
           <ModelPicker
             compact
+            harness="goose"
             groupByFamily
             includeDefault={false}
             resetLabel="Use Goose default"
             allowCustomModel
             label="Goose model"
-            appearance={modelAppearance === "subtle" ? "subtle" : "outlined"}
+            appearance={modelAppearance ?? "outlined"}
             // A card names its harness before the model, as Pi's does.
-            {...(modelAppearance === "subtle" && {
+            {...(modelAppearance === "glass-ghost" && {
               leading: <GooseLogoIcon size={18} />,
             })}
             models={choices}
             value={current.model}
             defaultModel={fallback}
-            defaultLabel={modelLabel(provider, fallback) || "Choose model"}
+            defaultLabel={fallback || "Choose model"}
             effort={current.effort}
             // A card's chip keeps its room for the model name; its menu
             // still shows and sets the level.
             effortLabel={
-              modelAppearance !== "subtle" && thinking.value?.levels.length
+              showEffort &&
+              modelAppearance !== "glass-ghost" &&
+              thinking.value?.levels.length
                 ? current.effort
                   ? current.effort.charAt(0).toUpperCase() +
                     current.effort.slice(1)
@@ -1120,8 +1353,10 @@ export function createTabs({
             loading={models.status === "loading"}
             onConfigure={() => setOpen(true)}
             onChange={(model) => onChange({ ...current, model, effort: "" })}
-            onEffortChange={(model, effort) =>
-              onChange({ ...current, model, effort })
+            onEffortChange={
+              showEffort
+                ? (model, effort) => onChange({ ...current, model, effort })
+                : undefined
             }
           />
         </ModelDiscoveryRecovery>
@@ -1136,13 +1371,42 @@ export function createTabs({
                 effort:
                   choice.provider === current.provider ? current.effort : "",
               });
-              reload();
-              reloadModels();
+              refresh();
               setOpen(false);
             }}
           />
         )}
       </>
+    );
+  }
+
+  /** Create agent's Thinking row: goose's levels for the chosen model. */
+  function CreateThinking({
+    config,
+    onChange,
+    disabled,
+  }: AgentCreateProps<Config>) {
+    const current = readConfig(config);
+    // A setup check, such as the model field's Try again, clears goose's
+    // levels; read them again once it settles.
+    const checking =
+      useSyncExternalStore(setup.subscribe, setup.snapshot).readiness ===
+      "checking";
+    const wasChecking = useRef(checking);
+    const [checks, setChecks] = useState(0);
+    useEffect(() => {
+      if (wasChecking.current && !checking) setChecks((count) => count + 1);
+      wasChecking.current = checking;
+    }, [checking]);
+    return (
+      <ThinkingField
+        compact
+        revision={checks}
+        choice={current}
+        value={current.effort}
+        disabled={disabled}
+        onChange={(effort) => onChange({ ...current, effort })}
+      />
     );
   }
 
@@ -1165,6 +1429,39 @@ export function createTabs({
     }, [error]);
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
+    // Inert in a build that recommends nothing for goose.
+    const following = onRecommended(draft) && candidatesFor("goose").length > 0;
+    const resolved = useRecommended(following);
+    // The route Automatic runs on, while a plugin offers one.
+    useModelRoutes("goose");
+    const automaticRoute = activeRoute("goose", "", true);
+    const manual = (
+      <>
+        {settingsHost?.typeControl?.(configChanged)}
+        {/* A manual choice, even of the default, is never Recommended. */}
+        <ProviderFields
+          revision={providerRevision}
+          rows
+          value={draft}
+          onChange={(choice) =>
+            setDraft(
+              offRecommended({
+                ...draft,
+                ...choice,
+                // A route picks each turn's level itself.
+                ...(routeOf(choice.model) ? { effort: "" } : {}),
+              }),
+            )
+          }
+        />
+        <ThinkingField
+          revision={providerRevision}
+          choice={draft}
+          value={draft.effort}
+          onChange={(effort) => setDraft(offRecommended({ ...draft, effort }))}
+        />
+      </>
+    );
     const submit = async () => {
       setSaving(true);
       setError("");
@@ -1172,7 +1469,39 @@ export function createTabs({
         const workspace = draft.workspace.trim() || DEFAULT_CONFIG.workspace;
         if (!validWorkspace(workspace))
           throw new Error("Enter an absolute or ~/… workspace path.");
-        await save({ ...draft, model: draft.model.trim(), workspace });
+        const next = { ...draft, model: draft.model.trim(), workspace };
+        if (
+          settingsHost?.proposedModelOrEffort &&
+          (next.model || next.effort)
+        ) {
+          if (agent.executionBinding)
+            throw new Error(
+              "Clear the model and thinking overrides to use the target’s defaults.",
+            );
+          if (next.model && !routeOf(next.model)) {
+            const provider =
+              next.provider || (await setup.providers()).defaults.provider;
+            if (
+              !provider ||
+              !(await setup.models(provider)).some(
+                (model) => model.id === next.model,
+              )
+            )
+              throw new Error(
+                "Choose an available Goose model or clear the model and thinking overrides.",
+              );
+          }
+          if (
+            next.effort &&
+            !(await setup.efforts(next)).levels.includes(next.effort)
+          )
+            throw new Error(
+              "Choose a thinking level this Goose model supports or use Default.",
+            );
+        }
+        // A Custom agent's save drops a mark left from before, which a later
+        // blank synced model would otherwise turn back on.
+        await save(onRecommended(next) ? next : offRecommended(next));
       } catch (reason) {
         setError(message(reason));
       } finally {
@@ -1201,18 +1530,42 @@ export function createTabs({
         {settingsSection !== "runtime" && (
           <>
             <SettingsGroup>
-              {settingsHost?.typeControl?.(configChanged)}
-              <ProviderFields
-                revision={providerRevision}
-                rows
-                value={draft}
-                onChange={(choice) => setDraft({ ...draft, ...choice })}
-              />
-              <ThinkingField
-                revision={providerRevision}
-                choice={draft}
-                value={draft.effort}
-                onChange={(effort) => setDraft({ ...draft, effort })}
+              {candidatesFor("goose").length ? (
+                <AISettings
+                  automatic={following}
+                  harnessIcon={GooseLogoIcon}
+                  {...runsOnDetails(
+                    { title: "Goose", icon: GooseLogoIcon },
+                    resolved,
+                    automaticRoute,
+                  )}
+                  onChange={(on) =>
+                    // Manual starts from the recommendation it ran on, or
+                    // from its Automatic route on that provider.
+                    setDraft(
+                      on
+                        ? readConfig(withRecommended(draft))
+                        : offRecommended(
+                            automaticRoute
+                              ? {
+                                  ...running(draft, resolved),
+                                  model: routeModel(automaticRoute.id),
+                                  effort: "",
+                                }
+                              : running(draft, resolved),
+                          ),
+                    )
+                  }
+                >
+                  {manual}
+                </AISettings>
+              ) : (
+                manual
+              )}
+              <CompactionField
+                value={draft.compactAt}
+                disabled={saving}
+                onChange={(value) => setDraft(withCompactAt(draft, value))}
               />
             </SettingsGroup>
             <AgentInstructions
@@ -1225,7 +1578,7 @@ export function createTabs({
         {settingsSection !== "identity" && (
           <>
             <ProviderSetup
-              choice={draft}
+              choice={running(draft, resolved)}
               onSaved={() => setProviderRevision((value) => value + 1)}
             />
             <Field
@@ -1238,19 +1591,29 @@ export function createTabs({
               />
             </Field>
             <Select
-              label="Sessions"
+              label="Session scope"
+              description="Choose how your agent uses sessions to keep context."
               variant="preference"
               value={draft.scope}
               groups={SCOPES}
               onValueChange={(value) =>
                 setDraft({
                   ...draft,
-                  scope: value === "channel" ? "channel" : "thread",
+                  scope: sessionScope(value),
                 })
               }
             />
           </>
         )}
+        {settingsHost?.proposedModelOrEffort &&
+          (draft.model || draft.effort) && (
+            <ClearModelOverrides
+              disabled={saving}
+              onClick={() =>
+                setDraft(offRecommended({ ...draft, model: "", effort: "" }))
+              }
+            />
+          )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />
         {settingsSection !== "identity" && settingsContent}
       </form>
@@ -1262,6 +1625,7 @@ export function createTabs({
     DefaultControl,
     Create,
     CreateModel,
+    CreateThinking,
     SettingsTab,
     ActivityTab,
   };

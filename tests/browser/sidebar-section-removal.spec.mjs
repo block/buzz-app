@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { clickSidebarHeadingAction, openPage } from "./navigation.mjs";
 // Real app/header portals, caller wiring, row relocation and cold reload through
 // the production signing broker. Failure/lifecycle matrices stay in Vitest.
 test.use({ productionBroker: true, savedSidebar: true, largeSidebar: false });
@@ -19,15 +19,16 @@ test.describe("section removal", () => {
     const group = page.locator(`[data-sidebar-section="group:${id}"]`);
     const row = page.locator(`[data-channel-id="${channel}"]`);
     await expect(group.locator(`[data-channel-id="${channel}"]`)).toBeVisible();
+    const more = group.getByRole("button", {
+      name: `More actions for ${title}`,
+    });
+    await clickSidebarHeadingAction(more);
     await page
-      .getByRole("button", { name: `More actions for ${title}` })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Remove section", exact: true })
+      .getByRole("menuitem", { name: "Remove workspace", exact: true })
       .click();
     const dialog = page.getByRole("dialog", { name: `Remove ${title}?` });
     await expect(dialog).toHaveAccessibleDescription(
-      "1 channel will move back to Channels. This does not delete any channels.",
+      "1 conversation will return to their default sections.",
     );
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
     await dialog.getByRole("button", { name: "Cancel" }).click();
@@ -39,19 +40,17 @@ test.describe("section removal", () => {
     await expect(group).toBeVisible();
     await group.locator("summary").click();
     await expect(group.locator("details")).not.toHaveAttribute("open");
+    await clickSidebarHeadingAction(more);
     await page
-      .getByRole("button", { name: `More actions for ${title}` })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Remove section", exact: true })
+      .getByRole("menuitem", { name: "Remove workspace", exact: true })
       .click();
     await dialog
-      .getByRole("button", { name: "Remove section", exact: true })
+      .getByRole("button", { name: "Remove workspace", exact: true })
       .click();
     await expect(dialog).toHaveCount(0);
     await expect(group).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: "More actions for Channels" }),
+      page.getByRole("button", { name: "More actions for Team" }),
     ).toBeFocused();
     await expect(
       page.locator(
@@ -63,17 +62,18 @@ test.describe("section removal", () => {
       .poll(() => app.report.sidebarPublications?.length ?? 0)
       .toBe(3);
     const reset = app.report.sidebarPublications[0];
-    expect(reset.coordinate).toBe("channel-sort");
+    expect(reset.coordinate).toBe("channel-workspace-sort");
     expect(reset.blob.meta.g[`section:${id}`][2]).toBeNull();
     expect(reset.blob.groups).toEqual({ channels: "recent" });
     const filterReset = app.report.sidebarPublications[1];
-    expect(filterReset.coordinate).toBe("channel-filter");
+    expect(filterReset.coordinate).toBe("channel-workspace-filter");
     expect(filterReset.blob.meta.g[`section:${id}`][2]).toBeNull();
     expect(filterReset.blob.groups).toEqual({});
     const { coordinate, blob } = app.report.sidebarPublications.at(-1);
-    expect(coordinate).toBe("channel-sections");
-    expect(blob.meta.s.work.live[2]).toBe(false);
-    expect(blob.meta.a.beta[2]).toBeNull();
+    expect(coordinate).toBe("channel-workspaces");
+    expect(blob.removedSections).toContain(id);
+    expect(blob.sections.map((section) => section.id)).not.toContain(id);
+    expect(blob.assignments).not.toHaveProperty(channel);
     // Persist view intent through the production pagehide owner, then reload.
     await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
     const savedViews = await page.evaluate(() =>

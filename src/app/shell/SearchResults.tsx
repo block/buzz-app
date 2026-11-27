@@ -1527,6 +1527,35 @@ export function SearchResults({
       ? `Last message ${relativeTimestamp(channel.lastActivityAt)}`
       : "Direct message";
   };
+  // A DM shows who it is with, as person rows do: their avatar for one
+  // person (squircle for an agent), the people icon for a group.
+  const dmFace = (
+    channel: ChannelSummary,
+  ): Pick<SearchDestination, "icon" | "avatar"> => {
+    const others = channel.participants ?? [];
+    if (channel.channelType !== "dm" || !others.length)
+      return { icon: channelIcon(channel) };
+    if (others.length > 1) return { icon: UsersIcon };
+    const pubkey = others[0] ?? "";
+    const profile = profiles.get(pubkey);
+    const agent =
+      !!profile?.isAgent ||
+      knownAgents.has(pubkey) ||
+      messageableAgents.has(pubkey) ||
+      sessionAgents.has(pubkey);
+    return {
+      icon: ChatCircleIcon,
+      avatar: {
+        src: avatarMedia(
+          profile?.picture ??
+            messageableAgents.get(pubkey)?.avatar ??
+            sessionAgents.get(pubkey)?.avatar,
+          session.media,
+        ),
+        shape: agent ? "squircle" : "circle",
+      },
+    };
+  };
   const conversationDestination = (
     channel: ChannelSummary,
   ): SearchDestination => {
@@ -1552,7 +1581,7 @@ export function SearchResults({
             : channel.channelType === "solo"
               ? soloDetail(channel)
               : "Conversation",
-      icon: channelIcon(channel),
+      ...dmFace(channel),
       kind:
         channel.channelType === "dm"
           ? "person"
@@ -1678,21 +1707,23 @@ export function SearchResults({
     const key = personKey(person.pubkey);
     const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
     const dm = liveDms.get(person.pubkey);
+    const status = newSession
+      ? "New chat"
+      : dm
+        ? lastMessage(dm)
+        : "Start a direct message";
     return {
       key,
       label: person.label,
       ...(matches?.length ? { matches } : {}),
-      detail: [
-        person.fullName,
-        person.username && `@${person.username}`,
-        newSession
-          ? "New chat"
-          : dm
-            ? lastMessage(dm)
-            : "Start a direct message",
-      ]
-        .filter(Boolean)
-        .join(" · "),
+      // An unread DM shows its newest message alone, as Unread rows do, so
+      // names don't truncate it.
+      detail:
+        !newSession && dm && unreadDm(dm)
+          ? status
+          : [person.fullName, person.username && `@${person.username}`, status]
+              .filter(Boolean)
+              .join(" · "),
       icon: ChatCircleIcon,
       avatar: {
         src: avatarMedia(person.picture, session.media),

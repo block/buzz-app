@@ -523,7 +523,7 @@ it("previews the newest unread reply of a channel unread only through threads an
   const rowsOf = (group: string) =>
     within(screen.getByRole("group", { name: group })).getAllByRole("option");
   const row = (name: string) =>
-    rowsOf("Unread").find((option) => option.textContent?.startsWith(name));
+    rowsOf("Unread").find((option) => within(option).queryByText(name));
   try {
     render(
       <SearchResults
@@ -576,7 +576,7 @@ it("previews the newest unread reply of a channel unread only through threads an
     expect(
       rowsOf("Unread")
         .slice(0, 2)
-        .map((option) => option.textContent?.match(/^(Larry|Moe)/)?.[0])
+        .map((option) => option.textContent?.match(/(Larry|Moe)/)?.[0])
         .sort(),
     ).toEqual(["Larry", "Moe"]);
     // The newest unread reply of the newest thread, by its author, not a root.
@@ -721,7 +721,7 @@ it("leads with DMs, then mentions of you, then threads, then the rest, showing a
     );
     await waitFor(() => expect(rowsOf("Unread")).toHaveLength(5));
     const rows = rowsOf("Unread").map((row) => row.textContent ?? "");
-    expect(rows[0]).toMatch(/^Larry.*DM$/);
+    expect(rows[0]).toMatch(/Larry.*DM$/);
     expect(rows.slice(1, 3).sort()).toEqual([
       expect.stringMatching(
         /^ping.*Mention, Larry: can you look at this.*Mentioned$/,
@@ -733,7 +733,7 @@ it("leads with DMs, then mentions of you, then threads, then the rest, showing a
     expect(rows[4]).not.toMatch(/(DM|Mentioned|Thread)$/);
     // A DM shows its newest unread message; a channel with only its own
     // messages unread keeps naming what it is.
-    expect(rows[0]).toMatch(/^Larry.*hey there.*DM$/);
+    expect(rows[0]).toMatch(/Larry.*hey there.*DM$/);
     expect(rows[0]).not.toMatch(/Direct message/);
     expect(rows[4]).toMatch(/Conversation/);
     // Muted without a mention stays quiet.

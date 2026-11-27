@@ -1455,6 +1455,25 @@ it("reports a turn Pi left unanswered to the owner, in its thread", async () => 
   });
 });
 
+it("tags a failure reply when Pi's saved model is no longer in its catalog", async () => {
+  const { deliver, settled, published } = setup({
+    deliver: () => {
+      throw new Error("Pi has no model claude-retired-1 from anthropic");
+    },
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({
+    ok: false,
+    error: "Pi has no model claude-retired-1 from anthropic",
+  });
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.tags).toContainEqual([
+    "buzz:model-unavailable",
+    "claude-retired-1",
+  ]);
+});
+
 it("continues an owner's Solo chat at the top level, and reports its failures there", async () => {
   const { host, deliver, settled, published, solo } = setup({
     wait: ({ submission }) =>

@@ -781,6 +781,9 @@ export class ClaudeRuntime {
         label: modelName(model.resolvedModel ?? model.value),
         efforts: offeredEfforts,
         ...resting(offeredEfforts),
+        ...(model.resolvedModel && model.resolvedModel !== model.value
+          ? { resolvedModel: model.resolvedModel }
+          : {}),
       };
     });
     // A saved route is the current choice; the agents service lists it.

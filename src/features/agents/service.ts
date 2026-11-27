@@ -1110,6 +1110,8 @@ export type Model = Readonly<{
   efforts: readonly Effort[];
   /** The effort a run on it uses without a pick, when known. */
   effort?: string;
+  /** The concrete provider model ID when `id` is an alias (e.g. `opus`). */
+  resolvedModel?: string;
 }>;
 /** The models an owner can pick from, and the id of the one used without a pick. */
 export type Models = Readonly<{

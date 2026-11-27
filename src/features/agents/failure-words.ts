@@ -29,14 +29,16 @@ export function withProviderWords(
 const ID = "[^\\s`'\"()]{1,200}";
 /** How providers say they do not have a model: goose's "Resource not found
  * (404)" with Databricks' "'<id>' does not exist", OpenAI's "The model `<id>`
- * does not exist", Anthropic's not_found_error "model: <id>", and Claude
- * Code's "issue with the selected model (<id>)". Each captures the ID. A
- * reply offers a pick only while its agent still runs on that ID. */
+ * does not exist", Anthropic's not_found_error "model: <id>", Claude Code's
+ * "issue with the selected model (<id>)", and Pi's "Pi has no model <id> from
+ * <provider>". Each captures the ID. A reply offers a pick only while its
+ * agent still runs on that ID. */
 const UNAVAILABLE = [
   new RegExp(`Resource not found \\(404\\)[^\\n]*?'(${ID})' does not exist`),
   new RegExp(`\\bmodel ['\`"](${ID})['\`"] does not exist`, "i"),
   new RegExp(`not_found_error[^\\n]*?"message"\\s*:\\s*"model: (${ID})"`),
   new RegExp(`issue with the selected model \\((${ID})\\)`, "i"),
+  new RegExp(`Pi has no model (${ID}) from ${ID}`),
 ];
 
 /** The model a failed turn's error says its provider does not have, if any. */

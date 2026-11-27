@@ -52,6 +52,8 @@ it("names the model a provider says it does not have, and nothing for other fail
       "There's an issue with the selected model (claude-old-2). It may not exist or you may not have access to it.",
       "claude-old-2",
     ],
+    ["Pi has no model claude-retired-1 from anthropic", "claude-retired-1"],
+    ["Pi has no model for this agent", undefined],
     ["Request failed: connection refused", undefined],
     ["404: file 'notes.md' does not exist", undefined],
   ] as const)

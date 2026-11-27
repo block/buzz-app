@@ -53,6 +53,10 @@ function Picker({
       : undefined;
   const type = agent && agents.types().find((item) => item.key === agent.type);
   const [listed, setListed] = useState<{
+    key: string;
+    config: unknown;
+    remote: boolean;
+    type: string;
     models: Models;
     recommended: RecommendedCandidate | null | undefined;
   }>();
@@ -62,14 +66,15 @@ function Picker({
   const key = agent?.key;
   const config = agent?.config;
   const remote = Boolean(agent?.executionBinding);
-  // Listed again once a pick is saved, so the menu shows what it runs on. The
-  // previous list stays meanwhile.
+  // Listed again once a pick is saved, so the menu shows what it runs on.
+  // Until a re-list settles for the current config, stale choices cannot be picked.
   useEffect(() => {
     const current = key && agents.find(pubkeyOf(key));
     // Only the config this render shows; a newer one lists on its own render.
     if (!current || current.config !== config || !type?.models) return;
     let live = true;
     const listModels = type.models;
+    const typeKey = type.key;
     void (async () => {
       const resolve =
         onRecommended(current.config) && !remote
@@ -80,7 +85,15 @@ function Picker({
         : undefined;
       if (!live) return;
       const models = await listModels(current);
-      if (live) setListed({ models, recommended });
+      if (live)
+        setListed({
+          key: current.key,
+          config,
+          remote,
+          type: typeKey,
+          models,
+          recommended,
+        });
     })().catch((reason: unknown) =>
       console.warn(`Agent type ${type.key} could not list its models`, reason),
     );
@@ -89,19 +102,34 @@ function Picker({
     };
   }, [agents, key, config, remote, type]);
   if (!agent || !type || !listed) return null;
-  if (picked === undefined && listed.models.current !== failed) return null;
+  const fresh =
+    listed.key === agent.key &&
+    listed.config === agent.config &&
+    listed.remote === remote &&
+    listed.type === type.key;
+  if (!fresh && picked === undefined) return null;
+  const matchesFailed = (id: string, resolvedModel?: string) =>
+    id === failed || resolvedModel === failed;
+  const currentModel = listed.models.models.find(
+    (item) => item.id === listed.models.current,
+  );
+  if (
+    picked === undefined &&
+    !matchesFailed(listed.models.current, currentModel?.resolvedModel)
+  )
+    return null;
   const choices: ModelChoice[] = listed.models.models
-    .filter((model) => model.id !== failed)
+    .filter((model) => !matchesFailed(model.id, model.resolvedModel))
     .map(({ id, label }) => ({ id, label }));
   if (!choices.length) return null;
   const save = async (model: string) => {
-    if (!model || model === failed) return;
+    const chosen = listed.models.models.find((item) => item.id === model);
+    if (!fresh || !model || matchesFailed(model, chosen?.resolvedModel)) return;
     setSaving(true);
     setError("");
     try {
       const base = offRecommended(agent.config as Record<string, unknown>);
       const effort = typeof base.effort === "string" ? base.effort : "";
-      const chosen = listed.models.models.find((item) => item.id === model);
       const clearEffort =
         effort !== "" &&
         (Boolean(routeOf(model)) ||
@@ -143,7 +171,7 @@ function Picker({
           models={choices}
           value={picked ?? failed}
           defaultLabel={failed}
-          pending={saving}
+          pending={saving || !fresh}
           onChange={(model) => void save(model)}
         />
       </div>

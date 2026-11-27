@@ -222,6 +222,30 @@ test("shows recording only once the microphone delivers audio", {
   await expect(stop).toBeEnabled();
   await expect(waiting).toHaveCount(0);
 });
+test("a silent microphone can still record after ten seconds", {
+  tag: "@media-recorder",
+}, async ({ page }) => {
+  await page.clock.install();
+  const now = await page.evaluate(() => {
+    window.voiceMic.mode = "late";
+    return Date.now();
+  });
+  await page.clock.pauseAt(now + 1000);
+  await page
+    .getByRole("button", { name: "Record voice note", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.voiceMic.context?.currentTime ?? 0))
+    .toBeGreaterThan(0.6);
+  const stop = page.getByRole("button", {
+    name: "Stop recording",
+    exact: true,
+  });
+  await expect(stop).toBeDisabled();
+  // A hidden window can skip waveform ticks; one late tick still ends the wait.
+  await page.clock.fastForward(10_100);
+  await expect(stop).toBeEnabled();
+});
 test("permission cancellation, denial and plugin removal release microphones", {
   tag: "@media-recorder",
 }, async ({ page }) => {

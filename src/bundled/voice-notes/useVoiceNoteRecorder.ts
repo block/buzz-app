@@ -209,7 +209,7 @@ export function useVoiceNoteRecorder() {
       // The microphone can take seconds to deliver audio after it opens; keep
       // "Waiting for microphone…" until it does, or until the wait runs out.
       const samples = new Float32Array(analyser.fftSize);
-      let waitTicks = Math.ceil(10_000 / VOICE_NOTE_WAVEFORM_INTERVAL_MS);
+      let waiting = true;
       const levelTimer = window.setInterval(() => {
         if (
           recorder.state !== "recording" ||
@@ -220,10 +220,13 @@ export function useVoiceNoteRecorder() {
           return;
         }
         analyser.getFloatTimeDomainData(samples);
-        if (waitTicks > 0) {
-          if (samples.every((sample) => sample === 0) && --waitTicks > 0)
+        if (waiting) {
+          if (
+            samples.every((sample) => sample === 0) &&
+            performance.now() - session.startedAt < 10_000
+          )
             return;
-          waitTicks = 0;
+          waiting = false;
           if (mountedRef.current) setStatus("recording");
         }
         let sumSquares = 0;

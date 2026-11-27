@@ -62,6 +62,31 @@ describe("message fold", () => {
       expect(row?.content).toBe(content);
     }
   });
+  it("reads one exact signed unavailable model, and none from conflicting or malformed tags", () => {
+    for (const [tags, model] of [
+      [[["buzz:model-unavailable", "old-model"]], "old-model"],
+      [[["buzz:model-unavailable", ""]], undefined],
+      [[["buzz:model-unavailable", "old-model", "extra"]], undefined],
+      [
+        [
+          ["buzz:model-unavailable", "a"],
+          ["buzz:model-unavailable", "b"],
+        ],
+        undefined,
+      ],
+    ] as const) {
+      const [row] = foldMessages(channel, relay.pubkey, [
+        message(
+          alice,
+          channel,
+          "Failed",
+          1,
+          tags.map((tag) => [...tag]),
+        ),
+      ]);
+      expect(row?.modelUnavailable).toBe(model);
+    }
+  });
   it("reads one exact signed request id, and none from conflicting or malformed tags", () => {
     const a = "a".repeat(64),
       b = "b".repeat(64);

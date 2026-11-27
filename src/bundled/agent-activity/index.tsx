@@ -4,6 +4,7 @@ import {
   ActivityAccessory,
   ActivityTypingReplacement,
 } from "./ActivityAccessory";
+import { ModelUnavailable } from "../../features/agents/ModelUnavailable";
 export const inject = ["relay", "conversation", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
@@ -31,6 +32,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Agent Activity",
     component: (props) => <ActivityAccessory {...props} agents={ctx.agents} />,
     placement: "response",
+  });
+  ctx.conversation.registerAccessory({
+    id: "model-unavailable",
+    title: "Pick another model after a failed turn",
+    placement: "message",
+    component: (props) => <ModelUnavailable {...props} agents={ctx.agents} />,
   });
   ctx.conversation.registerAccessory({
     id: "typing-presentation",

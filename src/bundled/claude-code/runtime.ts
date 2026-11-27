@@ -16,6 +16,7 @@ import {
 } from "../../features/agent-harness/session-scope";
 import { protectionTranscript } from "./protection-transcript";
 import { compactAt } from "../../features/agents/compact-at";
+import { failureTags } from "../../features/agents/failure-words";
 import { launchModel, routeOf } from "../../features/agents/model-routes";
 import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
@@ -2060,6 +2061,7 @@ export class ClaudeRuntime {
                 ],
               ]),
           ["p", agent.owner],
+          ...failureTags(error),
         ],
       })
       .catch((failure) =>

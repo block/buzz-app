@@ -14,6 +14,7 @@ import type { EventData } from "./events";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
   MEDIA_TARGET_TAG,
+  MODEL_UNAVAILABLE_TAG,
   type Attachment,
   type ChannelMessage,
 } from "./contracts";
@@ -506,6 +507,17 @@ export function foldMessages(
         )
           ? { notice: "execution-failure" as const }
           : {}),
+        ...(() => {
+          // One exact model ID, or none.
+          const tags = event.tags.filter(
+            ([name]) => name === MODEL_UNAVAILABLE_TAG,
+          );
+          const model =
+            tags.length === 1 && tags[0]?.length === 2 ? tags[0][1] : undefined;
+          return model && model.length <= 200
+            ? { modelUnavailable: model }
+            : {};
+        })(),
         ...(pluginRequest ? { pluginRequest: { id: pluginRequest } } : {}),
         ...(event.kind === 40008
           ? {

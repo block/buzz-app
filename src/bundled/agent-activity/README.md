@@ -12,6 +12,10 @@ Collapse in the expanded view. There is no automatic expiry; **Stopped** remains
 neutral. Passive unknown status stays in the internal recovery model without
 creating a conversation error balloon. Real coordination messages remain history.
 
+When one of your agents reports that its provider doesn't have its model, the
+failure offers a menu of the models that agent can run on. Your pick is saved
+to that agent's settings only; the harness's shared config stays as it is.
+
 ## Getting started
 
 1. Mention an agent in a conversation.

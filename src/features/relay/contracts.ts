@@ -119,6 +119,9 @@ export type Attachment = Readonly<{
 /** Signed URL binding a timecoded reply to one attachment in a media gallery. */
 export const MEDIA_TARGET_TAG = "buzz:media";
 export const INVOCATION_INTENT_TAG = "buzz:invocation-intent";
+/** Signed on a failed turn's reply: the model ID its provider said it does
+ * not have, so the agent's owner can pick another one from the reply. */
+export const MODEL_UNAVAILABLE_TAG = "buzz:model-unavailable";
 export const INVOCATION_INTENT_VERSION = 1;
 /** Relay-authored membership activity, not a membership grant or user message. */
 export type MembershipChange = Readonly<{
@@ -166,6 +169,10 @@ export type ChannelMessage = Readonly<{
   request?: string;
   /** Signed display metadata for an automatic execution-failure reply. */
   notice?: "execution-failure";
+  /** Signed `buzz:model-unavailable` tag: the author's claim that its turn
+   * failed because its provider does not have this model ID. Display only;
+   * the viewer's own agent record decides whether anything is offered. */
+  modelUnavailable?: string;
   /** Original kind 40008. Untrusted display metadata; content stays a raw patch. */
   diff?: Readonly<{
     filePath?: string | undefined;

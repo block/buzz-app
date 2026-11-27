@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { withProviderWords } from "./failure-words";
+import { unavailableModel, withProviderWords } from "./failure-words";
 
 it("follows the explanation with the provider's words, quoted and attributed", () => {
   expect(
@@ -32,4 +32,28 @@ it("quotes at most 500 characters of the provider's words, marking the cut", () 
 it("lets the explanation stand alone when the provider said nothing", () => {
   for (const words of ["", "  \n\t "])
     expect(withProviderWords("Explained.", "Claude", words)).toBe("Explained.");
+});
+
+it("names the model a provider says it does not have, and nothing for other failures", () => {
+  for (const [error, model] of [
+    [
+      "Request failed: Resource not found (404) at https://example.test/serving-endpoints: 'databricks-retired-model' does not exist.",
+      "databricks-retired-model",
+    ],
+    [
+      "404 The model `gpt-4.9-nano` does not exist or you do not have access to it.",
+      "gpt-4.9-nano",
+    ],
+    [
+      'API Error: 404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-old-1"}}',
+      "claude-old-1",
+    ],
+    [
+      "There's an issue with the selected model (claude-old-2). It may not exist or you may not have access to it.",
+      "claude-old-2",
+    ],
+    ["Request failed: connection refused", undefined],
+    ["404: file 'notes.md' does not exist", undefined],
+  ] as const)
+    expect(unavailableModel(error)).toBe(model);
 });

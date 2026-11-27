@@ -112,6 +112,8 @@ export type AttachmentRenderer = Readonly<{
 export type ReactionToolProps = Readonly<{
   session: RelaySession;
   scope: string;
+  /** Target channel for actual message reactions; absent for non-reaction choosers. */
+  channelId?: string | undefined;
   disabled: boolean;
   /** Host-owned reaction intent; revoked when the tool or target is removed. */
   select(emoji: string): boolean;

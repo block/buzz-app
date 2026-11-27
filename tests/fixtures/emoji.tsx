@@ -43,6 +43,12 @@ window.addEventListener("pagehide", () => {
 const viewer = keypair(),
   relay = keypair(),
   member = keypair();
+const workflowDiscovery = new URLSearchParams(location.search).has(
+  "workflow-reactions",
+);
+const channelId = workflowDiscovery
+  ? "11111111-1111-4111-8111-111111111111"
+  : "c";
 const wrap = new URLSearchParams(location.search).has("wrap");
 const coldProfiles = new URLSearchParams(location.search).has("cold-profiles");
 const grouped = new URLSearchParams(location.search).has("grouped");
@@ -58,6 +64,7 @@ const participantProfiles = new Map([
 const report = {
   publications: [] as { community: string; event: RelayEvent }[],
   reads: [] as string[],
+  workflowReads: [] as { community: string; channels: readonly string[] }[],
   reactionStarted: false,
 };
 const sessions = ["a", "b"].map((community) => {
@@ -129,6 +136,41 @@ const sessions = ["a", "b"].map((community) => {
       ],
     });
   let catalog = makeSet();
+  let workflowEnabled = true;
+  let workflowFailure = false;
+  const workflow = (
+    enabled = workflowEnabled,
+    emoji = "✅",
+    otherChannel = channelId,
+  ) =>
+    signed(member, {
+      kind: 30620,
+      content: `name: ${community === "a" ? "Triage" : "Other community"}
+enabled: ${enabled}
+trigger:
+  on: reaction_added
+steps:
+  - id: reviewed
+    name: Review complete
+    action: send_message
+    if: 'trigger_emoji == "${emoji}"'
+    text: Fixture only
+  - id: celebrate
+    name: Celebrate
+    action: send_message
+    if: 'trigger_emoji == ":party:"'
+    text: Fixture only
+`,
+      tags: [
+        ["h", otherChannel],
+        [
+          "d",
+          emoji === "🛑"
+            ? "44444444-4444-4444-8444-444444444444"
+            : "22222222-2222-4222-8222-222222222222",
+        ],
+      ],
+    });
   /** The channel's history, which its head page returns. */
   const history: RelayEvent[] = [];
   let archiveTime = 10;
@@ -150,6 +192,22 @@ const sessions = ["a", "b"].map((community) => {
         return { update() {}, retry() {}, dispose() {} };
       },
       async query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(30620))) {
+          report.workflowReads.push({
+            community,
+            channels: filters.flatMap((filter) => filter["#h"] ?? []),
+          });
+          if (workflowFailure) throw new Error("Fixture workflows offline");
+          return workflowDiscovery
+            ? [
+                workflow(workflowEnabled, community === "a" ? "✅" : "🎉"),
+                workflow(false, "🛑"),
+                workflow(true, "🚩", "33333333-3333-4333-8333-333333333333"),
+              ].filter((event) =>
+                filters.some((filter) => matchesEvent(event, filter)),
+              )
+            : [];
+        }
         if (filters[0]?.kinds?.includes(30030)) {
           report.reads.push(community);
           await catalogRead;
@@ -182,11 +240,14 @@ const sessions = ["a", "b"].map((community) => {
         if (filters.some((filter) => filter.top_level && !filter.until))
           return [
             ...history,
-            bounds(relay, "c", "head", { has_more: false, next_cursor: null }),
+            bounds(relay, channelId, "head", {
+              has_more: false,
+              next_cursor: null,
+            }),
           ];
         return [
-          roster(relay, "c", [viewer.pubkey], 1),
-          metadata(relay, "c", "Test", 1),
+          roster(relay, channelId, [viewer.pubkey], 1),
+          metadata(relay, channelId, "Test", 1),
         ].filter((event) =>
           filters.some((filter) => matchesEvent(event, filter)),
         );
@@ -219,7 +280,7 @@ const sessions = ["a", "b"].map((community) => {
   owner.session.channels.ensureList();
   const root = message(
     viewer,
-    "c",
+    channelId,
     grouped
       ? "Thanks, everyone!"
       : singleReaction
@@ -316,18 +377,18 @@ const sessions = ["a", "b"].map((community) => {
         }),
       ]
     : [];
-  const broken = message(viewer, "c", "Broken :missing:", 2, [
+  const broken = message(viewer, channelId, "Broken :missing:", 2, [
     ["emoji", "missing", "javascript:bad"],
   ]);
-  const unloaded = message(viewer, "c", "Unloadable :broken:", 3, [
+  const unloaded = message(viewer, channelId, "Unloadable :broken:", 3, [
     ["emoji", "broken", `${origin}/media/broken.png`],
   ]);
-  const single = message(viewer, "c", ":party:", 4, [
+  const single = message(viewer, channelId, ":party:", 4, [
     ["emoji", "party", `${origin}/media/1.png`],
   ]);
   const table = message(
     viewer,
-    "c",
+    channelId,
     "| State | Owner | Count | Tail |\n| --- | --- | --- | --- |\n| :party: | | 12 | |\n| | lead | | end |",
     5,
     [["emoji", "party", `${origin}/media/table.png`]],
@@ -347,7 +408,7 @@ const sessions = ["a", "b"].map((community) => {
     : [];
   const blocks = message(
     viewer,
-    "c",
+    channelId,
     "> Quote :party:\n\n```text\ncode\n```",
     6,
     [["emoji", "party", `${origin}/media/blocks.png`]],
@@ -361,14 +422,14 @@ const sessions = ["a", "b"].map((community) => {
     ...tableReactions,
   ];
   history.push(root, broken, unloaded, single, table, blocks, ...seeded);
-  owner.session.channels.ensure("c");
+  owner.session.channels.ensure(channelId);
   live.receive([root, broken, unloaded, single, table, blocks]);
   live.receive(seeded);
   return {
     ...owner,
     community,
     root,
-    rows: foldMessages("c", relay.pubkey, [
+    rows: foldMessages(channelId, relay.pubkey, [
       root,
       ...(grouped ? [] : [reaction]),
       ...(wrap ? [...wrapReactions, ownReaction] : []),
@@ -382,6 +443,12 @@ const sessions = ["a", "b"].map((community) => {
       table,
       blocks,
     ]),
+    failWorkflows(value: boolean) {
+      workflowFailure = value;
+    },
+    disableWorkflow() {
+      workflowEnabled = false;
+    },
     replace(empty = false) {
       time++;
       catalog = makeSet(empty);
@@ -421,7 +488,7 @@ const sessions = ["a", "b"].map((community) => {
           created_at: archiveTime,
           content: "",
           tags: [
-            ["d", "c"],
+            ["d", channelId],
             ["p", viewer.pubkey],
           ],
         }),
@@ -429,7 +496,7 @@ const sessions = ["a", "b"].map((community) => {
           kind: 39000,
           created_at: archiveTime++,
           content: "",
-          tags: [["d", "c"], ...(value ? [["archived", "true"]] : [])],
+          tags: [["d", channelId], ...(value ? [["archived", "true"]] : [])],
         }),
       ]);
     },
@@ -438,6 +505,8 @@ const sessions = ["a", "b"].map((community) => {
 Object.assign(window, {
   emojiFixture: {
     report,
+    disableWorkflow: () => sessions[0]?.disableWorkflow(),
+    failWorkflows: (value: boolean) => sessions[0]?.failWorkflows(value),
     replace: () => sessions[0]?.replace(),
     remove: () => sessions[0]?.replace(true),
     fail: (value: boolean) => sessions[0]?.fail(value),
@@ -470,8 +539,10 @@ function Fixture() {
   const item = sessions[selected];
   const liveRows = useSyncExternalStore(
     (callback) =>
-      item ? item.session.channels.subscribeWindow("c", callback) : () => {},
-    () => item?.session.channels.window("c"),
+      item
+        ? item.session.channels.subscribeWindow(channelId, callback)
+        : () => {},
+    () => item?.session.channels.window(channelId),
   );
   if (!item) return null;
   return (
@@ -515,7 +586,7 @@ function Fixture() {
         extensions={extensions}
         session={item.session}
         scope={item.community}
-        channelId="c"
+        channelId={channelId}
         channelName="general"
         {...(thread ? { threadRootId: item.root.id } : {})}
       />

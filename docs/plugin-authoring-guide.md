@@ -170,6 +170,15 @@ host commits the audio at each pause and at the end. `status()` reports
 `ready`, `checking`, `unconfirmed` or `needs-setup`, and `Settings` is its
 sign-in or setup UI.
 
+## Reaction pickers
+
+A conversation tool's `reactionComponent` receives optional `channelId` on
+message reactions. Older hosts and non-reaction choosers omit it. Use it for
+channel-scoped discovery only; `scope` identifies the community, not a channel.
+Forward props when wrapping another picker so it keeps that context. Send the
+explicit user's choice through `select(emoji)`; the host retains the target and
+owns reaction permissions and delivery. Do not infer the target from the DOM.
+
 ## Migration writes
 
 Check `ctx.relay.snapshot().session.supportsMigrationWrites === true` before

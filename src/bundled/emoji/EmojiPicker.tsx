@@ -8,6 +8,8 @@ import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type RefObject,
+  lazy,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -39,6 +41,9 @@ import type { EmojiSearchSelection } from "./emoji-mart";
 import { PREVIEW_ACTION_SLOT, type AddEmoji } from "./add-emoji";
 import { SKIN_TONE_SLOT, defaultSkinTone, toneHand } from "./skin-tone";
 import { rootFontSize, spaciousGrid } from "./picker-layout";
+import { ContributionBoundary } from "../../features/conversation/ContributionBoundary";
+import type { WorkflowCapability } from "../../features/workflows/types";
+const WorkflowReactions = lazy(() => import("./WorkflowReactions"));
 const NO_ADD_EMOJI = {
   snapshot: () => undefined,
   subscribe: () => () => {},
@@ -69,6 +74,7 @@ export function EmojiPicker({
   disabled,
   insert,
   reaction = false,
+  workflowContext,
   gifRequests = relayGifRequests,
   externalTrigger,
   gifShortcut,
@@ -82,6 +88,9 @@ export function EmojiPicker({
   /** Return false when the choice is rejected or must not count as a use. */
   insert(value: string): unknown;
   reaction?: boolean;
+  workflowContext?:
+    | { channelId: string; capability: WorkflowCapability }
+    | undefined;
   gifRequests?: GifRequests | undefined;
   externalTrigger?: {
     ref: RefObject<HTMLButtonElement | null>;
@@ -404,11 +413,37 @@ export function EmojiPicker({
     openAddEmoji?.();
   }
   const emojiContent = (
-    <div className={styles.emojiMart}>
-      <div ref={setHost} tabIndex={-1} />
-      {addEmojiAction}
-      {skinToneAction}
-    </div>
+    <>
+      {reaction && workflowContext && (
+        <ContributionBoundary
+          fallback={
+            <p className={styles.emojiStatus}>
+              Workflow reactions unavailable. Close and reopen the picker to
+              retry.
+            </p>
+          }
+        >
+          <Suspense fallback={null}>
+            <WorkflowReactions
+              key={`${scope}:${workflowContext.channelId}`}
+              {...workflowContext}
+              session={session}
+              disabled={disabled}
+              choose={(value) => {
+                onInsert.current(value);
+                accepted.current = true;
+                setOpen(false);
+              }}
+            />
+          </Suspense>
+        </ContributionBoundary>
+      )}
+      <div className={styles.emojiMart}>
+        <div ref={setHost} tabIndex={-1} />
+        {addEmojiAction}
+        {skinToneAction}
+      </div>
+    </>
   );
   const gifContent = community && (
     <GifPicker

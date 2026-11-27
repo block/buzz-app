@@ -210,3 +210,21 @@
   object-fit: contain;
   border-radius: var(--radius-control);
 }
+
+.workflowReactions {
+  flex-shrink: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-standard);
+}
+.workflowReactionGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.workflowReactionImage {
+  width: var(--size-emoji-picker);
+  height: var(--size-emoji-picker);
+  object-fit: contain;
+}

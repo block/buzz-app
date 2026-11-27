@@ -11,6 +11,7 @@ export function createReactionPicker(addEmoji?: AddEmoji) {
   return function ReactionPicker({
     session,
     scope,
+    channelId,
     disabled,
     select,
     reacted,
@@ -72,6 +73,11 @@ export function createReactionPicker(addEmoji?: AddEmoji) {
             }}
             addEmoji={addEmoji}
             reaction
+            workflowContext={
+              channelId && session.workflows?.availability.definitions
+                ? { channelId, capability: session.workflows }
+                : undefined
+            }
             externalTrigger={{
               ref: trigger,
               id,

@@ -237,6 +237,12 @@ runs on a message, reaction, schedule or webhook. It starts disabled, and only
 its author can edit, enable or run it. Your agents follow only workflows that
 you or your agents own.
 
+**Workflow reactions.** In a channel, **Add reaction** lists configured emoji
+from enabled reaction workflows. Hover or focus an emoji to see workflow and
+branch names, then select it to react normally. The list recognizes explicit
+emoji triggers and simple emoji-equality conditions; other conditions may still
+prevent a run. It is not a complete list or a guarantee of execution.
+
 ## Plugins
 
 **Settings → Plugins → Manage plugins** shows which plugins are on, turns them

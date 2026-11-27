@@ -693,6 +693,34 @@ it("draws a thread-title root as one line that opens its thread, and in full in 
     cleanup();
   }
 });
+it("leaves the title's author out of its line's repliers, but not a message's", () => {
+  const props = {
+    profile: { name: "Alex" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    onOpenThread: () => {},
+  };
+  const repliers = (container: HTMLElement) =>
+    [...container.querySelectorAll("[data-thread-summary] [title]")].map((e) =>
+      e.getAttribute("title"),
+    );
+  const replied = { ...row, participants: ["author", "agent"] };
+  try {
+    const { container, rerender } = renderDom(
+      <MessageRow
+        row={{ ...replied, content: "Fix the login test", threadTitle: true }}
+        {...props}
+      />,
+    );
+    expect(repliers(container)).toEqual(["agent"]);
+    rerender(<MessageRow row={replied} {...props} />);
+    expect(repliers(container)).toEqual(["agent", "author"]);
+  } finally {
+    cleanup();
+  }
+});
 it("draws a thread title's inline content, such as custom emoji, on its line", () => {
   const empty: never[] = [];
   const emoji = [

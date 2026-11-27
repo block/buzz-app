@@ -63,6 +63,39 @@ test("a thread title reads as one line that opens its thread", async ({
         }),
       )
       .toBe(true);
+    // An arrival cue on a line without a bubble washes it and then retires,
+    // so the line's fill comes back.
+    const filled = (button) =>
+      button.evaluate((element) => {
+        const entry = element.parentElement.parentElement;
+        return {
+          cue: /messageHighlight/.test(entry.className),
+          fill: [entry, element.parentElement].some(
+            (part) =>
+              getComputedStyle(part).backgroundColor !== "rgba(0, 0, 0, 0)",
+          ),
+        };
+      });
+    for (const titled of [line, second]) {
+      await titled.evaluate(async (element) => {
+        const { highlightMessage } = await import(
+          "/src/features/messages/message-highlight.ts"
+        );
+        highlightMessage(element.parentElement.parentElement);
+      });
+      await expect
+        .poll(() =>
+          titled.evaluate(
+            (element) =>
+              getComputedStyle(element.parentElement.parentElement, "::after")
+                .animationName,
+          ),
+        )
+        .not.toBe("none");
+      await expect
+        .poll(() => filled(titled), { timeout: 10_000 })
+        .toEqual({ cue: false, fill: true });
+    }
     // Hovering the line shows its Reply toolbar, as a full message's does.
     await line.hover();
     await expect(

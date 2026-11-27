@@ -3777,18 +3777,30 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
    briefly marks it. A filled bubble takes a see-through layer, chosen like its
    chips, so they stay readable on top. A row without one (membership lines,
    emoji, attachments, tables, diffs) is washed instead; the wash extends into
-   the feed's inset without changing the row's layout box. */
+   the feed's inset without changing the row's layout box. A :has() inside
+   another :has() is invalid and drops the whole rule, so a table's bubble is
+   its own case. */
 .messageHighlight {
   isolation: isolate;
 }
-.messageHighlight:not(
+.messageHighlight:is(
+  :not(
+    :has(
+      > .messageBody
+        > .messageContent
+        .messageBubble:not([data-emoji-only], [data-diff-only])
+    )
+  ),
+  :has(
+    > .messageBody > .messageContent .messageBubble > .text > table:only-child
+  ),
   :has(
     > .messageBody
       > .messageContent
-      .messageBubble:not([data-emoji-only], [data-diff-only]):not(
-        :has(> .text > table:only-child),
-        :has(> .text > table:first-child + .edited:last-child)
-      )
+      .messageBubble
+      > .text
+      > table:first-child
+      + .edited:last-child
   )
 )::after {
   content: "";

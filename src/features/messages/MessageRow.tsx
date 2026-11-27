@@ -220,6 +220,8 @@ type MessageContentProps = MessageRowProps & {
   shownRow?: ChannelMessage;
   /** Leave out the reactions row and its controls. */
   withoutReactions?: boolean;
+  /** The thread summary's avatars leave out the message's author. */
+  summaryWithoutAuthor?: boolean;
   renderMessage?: (
     message: ReactNode,
     trigger: RefObject<HTMLButtonElement | null>,
@@ -292,6 +294,7 @@ function MessageRowContent({
   fullWidth = false,
   shownRow,
   withoutReactions = false,
+  summaryWithoutAuthor = false,
   withToolbar = false,
   renderMessage,
   getThreadRoot,
@@ -1403,6 +1406,9 @@ function MessageRowContent({
   // Accessories may only point at a thread the row could open or start.
   const summaryThread =
     startsThreads || row.replyCount > 0 ? onOpenThread : undefined;
+  const summaryParticipants = summaryWithoutAuthor
+    ? row.participants.filter((id) => id !== row.authorId)
+    : row.participants;
   const renderMessageSummary = (activity?: MessageSummaryActivity) => {
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
@@ -1427,7 +1433,7 @@ function MessageRowContent({
               (!activity && row.replyCount > 0) || undefined
             }
             data-first-participant-shape={
-              agentPubkeys?.has(row.participants[0] ?? "")
+              agentPubkeys?.has(summaryParticipants[0] ?? "")
                 ? "squircle"
                 : "circle"
             }
@@ -1457,7 +1463,7 @@ function MessageRowContent({
               draft={threadDraft}
               replied={row.replyCount > 0}
               count={activity ? 0 : row.replyCount}
-              participants={row.participants}
+              participants={summaryParticipants}
               profiles={participantProfiles}
               agentPubkeys={agentPubkeys}
               resolveName={resolveName}
@@ -2492,6 +2498,7 @@ function ThreadTitleRow(props: MessageRowProps) {
       {...props}
       shownRow={row}
       withToolbar
+      summaryWithoutAuthor
       alignViewer={false}
       day={false}
       layout="continuation"

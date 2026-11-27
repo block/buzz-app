@@ -72,6 +72,11 @@ export function apply(ctx: Context) {
   const held: OutgoingMessage = { channelId: "record", text: "Later", recipients: [], references: [], attachments: [], picks: {} };
   const sent: Promise<string> = ctx.conversation.publish(ctx.relay.snapshot().session, held);
   void sent;
+  const scheduled = relaySession.messages.scheduled;
+  if (scheduled) {
+    void scheduled.create(held, Date.now() + 60_000);
+    void scheduled.list().then((rows) => rows[0]?.destination.channelId);
+  }
   type HostPickerKeys = "agents" | "communities" | "navigator" | "signal" | "visit" | "canOpenLink" | "onOpenLink" | "onOpenMessage";
   const pickerHasNoHostProps: Extract<keyof ChannelMembersDialogProps, HostPickerKeys> extends never ? true : false = true;
   void pickerHasNoHostProps;

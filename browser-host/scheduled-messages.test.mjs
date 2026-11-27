@@ -82,21 +82,24 @@ it("uses advertised scheduling through the authenticated fixed broker route", as
     const service = createScheduledMessages(transport.scheduledMessages, {
       viewer,
       signal: new AbortController().signal,
-      prepare: (input) => ({
+      prepare: (message) => ({
         kind: 9,
-        content: input.content,
-        tags: [["h", input.destination.channelId]],
+        content: message.text,
+        tags: [["h", message.channelId]],
       }),
       name: () => "Launch",
     });
-    await service.create({
-      destination: {
+    await service.create(
+      {
         channelId: "11111111-1111-4111-8111-111111111111",
-        name: "Launch",
+        text: "Tomorrow",
+        recipients: [],
+        references: [],
+        attachments: [],
+        picks: {},
       },
-      content: "Tomorrow",
-      sendAt: Date.now() + 86400000,
-    });
+      Date.now() + 86400000,
+    );
     expect(verifyEvent(queued.event)).toBe(true);
     expect(queued.event.pubkey).toBe(viewer);
     const [row] = await service.list(new AbortController().signal);

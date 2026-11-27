@@ -274,7 +274,7 @@ it("offers voice for a capable agent DM, explains automatic joining, and keeps o
     );
     expect(
       screen.getByText(
-        "Your microphone will turn on and Codex will join automatically.",
+        "Your microphone will turn on and Codex will join automatically. Transcripts appear in this chat.",
       ),
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Start huddle" }));

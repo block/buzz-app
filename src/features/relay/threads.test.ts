@@ -10,6 +10,7 @@ import {
 } from "./threads";
 import { byteSize } from "./budget";
 import { ReadError } from "./errors";
+import { foldMessages } from "./fold";
 import type { RelayReader } from "./reader";
 import type { OutgoingEvent } from "./outbox";
 import type { LiveCallbacks } from "./live";
@@ -22,6 +23,7 @@ import {
   roster,
   scriptedTransport,
   signed,
+  summary,
 } from "./testing";
 
 const relay = keypair(),
@@ -349,6 +351,88 @@ it("seeds a thread root and observed replies synchronously from retained session
     observedReply.id,
   ]);
 });
+
+it.each([false, true])(
+  "keeps Huddle transcript replies under the card (nested=%s)",
+  async (nested) => {
+    const h = setup();
+    const room = "00000000-0000-4000-8000-000000000002";
+    const card = signed(alice, {
+      kind: 9,
+      created_at: 2,
+      content: "Huddle started",
+      tags: [
+        ["h", "a"],
+        ["buzz:huddle-card", room],
+        ...(nested ? [["e", root.id, "", "reply"]] : []),
+      ],
+    });
+    const transcript = signed(alice, {
+      kind: 9,
+      created_at: 3,
+      content: "Hello",
+      tags: [
+        ["h", "a"],
+        ...(nested ? [["e", root.id, "", "root"]] : []),
+        ["e", card.id, "", "reply"],
+      ],
+    });
+    // Automatic relay teardown names the room without the new card or thread.
+    const end = signed(relay, {
+      kind: 48103,
+      created_at: 4,
+      content: JSON.stringify({ ephemeral_channel_id: room }),
+      tags: [["h", "a"]],
+    });
+    const announcement = signed(alice, {
+      kind: 48100,
+      created_at: 2,
+      content: JSON.stringify({ ephemeral_channel_id: room, card_id: card.id }),
+      tags: [["h", "a"]],
+    });
+    h.traffic.receive([roster(relay, "a", [viewer.pubkey])]);
+    h.session.channels.ensure("a");
+    h.next().respond([
+      root,
+      card,
+      announcement,
+      bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    h.traffic.receive([
+      card,
+      transcript,
+      summary(relay, "a", card.id, { reply_count: 1 }),
+    ]);
+    expect(h.session.channels.window("a").rows.map((row) => row.id)).toEqual(
+      nested ? [root.id] : [root.id, card.id],
+    );
+    const view = h.session.thread("a", nested ? root.id : card.id);
+    const { root: anchor, replies } = view.snapshot();
+    expect(nested ? replies[0] : anchor).toMatchObject({
+      id: card.id,
+      huddle: { room, threaded: true },
+      replyCount: 1,
+    });
+    expect(replies.at(-1)).toMatchObject({
+      id: transcript.id,
+      replyParentId: card.id,
+      threadRootId: nested ? root.id : card.id,
+    });
+    expect(
+      foldMessages("a", relay.pubkey, [
+        root,
+        announcement,
+        ...(nested ? [] : [card]),
+        end,
+      ]).map((row) => row.id),
+    ).toEqual(nested ? [root.id] : [root.id, card.id]);
+    h.traffic.receive([end]);
+    expect(h.session.channels.window("a").rows.map((row) => row.id)).toEqual(
+      nested ? [root.id] : [root.id, card.id],
+    );
+  },
+);
 
 /** A thread opened while the stream is up, as a settled view's resume needs. */
 function live() {

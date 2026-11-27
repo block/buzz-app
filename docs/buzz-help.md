@@ -222,13 +222,28 @@ if that desktop app is up and running.
 
 ## Huddles
 
-Huddles need the desktop app. The headphone button in a channel or DM header
-starts or joins one. Only Codex agents have voice. Your running Codex agent
-joins when it's a member of the huddle: starting a huddle in its DM adds it,
-and otherwise you add it from the huddle's members. Transcripts post in the
-huddle's room. Each agent's **Huddle voice** setting picks its voice. An agent
-hears whatever your microphone picks up, including people near you, and audio
-sent just before someone leaves can be credited to whoever takes their place.
+Huddles need the desktop app. Use the headphone button in a channel or DM,
+**Start a huddle** in the Solo chat menu, or **Start huddle in thread** on a
+message. In a channel, speech appears in replies to the Huddle card. If you start
+inside a thread, the card has its own replies there. In Solo chats and DMs,
+speech appears in the main timeline. The Huddle's **Messages** panel shows
+that same conversation. Use the Huddle card to join, and the reply summary
+below it to open its replies. The Huddle ends when the last person leaves.
+
+Buzz uses the provider in **Settings → Speech to text** to transcribe your microphone during a Huddle. On macOS, if the provider is unavailable, Apple on-device recognition posts a finished message after each utterance.
+
+Your running Codex agents in a Solo chat can join when you start the Huddle.
+Use the Huddle member controls to add people or agents already in the
+conversation. Each agent's **Huddle voice** setting picks its voice.
+In **Audio settings**, **Direct audio with local agents** lets your microphone
+and speakers bypass the relay for agents running on the same device.
+**Let agents hear each other** controls audio between those agents independently.
+**Live transcripts** updates each transcript message as you or an agent speaks. Turn it off to receive only finished transcripts.
+Work continuing in the Huddle uses the same Codex session. The voice model sees
+the current participants, recent chat messages, and new messages typed in that
+conversation. Codex Realtime provides agent audio, and replies from ordinary text turns appear in the chat. When you leave,
+unfinished Codex work in this conversation can continue in text. Use **Stop**
+on the work to cancel it.
 
 ## Workflows
 

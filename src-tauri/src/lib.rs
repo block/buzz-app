@@ -121,7 +121,7 @@ use relay::{
     relay_upload_begin, relay_upload_cancel, relay_upload_chunk, relay_verify_signatures,
     relay_workflow_runs,
 };
-use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
+use relay::{huddle_close, huddle_open, huddle_pcm, huddle_recognize, huddle_touch, Huddles};
 mod terminal;
 #[cfg(all(test, unix))]
 mod test_executable;
@@ -768,6 +768,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         huddle_open,
         huddle_close,
         huddle_pcm,
+        huddle_recognize,
         huddle_touch,
         pairing::pairing_account,
         pairing::pairing_start,

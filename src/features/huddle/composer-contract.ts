@@ -12,6 +12,7 @@ export type ComposerSnapshot = {
   viewer: string | undefined;
   scope: string;
   room: string;
+  draftKey?: string;
   writable: boolean;
   uploads: boolean;
   canAdd: boolean;

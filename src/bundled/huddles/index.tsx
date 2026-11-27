@@ -1,3 +1,4 @@
+import { relayOrigin } from "../../features/communities/destination";
 import {
   remoteDmVoiceCalls,
   withRemoteDmVoiceCalls,
@@ -26,6 +27,7 @@ export const inject = [
   "conversation",
   "navigation",
   "agents",
+  "speech",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!nativeHuddles.available) return;
@@ -33,8 +35,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.relay,
     nativeHuddles,
     openHuddleAudio,
-    (connection, destination) =>
-      dmVoiceAgent(connection, destination, ctx.agents)?.pubkey,
+    (connection, destination) => {
+      const dm = dmVoiceAgent(connection, destination, ctx.agents);
+      if (dm) return dm.pubkey;
+      const channel = connection.session.channels.get?.(destination.channelId);
+      if (channel?.channelType !== "solo") return;
+      return ctx.agents
+        .snapshot()
+        .running.filter(
+          (agent) =>
+            agent.type === "buzz.codex/codex" &&
+            agent.place === "here" &&
+            agent.owner === destination.viewer &&
+            relayOrigin(agent.relay) === relayOrigin(destination.relayUrl) &&
+            !agent.protection &&
+            !agent.executionBinding &&
+            channel.members?.includes(agent.pubkey),
+        )
+        .map((agent) => agent.pubkey);
+    },
+    ctx.speech,
   );
   const remoteVoices = remoteDmVoiceCalls(ctx.relay, ctx.agents);
   const stopVoices = createHuddleVoices(
@@ -105,6 +125,28 @@ export const apply: PluginModule["apply"] = (ctx) => {
       showWindow={companion.open}
     />
   ));
+  ctx.conversation.registerMessageAction({
+    id: "thread-huddle",
+    title: "Start a huddle in thread",
+    placement: "menu",
+    matches: (message, session) =>
+      !!message.threadRootId ||
+      (!message.huddle &&
+        !message.membership &&
+        /^[0-9a-f]{64}$/.test(message.id) &&
+        session.channels.get?.(message.channelId)?.channelType !== "solo"),
+    component: ({ session, message, close }) => (
+      <SoloHuddleMenu
+        session={session}
+        channelId={message.channelId}
+        root={message.threadRootId ?? message.id}
+        onActivate={close}
+        relay={ctx.relay}
+        huddles={huddles}
+        showWindow={companion.open}
+      />
+    ),
+  });
   ctx.panels.register({
     id: "huddles",
     title: "Huddles",
@@ -122,6 +164,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <HuddleLauncher
         agents={ctx.agents}
         {...props}
+        context={{
+          ...props.context,
+          ...(props.context.threadId && { root: props.context.threadId }),
+        }}
         relay={ctx.relay}
         huddles={huddles}
         showWindow={companion.open}

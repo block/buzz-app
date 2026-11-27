@@ -1,4 +1,9 @@
 import type { AudioSettingsState } from "../../features/huddle/audio-settings";
+import type {
+  HuddleRoutingOption,
+  HuddleSnapshot,
+} from "../../features/huddle/service";
+import { Switch } from "../../shared/design-system/ui/Switch";
 import { GearIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -15,10 +20,14 @@ export function HuddleAudioSettings({
   quiet = false,
   refresh,
   select,
+  routing,
+  setRouting,
 }: {
   state: AudioSettingsState | undefined;
   compact?: boolean;
   quiet?: boolean;
+  routing?: HuddleSnapshot["routing"];
+  setRouting(option: HuddleRoutingOption, enabled: boolean): void;
   refresh(): void;
   select(kind: "input" | "output", id: string): void;
 }) {
@@ -48,6 +57,31 @@ export function HuddleAudioSettings({
       <PopoverPopup align="start" size="compact">
         <div className="flex flex-col gap-3">
           <PopoverTitle>Audio settings</PopoverTitle>
+          {routing && (
+            <>
+              <Switch
+                label="Direct audio with local agents"
+                checked={routing.directAudio}
+                onCheckedChange={(enabled) =>
+                  setRouting("directAudio", enabled)
+                }
+              />
+              <Switch
+                label="Let agents hear each other"
+                checked={routing.agentCrossTalk}
+                onCheckedChange={(enabled) =>
+                  setRouting("agentCrossTalk", enabled)
+                }
+              />
+              <Switch
+                label="Live transcripts"
+                checked={routing.liveTranscript}
+                onCheckedChange={(enabled) =>
+                  setRouting("liveTranscript", enabled)
+                }
+              />
+            </>
+          )}
           {state ? (
             <>
               {(["input", "output"] as const).map((kind) => {

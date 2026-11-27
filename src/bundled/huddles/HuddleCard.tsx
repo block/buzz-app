@@ -181,7 +181,7 @@ export function HuddleCard({
             {current ? "Open" : "Join"}
           </Button>
         )}
-        {finished && open && (
+        {finished && open && !message.huddle?.threaded && (
           <Button
             size="sm"
             variant="subtle"

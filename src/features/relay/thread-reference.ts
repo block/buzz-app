@@ -2,6 +2,19 @@
 export const isThreadContent = (event: { kind: number }) =>
   [9, 40002, 40008].includes(event.kind);
 
+/** Direct replies omit the redundant root tag. */
+export function threadReplyTags(
+  root: string | undefined,
+  parent = root,
+): string[][] {
+  return root && parent
+    ? [
+        ...(root === parent ? [] : [["e", root, "", "root"]]),
+        ["e", parent, "", "reply"],
+      ]
+    : [];
+}
+
 /** NIP-10 matches relay ingest: last valid marked root/reply wins; a lone root is not a reply. */
 export function threadReference(event: {
   readonly tags: readonly (readonly string[])[];

@@ -825,6 +825,7 @@ it.each([false, true])(
     const event = await h.sign();
     expect(event.tags).toEqual([
       ["h", "c"],
+      ["buzz:message-source", "typed"],
       ...(nested ? [["e", root.id, "", "root"]] : []),
       ["e", parentId, "", "reply"],
       ["client-id", expect.any(String)],

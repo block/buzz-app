@@ -60,6 +60,7 @@ export function HuddlePanel({
       );
     };
   }, [valid, room, parent, connection.session, connection.scope]);
+  const conversation = discussion?.conversation;
   return valid && room && owner && discussion ? (
     <HuddleDiscussionView
       discussion={discussion}
@@ -70,9 +71,17 @@ export function HuddlePanel({
           session={connection.session}
           extensions={extensions}
           scope={connection.scope ?? ""}
-          channelId={room}
-          channelName="Huddle"
-          forwardAudience="Everyone in this Huddle"
+          channelId={conversation?.channelId ?? room}
+          channelName={
+            connection.session.channels.get?.(conversation?.channelId ?? room)
+              ?.name ?? "Huddle"
+          }
+          {...(conversation?.root && {
+            threadRootId: conversation.root,
+            replyParentId: conversation.parentId,
+          })}
+          {...(!conversation && { forwardAudience: "Everyone in this Huddle" })}
+          draftStorageKey={`draft:${room}`}
           label="Message this Huddle"
           placeholder="Message this Huddle"
           disabled={!discussion.writable}

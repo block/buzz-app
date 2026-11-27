@@ -274,6 +274,20 @@ async function addOneMember(
       throw new Error(
         "This channel cannot add members right now. Refresh and try again.",
       );
+    const room = channel();
+    if (room?.huddle) {
+      const parent =
+        room.parentChannelId && channelOf(session, room.parentChannelId);
+      if (
+        !parent ||
+        parent.cached ||
+        parent.archived ||
+        !parent.members?.includes(pubkey)
+      )
+        throw new Error(
+          "Add them to the conversation before inviting them to its Huddle.",
+        );
+    }
     if (agentUnavailable(session, pubkey))
       throw new Error(
         "Archived identities and agents being deleted cannot be added. Choose someone else.",
@@ -660,7 +674,9 @@ async function addMemberBatch(
 ): Promise<ReadonlySet<string>> {
   const confirmed = new Set<string>();
   const outbox = session.outbox;
-  if (people.length < 2 || !outbox) return confirmed;
+  // Huddle additions use the single-member path to check each invitee.
+  if (people.length < 2 || !outbox || channelOf(session, channelId)?.huddle)
+    return confirmed;
   const { migration, batchReceipt } = intents.values().next().value ?? {};
   const allowed = () =>
     soloParticipant

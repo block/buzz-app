@@ -446,6 +446,10 @@ pub(super) async fn run(
                                 _ => continue,
                             }
                             updates.send(Update::Participants {participants:peers.values().cloned().collect()}).map_err(|_| "Huddle view closed")?;
+                            // An agent seat never keeps a room alive after its human leaves.
+                            if seat.as_ref().is_some_and(|seat| !peers.values().any(|peer| peer == &seat.owner)) {
+                                break;
+                            }
                         }
                         Some(Ok(Message::Ping(bytes))) => {
                             let _ = out.try_send(Message::Pong(bytes));
@@ -821,6 +825,7 @@ mod tests {
                 viewer,
                 parent: uuid::Uuid::new_v4().to_string(),
                 room: None,
+                origin: None,
                 agent: None,
             };
             (
@@ -1031,7 +1036,7 @@ mod tests {
                 }
             });
             let (_pcm, pcm) = mpsc::channel(1);
-            let (stop, stopped) = watch::channel(false);
+            let (_stop, stopped) = watch::channel(false);
             let touched = Arc::new(std::sync::atomic::AtomicU64::new(
                 super::super::super::lease_time(),
             ));
@@ -1059,9 +1064,22 @@ mod tests {
                 })
                 .await
                 .expect("the owner was never heard");
-                stop.send(true).unwrap();
+                // Another human and this agent remain, but its owner is gone.
+                send(
+                    &mut relay,
+                    json!({"type":"left","peer_index":1,"pubkey":owner}),
+                )
+                .await;
+                while let Some(frame) = relay.next().await {
+                    if matches!(frame.unwrap(), Message::Close(_)) {
+                        break;
+                    }
+                }
             };
-            let (played, ()) = tokio::join!(playing, relay_side);
+            let (played, ()) =
+                tokio::time::timeout(FAILURE_BOUND, async { tokio::join!(playing, relay_side) })
+                    .await
+                    .expect("the agent seat stayed connected after its owner left");
             played.unwrap();
             assert!(heard.lock().unwrap().iter().all(|peer| *peer == owner));
         }

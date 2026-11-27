@@ -241,7 +241,10 @@ export function createHuddleComposerClient(token: string) {
               references,
               picks,
               draft:
-                viewRevision(initial.scope, `draft:${initial.room}`) ?? "null",
+                viewRevision(
+                  initial.scope,
+                  initial.draftKey ?? `draft:${initial.room}`,
+                ) ?? "null",
             })
           ).id,
       },
@@ -266,7 +269,10 @@ export function createHuddleComposerClient(token: string) {
               attachments,
               references,
               draft:
-                viewRevision(initial.scope, `draft:${initial.room}`) ?? "null",
+                viewRevision(
+                  initial.scope,
+                  initial.draftKey ?? `draft:${initial.room}`,
+                ) ?? "null",
             })
           ).id;
         },

@@ -40,7 +40,9 @@ To inspect a conversation, see [Inspect an agent session](../../../docs/session-
 An eligible voice seat uses the room's existing Codex thread with automatic
 WebRTC handoffs. The adapter carries 48 kHz mono PCM through the existing huddle
 capture worklet; Codex controls speech and interruption. Delegated work enters
-the ordinary active-turn and Buzz-tool path, and room mentions steer that work.
+the ordinary active-turn and Buzz-tool path. Room mentions can steer that work.
+With community scope, messages in other conversations can steer it too when
+they use the running turn's model and reasoning effort.
 The seat retains its resolved opening settings and thread subscription until
 close finishes. Protected agents and devices without WebRTC are refused.
 Final realtime transcripts go through the host's transcript policy.

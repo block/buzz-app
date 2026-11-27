@@ -401,6 +401,7 @@ export type MessageComposerProps = {
     | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  draftStorageKey?: string | undefined;
   /** Physical source thread when threadRootId is a task anchor. */
   sourceRootId?: string | undefined;
   /** The viewer's latest message in this thread, once the thread has loaded.
@@ -597,6 +598,7 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  draftStorageKey,
   sourceRootId,
   threadSeed,
   replyParentId,
@@ -653,7 +655,11 @@ function Composer({
   const threadKey = threadRootId
     ? threadDraftKey(channelId, threadRootId, sourceRootId)
     : undefined;
-  const draftKey = submission?.draftKey ?? threadKey ?? `draft:${channelId}`;
+  const draftKey =
+    submission?.draftKey ??
+    draftStorageKey ??
+    threadKey ??
+    `draft:${channelId}`;
   const [admitting, setAdmitting] = useState(false);
   const admission = useRef(false);
   const live = useRef(true);

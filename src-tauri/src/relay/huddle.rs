@@ -1,6 +1,7 @@
 //! Client-side Huddle owner. Uses the existing relay's ephemeral channels and v2 audio.
 //! No key, arbitrary signer, or arbitrary WebSocket endpoint is exposed to plugins.
 mod audio;
+mod speech;
 
 use super::{origin, request_url, send, verify_signature, Result};
 use crate::federated_identity::FederatedIdentity;
@@ -61,9 +62,18 @@ pub(crate) struct Call {
     viewer: String,
     parent: String,
     room: Option<String>,
+    origin: Option<TranscriptOrigin>,
     /// An agent of `viewer` to seat in the existing `room`, signing as itself.
     #[serde(default)]
     agent: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TranscriptOrigin {
+    root: Option<String>,
+    #[serde(default)]
+    card: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -106,6 +116,13 @@ fn validate(call: &Call) -> Result<()> {
     if !uuid(&call.id)
         || !uuid(&call.parent)
         || !super::hex_key(&call.viewer)
+        || call.origin.as_ref().is_some_and(|origin| {
+            call.room.is_some()
+                || origin
+                    .root
+                    .as_deref()
+                    .is_some_and(|root| !super::hex_key(root))
+        })
         || call
             .room
             .as_ref()
@@ -141,22 +158,36 @@ fn lifecycle(kind: u16, parent: &str, room: &str) -> EventTemplate {
         json!({"ephemeral_channel_id": room}).to_string(),
     )
 }
-fn create(room: &str, parent: &str) -> EventTemplate {
-    template(
-        9007,
-        vec![
-            vec!["h".into(), room.into()],
-            vec!["name".into(), "Huddle".into()],
-            vec!["visibility".into(), "private".into()],
-            vec!["channel_type".into(), "stream".into()],
-            vec![
-                "about".into(),
-                format!("Buzz Huddle (buzz.huddles/v1)\nparent:{parent}"),
-            ],
-            vec!["ttl".into(), "3600".into()],
-        ],
-        String::new(),
-    )
+fn create(
+    room: &str,
+    parent: &str,
+    origin: Option<&TranscriptOrigin>,
+    card_id: Option<&str>,
+) -> EventTemplate {
+    let about = format!("Buzz Huddle (buzz.huddles/v1)\nparent:{parent}");
+    let mut tags = vec![
+        vec!["h".into(), room.into()],
+        vec!["name".into(), "Huddle".into()],
+        vec!["visibility".into(), "private".into()],
+        vec!["channel_type".into(), "stream".into()],
+        vec!["about".into(), about],
+        vec!["ttl".into(), "3600".into()],
+    ];
+    if let Some(origin) = origin {
+        tags.push(vec!["t".into(), "huddle:transcripts".into()]);
+        // NIP-CL labels are limited to 64 characters, including the prefix.
+        for (name, id) in [
+            ("root", origin.root.as_deref().or(card_id)),
+            ("card", card_id),
+        ] {
+            if let Some(id) = id {
+                let (first, second) = id.split_at(32);
+                tags.push(vec!["t".into(), format!("huddle:{name}:0:{first}")]);
+                tags.push(vec!["t".into(), format!("huddle:{name}:1:{second}")]);
+            }
+        }
+    }
+    template(9007, tags, String::new())
 }
 fn confirm_member(room: &str, viewer: &str) -> EventTemplate {
     template(
@@ -183,6 +214,17 @@ async fn publish(
         _ => "update the Huddle",
     };
     let signed = host.sign(event).await?;
+    publish_signed(host, fi, community, signed, viewer, operation).await
+}
+
+async fn publish_signed(
+    host: &IdentityHost,
+    fi: &FederatedIdentity,
+    community: &str,
+    signed: Value,
+    viewer: &str,
+    operation: &str,
+) -> Result<()> {
     if signed["pubkey"] != viewer {
         return Err("Your identity changed. Reopen Huddles.".into());
     }
@@ -489,14 +531,43 @@ async fn run(
     let mut advertised = false;
     let result = async {
         if creating {
+            let card = if let Some(origin) = call.origin.as_ref().filter(|origin| origin.card) {
+                let mut tags = vec![
+                    vec!["h".into(), call.parent.clone()],
+                    vec!["buzz:huddle-card".into(), room.clone()],
+                ];
+                if let Some(root) = &origin.root {
+                    tags.push(vec!["e".into(), root.clone(), String::new(), "reply".into()]);
+                }
+                Some(host.sign(template(9, tags, "Huddle started".into())).await?)
+            } else {
+                None
+            };
+            let card_id = card.as_ref().and_then(|card| card["id"].as_str()).map(str::to_owned);
+            check_cancelled(&stop, &touched)?;
             attempted_create = true;
             // Do not cancel an in-flight publication: its outcome may be uncertain.
-            publish(host, fi, &call.community, create(&room, &call.parent), &call.viewer).await?;
+            publish(host, fi, &call.community, create(&room, &call.parent, call.origin.as_ref(), card_id.as_deref()), &call.viewer).await?;
             check_cancelled(&stop, &touched)?;
-            // Once the advisory might be visible, another person can join. Never
-            // archive that shared room on our own failed/cancelled connection.
+            // The first joinable card or advisory may be visible even if
+            // publication fails locally. Do not roll back a shared room.
             advertised = true;
-            publish(host, fi, &call.community, lifecycle(48100, &call.parent, &room), &call.viewer).await?;
+            if let Some(card) = card {
+                publish_signed(host, fi, &call.community, card, &call.viewer, "post the Huddle card").await?;
+                check_cancelled(&stop, &touched)?;
+            }
+            let mut start = lifecycle(48100, &call.parent, &room);
+            if let Some(origin) = &call.origin {
+                // Keep lifecycle events visible to discovery, including
+                // the channel window's fold that suppresses Huddle cards.
+                start.content = json!({
+                    "ephemeral_channel_id": room,
+                    "transcripts_in_origin": true,
+                    "thread_root": origin.root,
+                    "card_id": card_id,
+                }).to_string();
+            }
+            publish(host, fi, &call.community, start, &call.viewer).await?;
         }
         check_cancelled(&stop, &touched)?;
         let mut connection = tokio::select! {
@@ -586,6 +657,33 @@ pub(crate) fn huddle_touch(huddles: tauri::State<'_, Huddles>, id: String) -> Re
 }
 
 #[tauri::command]
+pub(crate) async fn huddle_recognize(
+    huddles: tauri::State<'_, Huddles>,
+    id: String,
+    samples: Vec<i16>,
+) -> Result<String> {
+    if samples.is_empty() || samples.len() > 16_000 * 20 {
+        return Err("Invalid Huddle speech length".into());
+    }
+    let stop = huddles
+        .0
+        .lock()
+        .map_err(|_| "Huddle unavailable")?
+        .get(&id)
+        .filter(|call| call.agent.is_none())
+        .map(|call| call.stop.subscribe())
+        .ok_or("The Huddle is no longer connected")?;
+    let mut stop = stop;
+    if *stop.borrow() {
+        return Err("The Huddle is no longer connected".into());
+    }
+    tokio::select! {
+        _ = stop.changed() => Err("The Huddle ended".into()),
+        result = speech::recognize(samples) => result,
+    }
+}
+
+#[tauri::command]
 pub(crate) fn huddle_pcm(
     huddles: tauri::State<'_, Huddles>,
     id: String,
@@ -621,6 +719,7 @@ mod tests {
             viewer: community.host.viewer().await.unwrap(),
             parent: uuid::Uuid::new_v4().to_string(),
             room: None,
+            origin: None,
             agent: None,
         };
         let _ = admit_membership(&community.host, &community.fi, &call).await;
@@ -725,6 +824,7 @@ mod tests {
             viewer: host.viewer().await.unwrap(),
             parent: uuid::Uuid::new_v4().to_string(),
             room: None,
+            origin: None,
             agent: None,
         };
         let updates = Channel::new(|_| panic!("Cancelled admission must not connect"));
@@ -836,7 +936,7 @@ mod tests {
     fn huddle_templates_match_existing_protocol() {
         let room = uuid::Uuid::new_v4().to_string();
         let parent = uuid::Uuid::new_v4().to_string();
-        let e = create(&room, &parent);
+        let e = create(&room, &parent, None, None);
         assert_eq!(e.kind, 9007);
         assert!(super::super::channel_writes::creation(&e));
         assert_eq!(e.tags[5], ["ttl", "3600"]);
@@ -848,6 +948,59 @@ mod tests {
             ]
         );
         assert_eq!(e.tags[2], ["visibility", "private"]);
+        let root = format!("{}{}", "ab".repeat(16), "cd".repeat(16));
+        let routed = create(
+            &room,
+            &parent,
+            Some(&TranscriptOrigin {
+                root: Some(root.clone()),
+                card: false,
+            }),
+            None,
+        );
+        assert_eq!(routed.tags[4], e.tags[4]);
+        assert!(super::super::channel_writes::creation(&routed));
+        assert_eq!(
+            routed.tags[6..],
+            [
+                vec!["t".to_owned(), "huddle:transcripts".into()],
+                vec!["t".into(), format!("huddle:root:0:{}", "ab".repeat(16))],
+                vec!["t".into(), format!("huddle:root:1:{}", "cd".repeat(16))],
+            ]
+        );
+        let channel_route = create(
+            &room,
+            &parent,
+            Some(&TranscriptOrigin {
+                root: None,
+                card: false,
+            }),
+            None,
+        );
+        assert!(super::super::channel_writes::creation(&channel_route));
+        assert_eq!(channel_route.tags[4], e.tags[4]);
+        assert_eq!(channel_route.tags[6..], [["t", "huddle:transcripts"]]);
+        let card = format!("{}{}", "ef".repeat(16), "01".repeat(16));
+        for (root, first, second) in [(Some(root), "ab", "cd"), (None, "ef", "01")] {
+            let with_card = create(
+                &room,
+                &parent,
+                Some(&TranscriptOrigin { root, card: true }),
+                Some(&card),
+            );
+            assert!(super::super::channel_writes::creation(&with_card));
+            assert_eq!(with_card.tags[4], e.tags[4]);
+            assert_eq!(
+                with_card.tags[6..],
+                [
+                    vec!["t".to_owned(), "huddle:transcripts".into()],
+                    vec!["t".into(), format!("huddle:root:0:{}", first.repeat(16))],
+                    vec!["t".into(), format!("huddle:root:1:{}", second.repeat(16))],
+                    vec!["t".into(), format!("huddle:card:0:{}", "ef".repeat(16))],
+                    vec!["t".into(), format!("huddle:card:1:{}", "01".repeat(16))],
+                ]
+            );
+        }
         let e = lifecycle(48100, &parent, &room);
         assert_eq!(e.tags, vec![vec!["h", &parent]]);
         assert_eq!(
@@ -917,6 +1070,7 @@ mod tests {
             },
             parent: uuid::Uuid::new_v4().to_string(),
             room: Some(uuid::Uuid::new_v4().to_string()),
+            origin: None,
             agent: Some(agent.pubkey.clone()),
         };
         validate(&call).unwrap();
@@ -970,6 +1124,7 @@ mod tests {
             viewer: "a".repeat(64),
             parent: uuid::Uuid::new_v4().to_string(),
             room: None,
+            origin: None,
             agent: None,
         };
         assert!(validate(&call).is_ok());

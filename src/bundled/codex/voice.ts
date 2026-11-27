@@ -12,6 +12,7 @@ export async function openVoice(
   instructions: string,
   thinking?: (active: boolean) => void,
   voice?: string,
+  briefing?: string,
 ) {
   signal.throwIfAborted();
   const peer = new RTCPeerConnection();
@@ -24,6 +25,7 @@ export async function openVoice(
   }
   const destination = context.createMediaStreamDestination();
   const playout = createPlayout(context, destination, 0.02);
+  const peers = new Map<string, ReturnType<typeof createPlayout>>();
   let capture: AudioWorkletNode | undefined;
   let remote: MediaStreamAudioSourceNode | undefined;
   let decoder: HTMLAudioElement | undefined;
@@ -56,6 +58,8 @@ export async function openVoice(
       capture.disconnect();
     }
     playout.close();
+    for (const peer of peers.values()) peer.close();
+    peers.clear();
     for (const track of destination.stream.getTracks()) track.stop();
     destination.disconnect();
     closing = Promise.all([
@@ -160,6 +164,9 @@ export async function openVoice(
       outputModality: "audio",
       clientManagedHandoffs: false,
       realtimeStartInstructions: instructions,
+      ...(briefing && {
+        initialItems: [{ role: "developer", text: briefing }],
+      }),
       ...(voice ? { voice } : {}),
     });
     await wait(starting);
@@ -167,8 +174,16 @@ export async function openVoice(
     signal.throwIfAborted();
     return {
       close,
-      input(samples: number[]) {
-        if (!closed) playout.play(samples);
+      input(samples: number[], source?: string) {
+        if (closed) return;
+        if (!source) return playout.play(samples);
+        let peer = peers.get(source);
+        if (!peer) {
+          if (peers.size >= 16) return;
+          peer = createPlayout(context, destination, 0.02);
+          peers.set(source, peer);
+        }
+        peer.play(samples);
       },
     };
   } catch (error) {

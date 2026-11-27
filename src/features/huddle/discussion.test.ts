@@ -20,6 +20,8 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     parentChannelId: parent,
   };
   let rows: ChannelMessage[] = [];
+  let parentMetadata: ChannelSummary | undefined;
+  const reply = vi.fn(() => "reply-id");
   const send = vi.fn(() => "id"),
     retry = vi.fn((_id: string, _allowed: () => boolean) => {}),
     dismiss = vi.fn(async () => {});
@@ -55,7 +57,7 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     media: (url: string) =>
       `http://buzz-media.localhost/${encodeURIComponent(url)}`,
     read,
-    messages: { ...owner.session.messages, send },
+    messages: { ...owner.session.messages, send, reply },
     outbox: {
       subscribe: () => () => {},
       observeDismiss: () => () => {},
@@ -72,7 +74,7 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     },
     channels: {
       ...owner.session.channels,
-      get: () => metadata,
+      get: (id: string) => (id === room ? metadata : parentMetadata),
       resolve: async () => {},
       ensure,
       loadOlder,
@@ -100,6 +102,11 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     read,
     ensure,
     discussion,
+    setParent: () => {
+      parentMetadata = { id: parent, name: "Parent", members: [viewer] };
+    },
+    thread: vi.spyOn(session, "thread"),
+    reply,
     loadOlder,
     historyError: (value: string) => {
       historyError = value;
@@ -122,6 +129,62 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     },
   };
 }
+it.each([false, true])(
+  "uses the canonical Huddle thread when the card is nested: %s",
+  async (nested) => {
+    const h = harness();
+    const card = "c".repeat(64);
+    const root = nested ? "a".repeat(64) : card;
+    const author = keypair();
+    const event = signed(author, {
+      kind: 9,
+      content: "Visible in the Huddle thread",
+      tags: [["h", "parent"]],
+    });
+    const rows = foldMessages("parent", h.authority.pubkey, [event]);
+    h.setParent();
+    h.metadata({
+      id: "room",
+      name: "Huddle",
+      huddle: true,
+      parentChannelId: "parent",
+      huddleTranscript: { channelId: "parent", root, parentId: card },
+    });
+    h.thread.mockReturnValue({
+      snapshot: () => ({
+        status: "ready",
+        root: undefined,
+        replies: rows,
+        error: undefined,
+        canLoadMore: false,
+        limited: false,
+      }),
+      subscribe: () => () => {},
+      refresh: async () => {},
+      loadMore: async () => {},
+      retarget: async () => "selected",
+      dispose: () => {},
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(h.discussion.snapshot().rows[0]?.text).toBe(event.content),
+      );
+      await h.discussion.send("Follow-up");
+      expect(h.reply).toHaveBeenCalledWith(
+        "parent",
+        root,
+        "Follow-up",
+        [],
+        [],
+        card,
+      );
+      expect(h.send).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
 it("only reads and sends to a verified Huddle belonging to this parent", async () => {
   const h = harness();
   h.metadata({ id: "room", name: "Ordinary channel" });

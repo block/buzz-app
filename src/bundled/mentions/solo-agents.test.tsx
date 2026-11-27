@@ -1798,6 +1798,7 @@ it.each(["picker", "completion"] as const)(
         content: "@Legacy Mic",
         tags: [
           ["h", "parent"],
+          ["buzz:message-source", "typed"],
           ["p", test.key],
         ],
       });

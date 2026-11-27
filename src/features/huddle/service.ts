@@ -1,5 +1,8 @@
 import { addChannelMember } from "../channel-members/members";
 import { endLastHumanHuddle } from "./ending";
+import { createMicrophoneTranscript } from "./transcript";
+import { startHostedHuddleTranscript } from "./hosted-transcript";
+import type { Speech } from "../speech/service";
 import { createPcmSender } from "./sender";
 import { viewerMember } from "../relay/membership";
 import type { ChannelSummary } from "../relay/contracts";
@@ -11,32 +14,48 @@ import type { HuddleBridge, HuddleDestination, HuddleUpdate } from "./bridge";
 import type { HuddleAudio, OpenHuddleAudio } from "./audio";
 import type { Context } from "@deepseek-ai/cordis";
 
+export type HuddleRoutingOption =
+  | "directAudio"
+  | "agentCrossTalk"
+  | "liveTranscript";
+type HuddleRouting = Record<HuddleRoutingOption, boolean>;
+
 export type HuddleSnapshot = Readonly<{
   id?: string;
   level?: number;
   audioSettings?: AudioSettingsState;
+  routing?: HuddleRouting;
   speakers?: Readonly<Record<string, number>>;
   requester?: string;
   phase: "idle" | "incoming" | "connecting" | "connected" | "leaving" | "error";
   destination?: HuddleDestination;
   room?: string;
+  transcriptDestination?: ChannelSummary["huddleTranscript"];
   muted: boolean;
   participants: readonly string[];
   listening?: readonly string[];
   thinking?: readonly string[];
   error?: string;
+  transcriptError?: string;
+  cleanHangup?: true;
 }>;
 type Attempt = {
   id: string;
   connection: RelaySnapshot;
   abort: AbortController;
+  transcriptAbort: AbortController;
+  finishingTranscript?: true;
   audio?: HuddleAudio;
+  transcript?: ReturnType<typeof createMicrophoneTranscript>;
+  hostedTranscript?: ReturnType<typeof startHostedHuddleTranscript>;
   opening?: Promise<void>;
   admissions?: readonly string[];
   heartbeat?: ReturnType<typeof setInterval>;
   stopAccess?: () => void;
   stopAudioSettings?: () => void;
   sender: ReturnType<typeof createPcmSender>;
+  localPlayout: Map<string, { playing: boolean }>;
+  microphoneListeners: Set<(samples: number[]) => void>;
 };
 const idle: HuddleSnapshot = { phase: "idle", muted: false, participants: [] };
 const message = (error: unknown) =>
@@ -50,8 +69,21 @@ export function createHuddles(
   dmAgent?: (
     connection: RelaySnapshot,
     destination: HuddleDestination,
-  ) => string | undefined,
+  ) => string | readonly string[] | undefined,
+  speech?: Speech,
 ) {
+  const routing: HuddleRouting = {
+    directAudio: true,
+    agentCrossTalk: true,
+    liveTranscript: true,
+  };
+  for (const option of Object.keys(routing) as HuddleRoutingOption[]) {
+    try {
+      routing[option] = localStorage.getItem(`buzz.huddle.${option}`) !== "off";
+    } catch {
+      // A call can still run when browser storage is unavailable.
+    }
+  }
   let snapshot = idle;
   let requests: ReturnType<typeof createHuddleRequests> | undefined;
   let current: Attempt | undefined;
@@ -63,9 +95,12 @@ export function createHuddles(
   let activityTimer: ReturnType<typeof setInterval> | undefined;
   let closing: Promise<void> | undefined;
   const listeners = new Set<() => void>();
+  const peerAudio = new Set<
+    (id: string, peer: string, samples: number[]) => void
+  >();
   const unavailable = new Set<string>();
   const update = (next: HuddleSnapshot) => {
-    snapshot = next;
+    snapshot = { ...next, routing: { ...routing } };
     if (next.phase !== "incoming") requests?.resetSelection();
     for (const listener of listeners) listener();
     requests?.refresh();
@@ -142,6 +177,14 @@ export function createHuddles(
       !error && !remote && snapshot.phase === "connected"
         ? snapshot
         : undefined;
+    let transcript: Promise<unknown> | undefined;
+    if (previous && ending && !disposed) {
+      previous.finishingTranscript = true;
+      transcript = Promise.all([
+        previous.hostedTranscript?.finish(),
+        previous.transcript?.flush(),
+      ]);
+    } else previous?.transcriptAbort.abort();
     current = undefined;
     resetActivity();
     previous?.abort.abort();
@@ -166,10 +209,25 @@ export function createHuddles(
       ...snapshot,
       ...activitySnapshot(),
       phase: "leaving",
+      ...(ending && !disposed && { cleanHangup: true }),
       participants: [],
     });
     closing = Promise.resolve().then(async () => {
       try {
+        if (transcript) {
+          let deadline: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              transcript,
+              new Promise<void>((resolve) => {
+                deadline = setTimeout(resolve, 3000);
+              }),
+            ]);
+          } finally {
+            clearTimeout(deadline);
+            previous.transcriptAbort.abort();
+          }
+        }
         // A command that was dispatched may arrive after Cancel; close its exact ID.
         if (previous.opening) {
           await previous.opening.catch(() => {});
@@ -214,7 +272,7 @@ export function createHuddles(
     if (current && relay.snapshot() !== current.connection) {
       const next = relay.snapshot();
       if (
-        next.status !== "ready" ||
+        (next.status !== "ready" && next.status !== "connecting") ||
         next.session !== current.connection.session ||
         next.scope !== current.connection.scope
       )
@@ -240,11 +298,10 @@ export function createHuddles(
       viewerMember(channel, destination.viewer);
     // Admission through a parent must never become room-only admission merely
     // because the audio join subsequently adds the viewer to the temporary room.
-    const parentAdmission = member(
-      connection.session.channels
-        .list()
-        .channels.find((channel) => channel.id === destination.channelId),
-    );
+    const parentChannel = connection.session.channels
+      .list()
+      .channels.find((channel) => channel.id === destination.channelId);
+    const parentAdmission = member(parentChannel);
     const accessible = () => {
       const channels = connection.session.channels.list().channels;
       const parent = channels.find((c) => c.id === destination.channelId);
@@ -286,6 +343,9 @@ export function createHuddles(
       id,
       connection,
       abort,
+      transcriptAbort: new AbortController(),
+      localPlayout: new Map(),
+      microphoneListeners: new Set(),
       sender: createPcmSender(
         (samples) => bridge.send(id, samples),
         abort.signal,
@@ -296,45 +356,59 @@ export function createHuddles(
     };
     current = attempt;
     // Only a fresh start invites; joining someone else's room never adds a listener.
-    const key = discover ? dmAgent?.(connection, destination) : undefined;
+    const autoInvite = () => {
+      const result = dmAgent?.(connection, destination);
+      return typeof result === "string" ? [result] : (result ?? []);
+    };
+    const keys = discover ? autoInvite() : [];
     let invited = false;
     let inviteError: string | undefined;
-    const seated = (roomId: string) =>
-      !!key &&
+    const seated = (roomId: string, key: string) =>
       !!connection.session.channels.get?.(roomId)?.members?.includes(key);
     // Clear only this invitation's warning, once the room roster shows the agent.
     const confirmInvite = () => {
+      const roomId = snapshot.room;
       if (!inviteError || snapshot.error !== inviteError) return;
-      if (!snapshot.room || !seated(snapshot.room)) return;
+      if (!roomId || !keys.every((key) => seated(roomId, key))) return;
       inviteError = undefined;
       const { error: _invite, ...rest } = snapshot;
       update(rest);
     };
     const inviteAgent = async (roomId: string) => {
-      if (!key || invited) return;
+      if (!keys.length || invited) return;
       invited = true;
+      const reportInviteError = (error: unknown) => {
+        if (!valid(attempt) || keys.every((key) => seated(roomId, key))) return;
+        inviteError = `Couldn’t add the agent: ${message(error)}. Use Huddle options → Add someone to retry.`;
+        update({ ...snapshot, error: inviteError });
+      };
       try {
         await connection.session.channels.resolve?.([roomId]);
         if (!valid(attempt)) return;
-        if (dmAgent?.(connection, destination) !== key)
-          throw new Error("The agent is no longer available for voice");
         const channel = connection.session.channels.get?.(roomId);
         if (
           !channel?.huddle ||
           channel.parentChannelId !== destination.channelId
         )
           throw new Error("Couldn’t verify the Huddle room");
-        if (!seated(roomId))
-          await addChannelMember(
-            connection.session,
-            roomId,
-            key,
-            attempt.abort.signal,
-          );
+        for (const key of keys) {
+          if (!valid(attempt)) return;
+          if (seated(roomId, key)) continue;
+          try {
+            if (!autoInvite().includes(key))
+              throw new Error("An agent is no longer available for voice");
+            await addChannelMember(
+              connection.session,
+              roomId,
+              key,
+              attempt.abort.signal,
+            );
+          } catch (error) {
+            reportInviteError(error);
+          }
+        }
       } catch (error) {
-        if (!valid(attempt) || seated(roomId)) return;
-        inviteError = `Couldn’t add the agent: ${message(error)}. Use Huddle options → Add someone to retry.`;
-        update({ ...snapshot, error: inviteError });
+        reportInviteError(error);
       }
     };
     attempt.stopAccess = connection.session.channels.subscribeList(() => {
@@ -377,8 +451,20 @@ export function createHuddles(
         return;
       }
       if (event.type === "audio") {
-        activity(event.peer, event.samples);
-        attempt.audio?.play(event.peer, event.samples);
+        if (
+          !routing.directAudio ||
+          !attempt.localPlayout.get(event.peer)?.playing
+        ) {
+          activity(event.peer, event.samples);
+          attempt.audio?.play(event.peer, event.samples);
+        }
+        if (
+          routing.agentCrossTalk &&
+          snapshot.transcriptDestination &&
+          snapshot.participants.includes(event.peer)
+        )
+          for (const listener of peerAudio)
+            listener(attempt.id, event.peer, event.samples);
         return;
       }
       // Native roster snapshots are unordered. Keep arrival order for the stack;
@@ -402,7 +488,88 @@ export function createHuddles(
           ? { phase: "connected", room: event.room }
           : {}),
       });
-      if (event.type === "connected") void inviteAgent(event.room);
+      if (event.type === "connected") {
+        const roomId = event.room;
+        void (async () => {
+          await connection.session.channels.resolve?.([roomId], {
+            consistency: "strong",
+            signal: attempt.abort.signal,
+          });
+          if (!valid(attempt)) return;
+          const metadata = connection.session.channels.get?.(roomId);
+          const transcriptDestination =
+            metadata?.parentChannelId === destination.channelId &&
+            !metadata.cached
+              ? metadata.huddleTranscript
+              : undefined;
+          if (transcriptDestination) {
+            const { root: _launchRoot, ...place } = destination;
+            update({
+              ...snapshot,
+              destination: {
+                ...place,
+                ...(transcriptDestination.root !==
+                  transcriptDestination.parentId &&
+                  transcriptDestination.root && {
+                    root: transcriptDestination.root,
+                  }),
+              },
+              transcriptDestination,
+            });
+            const canTranscribe = () => {
+              const active = relay.snapshot();
+              return (
+                !disposed &&
+                !attempt.transcriptAbort.signal.aborted &&
+                (valid(attempt) || attempt.finishingTranscript === true) &&
+                (active.status === "ready" || active.status === "connecting") &&
+                active.session === connection.session &&
+                active.scope === connection.scope &&
+                accessible() === "allowed"
+              );
+            };
+            const transcriptError = (error: unknown) => {
+              if (valid(attempt))
+                update({ ...snapshot, transcriptError: message(error) });
+            };
+            const track = attempt.audio?.transcriptionTrack;
+            if (parentAdmission && speech && track)
+              attempt.hostedTranscript = startHostedHuddleTranscript(
+                speech,
+                track,
+                connection.session,
+                destination.relayUrl,
+                transcriptDestination,
+                attempt.transcriptAbort.signal,
+                canTranscribe,
+                () => routing.liveTranscript,
+                transcriptError,
+                () => attempt.transcript?.flush(),
+              );
+            const recognize = bridge.recognize;
+            if (parentAdmission && recognize)
+              attempt.transcript = createMicrophoneTranscript(
+                attempt.transcriptAbort.signal,
+                (text) => {
+                  if (canTranscribe())
+                    connection.session.messages.transcribe(
+                      transcriptDestination.channelId,
+                      transcriptDestination.root,
+                      text,
+                      ...(transcriptDestination.parentId
+                        ? ([transcriptDestination.parentId] as const)
+                        : []),
+                    );
+                },
+                transcriptError,
+                (samples) => recognize(attempt.id, samples),
+              );
+          }
+          void inviteAgent(roomId);
+        })().catch(() => {
+          if (valid(attempt)) void inviteAgent(roomId);
+        });
+      }
     };
     try {
       if (discover) {
@@ -414,6 +581,7 @@ export function createHuddles(
         if (!valid(attempt)) return;
         room = rooms.find(
           (candidate) =>
+            candidate.root === destination.root &&
             !unavailable.has(`${destination.scope}:${candidate.id}`),
         )?.id;
       }
@@ -426,7 +594,13 @@ export function createHuddles(
           )
             return;
           activity(destination.viewer, samples);
+          if (attempt.hostedTranscript?.ready)
+            attempt.hostedTranscript.input(samples);
+          else attempt.transcript?.input(samples);
           void attempt.sender.send(samples);
+          if (routing.directAudio)
+            for (const listener of attempt.microphoneListeners)
+              listener(samples);
         },
         () => {
           if (valid(attempt))
@@ -450,7 +624,17 @@ export function createHuddles(
         attempt.stopAudioSettings = settings.subscribe(syncSettings);
         syncSettings();
       }
-      attempt.opening = bridge.open(attempt.id, destination, room, receive);
+      const threadTranscripts =
+        parentChannel?.channelType === "stream" ||
+        parentChannel?.channelType === "forum";
+      attempt.opening = bridge.open(
+        attempt.id,
+        threadTranscripts && !room
+          ? { ...destination, threadTranscripts }
+          : destination,
+        room,
+        receive,
+      );
       await attempt.opening;
       if (valid(attempt))
         attempt.heartbeat = setInterval(() => {
@@ -502,11 +686,67 @@ export function createHuddles(
     };
   return {
     snapshot: () => snapshot,
+    setRouting(option: HuddleRoutingOption, enabled: boolean) {
+      if (routing[option] === enabled) return;
+      routing[option] = enabled;
+      if (option === "directAudio")
+        for (const route of current?.localPlayout.values() ?? [])
+          route.playing = false;
+      try {
+        localStorage.setItem(`buzz.huddle.${option}`, enabled ? "on" : "off");
+      } catch {
+        // The change still applies for this app session.
+      }
+      update(snapshot);
+    },
+    openLocalPlayout(call: string, peer: string) {
+      const attempt = current;
+      // Remote owner calls cannot take over this device's speaker.
+      if (!attempt || attempt.id !== call || snapshot.phase !== "connected")
+        return;
+      const route = { playing: false };
+      attempt.localPlayout.set(peer, route);
+      const active = () =>
+        valid(attempt) && attempt.localPlayout.get(peer) === route;
+      return {
+        play(samples: readonly number[]) {
+          if (
+            !routing.directAudio ||
+            !active() ||
+            !snapshot.participants.includes(peer)
+          )
+            return;
+          route.playing = true;
+          activity(peer, samples);
+          attempt.audio?.play(peer, samples);
+        },
+        close() {
+          if (active()) attempt.localPlayout.delete(peer);
+        },
+      };
+    },
+    subscribeLocalMicrophone(
+      call: string,
+      listener: (samples: number[]) => void,
+    ) {
+      const attempt = current;
+      if (!attempt || attempt.id !== call || snapshot.phase !== "connected")
+        return;
+      attempt.microphoneListeners.add(listener);
+      return () => {
+        attempt.microphoneListeners.delete(listener);
+      };
+    },
     voiceListening: voiceSeat("listening"),
     voiceThinking: voiceSeat("thinking"),
     remoteVoiceError(error: string) {
       if (snapshot.phase !== "idle" && snapshot.phase !== "error") return;
       update({ ...idle, phase: "error", error });
+    },
+    dismissTranscriptError(call: string) {
+      if (snapshot.id !== call || !snapshot.transcriptError) return;
+      const { transcriptError: _previous, ...rest } = snapshot;
+      update(rest);
     },
     voiceError(call: string, error?: string) {
       if (snapshot.id !== call) return;
@@ -522,13 +762,25 @@ export function createHuddles(
         listeners.delete(listener);
       };
     },
+    subscribePeerAudio(
+      listener: (id: string, peer: string, samples: number[]) => void,
+    ) {
+      peerAudio.add(listener);
+      return () => {
+        peerAudio.delete(listener);
+      };
+    },
     join,
     start: (destination: HuddleDestination) =>
       join(destination, undefined, true),
     mute() {
       if (!current || snapshot.phase !== "connected") return;
       const muted = !snapshot.muted;
-      if (muted) current.sender.clear();
+      if (muted) {
+        current.sender.clear();
+        if (current.hostedTranscript?.ready) current.hostedTranscript.flush();
+        else current.transcript?.flush();
+      }
       current.audio?.mute(muted);
       if (muted && snapshot.destination)
         speakers.delete(snapshot.destination.viewer);
@@ -549,6 +801,7 @@ export function createHuddles(
       unsubscribe();
       await leave();
       listeners.clear();
+      peerAudio.clear();
     },
   };
 }

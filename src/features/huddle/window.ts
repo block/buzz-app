@@ -5,7 +5,7 @@ import { createHuddleComposerOwner } from "./composer-owner";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { RelayData } from "../relay/service";
 import { formatPublicKey } from "../../shared/identity/public-key";
-import type { Huddles } from "./service";
+import type { Huddles, HuddleRoutingOption, HuddleSnapshot } from "./service";
 import { createHuddleDiscussion, type HuddleDiscussion } from "./discussion";
 
 export type HuddleView = {
@@ -18,6 +18,7 @@ export type HuddleView = {
   dark: boolean;
   discussion?: HuddleDiscussion | undefined;
   audioSettings?: AudioSettingsState | undefined;
+  routing?: HuddleSnapshot["routing"];
   participants: {
     key: string;
     name: string;
@@ -35,6 +36,7 @@ export type HuddleAction =
   | "refreshAudio"
   | "inputDevice"
   | "outputDevice"
+  | HuddleRoutingOption
   | "mute"
   | "leave"
   | "minimize"
@@ -141,16 +143,16 @@ export function createHuddleWindow(
       return null;
     const session = relay.snapshot().session;
     const profiles = session.profiles.snapshot();
+    const error = call.error ?? call.transcriptError;
     return {
       id: call.id,
       title: Array.from(call.destination.channelName).slice(0, 1000).join(""),
       phase: call.phase as HuddleView["phase"],
       muted: call.muted,
-      error: call.error
-        ? Array.from(call.error).slice(0, 2000).join("")
-        : undefined,
+      error: error ? Array.from(error).slice(0, 2000).join("") : undefined,
       audioSettings:
         call.audioSettings && projectAudioSettings(call.audioSettings),
+      routing: call.routing,
       level: call.level ?? 0,
       dark: document.documentElement.classList.contains("dark"),
       discussion: discussion
@@ -327,6 +329,13 @@ export function createHuddleWindow(
               action === "inputDevice" ? "input" : "output",
               text,
             );
+          else if (
+            (action === "directAudio" ||
+              action === "agentCrossTalk" ||
+              action === "liveTranscript") &&
+            (text === "on" || text === "off")
+          )
+            huddles.setRouting(action, text === "on");
           else if (action === "thread") {
             publish(true);
             try {
@@ -337,30 +346,36 @@ export function createHuddleWindow(
                 call.destination &&
                 call.phase === "connected"
               ) {
+                const { room, destination } = call;
                 const session = relay.snapshot().session;
+                const current = () =>
+                  !disposed &&
+                  opened === id &&
+                  relay.snapshot().session === session &&
+                  huddles.snapshot().id === id;
                 const roomDiscussion = createHuddleDiscussion(
                   session,
-                  call.room,
-                  call.destination.channelId,
+                  room,
+                  destination.channelId,
                   () => {
+                    if (!current() || discussion !== roomDiscussion) return;
+                    if (!composer && roomDiscussion.available()) {
+                      composer = createHuddleComposerOwner(
+                        session,
+                        room,
+                        destination.channelId,
+                        extensions,
+                        current,
+                        roomDiscussion.writable,
+                        agents,
+                        roomDiscussion.snapshot().conversation,
+                      );
+                    }
                     composer?.refresh();
                     sync();
                   },
                 );
                 discussion = roomDiscussion;
-                composer = createHuddleComposerOwner(
-                  session,
-                  call.room,
-                  call.destination.channelId,
-                  extensions,
-                  () =>
-                    !disposed &&
-                    opened === id &&
-                    relay.snapshot().session === session &&
-                    huddles.snapshot().id === id,
-                  roomDiscussion.available,
-                  agents,
-                );
               }
             } catch (error) {
               closeDiscussion();

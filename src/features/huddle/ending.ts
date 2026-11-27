@@ -2,8 +2,11 @@ import {
   lifecycleRecord,
   exactLifecycleTag,
 } from "../relay/channel-lifecycle-protocol";
+import { huddleCreation } from "../relay/discovery";
+import { tag } from "../relay/events";
 import type { RelaySession } from "../relay/session";
 import type { HuddleDestination } from "./bridge";
+import { huddleRoomMetadata } from "./lifecycle";
 
 /** Explicit hangup only; failed joins and lost connections remain relay-owned. */
 export async function endLastHumanHuddle(
@@ -27,6 +30,11 @@ export async function endLastHumanHuddle(
     return;
   const signal = AbortSignal.timeout(10_000);
   const current = () => !signal.aborted && active();
+  const cached = session.channels.get?.(room);
+  const cachedDestination =
+    cached && !cached.cached && cached.parentChannelId === channelId
+      ? cached.huddleTranscript
+      : undefined;
   const records = await session.snapshotRead(
     [
       {
@@ -36,6 +44,17 @@ export async function endLastHumanHuddle(
         limit: 2,
         consistency: "strong",
       },
+      ...(cachedDestination
+        ? []
+        : [
+            {
+              kinds: [9007],
+              authors: [viewer],
+              "#h": [room],
+              limit: 2,
+              consistency: "strong" as const,
+            },
+          ]),
     ],
     { signal },
   );
@@ -101,11 +120,22 @@ export async function endLastHumanHuddle(
     )
       return;
   }
+  const creation = records.find((event) => huddleCreation(event, metadata));
+  const route = creation
+    ? huddleRoomMetadata(tag(creation, "about"), creation.tags)
+    : huddleRoomMetadata(exactLifecycleTag(metadata, "about"));
+  const inline =
+    cachedDestination ??
+    (route?.parent === channelId ? route.transcriptDestination : undefined);
   const id = outbox.send(
     {
       kind: 48103,
       tags: [["h", channelId]],
-      content: JSON.stringify({ ephemeral_channel_id: room }),
+      content: JSON.stringify({
+        ephemeral_channel_id: room,
+        ...(inline && { transcripts_in_origin: true }),
+        ...(inline?.parentId && { card_id: inline.parentId }),
+      }),
     },
     undefined,
     current,

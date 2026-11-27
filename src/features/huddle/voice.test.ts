@@ -5,7 +5,9 @@ import type {
   AgentVoicePipe,
   RegisteredAgentType,
 } from "../agents/service";
-import type { ChannelSummary } from "../relay/contracts";
+import { MESSAGE_SOURCE_TAG, type ChannelSummary } from "../relay/contracts";
+import type { LiveListener } from "../relay/incoming";
+import { keypair, signed } from "../relay/testing";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { HuddleSnapshot } from "./service";
 import type { HuddleBridge, HuddleUpdate } from "./bridge";
@@ -26,6 +28,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const origin = "https://relay.example.com";
+const typedSender = keypair();
 const agent = (pubkey: string): Agent => ({
   key: pubkey,
   pubkey,
@@ -59,7 +62,7 @@ afterEach(async () => {
   await Promise.all(disposals.splice(0).map((dispose) => dispose()));
   vi.useRealTimers();
 });
-function setup() {
+function setup(owner = "owner") {
   const h = observable(),
     a = observable(),
     r = observable(),
@@ -69,9 +72,9 @@ function setup() {
     id: "human",
     room: "room",
     muted: false,
-    participants: ["owner", "stranger"],
+    participants: [owner, "stranger"],
     destination: {
-      viewer: "owner",
+      viewer: owner,
       scope: "scope",
       relayUrl: origin,
       channelId: "parent",
@@ -81,14 +84,15 @@ function setup() {
   let room: ChannelSummary = {
     id: "room",
     name: "Room",
-    members: ["owner", "a", "b"],
+    members: [owner, "a", "b"],
   };
-  let running = [agent("a"), agent("b")];
+  let running = [agent("a"), agent("b")].map((entry) => ({ ...entry, owner }));
   const connections = new Map<
     string,
     { input: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
   >();
   const seatArgs = new Map<string, AgentVoicePipe>();
+  const liveListeners = new Set<LiveListener>();
   const voice = vi.fn(async (seat: AgentVoicePipe) => {
     seatArgs.set(seat.agent.pubkey, seat);
     const connection = { input: vi.fn(), close: vi.fn() };
@@ -110,15 +114,32 @@ function setup() {
     touch: vi.fn(async () => {}),
     send: vi.fn<HuddleBridge["send"]>(async () => {}),
   };
-  const resolveRoom = vi.fn(async () => {});
+  const resolveRoom = vi.fn<
+    NonNullable<RelaySnapshot["session"]["channels"]["resolve"]>
+  >(async () => {});
   let snapshot = {
     status: "ready",
     scope: "scope",
-    viewer: "owner",
+    viewer: owner,
     session: {
+      subscribeLive(listener: LiveListener) {
+        liveListeners.add(listener);
+        return () => {
+          liveListeners.delete(listener);
+        };
+      },
+      profiles: {
+        snapshot: () =>
+          new Map([
+            [owner, { name: "John" }],
+            [typedSender.pubkey, { name: "John" }],
+          ]),
+        subscribe: () => () => {},
+        ensure: async () => {},
+      },
       channels: {
         get: (id: string) =>
-          id === "room" ? room : { id: "parent", members: ["a", "b", "owner"] },
+          id === "room" ? room : { id: "parent", members: ["a", "b", owner] },
         subscribeList: m.subscribe,
         resolve: resolveRoom,
       },
@@ -137,13 +158,27 @@ function setup() {
   const report = vi.fn();
   const listening = vi.fn();
   const thinking = vi.fn();
-  const start = () => {
+  let audioListener:
+    | ((id: string, peer: string, samples: number[]) => void)
+    | undefined;
+  const start = (
+    openLocalPlayout?: Parameters<
+      typeof createHuddleVoices
+    >[0]["openLocalPlayout"],
+  ) => {
     const dispose = createHuddleVoices(
       {
         snapshot: () => call,
         subscribe: h.subscribe,
         voiceListening: listening,
         voiceThinking: thinking,
+        subscribePeerAudio(listener) {
+          audioListener = listener;
+          return () => {
+            audioListener = undefined;
+          };
+        },
+        ...(openLocalPlayout && { openLocalPlayout }),
       },
       agents,
       relay,
@@ -159,12 +194,27 @@ function setup() {
     voice,
     connections,
     seatArgs,
+    live(batch: Parameters<LiveListener>[0]) {
+      for (const listener of liveListeners) listener(batch);
+    },
     callbacks,
     report,
     listening,
     thinking,
     resolveRoom,
     start,
+    peerAudio: (id: string, peer: string, samples: number[]) =>
+      audioListener?.(id, peer, samples),
+    registerCodex() {
+      types = [
+        { key: "buzz.codex/codex", voice },
+      ] as unknown as RegisteredAgentType[];
+      running = running.map((agent) => ({
+        ...agent,
+        type: "buzz.codex/codex",
+      }));
+      a.notify();
+    },
     call: (patch: Partial<HuddleSnapshot>) => {
       call = { ...call, ...patch };
       h.notify();
@@ -189,7 +239,8 @@ function setup() {
 }
 it("seats two room members independently and drops non-owner audio", async () => {
   const f = setup();
-  f.start();
+  const local = { play: vi.fn(), close: vi.fn() };
+  f.start((_call, peer) => (peer === "a" ? local : undefined));
   await vi.waitFor(() => expect(f.connections.size).toBe(2));
   const samples = Array(960).fill(0.1);
   required(f.callbacks.get("a"))({ type: "audio", peer: "stranger", samples });
@@ -199,11 +250,13 @@ it("seats two room members independently and drops non-owner audio", async () =>
   expect(required(f.connections.get("a")).input).toHaveBeenCalledWith(samples);
   expect(required(f.connections.get("b")).input).not.toHaveBeenCalled();
   await required(f.seatArgs.get("a")).output(samples);
+  expect(local.play).toHaveBeenCalledWith(samples);
   expect(f.bridge.send).toHaveBeenCalledWith(
     required(f.bridge.open.mock.calls[0])[0],
     samples,
   );
   f.room({ members: ["owner", "b"] });
+  expect(local.close).toHaveBeenCalledOnce();
   expect(required(f.seatArgs.get("a")).signal.aborted).toBe(true);
   await vi.waitFor(() =>
     expect(required(f.connections.get("a")).close).toHaveBeenCalledOnce(),
@@ -600,4 +653,91 @@ it("reserves each seat before its bridge opens, and opens none it can't reserve"
   expect(f.report.mock.calls.at(-1)?.[1]).toContain("restarting");
   dispose();
   await vi.waitFor(() => expect(order).toContain("end a"));
+});
+
+it("mixes other admitted local Codex seats and excludes self and unknown speakers", async () => {
+  const h = setup();
+  const transcript = { channelId: "parent", root: "b".repeat(64) };
+  h.registerCodex();
+  h.call({
+    listening: ["a", "b"],
+    participants: ["owner", "a", "b", "stranger"],
+  });
+  h.resolveRoom.mockImplementationOnce(async (_ids, options) => {
+    if (options?.consistency === "strong")
+      h.room({
+        huddle: true,
+        parentChannelId: "parent",
+        huddleTranscript: transcript,
+      });
+  });
+  h.start();
+  await vi.waitFor(() => expect(h.connections.size).toBe(2));
+  expect(h.seatArgs.get("a")).toMatchObject({
+    conversation: transcript,
+    transcriptDestination: transcript,
+  });
+  expect(h.bridge.open.mock.calls.map((call) => call[2])).toEqual([
+    "room",
+    "room",
+  ]);
+  const samples = [0.1, 0.2];
+  h.peerAudio("old-huddle", "a", samples);
+  h.peerAudio("human", "stranger", samples);
+  h.peerAudio("human", "a", samples);
+  expect(h.connections.get("a")?.input).not.toHaveBeenCalled();
+  expect(h.connections.get("b")?.input).toHaveBeenCalledExactlyOnceWith(
+    samples,
+    "a",
+  );
+});
+
+it("forwards only typed messages in the active Huddle conversation", async () => {
+  const h = setup(typedSender.pubkey);
+  const root = "ab".repeat(32);
+  h.registerCodex();
+  h.room({
+    huddle: true,
+    parentChannelId: "parent",
+    huddleTranscript: { channelId: "parent", root },
+  });
+  h.start();
+  await vi.waitFor(() => expect(h.connections.size).toBe(2));
+  const receive = vi.fn();
+  const stop = required(required(h.seatArgs.get("a")).subscribeTypedMessages)(
+    receive,
+  );
+  const event = (
+    content: string,
+    source: string,
+    thread: string,
+    sender = typedSender,
+  ) =>
+    signed(sender, {
+      kind: 9,
+      created_at: 10,
+      content,
+      tags: [
+        ["h", "parent"],
+        ["e", thread, "", "reply"],
+        [MESSAGE_SOURCE_TAG, source],
+      ],
+    });
+  const typed = event("Typed in the Huddle thread", "typed", root);
+  h.live({
+    events: [
+      typed,
+      typed,
+      event("A member’s typed message", "typed", root, keypair()),
+      event("Already spoken", "huddle-transcript", root),
+      event("Another thread", "typed", "ce".repeat(32)),
+    ],
+  });
+  expect(receive).toHaveBeenCalledExactlyOnceWith({
+    speaker: "John",
+    text: typed.content,
+  });
+  stop();
+  h.live({ events: [event("After stop", "typed", root)] });
+  expect(receive).toHaveBeenCalledTimes(1);
 });

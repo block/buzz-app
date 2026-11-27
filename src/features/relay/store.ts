@@ -561,6 +561,10 @@ export function createChannelStore(
         old.autoJoin === channel.autoJoin &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
+        old.huddleTranscript?.channelId ===
+          channel.huddleTranscript?.channelId &&
+        old.huddleTranscript?.root === channel.huddleTranscript?.root &&
+        old.huddleTranscript?.parentId === channel.huddleTranscript?.parentId &&
         old.huddle === channel.huddle &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&

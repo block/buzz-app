@@ -44,7 +44,7 @@ import {
   type AgentProtection,
 } from "../../features/agent-protection/service";
 import type { RelayData } from "../../features/relay/service";
-import type { EventData } from "../../features/relay/events";
+import type { EventData, ReadFilter } from "../../features/relay/events";
 import type { Profile } from "../../features/relay/contracts";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
@@ -382,7 +382,9 @@ function fixture(
     ...(event as object),
     id: "d".repeat(64),
   }));
-  const read = vi.fn(async () => [] as EventData[]);
+  const read = vi.fn(
+    async (_filters?: readonly ReadFilter[]) => [] as EventData[],
+  );
   const memories: { slug: string; body: string; createdAt: number }[] = [];
   const memoryRead = vi.fn(async () => ({ entries: memories, partial: false }));
   const memoryView = {
@@ -8015,7 +8017,7 @@ describe("voice seats", () => {
     f.huddleChannels.add("channel");
     await f.runtime.run(f.delivery("@Codex typed first"));
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    f.complete(0, "DONE");
+    await f.complete(0, "DONE");
     f.core.mockResolvedValueOnce("NEW CORE");
     const d = f.delivery("unused");
     const connection = await f.runtime.voice(
@@ -8132,7 +8134,19 @@ describe("voice seats", () => {
     expect(late?.result).toMatchObject({ success: false });
   });
   it("posts only nonempty final transcripts without notifying or replying", async () => {
-    const f = await seated();
+    const transcriptDelta = vi.fn();
+    const f = await seated({ transcriptDelta });
+    for (const [threadId, role, delta] of [
+      ["thread-1", "assistant", "spoken"],
+      ["thread-1", "assistant", " words"],
+      ["thread-1", "user", "owner audio"],
+      ["thread-2", "assistant", "another thread"],
+    ])
+      f.emit({
+        method: "thread/realtime/transcript/delta",
+        params: { threadId, role, delta },
+      });
+    expect(transcriptDelta.mock.calls).toEqual([["spoken"], [" words"]]);
     for (const [method, text] of [
       ["thread/realtime/transcript/done", "hello @someone"],
       ["thread/realtime/transcript/done", "  "],
@@ -9986,6 +10000,109 @@ describe("a thread that keeps the base sections it started with", () => {
       shown: composeBase({ scope: "thread", place: "conversation" }).key,
     });
     await connection.close();
+  });
+
+  it("briefs the Realtime voice model at startup and when the Huddle roster changes", async () => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    f.huddleChannels.add("channel");
+    const d = f.delivery("unused");
+    f.events.push(
+      ...Array.from({ length: 21 }, (_, index) => ({
+        id: (index + 100).toString(16).padStart(64, "0"),
+        pubkey: owner,
+        kind: 9,
+        content: `Recent message number ${index}.`,
+        created_at: 20 + index,
+        tags: [["h", "channel"]],
+      })),
+      {
+        id: "ef".repeat(32),
+        pubkey: owner,
+        kind: 9,
+        content: "Unrelated conversation message.",
+        created_at: 42,
+        tags: [["h", "unrelated"]],
+      },
+    );
+    f.read.mockImplementation((filters) => f.query(filters ?? []));
+    let typedMessage:
+      | ((message: { speaker: string; text: string }) => void)
+      | undefined;
+    let names = ["John"];
+    let notify = () => {};
+    const unsubscribe = vi.fn();
+    const controller = new AbortController();
+    const connection = await f.runtime.voice(
+      {
+        config: d.config,
+        agent: { ...d.agent, config: d.config } as unknown as Agent,
+        conversation: { channelId: "channel" },
+        participants: {
+          snapshot: () => names,
+          subscribe: (listener: () => void) => {
+            notify = listener;
+            return unsubscribe;
+          },
+        },
+        subscribeTypedMessages(listener) {
+          typedMessage = listener;
+          return () => {
+            typedMessage = undefined;
+          };
+        },
+        signal: controller.signal,
+        async output() {},
+        async transcript() {},
+        ended() {},
+      },
+      d.agent,
+    );
+    try {
+      const briefing = vi.mocked(openVoice).mock.calls.at(-1)?.[8];
+      expect(briefing).toContain("live Buzz Huddle");
+      expect(briefing).toContain(JSON.stringify(d.agent.name));
+      expect(briefing).toContain('"John"');
+      expect(briefing).toContain("Recent message number 1.");
+      expect(briefing).toContain("Recent message number 20.");
+      expect(briefing).not.toContain("Recent message number 0.");
+      expect(briefing).not.toContain("Unrelated conversation message.");
+      notify();
+      expect(
+        f.sent.filter((wire) => wire.method === "thread/realtime/appendText"),
+      ).toHaveLength(0);
+      names = ["John", "Gigi"];
+      notify();
+      notify();
+      await vi.waitFor(() => {
+        expect(
+          f.sent.filter((wire) => wire.method === "thread/realtime/appendText"),
+        ).toEqual([
+          expect.objectContaining({
+            params: expect.objectContaining({
+              role: "developer",
+              text: expect.stringContaining('["John","Gigi"]'),
+            }),
+          }),
+        ]);
+      });
+      typedMessage?.({ speaker: "John", text: "The deployment is paused." });
+      await vi.waitFor(() => {
+        expect(
+          f.sent
+            .filter((wire) => wire.method === "thread/realtime/appendText")
+            .at(-1)?.params,
+        ).toEqual(
+          expect.objectContaining({
+            role: "developer",
+            text: expect.stringContaining("The deployment is paused."),
+          }),
+        );
+      });
+    } finally {
+      await connection.close();
+    }
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   it("does not carry what an old thread's saved prompt showed to its fresh replacement", async () => {
@@ -11848,6 +11965,67 @@ it("releases cancelled Codex community wakes before earlier work finishes", asyn
   }
 });
 
+it.each(["call room", "originating chat"])(
+  "steers a community DM into an active Huddle voice turn from the %s",
+  async (source) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("@Codex change that");
+    const { config } = scoped(d);
+    const acknowledged = vi.fn();
+    f.snapshot.session.channels.list = () => ({
+      status: "ready",
+      channels: [{ id: "channel", name: "DM", channelType: "dm" }],
+    });
+    if (d.trigger.type !== "mention") throw new Error("Expected a mention");
+    d.trigger.event.tags = [["h", "channel"]];
+    const connection = await join(
+      f,
+      d,
+      source === "originating chat"
+        ? {
+            conversation: { channelId: "channel" },
+            resumeOnClose: () => true,
+          }
+        : {},
+    );
+    try {
+      f.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "spoken" } },
+      });
+      await f.runtime.run({
+        ...d,
+        config,
+        model: "test-model",
+        effort: "low",
+        acknowledged,
+      });
+      expect(
+        f.sent.find((wire) => wire.method === "turn/steer")?.params,
+      ).toMatchObject({ threadId: "thread-1", expectedTurnId: "spoken" });
+      expect(f.starts()).toHaveLength(0);
+      expect(acknowledged).toHaveBeenCalledWith({ steering: true });
+      f.emit({
+        method: "turn/completed",
+        params: {
+          threadId: "thread-1",
+          turn: { id: "spoken", status: "completed" },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(
+          f.sent.find((wire) => wire.method === "thread/inject_items")?.params,
+        ).toMatchObject({ threadId: "thread-1" }),
+      );
+      expect(f.starts()).toHaveLength(0);
+    } finally {
+      f.runtime.dispose();
+      await connection.close();
+    }
+  },
+);
+
 it("replaces community source policies on voice startup and adopted speech", async () => {
   vi.stubGlobal("RTCPeerConnection", class {});
   const f = fixture();
@@ -12931,7 +13109,7 @@ it("retains a deferred remote community handoff until admission finishes", async
 });
 
 it.each(["channel", "community"] as const)(
-  "interrupts active %s work before attaching voice to the same session",
+  "continues active %s work after attaching voice to the same session",
   async (scope) => {
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
@@ -12956,26 +13134,186 @@ it.each(["channel", "community"] as const)(
         }),
       );
       expect(openVoice).toHaveBeenCalledTimes(opened);
-      await f.complete(0, "");
       vi.useFakeTimers();
       await vi.advanceTimersByTimeAsync(0);
       vi.useRealTimers();
       accepted.resolve();
       await opening;
       expect(vi.mocked(openVoice).mock.calls.at(-1)?.[1]).toBe("thread-1");
-      expect(f.starts()).toHaveLength(1);
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+      expect(JSON.stringify(f.starts()[1]?.params)).toContain(
+        "Continue the work interrupted",
+      );
+      await f.complete(1);
       const resumed = f.sent.filter((w) => w.method === "thread/resume").length;
       await f.runtime.run({ ...f.delivery("typed with audio"), config });
-      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
       expect(f.sent.filter((w) => w.method === "thread/resume")).toHaveLength(
         resumed,
       );
-      await f.complete(1);
+      await f.complete(2);
     } finally {
       accepted.resolve();
-      f.complete(0);
-      await (await opening)?.close();
+      for (const i of f.starts().keys()) await f.complete(i);
       f.runtime.dispose();
+      await (await opening?.catch(() => undefined))?.close();
+    }
+  },
+);
+
+it("continues community work when Huddle startup is cancelled during a pending steer", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const first = f.delivery("Continue this work");
+  const { config } = scoped(first);
+  const steering = deferred<void>();
+  const seat = new AbortController();
+  f.held.set("turn/steer", steering.promise);
+  f.huddleChannels.add("room");
+  await f.runtime.run({ ...first, config });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const followup = f.runtime.run({ ...f.delivery("One more detail"), config });
+  try {
+    await vi.waitFor(() =>
+      expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true),
+    );
+    const opening = join(f, first, { config, signal: seat.signal });
+    await vi.waitFor(() =>
+      expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(
+        true,
+      ),
+    );
+    seat.abort(new Error("Huddle cancelled"));
+    await expect(opening).rejects.toBe(seat.signal.reason);
+    steering.resolve();
+    await followup;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    expect(inputText(f.starts()[1])).toContain("One more detail");
+    await f.complete(1);
+  } finally {
+    seat.abort();
+    steering.resolve();
+    f.runtime.dispose();
+    await followup;
+  }
+});
+
+it.each(["channel", "community"] as const)(
+  "honors owner Stop during %s Huddle startup",
+  async (scope) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const openingMedia = deferred<void>();
+    const mediaRequested = deferred<void>();
+    vi.mocked(openVoice).mockImplementationOnce(async () => {
+      mediaRequested.resolve();
+      await openingMedia.promise;
+      return { input() {}, async close() {} };
+    });
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    const d = f.delivery("typed work");
+    const { config, agent } = scoped(d, scope);
+    const channelId = scope === "channel" ? "channel" : "room";
+    f.huddleChannels.add(channelId);
+    await f.runtime.run({ ...d, config, interruptible });
+    const outcome = f.workingUntil.mock.calls.at(-1)?.[0];
+    const stopped = vi.fn();
+    void outcome?.then(stopped);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const opening = join(f, d, { config, conversation: { channelId } });
+    try {
+      await mediaRequested.promise;
+      if (scope === "channel")
+        await f.runtime.session(agent, { channelId }, "interrupt");
+      else await interruptible.mock.calls[0]?.[0]();
+
+      await vi.waitFor(() =>
+        expect(stopped).toHaveBeenCalledWith({ ok: true, stopped: true }),
+      );
+      openingMedia.resolve();
+      await opening;
+      expect(f.starts()).toHaveLength(1);
+    } finally {
+      openingMedia.resolve();
+      for (const i of f.starts().keys()) await f.complete(i);
+      f.runtime.dispose();
+      await (await opening.catch(() => undefined))?.close();
+    }
+  },
+);
+
+it("continues typed work when its later steered wake expires during Huddle admission", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  const first = f.delivery("Continue this work");
+  const { config } = scoped(first);
+  f.soloChannels.add("channel");
+  f.huddleChannels.add("room");
+  let current = true;
+  vi.mocked(openVoice).mockImplementationOnce(async () => {
+    current = false;
+    return { input() {}, async close() {} };
+  });
+  await f.runtime.run({ ...first, config });
+  const original = f.workingUntil.mock.calls.at(-1)?.[0];
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run({
+    ...pluginWake(f),
+    config,
+    current: () => current,
+  });
+  const wake = f.workingUntil.mock.calls.at(-1)?.[0];
+  expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true);
+  const connection = await join(f, first);
+  try {
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(inputText(f.starts()[1])).toContain("Continue this work");
+    await f.complete(1);
+    await expect(original).resolves.toEqual({ ok: true });
+    await expect(wake).resolves.toEqual({ ok: true });
+  } finally {
+    f.runtime.dispose();
+    await connection.close();
+  }
+});
+
+it.each(["close", "stop"] as const)(
+  "keeps continued work on the original thread when the owner chooses %s",
+  async (action) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    const d = f.delivery("typed work");
+    const { config } = scoped(d);
+    f.huddleChannels.add("room");
+    await f.runtime.run({ ...d, config, interruptible });
+    const outcome = f.workingUntil.mock.calls.at(-1)?.[0];
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const connection = await join(f, d);
+    const interrupts = () =>
+      f.sent.filter((wire) => wire.method === "turn/interrupt");
+    try {
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+      if (action === "stop") {
+        await interruptible.mock.calls[0]?.[0]();
+        expect(interrupts().at(-1)?.params).toEqual({
+          threadId: "thread-1",
+          turnId: "turn-2",
+        });
+        await expect(outcome).resolves.toEqual({ ok: true, stopped: true });
+      } else {
+        const closing = connection.close();
+        await f.complete(1, "DONE");
+        await closing;
+        expect(interrupts()).toHaveLength(1);
+        await expect(outcome).resolves.toEqual({ ok: true });
+      }
+    } finally {
+      f.runtime.dispose();
+      await connection.close();
     }
   },
 );
@@ -13131,6 +13469,10 @@ it.each(["wake", "typed-wake", "wake-typed", "published"])(
       await expect(once).resolves.toMatchObject({ ok: order === "published" });
       await opening;
       expect(vi.mocked(openVoice).mock.calls.at(-1)?.[1]).toBe("thread-1");
+      if (order === "typed-wake" || order === "wake-typed") {
+        await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+        await f.complete(2);
+      }
     } finally {
       await f.complete(0, "");
       signal.abort();
@@ -13185,11 +13527,15 @@ it("interrupts queued community text before attaching Huddle audio", async () =>
     );
     const connection = await opening;
     expect(openVoice).toHaveBeenCalledTimes(opened + 1);
+    for (const resumed of [2, 3]) {
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(resumed + 1));
+      await f.complete(resumed);
+    }
     await connection.close();
   } finally {
     cleanup.resolve();
     seat.abort();
-    if (f.starts().length === 2) await f.complete(1, "");
+    for (const i of f.starts().keys()) await f.complete(i, "");
     f.runtime.dispose();
     await opening.catch(() => {});
   }
@@ -14205,4 +14551,283 @@ describe("gateway turns", () => {
     ).toBe(previous);
     await f.complete(2);
   });
+});
+
+it("switches active Solo work to voice and back to text on the same Codex thread", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  f.soloChannels.add("channel");
+  const d = f.delivery("finish my work");
+  const { config } = scoped(d, "channel");
+  const signal = new AbortController();
+  try {
+    await f.runtime.run({ ...d, config });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const connected = await join(f, d, {
+      config,
+      conversation: { channelId: "channel" },
+      signal: signal.signal,
+      resumeOnClose: () => true,
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).toMatchObject({
+      threadId: "thread-1",
+    });
+    expect(JSON.stringify(f.starts()[1]?.params)).toContain(
+      "Buzz posts that same reply in this conversation",
+    );
+    signal.abort();
+    await connected.close();
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    const text = f.starts()[2]?.params;
+    expect(text).toMatchObject({ threadId: "thread-1" });
+    expect(JSON.stringify(text)).toContain("interrupted when the Huddle ended");
+    expect(JSON.stringify(text)).not.toContain(
+      "Buzz posts that same reply in this conversation",
+    );
+    expect(
+      f.sent
+        .filter((wire) => wire.method === "turn/interrupt")
+        .map((wire) => wire.params),
+    ).toEqual([
+      { threadId: "thread-1", turnId: "turn-1" },
+      { threadId: "thread-1", turnId: "turn-2" },
+    ]);
+    await f.complete(2);
+  } finally {
+    signal.abort();
+    f.runtime.dispose();
+  }
+});
+
+it.each([
+  { interruptedFirst: false, steer: false },
+  { interruptedFirst: true, steer: false },
+  { interruptedFirst: false, steer: true },
+  { interruptedFirst: true, steer: false, settled: true },
+])(
+  "resumes a delegated spoken turn after leaving (interrupted: $interruptedFirst, steered: $steer, settled: $settled)",
+  async ({ interruptedFirst, steer, settled }) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    if (steer)
+      f.snapshot.session.channels.list = () => ({
+        status: "ready",
+        channels: [{ id: "channel", name: "DM", channelType: "dm" }],
+      });
+    else f.soloChannels.add("channel");
+    const d = f.delivery("spoken work");
+    const { config } = scoped(d, steer ? "community" : "channel");
+    const signal = new AbortController();
+    try {
+      const connected = await join(f, d, {
+        config,
+        conversation: { channelId: "channel" },
+        signal: signal.signal,
+        resumeOnClose: () => true,
+      });
+      f.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "speech-1" } },
+      });
+      await vi.waitFor(() =>
+        expect(
+          f.runtime
+            .sessions(d.agent.key)
+            .some((view) => view.status === "Working"),
+        ).toBe(true),
+      );
+      if (steer) {
+        await f.runtime.run({
+          ...f.delivery("Keep the accepted steering"),
+          config,
+          model: "test-model",
+          effort: "low",
+        });
+        await vi.waitFor(() =>
+          expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(
+            true,
+          ),
+        );
+      }
+      if (interruptedFirst)
+        f.emit({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turn: { id: "speech-1", status: "interrupted" },
+          },
+        });
+      if (settled) {
+        await vi.waitFor(() =>
+          expect(f.runtime.sessions(d.agent.key)[0]?.status).toBe(
+            "Interrupted",
+          ),
+        );
+      }
+      signal.abort();
+      await connected.close();
+
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(f.starts()[0]?.params).toMatchObject({ threadId: "thread-1" });
+      expect(JSON.stringify(f.starts()[0]?.params)).toContain(
+        "interrupted when the Huddle ended",
+      );
+      expect(
+        f.sent.find((wire) => wire.method === "turn/interrupt")?.params,
+      ).toEqual(
+        interruptedFirst
+          ? undefined
+          : { threadId: "thread-1", turnId: "speech-1" },
+      );
+      await f.complete(0);
+    } finally {
+      signal.abort();
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each([
+  ["threaded stream", false],
+  ["threaded stream", true],
+  ["threaded DM", false],
+  ["threaded DM", true],
+  ["top-level DM", false],
+] as const)(
+  "publishes a completed typed Huddle answer in a %s only in its own conversation (steered elsewhere: %s)",
+  async (where, elsewhere) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("finish this");
+    const dm = where.endsWith("DM");
+    const topLevel = where === "top-level DM";
+    if (dm) {
+      f.snapshot.session.channels.list = () => ({
+        status: "ready",
+        channels: [{ id: "channel", name: "DM", channelType: "dm" }],
+      });
+      if (topLevel && d.trigger.type === "mention")
+        d.trigger.event.tags = [["h", "channel"]];
+    }
+    const { config } = scoped(d, "channel");
+    const output = vi.fn(async () => {});
+    const signal = new AbortController();
+    try {
+      const connected = await join(f, d, {
+        config,
+        conversation: { channelId: "channel", ...(!topLevel && { root }) },
+        signal: signal.signal,
+        resumeOnClose: () => true,
+        output,
+      });
+      await f.runtime.run({ ...d, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      if (elsewhere) {
+        const steer = f.delivery("Continue in another thread", "e".repeat(64));
+        await vi.waitFor(() =>
+          expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Working"),
+        );
+        await f.runtime.run({
+          ...steer,
+          config,
+          model: "test-model",
+          effort: "low",
+        });
+        await vi.waitFor(() =>
+          expect(
+            f.sent.filter((wire) => wire.method === "turn/steer"),
+          ).toHaveLength(1),
+        );
+      }
+      f.emit({
+        method: "item/completed",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "agentMessage",
+            phase: "final_answer",
+            text: "Copper orchard.",
+          },
+        },
+      });
+      await f.complete(0, "");
+      await vi.waitFor(() =>
+        expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+      );
+      expect(f.publish).toHaveBeenCalledTimes(elsewhere ? 0 : 1);
+      expect(output).not.toHaveBeenCalled();
+      if (!elsewhere)
+        expect(f.publish).toHaveBeenCalledWith(
+          expect.objectContaining({
+            content: "Copper orchard.",
+            tags: expect.arrayContaining([["h", "channel"]]),
+          }),
+        );
+      await connected.close();
+    } finally {
+      signal.abort();
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("does not auto-post final text when speech joins an Attention turn in a Huddle", async () => {
+  vi.stubGlobal("RTCPeerConnection", class {});
+  const f = fixture();
+  f.soloChannels.add("channel");
+  const d = f.delivery("check this");
+  const { config } = scoped(d, "channel");
+  const signal = new AbortController();
+  const transcript = vi.fn(async () => {});
+  try {
+    const connected = await join(f, d, {
+      config,
+      conversation: { channelId: "channel" },
+      signal: signal.signal,
+      resumeOnClose: () => true,
+      transcript,
+    });
+    await f.runtime.run({
+      ...d,
+      config,
+      trigger: {
+        type: "attention",
+        id: "huddle-timer",
+        at: Date.now(),
+        channel: "channel",
+        topLevel: true,
+        text: "Resume background work.",
+      },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.emit({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "agentMessage",
+          phase: "final_answer",
+          text: "Only for the spoken request.",
+        },
+      },
+    });
+    f.emit({
+      method: "thread/realtime/transcript/done",
+      params: {
+        threadId: "thread-1",
+        role: "assistant",
+        text: "The spoken answer.",
+      },
+    });
+    await f.complete(0, "");
+    await connected.close();
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(transcript.mock.calls).toEqual([["agent", "The spoken answer."]]);
+  } finally {
+    signal.abort();
+    f.runtime.dispose();
+  }
 });

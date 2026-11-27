@@ -5513,7 +5513,7 @@ describe("voice launch and transcripts", () => {
       await f.ctx.fiber.dispose();
     }
   });
-  it("publishes final h-only transcripts without triggering its own agent", async () => {
+  it("publishes final transcripts without recipients without triggering its own agent", async () => {
     const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
       input: vi.fn(),
       close: vi.fn(),
@@ -5546,7 +5546,10 @@ describe("voice launch and transcripts", () => {
       expect(lines).toHaveLength(1);
       expect(lines[0]).toMatchObject({
         pubkey: bot,
-        tags: [["h", channel]],
+        tags: [
+          ["h", channel],
+          ["buzz:message-source", "huddle-transcript"],
+        ],
         content: "Echo (transcribed by Echo): Spoken answer",
       });
       await seat.transcript("owner", "  ");
@@ -5565,6 +5568,92 @@ describe("voice launch and transcripts", () => {
       await f.ctx.fiber.dispose();
     }
   });
+
+  it.each([undefined, "a".repeat(64)])(
+    "posts agent speech to the specified channel or thread and leaves human publication to the host (%s)",
+    async (root) => {
+      const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+        input: vi.fn(),
+        close: vi.fn(),
+      }));
+      const f = await setup({ voice });
+      try {
+        await f.service.create({ type: "example/echo", name: "Echo" });
+        const agent = f.service.find(bot);
+        const open = f.service
+          .types()
+          .find((type) => type.key === "example/echo")?.voice;
+        if (!agent || !open) throw new Error("Missing voice fixture");
+        const controller = new AbortController();
+        let stream = true;
+        await open({
+          agent,
+          streamTranscript: () => stream,
+          conversation: { channelId: "76777eba-0881-43cf-9b24-9f1136d8dc72" },
+          transcriptDestination: {
+            channelId: channel,
+            ...(root ? { root } : {}),
+          },
+          signal: controller.signal,
+          resumeOnClose: () => root !== undefined,
+          output: async () => {},
+          ended: () => {},
+        });
+        const seat = voice.mock.calls[0]?.[0];
+        if (!seat) throw new Error("Missing opened seat");
+        await seat.transcript("owner", "Human speech");
+        seat.transcriptDelta?.("Spoken");
+        await vi.waitFor(async () =>
+          expect(await published(f.native, 9)).toHaveLength(1),
+        );
+        if (root) {
+          seat.transcriptDelta?.(" answer");
+          await vi.waitFor(async () =>
+            expect(await published(f.native, 40003)).toHaveLength(1),
+          );
+          const correction = seat.transcript("agent", "Spoken answer.");
+          controller.abort();
+          await correction;
+        } else {
+          await seat.transcript("agent", "Spoken answer");
+          stream = false;
+          seat.transcriptDelta?.("An unfinished line");
+          expect(await published(f.native, 9)).toHaveLength(1);
+          await seat.transcript("agent", "Finished line");
+          controller.abort();
+        }
+        seat.transcriptDelta?.("Late fragment");
+        await seat.transcript("agent", "Late answer");
+        const lines = await published(f.native, 9);
+        expect(lines).toHaveLength(root ? 1 : 2);
+        expect(lines[0]).toMatchObject({
+          pubkey: bot,
+          tags: [
+            ["h", channel],
+            ["buzz:message-source", "huddle-transcript"],
+            ...(root ? [["e", root, "", "reply"]] : []),
+          ],
+          content: "Spoken",
+        });
+        if (!root) expect(lines[1]?.content).toBe("Finished line");
+        expect(await published(f.native, 40003)).toEqual([
+          expect.objectContaining({
+            pubkey: bot,
+            tags: [
+              ["h", channel],
+              ["e", lines[0]?.id],
+            ],
+            content: "Spoken answer",
+          }),
+          ...(root
+            ? [expect.objectContaining({ content: "Spoken answer." })]
+            : []),
+        ]);
+      } finally {
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
 });
 
 describe("a type without synced settings", () => {
@@ -7853,6 +7942,11 @@ describe("an agent in several communities", () => {
       scope: "scope",
       viewer: owner,
       session: {
+        profiles: {
+          snapshot: () => new Map(),
+          subscribe: quiet,
+          ensure: async () => {},
+        },
         channels: {
           get: () => ({
             id: "room",
@@ -8054,6 +8148,7 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
       event("others", { tags: [["h", "dm-others"]] }),
       event("unknown", { tags: [["h", "dm-unknown"]] }),
       inDm("edit", { kind: 40003 }),
+      inDm("spoken", { tags: [["buzz:message-source", "huddle-transcript"]] }),
       inDm("like", { kind: 7, tags: [["e", "x".repeat(64)]] }),
       inDm("own", { pubkey: bot }),
     ],

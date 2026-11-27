@@ -47,11 +47,15 @@ function ConnectedComposer({
         extensions={extensions}
         scope={data.scope}
         channelId={data.room}
-        channelName="Huddle"
-        forwardAudience="Everyone in this Huddle"
+        channelName={
+          data.channels.channels.find((channel) => channel.id === data.room)
+            ?.name ?? "Huddle"
+        }
+        {...(!data.draftKey && { forwardAudience: "Everyone in this Huddle" })}
         label="Message this Huddle"
         placeholder="Message this Huddle"
         disabled={!data.writable}
+        draftStorageKey={data.draftKey}
         editMessages={[]}
       />
     </MentionModelsContext.Provider>

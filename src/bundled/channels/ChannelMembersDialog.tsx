@@ -889,6 +889,16 @@ export function ChannelMembersDialog({
   const channel =
     list.channels.find((item) => item.id === channelId) ??
     session.channels.get?.(channelId);
+  const huddleParent = channel?.huddle
+    ? list.channels.find((item) => item.id === channel.parentChannelId)
+    : undefined;
+  const huddleInvitees = channel?.huddle
+    ? new Set(
+        !huddleParent?.cached && !huddleParent?.archived
+          ? huddleParent?.members
+          : undefined,
+      )
+    : undefined;
   const solo = channel?.channelType === "solo";
   const dm = channel?.channelType === "dm";
   const place = solo ? "chat" : dm ? "DM" : "channel";
@@ -1488,6 +1498,7 @@ export function ChannelMembersDialog({
   const available = [...candidates.values()].filter(
     (person) =>
       !members.has(person.pubkey) &&
+      (!huddleInvitees || huddleInvitees.has(person.pubkey)) &&
       !agentUnavailable(session, person.pubkey) &&
       // A Solo chat offers only the agents its owner can add directly.
       !(
@@ -1680,7 +1691,9 @@ export function ChannelMembersDialog({
     (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
   );
   const teams = (
-    solo || dm || memberActions ? [] : (agentsSnapshot?.teams ?? [])
+    solo || dm || memberActions || huddleInvitees
+      ? []
+      : (agentsSnapshot?.teams ?? [])
   ).flatMap((team) => {
     const missing = team.members.filter(
       (key) => teamNames.has(key) && !members.has(key),
@@ -2120,6 +2133,7 @@ export function ChannelMembersDialog({
           memberPending
         }
         canAddWithRole={
+          !huddleInvitees &&
           !solo &&
           !dm &&
           session.memberAdministration.available &&

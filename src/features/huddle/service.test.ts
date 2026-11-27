@@ -4,6 +4,7 @@ vi.mock("../channel-members/members", () => ({
 }));
 import { Context } from "@deepseek-ai/cordis";
 import { describe, expect, it, vi } from "vitest";
+import type { Agent, Agents, RegisteredAgentType } from "../agents/service";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import { keypair, signed } from "../relay/testing";
@@ -13,6 +14,8 @@ import { createRelaySession } from "../relay/session";
 import type { HuddleAudio, OpenHuddleAudio } from "./audio";
 import type { HuddleBridge, HuddleDestination, HuddleUpdate } from "./bridge";
 import { createHuddles, provideHuddleStatus } from "./service";
+import { huddleDescription } from "./lifecycle";
+import { createHuddleVoices } from "./voice";
 
 const viewerKey = keypair();
 const relayKey = keypair();
@@ -50,6 +53,7 @@ function harness(
     async () => [],
   );
   const archive = vi.fn(async () => {});
+  const transcribe = vi.fn(() => "outbox-id");
   const publish = vi.fn(async () => {});
   const writes = createOutbox(
     viewerKey.pubkey,
@@ -75,6 +79,7 @@ function harness(
     session: {
       ...store.session,
       read,
+      messages: { ...store.session.messages, transcribe },
       snapshotRead,
       relayAuthor: relayKey.pubkey,
       outbox: writes.outbox,
@@ -132,6 +137,7 @@ function harness(
     close: vi.fn(async () => {}),
     touch: vi.fn(async () => {}),
     send: vi.fn(async () => {}),
+    recognize: vi.fn(async () => " spoken words "),
   };
   const openAudio = vi.fn<OpenHuddleAudio>(async (fn) => {
     send = fn;
@@ -140,6 +146,8 @@ function harness(
   const service = createHuddles(relay, bridge, openAudio, dmAgent);
   return {
     service,
+    transcribe,
+    relay,
     snapshotRead,
     archive,
     publish,
@@ -154,6 +162,10 @@ function harness(
       partial = incomplete;
       for (const fn of accessListeners) fn();
     },
+    reconnect() {
+      connection = { ...connection, status: "connecting" };
+      for (const fn of changes) fn();
+    },
     replace() {
       connection = { ...connection, generation: 2, status: "disconnected" };
       for (const fn of changes) fn();
@@ -167,6 +179,42 @@ function harness(
   };
 }
 describe("Huddle lifetime", () => {
+  it("plays the local agent once and keeps relay audio for other speakers", async () => {
+    const h = harness();
+    try {
+      await h.service.join(destination);
+      h.receive({
+        type: "connected",
+        room: "room",
+        participants: ["agent", "guest"],
+      });
+      const call = h.service.snapshot().id;
+      if (!call) throw new Error("Missing owner Huddle");
+      const local = h.service.openLocalPlayout(call, "agent");
+      local?.play([0.1]);
+      h.receive({ type: "audio", peer: "agent", samples: [0.2] });
+      h.receive({ type: "audio", peer: "guest", samples: [0.3] });
+      expect(vi.mocked(h.audio.play).mock.calls).toEqual([
+        ["agent", [0.1]],
+        ["guest", [0.3]],
+      ]);
+      h.service.setRouting("directAudio", false);
+      local?.play([0.4]);
+      h.receive({ type: "audio", peer: "agent", samples: [0.45] });
+      expect(h.audio.play).toHaveBeenLastCalledWith("agent", [0.45]);
+      h.service.setRouting("directAudio", true);
+      local?.play([0.46]);
+      expect(h.audio.play).toHaveBeenLastCalledWith("agent", [0.46]);
+      local?.close();
+      local?.play([0.4]);
+      h.receive({ type: "audio", peer: "agent", samples: [0.5] });
+      expect(h.audio.play).toHaveBeenCalledTimes(5);
+      expect(h.audio.play).toHaveBeenLastCalledWith("agent", [0.5]);
+    } finally {
+      h.service.setRouting("directAudio", true);
+      await h.dispose();
+    }
+  });
   it("keeps arrival order across unordered roster snapshots and treats rejoining as new", async () => {
     const h = harness();
     await h.service.join(destination);
@@ -230,6 +278,109 @@ describe("Huddle lifetime", () => {
     h.receive({ type: "connected", room: "late", participants: [] });
     expect(h.service.snapshot().phase).toBe("idle");
     await h.dispose();
+  });
+  it("delivers local microphone audio to Codex while the relay send stalls", async () => {
+    const h = harness([
+      {
+        id: destination.channelId,
+        name: "Design",
+        members: [destination.viewer],
+      },
+      {
+        id: "room",
+        name: "Huddle",
+        members: [destination.viewer, botKey.pubkey],
+      },
+    ]);
+    const input = vi.fn<(samples: number[]) => void>();
+    const agent = {
+      key: "codex",
+      pubkey: botKey.pubkey,
+      owner: destination.viewer,
+      relay: destination.relayUrl,
+      type: "codex",
+      place: "here",
+    } as Agent;
+    const types = [
+      {
+        key: agent.type,
+        voice: async () => ({ input, close: () => {} }),
+      },
+    ] as unknown as RegisteredAgentType[];
+    const agents = {
+      snapshot: () => ({ status: "ready", running: [agent] }),
+      subscribe: () => () => {},
+      types: () => types,
+      reserveVoice: () => () => {},
+    } as unknown as Pick<
+      Agents,
+      "snapshot" | "subscribe" | "types" | "reserveVoice"
+    >;
+    let receive = (_: HuddleUpdate) => {};
+    const bridge: HuddleBridge = {
+      ...h.bridge,
+      open: async (_id, _context, _room, update) => {
+        receive = update;
+      },
+    };
+    const report = vi.fn();
+    const stop = createHuddleVoices(h.service, agents, h.relay, bridge, report);
+    const stalled = deferred<void>();
+    vi.mocked(h.bridge.send).mockReturnValueOnce(stalled.promise);
+    try {
+      await h.service.join(destination);
+      h.receive({
+        type: "connected",
+        room: "room",
+        participants: [botKey.pubkey],
+      });
+      await vi.waitFor(() =>
+        expect(h.service.snapshot().listening).toContain(botKey.pubkey),
+      );
+
+      const delayedFrame = Array<number>(960).fill(0.01);
+      const frames = [
+        delayedFrame,
+        ...Array.from({ length: 11 }, (_, i) =>
+          Array<number>(960).fill((i + 2) / 100),
+        ),
+      ];
+      for (const frame of frames) h.send(frame);
+      expect(h.bridge.send).toHaveBeenCalledTimes(1);
+      expect(input).toHaveBeenCalledTimes(frames.length);
+      expect(input.mock.calls.map(([frame]) => frame[0])).toEqual(
+        frames.map((frame) => frame[0]),
+      );
+      receive({
+        type: "audio",
+        peer: destination.viewer,
+        samples: delayedFrame,
+      });
+      expect(input).toHaveBeenCalledTimes(frames.length);
+
+      h.service.mute();
+      h.send(Array(960).fill(0.5));
+      receive({
+        type: "audio",
+        peer: destination.viewer,
+        samples: delayedFrame,
+      });
+      expect(input).toHaveBeenCalledTimes(frames.length);
+
+      await h.service.leave();
+      h.send(delayedFrame);
+      receive({
+        type: "audio",
+        peer: destination.viewer,
+        samples: delayedFrame,
+      });
+      expect(input).toHaveBeenCalledTimes(frames.length);
+      expect(report).not.toHaveBeenCalled();
+    } finally {
+      stalled.resolve();
+      await stop();
+      await h.dispose();
+    }
   });
   it("cancels an outstanding permission prompt and allows another attempt", async () => {
     const h = harness();
@@ -700,6 +851,27 @@ describe("automatic DM voice invitation", () => {
       await h.dispose();
     }
   });
+  it("still invites other eligible agents when one invitation fails", async () => {
+    vi.mocked(addChannelMember).mockClear();
+    vi.mocked(addChannelMember).mockRejectedValueOnce(new Error("Offline"));
+    const h = harness(
+      [{ ...parent, members: [...parent.members, "second-agent"] }, room],
+      () => ["agent", "second-agent"],
+    );
+    try {
+      await h.service.start(destination);
+      h.receive({ type: "connected", room: "room", participants: [] });
+      await vi.waitFor(() => expect(addChannelMember).toHaveBeenCalledTimes(2));
+      expect(addChannelMember).toHaveBeenLastCalledWith(
+        expect.anything(),
+        "room",
+        "second-agent",
+        expect.any(AbortSignal),
+      );
+    } finally {
+      await h.dispose();
+    }
+  });
   it.each(["leave", "ineligible", "wrong-parent", "already-member"])(
     "does not grant access after %s",
     async (scenario) => {
@@ -909,6 +1081,52 @@ describe("explicit last-human hangup", () => {
     expect(h.service.snapshot().phase).toBe("idle");
     await h.dispose();
   });
+  it("keeps the transcript card on the end event without cached room details", async () => {
+    const h = await connected();
+    const card = "c".repeat(64);
+    const creation = signed(viewerKey, {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", room],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["about", huddleDescription(destination.channelId)],
+        ["t", "huddle:transcripts"],
+        ["t", `huddle:root:0:${card.slice(0, 32)}`],
+        ["t", `huddle:root:1:${card.slice(32)}`],
+        ["t", `huddle:card:0:${card.slice(0, 32)}`],
+        ["t", `huddle:card:1:${card.slice(32)}`],
+      ],
+    });
+    h.snapshotRead.mockImplementationOnce(async (filters) => [
+      ...records(),
+      ...(filters.some(
+        (filter) =>
+          filter.kinds?.includes(9007) &&
+          filter.authors?.includes(destination.viewer) &&
+          filter["#h"]?.includes(room),
+      )
+        ? [creation]
+        : []),
+    ]);
+    try {
+      await h.service.leave();
+      expect(h.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 48103,
+          content: JSON.stringify({
+            ephemeral_channel_id: room,
+            transcripts_in_origin: true,
+            card_id: card,
+          }),
+        }),
+        expect.anything(),
+      );
+    } finally {
+      await h.dispose();
+    }
+  });
   it.each([
     "second device",
     "another human",
@@ -1102,3 +1320,98 @@ describe("explicit last-human hangup", () => {
     }
   });
 });
+
+it.each([
+  [undefined, undefined],
+  ["a".repeat(64), undefined],
+  ["a".repeat(64), "b".repeat(64)],
+  ["b".repeat(64), "b".repeat(64)],
+])(
+  "rejoins transcript thread %s with reply parent %s and posts one local utterance",
+  async (root, parentId) => {
+    const room = "00000000-0000-4000-8000-000000000002";
+    const transcript = {
+      channelId: destination.channelId,
+      ...(root && { root }),
+      ...(parentId && { parentId }),
+    };
+    const h = harness([
+      {
+        id: destination.channelId,
+        name: "Design",
+        members: [destination.viewer],
+      },
+      {
+        id: room,
+        name: "Huddle",
+        huddle: true,
+        parentChannelId: destination.channelId,
+        huddleTranscript: transcript,
+        members: [destination.viewer, botKey.pubkey],
+      },
+    ]);
+    try {
+      await h.service.join(destination, room);
+      h.receive({
+        type: "connected",
+        room,
+        participants: [destination.viewer, botKey.pubkey],
+      });
+      await vi.waitFor(() =>
+        expect(h.service.snapshot().transcriptDestination).toEqual(transcript),
+      );
+      const speech = new Array<number>(960).fill(0.05);
+      const silence = new Array<number>(960).fill(0);
+      for (let i = 0; i < 10; i++) h.send(speech);
+      const peerAudio = vi.fn();
+      h.service.subscribePeerAudio(peerAudio);
+      h.service.setRouting("agentCrossTalk", false);
+      h.receive({ type: "audio", peer: botKey.pubkey, samples: speech });
+      expect(peerAudio).not.toHaveBeenCalled();
+      expect(h.audio.play).toHaveBeenLastCalledWith(botKey.pubkey, speech);
+      h.service.setRouting("agentCrossTalk", true);
+      h.receive({ type: "audio", peer: botKey.pubkey, samples: speech });
+      expect(peerAudio).toHaveBeenCalledOnce();
+      h.reconnect();
+      expect(h.service.snapshot().phase).toBe("connected");
+      for (let i = 0; i < 35; i++) h.send(silence);
+      await vi.waitFor(() =>
+        expect(h.transcribe).toHaveBeenCalledWith(
+          destination.channelId,
+          root,
+          "spoken words",
+          ...(parentId ? [parentId] : []),
+        ),
+      );
+      expect(h.transcribe).toHaveBeenCalledTimes(1);
+      vi.mocked(h.bridge.recognize)?.mockRejectedValueOnce(
+        new Error("Could not transcribe the microphone audio."),
+      );
+      for (let i = 0; i < 10; i++) h.send(speech);
+      for (let i = 0; i < 35; i++) h.send(silence);
+      await vi.waitFor(() =>
+        expect(h.service.snapshot()).toMatchObject({
+          phase: "connected",
+          transcriptError: "Could not transcribe the microphone audio.",
+        }),
+      );
+      expect(h.service.snapshot().error).toBeUndefined();
+      for (let i = 0; i < 10; i++) h.send(speech);
+      for (let i = 0; i < 35; i++) h.send(silence);
+      await vi.waitFor(() => expect(h.transcribe).toHaveBeenCalledTimes(2));
+      h.service.mute();
+      for (let i = 0; i < 10; i++) h.send(speech);
+      for (let i = 0; i < 35; i++) h.send(silence);
+      expect(h.bridge.recognize).toHaveBeenCalledTimes(3);
+      if (!root) {
+        h.service.mute();
+        for (let i = 0; i < 10; i++) h.send(speech);
+        await h.service.leave();
+        expect(h.transcribe).toHaveBeenCalledTimes(3);
+      }
+    } finally {
+      h.service.setRouting("agentCrossTalk", true);
+      await h.dispose();
+    }
+  },
+);

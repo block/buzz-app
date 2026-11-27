@@ -42,6 +42,7 @@ fn main() {
     // the directory too: the ordinary goose-acp is staged after a first `cargo check`.
     println!("cargo:rerun-if-changed=resources/bin");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        build_huddle_speech();
         build_resources::prepare_executables(
             std::path::Path::new("resources/bin"),
             &std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR")),
@@ -73,6 +74,7 @@ fn main() {
             "huddle_open",
             "huddle_close",
             "huddle_pcm",
+            "huddle_recognize",
             "huddle_touch",
             "pairing_account",
             "pairing_start",
@@ -402,6 +404,45 @@ fn federated_identity_servers(
         dev_viewer.as_deref(),
     )
     .unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn build_huddle_speech() {
+    let source = "src/relay/huddle/speech.m";
+    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
+    let object = output.join("huddle-speech.o");
+    let archive = output.join("libhuddle_speech.a");
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("aarch64") => "arm64",
+        Ok("x86_64") => "x86_64",
+        _ => panic!("Unsupported macOS target architecture"),
+    };
+    let run = |command: &mut std::process::Command| {
+        let status = command.status().expect("Run macOS speech build tool");
+        assert!(status.success(), "macOS speech build failed: {command:?}");
+    };
+    run(std::process::Command::new("xcrun")
+        .args([
+            "--sdk",
+            "macosx",
+            "clang",
+            "-fobjc-arc",
+            "-arch",
+            arch,
+            "-mmacosx-version-min=12.0",
+            "-c",
+            source,
+            "-o",
+        ])
+        .arg(&object));
+    run(std::process::Command::new("xcrun")
+        .args(["libtool", "-static", "-o"])
+        .arg(&archive)
+        .arg(&object));
+    println!("cargo:rerun-if-changed={source}");
+    println!("cargo:rustc-link-search=native={}", output.display());
+    println!("cargo:rustc-link-lib=static=huddle_speech");
+    println!("cargo:rustc-link-lib=framework=AVFoundation");
+    println!("cargo:rustc-link-lib=framework=Speech");
 }
 
 #[cfg(test)]

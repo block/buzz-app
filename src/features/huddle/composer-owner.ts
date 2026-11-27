@@ -8,6 +8,7 @@ import {
   draftRetirementCursor,
   retireViewDraft,
 } from "../../shared/view-state";
+import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
 import { prepareAttachment } from "../messages/prepare-attachment";
@@ -28,13 +29,18 @@ import type {
  * File bytes use structured cloning; all preparation, signing and delivery stay here. */
 export function createHuddleComposerOwner(
   session: RelaySession,
-  room: string,
+  callRoom: string,
   parent: string,
   extensions: ComposerReader | undefined,
   current: () => boolean,
   verified?: () => boolean,
   agents?: import("../agents/service").Agents,
+  destination?: ChannelSummary["huddleTranscript"],
 ) {
+  const room = destination?.channelId ?? callRoom;
+  const root = destination?.root;
+  const parentId = destination?.parentId;
+  const draftKey = `draft:${callRoom}`;
   async function modelChoices(pubkeys: readonly string[]) {
     const revision = modelRevision;
     if (
@@ -136,6 +142,7 @@ export function createHuddleComposerOwner(
     const roomMetadata = metadata();
     return {
       room,
+      ...(destination && { draftKey }),
       modelRevision,
       viewer: session.viewer,
       scope: session.scope,
@@ -239,7 +246,7 @@ export function createHuddleComposerOwner(
         )
           throw new Error("Invalid Huddle message.");
         const scope = session.scope;
-        const key = `draft:${room}`;
+        const key = draftKey;
         const cursor = retirementCursor ?? draftRetirementCursor(scope, key);
         const files = attachments.map((file) => {
           const known = uploaded.get(JSON.stringify([file.url, file.sha256]));
@@ -309,17 +316,34 @@ export function createHuddleComposerOwner(
               forward.name,
               text,
               undefined,
-              { mentions, attachments: files, references, picks },
+              {
+                mentions,
+                attachments: files,
+                references,
+                picks,
+                ...(root && { rootId: root, parentId: parentId ?? root }),
+              },
             )
-          : session.messages.send(
-              room,
-              text,
-              mentions,
-              files,
-              undefined,
-              references,
-              picks,
-            );
+          : root
+            ? session.messages.reply(
+                room,
+                root,
+                text,
+                mentions,
+                files,
+                parentId,
+                references,
+                picks,
+              )
+            : session.messages.send(
+                room,
+                text,
+                mentions,
+                files,
+                undefined,
+                references,
+                picks,
+              );
         // Admission owns the persisted draft too: closing the child before its
         // acknowledgement must not restore a message already in the main
         // outbox. The stub is what the composer saves for every send; it

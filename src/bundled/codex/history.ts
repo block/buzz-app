@@ -20,8 +20,8 @@ import { compareMessages, eventMs } from "../../features/relay/message-order";
 import type { Conversation } from "./prompt";
 
 /** Reuse the message owner's edits/deletions projection on verified relay reads. */
-export async function conversationHistory(
-  event: EventData,
+async function conversationMessages(
+  event: EventData | undefined,
   conversation: Conversation,
   read: (filters: readonly ReadFilter[]) => Promise<readonly EventData[]>,
   profiles?: Pick<AgentReads, "profiles" | "profile" | "authorNames">,
@@ -31,7 +31,7 @@ export async function conversationHistory(
   const filter = {
     kinds: [9, 40002],
     "#h": [channelId],
-    until: event.created_at,
+    ...(event && { until: event.created_at }),
   };
   const found = await read(
     root
@@ -50,7 +50,7 @@ export async function conversationHistory(
         ]
       : [{ ...filter, limit: 50 }],
   );
-  const cutoff = {
+  const cutoff = event && {
     id: event.id,
     createdAt: event.created_at,
     createdAtMs: eventMs(event),
@@ -58,7 +58,7 @@ export async function conversationHistory(
   // The cutoff selects messages, not revisions. Apply current edits/deletions
   // so history agrees with the conversation rather than reviving replaced text.
   const history =
-    conversation.sourceRoot && root && event.id !== root
+    conversation.sourceRoot && root && event?.id !== root
       ? (
           await readSubthread(
             found,
@@ -70,6 +70,7 @@ export async function conversationHistory(
       : found;
   const earlier = history.filter(
     (item) =>
+      !cutoff ||
       compareMessages(
         { id: item.id, createdAt: item.created_at, createdAtMs: eventMs(item) },
         cutoff,
@@ -93,10 +94,10 @@ export async function conversationHistory(
   if (profiles && found.length)
     // The event's author too, so the turn can name them beside its pubkey.
     await profiles
-      .profiles([...new Set([event.pubkey, ...authors])])
+      .profiles([...new Set([...(event ? [event.pubkey] : []), ...authors])])
       .catch(() => {});
   // With no history, only the name is wanted, which a slow read can skip.
-  else await readAuthorNames(profiles, [event]);
+  else if (event) await readAuthorNames(profiles, [event]);
   if (profiles && found.length) {
     await Promise.all(
       authors.map(async (author) => {
@@ -109,7 +110,7 @@ export async function conversationHistory(
     );
   }
   const raw = new Map([...earlier, ...changes].map((item) => [item.id, item]));
-  const messages = foldMessages(channelId, "", [...earlier, ...changes], {
+  return foldMessages(channelId, "", [...earlier, ...changes], {
     includeReplies: true,
     signingAuthority,
     agentOwner: (author) => {
@@ -119,12 +120,12 @@ export async function conversationHistory(
         : undefined;
     },
   })
-    .filter(
-      (message) =>
-        !root ||
-        !!conversation.sourceRoot ||
-        message.id === root ||
-        message.threadRootId === root,
+    .filter((message) =>
+      root
+        ? !!conversation.sourceRoot ||
+          message.id === root ||
+          message.threadRootId === root
+        : !!event || !message.threadRootId,
     )
     .slice(-50)
     .map((message) =>
@@ -149,10 +150,48 @@ export async function conversationHistory(
         profiles?.authorNames?.(message.authorId),
       ),
     );
-  const section = root ? "thread-context" : "conversation-context";
+}
+
+export async function conversationHistory(
+  event: EventData,
+  conversation: Conversation,
+  read: (filters: readonly ReadFilter[]) => Promise<readonly EventData[]>,
+  profiles?: Pick<AgentReads, "profiles" | "profile" | "authorNames">,
+  signingAuthority?: string,
+) {
+  const messages = await conversationMessages(
+    event,
+    conversation,
+    read,
+    profiles,
+    signingAuthority,
+  );
+  const section = conversation.root ? "thread-context" : "conversation-context";
   const text = quoted({
     note: `Recent context, not new requests. Previously supplied context may repeat. Up to 50 messages, ${CONTENT_LIMIT} characters each.`,
     messages,
   });
   return `<${section}>\n${text}\n</${section}>\n`;
+}
+
+export async function recentVoiceHistory(
+  conversation: Conversation,
+  reads: AgentReads,
+  signal: AbortSignal,
+) {
+  const messages = await conversationMessages(
+    undefined,
+    conversation,
+    (filters) => reads.read(filters, signal),
+    reads,
+    reads.workflowAuthority(),
+  );
+  return messages.slice(-20).map((message) => ({
+    speaker: (
+      reads.authorNames?.(message.pubkey)?.display_name ||
+      reads.name(message.pubkey) ||
+      "Unnamed speaker"
+    ).slice(0, 100),
+    text: message.content.slice(0, 400),
+  }));
 }

@@ -5,6 +5,7 @@ import { dmVoiceAgent } from "../../features/huddle/dm-agent";
 import type { ChatMenuProps } from "../../features/conversation/service";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ChannelLauncherProps } from "../../features/panels/service";
+import type { HuddleDestination } from "../../features/huddle/bridge";
 import type { RelayData } from "../../features/relay/service";
 import { useRelayConnection } from "../../features/relay/react";
 import { useIncomingHuddle } from "../../features/huddle/use-incoming";
@@ -31,15 +32,14 @@ import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import styles from "./Huddles.module.css";
 import { writeClipboardText } from "../../shared/clipboard";
 
-type Props = Pick<
-  ChannelLauncherProps,
-  "context" | "available" | "openMembers"
-> & {
+type Props = Pick<ChannelLauncherProps, "available" | "openMembers"> & {
+  context: HuddleDestination;
   relay: RelayData;
   huddles: Huddles;
   showWindow(): Promise<void>;
   menu?: boolean;
   agents?: Agents;
+  onActivate?: () => void;
 };
 const focusPlayer = () => document.getElementById("huddle-capsule")?.focus();
 
@@ -47,10 +47,15 @@ const focusPlayer = () => document.getElementById("huddle-capsule")?.focus();
 export function SoloHuddleMenu({
   session,
   channelId,
+  root,
+  onActivate,
   relay,
   huddles,
   showWindow,
-}: ChatMenuProps & Pick<Props, "relay" | "huddles" | "showWindow">) {
+}: ChatMenuProps &
+  Pick<Props, "relay" | "huddles" | "showWindow" | "onActivate"> & {
+    root?: string;
+  }) {
   const connection = useRelayConnection(relay);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
@@ -61,7 +66,8 @@ export function SoloHuddleMenu({
     connection.session !== session ||
     !connection.scope ||
     !connection.viewer ||
-    channel?.channelType !== "solo" ||
+    (!root && channel?.channelType !== "solo") ||
+    !channel ||
     channel.archived ||
     channel.readOnly ||
     channel.cached
@@ -72,6 +78,7 @@ export function SoloHuddleMenu({
     viewer: connection.viewer,
     channelId,
     channelName: channel.name,
+    ...(root && { root }),
     relayUrl: connection.scope
       .slice(0, -(connection.viewer.length + 1))
       .replace(/^https:/, "wss:")
@@ -84,6 +91,7 @@ export function SoloHuddleMenu({
       relay={relay}
       huddles={huddles}
       showWindow={showWindow}
+      {...(onActivate && { onActivate })}
       available={() => relay.snapshot() === connection}
     />
   );
@@ -99,6 +107,7 @@ export function HuddleLauncher(props: Props) {
       ? connection.session
       : undefined,
     context.channelId,
+    context.root,
   );
   const list = useSyncExternalStore(
     connection.session.channels.subscribeList,
@@ -108,7 +117,12 @@ export function HuddleLauncher(props: Props) {
     (channel) => channel.id === context.channelId,
   );
   // Bind a pending confirmation to its conversation so it never starts another.
-  const target = [context.scope, context.viewer, context.channelId].join("\n");
+  const target = [
+    context.scope,
+    context.viewer,
+    context.channelId,
+    context.root,
+  ].join("\n");
   const [confirming, setConfirming] = useState<string>();
   if (confirming && confirming !== target) setConfirming(undefined);
   const proceed = useRef<HTMLButtonElement>(null);
@@ -117,13 +131,19 @@ export function HuddleLauncher(props: Props) {
     call.phase === "connected" &&
     call.destination?.scope === context.scope &&
     call.destination.viewer === context.viewer &&
-    call.destination.channelId === context.channelId;
+    call.destination.channelId === context.channelId &&
+    call.destination.root === context.root;
   // Load archive evidence so an archived agent is never offered or invited.
   useAgentChoices(connection.session, false, true);
   const voiceAgent =
     props.agents && dmVoiceAgent(connection, context, props.agents);
   if (parent?.archived) return null;
-  if (props.menu && active) return null;
+  if (props.menu && active)
+    return here ||
+      (call.phase === "connecting" &&
+        call.destination?.channelId === context.channelId) ? (
+      <MenuItem onClick={() => void huddles.leave()}>Leave huddle</MenuItem>
+    ) : null;
   if (here && call.id)
     return <ActiveHuddle key={call.id} {...props} callId={call.id} />;
   const joinable =
@@ -153,11 +173,16 @@ export function HuddleLauncher(props: Props) {
   };
   if (props.menu)
     return (
-      <MenuItem onClick={activate}>
+      <MenuItem
+        onClick={() => {
+          props.onActivate?.();
+          activate();
+        }}
+      >
         <MenuIcon>
           <HeadphonesIcon size={16} />
         </MenuIcon>
-        {label}
+        {context.root && !joinable ? "Start huddle in thread" : label}
       </MenuItem>
     );
   // Keep active/incoming calls visible; idle Solo calls live in Chat actions.
@@ -180,8 +205,8 @@ export function HuddleLauncher(props: Props) {
           title="Start a huddle?"
           description={
             voiceAgent
-              ? `Your microphone will turn on and ${voiceAgent.name} will join automatically.`
-              : "Your microphone will turn on, and others in this conversation can join."
+              ? `Your microphone will turn on and ${voiceAgent.name} will join automatically. Transcripts appear in this chat.`
+              : `Your microphone will turn on. Transcripts appear in this ${context.root ? "thread" : "channel"}.`
           }
           initialFocus={proceed}
           onClose={close}
@@ -332,7 +357,7 @@ function ActiveHuddle({
           session={connection.session}
           channelId={call.room}
           title="Huddle members"
-          description="People added here can join this Huddle and its thread. The original chat stays private."
+          description="Only members of the original conversation can be added to this Huddle."
           close={() => setMembersOpen(false)}
           trigger={trigger}
         />

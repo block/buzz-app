@@ -7,10 +7,12 @@ import { huddleLifecycle } from "./lifecycle";
 export function useIncomingHuddle(
   session: RelaySession | undefined,
   parent: string,
+  root?: string,
 ) {
   const [state, setState] = useState<{
     session: RelaySession;
     parent: string;
+    root?: string;
     room: { id: string; participants: number } | undefined;
   }>();
   useEffect(() => {
@@ -29,13 +31,11 @@ export function useIncomingHuddle(
         snapshot.events,
         parent,
         session.relayAuthor,
-      ).find(
-        (candidate) =>
-          candidate.startedAt <= now && candidate.startedAt + 3600 > now,
-      );
+      ).find((candidate) => candidate.root === root);
       setState({
         session,
         parent,
+        ...(root && { root }),
         room: room && {
           id: room.id,
           participants: huddleLifecycle(
@@ -57,8 +57,10 @@ export function useIncomingHuddle(
       stop();
       view.dispose();
     };
-  }, [session, parent]);
-  return state?.session === session && state?.parent === parent
+  }, [session, parent, root]);
+  return state?.session === session &&
+    state?.parent === parent &&
+    state?.root === root
     ? state.room
     : undefined;
 }

@@ -202,6 +202,7 @@ export class MessageProjection {
             collapseHuddleCards(
               [...this.messages.values()],
               this.relayAuthor,
+              next.values(),
             ).sort(compareMessages),
           );
         },

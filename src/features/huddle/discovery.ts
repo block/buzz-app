@@ -1,23 +1,13 @@
 import type { EventData } from "../relay/events";
 import type { RelaySession } from "../relay/session";
+import { huddleLifecycleBody, huddleRoom } from "./lifecycle";
 
 export type HuddleRoom = Readonly<{
   id: string;
   creator: string;
   startedAt: number;
+  root?: string;
 }>;
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-function room(event: EventData): string | undefined {
-  try {
-    const body: unknown = JSON.parse(event.content);
-    if (!body || typeof body !== "object" || !("ephemeral_channel_id" in body))
-      return;
-    const id = body.ephemeral_channel_id;
-    return typeof id === "string" && uuid.test(id) ? id : undefined;
-  } catch {
-    return;
-  }
-}
 /** Discovery is advisory; the audio relay rechecks creator linkage and membership. */
 export function recentHuddles(
   events: readonly EventData[],
@@ -30,19 +20,25 @@ export function recentHuddles(
   );
   const starts = new Map<string, HuddleRoom>();
   for (const event of scoped) {
-    const id = room(event);
+    const id = huddleRoom(event);
     if (event.kind !== 48100 || !id || id === parent) continue;
     const previous = starts.get(id);
+    const candidate = huddleLifecycleBody(event)?.thread_root;
+    const root =
+      typeof candidate === "string" && /^[0-9a-f]{64}$/.test(candidate)
+        ? candidate
+        : undefined;
     // The initial creator's announcement owns this advisory room identity.
     if (!previous || event.created_at < previous.startedAt)
       starts.set(id, {
         id,
         creator: event.pubkey,
         startedAt: event.created_at,
+        ...(root && { root }),
       });
   }
   for (const event of scoped) {
-    const id = room(event);
+    const id = huddleRoom(event);
     const start = id ? starts.get(id) : undefined;
     if (
       event.kind === 48103 &&

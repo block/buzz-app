@@ -1,3 +1,6 @@
+import { MESSAGE_SOURCE_TAG } from "../relay/contracts";
+import { tag } from "../relay/events";
+import { threadReference } from "../relay/thread-reference";
 import { createPcmSender } from "./sender";
 import type {
   Agent,
@@ -15,6 +18,8 @@ type Seat = {
   agent: Agent;
   voice: RegisteredAgentType["voice"];
   stop(): Promise<void>;
+  input(samples: number[], source?: string): void;
+  mixesPeers: boolean;
 };
 
 /** A local call or verified owner participation on another device supplies the call.
@@ -23,7 +28,16 @@ export function createHuddleVoices(
   huddles: Pick<
     Huddles,
     "snapshot" | "subscribe" | "voiceListening" | "voiceThinking"
-  > & { voiceAgent?(): string | undefined },
+  > &
+    Partial<
+      Pick<
+        Huddles,
+        "subscribePeerAudio" | "openLocalPlayout" | "subscribeLocalMicrophone"
+      >
+    > & {
+      voiceAgent?(): string | undefined;
+      endedByOwner?(call: string): boolean;
+    },
   agents: Pick<Agents, "snapshot" | "subscribe" | "types" | "reserveVoice">,
   relay: RelayData,
   bridge: HuddleBridge,
@@ -40,15 +54,24 @@ export function createHuddleVoices(
     call: string,
     destination: HuddleDestination,
     room: string,
+    transcriptDestination:
+      | NonNullable<ReturnType<Huddles["snapshot"]>["transcriptDestination"]>
+      | undefined,
   ): Seat {
     const id = crypto.randomUUID();
+    const callSession = session;
+    const remoteCall = huddles.voiceAgent?.() === agent.pubkey;
+    let ownerPresent = false;
+    let ownerLeft = false;
     const abort = new AbortController();
     let connection: AgentVoiceConnection | undefined;
+    let stopLocalMicrophone: (() => void) | undefined;
     let opening: Promise<void> | undefined;
     let closing: Promise<void> | undefined;
     let starting: Promise<void> | undefined;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let release: (() => void) | undefined;
+    let localPlayout: ReturnType<Huddles["openLocalPlayout"]>;
     const fail = (error?: unknown) => {
       if (abort.signal.aborted) return;
       void stop();
@@ -62,9 +85,20 @@ export function createHuddleVoices(
       abort.signal,
       fail,
     );
+    function input(samples: number[], source?: string) {
+      if (abort.signal.aborted) return;
+      try {
+        if (source) connection?.input(samples, source);
+        else connection?.input(samples);
+      } catch (error) {
+        fail(error);
+      }
+    }
     function stop() {
       if (closing) return closing;
       abort.abort();
+      localPlayout?.close();
+      stopLocalMicrophone?.();
       clearInterval(heartbeat);
       release?.();
       closing = Promise.allSettled([
@@ -95,47 +129,166 @@ export function createHuddleVoices(
           room,
           (event) => {
             if (abort.signal.aborted) return;
-            if (event.type === "ended") return fail(event.error);
-            if (
-              (event.type === "participants" || event.type === "connected") &&
-              !event.participants.includes(agent.owner)
-            )
-              return fail("The owner left the Huddle");
-            // Defense in depth; privacy tests count at the native decode site.
-            if (event.type === "audio" && event.peer === agent.owner) {
-              try {
-                connection?.input(event.samples);
-              } catch (error) {
-                fail(error);
+            if (event.type === "ended") {
+              if (event.error) fail(event.error);
+              else {
+                ownerLeft = remoteCall && ownerPresent;
+                void stop();
               }
+              return;
             }
+            if (event.type === "participants" || event.type === "connected") {
+              if (!event.participants.includes(agent.owner)) {
+                ownerLeft = remoteCall && ownerPresent;
+                return void stop();
+              }
+              ownerPresent = true;
+            }
+            // Defense in depth; privacy tests count at the native decode site.
+            if (
+              event.type === "audio" &&
+              event.peer === agent.owner &&
+              (!stopLocalMicrophone ||
+                huddles.snapshot().routing?.directAudio === false)
+            )
+              input(event.samples);
           },
           agent.pubkey,
         );
         await opening;
         if (abort.signal.aborted) return;
+        localPlayout = huddles.openLocalPlayout?.(call, agent.pubkey);
         heartbeat = setInterval(() => {
           void bridge.touch(id).catch(fail);
         }, 5000);
+        const participantKeys = () => {
+          const current = huddles.snapshot();
+          return current.id === call
+            ? current.participants.filter((key) => key !== agent.pubkey)
+            : [];
+        };
+        const profiles = callSession.profiles;
+        const requested = new Set<string>();
+        const loadNames = () => {
+          const missing = participantKeys().filter(
+            (key) => !profiles.snapshot().has(key) && !requested.has(key),
+          );
+          for (const key of missing) requested.add(key);
+          if (missing.length)
+            void profiles.ensure(missing, "background").catch(() => {});
+        };
+        loadNames();
+        const conversation = transcriptDestination
+          ? {
+              channelId: transcriptDestination.channelId,
+              ...(transcriptDestination.root !==
+                transcriptDestination.parentId &&
+                transcriptDestination.root && {
+                  root: transcriptDestination.root,
+                }),
+            }
+          : { channelId: room };
         const opened = await voice({
           agent,
-          conversation: { channelId: room },
+          conversation,
+          subscribeTypedMessages(listener) {
+            const seen = new Set<string>();
+            return callSession.subscribeLive(({ events }) => {
+              for (const event of events) {
+                if (
+                  abort.signal.aborted ||
+                  huddles.snapshot().id !== call ||
+                  event.kind !== 9 ||
+                  event.pubkey !== agent.owner ||
+                  tag(event, "h") !== conversation.channelId ||
+                  (threadReference(event)?.rootId !== conversation.root &&
+                    threadReference(event)?.rootId !==
+                      transcriptDestination?.root) ||
+                  tag(event, MESSAGE_SOURCE_TAG) !== "typed" ||
+                  !event.content.trim() ||
+                  seen.has(event.id)
+                )
+                  continue;
+                seen.add(event.id);
+                listener({
+                  speaker:
+                    profiles.snapshot().get(event.pubkey)?.name ||
+                    "Unnamed speaker",
+                  text: event.content,
+                });
+              }
+            });
+          },
+          participants: {
+            snapshot: () => {
+              const people = profiles.snapshot();
+              const running = agents.snapshot().running;
+              return participantKeys().map(
+                (key) =>
+                  running.find((other) => other.pubkey === key)?.name ||
+                  people.get(key)?.name ||
+                  "Unnamed participant",
+              );
+            },
+            subscribe: (listener) => {
+              const stopProfiles = profiles.subscribe(listener);
+              const stopHuddle = huddles.subscribe(() => {
+                loadNames();
+                listener();
+              });
+              return () => {
+                stopProfiles();
+                stopHuddle();
+              };
+            },
+          },
+          ...(transcriptDestination && {
+            transcriptDestination,
+            streamTranscript: () =>
+              huddles.snapshot().routing?.liveTranscript === true,
+            resumeOnClose: () => {
+              const current = huddles.snapshot();
+              const relayState = relay.snapshot();
+              return (
+                ((current.id === call && current.cleanHangup === true) ||
+                  (remoteCall &&
+                    (ownerLeft || huddles.endedByOwner?.(call) === true))) &&
+                relayState.session === callSession &&
+                relayState.scope === destination.scope &&
+                relayState.status === "ready"
+              );
+            },
+          }),
           signal: abort.signal,
           ended: fail,
           thinking: (active) => {
             if (!abort.signal.aborted)
               huddles.voiceThinking(call, agent.pubkey, active);
           },
-          output: sender.send,
+          output: (samples) => {
+            if (abort.signal.aborted) return Promise.resolve();
+            // The owner's local copy avoids the relay round trip. The relay
+            // still carries the same frames to every other device in the room.
+            localPlayout?.play(samples);
+            return sender.send(samples);
+          },
         });
         if (abort.signal.aborted) await opened.close();
         else {
           connection = opened;
+          stopLocalMicrophone = huddles.subscribeLocalMicrophone?.(call, input);
           huddles.voiceListening(call, agent.pubkey, true);
         }
       })
       .catch(fail);
-    return { call, agent, voice, stop };
+    return {
+      call,
+      agent,
+      voice,
+      stop,
+      input,
+      mixesPeers: !!transcriptDestination,
+    };
   }
   function sync() {
     if (disposed) return;
@@ -182,7 +335,7 @@ export function createHuddleVoices(
       resolution = pending;
       // Resolve only for voice candidates. A failure leaves seats closed and
       // retries on the next notification, never from the rejection itself.
-      void session.channels.resolve?.([room]).then(
+      void session.channels.resolve?.([room], { consistency: "strong" }).then(
         () => {
           if (resolution !== pending) return;
           pending.ready = true;
@@ -206,8 +359,23 @@ export function createHuddleVoices(
       (!huddles.voiceAgent?.() ||
         (channel.huddle === true &&
           channel.parentChannelId === destination?.channelId));
+    const transcriptDestination =
+      channel?.parentChannelId === destination?.channelId
+        ? channel?.huddleTranscript
+        : undefined;
+    const parent =
+      transcriptDestination &&
+      session.channels.get?.(transcriptDestination.channelId);
     const running = available
-      ? candidates.filter((agent) => channel.members?.includes(agent.pubkey))
+      ? candidates.filter(
+          (agent) =>
+            channel.members?.includes(agent.pubkey) &&
+            (!transcriptDestination ||
+              (agent.type === "buzz.codex/codex" &&
+                parent?.members?.includes(agent.pubkey) &&
+                !parent.archived &&
+                !parent.cached)),
+        )
       : [];
     for (const [key, seat] of seats) {
       const agent = running.find((agent) => agent.pubkey === key);
@@ -230,9 +398,26 @@ export function createHuddleVoices(
     for (const agent of running) {
       const voice = types.find((type) => type.key === agent.type)?.voice;
       if (voice && !seats.has(agent.pubkey))
-        seats.set(agent.pubkey, open(agent, voice, call.id, destination, room));
+        seats.set(
+          agent.pubkey,
+          open(agent, voice, call.id, destination, room, transcriptDestination),
+        );
     }
   }
+  // The human connection already receives playback. Mix only the other
+  // authorized Codex seats on this device into each agent's microphone track.
+  const stopPeerAudio = huddles.subscribePeerAudio?.((call, peer, samples) => {
+    const source = seats.get(peer);
+    if (
+      !source?.mixesPeers ||
+      source.call !== call ||
+      !huddles.snapshot().listening?.includes(peer)
+    )
+      return;
+    for (const seat of seats.values())
+      if (seat !== source && seat.mixesPeers && seat.call === call)
+        seat.input(samples, peer);
+  });
   const stops = [
     huddles.subscribe(sync),
     agents.subscribe(sync),
@@ -242,6 +427,7 @@ export function createHuddleVoices(
   return async () => {
     disposed = true;
     offMembers();
+    stopPeerAudio?.();
     for (const stop of stops) stop();
     await Promise.all([...seats.values()].map((seat) => seat.stop()));
     seats.clear();

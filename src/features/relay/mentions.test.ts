@@ -498,6 +498,7 @@ it.each([false, true])(
     expect(event?.id).toBe(id);
     expect(event?.tags.filter(([tag]) => tag !== "client-id")).toEqual([
       ["h", "c"],
+      ["buzz:message-source", "typed"],
       ...(reply ? [["e", root, "", "reply"]] : []),
       ["p", honey.pubkey],
       ["p", namesake.pubkey],
@@ -662,6 +663,7 @@ it("typed names create no recipient tags; unconfirmed or forged membership canno
     h.publish.mock.calls[0]?.[0].tags.filter(([tag]) => tag !== "client-id"),
   ).toEqual([
     ["h", "c"],
+    ["buzz:message-source", "typed"],
     ["ms", expect.stringMatching(/^(0|[1-9]\d{0,2})$/)],
   ]);
 });

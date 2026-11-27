@@ -1151,10 +1151,23 @@ export type ConfigBinding = Readonly<{
 export type AgentVoiceSeat<Config = unknown> = Readonly<
   {
     agent: Agent<Config>;
-    /** Always channel-scoped, regardless of the harness setting; never invent a root. */
-    conversation: Readonly<{ channelId: string }>;
+    /** The conversation that owns the work and its transcript. */
+    conversation: Readonly<{ channelId: string; root?: string }>;
+    /** Display names of other live participants, scoped to this voice seat. */
+    participants?: {
+      snapshot(): readonly string[];
+      subscribe(listener: () => void): () => void;
+    };
+    /** Newly typed messages in the conversation while this seat is live. */
+    subscribeTypedMessages?(
+      listener: (message: Readonly<{ speaker: string; text: string }>) => void,
+    ): () => void;
+    /** Continue in text when the host ends a conversation's Huddle. */
+    resumeOnClose?(): boolean;
     signal: AbortSignal;
-    /** Final lines only: h-tag-only agent posts; own events never trigger this agent. */
+    /** Agent speech fragments in the host-selected conversation. */
+    transcriptDelta?(delta: string): void;
+    /** Completes a live transcript or posts one finalized line. */
     transcript(speaker: "owner" | "agent", text: string): Promise<void>;
     /** 48 kHz mono; native accepts exactly 960 finite samples with |s| <= 1,
      * dropping frames when its capacity-5 queue is full. */
@@ -1169,14 +1182,23 @@ export type AgentVoiceSeat<Config = unknown> = Readonly<
 /** Host pipe before the agents service resolves launch settings and transcript policy. */
 export type AgentVoicePipe = Omit<
   AgentVoiceSeat,
-  "config" | "revisions" | "synced" | "team" | "transcript"
->;
+  "config" | "revisions" | "synced" | "team" | "transcript" | "transcriptDelta"
+> & {
+  /** Publish only this agent's speech to the host-selected conversation. */
+  transcriptDestination?: Readonly<{
+    channelId: string;
+    root?: string;
+    parentId?: string;
+  }>;
+  streamTranscript?(): boolean;
+};
 type HostedAgentType = Omit<AgentType, "voice"> & {
   voice?(seat: AgentVoicePipe): Promise<AgentVoiceConnection>;
 };
 export type AgentVoiceConnection = Readonly<{
-  /** Owner-only 48 kHz mono frames of up to 5760 samples (native plays out 10 ms frames). Borrowed for this call. */
-  input(samples: number[]): void;
+  /** 48 kHz mono frames of up to 5760 samples. The default source is the
+   * owner; the host supplies a verified peer key for each additional source. */
+  input(samples: number[], source?: string): void;
   /** Host aborts signal, then awaits close to finish teardown. Idempotent. */
   close(): void | Promise<void>;
 }>;

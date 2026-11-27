@@ -141,3 +141,29 @@ it("restores signed proof with cached membership, without granting write access"
   restored.clearCached();
   expect(restored.get(room)).toBeUndefined();
 });
+
+it.each(["description", "custom tag", "labels"])(
+  "takes a transcript thread from a signed %s creation, across metadata edits",
+  (format) => {
+    const owner = state();
+    const root = "b".repeat(64);
+    const marker = `${huddleDescription(parent)}\ntranscripts:thread:${root}`;
+    const created =
+      format === "description"
+        ? tags.map((tag) => (tag[0] === "about" ? ["about", marker] : tag))
+        : format === "custom tag"
+          ? [...tags, ["buzz:huddle-transcript", `transcripts:thread:${root}`]]
+          : [
+              ...tags,
+              ["t", "huddle:transcripts"],
+              ["t", `huddle:root:0:${root.slice(0, 32)}`],
+              ["t", `huddle:root:1:${root.slice(32)}`],
+            ];
+    expect(owner.accept(receipt(creator, created))).toBe(true);
+    owner.accept(info(30, `${huddleDescription(parent)}\ntranscripts:channel`));
+    expect(owner.get(room)?.huddleTranscript).toEqual({
+      channelId: parent,
+      root,
+    });
+  },
+);

@@ -164,6 +164,10 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
             <HuddleAudioSettings
               quiet
               state={view.audioSettings}
+              routing={view.routing}
+              setRouting={(option, enabled) =>
+                act(option, enabled ? "on" : "off")
+              }
               refresh={() => act("refreshAudio")}
               select={(kind, id) =>
                 act(kind === "input" ? "inputDevice" : "outputDevice", id)

@@ -8,7 +8,11 @@ import { relayedFromClaim, relayNotice } from "./relayed-from";
 import { pluginRequestId } from "./plugin-request";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
-import { huddleRoom } from "../huddle/lifecycle";
+import {
+  huddleCardRoom,
+  huddleLifecycleBody,
+  huddleRoom,
+} from "../huddle/lifecycle";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import {
@@ -338,8 +342,33 @@ export function foldMessages(
       continue;
     const aux = overlays.get(event.id) ?? [];
     if (deleted(event)) continue;
-    if (event.kind === 48100 || event.kind === 48103) {
-      const room = huddleRoom(event);
+    const summary = parseSummary(summaries.get(event.id));
+    const pending = includeReplies
+      ? []
+      : (replies.get(event.id)?.filter((reply) => !deleted(reply)) ?? []);
+    // The relay lists participants by signer, so a pending reply whose signer
+    // it lists but not its author (a relay-signed workflow reply) leads as that
+    // signer rather than adding a second identity.
+    const repliers = pending.map((reply) => {
+      const author = messageAuthor(reply, signingAuthority);
+      return !summary.participants.includes(author) &&
+        summary.participants.includes(reply.pubkey)
+        ? reply.pubkey
+        : author;
+    });
+    const repliesSummary = {
+      replyCount: summary.replyCount + pending.length,
+      // Pending repliers lead, returning ones included, so they stay within
+      // the visible avatar stack.
+      participants: Object.freeze([
+        ...new Set([...repliers, ...summary.participants]),
+      ]),
+    };
+    const cardRoom = huddleCardRoom(event);
+    if (cardRoom || event.kind === 48100 || event.kind === 48103) {
+      const room = cardRoom ?? huddleRoom(event);
+      const lifecycle = huddleLifecycleBody(event);
+      if (!cardRoom && typeof lifecycle?.card_id === "string") continue;
       if (!room || room === channelId) continue;
       // End authority is checked with matching starts when cards are collapsed.
       rows.push(
@@ -348,17 +377,22 @@ export function foldMessages(
           channelId,
           authorId: event.pubkey,
           createdAt: event.created_at,
-          content: event.kind === 48100 ? "Huddle started" : "Huddle ended",
+          content: event.kind === 48103 ? "Huddle ended" : "Huddle started",
+          threadRootId: threadReference(event)?.rootId,
+          replyParentId: threadReference(event)?.parentId,
           huddle: {
             room,
+            ...(cardRoom && { threaded: true as const }),
+            ...((cardRoom || lifecycle?.transcripts_in_origin === true) && {
+              inlineTranscripts: true as const,
+            }),
             state:
-              event.kind === 48100 ? ("started" as const) : ("ended" as const),
+              event.kind === 48103 ? ("ended" as const) : ("started" as const),
           },
           mentions: [],
           attachments: [],
           reactions: [],
-          replyCount: 0,
-          participants: [],
+          ...repliesSummary,
         }),
       );
       continue;
@@ -422,20 +456,6 @@ export function foldMessages(
         ? safeMessageUrl(mediaTargets[0]?.[1] ?? "")
         : undefined;
     const pluginRequest = pluginRequestId(event);
-    const summary = parseSummary(summaries.get(event.id));
-    const pending = includeReplies
-      ? []
-      : (replies.get(event.id)?.filter((reply) => !deleted(reply)) ?? []);
-    // The relay lists participants by signer, so a pending reply whose signer
-    // it lists but not its author (a relay-signed workflow reply) leads as that
-    // signer rather than adding a second identity.
-    const repliers = pending.map((reply) => {
-      const author = messageAuthor(reply, signingAuthority);
-      return !summary.participants.includes(author) &&
-        summary.participants.includes(reply.pubkey)
-        ? reply.pubkey
-        : author;
-    });
     const forward = readForward({ ...event, content });
     const audience = messageAudience(event);
     const relayed = relayedFromClaim(event);
@@ -556,18 +576,13 @@ export function foldMessages(
           aux.filter((item) => item.kind === 7),
           deleted,
         ),
-        replyCount: summary.replyCount + pending.length,
-        // Pending repliers lead, returning ones included, so they stay within
-        // the visible avatar stack.
-        participants: Object.freeze([
-          ...new Set([...repliers, ...summary.participants]),
-        ]),
+        ...repliesSummary,
       }),
     );
   }
-  return (collapseHuddles ? collapseHuddleCards(rows, relayAuthor) : rows).sort(
-    compareMessages,
-  );
+  return (
+    collapseHuddles ? collapseHuddleCards(rows, relayAuthor, events) : rows
+  ).sort(compareMessages);
 }
 
 /** Count people, but retain event IDs for author-only removal and duplicate cleanup. */
@@ -631,6 +646,7 @@ export function groupReactions(
 export function collapseHuddleCards(
   rows: ChannelMessage[],
   relayAuthor: string,
+  events: Iterable<EventData>,
 ): ChannelMessage[] {
   const key = (row: ChannelMessage) => `${row.channelId}:${row.huddle?.room}`;
   const starts = new Map<string, ChannelMessage>();
@@ -644,11 +660,31 @@ export function collapseHuddleCards(
     )
       starts.set(key(row), row);
   }
+  // The relay's automatic end may have no thread tags. Keep it as
+  // lifecycle evidence without creating a second card in the timeline.
+  const roomsWithCards = new Set<string>();
+  if (
+    rows.some((row) => row.huddle?.state === "ended" && !starts.has(key(row)))
+  ) {
+    for (const event of events) {
+      const cardId =
+        event.kind === 48100 ? huddleLifecycleBody(event)?.card_id : undefined;
+      const room =
+        huddleCardRoom(event) ??
+        (typeof cardId === "string" && HEX64.test(cardId)
+          ? huddleRoom(event)
+          : undefined);
+      if (room) roomsWithCards.add(`${channelRowChannel(event)}:${room}`);
+    }
+  }
   const authorized = rows.filter((row) => {
-    if (row.huddle?.state !== "ended" || row.authorId === relayAuthor)
-      return true;
+    if (row.huddle?.state !== "ended") return true;
     const start = starts.get(key(row));
-    return start?.authorId === row.authorId && start.createdAt <= row.createdAt;
+    if (!start && roomsWithCards.has(key(row))) return false;
+    return (
+      row.authorId === relayAuthor ||
+      (start?.authorId === row.authorId && start.createdAt <= row.createdAt)
+    );
   });
   if (!starts.size) return authorized;
   const ends = new Map<string, number>();

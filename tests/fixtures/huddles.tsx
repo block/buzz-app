@@ -67,6 +67,7 @@ const destination = {
 };
 const store = createRelaySession(null);
 const guestKeys = ["de", "ef", "fa", "bc"].map((key) => key.repeat(32));
+const invitePicker = new URLSearchParams(location.search).has("invitePicker");
 const profiles = new Map<string, Profile>([
   [viewer, { name: "Kenneth" }],
   [
@@ -74,13 +75,20 @@ const profiles = new Map<string, Profile>([
     {
       name: new URLSearchParams(location.search).has("longCaller")
         ? "Caller".repeat(400)
-        : "Alex",
+        : invitePicker
+          ? "Alex Member"
+          : "Alex",
       picture: "https://fixture.example/media/avatar.png",
     },
   ],
   ...guestKeys.map((key, index): [string, Profile] => [
     key,
-    { name: ["Sam", "Jo", "Robin", "Taylor"][index] ?? "Guest" },
+    {
+      name:
+        invitePicker && index === 0
+          ? "Alex Visitor"
+          : (["Sam", "Jo", "Robin", "Taylor"][index] ?? "Guest"),
+    },
   ]),
 ]);
 const dmId = "00000000-0000-4000-8000-000000000003";
@@ -137,7 +145,7 @@ const room = {
   get parentChannelId() {
     return legacyRoom ? undefined : lifecycleParent;
   },
-  members: [viewer, peer],
+  members: invitePicker ? [viewer] : [viewer, peer],
 };
 let discussionRows: ChannelMessage[] = [
   {
@@ -159,6 +167,32 @@ const session = {
   scope: destination.scope,
   viewer,
   relayAuthor: viewer,
+  ...(invitePicker && {
+    outbox: {
+      ...store.session.outbox,
+      supports: (kind: number) => kind === 9000,
+    },
+    searchProfiles: async (query: string) =>
+      [...profiles]
+        .filter(([, profile]) =>
+          profile.name.toLowerCase().includes(query.toLowerCase()),
+        )
+        .map(([pubkey, profile]) => ({
+          id: pubkey,
+          pubkey,
+          kind: 0,
+          created_at: 1,
+          tags: [],
+          content: JSON.stringify(profile),
+          sig: "",
+        })),
+    memberAdditions: {
+      ...store.session.memberAdditions,
+      add: async (id: string, pubkey: string) => {
+        if (id === roomId) stats.invited.push(pubkey);
+      },
+    },
+  }),
   observe: () => ({
     snapshot: () => ({
       status: lifecycleReadError
@@ -275,7 +309,24 @@ const session = {
       return messageId;
     },
   },
-  read: async () => (legacyRoom ? [lifecycleEvent(48101, startedAt)] : []),
+  read: async (filters: readonly { kinds?: readonly number[] }[]) => {
+    if (invitePicker && filters.some((filter) => filter.kinds?.includes(39002)))
+      return [
+        {
+          id: "89".repeat(32),
+          pubkey: viewer,
+          kind: 39002,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["d", roomId],
+            ["p", viewer, "owner"],
+          ],
+          sig: "",
+        },
+      ];
+    return legacyRoom ? [lifecycleEvent(48101, startedAt)] : [];
+  },
   media: (url: string) =>
     url.startsWith("https://fixture.example/media/") && url.endsWith(".png")
       ? "/tests/fixtures/design-system/assets/avatar.png"
@@ -299,6 +350,7 @@ let uploadGate: Promise<void> | undefined;
 let releaseUpload: (() => void) | undefined;
 let receive = (_: HuddleUpdate) => {};
 const stats = {
+  invited: [] as string[],
   uploadWaiting: 0,
   layoutWaiting: 0,
   uploads: [] as { name: string; text: string }[],

@@ -16,10 +16,15 @@ import {
   INVOCATION_INTENT_TAG,
   INVOCATION_INTENT_VERSION,
   MEDIA_TARGET_TAG,
+  MESSAGE_SOURCE_TAG,
   type ChannelMessage,
 } from "./contracts";
 import { messageAuthor } from "./fold";
-import { isThreadContent, threadReference } from "./thread-reference";
+import {
+  isThreadContent,
+  threadReference,
+  threadReplyTags,
+} from "./thread-reference";
 import { reactionTarget as reactionTargetId } from "./reaction-target";
 import { safeMessageUrl } from "./message-content";
 import type { EventData } from "./events";
@@ -498,6 +503,7 @@ export function createMessages(
           content: text(message.content),
           tags: [
             ["h", channelId],
+            [MESSAGE_SOURCE_TAG, "typed"],
             ...mentionTags(channelId, withDmAgents(channelId, mentions)),
             ...referenceTags(references),
             ...pickTags(channelId, mentions, picks),
@@ -508,6 +514,28 @@ export function createMessages(
         },
         ...(recovery ? [recovery] : []),
       );
+    },
+    /** Speech is already delivered as audio, so it carries no wake recipients. */
+    transcribe(
+      channelId: string,
+      root: string | undefined,
+      content: string,
+      parentId?: string,
+    ) {
+      if (
+        (root && !/^[0-9a-f]{64}$/.test(root)) ||
+        (parentId && (!root || !/^[0-9a-f]{64}$/.test(parentId)))
+      )
+        throw new Error("A valid thread root is required");
+      return writer(9, channelId).send({
+        kind: 9,
+        content: text(content),
+        tags: [
+          ["h", channelId],
+          [MESSAGE_SOURCE_TAG, "huddle-transcript"],
+          ...threadReplyTags(root, parentId),
+        ],
+      });
     },
     /** Forward only the reconciled row supplied by an authorized source reader. */
     forward(
@@ -695,6 +723,7 @@ export function createMessages(
         content: text(message.content),
         tags: [
           ["h", channelId],
+          [MESSAGE_SOURCE_TAG, "typed"],
           ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
           ["e", parentId, "", "reply"],
           ...recipients,

@@ -130,6 +130,7 @@ function fixture(resume = Promise.resolve()) {
   const open = (
     send: (samples: number[]) => Promise<void> = output,
     voice?: string,
+    briefing?: string,
   ) =>
     openVoice(
       rpc as unknown as AppServer,
@@ -140,6 +141,7 @@ function fixture(resume = Promise.resolve()) {
       "instructions",
       thinking,
       voice,
+      briefing,
     );
   return {
     open,
@@ -332,6 +334,10 @@ it("delivers every captured frame through the real seat during a slow bridge sen
         scope: "scope",
         viewer: "owner",
         session: {
+          profiles: {
+            snapshot: () => new Map([["owner", { name: "John" }]]),
+            ensure: async () => {},
+          },
           channels: {
             subscribeList: subscribe,
             get: () => ({ members: ["agent"] }),
@@ -406,3 +412,17 @@ it.each(["cove", "maple", ""])(
     await connection.close();
   },
 );
+
+it("sends the live Huddle briefing to the voice model as an initial item", async () => {
+  const f = fixture();
+  const text = 'You are speaking as "Aidan" in a live Buzz Huddle.';
+  const connection = await f.open(f.output, undefined, text);
+  expect(f.rpc.request).toHaveBeenCalledWith(
+    "thread/realtime/start",
+    expect.objectContaining({
+      initialItems: [{ role: "developer", text }],
+      realtimeStartInstructions: "instructions",
+    }),
+  );
+  await connection.close();
+});

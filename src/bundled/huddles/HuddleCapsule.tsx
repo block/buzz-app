@@ -195,6 +195,16 @@ function HuddleCapsuleContent({
           }}
         />
       )}
+      {call.transcriptError && (
+        <ToastNotice
+          title="Microphone transcript unavailable"
+          description={call.transcriptError}
+          closeLabel="Dismiss microphone transcript warning"
+          onDismiss={() => {
+            if (call.id) huddles.dismissTranscriptError(call.id);
+          }}
+        />
+      )}
       {presentation.error && (
         <ToastNotice
           title="Couldn’t update Huddle"
@@ -251,6 +261,8 @@ function HuddleCapsuleContent({
         <HuddleAudioSettings
           compact
           state={call.audioSettings}
+          routing={call.routing}
+          setRouting={huddles.setRouting}
           refresh={huddles.refreshAudioSettings}
           select={huddles.selectAudioDevice}
         />

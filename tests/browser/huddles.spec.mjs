@@ -938,12 +938,36 @@ test("active chat has a split Huddle menu for members and a join-path link", asy
       .getByRole("dialog", { name: "Huddle members" })
       .getByRole("banner")
       .getByText(
-        "People added here can join this Huddle and its thread. The original chat stays private.",
+        "Only members of the original conversation can be added to this Huddle.",
       ),
   ).toBeVisible();
   await expect(
     page.getByText("DM membership cannot be changed here."),
   ).toHaveCount(0);
+});
+
+test("Huddle invitations are limited to members of the originating chat", async ({
+  page,
+}) => {
+  await page.goto(`${origin}/tests/fixtures/huddles.html?chrome&invitePicker`);
+  await page
+    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
+    .click();
+  await page.getByRole("button", { name: "Close Huddle window" }).click();
+  await page.getByRole("button", { name: "Huddle options" }).click();
+  await page.getByRole("menuitem", { name: "Add someone" }).click();
+  const dialog = page.getByRole("dialog", { name: "Huddle members" });
+  const search = dialog.getByRole("searchbox");
+  await search.fill("Alex");
+  const member = dialog.getByRole("button", { name: "Add Alex Member" });
+  await expect(member).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Add Alex Visitor" }),
+  ).toHaveCount(0);
+  await member.click();
+  await expect
+    .poll(() => page.evaluate(() => window.huddleFixture.stats.invited))
+    .toEqual(["cd".repeat(32)]);
 });
 
 // Browser integration: a failed lifecycle read still permits the card-to-call

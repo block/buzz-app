@@ -4,7 +4,7 @@ import {
   channelTtl,
   channelVisibility,
 } from "./channel-details-protocol";
-import { huddleParent } from "../huddle/lifecycle";
+import { huddleParent, huddleRoomMetadata } from "../huddle/lifecycle";
 import { soloLabels } from "../solo/labels";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
@@ -499,7 +499,7 @@ export class DiscoveryState {
     const creation = this.creations.get(id);
     const huddle =
       event && creation && huddleCreation(creation, event)
-        ? huddleParent(tag(creation, "about"))
+        ? huddleRoomMetadata(tag(creation, "about"), creation.tags)
         : undefined;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);
@@ -514,7 +514,10 @@ export class DiscoveryState {
     return {
       id,
       ...(huddle || legacyHuddle ? { huddle: true as const } : {}),
-      ...(huddle ? { parentChannelId: huddle } : {}),
+      ...(huddle ? { parentChannelId: huddle.parent } : {}),
+      ...(huddle?.transcriptDestination && {
+        huddleTranscript: huddle.transcriptDestination,
+      }),
       ...(!this.authorized(id) || this.cached.has(id) || viewerRole === "guest"
         ? { readOnly: true as const }
         : {}),

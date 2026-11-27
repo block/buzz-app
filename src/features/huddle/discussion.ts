@@ -1,12 +1,19 @@
 import { huddleRoom } from "./lifecycle";
 import type { RelaySession } from "../relay/session";
-import type { Attachment, ChannelMessage } from "../relay/contracts";
+import type {
+  Attachment,
+  ChannelMessage,
+  ChannelSummary,
+} from "../relay/contracts";
 import type { Delivery } from "../relay/outbox";
+import type { ThreadView } from "../relay/threads";
+import { threadReference } from "../relay/thread-reference";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { avatarMedia, avatarSource } from "../../shared/avatar-source";
 
 export type HuddleDiscussion = {
   composer?: string | undefined;
+  conversation?: ChannelSummary["huddleTranscript"];
   version: number;
   historyLimited: boolean;
   status: "loading" | "ready" | "error";
@@ -49,6 +56,9 @@ export function createHuddleDiscussion(
   changed: () => void,
 ) {
   let disposed = false;
+  let destination: ChannelSummary["huddleTranscript"];
+  let thread: ThreadView | undefined;
+  let stopWindow: (() => void) | undefined;
   let version = 0;
   let resolved = false;
   let legacyVerified = false;
@@ -63,7 +73,6 @@ export function createHuddleDiscussion(
       changed();
     }
   };
-  const stop = session.channels.subscribeWindow(room, notify);
   const stopList = session.channels.subscribeList(notify);
   const stopProfiles = session.profiles.subscribe(notify);
   async function load() {
@@ -100,15 +109,40 @@ export function createHuddleDiscussion(
         );
       }
       resolved = true;
+      destination = metadata?.huddleTranscript;
+      if (destination && destination.channelId !== parent)
+        throw new Error("Invalid Huddle conversation");
       if (!available()) {
         resolved = false;
         throw new Error("Huddle identity unavailable");
       }
-      session.channels.ensure(room);
+      stopWindow?.();
+      thread?.dispose();
+      thread = undefined;
+      if (destination?.root) {
+        const anchor = destination.parentId ?? destination.root;
+        const nested = anchor !== destination.root;
+        thread = session.thread(destination.channelId, anchor, {
+          exact: nested,
+          subthread: nested,
+        });
+        stopWindow = thread.subscribe(notify);
+        await thread.refresh(
+          nested
+            ? { messageId: anchor, sourceThreadId: destination.root }
+            : undefined,
+        );
+      } else {
+        const id = destination?.channelId ?? room;
+        stopWindow = session.channels.subscribeWindow(id, notify);
+        session.channels.ensure(id);
+      }
     } catch {
-      if (!disposed && attempt === loading)
+      if (!disposed && attempt === loading) {
+        resolved = false;
         error =
           "Couldn’t load this Huddle conversation. Retry to check its connection and access.";
+      }
     }
     notify();
   }
@@ -117,9 +151,15 @@ export function createHuddleDiscussion(
     session.channels.list().channels.find((c) => c.id === room);
   const available = () => {
     const c = channel();
+    const parentChannel = destination && session.channels.get?.(parent);
     return (
       resolved &&
       !!c &&
+      (!destination ||
+        (!!parentChannel &&
+          !parentChannel.cached &&
+          !!session.viewer &&
+          !!parentChannel.members?.includes(session.viewer))) &&
       ((c.huddle === true && c.parentChannelId === parent) ||
         (legacyVerified &&
           c.parentChannelId === undefined &&
@@ -127,19 +167,42 @@ export function createHuddleDiscussion(
           c.channelType === "stream"))
     );
   };
+  const target = () => destination?.channelId ?? room;
   const writable = () => {
-    const c = channel();
-    return available() && !!c && !c.archived && !c.readOnly && !c.cached;
+    const c = destination ? session.channels.get?.(target()) : channel();
+    return (
+      available() &&
+      !!c &&
+      !c.archived &&
+      !c.readOnly &&
+      !c.cached &&
+      (!destination ||
+        (!!session.viewer && !!c.members?.includes(session.viewer))) &&
+      (!thread || thread.snapshot().status === "ready")
+    );
+  };
+  const timeline = () => {
+    const snapshot = thread?.snapshot();
+    if (snapshot)
+      return {
+        rows: snapshot.replies,
+        status: snapshot.status,
+        error: snapshot.error,
+        hasMore: snapshot.canLoadMore,
+      };
+    return session.channels.window(target());
   };
   void load();
   return {
     available,
+    writable,
     snapshot(): HuddleDiscussion {
-      const window = session.channels.window(room);
+      const window = timeline();
       const profiles = session.profiles.snapshot();
       const rows = visibleMessages(window.rows);
       return {
         version,
+        ...(destination && { conversation: destination }),
         historyLimited:
           (rows.length >= 200 && window.hasMore) || rows.length > 200,
         status:
@@ -160,7 +223,7 @@ export function createHuddleDiscussion(
           return {
             id: r.id,
             authorId: r.authorId,
-            channelId: room,
+            channelId: target(),
             attachments: r.attachments.flatMap((attachment) => {
               // Keep one malformed metadata value from rejecting the entire native view.
               // URLs are omitted, never truncated into a different resource.
@@ -249,7 +312,16 @@ export function createHuddleDiscussion(
       error = undefined;
       notify();
       try {
-        await session.messages.send(room, text);
+        if (destination?.root)
+          await session.messages.reply(
+            target(),
+            destination.root,
+            text,
+            [],
+            [],
+            destination.parentId,
+          );
+        else await session.messages.send(target(), text);
         if (!disposed) sent++;
       } catch (cause) {
         if (!disposed)
@@ -270,7 +342,10 @@ export function createHuddleDiscussion(
             item.event.id === id &&
             item.event.pubkey === session.viewer &&
             ["failed", "unknown"].includes(item.delivery) &&
-            item.event.tags.some((t) => t[0] === "h" && t[1] === room),
+            item.event.tags.some((t) => t[0] === "h" && t[1] === target()) &&
+            threadReference(item.event)?.rootId === destination?.root &&
+            (!destination?.parentId ||
+              threadReference(item.event)?.parentId === destination.parentId),
         );
       if (disposed || !available() || !item) return;
       if (dismiss)
@@ -281,24 +356,25 @@ export function createHuddleDiscussion(
       else if (writable()) session.outbox?.retry(id, writable);
     },
     retry: () => {
-      const window = session.channels.window(room);
+      const window = timeline();
       if (available() && window.status === "ready" && window.error) {
-        session.channels.loadOlder(room);
+        if (thread) void thread.loadMore();
+        else session.channels.loadOlder(target());
         return;
       }
       void load();
     },
     older: () => {
-      if (
-        available() &&
-        visibleMessages(session.channels.window(room).rows).length < 200
-      )
-        session.channels.loadOlder(room);
+      if (available() && visibleMessages(timeline().rows).length < 200) {
+        if (thread) void thread.loadMore();
+        else session.channels.loadOlder(target());
+      }
     },
     dispose() {
       disposed = true;
       controller.abort();
-      stop();
+      stopWindow?.();
+      thread?.dispose();
       stopList();
       stopProfiles();
     },

@@ -7,6 +7,8 @@ export type HuddleDestination = Readonly<{
   relayUrl: string;
   channelId: string;
   channelName: string;
+  root?: string;
+  threadTranscripts?: boolean;
 }>;
 export type HuddleUpdate =
   | { type: "connected"; room: string; participants: string[] }
@@ -25,6 +27,7 @@ export type HuddleBridge = {
   close(id: string): Promise<void>;
   touch(id: string): Promise<void>;
   send(id: string, samples: number[]): Promise<void>;
+  recognize?(id: string, samples: number[]): Promise<string>;
 };
 export const nativeHuddles: HuddleBridge = {
   available: isTauri(),
@@ -38,6 +41,12 @@ export const nativeHuddles: HuddleBridge = {
         viewer: destination.viewer,
         parent: destination.channelId,
         room: room ?? null,
+        origin: room
+          ? null
+          : {
+              root: destination.root ?? null,
+              card: destination.threadTranscripts ?? false,
+            },
         agent: agent ?? null,
       },
       updates,
@@ -46,4 +55,5 @@ export const nativeHuddles: HuddleBridge = {
   close: (id) => invoke("huddle_close", { id }),
   touch: (id) => invoke("huddle_touch", { id }),
   send: (id, samples) => invoke("huddle_pcm", { id, samples }),
+  recognize: (id, samples) => invoke("huddle_recognize", { id, samples }),
 };

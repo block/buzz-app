@@ -902,6 +902,13 @@ it("exposes workflow history over the purpose-bound native route and workflow wr
     expect.arrayContaining([30620, 46020, 5, 48103]),
   );
   expect(transport.writer?.kinds).toEqual(nativeWriteKinds);
+  // Board, calendar and badge plugins publish these.
+  expect(nativeWriteKinds).toEqual(
+    expect.arrayContaining([
+      1111, 1621, 1630, 1631, 1632, 1633, 30621, 31922, 31923, 31924, 31925, 8,
+      30009,
+    ]),
+  );
   assert.exists(transport.workflows);
   const id = "11111111-1111-4111-8111-111111111111";
   const cursor = { before: "2026-09-29T20:00:00Z", beforeId: id };

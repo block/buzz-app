@@ -14,6 +14,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentProps,
   type ReactNode,
   type Ref,
@@ -48,6 +49,17 @@ import { PanelFrame } from "../../features/panels/PanelFrame";
 import { useRelayConnection } from "../../features/relay/react";
 import { macTitleBarDragHandlers } from "./title-bar";
 import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
+import type { Seen } from "../../features/seen/service";
+import { WelcomeTour } from "./welcome-tour/WelcomeTour";
+import {
+  newToBuzzKey,
+  welcomeTour,
+  welcomeTourKey,
+} from "./welcome-tour/welcome-tour";
+
+const MESSAGES = "buzz.channels/channels";
+const BESTIE = "buzz.bestie/bestie";
+const noSeen = () => () => {};
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
@@ -99,6 +111,7 @@ function AppShellContent({
   companion,
   creationAction,
   creationInSidebar = true,
+  seen,
   children,
 }: {
   pages: readonly RegisteredPage[];
@@ -144,6 +157,8 @@ function AppShellContent({
     triggerContainer: HTMLElement | null,
   ) => ReactNode;
   creationInSidebar?: boolean;
+  /** Remembers the welcome tour per person; without it the tour never opens. */
+  seen?: Seen | undefined;
   children: ReactNode;
 }) {
   const header = useRef<HTMLElement>(null);
@@ -227,6 +242,30 @@ function AppShellContent({
   const visibleSidebar =
     hasNavigation && (narrow ? navigationOpen : sidebarOpen);
   const creationInNavigation = !!creationAction && creationInSidebar;
+  // The welcome tour opens once for someone new to Buzz, the first time they
+  // land in Messages with the sidebar showing. Search can start it again.
+  const tourDue = useSyncExternalStore(
+    seen?.subscribe ?? noSeen,
+    () =>
+      seen?.has(newToBuzzKey) === true && seen.has(welcomeTourKey) === false,
+  );
+  const [tourOpen, setTourOpen] = useState(false);
+  const inMessages = owner === MESSAGES && visibleSidebar && !narrow;
+  useEffect(() => {
+    if (!tourDue || !inMessages) return;
+    // Lets the sidebar fill in before the cards point at it.
+    const timer = window.setTimeout(() => setTourOpen(true), 1200);
+    return () => window.clearTimeout(timer);
+  }, [tourDue, inMessages]);
+  useEffect(
+    () =>
+      welcomeTour.subscribe(() => {
+        if (!narrow) setSidebarOpen(true);
+        if (owner !== MESSAGES) onSelect(MESSAGES);
+        setTourOpen(true);
+      }),
+    [narrow, owner, onSelect],
+  );
   useEffect(
     () =>
       searchServices?.shortcuts.registerHost({
@@ -496,6 +535,18 @@ function AppShellContent({
         </div>
       </div>
       {creationAction?.(creationOpen, setCreationOpen, creationContainer)}
+      <WelcomeTour
+        open={tourOpen && !narrow}
+        onDone={() => {
+          setTourOpen(false);
+          seen?.mark(welcomeTourKey);
+        }}
+        onSetUpAgent={
+          pages.some((page) => page.key === BESTIE)
+            ? () => onSelect(BESTIE)
+            : undefined
+        }
+      />
       {searchServices && (
         <>
           <MarkAllReadShortcut

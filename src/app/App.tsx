@@ -59,6 +59,7 @@ import { useAppNavigation, type PendingSettingsDeparture } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
 import { AppShell } from "./shell/AppShell";
+import { markNewToBuzz } from "./shell/welcome-tour/welcome-tour";
 import {
   LaunchWindowControls,
   LoadingWindowHeader,
@@ -314,6 +315,11 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     client.status === "ready" &&
     client.relayAvailable &&
     client.memberships.length === 0;
+  // Starting with no community to open is how someone new to Buzz arrives, so
+  // this is when the welcome tour becomes due for them.
+  useEffect(() => {
+    if (firstRun) markNewToBuzz(services.seen);
+  }, [firstRun, services.seen]);
   // The prompt is stale once Settings ends another way or nothing is left to
   // discard, such as when a pending save is sent behind it.
   if (confirmSettingsDiscard && (!settings || !settingsUnsaved)) {
@@ -814,6 +820,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       )}
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
+          seen={services.seen}
           sidebarAvailable={sidebarAvailable}
           creationInSidebar={!workspace.page?.sidebar}
           creationAction={(open, onOpenChange, triggerContainer) => (

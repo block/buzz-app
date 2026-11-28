@@ -9,7 +9,11 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
+import {
+  InfoIcon,
+  MagnifyingGlassIcon,
+} from "../../shared/design-system/icons/index";
+import { welcomeTour } from "./welcome-tour/welcome-tour";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { activeModal } from "../../shared/design-system/overlayLayer";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -291,6 +295,18 @@ export function PageSearch({
         ...shellPresentation.settings,
         open: () => onSelect("settings"),
       },
+      // Typed-for only, so the tour never crowds the everyday list.
+      ...(needle
+        ? [
+            {
+              key: "welcome-tour",
+              label: "Take the Buzz tour",
+              detail: "A quick look around",
+              icon: InfoIcon,
+              open: () => welcomeTour.start(),
+            },
+          ]
+        : []),
     ];
   const destinations: SearchDestination[] = searchPages
     .flatMap((page) => {

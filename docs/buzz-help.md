@@ -101,6 +101,10 @@ if that desktop app is up and running.
   whether it's backed up in **Settings → Buzz → Identity**, and **Copy private key**
   makes a copy for a password manager. Without a copy, a lost key means a lost
   identity. Never paste a private key into a chat.
+- **Welcome tour.** Someone new to Buzz gets a short card tour in Messages
+  the first time they land in a community: Solo chats, channels, direct
+  messages, Activity, plugins and search. To see it again, type **tour** in
+  search (⌘K; Ctrl+K elsewhere) and choose **Take the Buzz tour**.
 - **More communities.** Use **Join a community** in the community picker with an
   invite link or address. To bring people in, use **Invite to community** there
   or in **Membership**.

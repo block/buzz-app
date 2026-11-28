@@ -31,6 +31,10 @@ vi.mock("../relay/native", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../relay/native")>()),
   clearNativeMedia: (origin: string) => record("saved images", origin),
 }));
+vi.mock("../decisions/keys", () => ({
+  clearCommunityTypeSafeKey: (community: string) =>
+    record("TypeSafe key", community),
+}));
 vi.mock("../relay/read-state-storage", () => ({
   purgeReadStateStorage: (scope: string) => record("read state", scope),
 }));
@@ -155,6 +159,8 @@ it("purges the relay's heads, read state and outbox for the exact partition, in 
     ["outbox", `${origin}:${viewer}`],
     ["artifacts", viewer, origin],
     ["model choices", `${origin}:${viewer}`],
+    // The device's key for the community, whoever the viewer.
+    ["TypeSafe key", origin],
   ]);
 });
 
@@ -164,6 +170,7 @@ it("skips the head cache without IndexedDB and still purges the other relay stor
     ["saved images", origin],
     ["read state", `${origin}:${viewer}`],
     ["outbox", `${origin}:${viewer}`],
+    ["TypeSafe key", origin],
   ]);
 });
 
@@ -174,16 +181,19 @@ it("reports each failed relay store by name, closes heads and still clears the o
   const reads = new Error("read state blocked");
   const artifacts = new Error("artifacts blocked");
   const choices = new Error("choices blocked");
+  const key = new Error("keychain locked");
   relay.fail
     .set("heads.clear", heads)
     .set("read state", reads)
     .set("artifacts", artifacts)
-    .set("model choices", choices);
+    .set("model choices", choices)
+    .set("TypeSafe key", key);
   expect(await purgeCommunityDeviceState(origin, viewer)).toEqual([
     { store: "channel heads", error: heads },
     { store: "read state", error: reads },
     { store: "artifacts", error: artifacts },
     { store: "model and effort choices", error: choices },
+    { store: "TypeSafe key", error: key },
   ]);
   expect(relay.calls.map(([name]) => name)).toEqual([
     "heads",
@@ -194,6 +204,7 @@ it("reports each failed relay store by name, closes heads and still clears the o
     "outbox",
     "artifacts",
     "model choices",
+    "TypeSafe key",
   ]);
   expect(warn.mock.calls).toEqual([
     [`Couldn't clear channel heads for ${origin} on this device`, heads],
@@ -203,6 +214,7 @@ it("reports each failed relay store by name, closes heads and still clears the o
       `Couldn't clear model and effort choices for ${origin} on this device`,
       choices,
     ],
+    [`Couldn't clear TypeSafe key for ${origin} on this device`, key],
   ]);
 });
 

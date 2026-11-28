@@ -1,10 +1,13 @@
-// The saved TypeSafe key and what is known about it. Native code reads and
-// sends the key; the app only learns whether one is saved.
+// The TypeSafe key saved for each community, and what is known about it.
+// Native code reads and sends the keys; the app only learns whether one is
+// saved.
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type {
-  DecisionProvider,
-  DecisionProviderStatus,
-  DecisionReply,
+import { onCommunityTypeSafeKeyCleared } from "../../features/decisions/keys";
+import {
+  communityKey,
+  type DecisionProvider,
+  type DecisionProviderStatus,
+  type DecisionReply,
 } from "../../features/decisions/service";
 
 /** Still being read, saved, not saved, unreadable (the store refused or
@@ -17,24 +20,48 @@ export type KeyState =
   | "refused";
 
 export type TypeSafeNative = Readonly<{
-  /** Whether a key is saved. */
-  status(): Promise<boolean>;
-  /** Saves the key; it is never read back. */
-  setKey(key: string): Promise<void>;
-  clearKey(): Promise<void>;
-  /** Native `decide` on TypeSafe, which reads the key itself. */
+  /** Whether `community` (a relay URL) has a saved key. */
+  status(community: string): Promise<boolean>;
+  /** Saves `community`'s key; it is never read back. */
+  setKey(community: string, key: string): Promise<void>;
+  clearKey(community: string): Promise<void>;
+  /** Gives the one key saved before keys were per community to each of
+   * `communities` without its own, then deletes it. */
+  adopt(communities: readonly string[]): Promise<void>;
+  /** Native `decide` on TypeSafe, which reads the request's community's key
+   * itself. */
   decide(request: unknown): Promise<unknown>;
 }>;
 export const nativeTypeSafe = (): TypeSafeNative | undefined =>
   isTauri()
     ? {
         // Normalized here so the plugin always gets a promised boolean.
-        status: async () => (await invoke("jev_classifier_status")) === true,
-        setKey: (key) => invoke("jev_classifier_set_key", { key }),
-        clearKey: () => invoke("jev_classifier_clear_key"),
+        status: async (community) =>
+          (await invoke("jev_classifier_status", { community })) === true,
+        setKey: (community, key) =>
+          invoke("jev_classifier_set_key", { community, key }),
+        clearKey: (community) =>
+          invoke("jev_classifier_clear_key", { community }),
+        adopt: (communities) => invoke("jev_classifier_adopt", { communities }),
         decide: (request) => invoke("decide", { backend: "typesafe", request }),
       }
     : undefined;
+
+/** The joined communities, as relay URLs, or `undefined` while they are
+ * still loading. */
+export type JoinedCommunities = Readonly<{
+  joined(): readonly string[] | undefined;
+  subscribe(listener: () => void): () => void;
+}>;
+
+/** One community's key, as its Settings row shows it. */
+export type CommunityKey = Readonly<{
+  snapshot(): KeyState;
+  subscribe(listener: () => void): () => void;
+  save(key: string): Promise<void>;
+  clear(): Promise<void>;
+  desktop(): boolean;
+}>;
 
 const STATUS: Record<KeyState, DecisionProviderStatus> = {
   checking: "checking",
@@ -46,62 +73,171 @@ const STATUS: Record<KeyState, DecisionProviderStatus> = {
   missing: "needs-setup",
 };
 
-/** The key's state, and the provider that uses it. */
-export class TypeSafeKey {
-  private state: KeyState;
-  /** Changes each time the owner saves or removes the key. A read or call
-   * that started before the change may have used the old key, so what it
-   * found is ignored. */
-  private generation = 0;
+/** Each community's TypeSafe key: what is known about it, and the provider
+ * that uses it. A request answers with its own community's key; one that
+ * names no community has none. */
+export class TypeSafeKeys {
+  /** By community key; a community not here is read when first asked
+   * about. */
+  private readonly states = new Map<string, KeyState>();
+  /** Changes each time the owner saves or removes a community's key. A read
+   * or call that started before the change may have used the old key, so
+   * what it found is ignored. */
+  private readonly generations = new Map<string, number>();
+  private readonly views = new Map<string, CommunityKey>();
   private readonly listeners = new Set<() => void>();
-  constructor(private readonly native: TypeSafeNative | undefined) {
-    this.state = native ? "checking" : "missing";
+  /** Whether the key saved before keys were per community has been given to
+   * the communities joined then. Until it has, every key is `checking`. */
+  private adopted: boolean;
+  private started = false;
+  constructor(
+    private readonly native: TypeSafeNative | undefined,
+    private readonly joined?: JoinedCommunities,
+  ) {
+    this.adopted = !native || !joined;
   }
-  /** Reads whether a key is saved. */
-  load() {
-    const native = this.native;
-    if (!native) return;
-    const generation = this.generation;
-    void native
-      .status()
-      .then((saved) => this.found(saved ? "saved" : "missing", generation))
-      .catch((error) => {
-        console.warn("The TypeSafe key could not be read", error);
-        this.found("unreadable", generation);
-      });
+  /** Once the joined communities are known, gives them the old device-wide
+   * key, then reads their keys; any other community's is read when first
+   * asked about. Afterwards, a community that is left or joined is read
+   * again, as leaving removes its key, and again once the key is removed.
+   * Returns the function that stops following the joined communities. */
+  load(): () => void {
+    const { native, joined } = this;
+    if (!native || !joined || this.started) return () => {};
+    this.started = true;
+    let members: ReadonlySet<string> | undefined;
+    const changed = () => {
+      const relays = joined.joined();
+      if (relays === undefined) return;
+      const next = new Set(
+        relays.flatMap((relay) => communityKey(relay) ?? []),
+      );
+      if (members) {
+        for (const key of new Set([...members, ...next]))
+          if (members.has(key) !== next.has(key)) this.forget(key);
+        members = next;
+        return;
+      }
+      members = next;
+      void (relays.length ? native.adopt(relays) : Promise.resolve())
+        .catch((error) =>
+          console.warn(
+            "The TypeSafe key could not be given to each community",
+            error,
+          ),
+        )
+        .finally(() => {
+          this.adopted = true;
+          this.states.clear();
+          // Read each joined community's key now, as Settings and Attention
+          // will ask about them.
+          for (const relay of relays) this.snapshot(relay);
+          this.notify();
+        });
+    };
+    const stop = joined.subscribe(changed);
+    // Leaving clears the key after the membership is gone, so a read in
+    // between may have found it still saved.
+    const stopCleared = onCommunityTypeSafeKeyCleared((community) => {
+      const key = communityKey(community);
+      if (key !== undefined) this.forget(key);
+    });
+    changed();
+    return () => {
+      stop();
+      stopCleared();
+    };
   }
   desktop = () => this.native !== undefined;
-  snapshot = (): KeyState => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => void this.listeners.delete(listener);
   };
-  async save(key: string) {
+  /** `community`'s key state; asking reads it once. */
+  snapshot = (community?: string): KeyState => {
+    const key = communityKey(community);
+    if (!this.native || community === undefined || key === undefined)
+      return "missing";
+    if (!this.adopted) return "checking";
+    const known = this.states.get(key);
+    if (known) return known;
+    this.states.set(key, "checking");
+    this.read(community, key);
+    return "checking";
+  };
+  /** `community`'s key, for its Settings row. */
+  for = (community: string): CommunityKey => {
+    const key = communityKey(community) ?? community;
+    let view = this.views.get(key);
+    if (!view) {
+      view = Object.freeze({
+        snapshot: () => this.snapshot(community),
+        subscribe: this.subscribe,
+        save: (value: string) => this.save(community, value),
+        clear: () => this.clear(community),
+        desktop: this.desktop,
+      });
+      this.views.set(key, view);
+    }
+    return view;
+  };
+  private read(community: string, key: string) {
+    const native = this.native;
+    if (!native) return;
+    const generation = this.generation(key);
+    void native
+      .status(community)
+      .then((saved) => this.found(key, saved ? "saved" : "missing", generation))
+      .catch((error) => {
+        console.warn("The TypeSafe key could not be read", error);
+        this.found(key, "unreadable", generation);
+      });
+  }
+  private async save(community: string, value: string) {
     const native = this.native;
     if (!native) throw new Error("TypeSafe runs only in the desktop app");
-    await this.change(() => native.setKey(key));
-    this.set("saved");
+    const key = this.keyOf(community);
+    await this.change(key, () => native.setKey(community, value));
+    this.set(key, "saved");
   }
-  async clear() {
+  private async clear(community: string) {
     const native = this.native;
     if (!native) throw new Error("TypeSafe runs only in the desktop app");
-    await this.change(() => native.clearKey());
-    this.set("missing");
+    const key = this.keyOf(community);
+    await this.change(key, () => native.clearKey(community));
+    this.set(key, "missing");
   }
-  private async change(change: () => Promise<void>) {
-    this.generation++;
+  private keyOf(community: string) {
+    const key = communityKey(community);
+    if (key === undefined) throw new Error("That is not a community");
+    return key;
+  }
+  private generation(key: string) {
+    return this.generations.get(key) ?? 0;
+  }
+  private async change(key: string, change: () => Promise<void>) {
+    this.generations.set(key, this.generation(key) + 1);
     try {
       await change();
     } finally {
-      this.generation++;
+      this.generations.set(key, this.generation(key) + 1);
     }
   }
-  private found(state: KeyState, generation: number) {
-    if (generation === this.generation) this.set(state);
+  /** Drops what is known about `key`'s community, and ignores reads that
+   * started before, so it is read again when next asked about. */
+  private forget(key: string) {
+    this.generations.set(key, this.generation(key) + 1);
+    if (this.states.delete(key)) this.notify();
   }
-  private set(state: KeyState) {
-    if (this.state === state) return;
-    this.state = state;
+  private found(key: string, state: KeyState, generation: number) {
+    if (generation === this.generation(key)) this.set(key, state);
+  }
+  private set(key: string, state: KeyState) {
+    if (this.states.get(key) === state) return;
+    this.states.set(key, state);
+    this.notify();
+  }
+  private notify() {
     for (const listener of [...this.listeners]) listener();
   }
   /** Answers on TypeSafe. What each call finds out about the key updates
@@ -110,7 +246,10 @@ export class TypeSafeKey {
   readonly decide: DecisionProvider["decide"] = async (request) => {
     const native = this.native;
     if (!native) return { outcome: "failed", reason: "unavailable" };
-    const generation = this.generation;
+    const key = communityKey(request.community);
+    if (request.community === undefined || key === undefined)
+      return { outcome: "failed", reason: "missing_credentials" };
+    const generation = this.generation(key);
     let reply: unknown;
     try {
       reply = await native.decide(request);
@@ -133,14 +272,15 @@ export class TypeSafeKey {
       string,
       unknown
     >;
-    if (outcome === "answered") this.found("saved", generation);
+    if (outcome === "answered") this.found(key, "saved", generation);
     else if (reason === "missing_credentials")
-      this.found("missing", generation);
-    else if (reason === "unauthorized") this.found("refused", generation);
+      this.found(key, "missing", generation);
+    else if (reason === "unauthorized") this.found(key, "refused", generation);
     // The host checks the reply's shape and answers.
     return (
       outcome === "answered" ? { outcome, model, answers } : { outcome, reason }
     ) as DecisionReply;
   };
-  status = (): DecisionProviderStatus => STATUS[this.state];
+  status = (community?: string): DecisionProviderStatus =>
+    STATUS[this.snapshot(community)];
 }

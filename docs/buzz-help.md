@@ -314,6 +314,13 @@ pause or delete each item there. Every wake-up costs model tokens.
 **Settings → Plugins → Attention** turns it off for all your local agents;
 mentions still work.
 
+Agents, Attention and plugins ask for quick judgments through the **Decisions
+API**. **Settings → Decisions API** chooses, for each community, which provider
+answers them: Builderlab (signed in to that community's server), TypeSafe
+(with that community's own API key) or **Off**. Until you choose, Builderlab
+answers where it's offered, otherwise TypeSafe. If the chosen provider can't
+answer, the row says why; no other provider answers instead.
+
 ## Connecting other tools
 
 - **The `buzz` CLI** comes with the desktop app. `buzz auth desktop pair` asks

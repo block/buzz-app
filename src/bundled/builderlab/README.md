@@ -264,16 +264,22 @@ again; failed reads retain the previous values. Only capabilities change;
 account identity and display details remain those read at sign-in.
 
 The plugin also offers Builderlab as a Decisions API provider while the user is
-signed in. It reads `capabilities.can_use_builderlab_decisions` the same way:
-only explicit `true` makes it ready, and otherwise it needs setup, its settings
-say it is unavailable for this account, and no decision request goes to it.
-Without a choice, the first default that can answer does, so TypeSafe answers
-until access is granted; when no default can, TypeSafe is shown, since its key
-is something the user can add. While stale permissions refuse, Builderlab's
-status is `checking` during the re-read that reading it starts. That never
-moves the selection: a request is held for it only when no other default can
-answer, and then, like Attention readiness, it waits within its deadline, so
-a new grant is used by the request that noticed it. Live development retains refreshed flags and their cache age
+signed in, or a joined community's sign-in server serves it, so it can be
+chosen there before sign-in. Settings → Decisions API shows, for each
+community, whether its server's account can answer, and links a signed-out
+one to where it signs in (Community sign-ins in FI builds, else this card). Each request names its community, and Builderlab answers it with
+the sign-in of that community's sign-in server. It reads
+`capabilities.can_use_builderlab_decisions` the same way: only explicit `true`
+makes it ready in that community, and otherwise it needs setup there,
+Settings shows it is not available there, and no decision request goes to it.
+A request without a community never goes to Builderlab. The user chooses a
+provider for each community in Settings → Decisions API. Without a choice,
+Builderlab answers where it is offered. Where it answers but cannot (not
+signed in, or no access), decisions there fail, and no other provider answers
+in its place. While stale permissions refuse, Builderlab's status is
+`checking` during the re-read that reading it starts; a request waits for it
+within its deadline, like Attention readiness, so a new grant is used by the
+request that noticed it. Live development retains refreshed flags and their cache age
 across page reloads.
 The plugin names the NIP-FI session by its revision, and
 native `decide` posts to the identity origin's API with that

@@ -4,7 +4,7 @@
 /// Bumped when the request format or the set of served items changes.
 /// `just desktop me` installs one helper per protocol, so checkouts on
 /// different protocols each keep a helper that understands them.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 
 /// Largest value read or written, in either direction.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -127,8 +127,10 @@ pub fn allowed(operation: Operation, service: &str, account: &str) -> bool {
             account == "agent-bundle-v1" || plain(account, "agent:")
         }
         "xyz.block.buzz.desktop.federated-session.debug" => hex64(account),
+        // The key saved before keys were per community, and each
+        // community's own key.
         "xyz.block.buzz.desktop.jev-key.debug" | "dev.local.buzz.foundation.jev-key.debug" => {
-            account == "typesafe"
+            account == "typesafe" || plain(account, "typesafe:")
         }
         "xyz.block.buzz.desktop.claude-api-key.debug" => account == "anthropic",
         // The device-wide environment variables for every local agent.
@@ -223,6 +225,16 @@ mod tests {
             (Read, "dev.local.buzz.foundation.jev-key.debug", "typesafe"),
             (
                 Replace,
+                "xyz.block.buzz.desktop.jev-key.debug",
+                "typesafe:relay.example.com",
+            ),
+            (
+                Delete,
+                "dev.local.buzz.foundation.jev-key.debug",
+                "typesafe:relay.example.com:8443",
+            ),
+            (
+                Replace,
                 "xyz.block.buzz.desktop.claude-api-key.debug",
                 "anthropic",
             ),
@@ -298,6 +310,14 @@ mod tests {
                 "human",
             ),
             (Read, "xyz.block.buzz.desktop.jev-key", "typesafe"),
+            (
+                Read,
+                "xyz.block.buzz.desktop.jev-key",
+                "typesafe:relay.example.com",
+            ),
+            (Read, "xyz.block.buzz.desktop.jev-key.debug", "typesafe:"),
+            (Read, "xyz.block.buzz.desktop.jev-key.debug", "typesafe:a/b"),
+            (Read, "xyz.block.buzz.desktop.jev-key.debug", "other"),
             (Read, "xyz.block.buzz.desktop.claude-api-key", "anthropic"),
             (Read, "xyz.block.buzz.desktop.agent-env.agent", hex.as_str()),
             (Read, "xyz.block.buzz.desktop.agent-env", "default"),

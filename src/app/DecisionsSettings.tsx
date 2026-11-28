@@ -2,111 +2,189 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
-  useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import {
+  DECISIONS_OFF,
   DEFAULT_DECISION_PROVIDER,
   DEFAULT_DECISION_PROVIDERS,
   statusOf,
+  type DecisionProvider,
+  type DecisionProviderStatus,
   type DecisionsService,
+  type RegisteredProvider,
 } from "../features/decisions/service";
 import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import typesafeMark from "../shared/assets/typesafe-mark.png";
-import {
-  BuilderlabLogoIcon,
-  WarningCircleIcon,
-} from "../shared/design-system/icons";
-import { Dialog } from "../shared/design-system/ui/Dialog";
-import { Button } from "../shared/design-system/ui/Button";
-import { Field } from "../shared/design-system/ui/Field";
+import { BuilderlabLogoIcon } from "../shared/design-system/icons";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
-import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
-
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Select } from "../shared/design-system/ui/Select";
+import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { Avatar } from "../shared/design-system/ui/Avatar";
+import type { Membership } from "../features/communities/service";
+import { communityDestination } from "../features/communities/destination";
+import { communityIcon } from "../features/communities/community-icon";
+import { communityName } from "../features/communities/names";
 
-/** Chooses the provider that answers decisions on this device and shows the
- * selected provider's own settings. Providers are plugins. One picked before
- * it is ready shows its settings, but the choice is saved only once it is
- * ready, so a working provider keeps answering until then. The choice is
- * hidden only when one provider is registered and already answering when
- * Settings opens. */
+const BUILDERLAB = DEFAULT_DECISION_PROVIDERS[0];
+
+type Status = DecisionProviderStatus | "unavailable";
+/** One community's row, as Settings shows it. */
+type CommunityState = Readonly<{
+  /** The provider in its menu: the one that answers, or `DECISIONS_OFF`
+   * when none does. */
+  shown: string;
+  /** The provider that answers now, or "" when none does. */
+  answering: string;
+  /** The user chose Off here, rather than its provider being unavailable. */
+  chosenOff: boolean;
+  status: Status;
+  /** Provider key -> whether it can be chosen here. */
+  offered: Readonly<Record<string, boolean>>;
+}>;
+
+const offeredIn = (provider: DecisionProvider, community: string) => {
+  try {
+    return provider.offered?.(community) ?? true;
+  } catch {
+    return false;
+  }
+};
+
+/** Chooses, for each joined community, the provider that answers its
+ * decisions, and shows whether that provider can answer there: Builderlab's
+ * availability follows the community's sign-in server, which communities on
+ * one server share, and each community has its own TypeSafe key.
+ * Providers are plugins. Each community's menu offers the providers that
+ * can be set up there; a chosen provider that cannot answer says why, and
+ * no other answers in its place. With no communities, it lists each
+ * provider's settings. */
 export function DecisionsSettings({
   decisions,
   active,
   onSection,
+  memberships = [],
 }: {
   decisions: Pick<
     DecisionsService,
-    "backend" | "subscribe" | "setBackend" | "providers"
+    "backend" | "status" | "subscribe" | "setBackend" | "providers" | "chosenIn"
   >;
   active(): boolean;
   onSection?: ((section: string) => void) | undefined;
+  memberships?: readonly Membership[] | undefined;
 }) {
-  const backend = useSyncExternalStore(
-    decisions.subscribe,
-    decisions.backend,
-    decisions.backend,
-  );
   const providers = useSyncExternalStore(
     decisions.subscribe,
     decisions.providers,
     decisions.providers,
   );
-  const [picked, setPicked] = useState<string>();
-  const pending = providers.find((provider) => provider.key === picked);
+  const communities = memberships.flatMap((membership) => {
+    try {
+      return [
+        {
+          membership,
+          name: communityName(membership),
+          url: communityDestination(membership.id).url,
+        },
+      ];
+    } catch {
+      return [];
+    }
+  });
+  // One string, so the external store compares states, not new arrays.
   // Re-read on every change: a provider's status is its own.
-  const pendingReady = useSyncExternalStore(
-    decisions.subscribe,
-    () => pending !== undefined && statusOf(pending) === "ready",
-    () => false,
-  );
-  useEffect(() => {
-    if (!pending || !pendingReady) return;
-    setPicked(undefined);
-    decisions.setBackend(pending.key);
-  }, [pending, pendingReady, decisions]);
-  const selected = pending && pending.key !== backend ? pending : undefined;
-  const current = providers.find((provider) => provider.key === backend);
-  const builderlab = providers.find(
-    (p) => p.key === DEFAULT_DECISION_PROVIDERS[0],
-  );
-  const ownKey = providers.find((p) => p.key === DEFAULT_DECISION_PROVIDER);
-  const combined = !!builderlab && !!ownKey && providers.length === 2;
-  const builderlabStatus = useSyncExternalStore(
-    decisions.subscribe,
-    () =>
-      combined && current?.key === builderlab.key
-        ? statusOf(builderlab)
-        : undefined,
-    () => undefined,
-  );
-  const shown = combined ? current : (selected ?? current);
-  const choose = (value: string) => {
-    if (!active()) return;
-    const next = providers.find((provider) => provider.key === value);
-    if (!next) return;
-    if (statusOf(next) === "ready" || next.key === backend) {
-      setPicked(undefined);
-      decisions.setBackend(next.key);
-    } else setPicked(next.key);
+  const state = JSON.parse(
+    useSyncExternalStore(
+      decisions.subscribe,
+      () => {
+        const registered = decisions.providers();
+        return JSON.stringify({
+          providers: registered.map((provider) => statusOf(provider)),
+          communities: communities.map(({ url }): CommunityState => {
+            const answering = decisions.backend(url) ?? "";
+            return {
+              // Decisions are off wherever no provider answers: turned off
+              // there, or the chosen provider's plugin is off. The choice
+              // itself is kept, so it returns with its plugin.
+              shown: answering || DECISIONS_OFF,
+              answering,
+              chosenOff: decisions.chosenIn(url) === DECISIONS_OFF,
+              status: decisions.status(url),
+              offered: Object.fromEntries(
+                registered.map((provider) => [
+                  provider.key,
+                  offeredIn(provider, url),
+                ]),
+              ),
+            };
+          }),
+        });
+      },
+      () => JSON.stringify({ providers: [], communities: [] }),
+    ),
+  ) as { providers: DecisionProviderStatus[]; communities: CommunityState[] };
+  const label = (key: string) =>
+    providers.find((provider) => provider.key === key)?.label ?? key;
+  const choose = (key: string, community: string) => {
+    if (active()) decisions.setBackend(key, community);
   };
-  // With no provider answering, even a lone one must be choosable: decisions
-  // never move to a provider the user did not choose. Once offered, the choice
-  // stays for this visit, so choosing does not remove the focused control.
-  const [offered, setOffered] = useState(false);
-  const needsChoice = providers.length > 1 || backend === undefined;
-  if (needsChoice && !offered) setOffered(true);
-  const choosable = needsChoice || (offered && providers.length > 0);
+  /** What a community's row says under its name, if anything. */
+  const note = (row: CommunityState) => {
+    if (row.shown === DECISIONS_OFF)
+      return "Decisions are off in this community";
+    if (row.offered[row.answering] === false)
+      return `${label(row.answering)} isn’t offered in this community`;
+    if (row.status === "checking") return "Checking…";
+    if (row.status === "needs-setup")
+      return `Set up ${label(row.answering)} to use decisions here`;
+    return undefined;
+  };
+  const settingsOf = (
+    provider: RegisteredProvider,
+    community: string | undefined,
+  ) =>
+    provider.Settings && (
+      // A provider's settings are plugin code: if they fail, only this part
+      // does, and Manage plugins can turn it off.
+      <OwnedContribution
+        entry={provider}
+        registry={{ snapshot: decisions.providers }}
+        fallback={
+          <p role="alert" className="m-0 py-4 text-body-sm text-secondary">
+            {provider.label} settings are unavailable. You can turn its plugin
+            off in{" "}
+            <SettingsSectionLink section="plugins" open={onSection}>
+              Manage plugins
+            </SettingsSectionLink>
+            .
+          </p>
+        }
+      >
+        {(entry, owned) => {
+          const Settings = entry.Settings;
+          return (
+            Settings && (
+              <div className="grid gap-4 py-4 empty:hidden">
+                <Settings
+                  active={() => active() && owned()}
+                  grouped={false}
+                  {...(community === undefined ? {} : { community })}
+                />
+              </div>
+            )
+          );
+        }}
+      </OwnedContribution>
+    );
   // A provider can go away while its controls have focus, for example when
   // a sign-out removes Builderlab. The service notifies before React
   // re-renders, so the old controls are still in the page: note whether
-  // focus is in this section, then hand it to the selected provider's radio,
-  // or the section itself, if the update dropped it.
+  // focus is in this section, then hand it to the section itself if the
+  // update dropped it.
   const section = useRef<HTMLElement>(null);
-  const setupForm = useRef<HTMLDivElement>(null);
   const hadFocus = useRef(false);
   useEffect(
     () =>
@@ -127,10 +205,7 @@ export function DecisionsSettings({
       (focused && focused !== document.body && focused.isConnected)
     )
       return;
-    const radio = element.querySelector<HTMLElement>(
-      '[role="radio"][aria-checked="true"]',
-    );
-    (radio ?? element).focus({ preventScroll: true });
+    element.focus({ preventScroll: true });
   });
   return (
     <section
@@ -146,12 +221,13 @@ export function DecisionsSettings({
             <strong>Agents</strong>, <strong>plugins</strong> and features like{" "}
             <strong>Attention</strong> can use this API for quick, inexpensive
             judgments, such as whether a watched event should wake your agent.
-            Your chosen provider handles these questions and receives the
-            message text sent with them, which may come from private channels.
+            The provider you choose for a community handles its questions and
+            receives the message text sent with them, which may come from
+            private channels.
           </>
         }
       />
-      {providers.length === 0 ? (
+      {providers.length === 0 && (
         <p role="status" className="mt-4 text-body-sm text-secondary">
           No decision provider is turned on. Turn one on in{" "}
           <SettingsSectionLink section="plugins" open={onSection}>
@@ -159,266 +235,149 @@ export function DecisionsSettings({
           </SettingsSectionLink>
           .
         </p>
+      )}
+      {communities.length === 0 ? (
+        <div
+          data-buzz-ui=""
+          className="mt-section-gap flex w-full flex-col gap-4"
+        >
+          {providers.map((provider, index) => {
+            const status = state.providers[index];
+            return (
+              <SettingsGroup key={provider.key}>
+                <PreferenceRow
+                  icon={providerMark(provider.key, 24)}
+                  title={provider.label}
+                  subtitle={
+                    <span role="status">
+                      {status === "ready" || status === "unconfirmed"
+                        ? "Ready"
+                        : status === "checking"
+                          ? "Checking…"
+                          : "Not set up"}
+                    </span>
+                  }
+                />
+                {settingsOf(provider, undefined)}
+              </SettingsGroup>
+            );
+          })}
+        </div>
       ) : (
         <div
           data-buzz-ui=""
-          className="mt-section-gap flex flex-col items-start gap-section-gap"
+          className="mt-section-gap flex w-full flex-col gap-4"
         >
-          {choosable && !combined && (
-            <div className="w-full max-w-md">
-              <InlineHeader title="Decisions API Provider" />
-              <Field
-                label="Decisions API Provider"
-                labelVisibility="hidden"
-                nativeLabel={false}
-              >
-                <RadioGroup
-                  aria-label="Decisions API Provider"
-                  value={shown?.key ?? ""}
-                  onValueChange={choose}
-                >
-                  {providers.map((provider) => (
-                    <Radio
-                      key={provider.key}
-                      value={provider.key}
-                      variant="card"
-                      label={provider.label}
-                      description={provider.description}
+          <InlineHeader
+            title="Communities"
+            subtitle="Choose which provider answers each community’s decisions, or turn them off."
+          />
+          {communities.map(({ membership, name, url }, index) => {
+            const row = state.communities[index];
+            const current = providers.find(
+              (provider) => provider.key === row?.shown,
+            );
+            const subtitle = row && note(row);
+            return (
+              <SettingsGroup key={url}>
+                <PreferenceRow
+                  icon={
+                    <Avatar
+                      src={communityIcon(
+                        membership.publishedIcon ?? membership.icon,
+                      )}
+                      alt=""
+                      fallback={name}
+                      shape="squircle"
+                      size="small"
                     />
-                  ))}
-                </RadioGroup>
-              </Field>
-            </div>
-          )}
-          {combined && (
-            <div className="w-full">
-              <SettingsGroup>
-                <Select
-                  label="Decision provider"
-                  leading={
-                    shown?.key === builderlab.key ? (
-                      <BuilderlabLogoIcon size={20} aria-hidden="true" />
-                    ) : (
-                      <span
-                        aria-hidden="true"
-                        style={{
-                          width: 20,
-                          height: 20,
-                          display: "inline-block",
-                          backgroundColor: "currentColor",
-                          maskImage: `url(${typesafeMark})`,
-                          maskSize: "contain",
-                          maskPosition: "center",
-                          maskRepeat: "no-repeat",
-                        }}
-                      />
-                    )
                   }
-                  valueSuffix={
-                    shown?.key === builderlab.key &&
-                    builderlabStatus === "needs-setup" ? (
-                      <WarningCircleIcon
-                        size={16}
-                        className="ml-2 text-danger"
-                        aria-label="Unavailable for this account"
-                      />
-                    ) : undefined
-                  }
-                  variant="preference"
-                  value={shown?.key ?? ""}
-                  disabled={!active()}
-                  onValueChange={choose}
-                  groups={[
-                    {
-                      label: "Providers",
-                      options: [
-                        {
-                          value: builderlab.key,
-                          label: "Builderlab",
-                          description:
-                            builderlabStatus === "needs-setup"
-                              ? "Unavailable for this account"
-                              : undefined,
-                          leading:
-                            builderlabStatus === "needs-setup" ? (
-                              <WarningCircleIcon
-                                size={20}
-                                className="text-danger"
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <BuilderlabLogoIcon
-                                size={20}
-                                aria-hidden="true"
-                              />
-                            ),
-                        },
-                        {
-                          value: ownKey.key,
-                          label: "TypeSafe",
-                          leading: (
-                            <span
-                              aria-hidden="true"
-                              style={{
-                                width: 20,
-                                height: 20,
-                                display: "inline-block",
-                                backgroundColor: "currentColor",
-                                maskImage: `url(${typesafeMark})`,
-                                maskSize: "contain",
-                                maskPosition: "center",
-                                maskRepeat: "no-repeat",
-                              }}
-                            />
-                          ),
-                        },
-                      ],
-                    },
-                  ]}
-                />
-                {shown?.key === builderlab.key &&
-                  builderlabStatus === "needs-setup" && (
-                    <p
-                      role="status"
-                      className="m-0 py-4 text-body-sm text-secondary"
-                    >
-                      Decisions API isn’t available for this Builderlab account.
-                      Use your own TypeSafe key or contact your account
-                      administrator.
-                    </p>
-                  )}
-                {shown?.key === ownKey.key && shown.Settings && (
-                  <div className="grid gap-4 py-4">
-                    <OwnedContribution
-                      entry={shown}
-                      registry={{ snapshot: decisions.providers }}
-                      fallback={
-                        <p role="alert">TypeSafe settings are unavailable.</p>
+                  title={name}
+                  subtitle={subtitle && <span role="status">{subtitle}</span>}
+                  trailing={({ "aria-describedby": describedBy }) => (
+                    <Select
+                      label={`Decision provider for ${name}`}
+                      variant="compact"
+                      describedBy={describedBy}
+                      leading={current && providerMark(current.key, 20)}
+                      // Off by choice is selected; off because its provider
+                      // is unavailable shows Off unselected, so choosing Off
+                      // saves it.
+                      value={
+                        row?.answering || (row?.chosenOff ? DECISIONS_OFF : "")
                       }
-                    >
-                      {(entry, owned) => {
-                        const Settings = entry.Settings;
-                        return (
-                          Settings && (
-                            <Settings
-                              active={() => active() && owned()}
-                              grouped={false}
-                            />
-                          )
-                        );
-                      }}
-                    </OwnedContribution>
-                  </div>
-                )}
+                      placeholder="Off"
+                      disabled={!active()}
+                      onValueChange={(key) => choose(key, url)}
+                      groups={[
+                        ...(providers.length === 0
+                          ? []
+                          : [
+                              {
+                                label: "Providers",
+                                options: providers.map((provider) => {
+                                  const offered =
+                                    row?.offered[provider.key] ?? false;
+                                  return {
+                                    value: provider.key,
+                                    label: provider.label,
+                                    leading: providerMark(provider.key, 20),
+                                    disabled:
+                                      !offered && provider.key !== row?.shown,
+                                    description: offered
+                                      ? undefined
+                                      : "Not offered in this community",
+                                  };
+                                }),
+                              },
+                            ]),
+                        {
+                          label: "",
+                          separator: true,
+                          options: [
+                            {
+                              value: DECISIONS_OFF,
+                              label: "Off",
+                            },
+                          ],
+                        },
+                      ]}
+                    />
+                  )}
+                />
+                {/* Where the provider isn't offered, the row says so, and
+                    its setup can't help. */}
+                {current &&
+                  row?.offered[current.key] !== false &&
+                  settingsOf(current, url)}
               </SettingsGroup>
-            </div>
-          )}
-          {shown && !combined && (
-            <div className="w-full">
-              {shown.showSettingsHeading !== false && (
-                <InlineHeader title={shown.label} />
-              )}
-              {shown.Settings && (
-                // A provider's settings are plugin code: if they fail, only
-                // this part does, and Manage plugins can turn it off.
-                <OwnedContribution
-                  entry={shown}
-                  registry={{ snapshot: decisions.providers }}
-                  fallback={
-                    <p role="alert" className="text-body-sm text-secondary">
-                      {shown.label} settings are unavailable. You can turn its
-                      plugin off in{" "}
-                      <SettingsSectionLink section="plugins" open={onSection}>
-                        Manage plugins
-                      </SettingsSectionLink>
-                      .
-                    </p>
-                  }
-                >
-                  {(entry, owned) => {
-                    const Settings = entry.Settings;
-                    return (
-                      Settings && (
-                        <Settings active={() => active() && owned()} />
-                      )
-                    );
-                  }}
-                </OwnedContribution>
-              )}
-            </div>
-          )}
+            );
+          })}
         </div>
-      )}
-      {combined && selected?.Settings && (
-        <Dialog
-          open
-          visit
-          title={
-            selected.key === ownKey.key
-              ? "Connect TypeSafe"
-              : "Set up Builderlab"
-          }
-          description={
-            selected.key === ownKey.key ? (
-              <>
-                Create an API key at{" "}
-                <Button
-                  variant="link"
-                  size="text"
-                  nativeButton={false}
-                  role="link"
-                  render={
-                    <a
-                      href="https://console.typesafe.ai/keys"
-                      target="_blank"
-                      rel="noreferrer"
-                    />
-                  }
-                >
-                  console.typesafe.ai
-                </Button>{" "}
-                and paste it below.
-              </>
-            ) : (
-              "Complete account setup to use Builderlab for decision requests."
-            )
-          }
-          dismissOnOutsideClick
-          onOpenChange={(open) => !open && setPicked(undefined)}
-          initialFocus={
-            selected.key === ownKey.key
-              ? () =>
-                  setupForm.current?.querySelector<HTMLInputElement>(
-                    "input:not([readonly])",
-                  ) ?? null
-              : undefined
-          }
-          finalFocus={() =>
-            section.current?.querySelector<HTMLElement>('[role="combobox"]') ??
-            section.current
-          }
-        >
-          <div ref={setupForm}>
-            <OwnedContribution
-              entry={selected}
-              registry={{ snapshot: decisions.providers }}
-              fallback={<p role="alert">TypeSafe settings are unavailable.</p>}
-            >
-              {(entry, owned) => {
-                const Settings = entry.Settings;
-                return (
-                  Settings && (
-                    <Settings
-                      active={() => active() && owned()}
-                      grouped={false}
-                    />
-                  )
-                );
-              }}
-            </OwnedContribution>
-          </div>
-        </Dialog>
       )}
     </section>
   );
+}
+
+/** The bundled providers' marks; other providers have none. */
+function providerMark(key: string, size: number): ReactNode {
+  if (key === BUILDERLAB)
+    return <BuilderlabLogoIcon size={size} aria-hidden="true" />;
+  if (key === DEFAULT_DECISION_PROVIDER)
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          width: size,
+          height: size,
+          display: "inline-block",
+          backgroundColor: "currentColor",
+          maskImage: `url(${typesafeMark})`,
+          maskSize: "contain",
+          maskPosition: "center",
+          maskRepeat: "no-repeat",
+        }}
+      />
+    );
+  return undefined;
 }

@@ -14,8 +14,10 @@ struct FakeStore {
     /// Reads block this long, as a stalled `security` process does.
     stall: StdMutex<Duration>,
 }
+/// One key for every account: `jev_tests.rs` covers keeping each
+/// community's apart.
 impl KeyStore for Arc<FakeStore> {
-    fn read(&self) -> Result<Option<Zeroizing<String>>, String> {
+    fn read(&self, _account: &str) -> Result<Option<Zeroizing<String>>, String> {
         *self.reads.lock().unwrap() += 1;
         std::thread::sleep(*self.stall.lock().unwrap());
         if *self.unreadable.lock().unwrap() {
@@ -23,11 +25,11 @@ impl KeyStore for Arc<FakeStore> {
         }
         Ok(self.key.lock().unwrap().clone().map(Zeroizing::new))
     }
-    fn replace(&self, key: &str) -> Result<(), String> {
+    fn replace(&self, _account: &str, key: &str) -> Result<(), String> {
         *self.key.lock().unwrap() = Some(key.into());
         Ok(())
     }
-    fn clear(&self) -> Result<(), String> {
+    fn clear(&self, _account: &str) -> Result<(), String> {
         *self.key.lock().unwrap() = None;
         Ok(())
     }
@@ -116,10 +118,13 @@ fn decisions(url: &str) -> DecisionsHost {
         TIMEOUT,
     )
 }
+/// A request from `wss://buzz.example.org`, whose TypeSafe key `keys` holds.
 fn request(questions: Value) -> Request {
-    serde_json::from_value(
-        json!({ "state": "The build is broken on main.", "questions": questions }),
-    )
+    serde_json::from_value(json!({
+        "state": "The build is broken on main.",
+        "questions": questions,
+        "community": "wss://buzz.example.org",
+    }))
     .unwrap()
 }
 /// One question of each type.
@@ -548,6 +553,28 @@ async fn builderlab_without_a_community_sends_nothing_and_typesafe_sends_none() 
 }
 
 #[tokio::test]
+async fn typesafe_without_a_community_has_no_key_and_sends_nothing() {
+    let (url, seen) = server(vec![]).await;
+    let (store, keys) = keys(Some("k"));
+    for community in [None, Some(""), Some("buzz.example.org")] {
+        let mut request = every_type();
+        request.community = community.map(Into::into);
+        assert_eq!(
+            decisions(&url)
+                .decide(&keys, Backend::Typesafe, None, request)
+                .await,
+            Decided::Failed {
+                backend: Backend::Typesafe,
+                reason: Failure::MissingCredentials
+            },
+            "{community:?}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(*store.reads.lock().unwrap(), 0);
+}
+
+#[tokio::test]
 async fn builderlab_without_a_sign_in_or_an_address_sends_nothing() {
     let (url, seen) = server(vec![]).await;
     let (_, keys) = keys(None);
@@ -626,7 +653,8 @@ async fn only_a_builderlab_401_ends_the_sign_in_and_none_touch_the_key() {
 /// An FI build's sign-in at the test server, with that session's revision.
 fn federated_at(url: &str) -> (FederatedIdentity, String) {
     let origin = url.trim_end_matches("/decide").to_owned();
-    let fi = crate::federated_identity::testing::signed_in_at(origin);
+    // The build's server, which covers the requests' community.
+    let fi = crate::federated_identity::testing::signed_in_covering(origin, "buzz.example.org");
     let revision = fi.with_session(|_, current, _| current.to_owned()).unwrap();
     (fi, revision)
 }
@@ -695,6 +723,73 @@ async fn an_fi_call_needs_the_session_it_started_under() {
         decide_federated(&host, &keys, &fi, &revision, yes_no_in_community()).await,
         missing
     );
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_fi_call_uses_the_sign_in_server_of_its_community() {
+    let reply = json!({ "model": "jev-1.13.0", "answers": { "a": { "noul": { "value": 0.4 } } } });
+    let (url, seen) = server(vec![Some((200, "", reply.to_string()))]).await;
+    let origin = url.trim_end_matches("/decide").to_owned();
+    // The build's own server is not the community's and is never called.
+    let (fi, peer) = crate::federated_identity::testing::signed_in_with_peer(
+        "http://127.0.0.1:9".into(),
+        origin,
+        "buzz.example.org",
+    );
+    let revision =
+        |fi: &FederatedIdentity| fi.with_session(|_, current, _| current.to_owned()).unwrap();
+    let (_, keys) = keys(None);
+    let host = decisions("http://127.0.0.1:9/unused");
+    // The build's session is not the community's.
+    assert_eq!(
+        decide_federated(&host, &keys, &fi, &revision(&fi), yes_no_in_community()).await,
+        Decided::Failed {
+            backend: Backend::Builderlab,
+            reason: Failure::MissingCredentials,
+        }
+    );
+    assert!(seen.lock().unwrap().is_empty());
+    let result = decide_federated(&host, &keys, &fi, &revision(&peer), yes_no_in_community()).await;
+    assert!(matches!(result, Decided::Answered { .. }), "{result:?}");
+    let (head, _) = seen.lock().unwrap()[0].clone();
+    assert!(
+        head.starts_with("post /api/v3/builderlab/decisions "),
+        "{head}"
+    );
+    assert!(
+        head.lines()
+            .any(|line| line == "x-buzz-community: buzz.example.org"),
+        "{head}"
+    );
+}
+
+#[tokio::test]
+async fn an_fi_call_without_a_covered_community_sends_nothing() {
+    let (url, seen) = server(vec![]).await;
+    let (fi, revision) = federated_at(&url);
+    let (_, keys) = keys(None);
+    // A request with no relay URL is invalid. No sign-in server covers the
+    // last one, so the build's own server, which `server_for` falls back to,
+    // must not answer it either: there is no account for it.
+    for (community, reason) in [
+        (None, Failure::InvalidRequest),
+        (Some("not a relay".to_owned()), Failure::InvalidRequest),
+        (
+            Some("wss://other.example".to_owned()),
+            Failure::MissingCredentials,
+        ),
+    ] {
+        let mut request = yes_no_in_community();
+        request.community = community;
+        assert_eq!(
+            decide_federated(&decisions(&url), &keys, &fi, &revision, request).await,
+            Decided::Failed {
+                backend: Backend::Builderlab,
+                reason,
+            }
+        );
+    }
     assert!(seen.lock().unwrap().is_empty());
 }
 

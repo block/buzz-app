@@ -1,6 +1,7 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { relayOrigin } from "../communities/destination";
 import { nativeIdentityEnabled } from "../identity/service";
 import type { HostResponse } from "../host/service";
 
@@ -239,10 +240,13 @@ export class FederatedIdentityService
     return invoke<string | null>("federated_identity_sign_in_link");
   }
   forCommunity = (relay: string): FederatedIdentity => {
-    let session = this.shared.communities.get(relay);
+    // One session per community, however it is spelled: Settings names it
+    // by its https origin and agents by its wss relay URL.
+    const origin = sameCommunity(relay);
+    let session = this.shared.communities.get(origin);
     if (!session) {
-      session = new CommunitySession({ relay });
-      this.shared.communities.set(relay, session);
+      session = new CommunitySession({ relay: origin });
+      this.shared.communities.set(origin, session);
     }
     return session;
   };
@@ -365,6 +369,16 @@ async function communityRequiresSignIn(relay: string) {
 /** Which server a session command is for: a community's, or one by id. */
 type Target = Readonly<{ relay: string } | { server: string }>;
 
+/** `relay`'s origin, which native canonicalizes the same way; a value that is
+ * not a relay URL keys its own session and native refuses it. */
+const sameCommunity = (relay: string) => {
+  try {
+    return relayOrigin(relay);
+  } catch {
+    return relay;
+  }
+};
+
 /** One sign-in server's session, for a community's sign-in prompt or its
  * Settings row. Snapshots follow its server, whichever event stream native
  * publishes them on. */
@@ -408,7 +422,19 @@ class CommunitySession implements FederatedIdentity {
           if (id && payload.authority?.id === id) this.accept(payload);
         }).catch(() => () => {}),
       );
-    void this.operation("federated_identity_snapshot").catch(() => {});
+    // As for the build's own session: a first read that fails settles as
+    // unavailable rather than restoring forever, since a community's
+    // events can't reach it before it knows its server. Signing in or a
+    // recheck reads it again.
+    const epoch = this.epoch;
+    void this.operation("federated_identity_snapshot").catch(() => {
+      if (this.epoch === epoch)
+        this.accept({
+          ...this.state,
+          status: "unavailable",
+          failure: "native-unavailable",
+        });
+    });
   }
   communityRequiresSignIn = communityRequiresSignIn;
   askAgain = askAgain;

@@ -39,6 +39,7 @@ const VIEWER = fileURLToPath(
 
 /** Size roles a component may use. Kept in sync with typography.css. */
 const SIZE_ROLES = [
+  "label-lg",
   "label",
   "label-sm",
   "caption",

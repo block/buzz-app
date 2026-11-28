@@ -1865,6 +1865,16 @@ export const TYPE_ROLES: TypeRole[] = [
     status: "core",
   },
   {
+    token: "text-label-lg",
+    pointsAt: "body/label-large (Buzz)",
+    size: "18px",
+    lineHeight: "24px",
+    tracking: "0em",
+    weight: "500",
+    use: "Item names in catalogs.",
+    status: "core",
+  },
+  {
     token: "text-label",
     pointsAt: "body/label-medium",
     size: "16px",

@@ -67,6 +67,10 @@
   --text-message--line-height: 1.5357142857142858;
   --text-message--letter-spacing: -0.01em;
   --text-message--font-weight: var(--type-weight-normal);
+  --text-label-lg: var(--type-size-18);
+  --text-label-lg--line-height: calc(24 / 18);
+  --text-label-lg--letter-spacing: 0em;
+  --text-label-lg--font-weight: var(--type-weight-medium);
   --text-label: var(--type-size-16);
   --text-label--line-height: 1.5;
   --text-label--letter-spacing: 0em;

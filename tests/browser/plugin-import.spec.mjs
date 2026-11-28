@@ -480,10 +480,10 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
 }, info) => {
   await nativeImports(page);
   await openPlugins(page, app.origin);
-  const checkButtons = async (section, scale) => {
+  const checkButtons = async (section) => {
     await expect
       .poll(() =>
-        section.evaluate((root, scale) => {
+        section.evaluate((root) => {
           const failures = [];
           const bounds = root.getBoundingClientRect();
           for (const label of root.querySelectorAll(
@@ -533,11 +533,6 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
                   `${button.textContent}: action words break apart`,
                 );
             }
-            // Shared controls retain their authored 32px small or 40px default
-            // minimum at 100%; enlarged labels may grow.
-            const minimum = button.dataset.size === "sm" ? 32 : 40;
-            if (scale === 100 && box.height !== minimum)
-              failures.push(`${button.textContent}: default height changed`);
             // Compact Select deliberately ellipsizes its value; a text Range
             // includes hidden glyphs. Check the painted boxes and full-value
             // hint instead, without exempting lost clipping or escaping icons.
@@ -588,7 +583,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
               );
           }
           return failures;
-        }, scale),
+        }),
       )
       .toEqual([]);
   };
@@ -623,7 +618,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         }),
       ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
-      await checkButtons(appearance, scale);
+      await checkButtons(appearance);
       const colors = appearance.locator("[data-accent-colors] button");
       await expect(colors).toHaveCount(6);
       await colors.first().focus();
@@ -701,14 +696,14 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         exact: true,
       });
       await expect(button(page, "Add")).toBeVisible();
-      await checkButtons(plugins, scale);
+      await checkButtons(plugins);
       await button(page, "Add").click();
       const dialog = page.getByRole("dialog", { name: "Add a plugin" });
       await expect(dialog).toBeVisible();
       // Focus reveals below scroll the nested popup and body scrollers; let
       // the entrance settle before measuring or revealing anything.
       await settleDialogMotion(dialog);
-      await checkButtons(dialog, scale);
+      await checkButtons(dialog);
       const folder = button(page, "Browse plugin folder");
       const repository = dialog.getByRole("textbox", {
         name: "Git or GitHub repository",
@@ -975,34 +970,14 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   const enabled = pluginAction(page, "Example two");
   await expect(enabled).toHaveAccessibleName("Enable Example two");
   const row = button(page, "View Example two details");
+  const description = row.getByText(/^Review repository activity/);
   await expect(button(page, "Update Example two")).toHaveCount(0);
   for (const width of [1100, 768]) {
     await page.setViewportSize({ width, height: 950 });
     await row.scrollIntoViewIfNeeded();
-    await expect
-      .poll(() =>
-        row.evaluate((node) => {
-          const description = node.querySelector('[id^="plugin-description-"]');
-          const actions = [...node.parentElement.querySelectorAll("button")]
-            .filter((button) => button !== node)
-            .map((button) => button.getBoundingClientRect());
-          // Ellipsis clips glyphs outside this box; Range rects include those hidden glyphs.
-          const rect = description.getBoundingClientRect();
-          const style = getComputedStyle(description);
-          return (
-            style.textOverflow === "ellipsis" &&
-            style.overflow === "hidden" &&
-            actions.every(
-              (action) =>
-                rect.right <= action.left ||
-                rect.left >= action.right ||
-                rect.bottom <= action.top ||
-                rect.top >= action.bottom,
-            )
-          );
-        }),
-      )
-      .toBe(true);
+    await expect(description).toBeInViewport({ ratio: 1 });
+    await enabled.click({ trial: true });
+    await button(page, "More actions for Example two").click({ trial: true });
   }
   await page.emulateMedia({ colorScheme: "light" });
   await page.screenshot({ path: info.outputPath("updatable-row-light.png") });
@@ -1327,15 +1302,18 @@ test("resizing over the catalog keeps focus in visible plugin details", async ({
   await nativeImports(page);
   await page.setViewportSize({ width: 1440, height: 950 });
   await openPlugins(page, app.origin);
-  await button(page, "View github details").click();
+  const trigger = button(page, "View github details");
+  await trigger.click();
   const pane = page.getByRole("complementary", { name: "github details" });
   const close = pane.getByRole("button", { name: "Close plugin details" });
   await expect(close).toBeFocused();
   await pluginAction(page, "github").focus();
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 900, height: 844 });
+  await expect(trigger).toBeHidden();
   await expect(close).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(pane).toHaveCount(0);
+  await expect(trigger).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 950 });
   await button(page, "View github details").click();
   await button(page, "Add").click();

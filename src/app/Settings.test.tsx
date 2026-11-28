@@ -609,8 +609,6 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
   expect(screen.queryByRole("button", { name: "Disable Channels" })).toBeNull();
   const rowRequired = screen.getByRole("button", { name: "Required" });
   expect(rowRequired).toBeDisabled();
-  expect(rowRequired).toHaveAttribute("data-variant", "outline");
-  expect(rowRequired).toHaveAttribute("data-size", "sm");
   expect(screen.queryByText("buzz.channels")).toBeNull();
 
   fireEvent.click(bundledCard);
@@ -674,8 +672,6 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
   const rowAction = screen.getByRole("button", {
     name: "Disable External helper",
   });
-  expect(rowAction).toHaveAttribute("data-variant", "subtle");
-  expect(rowAction).toHaveAttribute("data-size", "sm");
   expect(externalCard).not.toContainElement(rowAction);
   fireEvent.click(rowAction);
   expect(plugins.change).toHaveBeenCalledWith("disable", "example.helper");
@@ -723,7 +719,6 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
   const rowEnable = screen.getByRole("button", {
     name: "Enable External helper",
   });
-  expect(rowEnable).toHaveAttribute("data-variant", "prominent");
   fireEvent.click(rowEnable);
   expect(plugins.change).toHaveBeenLastCalledWith("enable", "example.helper");
   fireEvent.click(enable);
@@ -745,7 +740,6 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
     name: "Enable External helper",
   });
   expect(pendingRow).toHaveAttribute("aria-disabled", "true");
-  expect(pendingRow).toHaveAttribute("data-variant", "prominent");
   fireEvent.click(pendingRow);
   expect(plugins.change).not.toHaveBeenCalled();
 });

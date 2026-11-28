@@ -8,6 +8,8 @@
   height: 100%;
   padding: 0;
   border: 0;
+  /* hr defaults to hidden; the grip and resize help extend past its hit box. */
+  overflow: visible;
   /* Keep the hit target centered on the divider without adding a gutter. */
   margin: 0 calc(-1 * var(--space-4) / 2);
   background: transparent;
@@ -58,7 +60,7 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .handle:hover::after {
-    opacity: var(--resize-grip-opacity, 1);
+    opacity: 0.5;
     transform: translate(-50%, -50%) scaleY(1);
   }
   .handle:hover::before {
@@ -70,7 +72,7 @@
 }
 .handle:focus-visible::after,
 .handle[data-resizing]::after {
-  opacity: var(--resize-grip-opacity, 1);
+  opacity: 0.5;
   transform: translate(-50%, -50%) scaleY(1);
 }
 html[data-keyboard-navigation] .handle::after,

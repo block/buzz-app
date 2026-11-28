@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::{LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Runtime, Window};
 use tauri_plugin_window_state::{AppHandleExt, Builder, StateFlags, WindowExt};
@@ -20,6 +20,14 @@ pub(crate) fn builder() -> Builder {
 
 // Called from app setup, after the configured main window has been created.
 const INTRO_GEOMETRY: &str = "onboarding-window-restore.json";
+// The plugin saves physical pixels without the scales they were measured at.
+// Buzz records them beside each save, as
+// {"main": {"scale": 2.0, "position": 1.0, "prev": 2.0, "geometry": [...]}}
+// (see `SavedScale`). `geometry` names the save the scales belong to, so a
+// geometry file written without them (by an older build, or before an exit
+// finished) never takes a stale scale.
+const SCALE: &str = ".window-scale.json";
+const INTRO_SCALE: &str = "onboarding-window-scale.json";
 
 /// Preserve normal geometry for the next launch, without resizing this session.
 #[tauri::command]
@@ -48,8 +56,199 @@ pub(crate) fn onboarding_preserve_window<R: Runtime>(
         StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED | StateFlags::FULLSCREEN,
     )
     .map_err(|e| e.to_string())?;
+    save_scale(app);
     let bytes = std::fs::read(dir.join(app.filename())).map_err(|e| e.to_string())?;
-    preserve_intro_geometry(&target, &bytes)
+    preserve_intro_geometry(&target, &bytes)?;
+    // The snapshot copies the plugin's file, so it takes the scale paired with it.
+    if let Err(error) = std::fs::copy(dir.join(SCALE), dir.join(INTRO_SCALE)) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            eprintln!("Could not save Buzz window scale: {error}");
+        }
+    }
+    Ok(())
+}
+
+/// The scales of the plugin's cached frame: its size, its position, and the
+/// position before that (`prev_x`/`prev_y`, used for a maximized window). The
+/// plugin updates size and position on different events, so each keeps its own.
+/// They start from the scale file, as the plugin's cache starts from its file.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Kept {
+    size: Option<f64>,
+    position: Option<f64>,
+    prev: Option<f64>,
+}
+
+/// `restoring` mirrors the plugin's restore lock, held while `restore_state`
+/// runs: the plugin ignores Moved and Resized meanwhile.
+#[derive(Default)]
+struct KeptScale {
+    kept: std::sync::Mutex<Kept>,
+    restoring: std::sync::atomic::AtomicBool,
+}
+
+fn kept_scale<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::State<'_, KeptScale> {
+    if app.try_state::<KeptScale>().is_none() {
+        let file = app
+            .path()
+            .app_config_dir()
+            .ok()
+            .and_then(|dir| restore_input(&dir, &app.filename(), "main", false)?.1);
+        let kept = file.map_or_else(Kept::default, |saved| Kept {
+            size: Some(saved.scale),
+            position: Some(saved.position()),
+            prev: Some(saved.prev()),
+        });
+        app.manage(KeptScale {
+            kept: std::sync::Mutex::new(kept),
+            ..Default::default()
+        });
+    }
+    app.state::<KeptScale>()
+}
+
+/// An update of the plugin's cached frame (window-state 2.5.0).
+#[derive(Clone, Copy, Debug)]
+enum Update {
+    /// `Moved`: position, unless minimized; the old position becomes `prev`.
+    Moved,
+    /// `Resized`: size, unless minimized or maximized.
+    Resized,
+    /// `CloseRequested` and the save at Exit: size and position, unless
+    /// minimized or maximized.
+    Saved,
+}
+
+/// What the plugin reads from the window for an update.
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    maximized: bool,
+    minimized: bool,
+    scale: f64,
+}
+
+impl Kept {
+    fn apply(&mut self, update: Update, frame: Frame) {
+        let reads_frame = !frame.maximized && !frame.minimized;
+        match update {
+            Update::Moved if !frame.minimized => {
+                self.prev = self.position;
+                self.position = Some(frame.scale);
+            }
+            Update::Resized if reads_frame => self.size = Some(frame.scale),
+            Update::Saved if reads_frame => {
+                self.size = Some(frame.scale);
+                self.position = Some(frame.scale);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Follows the plugin's cache: call it for each main-window event.
+pub(crate) fn window_event<R: Runtime>(window: &Window<R>, event: &tauri::WindowEvent) {
+    let update = match event {
+        tauri::WindowEvent::Moved(_) => Update::Moved,
+        tauri::WindowEvent::Resized(_) => Update::Resized,
+        tauri::WindowEvent::CloseRequested { .. } => Update::Saved,
+        _ => return,
+    };
+    follow(window, update);
+}
+
+fn follow<R: Runtime>(window: &Window<R>, update: Update) {
+    let read = || -> tauri::Result<Frame> {
+        // tauri#5812: on Resized, the plugin treats an undecorated or fixed-size
+        // macOS window as never maximized.
+        let quirk = matches!(update, Update::Resized)
+            && cfg!(target_os = "macos")
+            && (!window.is_decorated()? || !window.is_resizable()?);
+        Ok(Frame {
+            maximized: !quirk && window.is_maximized()?,
+            minimized: window.is_minimized()?,
+            scale: window.scale_factor()?,
+        })
+    };
+    if window.label() != "main" {
+        return;
+    }
+    let kept = kept_scale(window.app_handle());
+    let restoring = kept.restoring.load(std::sync::atomic::Ordering::SeqCst);
+    if restoring && matches!(update, Update::Moved | Update::Resized) {
+        return;
+    }
+    if let Ok(frame) = read() {
+        kept.kept.lock().unwrap().apply(update, frame);
+    }
+}
+
+/// Record the scales beside a save of the plugin's file (Exit or onboarding),
+/// after the plugin's save has updated its cache.
+pub(crate) fn save_scale<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        follow(&window.as_ref().window(), Update::Saved);
+    }
+    write_kept_scale(app);
+}
+
+fn write_kept_scale<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let kept = *kept_scale(app).kept.lock().unwrap();
+    let Some(scale) = kept.size else {
+        return;
+    };
+    let result = app.path().app_config_dir().and_then(|dir| {
+        // Name the save these scales belong to: the plugin's file, just written.
+        let Some(saved) = std::fs::read(dir.join(app.filename()))
+            .ok()
+            .and_then(|bytes| saved_geometry(&bytes, "main"))
+        else {
+            return Ok(());
+        };
+        let saved = SavedScale {
+            scale,
+            position: kept.position,
+            prev: kept.prev,
+            geometry: Some(saved.pairing()),
+        };
+        let scale = HashMap::from([("main", saved)]);
+        std::fs::write(dir.join(SCALE), serde_json::to_vec(&scale)?)?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        eprintln!("Could not save Buzz window scale: {error}");
+    }
+}
+
+/// `scale` is the size's. A missing `position` is at the size's scale, and a
+/// missing `prev` at the position's.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedScale {
+    scale: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    position: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prev: Option<f64>,
+    /// The saved geometry these scales belong to (`SavedGeometry::pairing`).
+    #[serde(default)]
+    geometry: Option<[i64; 6]>,
+}
+
+impl SavedScale {
+    fn position(&self) -> f64 {
+        self.position.unwrap_or(self.scale)
+    }
+
+    fn prev(&self) -> f64 {
+        self.prev.unwrap_or(self.position())
+    }
+}
+
+fn saved_scale(bytes: &[u8], label: &str) -> Option<SavedScale> {
+    let valid = |scale: f64| scale.is_finite() && scale > 0.0;
+    serde_json::from_slice::<HashMap<String, SavedScale>>(bytes)
+        .ok()?
+        .remove(label)
+        .filter(|saved| valid(saved.scale) && valid(saved.position()) && valid(saved.prev()))
 }
 
 /// The Mac window shows `--bg-app` (tokens.css) under the page instead of the
@@ -94,28 +293,57 @@ fn preserve_intro_geometry(target: &std::path::Path, bytes: &[u8]) -> Result<(),
 }
 
 pub(crate) fn restore<R: Runtime>(window: &Window<R>) -> tauri::Result<()> {
-    let pending = window
-        .app_handle()
-        .path()
-        .app_config_dir()?
-        .join(INTRO_GEOMETRY);
-    if let Ok(bytes) = std::fs::read(&pending) {
-        if let Some(saved) = saved_geometry(&bytes, window.label()) {
-            window.set_fullscreen(false)?;
-            window.unmaximize()?;
-            restore_geometry_from(window, Some(bytes))?;
-            window.set_fullscreen(saved.fullscreen)?;
-            if saved.maximized {
-                window.maximize()?;
-            }
-            std::fs::remove_file(pending)?;
-            return Ok(());
+    // Read the scale file before restore's own resizes update the kept scales.
+    kept_scale(window.app_handle());
+    let dir = window.app_handle().path().app_config_dir()?;
+    let filename = window.app_handle().filename();
+    if let Some((saved, scales)) = restore_input(&dir, &filename, window.label(), true) {
+        let (fullscreen, maximized) = (saved.fullscreen, saved.maximized);
+        window.set_fullscreen(false)?;
+        window.unmaximize()?;
+        restore_geometry(window, saved, scales)?;
+        window.set_fullscreen(fullscreen)?;
+        if maximized {
+            window.maximize()?;
+        }
+        std::fs::remove_file(dir.join(INTRO_GEOMETRY))?;
+        let _ = std::fs::remove_file(dir.join(INTRO_SCALE));
+        return Ok(());
+    }
+    if let Some((saved, scales)) = restore_input(&dir, &filename, window.label(), false) {
+        if let Err(error) = restore_geometry(window, saved, scales) {
+            eprintln!("Could not restore Buzz window geometry: {error}");
         }
     }
-    if let Err(error) = restore_geometry(window) {
-        eprintln!("Could not restore Buzz window geometry: {error}");
-    }
-    window.restore_state(StateFlags::MAXIMIZED | StateFlags::FULLSCREEN)
+    let kept = kept_scale(window.app_handle());
+    kept.restoring
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let result = window.restore_state(StateFlags::MAXIMIZED | StateFlags::FULLSCREEN);
+    kept.restoring
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    result
+}
+
+/// The geometry to restore and the scales recorded with it: the onboarding
+/// snapshot (`intro`) and its scale copy, or the plugin's file and Buzz's.
+fn restore_input(
+    dir: &std::path::Path,
+    filename: &str,
+    label: &str,
+    intro: bool,
+) -> Option<(SavedGeometry, Option<SavedScale>)> {
+    let (geometry, scale) = if intro {
+        (INTRO_GEOMETRY, INTRO_SCALE)
+    } else {
+        (filename, SCALE)
+    };
+    let saved = saved_geometry(&std::fs::read(dir.join(geometry)).ok()?, label)?;
+    // Scales recorded for another save are stale: restore as without them.
+    let scales = std::fs::read(dir.join(scale))
+        .ok()
+        .and_then(|bytes| saved_scale(&bytes, label))
+        .filter(|scales| scales.geometry == Some(saved.pairing()));
+    Some((saved, scales))
 }
 
 // Read-only adapter for window-state 2.4.1's format: position is the outer
@@ -139,6 +367,20 @@ struct SavedGeometry {
     fullscreen: bool,
 }
 
+impl SavedGeometry {
+    /// The numbers a restore converts, which name this save in the scale file.
+    fn pairing(&self) -> [i64; 6] {
+        [
+            self.width.into(),
+            self.height.into(),
+            self.x.into(),
+            self.y.into(),
+            self.prev_x.into(),
+            self.prev_y.into(),
+        ]
+    }
+}
+
 fn saved_geometry(bytes: &[u8], label: &str) -> Option<SavedGeometry> {
     serde_json::from_slice::<HashMap<String, SavedGeometry>>(bytes)
         .ok()?
@@ -146,29 +388,15 @@ fn saved_geometry(bytes: &[u8], label: &str) -> Option<SavedGeometry> {
         .filter(|state| state.width > 0 && state.height > 0)
 }
 
-fn restore_geometry<R: Runtime>(window: &Window<R>) -> tauri::Result<()> {
-    restore_geometry_from(window, None)
-}
-
-fn restore_geometry_from<R: Runtime>(
+fn restore_geometry<R: Runtime>(
     window: &Window<R>,
-    override_bytes: Option<Vec<u8>>,
+    saved: SavedGeometry,
+    scales: Option<SavedScale>,
 ) -> tauri::Result<()> {
-    let path = window
-        .app_handle()
-        .path()
-        .app_config_dir()?
-        .join(window.app_handle().filename());
-    let Some(saved) = override_bytes
-        .or_else(|| std::fs::read(path).ok())
-        .and_then(|bytes| saved_geometry(&bytes, window.label()))
-    else {
-        return Ok(());
-    };
     let monitors = window.available_monitors()?;
     let areas: Vec<_> = monitors
         .iter()
-        .map(|monitor| *monitor.work_area())
+        .map(|monitor| (*monitor.work_area(), monitor.scale_factor()))
         .collect();
     let fallback = window
         .primary_monitor()?
@@ -183,17 +411,16 @@ fn restore_geometry_from<R: Runtime>(
             inner.x.saturating_sub(outer.x),
             inner.y.saturating_sub(outer.y),
         );
-        // AppShell owns a 48 logical-pixel header on all desktop platforms.
-        let header_height = (48.0 * window.scale_factor()?).ceil() as u32;
         let windows = &window.config().app.windows;
         let config = windows.first().cloned().unwrap_or_default();
-        let (position, size, relocated) =
-            restore_request(&saved, offset, header_height, &areas, fallback, &config);
+        let startup = window.scale_factor()?;
+        let (position, size, logical) =
+            restore_plan(saved, scales, offset, startup, &areas, fallback, &config);
         // Validate the requested geometry BEFORE sending it. Native setters
         // may apply asynchronously (Linux/macOS); getters can still report the
         // startup frame.
         // Move first: Windows rescales on DPI change. macOS/GTK convert at the startup scale.
-        if let Some(scale) = relocated.filter(|_| cfg!(not(windows))) {
+        if let Some(scale) = logical.filter(|_| cfg!(not(windows))) {
             window.set_position(position.to_logical::<f64>(scale))?;
             return window.set_size(size.to_logical::<f64>(scale));
         }
@@ -203,14 +430,73 @@ fn restore_geometry_from<R: Runtime>(
     Ok(())
 }
 
+/// The restore request for saved geometry and the scales recorded with it.
+fn restore_plan(
+    saved: SavedGeometry,
+    scales: Option<SavedScale>,
+    client_offset: PhysicalPosition<i32>,
+    startup: f64,
+    monitors: &[(PhysicalRect<i32, u32>, f64)],
+    fallback: (PhysicalRect<i32, u32>, f64),
+    config: &tauri::utils::config::WindowConfig,
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>, Option<f64>) {
+    // Windows rescales on DPI change, so it keeps sending physical pixels.
+    let scales = scales.filter(|_| cfg!(not(windows)));
+    let saved = at_size_scale(saved, scales);
+    let recorded = scales.map(|scales| scales.scale);
+    restore_request(
+        &saved,
+        recorded,
+        client_offset,
+        startup,
+        monitors,
+        fallback,
+        config,
+    )
+}
+
+/// Expresses the saved positions in the size's pixels, each from its own scale.
+fn at_size_scale(mut saved: SavedGeometry, scales: Option<SavedScale>) -> SavedGeometry {
+    if let Some(scales) = scales {
+        let rescale = |x: i32, y: i32, from: f64| {
+            let position = PhysicalPosition::new(x, y)
+                .to_logical::<f64>(from)
+                .to_physical::<i32>(scales.scale);
+            (position.x, position.y)
+        };
+        (saved.x, saved.y) = rescale(saved.x, saved.y, scales.position());
+        (saved.prev_x, saved.prev_y) = rescale(saved.prev_x, saved.prev_y, scales.prev());
+    }
+    saved
+}
+
+/// Plans the restore in the saved rect's pixels. With the recorded save-time
+/// scale, monitors are measured in those pixels too, and the result is sent as
+/// logical units at that scale. Without it, the plan is in mixed units, as before.
 fn restore_request(
     saved: &SavedGeometry,
+    recorded: Option<f64>,
     client_offset: PhysicalPosition<i32>,
-    header_height: u32,
-    areas: &[PhysicalRect<i32, u32>],
+    startup: f64,
+    monitors: &[(PhysicalRect<i32, u32>, f64)],
     (fallback, scale): (PhysicalRect<i32, u32>, f64),
     config: &tauri::utils::config::WindowConfig,
 ) -> (PhysicalPosition<i32>, PhysicalSize<u32>, Option<f64>) {
+    let rebase = |(area, from): (PhysicalRect<i32, u32>, f64)| match recorded {
+        Some(to) => PhysicalRect {
+            position: area.position.to_logical::<f64>(from).to_physical(to),
+            size: area.size.to_logical::<f64>(from).to_physical(to),
+        },
+        None => area,
+    };
+    let areas: Vec<_> = monitors.iter().copied().map(rebase).collect();
+    let fallback = rebase((fallback, scale));
+    let client_offset = match recorded {
+        Some(to) => client_offset.to_logical::<f64>(startup).to_physical(to),
+        None => client_offset,
+    };
+    // AppShell owns a 48 logical-pixel header on all desktop platforms.
+    let header_height = (48.0 * recorded.unwrap_or(startup)).ceil() as u32;
     let position = if saved.maximized {
         PhysicalPosition::new(saved.prev_x, saved.prev_y)
     } else {
@@ -223,17 +509,19 @@ fn restore_request(
         ),
         size: PhysicalSize::new(saved.width, saved.height),
     };
-    // A size below the minimum at the fallback's scale (rounded as tao rounds it) was
-    // saved at a lower scale and would reopen below it. Windows applies the minimum to
-    // the frame: take off tao's shadow insets (default metrics, Windows 11 top).
+    // Without a recorded scale, a size below the minimum at the fallback's scale (rounded
+    // as tao rounds it) was saved at a lower scale and would reopen below it. Windows
+    // applies the minimum to the frame: take off tao's shadow insets (default metrics,
+    // Windows 11 top).
     let win = u32::from(cfg!(windows));
     let side = win * (4 * (scale * 96.0).round() as u32 + 48) / 96 * 2;
     let top = win * scale.round() as u32;
     let px = |logical: Option<f64>| (logical.unwrap_or(0.0) * scale).round() as u32;
-    let below = saved.width < px(config.min_width).saturating_sub(2 * side)
-        || saved.height < px(config.min_height).saturating_sub(side + top);
+    let below = recorded.is_none()
+        && (saved.width < px(config.min_width).saturating_sub(2 * side)
+            || saved.height < px(config.min_height).saturating_sub(side + top));
     let default = below.then(|| LogicalSize::new(config.width, config.height).to_physical(scale));
-    let relocated = reachable_client(client, header_height, areas, fallback, default);
+    let relocated = reachable_client(client, header_height, &areas, fallback, default);
     let target = relocated.unwrap_or(client);
     (
         PhysicalPosition::new(
@@ -241,7 +529,7 @@ fn restore_request(
             target.position.y.saturating_sub(client_offset.y),
         ),
         target.size,
-        relocated.map(|_| scale),
+        recorded.or(relocated.map(|_| scale)),
     )
 }
 
@@ -335,13 +623,13 @@ mod tests {
         let laptop = rect(0, 50, 3024, 1840);
         let saved = decode(&saved_state(1600, 100, 602, 470));
         let offset = tauri::PhysicalPosition::new(0, 0);
-        let request = |areas: &[tauri::PhysicalRect<i32, u32>]| {
-            super::restore_request(&saved, offset, 96, areas, (laptop, 2.0), &config())
+        let request = |areas: &[(tauri::PhysicalRect<i32, u32>, f64)]| {
+            super::restore_request(&saved, None, offset, 2.0, areas, (laptop, 2.0), &config())
         };
         // The 1x external overlaps the 2x laptop's physical rect, so the scale
         // this rect was saved at is ambiguous. Keep it as saved.
         assert_eq!(
-            request(&[laptop, external]),
+            request(&[(laptop, 2.0), (external, 1.0)]),
             (
                 tauri::PhysicalPosition::new(1600, 100),
                 tauri::PhysicalSize::new(602, 470),
@@ -352,11 +640,100 @@ mod tests {
         // but 301x235 points is below the minimum at its known scale. Send the
         // default in the laptop's logical units.
         assert_eq!(
-            request(&[laptop]),
+            request(&[(laptop, 2.0)]),
             (
                 tauri::PhysicalPosition::new(312, 50),
                 tauri::PhysicalSize::new(2400, 1600),
                 Some(2.0)
+            ),
+        );
+    }
+
+    // The issue #3083 layout: a 2x laptop (1512x982 points) with a 1x external
+    // to its right. Their physical rects overlap from x 1512 to 3024.
+    fn mixed_scale_monitors() -> [(tauri::PhysicalRect<i32, u32>, f64); 2] {
+        [
+            (rect(0, 66, 3024, 1898), 2.0),
+            (rect(1512, -317, 3440, 1415), 1.0),
+        ]
+    }
+
+    fn logical_request(
+        saved: &super::SavedGeometry,
+        recorded: Option<f64>,
+        startup: f64,
+        monitors: &[(tauri::PhysicalRect<i32, u32>, f64)],
+    ) -> (tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>) {
+        let offset = tauri::PhysicalPosition::new(0, 0);
+        let (position, size, scale) = super::restore_request(
+            saved,
+            recorded,
+            offset,
+            startup,
+            monitors,
+            monitors[0],
+            &config(),
+        );
+        let scale = scale.expect("sent in logical units");
+        (position.to_logical(scale), size.to_logical(scale))
+    }
+
+    #[test]
+    fn recorded_scale_restores_logical_frame_whichever_screen_starts_the_window() {
+        let monitors = mixed_scale_monitors();
+        // Saved on the 2x laptop at 1200x750 points, relaunched on the 1x external.
+        let laptop = decode(&saved_state(200, 66, 2400, 1500));
+        assert_eq!(
+            logical_request(&laptop, Some(2.0), 1.0, &monitors),
+            (
+                tauri::LogicalPosition::new(100.0, 33.0),
+                tauri::LogicalSize::new(1200.0, 750.0)
+            ),
+        );
+        // Saved on the 1x external, relaunched on the 2x laptop.
+        let external = decode(&saved_state(2212, -317, 2323, 1089));
+        assert_eq!(
+            logical_request(&external, Some(1.0), 2.0, &monitors),
+            (
+                tauri::LogicalPosition::new(2212.0, -317.0),
+                tauri::LogicalSize::new(2323.0, 1089.0)
+            ),
+        );
+        // A 1x save below the minimum at 2x is kept: its points are known.
+        let small = decode(&saved_state(2212, 100, 602, 470));
+        assert_eq!(
+            logical_request(&small, Some(1.0), 2.0, &monitors).1,
+            tauri::LogicalSize::new(602.0, 470.0),
+        );
+    }
+
+    #[test]
+    fn recorded_scale_measures_reachability_in_points_after_unplugging() {
+        // Saved on the 1x external, which is gone. Its pixels still fall in the
+        // laptop's physical rect, but its points are right of the laptop.
+        let saved = decode(&saved_state(2212, 100, 1000, 600));
+        let laptop = &mixed_scale_monitors()[..1];
+        assert_eq!(
+            logical_request(&saved, Some(1.0), 2.0, laptop),
+            (
+                tauri::LogicalPosition::new(256.0, 33.0),
+                tauri::LogicalSize::new(1000.0, 600.0)
+            ),
+        );
+    }
+
+    #[test]
+    fn without_a_recorded_scale_the_request_is_unchanged() {
+        let monitors = mixed_scale_monitors();
+        let offset = tauri::PhysicalPosition::new(0, 0);
+        let saved = decode(&saved_state(200, 66, 2400, 1500));
+        // Reachable: sent as physical pixels, which macOS converts at the startup scale.
+        assert_eq!(
+            super::restore_request(&saved, None, offset, 1.0, &monitors, monitors[0], &config()),
+            (
+                tauri::PhysicalPosition::new(200, 66),
+                tauri::PhysicalSize::new(2400, 1500),
+                None
             ),
         );
     }
@@ -368,8 +745,15 @@ mod tests {
         let fallback = |width, height, area| {
             let saved = decode(&saved_state(5530, 100, width, height));
             let offset = tauri::PhysicalPosition::new(0, 0);
-            let (position, size, scale) =
-                super::restore_request(&saved, offset, 96, &[area, left], (area, 2.0), &config());
+            let (position, size, scale) = super::restore_request(
+                &saved,
+                None,
+                offset,
+                2.0,
+                &[(area, 2.0), (left, 2.0)],
+                (area, 2.0),
+                &config(),
+            );
             assert_eq!(scale, Some(2.0));
             Some(tauri::PhysicalRect { position, size })
         };
@@ -390,9 +774,17 @@ mod tests {
         let offset = tauri::PhysicalPosition::new(0, 0);
         let relocated = |scale, width, height| {
             let saved = decode(&saved_state(100, 100, width, height));
-            super::restore_request(&saved, offset, 96, &[area], (area, scale), &config())
-                .2
-                .is_some()
+            super::restore_request(
+                &saved,
+                None,
+                offset,
+                2.0,
+                &[(area, scale)],
+                (area, scale),
+                &config(),
+            )
+            .2
+            .is_some()
         };
         // tao applies the 480x400 minimum to an undecorated Windows frame. The
         // shadow insets (size frame plus padded border on the sides and bottom,
@@ -492,9 +884,10 @@ mod tests {
         assert_eq!(
             super::restore_request(
                 &saved,
+                None,
                 tauri::PhysicalPosition::new(7, 0),
-                48,
-                &[area],
+                1.0,
+                &[(area, 1.0)],
                 (area, 1.0),
                 &config()
             ),
@@ -530,6 +923,12 @@ mod tests {
         super::saved_geometry(&serde_json::to_vec(state).unwrap(), "main").unwrap()
     }
 
+    /// A scale file with `fields`, recorded for the save `state`.
+    fn bound(state: &Value, mut fields: Value) -> Vec<u8> {
+        fields["geometry"] = json!(decode(state).pairing());
+        serde_json::to_vec(&json!({ "main": fields })).unwrap()
+    }
+
     #[test]
     fn requested_geometry_is_safe_even_while_getters_still_report_startup_bounds() {
         let area = rect(0, 25, 1440, 875);
@@ -555,14 +954,30 @@ mod tests {
         );
         let offset = tauri::PhysicalPosition::new(0, 0);
         assert_eq!(
-            super::restore_request(&saved, offset, 48, &[area], (area, 1.0), &config()),
+            super::restore_request(
+                &saved,
+                None,
+                offset,
+                1.0,
+                &[(area, 1.0)],
+                (area, 1.0),
+                &config()
+            ),
             expected
         );
         // Resize is asynchronous too: validating only startup width misses
         // the right-hand controls of a wider saved client.
         let saved = decode(&saved_state(100, 120, 1800, 800));
         assert_eq!(
-            super::restore_request(&saved, offset, 48, &[area], (area, 1.0), &config()),
+            super::restore_request(
+                &saved,
+                None,
+                offset,
+                1.0,
+                &[(area, 1.0)],
+                (area, 1.0),
+                &config()
+            ),
             (
                 area.position,
                 tauri::PhysicalSize::new(1440, 800),
@@ -577,7 +992,15 @@ mod tests {
         let offset = tauri::PhysicalPosition::new(7, 0);
         let saved = decode(&saved_state(-7, 0, 1920, 1000));
         assert_eq!(
-            super::restore_request(&saved, offset, 48, &[area], (area, 1.0), &config()),
+            super::restore_request(
+                &saved,
+                None,
+                offset,
+                1.0,
+                &[(area, 1.0)],
+                (area, 1.0),
+                &config()
+            ),
             (
                 tauri::PhysicalPosition::new(-7, 0),
                 tauri::PhysicalSize::new(1920, 1000),
@@ -589,7 +1012,15 @@ mod tests {
         state["main"]["prev_x"] = json!(100);
         state["main"]["prev_y"] = json!(-450);
         assert_eq!(
-            super::restore_request(&decode(&state), offset, 48, &[area], (area, 1.0), &config()),
+            super::restore_request(
+                &decode(&state),
+                None,
+                offset,
+                1.0,
+                &[(area, 1.0)],
+                (area, 1.0),
+                &config()
+            ),
             (
                 tauri::PhysicalPosition::new(473, 0),
                 tauri::PhysicalSize::new(960, 640),
@@ -600,7 +1031,15 @@ mod tests {
         state["main"]["maximized"] = json!(false);
         state["main"]["fullscreen"] = json!(true);
         assert_eq!(
-            super::restore_request(&decode(&state), offset, 48, &[area], (area, 1.0), &config()),
+            super::restore_request(
+                &decode(&state),
+                None,
+                offset,
+                1.0,
+                &[(area, 1.0)],
+                (area, 1.0),
+                &config()
+            ),
             (
                 tauri::PhysicalPosition::new(0, 0),
                 tauri::PhysicalSize::new(960, 640),
@@ -665,6 +1104,316 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), original);
         super::restore(&window).unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn onboarding_records_scale_beside_both_saves_and_restore_clears_its_copy() {
+        let (dir, app) = fixture();
+        let state = dir.path().join(tauri_plugin_window_state::DEFAULT_FILENAME);
+        std::fs::write(
+            &state,
+            serde_json::to_vec(&saved_state(100, 120, 960, 640)).unwrap(),
+        )
+        .unwrap();
+        let mut plugin = super::builder().build();
+        plugin.initialize(app.handle(), Value::Null).unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let window = webview.as_ref().window();
+        plugin.window_created(window.clone());
+        super::onboarding_preserve_window(webview).unwrap();
+        let scale = window.scale_factor().unwrap();
+        for name in [super::SCALE, super::INTRO_SCALE] {
+            let bytes = std::fs::read(dir.path().join(name)).unwrap();
+            let saved = super::saved_scale(&bytes, "main").unwrap();
+            assert_eq!((saved.scale, saved.position), (scale, Some(scale)));
+            assert!(saved.geometry.is_some());
+            assert_eq!(super::saved_scale(&bytes, "other"), None);
+        }
+        assert_eq!(super::saved_scale(br#"{"main":{"scale":0}}"#, "main"), None);
+        // Each scale file names the geometry file it was copied beside.
+        for intro in [true, false] {
+            let (_, scales) =
+                super::restore_input(dir.path(), &app.handle().filename(), "main", intro).unwrap();
+            assert_eq!(scales.map(|scales| scales.scale), Some(scale));
+        }
+        super::restore(&window).unwrap();
+        assert!(!dir.path().join(super::INTRO_GEOMETRY).exists());
+        assert!(!dir.path().join(super::INTRO_SCALE).exists());
+        assert!(dir.path().join(super::SCALE).exists());
+    }
+
+    fn kept(size: f64, position: f64, prev: f64) -> super::Kept {
+        super::Kept {
+            size: Some(size),
+            position: Some(position),
+            prev: Some(prev),
+        }
+    }
+
+    fn frame(maximized: bool, minimized: bool, scale: f64) -> super::Frame {
+        super::Frame {
+            maximized,
+            minimized,
+            scale,
+        }
+    }
+
+    #[test]
+    fn kept_scales_follow_the_plugins_cache_rules() {
+        use super::Update::{Moved, Resized, Saved};
+        let normal = |scale| frame(false, false, scale);
+        // Dragged from a 2x screen to a 1x screen without a Resized, then
+        // minimized and quit: the plugin keeps 2x size and 1x position.
+        let mut scales = kept(2.0, 2.0, 2.0);
+        scales.apply(Moved, normal(1.0));
+        assert_eq!(scales, kept(2.0, 1.0, 2.0));
+        scales.apply(Moved, frame(false, true, 2.0));
+        scales.apply(Resized, frame(false, true, 2.0));
+        scales.apply(Saved, frame(false, true, 2.0));
+        assert_eq!(scales, kept(2.0, 1.0, 2.0));
+        // Maximizing moves the window: the normal origin becomes prev. A
+        // maximized window keeps its cached size, through Resized and saves.
+        scales.apply(Moved, frame(true, false, 2.0));
+        assert_eq!(scales, kept(2.0, 2.0, 1.0));
+        scales.apply(Resized, frame(true, false, 1.0));
+        scales.apply(Saved, frame(true, false, 1.0));
+        assert_eq!(scales, kept(2.0, 2.0, 1.0));
+        // A normal window's save reads both size and position, never prev.
+        scales.apply(Resized, normal(1.0));
+        assert_eq!(scales, kept(1.0, 2.0, 1.0));
+        scales.apply(Saved, normal(2.0));
+        assert_eq!(scales, kept(2.0, 2.0, 1.0));
+    }
+
+    /// Reads `state` and `scale` from disk as restore does, then plans the
+    /// restore as restore does, in logical units. Windows plans in physical
+    /// pixels, without recorded scales.
+    #[cfg(not(windows))]
+    fn planned(
+        state: &Value,
+        scale: Value,
+        startup: f64,
+        monitors: &[(tauri::PhysicalRect<i32, u32>, f64)],
+    ) -> (tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>) {
+        let dir = tempfile::tempdir().unwrap();
+        let live = tauri_plugin_window_state::DEFAULT_FILENAME;
+        std::fs::write(dir.path().join(live), serde_json::to_vec(state).unwrap()).unwrap();
+        std::fs::write(dir.path().join(super::SCALE), bound(state, scale)).unwrap();
+        let (saved, scales) = super::restore_input(dir.path(), live, "main", false).unwrap();
+        let offset = tauri::PhysicalPosition::new(0, 0);
+        let (position, size, logical) = super::restore_plan(
+            saved,
+            scales,
+            offset,
+            startup,
+            monitors,
+            monitors[0],
+            &config(),
+        );
+        let logical = logical.expect("sent in logical units");
+        (position.to_logical(logical), size.to_logical(logical))
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn position_and_size_restore_each_at_its_own_scale() {
+        let monitors = mixed_scale_monitors();
+        // 1200x750 points cached on the 2x laptop, then moved to (2212, -200)
+        // points on the 1x external without a Resized.
+        let state = saved_state(2212, -200, 2400, 1500);
+        let split = json!({"scale": 2.0, "position": 1.0, "prev": 1.0});
+        assert_eq!(
+            planned(&state, split, 2.0, &monitors),
+            (
+                tauri::LogicalPosition::new(2212.0, -200.0),
+                tauri::LogicalSize::new(1200.0, 750.0)
+            ),
+        );
+        // Maximized: the normal origin is prev, at prev's scale.
+        let mut state = saved_state(0, 66, 2400, 1500);
+        state["main"]["maximized"] = json!(true);
+        state["main"]["prev_x"] = json!(2212);
+        state["main"]["prev_y"] = json!(-200);
+        let prev = json!({"scale": 2.0, "position": 2.0, "prev": 1.0});
+        assert_eq!(
+            planned(&state, prev, 2.0, &monitors).0,
+            tauri::LogicalPosition::new(2212.0, -200.0),
+        );
+        // An older file without position scales reads them as the size's.
+        let state = saved_state(200, 66, 2400, 1500);
+        assert_eq!(
+            planned(&state, json!({"scale": 2.0}), 1.0, &monitors),
+            (
+                tauri::LogicalPosition::new(100.0, 33.0),
+                tauri::LogicalSize::new(1200.0, 750.0)
+            ),
+        );
+        assert_eq!(
+            super::saved_scale(br#"{"main":{"scale":2.0,"prev":0}}"#, "main"),
+            None
+        );
+    }
+
+    #[test]
+    fn restore_reads_the_snapshot_pair_while_pending_else_the_live_pair() {
+        let dir = tempfile::tempdir().unwrap();
+        let write =
+            |name: &str, bytes: &[u8]| std::fs::write(dir.path().join(name), bytes).unwrap();
+        let live = tauri_plugin_window_state::DEFAULT_FILENAME;
+        let input = |intro| super::restore_input(dir.path(), live, "main", intro);
+        assert!(input(true).is_none() && input(false).is_none());
+        let (state, intro) = (
+            saved_state(100, 120, 960, 640),
+            saved_state(300, 320, 1200, 800),
+        );
+        write(live, &serde_json::to_vec(&state).unwrap());
+        // A plugin file without a scale file restores as on main.
+        assert!(input(false).unwrap().1.is_none());
+        write(super::SCALE, &bound(&state, json!({"scale": 2.0})));
+        write(super::INTRO_GEOMETRY, &serde_json::to_vec(&intro).unwrap());
+        write(
+            super::INTRO_SCALE,
+            &bound(&intro, json!({"scale": 1.0, "position": 2.0})),
+        );
+        let (saved, scales) = input(true).unwrap();
+        assert_eq!((saved.x, saved.width), (300, 1200));
+        assert_eq!(
+            scales,
+            Some(super::SavedScale {
+                scale: 1.0,
+                position: Some(2.0),
+                prev: None,
+                geometry: Some(decode(&intro).pairing()),
+            })
+        );
+        let (saved, scales) = input(false).unwrap();
+        assert_eq!((saved.x, saved.width), (100, 960));
+        assert_eq!(scales.map(|scales| scales.scale), Some(2.0));
+        assert!(super::restore_input(dir.path(), live, "other", false).is_none());
+    }
+
+    #[test]
+    fn window_events_update_the_kept_scales_and_only_saves_write_them() {
+        let (dir, app) = fixture();
+        let path = dir.path().join(super::SCALE);
+        let live = dir.path().join(tauri_plugin_window_state::DEFAULT_FILENAME);
+        let state = saved_state(200, 66, 2400, 1500);
+        std::fs::write(&live, serde_json::to_vec(&state).unwrap()).unwrap();
+        let disk = bound(&state, json!({"scale": 2.0}));
+        std::fs::write(&path, &disk).unwrap();
+        let mut plugin = super::builder().build();
+        plugin.initialize(app.handle(), Value::Null).unwrap();
+        let mut window = |label| {
+            let window = tauri::WebviewWindowBuilder::new(&app, label, Default::default())
+                .build()
+                .unwrap()
+                .as_ref()
+                .window();
+            plugin.window_created(window.clone());
+            window
+        };
+        let (main, other) = (window("main"), window("other"));
+        let scales = || *app.state::<super::KeptScale>().kept.lock().unwrap();
+        // The kept scales start from the file, as the plugin's cache does.
+        super::restore(&main).unwrap();
+        assert_eq!(scales(), kept(2.0, 2.0, 2.0));
+        // MockRuntime's windows are normal, at 1x.
+        let moved = tauri::WindowEvent::Moved(tauri::PhysicalPosition::new(2212, -200));
+        let resized = tauri::WindowEvent::Resized(tauri::PhysicalSize::new(2400, 1500));
+        super::window_event(&other, &moved);
+        super::window_event(&main, &tauri::WindowEvent::Focused(true));
+        assert_eq!(scales(), kept(2.0, 2.0, 2.0));
+        super::window_event(&main, &moved);
+        assert_eq!(scales(), kept(2.0, 1.0, 2.0));
+        super::window_event(&main, &resized);
+        assert_eq!(scales(), kept(1.0, 1.0, 2.0));
+        // While the plugin's restore holds its lock, it ignores Moved and
+        // Resized, and so does Buzz.
+        let restoring = &app.state::<super::KeptScale>().restoring;
+        restoring.store(true, std::sync::atomic::Ordering::SeqCst);
+        super::window_event(&main, &moved);
+        super::window_event(&main, &resized);
+        restoring.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(scales(), kept(1.0, 1.0, 2.0));
+        // Events only update the cache, like the plugin's: a crash or Force
+        // Quit before Exit leaves the old geometry on disk, and the old scale.
+        assert_eq!(std::fs::read(&path).unwrap(), disk);
+        // Exit: the plugin saves, then Buzz writes the scales of that save.
+        plugin.on_event(app.handle(), &tauri::RunEvent::Exit);
+        super::save_scale(app.handle());
+        let saved = super::saved_geometry(&std::fs::read(&live).unwrap(), "main").unwrap();
+        assert_eq!(
+            super::saved_scale(&std::fs::read(&path).unwrap(), "main"),
+            Some(super::SavedScale {
+                scale: 1.0,
+                position: Some(1.0),
+                prev: Some(2.0),
+                geometry: Some(saved.pairing()),
+            })
+        );
+    }
+
+    #[test]
+    fn a_geometry_save_without_its_scales_restores_as_before() {
+        let monitors = mixed_scale_monitors();
+        let (dir, app) = fixture();
+        let mut plugin = super::builder().build();
+        plugin.initialize(app.handle(), Value::Null).unwrap();
+        let live = dir.path().join(tauri_plugin_window_state::DEFAULT_FILENAME);
+        let path = dir.path().join(super::SCALE);
+        // This build quit on the 2x laptop: a 1200x750-point window.
+        let laptop = saved_state(200, 66, 2400, 1500);
+        std::fs::write(&live, serde_json::to_vec(&laptop).unwrap()).unwrap();
+        std::fs::write(&path, bound(&laptop, json!({"scale": 2.0}))).unwrap();
+        // Then an older build, or an exit cut short between the two writes,
+        // saved 1200x750 pixels on the 1x external and left the 2x scale.
+        let external = saved_state(2212, -317, 1200, 750);
+        std::fs::write(&live, serde_json::to_vec(&external).unwrap()).unwrap();
+        let (saved, scales) =
+            super::restore_input(dir.path(), &app.handle().filename(), "main", false).unwrap();
+        assert_eq!(scales, None);
+        // Restored as on main, in physical pixels, not halved to 600x375 points.
+        let offset = tauri::PhysicalPosition::new(0, 0);
+        assert_eq!(
+            super::restore_plan(
+                saved,
+                scales,
+                offset,
+                1.0,
+                &monitors,
+                monitors[0],
+                &config()
+            ),
+            (
+                tauri::PhysicalPosition::new(2212, -317),
+                tauri::PhysicalSize::new(1200, 750),
+                None
+            ),
+        );
+        // The kept scales don't start from the stale file either, so the next
+        // Exit can't pair them with this save's cached frame.
+        let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap()
+            .as_ref()
+            .window();
+        plugin.window_created(window.clone());
+        super::restore(&window).unwrap();
+        assert_eq!(
+            *app.state::<super::KeptScale>().kept.lock().unwrap(),
+            super::Kept::default()
+        );
+    }
+
+    #[test]
+    fn nothing_is_written_without_a_kept_scale() {
+        let (dir, app) = fixture();
+        let mut plugin = super::builder().build();
+        plugin.initialize(app.handle(), Value::Null).unwrap();
+        super::write_kept_scale(app.handle());
+        assert!(!dir.path().join(super::SCALE).exists());
     }
 
     #[test]

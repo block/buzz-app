@@ -14,6 +14,7 @@ import {
   terminalOutcome,
   type ObserverFrame,
 } from "./observer";
+import { controlResult, type ControlResult } from "./agent-control";
 
 export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
@@ -168,6 +169,7 @@ export function createAgentActivity(
   const typing = new Map<string, Typing>();
   const listeners = new Set<() => void>();
   const workingListeners = new Set<() => void>();
+  const controlListeners = new Set<(result: ControlResult) => void>();
   const channelListeners = new Map<string, Set<() => void>>();
   let channels = new Map<string, Snapshot>();
   const projectedTurns = new WeakMap<Turn, ActivityTurn>();
@@ -550,7 +552,14 @@ export function createAgentActivity(
       },
     );
   }
-  function admit(input: ObserverFrame, receivedAt: number) {
+  /** An agent may ship its answer inside a batch with other telemetry. */
+  function answer(agent: string, items: readonly unknown[]) {
+    for (const item of items) {
+      const result = controlResult(agent, item);
+      if (result) for (const listener of controlListeners) listener(result);
+    }
+  }
+  function admit(input: ObserverFrame, receivedAt: number, stale: boolean) {
     let frame: ObserverFrame, raw: unknown;
     try {
       frame = observerFrame(input);
@@ -568,12 +577,18 @@ export function createAgentActivity(
     const items = Array.isArray(children) ? children : [raw];
     // A denied child cannot leak through an otherwise visible raw batch.
     if (!channelsAllowed(raw, canAccess)) return;
+    if (stale) {
+      // Dated before the route started: only an answer to a stop is read.
+      answer(frame.agent, items);
+      return;
+    }
     if (records.some((record) => record.id === frame.id)) {
       publish();
       return;
     }
     liveAgents.add(frame.agent);
     for (const item of items) fold(frame.agent, item);
+    answer(frame.agent, items);
     const record = Object.freeze({
       id: frame.id,
       agent: frame.agent,
@@ -651,6 +666,16 @@ export function createAgentActivity(
           throw new Error("This request can't be retried here");
         local.source.retry({ scope: local.scope, agent, messageId });
       },
+      /** Whether telemetry from `agent` reached this session since it last
+       * started listening. The relay sends an agent's telemetry only to its
+       * owner, so this proves the viewer owns it. */
+      reports: (agent: string) => liveAgents.has(agent),
+      /** Hears each answer to a stop an agent sends the viewer. */
+      controlResults(listener: (result: ControlResult) => void) {
+        if (closed) return () => {};
+        controlListeners.add(listener);
+        return () => controlListeners.delete(listener);
+      },
       workingSnapshot: () => workingChannels,
       subscribeWorking(listener: () => void) {
         if (closed) return () => {};
@@ -699,7 +724,7 @@ export function createAgentActivity(
         };
       },
     }),
-    receive(input: ObserverFrame, current: number) {
+    receive(input: ObserverFrame, current: number, stale = false) {
       if (closed || !available || leases === 0 || current !== generation)
         return;
       let frame: ObserverFrame, raw: unknown;
@@ -723,7 +748,7 @@ export function createAgentActivity(
         })
       )
         return;
-      if (leases > 0) admit(frame, Date.now());
+      if (leases > 0) admit(frame, Date.now(), stale);
     },
     /** Trigger messages may arrive after telemetry. Resolve at content admission,
      * not on the freshness timer, without retaining or fetching more messages. */
@@ -853,6 +878,7 @@ export function createAgentActivity(
       restart();
       listeners.clear();
       workingListeners.clear();
+      controlListeners.clear();
       channelListeners.clear();
     },
   };

@@ -834,6 +834,10 @@ fn isolated_agent_ipc_probe() {
             serde_json::json!({"community": "https://relay.test", "event": {"id": "bad"}}),
         ),
         (
+            "relay_agent_control",
+            serde_json::json!({"community": "https://relay.test", "agent": public, "payload": {"type": "cancel_turn", "channelId": "c", "requestId": "bad"}}),
+        ),
+        (
             "relay_agent_log_proof",
             serde_json::json!({"community": "https://relay.test", "target": {"id": "bad", "pubkey": public, "relayUrl": "wss://relay.test", "nonce": "bad"}}),
         ),

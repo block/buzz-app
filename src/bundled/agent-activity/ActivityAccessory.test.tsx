@@ -1598,12 +1598,15 @@ it("stops a hosted agent's turn through its provider in this thread", async () =
   try {
     f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
     openBubble();
-    expect(agents.interruptible).toHaveBeenCalledWith(A);
+    // Asked through this conversation's own session.
+    const conversation = f.props.session.agentActivity;
+    expect(agents.interruptible).toHaveBeenCalledWith(A, conversation);
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(A, {
-      channelId: "c",
-      threadRootId: root,
-    });
+    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(
+      A,
+      { channelId: "c", threadRootId: root },
+      conversation,
+    );
     // Its turn ends when the provider reports it, so it shows as stopping.
     await settle();
     expect(look().getByText("Stopping…")).toBeInTheDocument();
@@ -1635,10 +1638,14 @@ it("stops a hosted agent in the thread its message replies to", () => {
     f.send(A, "t", 1, "turn_started", { triggeringEventIds: [next] });
     openBubble();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(A, {
-      channelId: "c",
-      threadRootId: root,
-    });
+    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(
+      A,
+      {
+        channelId: "c",
+        threadRootId: root,
+      },
+      expect.anything(),
+    );
   } finally {
     view.unmount();
     f.dispose();
@@ -1656,10 +1663,14 @@ it("opens a single agent directly and stops it without opening activity", async 
     expect(bubble).not.toHaveAttribute("aria-expanded");
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     expect(f.props.open).not.toHaveBeenCalled();
-    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(A, {
-      channelId: "c",
-      threadRootId: root,
-    });
+    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(
+      A,
+      {
+        channelId: "c",
+        threadRootId: root,
+      },
+      expect.anything(),
+    );
     await settle();
     expect(bubble).toHaveTextContent("Stopping…");
     expect(bubble).toHaveAccessibleName(/Blossom, Stopping/);
@@ -1741,10 +1752,14 @@ it("offers each agent its own Stop in the activity popup", async () => {
       popup.getByRole("button", { name: "Stop Blossom" }),
     ).toHaveTextContent("Stop");
     fireEvent.click(popup.getByRole("button", { name: "Stop Bubbles" }));
-    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(B, {
-      channelId: "c",
-      threadRootId: root,
-    });
+    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(
+      B,
+      {
+        channelId: "c",
+        threadRootId: root,
+      },
+      expect.anything(),
+    );
     await settle();
     expect(notify).toHaveBeenCalledExactlyOnceWith(
       "Stopping Bubbles",

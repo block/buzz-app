@@ -785,8 +785,10 @@ export function policyRelay({
                 expect(filter["#p"]).toEqual([viewer]);
                 expect(filter["#h"]).toBeUndefined();
                 expect(filter.limit).toBeUndefined();
+                // Live only, allowing for an agent's clock running behind
+                // (`OBSERVER_SKEW_SECS` in live.ts, which plain Node can't load).
                 expect(filter.since).toBeGreaterThanOrEqual(
-                  Math.floor(Date.now() / 1000) - 1,
+                  Math.floor(Date.now() / 1000) - 300 - 1,
                 );
               }
             }

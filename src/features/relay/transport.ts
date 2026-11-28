@@ -35,6 +35,7 @@ import {
   readSnapshotText,
 } from "./read-state-snapshot";
 import type { AgentLibraryReader } from "../agents/library";
+import type { CancelTurn } from "../agents/agent-control";
 import {
   projectSidebarPreferences,
   projectWorkspaceGroups,
@@ -157,6 +158,15 @@ export interface ReadTransport {
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
+  /** Purpose-bound NIP-AO stop frame, `cancel_turn` or `cancel_thread_turn`:
+   * encrypted to one of the viewer's agents with the viewer's key, signed for
+   * the session to send on its live socket. Never a general encrypting
+   * signer. */
+  readonly signAgentControl?: (
+    agent: string,
+    payload: CancelTurn,
+    signal: AbortSignal,
+  ) => Promise<RelayEvent>;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;

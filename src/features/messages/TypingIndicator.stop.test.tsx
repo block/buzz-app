@@ -138,10 +138,14 @@ it("stops hosted work in its known conversation and keeps Stop pending until the
     name: "Stop Agent in Thread · First task",
   });
   await user.click(stop);
-  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, {
-    channelId: "channel",
-    threadRootId: root,
-  });
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(
+    agent,
+    {
+      channelId: "channel",
+      threadRootId: root,
+    },
+    expect.anything(),
+  );
   expect(stop).toHaveAttribute("aria-disabled", "true");
   f.update([entry()], { turns: [], records: [] });
   expect(
@@ -229,9 +233,14 @@ it("identifies each hosted thread and stops only the selected work", async () =>
         name: "Stop Agent in Thread · " + task.title,
       }),
     );
-    expect(interrupt).toHaveBeenNthCalledWith(index + 1, agent, {
-      channelId: "channel",
-      threadRootId: task.root,
-    });
+    expect(interrupt).toHaveBeenNthCalledWith(
+      index + 1,
+      agent,
+      {
+        channelId: "channel",
+        threadRootId: task.root,
+      },
+      expect.anything(),
+    );
   }
 });

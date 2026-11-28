@@ -770,7 +770,7 @@ const holds = (state: PullState | "failed" | undefined, level: PullLevel) =>
  * request with one number keep their own. */
 /** GitHub names are not case-sensitive, so one key holds every casing a
  * link, the panel or a watch gives. */
-const keyOf = (url: string, level: PullLevel = "state") => {
+export const keyOf = (url: string, level: PullLevel = "state") => {
   const reference = parseGitHubReference(url);
   return reference?.kind === "pull" ||
     (reference?.kind === "issue" && level === "state")

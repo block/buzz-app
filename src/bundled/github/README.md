@@ -19,3 +19,15 @@ Preview GitHub repositories, pull requests, issues, and commits without leaving 
 2. On a pull request, switch between **Discussion** and **Checks**.
 3. Switch a pull request from **Summary** to **Changes** to read its diff.
 4. Choose **Open on GitHub** to see the full page.
+5. To post a repository's pull requests in a channel you can post in, open
+   the channel menu, choose **GitHub repositories** and follow the repository.
+   Following needs the desktop app with `gh` signed in: your Buzz reads the
+   repository about once a minute and posts its pull requests as you, so
+   cards only update while your Buzz is open. New cards start only for pull
+   requests that change after you follow. Anything it can't keep shows under
+   the repository.
+6. Each followed pull request shows as a card on its announcement, with its
+   state, checks and reviews, and the thread gets a reply when it is
+   approved, merged or closed. A card shows only what the repository's
+   publisher wrote, and only while the channel still follows the repository
+   with them as its publisher.

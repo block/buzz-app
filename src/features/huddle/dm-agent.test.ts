@@ -26,7 +26,11 @@ function fixture() {
     protection: undefined as unknown,
     executionBinding: undefined as unknown,
   };
-  const types = [{ key: "test/voice", voice: () => {} }];
+  const types: {
+    key: string;
+    voice: () => void;
+    voiceReady?: () => boolean;
+  }[] = [{ key: "test/voice", voice: () => {} }];
   const choices = { selectable: [{ pubkey: "agent" }] };
   const connection = {
     status: "ready",
@@ -57,6 +61,7 @@ it.each([
   "other-owner",
   "other-community",
   "unsupported",
+  "voice-off",
   "not-selectable",
 ])("does not automatically invite %s", (kind) => {
   const f = fixture();
@@ -69,6 +74,12 @@ it.each([
   if (kind === "other-owner") f.agent.owner = "other";
   if (kind === "other-community") f.agent.relay = "https://other.example.org";
   if (kind === "unsupported") f.types.length = 0;
+  if (kind === "voice-off")
+    f.types[0] = {
+      key: "test/voice",
+      voice: () => {},
+      voiceReady: () => false,
+    };
   if (kind === "not-selectable") f.choices.selectable = [];
   expect(dmVoiceAgent(f.connection, f.destination, f.agents)).toBeUndefined();
 });

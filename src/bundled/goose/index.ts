@@ -157,6 +157,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       if (!handle) throw new Error("The Goose agent is not running");
       return runtime.voice(seat, handle);
     },
+    // Voice is off until the owner turns it on for this device.
+    voiceReady: () => runtime.voiceSettings.enabled,
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,
     conversationFolders: true,

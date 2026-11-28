@@ -240,6 +240,13 @@ runs on a message, reaction, schedule or webhook. It starts disabled, and only
 its author can edit, enable or run it. Your agents follow only workflows that
 you or your agents own.
 
+## Reminders
+
+In the desktop app, when the plugin is on, choose **Remind me** in a sent
+message's ⋯ menu. A confirmation names the due time, and the message shows an
+alarm mark while the reminder is pending. A reminder's note can't be edited
+once set.
+
 ## Plugins
 
 **Settings → Plugins → Manage plugins** shows which plugins are on, turns them

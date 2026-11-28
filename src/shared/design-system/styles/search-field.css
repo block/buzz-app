@@ -18,7 +18,11 @@
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
 
-.search-field:has(.search-field-actions, [data-search-clear]) {
+/* Give trailing buttons a tighter inset while text keeps the field padding. */
+.search-field:has(
+  [data-search-clear],
+  .search-field-actions :where(.buzz-button)
+) {
   padding-right: var(--space-1);
 }
 
@@ -68,12 +72,15 @@ html[data-keyboard-navigation] .search-field:has(input:focus-visible),
   flex-shrink: 0;
 }
 
+.search-field > [data-search-clear] {
+  order: 2;
+}
+
 .search-field [data-search-clear] {
   position: static;
   display: grid;
   place-items: center;
   flex: 0 0 var(--size-control-sm);
-  order: 2;
   width: var(--size-control-sm);
   height: var(--size-control-sm);
   min-height: 0;

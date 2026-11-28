@@ -66,7 +66,7 @@ const message = {
 it.each([
   ["mention", "Pinky mentioned you in #new-notifications"],
   ["thread", "Pinky replied in #new-notifications"],
-  ["direct", "Pinky sent you a direct message"],
+  ["direct", "Pinky sent you a DM"],
 ] as const)(
   "formats %s with sender, conversation and plain preview",
   (category, title) => {
@@ -88,7 +88,7 @@ it("DM mentions do not expose an internal DM name; missing names use key fragmen
       { id: "room", name: "internal-id", channelType: "dm" },
       undefined,
     ).title,
-  ).toBe("aaaaaaaaaa mentioned you in a direct message");
+  ).toBe("aaaaaaaaaa mentioned you in a DM");
   expect(
     messageNotificationText(message, "thread", undefined, { name: " " }).title,
   ).toBe("aaaaaaaaaa replied in #room");
@@ -113,7 +113,8 @@ it("keeps group identity and other recipients visible with bounded names and an 
     undefined,
     (id) => names.get(id),
   );
-  expect(text.title).toContain("Group DM");
+  // Includes the viewer as well as every other authorized member.
+  expect(text.title).toMatch(/^Group DM · 5 members ·/);
   expect(text.title).toContain("Pinky");
   expect(text.title).toContain("Amy");
   expect(text.title).toContain("Bea");
@@ -131,9 +132,12 @@ it.each([
   ["Customer Support East Escalations", "Customer Support West Escalations"],
 ])("keeps shortened recipients distinguishable: %s / %s", (first, second) => {
   const ids = ["c".repeat(64), "d".repeat(64)] as const;
+  const longSender = "Long sender name ".repeat(5);
   const resolved = resolveIdentityNames([
     { pubkey: ids[0], name: first, isAgent: true },
     { pubkey: ids[1], name: second, isAgent: true },
+    { pubkey: message.authorId, name: longSender },
+    { pubkey: "f".repeat(64), name: longSender },
   ]);
   const keys = publicKeyLabels(ids);
   const text = messageNotificationText(
@@ -146,9 +150,13 @@ it.each([
       participants: [message.authorId, ...ids],
     },
     { name: "Pinky" },
-    undefined,
+    resolved.get(message.authorId)?.name,
     (id) => resolved.get(id)?.name,
   );
+  expect(text.title).toContain("Long sender");
+  const senderQualifier = resolved.get(message.authorId)?.qualifier;
+  expect(senderQualifier).toBeTruthy();
+  expect(text.title).toContain(senderQualifier);
   for (const id of ids) {
     const identifyingPart = resolved.get(id)?.qualifier ?? keys.get(id);
     expect(identifyingPart).toBeTruthy();
@@ -246,6 +254,23 @@ it("labels workflow ownership without making the owner the sender, preserving na
   expect(
     messageNotificationText(workflow, "thread", undefined, undefined).title,
   ).toBe("Workflow · owned by bbbbbbbbbb replied in #room");
+  const group = messageNotificationText(
+    workflow,
+    "direct",
+    {
+      id: "room",
+      channelType: "dm",
+      name: "internal-id",
+      participants: [workflow.authorId, workflow.workflowOwnerId],
+    },
+    undefined,
+    `${"Long owner name ".repeat(5)}· owner-id`,
+    (id) => (id === workflow.workflowOwnerId ? "Wes Owner" : undefined),
+  );
+  expect(group.title).toMatch(/^Group DM · 3 members · Workflow · owned by/);
+  expect(group.title).toContain("owner-id");
+  // Exclude the actual author, not the owner, from the other recipients.
+  expect(group.title).toContain("to you, Wes Owner");
 });
 
 it("cuts the source on a whole code point when an emoji straddles the cap", () => {

@@ -142,12 +142,18 @@ export function messageNotificationText(
   const participants =
     channel?.channelType === "dm" ? channel.participants : undefined;
   if (category === "direct" && participants && participants.length > 1) {
+    const compactName =
+      shortText(resolvedName ?? profile?.name ?? "", 20, 8) || name;
+    // Shorten the name, not the label that identifies workflow ownership.
+    const compactSender = message.workflowOwnerId
+      ? workflowLabel(compactName)
+      : compactName;
     const ids = participants.filter((id) => id !== message.authorId);
     const keys = publicKeyLabels(ids);
     // Keep the end of long names, where scoped identity qualifiers live.
     const labels = ids.map(
       (id) =>
-        shortText(recipientName?.(id) ?? "", 24, 8) ||
+        shortText(recipientName?.(id) ?? "", 16, 8) ||
         keys.get(id) ||
         "Unknown",
     );
@@ -165,7 +171,7 @@ export function messageNotificationText(
       recipients.length > 2 ? ` and ${recipients.length - 2} more` : "";
     return Object.freeze({
       title: shortText(
-        `Group DM · ${shortText(sender, 40)} to you, ${others}${remaining}`,
+        `Group DM · ${participants.length + 1} members · ${compactSender} to you, ${others}${remaining}`,
         128,
       ),
       body: messagePreview(message.previewContent),
@@ -173,13 +179,13 @@ export function messageNotificationText(
   }
   const destination =
     channel?.channelType === "dm"
-      ? "a direct message"
+      ? "a DM"
       : `#${shortText(channel?.name ?? "", 64) || message.channelId.slice(0, 8)}`;
   const title =
     category === "mention"
       ? `${sender} mentioned you in ${destination}`
       : category === "direct"
-        ? `${sender} sent you a direct message`
+        ? `${sender} sent you a DM`
         : `${sender} replied in ${destination}`;
   return Object.freeze({ title, body: messagePreview(message.previewContent) });
 }

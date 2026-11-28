@@ -591,7 +591,7 @@ it.each([
     expect(h.show.mock.calls[0]?.[0]).toMatchObject({
       title:
         category === "direct"
-          ? "Pinky sent you a direct message"
+          ? "Pinky sent you a DM"
           : "Pinky replied in #Room",
       body: "A new reply",
     });
@@ -640,13 +640,14 @@ it.each([false, true])(
     const notification = h.show.mock.calls[0]?.[0];
     expect(notification.body).toBe("hello");
     if (group) {
-      expect(notification.title).toContain("Group DM");
+      // The total includes the viewer, the sender and the agent.
+      expect(notification.title).toMatch(/^Group DM · 3 members ·/);
       expect(notification.title).toContain("Pinky");
       expect(notification.title).toContain("Helper");
       expect(notification.title).not.toContain("internal-dm-id");
       expect(notification.title).not.toContain(h.viewer.pubkey);
     } else {
-      expect(notification.title).toBe("Pinky sent you a direct message");
+      expect(notification.title).toBe("Pinky sent you a DM");
       expect(notification.title).not.toContain("Helper");
     }
     h.click();

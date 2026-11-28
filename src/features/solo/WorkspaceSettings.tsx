@@ -304,7 +304,7 @@ export function WorkspaceSettings({
       if (lifetime.checkOnly) {
         // Checking an uncertain details write never publishes pending Canvas edits.
         await lifetime.run("check");
-        if (!active()) return;
+        if (!active() || lifetime.checkingAutomatic) return;
         if (canvasAvailable && !loaded) {
           setStatus(
             "Chat name and lifetime saved. Workspace and Canvas were not loaded; retry settings to review them.",
@@ -524,7 +524,7 @@ export function WorkspaceSettings({
           <Input
             value={lifetime.name}
             placeholder={lifetime.base.name}
-            disabled={busy || lifetime.busy || lifetime.blocked}
+            disabled={busy || lifetime.busy || lifetime.nameBlocked}
             onChange={(event) => lifetime.changeName(event.target.value)}
           />
         </Field>

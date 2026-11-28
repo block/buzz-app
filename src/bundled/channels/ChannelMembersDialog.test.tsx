@@ -3676,7 +3676,7 @@ it.each([false, true])(
       .fn(async () => details)
       .mockImplementationOnce(() => initial);
     const save = vi.fn(async () => {});
-    const check = vi.fn(async () => {});
+    const check = vi.fn(async () => undefined);
     cleanup();
     try {
       render(

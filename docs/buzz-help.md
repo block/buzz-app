@@ -139,6 +139,8 @@ if that desktop app is up and running.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.
+  If Buzz chooses an automatic title while you’re renaming the chat in the
+  same session, you can still save the name you typed.
 - **Channels** are open (anyone can find and join them) or private (invite
   only). The member avatars in the header manage members, access and roles.
   Archived channels are read-only, and owners and admins can unarchive them.

@@ -19,7 +19,7 @@ cc = "1"
 tauri = { version = "=2.12.4", features = ["test"] }
 libc = "0.2"
 block2 = "=0.6.2"
-objc2 = "=0.6.4"
+objc2 = "=0.6.5"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSTimer", "block2"] }
 objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore"] }
 tempfile = "3"

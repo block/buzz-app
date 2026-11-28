@@ -1,4 +1,5 @@
 import { useContext, useRef } from "react";
+import { behindModal } from "../../shared/design-system/overlayLayer";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import {
   useComposerExpected,
@@ -39,6 +40,7 @@ function Layer({ open }: { open: OpenLayer }) {
       ? document.activeElement
       : null,
   );
+  const scroll = useRef<HTMLElement>(null);
   if (!address || !view) return null;
   // The layer reads at once, and draws once its thread's reply box is there.
   const waiting = !host && expected;
@@ -70,8 +72,11 @@ function Layer({ open }: { open: OpenLayer }) {
               bodyLayout="flex"
               visit
               finalFocus={opener}
+              // Media opened from the message is over it, and closes first.
+              onEscape={() => behindModal(scroll.current)}
             >
               <section
+                ref={scroll}
                 className={styles.detailsDialogScroll}
                 aria-label="Message"
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: The scroll owner must support keyboard scrolling.

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 import { hoverMessage } from "./message-actions.mjs";
@@ -176,6 +177,7 @@ test.describe("Guest-default permalinks", () => {
 test("a joined guest can read and leave without receiving a composer or Join prompt", async ({
   page,
   app,
+  context,
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Messages");
@@ -203,6 +205,60 @@ test("a joined guest can read and leave without receiving a composer or Join pro
   await expect(
     page.getByText("Start the conversation below.", { exact: true }),
   ).toHaveCount(0);
+  // With no composer to read over, a details message opens whole in a
+  // dialog. Media opened from it is in front of that dialog, which only a
+  // browser's painting order shows.
+  await context.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: fileURLToPath(
+        new URL("../../public/shell-gradient.png", import.meta.url),
+      ),
+      contentType: "image/png",
+    }),
+  );
+  app.append(
+    "primary",
+    readerChannelId,
+    `Guest findings\n\n${"More of it follows here. ".repeat(30)}`,
+    true,
+    false,
+    undefined,
+    undefined,
+    [
+      ["audience", "details"],
+      ["imeta", "url https://primary.example/media/photo.png", "m image/png"],
+    ],
+  );
+  await page.getByRole("button", { name: "Show more", exact: true }).click();
+  // Under the viewer the reader is hidden from roles.
+  const reader = page
+    .getByRole("dialog", { includeHidden: true })
+    .filter({ hasText: "Guest findings" });
+  await reader
+    .getByRole("link", { name: "Open image attachment", exact: true })
+    .click();
+  const closeViewer = page.getByRole("button", {
+    name: "Close fullscreen viewer",
+    exact: true,
+  });
+  await expect(closeViewer).toBeVisible();
+  // The reader is inert under the viewer, and hit testing passes over what
+  // is inert. With that lifted, it finds what is painted in front.
+  expect(
+    await reader.evaluate((element) => {
+      const inert = [...document.querySelectorAll("[inert]")];
+      for (const each of inert) each.inert = false;
+      const { x, y, width, height } = element.getBoundingClientRect();
+      const front = document.elementFromPoint(x + width / 2, y + height / 2);
+      for (const each of inert) each.inert = true;
+      return element.contains(front);
+    }),
+  ).toBe(false);
+  await page.keyboard.press("Escape");
+  await expect(closeViewer).toHaveCount(0);
+  await expect(reader).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(reader).toHaveCount(0);
   await page
     .getByRole("button", { name: "Channel actions", exact: true })
     .click();

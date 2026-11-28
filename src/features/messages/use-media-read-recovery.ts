@@ -8,7 +8,8 @@ function mediaFailure(element: HTMLMediaElement): Error {
 }
 
 /** Reload bytes after a network failure. Playback permission and decoding
- * failures remain explicit; recovery never starts playback itself. */
+ * failures remain explicit; recovery never starts playback itself. The
+ * element keeps its place: a reload alone would start it over at 0:00. */
 export function useMediaReadRecovery(
   source: string | undefined,
   failed: () => void,
@@ -66,7 +67,11 @@ export function useMediaReadRecovery(
         signal.addEventListener("abort", abort, { once: true });
         try {
           if (preload === "none") element.preload = "metadata";
+          const position = element.currentTime;
           element.load();
+          // With nothing loaded this sets where the browser starts, and what
+          // the element reports as its position meanwhile.
+          if (position > 0) element.currentTime = position;
         } catch (error) {
           finish(error);
         }

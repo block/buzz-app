@@ -1,4 +1,3 @@
-import { snapshotAttachments } from "../relay/forwarded-message";
 import { ForwardedMessage } from "./ForwardedMessage";
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
@@ -73,7 +72,7 @@ import {
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
-import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
+import type { MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import {
   profileTarget,
@@ -94,18 +93,13 @@ import {
   contributionKey,
 } from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
-import { AttachmentImage } from "./AttachmentImage";
 import { AgentDeclineNotes } from "./AgentDeclineNotes";
 import { DeliveryNotice } from "./DeliveryNotice";
-import { AttachmentView } from "../conversation/AttachmentView";
-import { AudioAttachment } from "./AudioAttachment";
-import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
-import { isNativeMediaSource, isProxySource } from "./attachment-source";
-import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
 import { DetailsMessage } from "./DetailsMessage";
+import { MessageAttachments, useAttachmentGroups } from "./MessageAttachments";
 import { useComposerScope } from "./composer-overlay";
 import {
   safeMessageUrl,
@@ -643,9 +637,19 @@ function MessageRowContent({
       setMediaPlaying([...attachmentLists.current].some(playingIn));
     };
   }, []);
-  const keepAlive = reporting !== undefined || !!opened || mediaPlaying;
-  // The dialog, pending submit, notice and playing media live in this row;
-  // eviction loses them.
+  // A reader that took a video's playback from this row hands it back here
+  // when it closes. The row's own player is paused meanwhile.
+  const [lent, setLent] = useState(0);
+  const trackLent = useCallback((held: boolean) => {
+    setLent((count) => count + (held ? 1 : -1));
+    // Handed back, the player plays before its play event says so; reading it
+    // now leaves no moment unpinned between the two.
+    setMediaPlaying([...attachmentLists.current].some(playingIn));
+  }, []);
+  const keepAlive =
+    reporting !== undefined || !!opened || mediaPlaying || lent > 0;
+  // The dialog, pending submit, notice, playing media and the playback a
+  // reader will hand back live in this row; eviction loses them.
   useEffect(() => {
     const release = keepAlive ? keepMounted?.(row.id) : undefined;
     // Dialog focus restoration runs in a microtask after unmount; releasing a
@@ -769,269 +773,45 @@ function MessageRowContent({
       return false;
     }
   };
-  // A plugin may draw an image itself, such as a shared agent's card; it
-  // stands alone rather than joining the gallery around it.
-  const attachmentRenderers = useSyncExternalStore(
-    extensions?.attachments?.subscribe ?? noSubscribe,
-    extensions?.attachments?.snapshot ?? noActions,
-    extensions?.attachments?.snapshot ?? noActions,
-  );
-  const drawn = (attachment: ChannelMessage["attachments"][number]) =>
-    attachment.kind === "image" &&
-    attachmentRenderers.some((renderer) => {
-      try {
-        return renderer.matches(attachment);
-      } catch {
-        return false;
-      }
-    });
-  // Gallery-backed images and videos share a group, preserving sender order.
-  const copiedUrls = new Set(
-    row.forward ? snapshotAttachments(row).map(({ url }) => url) : [],
-  );
-  const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
-  for (const attachment of row.attachments) {
-    if (!safeMessageUrl(attachment.url) || claimed(attachment)) continue;
-    const previous = attachmentGroups.at(-1);
-    if (
-      previous?.[0] &&
-      copiedUrls.has(previous[0].url) === copiedUrls.has(attachment.url) &&
-      !drawn(attachment) &&
-      !drawn(previous[0]) &&
-      (((attachment.kind === "image" || attachment.kind === "file") &&
-        previous[0].kind === attachment.kind) ||
-        (onOpenMediaReview &&
-          (attachment.kind === "image" || attachment.kind === "video") &&
-          (previous[0].kind === "image" || previous[0].kind === "video")))
-    )
-      previous.push(attachment);
-    else attachmentGroups.push([attachment]);
-  }
-  // A message's images are saved with its channel, so losing the channel
-  // forgets them.
-  const attachmentMedia = (url: string, size?: "small") =>
-    media(url, size, row.channelId);
+  const {
+    groups: attachmentGroups,
+    copiedUrls,
+    drawn,
+  } = useAttachmentGroups(row, extensions, {
+    claimed,
+    gallery: !!onOpenMediaReview,
+  });
+  const attachmentList = {
+    row,
+    drawn,
+    session,
+    extensions,
+    // A message's images are saved with its channel, so losing the channel
+    // forgets them.
+    media: (url: string, size?: "small") => media(url, size, row.channelId),
+    onOpenLink: openLink,
+    canOpenLink,
+    cached,
+    keepMounted: keepRowMounted,
+    onOpenMediaReview,
+  };
   const attachmentContent = (copied = false) =>
     attachmentGroups.some(
       (group) => copiedUrls.has(group[0]?.url ?? "") === copied,
     ) && (
-      <div
-        className={styles.messageAttachments}
-        data-message-attachments
-        ref={observeAttachments}
-        onPlay={trackMedia}
-        onPause={trackMedia}
-        onEnded={trackMedia}
-        onEmptied={trackMedia}
-        onError={trackMedia}
-      >
-        {attachmentGroups
-          .filter((group) => copiedUrls.has(group[0]?.url ?? "") === copied)
-          .map((group) => {
-            const images =
-              group[0]?.kind === "image" || group[0]?.kind === "video";
-            const imageOnly = group.every((item) => item.kind === "image");
-            const mediaLabel = imageOnly ? "images" : "photos and videos";
-            const files = group[0]?.kind === "file";
-            // Only collapse when the host can open the complete gallery.
-            const collapsed = images && group.length > 4 && !!onOpenMediaReview;
-            const previews = collapsed ? group.slice(0, 4) : group;
-            const items = previews.map((attachment, index) => {
-              const url = safeMessageUrl(attachment.url);
-              if (!url) return null;
-              const source = attachmentMedia(url);
-              if (attachment.kind === "file") {
-                const fallback = (
-                  <FileAttachment
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    onOpenLink={openLink}
-                  />
-                );
-                return source && extensions?.attachments ? (
-                  <AttachmentView
-                    key={url}
-                    registry={extensions.attachments}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    placement="message"
-                    message={row}
-                    FileCard={FileAttachment}
-                    fallback={fallback}
-                  />
-                ) : (
-                  fallback
-                );
-              }
-              if (attachment.kind === "audio") {
-                if (
-                  source &&
-                  (isProxySource(source) || isNativeMediaSource(source))
-                )
-                  return extensions?.attachments ? (
-                    <AttachmentDownloadContext key={url} value={true}>
-                      <AttachmentView
-                        registry={extensions.attachments}
-                        attachment={{ ...attachment, url }}
-                        source={source}
-                        placement="message"
-                        message={row}
-                        fallback={
-                          <AudioAttachment
-                            attachment={{ ...attachment, url }}
-                            source={source}
-                          />
-                        }
-                      />
-                    </AttachmentDownloadContext>
-                  ) : (
-                    <AudioAttachment
-                      key={url}
-                      attachment={{ ...attachment, url }}
-                      source={source}
-                    />
-                  );
-                return (
-                  <FileAttachment
-                    key={url}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    onOpenLink={openLink}
-                  />
-                );
-              }
-              if (attachment.kind === "image") {
-                const small = attachmentMedia(url, "small");
-                // Third-party URLs map to themselves: no thumbnail. JPEG
-                // drops alpha, so these formats use the WebP variant.
-                const alpha =
-                  /^(.+\/[0-9a-f]{64})\.(?:png|gif|webp|avif)$/.exec(url);
-                const thumbnail =
-                  small === source
-                    ? undefined
-                    : alpha
-                      ? attachmentMedia(`${alpha[1]}.thumb.webp`)
-                      : small;
-                const image = (
-                  <AttachmentImage
-                    onOpenLink={
-                      canOpenLink?.(attachment.url) ? openLink : undefined
-                    }
-                    key={url}
-                    session={session}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    thumbnail={thumbnail}
-                    cached={cached}
-                    compact={group.length >= 4}
-                    overlayCount={
-                      collapsed && index === 3 ? group.length - 3 : 0
-                    }
-                    keepMounted={keepRowMounted}
-                    label={
-                      collapsed && index === 3
-                        ? `View all ${group.length} ${mediaLabel}, starting at ${imageOnly ? "image" : "item"} 4`
-                        : group.length > 1
-                          ? `Open image ${index + 1} of ${group.length}`
-                          : "Open image attachment"
-                    }
-                    {...(onOpenMediaReview
-                      ? {
-                          onOpenReview: (item, seconds) =>
-                            onOpenMediaReview(
-                              row.id,
-                              item,
-                              seconds,
-                              row.replyCount > 0 ||
-                                (!!row.threadRootId &&
-                                  row.threadRootId !== row.id),
-                              row.attachments,
-                            ),
-                        }
-                      : {})}
-                  />
-                );
-                return source &&
-                  extensions?.attachments &&
-                  drawn(attachment) ? (
-                  <AttachmentView
-                    key={url}
-                    registry={extensions.attachments}
-                    attachment={{ ...attachment, url }}
-                    source={source}
-                    placement="message"
-                    message={row}
-                    fallback={image}
-                  />
-                ) : (
-                  image
-                );
-              }
-              return (
-                <MediaAttachment
-                  key={url}
-                  attachment={{ ...attachment, url }}
-                  media={attachmentMedia}
-                  compact={images && group.length >= 4 && !!onOpenMediaReview}
-                  overlayCount={collapsed && index === 3 ? group.length - 3 : 0}
-                  label={
-                    collapsed && index === 3
-                      ? `View all ${group.length} ${mediaLabel}, starting at item 4`
-                      : `Open video ${index + 1} of ${group.length}`
-                  }
-                  mode={mediaMode}
-                  {...(attachment.kind === "video" && mediaSeekTo !== undefined
-                    ? {
-                        seekTo: mediaSeekTo,
-                        ...(mediaSeekRequest !== undefined
-                          ? { seekRequest: mediaSeekRequest }
-                          : {}),
-                      }
-                    : {})}
-                  {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
-                  {...(onOpenMediaReview
-                    ? {
-                        onOpenReview: (item, seconds) =>
-                          onOpenMediaReview(
-                            row.id,
-                            item,
-                            seconds,
-                            row.replyCount > 0 ||
-                              (!!row.threadRootId &&
-                                row.threadRootId !== row.id),
-                            row.attachments,
-                          ),
-                      }
-                    : {})}
-                />
-              );
-            });
-            return images &&
-              !(group[0] && drawn(group[0])) &&
-              (imageOnly || group.length >= 4) ? (
-              <div className={styles.imageGroup} key={group[0]?.url}>
-                {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
-                <div
-                  className={`${styles.imageList} ${group.length >= 4 ? styles.imageGrid : ""}`}
-                  data-image-grid={group.length >= 4 || undefined}
-                  role="group"
-                  aria-label={`${group.length} ${imageOnly ? (group.length === 1 ? "image" : "images") : "photos and videos"}`}
-                >
-                  {items}
-                </div>
-              </div>
-            ) : files ? (
-              <div className={styles.fileGroup} key={group[0]?.url}>
-                {/* A block each, so a copied selection puts every
-                    card on its own line. */}
-                {items.map((item) => item && <div key={item.key}>{item}</div>)}
-              </div>
-            ) : (
-              items
-            );
-          })}
-      </div>
+      <MessageAttachments
+        {...attachmentList}
+        groups={attachmentGroups.filter(
+          (group) => copiedUrls.has(group[0]?.url ?? "") === copied,
+        )}
+        mode={mediaMode}
+        seekTo={mediaSeekTo}
+        seekRequest={mediaSeekRequest}
+        onPlayback={onMediaPlayback}
+        onLent={trackLent}
+        list={observeAttachments}
+        onMedia={trackMedia}
+      />
     );
   const forwardProjection = useMemo(
     () =>
@@ -1149,6 +929,11 @@ function MessageRowContent({
           onOpenLink={openLink}
           canOpenLink={canOpenLink}
           participantProfiles={participantProfiles}
+        />
+        <MessageAttachments
+          {...attachmentList}
+          groups={attachmentGroups}
+          reader
         />
       </DetailsMessage>
     ) : (

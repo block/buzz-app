@@ -9,6 +9,7 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -37,6 +38,7 @@ import { useMediaElementSource } from "./use-media-element-source";
 import { isNativeMediaSource } from "./attachment-source";
 import { MediaContextMenu } from "./MediaContextMenu";
 import { MediaActionAnnouncements } from "./MediaActionAnnouncements";
+import { type PlaybackHandoff, usePlaybackHandoff } from "./playback-handoff";
 
 export type MediaPlayback = Readonly<{
   attachmentUrl: string;
@@ -56,6 +58,11 @@ type MediaAttachmentProps = {
   compact?: boolean;
   overlayCount?: number;
   label?: string;
+  /** Shares a video's playback between a message's brief and its reader. */
+  handoff?: PlaybackHandoff | undefined;
+  /** Whether a reader holds the playback it took from this brief, and will
+   * hand it back. Must be stable. */
+  onLent?: ((lent: boolean) => void) | undefined;
 };
 
 function useVideoPosition(
@@ -101,6 +108,8 @@ export function MediaAttachment({
   compact = false,
   overlayCount = 0,
   label = "Open video fullscreen",
+  handoff,
+  onLent,
 }: MediaAttachmentProps) {
   const active = useConversationPresentation();
   const corners = useMediaCorners();
@@ -115,6 +124,14 @@ export function MediaAttachment({
   const [currentTime, setCurrentTime] = useState(seekTo ?? 0);
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
+  // Handed a video that has played, it shows no poster again: its own frame,
+  // or a still of the one it was handed until then.
+  const [handed, setHanded] = useState(false);
+  const still = useRef<HTMLSpanElement>(null);
+  const takeOver = useCallback((posterless: boolean) => {
+    setStarted(true);
+    if (posterless) setHanded(true);
+  }, []);
   const [failed, setFailed] = useState(false);
   const captured = source ? openingFrame(source) : undefined;
   const openingSeek = useRef<{ time: number; capture: number }>(undefined);
@@ -139,6 +156,25 @@ export function MediaAttachment({
   const { recover: recoverMedia } = useMediaReadRecovery(
     active ? videoSource : undefined,
     () => setFailed(true),
+  );
+  usePlaybackHandoff(
+    video,
+    handoff &&
+      attachment.kind === "video" &&
+      !compact &&
+      source &&
+      !failed &&
+      !element.unavailable
+      ? `${handoff.messageId}\n${attachment.url}`
+      : undefined,
+    {
+      reader: !!handoff?.reader,
+      active,
+      started,
+      start: takeOver,
+      still,
+      onLent,
+    },
   );
   const viewMedia = (seconds: number) => {
     video.current?.pause();
@@ -269,7 +305,7 @@ export function MediaAttachment({
         source && isNativeMediaSource(source) ? "anonymous" : undefined
       }
       src={videoSource}
-      poster={visiblePreview}
+      poster={handed ? undefined : visiblePreview}
       preload={compact ? "metadata" : preload}
       playsInline
       style={previewStyle}
@@ -455,6 +491,9 @@ export function MediaAttachment({
                 capturedPreview && <CapturedPoster frame={capturedPreview} />
               ))}
             {videoElement}
+            {handoff && (
+              <span ref={still} className={styles.mediaStill} aria-hidden />
+            )}
             {active && <VideoControls videoRef={video} inline />}
             <span className={styles.mediaExpand}>
               <IconButton
@@ -553,6 +592,14 @@ export function MediaViewer({
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) close();
+      }}
+      // A dialog this opened from is its React ancestor, and takes an Escape
+      // that reaches it: pressed in the viewer, the key closes the viewer.
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.defaultPrevented) return;
+        event.preventDefault();
+        event.stopPropagation();
+        close();
       }}
     >
       <section

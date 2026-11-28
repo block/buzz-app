@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { behindModal } from "../../shared/design-system/overlayLayer";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { useComposerScope } from "./composer-overlay";
@@ -82,6 +83,7 @@ export function DetailsMessage({
   );
   const trigger = useRef<HTMLButtonElement>(null);
   const clip = useRef<HTMLDivElement>(null);
+  const scroll = useRef<HTMLElement>(null);
   const [clipped, setClipped] = useState(false);
   // Expanded, nothing is held back; the toggle stays for Show less.
   useLayoutEffect(() => {
@@ -145,8 +147,11 @@ export function DetailsMessage({
           description={time}
           bodyLayout="flex"
           finalFocus={trigger}
+          // Media opened from the message is over it, and closes first.
+          onEscape={() => behindModal(scroll.current)}
         >
           <section
+            ref={scroll}
             className={styles.detailsDialogScroll}
             aria-label="Message"
             // biome-ignore lint/a11y/noNoninteractiveTabindex: The scroll owner must support keyboard scrolling.

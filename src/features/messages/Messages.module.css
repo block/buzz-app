@@ -1537,6 +1537,24 @@ button.mediaPreview {
   object-fit: contain;
   pointer-events: none;
 }
+/* A still of the frame a player was handed, over its video until the video
+   shows that frame itself. */
+.mediaStill {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.mediaStill:empty {
+  display: none;
+}
+.mediaStill > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--surface-inverse);
+}
 .mediaPlay,
 .mediaExpand {
   position: absolute;
@@ -1598,10 +1616,13 @@ button.mediaPreview {
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
 }
+/* A fullscreen viewer is a modal on the dialog layer, so one opened from a
+   dialog is over it: both are portalled to the page, and the later is on
+   top. Toasts, menus and tooltips have their own layers above. */
 .mediaViewerBackdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--layer-dialog);
   display: grid;
   place-items: center;
   padding: var(--space-8);
@@ -1657,7 +1678,7 @@ button.mediaPreview {
   container: media-review / inline-size;
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--layer-dialog);
   padding: var(--space-6);
   background: var(--overlay);
 }
@@ -2790,6 +2811,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 .mediaPreview[data-video-preview] .mediaVideo,
+.mediaPreview[data-video-preview] .mediaStill,
 .mediaPreview[data-video-preview] .mediaPoster {
   border-radius: inherit;
   clip-path: var(--media-corner-clip, none);
@@ -4572,6 +4594,11 @@ html[data-keyboard-navigation]
   overscroll-behavior: contain;
   margin-inline: calc(-1 * var(--dialog-padding));
   padding-inline: var(--dialog-padding);
+}
+/* The whole message's attachments stand clear of the end of its text. A
+   row's sit closer, under a bubble that has its own padding. */
+.detailsReader > .messageAttachments {
+  margin-top: var(--space-2);
 }
 /* The details reader's sections sit below its dialog title in hierarchy. */
 .detailsReader .text :is(h1, h2) {

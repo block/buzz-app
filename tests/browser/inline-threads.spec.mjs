@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
 import { clickRow, open, settle } from "./timeline.mjs";
@@ -39,7 +41,7 @@ const reply = (scope) =>
 const side = (page) => page.locator("[data-panel-workspace]");
 const filler = "More of it follows here. ".repeat(30);
 /** A peer's details message: in `root`'s thread, or the channel's own. */
-const details = (app, text, root) =>
+const details = (app, text, root, attachments = []) =>
   app.append(
     "primary",
     "alpha",
@@ -48,7 +50,7 @@ const details = (app, text, root) =>
     false,
     root?.id,
     undefined,
-    [["audience", "details"]],
+    [["audience", "details"], ...attachments],
   );
 const showMore = (scope, text) =>
   scope
@@ -367,14 +369,51 @@ test.describe("Inline", () => {
   test("details in the conversation read over its composer", async ({
     page,
     app,
+    context,
   }) => {
+    await context.route("**/api/relay/primary/media?**", (route) =>
+      route.fulfill({
+        path: fileURLToPath(
+          new URL("../../public/shell-gradient.png", import.meta.url),
+        ),
+        contentType: "image/png",
+      }),
+    );
     await open(page, app);
-    details(app, "Channel findings");
+    details(app, "Channel findings", undefined, [
+      ["imeta", "url https://primary.example/media/photo.png", "m image/png"],
+      [
+        "imeta",
+        "url https://primary.example/media/report.pdf",
+        "m application/pdf",
+        "filename report.pdf",
+      ],
+    ]);
     const timeline = page.locator("[data-channel-timeline]");
     await showMore(timeline, "Channel findings").click();
     const reader = detailsSheet(page);
     await expect(reader).toBeVisible();
     await expect(reader).toBeFocused();
+    // The whole message lists its attachments, as its row does, and media
+    // opens over the reader and closes back to it.
+    const image = reader.getByRole("link", {
+      name: "Open image attachment",
+      exact: true,
+    });
+    await expect(image).toBeVisible();
+    await expect(
+      reader.getByRole("link", { name: "Download report.pdf", exact: true }),
+    ).toBeVisible();
+    await image.click();
+    const closeViewer = page.getByRole("button", {
+      name: "Close fullscreen viewer",
+      exact: true,
+    });
+    await expect(closeViewer).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(closeViewer).toHaveCount(0);
+    await expect(reader).toBeVisible();
+    await expect(image).toBeFocused();
     // The composer stays usable above the reader.
     const composer = page.getByRole("textbox", { name: "Message #Alpha" });
     await composer.click();
@@ -391,6 +430,309 @@ test.describe("Inline", () => {
     await expect(detailsSheet(page)).toHaveCount(0);
     await page.goForward();
     await expect(detailsSheet(page)).toHaveCount(0);
+  });
+
+  // Browser-only: only real media elements prove a position, a play state and
+  // sound move between two players.
+  test("a details video plays on into the reader and back into the chat", async ({
+    page,
+    app,
+    browserName,
+  }) => {
+    // Chromium seeks only in media served by byte range.
+    const bytes = await readFile(
+      new URL(
+        "../fixtures/message-gallery/assets/sample-long.mp4",
+        import.meta.url,
+      ),
+    );
+    // While set, the video's bytes wait, as on a slow connection.
+    let slow;
+    await page.route("**/api/relay/primary/media?**", async (route) => {
+      await slow;
+      const range = /^bytes=(\d+)-(\d*)$/.exec(
+        route.request().headers().range ?? "",
+      );
+      const start = Number(range?.[1] ?? 0);
+      const last = range?.[2]
+        ? Math.min(Number(range[2]), bytes.length - 1)
+        : bytes.length - 1;
+      return route.fulfill({
+        status: range ? 206 : 200,
+        contentType: "video/mp4",
+        headers: {
+          "accept-ranges": "bytes",
+          ...(range && {
+            "content-range": `bytes ${start}-${last}/${bytes.length}`,
+          }),
+        },
+        body: bytes.subarray(start, last + 1),
+      });
+    });
+    // The clip lasts a minute and is played from its twentieth second. At
+    // quarter speed the rest is longer than a journey's time limit, so
+    // playback never reaches its end here.
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz.video.playback-speed", "0.25"),
+    );
+    await open(page, app);
+    const event = app.append(
+      "primary",
+      "alpha",
+      `Video findings\n\n${filler}`,
+      true,
+      false,
+      undefined,
+      undefined,
+      [
+        ["audience", "details"],
+        [
+          "imeta",
+          "url https://primary.example/media/sample.mp4",
+          "m video/mp4",
+        ],
+      ],
+    );
+    const timeline = page.locator("[data-channel-timeline]");
+    const brief = timeline.locator(`[data-message-id="${event.id}"] video`);
+    const reader = detailsSheet(page);
+    const read = (video) =>
+      video.evaluate((element) => ({
+        playing: !element.paused,
+        seconds: element.currentTime,
+        // Each stretch of the clip it has played, oldest first, as its start
+        // and end. A seek begins a new one.
+        played: Array.from({ length: element.played.length }, (_, index) => [
+          element.played.start(index),
+          element.played.end(index),
+        ]),
+        volume: element.volume,
+        muted: element.muted,
+        rate: element.playbackRate,
+      }));
+    const press = async (scope, name) => {
+      await scope.getByRole("button", { name, exact: true }).focus();
+      await page.keyboard.press("Enter");
+    };
+    const row = timeline.locator(`[data-message-id="${event.id}"]`);
+    // The part of the clip's picture that counts its seconds, which no
+    // control of the player lies over, as a grid of colours: of the frame a
+    // video shows, or of a screenshot of a player.
+    const picture = (video, screenshot) =>
+      video.evaluate(async (element, png) => {
+        const part = { left: 0.6, top: 0.3, width: 0.24, height: 0.4 };
+        let source = element;
+        let frame = [0, 0, element.videoWidth, element.videoHeight];
+        if (png) {
+          source = await createImageBitmap(
+            new Blob(
+              [Uint8Array.from(atob(png), (char) => char.charCodeAt(0))],
+              { type: "image/png" },
+            ),
+          );
+          // The player fits the whole frame inside its box.
+          const fit = Math.min(
+            source.width / element.videoWidth,
+            source.height / element.videoHeight,
+          );
+          const [width, height] = [
+            element.videoWidth * fit,
+            element.videoHeight * fit,
+          ];
+          frame = [
+            (source.width - width) / 2,
+            (source.height - height) / 2,
+            width,
+            height,
+          ];
+        }
+        const canvas = document.createElement("canvas");
+        [canvas.width, canvas.height] = [48, 40];
+        const context = canvas.getContext("2d");
+        context.drawImage(
+          source,
+          frame[0] + part.left * frame[2],
+          frame[1] + part.top * frame[3],
+          part.width * frame[2],
+          part.height * frame[3],
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        );
+        const { data } = context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        );
+        // Each cell is the mean of a block, so that the scale a picture was
+        // drawn at does not tell.
+        const cells = Array(6 * 5 * 3).fill(0);
+        for (let index = 0; index < data.length; index += 4) {
+          const pixel = index / 4;
+          const cell =
+            Math.floor(pixel / canvas.width / 8) * 6 +
+            Math.floor((pixel % canvas.width) / 8);
+          for (let channel = 0; channel < 3; channel++)
+            cells[cell * 3 + channel] += data[index + channel] / 64;
+        }
+        return cells;
+      }, screenshot?.toString("base64"));
+    // How far apart two such pictures are, from 0 to 255.
+    const apart = (one, other) =>
+      one.reduce(
+        (sum, value, index) => sum + Math.abs(value - other[index]),
+        0,
+      ) / one.length;
+    await expect
+      .poll(() => brief.evaluate((video) => video.readyState))
+      .toBeGreaterThanOrEqual(2);
+    // The clip as its poster shows it, in its first second.
+    const unplayed = await picture(brief);
+    await brief.evaluate((video) => {
+      video.volume = 0.5;
+      video.muted = true;
+      video.currentTime = 20;
+    });
+    await press(row, "Play video");
+    await expect
+      .poll(async () => (await read(brief)).seconds)
+      .toBeGreaterThan(20.3);
+
+    // From the moment the reader's player is drawn: each position it reports,
+    // and the time in the clip of each frame it presents with nothing over
+    // the video.
+    await page.evaluate(() => {
+      const seen = { positions: [], frames: [] };
+      window.readerPlayer = seen;
+      const observer = new MutationObserver(() => {
+        const video = document.querySelector(
+          "[data-details-sheet-surface] video",
+        );
+        if (!video) return;
+        observer.disconnect();
+        const report = () => seen.positions.push(video.currentTime);
+        report();
+        for (const name of [
+          "loadedmetadata",
+          "loadeddata",
+          "seeking",
+          "seeked",
+          "playing",
+          "timeupdate",
+        ])
+          video.addEventListener(name, report);
+        const tick = () => {
+          report();
+          if (video.isConnected) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        const present = (_now, { mediaTime }) => {
+          if (!video.parentElement.querySelector("canvas"))
+            seen.frames.push(mediaTime);
+          video.requestVideoFrameCallback(present);
+        };
+        video.requestVideoFrameCallback?.(present);
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+
+    // Expanded mid-playback, the reader's player plays on from the brief's
+    // position with its sound and speed, and the brief falls silent. The mute
+    // it hands over is read here: Linux WebKit unmutes any video that plays
+    // this slowly.
+    const { muted } = await read(brief);
+    // The frame the brief shows as its playback leaves it, kept as it is
+    // paused. The frame it rests on afterwards does not say: once paused,
+    // Linux WebKit presents one frame more, from later in the clip.
+    await brief.evaluate((video) => {
+      video.pause = () => {
+        if (!window.briefFrame) {
+          const canvas = document.createElement("canvas");
+          [canvas.width, canvas.height] = [video.videoWidth, video.videoHeight];
+          canvas.getContext("2d").drawImage(video, 0, 0);
+          window.briefFrame = canvas;
+        }
+        HTMLMediaElement.prototype.pause.call(video);
+      };
+    });
+    let load;
+    slow = new Promise((resolve) => {
+      load = resolve;
+    });
+    await clickRow(page, showMore(timeline, "Video findings"));
+    await expect(reader.locator("video")).toHaveCount(1);
+    await expect.poll(async () => (await read(brief)).playing).toBe(false);
+    const handed = (await read(brief)).seconds;
+    expect(handed).toBeGreaterThan(20.3);
+    // While its video has yet to load, however long that takes, the reader's
+    // player shows the frame the brief showed as it stopped and not the
+    // poster.
+    const loading = await picture(
+      brief,
+      await reader.locator("video").screenshot(),
+    );
+    expect(
+      await reader.locator("video").evaluate((video) => video.readyState),
+    ).toBe(0);
+    const stopped = await picture(
+      brief,
+      Buffer.from(
+        await page.evaluate(() =>
+          window.briefFrame.toDataURL("image/png").replace(/^.*,/, ""),
+        ),
+        "base64",
+      ),
+    );
+    expect(apart(loading, stopped)).toBeLessThan(apart(loading, unplayed) / 4);
+    load();
+    slow = undefined;
+    await expect
+      .poll(async () => (await read(reader.locator("video"))).seconds)
+      .toBeGreaterThan(handed);
+    const taken = await read(reader.locator("video"));
+    expect(taken).toMatchObject({
+      playing: true,
+      volume: 0.5,
+      muted,
+      rate: 0.25,
+    });
+    // Frames come a third of a second apart at this speed, and a record of
+    // none would pass below: wait for one shown with nothing over the video.
+    await expect
+      .poll(() => page.evaluate(() => window.readerPlayer.frames.length))
+      .toBeGreaterThan(0);
+    // It was never at the start to get here: it reported no position before
+    // the brief's and showed no frame from before it, neither in place of
+    // the seek nor before it landed. A position can settle on the frame
+    // before it, of twelve a second.
+    const seen = await page.evaluate(() => window.readerPlayer);
+    expect(Math.min(...seen.positions)).toBeGreaterThan(handed - 0.1);
+    expect(Math.min(...seen.frames)).toBeGreaterThan(handed - 0.1);
+    // Nor did it play any of the clip before that position. WebKit's own
+    // record cannot show it: a player started before its video loaded counts
+    // the clip up to its start position as played, though it presents none
+    // of it.
+    if (browserName !== "webkit")
+      expect(taken.played[0][0]).toBeGreaterThan(handed - 0.1);
+    expect((await read(brief)).playing).toBe(false);
+
+    // Closed, the brief plays on from the reader's position.
+    const returned = (await read(reader.locator("video"))).seconds;
+    await reader.focus();
+    await page.keyboard.press("Escape");
+    await expect(reader).toHaveCount(0);
+    await expect
+      .poll(async () => {
+        const now = await read(brief);
+        return now.playing && now.seconds > returned;
+      })
+      .toBe(true);
+    // Its latest stretch: the one before the reader opened began earlier.
+    expect((await read(brief)).played.at(-1)[0]).toBeGreaterThan(
+      returned - 0.1,
+    );
   });
 
   test("Move to side panel hands the thread, its draft and the reply it answers to a tab", async ({

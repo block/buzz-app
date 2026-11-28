@@ -92,7 +92,9 @@ export function ManagedPlugins({
     />
   ) : null;
   const rows =
-    managed.status === "ready" ? managed.plugins.filter(offeredManaged) : [];
+    managed.status === "ready"
+      ? managed.plugins.filter((entry) => offeredManaged(entry, managed.source))
+      : [];
   const section =
     managed.status === "loading" ? (
       <section

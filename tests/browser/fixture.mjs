@@ -137,6 +137,7 @@ export const test = base.extend({
   // An FI build with no native host: the Builderlab plugin applies, signed out.
   federatedIdentity: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  installOnlyRecommendations: [[], { option: true, scope: "worker" }],
   localAgentActivity: [false, { option: true, scope: "worker" }],
   pairingFixture: [false, { option: true, scope: "worker" }],
   // A build whose startup throws where `window.__buzzFixtureStartupFailure`

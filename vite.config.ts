@@ -14,6 +14,7 @@ import {
 import { parseFirstRunAccountSeed } from "./src/features/identity/first-run-seed.ts";
 import { isBuiltInBuilderlab } from "./src/features/federated-identity/community-hosts.ts";
 import { selectGatewayDescriptor } from "./src/features/agents/gateway/descriptor.ts";
+import { parseInstallOnlyRecommendations } from "./src/plugins/managed-config.ts";
 import { parseRecommended } from "./src/features/agents/recommended.ts";
 
 /** A value native builds also read: process first, then repository-root
@@ -111,6 +112,9 @@ export default defineConfig(async ({ command, mode }) => {
   const federatedUrl = federatedBuilderlabUrl(legacyUrl, live);
   const builderlabUrl = federatedUrl ?? legacyUrl ?? BUILT_IN_BUILDERLAB;
   const appsControlPlane = sharedAppsControlPlane(builderlabUrl);
+  const installOnlyRecommendations =
+    sharedBuildValue("BUZZ_BUILD_INSTALL_ONLY_RECOMMENDATIONS") ?? "";
+  parseInstallOnlyRecommendations(installOnlyRecommendations);
   const aliases = env.BUZZ_COMMUNITY_ALIASES ?? "";
   parseCommunityAliases(aliases);
   const externalMcpCommunities = (env.BUZZ_EXTERNAL_MCP_COMMUNITIES ?? "")
@@ -223,6 +227,9 @@ export default defineConfig(async ({ command, mode }) => {
     plugins,
     resolve: { alias: diffHighlighterAliases },
     define: {
+      "import.meta.env.VITE_BUZZ_INSTALL_ONLY_RECOMMENDATIONS": JSON.stringify(
+        installOnlyRecommendations,
+      ),
       "import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_REVISION": JSON.stringify(
         frontendIdentity.revision ?? "",
       ),

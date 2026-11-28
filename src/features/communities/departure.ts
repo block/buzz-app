@@ -21,6 +21,11 @@ export type DeviceRemovalResult = Readonly<{
 }>;
 export type CommunityLeaveResult = DeviceRemovalResult &
   Readonly<{ outcome: LeaveOutcome }>;
+type LeaveWait = Readonly<{
+  /** Abandons device cleanup, not a request the relay may already have applied. */
+  signal: AbortSignal;
+  onCleanup(): void;
+}>;
 
 async function forgetCommunityOnDevice(
   communities: Communities,
@@ -48,17 +53,20 @@ export async function removeCommunityFromDevice(
 export async function leaveCommunity(
   communities: Communities,
   membership: Membership,
+  wait?: LeaveWait,
 ): Promise<CommunityLeaveResult> {
   const viewer = communities.snapshot().viewer;
   let outcome: LeaveOutcome;
   try {
     outcome = await requestLeave(membership.id);
+    wait?.signal.throwIfAborted();
   } catch (error) {
     throw new CommunityDepartureError("relay", error);
   }
   try {
     if (communities.snapshot().viewer !== viewer)
       throw new Error("Account changed before device cleanup");
+    wait?.onCleanup();
     return {
       ...(await forgetCommunityOnDevice(
         communities,
@@ -84,21 +92,24 @@ export async function departCommunity(
   communities: Communities,
   membership: Membership,
   intent: DepartureIntent,
+  wait?: LeaveWait,
 ): Promise<Departure> {
   return intent === "remove"
     ? { intent, ...(await removeCommunityFromDevice(communities, membership)) }
-    : { intent, ...(await leaveCommunity(communities, membership)) };
+    : { intent, ...(await leaveCommunity(communities, membership, wait)) };
 }
 
-/** The notice for a finished departure and its toast tone. Removal only
- * follows a leave its relay never settled, which may still have applied, so
- * the notice cannot claim the membership is unchanged. */
+/** A relay may have applied an unanswered leave, so only removal without
+ * a leave attempt can say the membership was unchanged. */
 export function departedText(
   name: string,
   departure: Departure,
+  leaveWasRequested: boolean,
 ): [string, "success" | "info"] {
   const residue = departure.residue.length > 0;
   if (departure.intent === "remove") {
+    if (!leaveWasRequested)
+      return [removedFromDeviceText(name, residue), "success"];
     const removed = `${name} was removed from this device. Its relay didn’t confirm the leave, so you may still be a member.`;
     return [
       residue ? `${removed} Some saved data couldn’t be cleared.` : removed,

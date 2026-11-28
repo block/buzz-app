@@ -139,8 +139,9 @@ export function CommunityPicker({
   const [leaving, setLeaving] = useState<{
     membership: Membership;
     intent: DepartureIntent;
-    pending: boolean;
+    pending: false | "relay" | "cleanup" | "remove";
   } | null>(null);
+  const relayWait = useRef<AbortController | null>(null);
   const wasLeaving = useRef<Membership | null>(null);
   const notify = useToastNotification();
   const client = useSyncExternalStore(
@@ -212,19 +213,37 @@ export function CommunityPicker({
     // moves before the browser handles another key.
     if (offeringRemoval) cancelRef.current?.focus();
   }, [offeringRemoval]);
-  /** A leave publishes first; the device forgets the community only once the
-   * relay has released the membership, reports it never held one, or refuses
-   * the viewer as banned. If the relay never settles it, for example because
-   * its domain no longer resolves, the dialog offers to remove the community
-   * from this device instead, which needs no relay. */
-  const depart = async () => {
-    if (!leaving || leaving.pending) return;
-    const { membership, intent } = leaving;
-    setLeaving({ membership, intent, pending: true });
+  const depart = async (intent: DepartureIntent) => {
+    if (!leaving) return;
+    if (leaving.pending && (intent !== "remove" || !relayWait.current)) return;
+    const { membership } = leaving;
+    const leaveWasRequested =
+      leaving.intent === "remove" || leaving.pending === "relay";
+    const wait = intent === "leave" ? new AbortController() : null;
+    // Once device cleanup starts, removal must not race it. Until then,
+    // removal can abandon the wait without undoing a leave sent to the relay.
+    relayWait.current?.abort();
+    relayWait.current = wait;
+    setLeaving({ ...leaving, pending: wait ? "relay" : "remove" });
     let result: Departure;
     try {
-      result = await departCommunity(communities, membership, intent);
+      result = await departCommunity(
+        communities,
+        membership,
+        intent,
+        wait
+          ? {
+              signal: wait.signal,
+              onCleanup: () => {
+                relayWait.current = null;
+                setLeaving({ ...leaving, pending: "cleanup" });
+              },
+            }
+          : undefined,
+      );
     } catch (error) {
+      if (wait?.signal.aborted) return;
+      relayWait.current = null;
       if (intent === "leave" && leaveUnsettled(error)) {
         setLeaving({ membership, intent: "remove", pending: false });
         return;
@@ -252,7 +271,13 @@ export function CommunityPicker({
         );
       }
     }
-    notify(...departedText(communityActionLabel(membership), result));
+    notify(
+      ...departedText(
+        communityActionLabel(membership),
+        result,
+        leaveWasRequested,
+      ),
+    );
     setLeaving(null);
   };
   const active = client.memberships.find(
@@ -410,7 +435,7 @@ export function CommunityPicker({
                     manager={selected && invites && role.manager}
                     leaving={
                       leaving?.membership.id === membership.id &&
-                      leaving.pending
+                      !!leaving.pending
                     }
                     onSelect={select}
                     onOpenTarget={
@@ -514,10 +539,10 @@ export function CommunityPicker({
           }
           description={
             leaving.intent === "leave"
-              ? `This sends a leave request to the community’s relay, then removes ${communityDefaultName(leaving.membership)} from this device along with its saved drafts and reading positions. Rejoining may need a new invite.`
+              ? `Leaving sends a request to the community’s relay, then removes ${communityDefaultName(leaving.membership)} from this device along with its saved drafts and reading positions. Rejoining may need a new invite. Removing from this device skips the relay, but the relay may still process a leave request you already sent.`
               : `Its relay didn’t confirm the leave, so you may still be a member. You can remove ${communityDefaultName(leaving.membership)} from this device instead, along with its saved drafts and reading positions. This doesn’t change your membership.`
           }
-          pending={leaving.pending}
+          pending={!!leaving.pending}
           onClose={() => setLeaving(null)}
           // The picker's own effect places focus once the dialog is gone.
           finalFocus={false}
@@ -525,22 +550,31 @@ export function CommunityPicker({
             <>
               <Button
                 ref={cancelRef}
-                disabled={leaving.pending}
+                disabled={!!leaving.pending}
                 onClick={() => setLeaving(null)}
               >
                 Cancel
               </Button>
               <Button
-                variant={
-                  leaving.intent === "leave" ? "destructive" : "prominent"
-                }
-                loading={leaving.pending}
-                onClick={() => void depart()}
+                variant={leaving.intent === "remove" ? "prominent" : "subtle"}
+                disabled={leaving.pending === "cleanup"}
+                loading={leaving.pending === "remove"}
+                onClick={() => void depart("remove")}
               >
-                {leaving.intent === "leave"
-                  ? "Leave community"
-                  : "Remove from this device"}
+                Remove from this device
               </Button>
+              {leaving.intent === "leave" && (
+                <Button
+                  variant="destructive"
+                  disabled={leaving.pending === "remove"}
+                  loading={
+                    leaving.pending === "relay" || leaving.pending === "cleanup"
+                  }
+                  onClick={() => void depart("leave")}
+                >
+                  Leave community
+                </Button>
+              )}
             </>
           }
         >

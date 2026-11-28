@@ -810,7 +810,7 @@ it("cancelling the confirmation keeps the membership and returns focus to the co
   expect(h.select).not.toHaveBeenCalled();
 });
 
-it("reports the relay owner's refusal without offering device removal", async () => {
+it("reports the relay owner's refusal instead of switching to the removal fallback", async () => {
   const user = userEvent.setup();
   const h = harness({
     leaveResponse: () =>
@@ -844,6 +844,45 @@ async function failLeave(
 }
 const confirmRemove = (dialog: HTMLElement) =>
   within(dialog).getByRole("button", { name: "Remove from this device" });
+
+it("removes a community on this device without sending a leave request", async () => {
+  const user = userEvent.setup();
+  const h = harness();
+  render(<CommunityPicker communities={h.communities} />);
+  await user.click(confirmRemove(await askToLeave(user, "Secondary")));
+  await screen.findByText(
+    /was removed from this device.*membership wasn’t changed/i,
+  );
+  expect(h.leaveRequests()).toEqual([]);
+  openSwitcher();
+  expect(
+    screen.queryByRole("button", { name: "Switch to Secondary" }),
+  ).toBeNull();
+});
+
+it("removes a community while its leave is waiting and ignores a late relay acceptance", async () => {
+  const user = userEvent.setup();
+  let answer!: (response: Response) => void;
+  const h = harness({
+    selected: secondary,
+    leaveResponse: () => new Promise<Response>((resolve) => (answer = resolve)),
+  });
+  render(<CommunityPicker communities={h.communities} onSelect={h.onSelect} />);
+  const dialog = await askToLeave(user, "Secondary");
+  await user.click(confirmLeave(dialog));
+  await waitFor(() => expect(h.leaveRequests()).toHaveLength(1));
+  await user.click(confirmRemove(dialog));
+  await screen.findByText(
+    /was removed from this device.*may still be a member/i,
+  );
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  await act(async () => answer(accepted()));
+  expect(h.leaveRequests()).toHaveLength(1);
+  expect(h.leave).toHaveBeenCalledExactlyOnceWith(secondary, { purge: true });
+  expect(h.onSelect).toHaveBeenCalledExactlyOnceWith(null);
+  expect(screen.queryByText(/^Left Secondary/)).toBeNull();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+});
 
 it.each([
   {

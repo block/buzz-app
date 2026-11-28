@@ -511,5 +511,42 @@ describe("holdsLead", () => {
         both,
       ).jump,
     ).toBe(false);
+
+    // A page's alternate title (`about`) gets the same prefix guard.
+    const bestiePage: JumpPlace = {
+      key: "page:buzz.bestie/bestie",
+      kind: "page",
+      pluginId: "buzz.bestie",
+      pageId: "bestie",
+      pageKey: "buzz.bestie/bestie",
+      name: "Pollen",
+      about: "Bestie",
+      at: 0,
+    };
+    const bestieSupport = channel("bestie-support", "bestie-support");
+    const aliasPlaces = [bestiePage, bestieSupport];
+    const aliasFirst = holdsLead(
+      undefined,
+      found(bestiePage, 0.9),
+      "open bestie",
+      aliasPlaces,
+    );
+    expect(aliasFirst.jump).toBe(false);
+    expect(
+      holdsLead(
+        aliasFirst.lead,
+        found(bestieSupport, 0.9),
+        "open bestie support",
+        aliasPlaces,
+      ).jump,
+    ).toBe(true);
+    expect(
+      holdsLead(
+        aliasFirst.lead,
+        found(bestiePage, 0.9),
+        "open bestie please",
+        aliasPlaces,
+      ).jump,
+    ).toBe(true);
   });
 });

@@ -416,6 +416,14 @@ export type LiveLead = Readonly<{ key: string; words: number }>;
 const wordsOf = (name: string) =>
   new Set(nameWords(name).map((word) => word.toLowerCase()));
 
+const placeWordSets = (place: JumpPlace) =>
+  (place.kind === "page" && place.about
+    ? [place.name, place.about]
+    : [place.name]
+  )
+    .map(wordsOf)
+    .filter((words) => words.size > 0);
+
 /** Whether another place's name holds every word of this one's and more,
  * so a speaker who has said this name may still be saying that one: #jev
  * before "Jev clock", #buzz before #buzz-security. */
@@ -424,12 +432,17 @@ export function extendable(
   places: readonly JumpPlace[],
 ): boolean {
   if (place.kind === "thread") return false;
-  const own = wordsOf(place.name);
-  if (!own.size) return false;
+  const ownSets = placeWordSets(place);
+  if (!ownSets.length) return false;
   return places.some((other) => {
     if (other.key === place.key || other.kind === "thread") return false;
-    const theirs = wordsOf(other.name);
-    return theirs.size > own.size && [...own].every((word) => theirs.has(word));
+    const otherSets = placeWordSets(other);
+    return ownSets.some((own) =>
+      otherSets.some(
+        (theirs) =>
+          theirs.size > own.size && [...own].every((word) => theirs.has(word)),
+      ),
+    );
   });
 }
 

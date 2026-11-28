@@ -27,7 +27,10 @@ import {
   channelIconLabel,
 } from "../../features/channels/channel-icon";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { sortParticipantNames } from "../../features/identity-names/participant-order";
+import {
+  dmNamedParticipants,
+  sortParticipantNames,
+} from "../../features/identity-names/participant-order";
 import type { PagesReader, RegisteredPage } from "../../features/pages/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -662,7 +665,9 @@ function sources(
   const name = (channel: ChannelSummary) =>
     channel.channelType === "dm" && channel.participants
       ? sortParticipantNames(
-          channel.participants.map((id) => person(id, channel.participants)),
+          dmNamedParticipants(channel.participants, profiles).map((id) =>
+            person(id, channel.participants),
+          ),
         ).join(", ") || "Notes to self"
       : channel.name;
   return {

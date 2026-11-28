@@ -93,9 +93,11 @@ const defaultPages: RegisteredPage[] = [
 async function mount({
   connected = true,
   pages = defaultPages,
+  customSession = session,
 }: {
   connected?: boolean;
   pages?: readonly RegisteredPage[];
+  customSession?: typeof session;
 } = {}) {
   const ctx = new Context();
   contexts.push(ctx);
@@ -122,8 +124,18 @@ async function mount({
     viewer: string | undefined;
     origin: string | undefined;
   } = connected
-    ? { status: "ready", session, viewer, origin: communityOrigin }
-    : { status: "idle", session, viewer: undefined, origin: undefined };
+    ? {
+        status: "ready",
+        session: customSession,
+        viewer,
+        origin: communityOrigin,
+      }
+    : {
+        status: "idle",
+        session: customSession,
+        viewer: undefined,
+        origin: undefined,
+      };
   const relayListeners = new Set<() => void>();
   const setRelay = (next: typeof relay) => {
     relay = next;
@@ -554,4 +566,50 @@ test("Enter right after final speech submits the latest transcript without racin
     }),
   );
   expect(open).toHaveBeenCalledTimes(1);
+});
+
+test("DM names omit agent participants when a human is in the DM", async () => {
+  const alice = "b".repeat(64);
+  const agent = "c".repeat(64);
+  const dmChannels = [
+    {
+      id: "dm-alice",
+      name: "",
+      channelType: "dm",
+      hidden: true,
+      participants: [agent, alice],
+      lastActivityAt: 10,
+    },
+  ];
+  const dmProfiles = new Map([
+    [alice, { name: "Alice" }],
+    [agent, { name: "Helper", isAgent: true as const }],
+  ]);
+  const dmSession = {
+    ...session,
+    profiles: { snapshot: () => dmProfiles },
+    channels: {
+      ...session.channels,
+      list: () => ({ channels: dmChannels }),
+      get: (id: string) => dmChannels.find((channel) => channel.id === id),
+    },
+  } as unknown as typeof session;
+  const { listens, decide } = await mount({ customSession: dmSession });
+  decide.mockResolvedValueOnce(
+    answer("DM with Alice", { "DM with Alice": 0.4 }),
+  );
+  press();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
+  act(() => (listens[0] as ListenOptions).onEnd("alice"));
+  expect(await screen.findByText("Alice")).toBeInTheDocument();
+  expect(screen.queryByText(/Helper/)).not.toBeInTheDocument();
+  const request = decide.mock.calls[0]?.[0] as {
+    questions: { place: { options: Record<string, string> } };
+  };
+  expect(Object.keys(request.questions.place.options)).toContain(
+    "DM with Alice",
+  );
+  expect(Object.keys(request.questions.place.options)).not.toContain(
+    "DM with Alice, Helper",
+  );
 });

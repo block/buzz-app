@@ -916,6 +916,14 @@
     color: var(--text-standard);
   }
 
+  /* Cutout artwork may reveal its host surface; loading and error fallbacks
+     keep the normal avatar fill so initials remain legible. */
+  .buzz-avatar[data-artwork-surface="transparent"]:not(
+    :has([data-avatar-fallback])
+  ) {
+    background: transparent;
+  }
+
   /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
   .buzz-avatar[data-size="compact"] {
     @apply text-caption;

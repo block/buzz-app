@@ -39,6 +39,7 @@ export function AgentPortrait({
       src={src}
       alt=""
       fallback={agent.name}
+      artworkSurface="transparent"
       size="fill"
       shape="squircle"
     />

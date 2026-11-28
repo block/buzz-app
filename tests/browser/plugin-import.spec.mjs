@@ -3013,6 +3013,47 @@ test("document formatting floats over scrollable content", async ({
       )
       .toEqual([]);
 
+    // Hold the toolbar partway through entry so slow runners exercise the
+    // same overlap. The caret must stay clear when the toolbar settles.
+    const line = "const line39 = 39;";
+    await editor.evaluate((field, line) => {
+      field.focus();
+      const offset = field.value.indexOf(line) + line.length;
+      field.setSelectionRange(offset, offset);
+    }, line);
+    const restingTop = (await toolbar.boundingBox()).y;
+    const caretBottom = await selectionHeadBottom(true);
+    await scroll.evaluate(
+      (area, distance) => {
+        area.scrollTop += distance;
+      },
+      caretBottom - restingTop - 5,
+    );
+    await toolbar.evaluate(async (bar) => {
+      const entry = bar.animate(
+        [{ transform: "translateY(0.75rem)" }, { transform: "none" }],
+        { duration: 220 },
+      );
+      entry.id = "held-toolbar-entry";
+      entry.pause();
+      entry.currentTime = 0;
+      await entry.ready;
+    });
+    await page.keyboard.insertText("x");
+    await expect(editor).toContainText(`${line}x`);
+    await toolbar.evaluate((bar) => {
+      bar
+        .getAnimations()
+        .find((entry) => entry.id === "held-toolbar-entry")
+        ?.cancel();
+    });
+    expect
+      .soft(
+        await selectionHeadBottom(true),
+        `${name} caret after the formatting bar settles`,
+      )
+      .toBeLessThanOrEqual((await toolbar.boundingBox()).y);
+
     await toolbar.getByRole("button", { name: "Bold", exact: true }).focus();
     await page.keyboard.press("Tab");
     await expect(toolbar.getByRole("button", { name: "Italic" })).toBeFocused();

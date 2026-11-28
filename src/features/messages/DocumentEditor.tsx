@@ -163,7 +163,7 @@ function DocumentFormattingToolbar({
         aria-label="Document formatting"
         aria-hidden={!present || undefined}
         inert={!present}
-        initial={hidden}
+        initial={instant ? false : hidden}
         animate={{ opacity: 1, y: "0rem" }}
         exit={hidden}
         transition={{
@@ -343,8 +343,13 @@ export function DocumentEditor({
   }, [showFormatting]);
   const revealAboveToolbar = (bottom: number) => {
     const toolbar = toolbarSurface.current;
-    if (!toolbar) return;
-    const overlap = bottom - toolbar.getBoundingClientRect().top;
+    const anchor = toolbar?.parentElement;
+    if (!toolbar || !anchor) return;
+    // Clear the toolbar's resting position while it slides into place.
+    const top =
+      anchor.getBoundingClientRect().bottom -
+      toolbar.getBoundingClientRect().height;
+    const overlap = bottom - top;
     if (overlap <= 0) return;
     const scroller = updateEditorScroller.current?.();
     if (scroller) scroller.scrollTop += Math.ceil(overlap);
@@ -353,7 +358,9 @@ export function DocumentEditor({
   const instant =
     !!reduceMotion ||
     (typeof document !== "undefined" &&
-      document.documentElement.hasAttribute("data-keyboard-navigation"));
+      document.documentElement.matches(
+        "[data-keyboard-input], [data-keyboard-navigation]",
+      ));
   const toolbar = (
     <AnimatePresence custom={instant}>
       {showFormatting && (

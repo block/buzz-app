@@ -56,22 +56,32 @@ function setup() {
       },
       generation ?? -1,
     );
-  const result = (status: string, requestId: string) => ({
+  type Type = CancelTurn["type"];
+  const result = (status: string, requestId: string, type: Type) => ({
     kind: "control_result",
     channelId: "channel",
-    payload: { type: "cancel_turn", status, requestId },
+    payload: { type, status, requestId },
   });
-  const answer = (from: string, status: string, requestId: string) =>
-    frame(from, result(status, requestId));
+  const answer = (
+    from: string,
+    status: string,
+    requestId: string,
+    type: Type = "cancel_turn",
+  ) => frame(from, result(status, requestId, type));
   // An agent's publisher packs one tick's events for a channel into a batch.
-  const batched = (from: string, status: string, requestId: string) =>
+  const batched = (
+    from: string,
+    status: string,
+    requestId: string,
+    type: Type = "cancel_thread_turn",
+  ) =>
     frame(from, {
       kind: "batch",
       channelId: "channel",
       payload: {
         events: [
           { kind: "agent_message_chunk", channelId: "channel", payload: {} },
-          result(status, requestId),
+          result(status, requestId, type),
         ],
       },
     });
@@ -124,16 +134,19 @@ it("sends once the observer listens, and resolves on the agent's own sent answer
   await vi.advanceTimersByTimeAsync(0);
   expect(f.publish).toHaveBeenCalledOnce();
   const [request] = f.sent;
+  // A thread stop has the type a host too old to target one thread ignores.
   expect(request).toEqual({
-    type: "cancel_turn",
+    type: "cancel_thread_turn",
     channelId: "channel",
     threadRootId: root,
     requestId: expect.any(String),
   });
   const id = request?.requestId ?? "";
-  // Answers to other stops, or from another agent, are not this one's.
-  f.answer(agent, "sent", crypto.randomUUID());
-  f.answer(other, "sent", id);
+  // Answers to other stops, of another type, or from another agent, are not
+  // this one's.
+  f.answer(agent, "sent", crypto.randomUUID(), "cancel_thread_turn");
+  f.answer(agent, "sent", id, "cancel_turn");
+  f.answer(other, "sent", id, "cancel_thread_turn");
   let settled = false;
   void stop.then(() => (settled = true));
   await vi.advanceTimersByTimeAsync(0);
@@ -158,7 +171,11 @@ it("holds a no_active_turn for a sent from another device, then settles on it", 
   const first = f.control.cancelTurn(agent, place, signal);
   await vi.advanceTimersByTimeAsync(0);
   // A Solo chat or DM names no thread.
-  expect(f.sent[0]).not.toHaveProperty("threadRootId");
+  expect(f.sent[0]).toEqual({
+    type: "cancel_turn",
+    channelId: "channel",
+    requestId: expect.any(String),
+  });
   f.answer(agent, "no_active_turn", f.sent[0]?.requestId ?? "");
   await vi.advanceTimersByTimeAsync(CONTROL_HOLD_MS - 1);
   f.answer(agent, "sent", f.sent[0]?.requestId ?? "");

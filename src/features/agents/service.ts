@@ -2174,7 +2174,7 @@ export type Agents = {
   leave(agent: AgentKey): Promise<void>;
   /** Whether the owner can stop the agent's turns from here: a hosted
    * agent's through its provider, or one on another of the owner's devices
-   * with a NIP-AO `cancel_turn`. That one is asked through `conversation`,
+   * with a NIP-AO stop frame. That one is asked through `conversation`,
    * the agent activity of the conversation's own session, and must be proven
    * the owner's there: its telemetry reached that session, or the owner's
    * agent list in that community has it elsewhere. */

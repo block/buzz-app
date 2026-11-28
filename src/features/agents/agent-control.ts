@@ -1,20 +1,26 @@
 import type { RelayEvent } from "../relay/events";
 
-/** NIP-AO `cancel_turn`: the owner asks one of their agents to stop its turn
- * in a conversation. `threadRootId` names one thread; without it the whole
- * conversation, as for a Solo chat or DM. */
-export type CancelTurn = Readonly<{
-  type: "cancel_turn";
-  channelId: string;
-  threadRootId?: string;
-  requestId: string;
-}>;
-/** `sent` means the turn was signalled, not that it has ended. */
+/** The owner asks one of their agents to stop its turn in a conversation.
+ * NIP-AO `cancel_turn` names no thread and stops the whole conversation, as
+ * for a Solo chat or DM. `cancel_thread_turn` stops one thread; a host too old
+ * to read it ignores it, rather than stopping another thread. */
+export type CancelTurn = Readonly<
+  | { type: "cancel_turn"; channelId: string; requestId: string }
+  | {
+      type: "cancel_thread_turn";
+      channelId: string;
+      threadRootId: string;
+      requestId: string;
+    }
+>;
+/** `sent` means the turn was signalled, not that it has ended. Only a
+ * `cancel_turn` can be `ambiguous_target`. */
 export type CancelTurnStatus = "sent" | "no_active_turn" | "ambiguous_target";
-/** An agent's `control_result` telemetry answering a `cancel_turn`. */
+/** An agent's `control_result` telemetry answering a stop. */
 export type ControlResult = Readonly<{
   agent: string;
   channelId: string;
+  type: CancelTurn["type"];
   requestId: string;
   status: CancelTurnStatus;
 }>;
@@ -33,35 +39,36 @@ export class ControlUnanswered extends Error {
   }
 }
 
-const STATUSES = new Set<string>([
-  "sent",
-  "no_active_turn",
-  "ambiguous_target",
-]);
+const STATUSES: Readonly<Record<CancelTurn["type"], ReadonlySet<string>>> = {
+  cancel_turn: new Set(["sent", "no_active_turn", "ambiguous_target"]),
+  cancel_thread_turn: new Set(["sent", "no_active_turn"]),
+};
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 
-/** The `cancel_turn` answer in decoded telemetry from `agent`, if it is one. */
+/** The answer to a stop in decoded telemetry from `agent`, if it is one. */
 export function controlResult(
   agent: string,
   value: unknown,
 ): ControlResult | undefined {
   const frame = object(value);
   const payload = object(frame?.payload);
+  const type = payload?.type;
   if (
     frame?.kind !== "control_result" ||
     typeof frame.channelId !== "string" ||
-    payload?.type !== "cancel_turn" ||
-    typeof payload.requestId !== "string" ||
+    (type !== "cancel_turn" && type !== "cancel_thread_turn") ||
+    typeof payload?.requestId !== "string" ||
     typeof payload.status !== "string" ||
-    !STATUSES.has(payload.status)
+    !STATUSES[type].has(payload.status)
   )
     return undefined;
   return Object.freeze({
     agent,
     channelId: frame.channelId,
+    type,
     requestId: payload.requestId,
     status: payload.status as CancelTurnStatus,
   });
@@ -89,21 +96,25 @@ export function createAgentControl(deps: {
   activity: Listening;
 }) {
   return {
-    /** Resolves on the first `sent`. A `no_active_turn` or `ambiguous_target`
-     * settles only after `CONTROL_HOLD_MS` without a `sent`. Rejects with
-     * `ControlUnanswered` when no answer arrives in `CONTROL_ANSWER_MS`. */
+    /** Sends `cancel_thread_turn` for a place with a thread, else
+     * `cancel_turn`. Resolves on the first `sent`. A `no_active_turn` or
+     * `ambiguous_target` settles only after `CONTROL_HOLD_MS` without a
+     * `sent`. Rejects with `ControlUnanswered` when no answer arrives in
+     * `CONTROL_ANSWER_MS`, as from a host too old for a thread stop. */
     cancelTurn(
       agent: string,
       place: Readonly<{ channelId: string; threadRootId?: string | undefined }>,
       signal: AbortSignal,
     ): Promise<CancelTurnStatus> {
       const requestId = crypto.randomUUID();
-      const payload: CancelTurn = {
-        type: "cancel_turn",
-        channelId: place.channelId,
-        ...(place.threadRootId ? { threadRootId: place.threadRootId } : {}),
-        requestId,
-      };
+      const payload: CancelTurn = place.threadRootId
+        ? {
+            type: "cancel_thread_turn",
+            channelId: place.channelId,
+            threadRootId: place.threadRootId,
+            requestId,
+          }
+        : { type: "cancel_turn", channelId: place.channelId, requestId };
       const stops: (() => void)[] = [];
       const done = new AbortController();
       const bounded = AbortSignal.any([signal, done.signal]);
@@ -132,7 +143,11 @@ export function createAgentControl(deps: {
         // Listen before sending, so an answer can't arrive unheard.
         stops.push(
           deps.activity.controlResults((result) => {
-            if (result.requestId !== requestId || result.agent !== agent)
+            if (
+              result.type !== payload.type ||
+              result.requestId !== requestId ||
+              result.agent !== agent
+            )
               return;
             if (result.status === "sent") return settle(() => resolve("sent"));
             // Another device holding the agent may still stop it.

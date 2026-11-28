@@ -158,9 +158,10 @@ export interface ReadTransport {
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
-  /** Purpose-bound NIP-AO control frame: a `cancel_turn` encrypted to one of
-   * the viewer's agents with the viewer's key, signed for the session to send
-   * on its live socket. Never a general encrypting signer. */
+  /** Purpose-bound NIP-AO stop frame, `cancel_turn` or `cancel_thread_turn`:
+   * encrypted to one of the viewer's agents with the viewer's key, signed for
+   * the session to send on its live socket. Never a general encrypting
+   * signer. */
   readonly signAgentControl?: (
     agent: string,
     payload: CancelTurn,

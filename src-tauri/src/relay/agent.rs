@@ -192,8 +192,10 @@ pub(crate) async fn relay_agent_observer(
     host.with_key(move |secret, viewer| decode_observer_with_key(secret, viewer, &event))
         .await
 }
-/// The only control frame the owner may send: stop an agent's turn in one
-/// conversation (NIP-AO `cancel_turn`). Unknown fields are refused.
+/// The only control frames the owner may send: stop an agent's turn in one
+/// conversation. NIP-AO `cancel_turn` names no thread, for a whole
+/// conversation; `cancel_thread_turn` names one, which hosts too old to read
+/// it ignore. Unknown fields are refused.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct CancelTurn {
@@ -241,25 +243,26 @@ fn control_template(
     created_at: u64,
 ) -> Result<EventTemplate> {
     let channel = &payload.channel_id;
+    let target = match (payload.kind.as_str(), payload.thread_root_id.as_deref()) {
+        ("cancel_turn", None) => true,
+        ("cancel_thread_turn", Some(root)) => key(root),
+        _ => false,
+    };
     if !key(agent)
         || agent == viewer
-        || payload.kind != "cancel_turn"
+        || !target
         || channel.is_empty()
         || channel.len() > 128
         || !channel
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        || payload
-            .thread_root_id
-            .as_deref()
-            .is_some_and(|root| !key(root))
         || payload.request_id.len() != 36
         || uuid::Uuid::parse_str(&payload.request_id).is_err()
     {
         return Err("Invalid agent control".into());
     }
     let mut body = json!({
-        "type": "cancel_turn",
+        "type": payload.kind,
         "channelId": channel,
         "requestId": payload.request_id,
     });
@@ -1337,7 +1340,7 @@ mod tests {
         let payload = |value: Value| serde_json::from_value::<CancelTurn>(value);
         let request = "0f8fad5b-d9cb-469f-a165-70867728950e";
         let root = "a".repeat(64);
-        let stop = payload(json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": root, "requestId": request})).unwrap();
+        let stop = payload(json!({"type": "cancel_thread_turn", "channelId": "c-1", "threadRootId": root, "requestId": request})).unwrap();
         let frame = control_template(&owner_secret, &owner, &agent, &stop, 1_700_000_000).unwrap();
         assert_eq!(frame.kind, 24200);
         assert_eq!(
@@ -1357,7 +1360,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             serde_json::from_str::<Value>(&text).unwrap(),
-            json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": root, "requestId": request})
+            json!({"type": "cancel_thread_turn", "channelId": "c-1", "threadRootId": root, "requestId": request})
         );
         // A Solo chat or DM stops the whole conversation: no root.
         let whole = payload(json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": null, "requestId": request})).unwrap();
@@ -1388,7 +1391,16 @@ mod tests {
             ),
             (
                 agent.as_str(),
-                json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": "root", "requestId": request}),
+                json!({"type": "cancel_thread_turn", "channelId": "c-1", "threadRootId": "root", "requestId": request}),
+            ),
+            // A thread only with the type older hosts ignore, and always with it.
+            (
+                agent.as_str(),
+                json!({"type": "cancel_turn", "channelId": "c-1", "threadRootId": root, "requestId": request}),
+            ),
+            (
+                agent.as_str(),
+                json!({"type": "cancel_thread_turn", "channelId": "c-1", "requestId": request}),
             ),
             (
                 agent.as_str(),

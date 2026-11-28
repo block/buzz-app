@@ -662,7 +662,7 @@ export function createAgentActivity(
        * started listening. The relay sends an agent's telemetry only to its
        * owner, so this proves the viewer owns it. */
       reports: (agent: string) => liveAgents.has(agent),
-      /** Hears each `cancel_turn` answer an agent sends the viewer. */
+      /** Hears each answer to a stop an agent sends the viewer. */
       controlResults(listener: (result: ControlResult) => void) {
         if (closed) return () => {};
         controlListeners.add(listener);

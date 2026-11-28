@@ -12,9 +12,10 @@ use objc2::{
     runtime::{NSObjectProtocol, ProtocolObject},
     AnyThread, DefinedClass,
 };
-use objc2_foundation::{NSArray, NSError, NSObject, NSString};
+use objc2_foundation::{NSArray, NSError, NSObject, NSSet, NSString};
 use objc2_user_notifications::{
-    UNAuthorizationStatus, UNMutableNotificationContent, UNNotificationDefaultActionIdentifier,
+    UNAuthorizationStatus, UNMutableNotificationContent, UNNotificationCategory,
+    UNNotificationCategoryOptions, UNNotificationDefaultActionIdentifier,
     UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
     UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
@@ -22,6 +23,7 @@ use objc2_user_notifications::{
 use super::{Outcome, Pending};
 
 static REGISTRY: OnceLock<Arc<Registry>> = OnceLock::new();
+const CATEGORY: &str = "buzz";
 static ADMISSION: Mutex<()> = Mutex::new(());
 pub(super) fn admission_lock() -> &'static Mutex<()> {
     &ADMISSION
@@ -181,8 +183,19 @@ pub(crate) fn init() {
         let registry = Arc::new(Registry::default());
         let delegate: Retained<ProtocolObject<dyn UNUserNotificationCenterDelegate>> =
             ProtocolObject::from_retained(Delegate::new(registry.clone()));
-        UNUserNotificationCenter::currentNotificationCenter().setDelegate(Some(&delegate));
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        center.setDelegate(Some(&delegate));
         std::mem::forget(delegate);
+        // Titles say who wrote and where, so they stay visible when previews
+        // are hidden. The body, which holds message text, stays hidden.
+        let category =
+            UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+                &NSString::from_str(CATEGORY),
+                &NSArray::new(),
+                &NSArray::new(),
+                UNNotificationCategoryOptions::HiddenPreviewsShowTitle,
+            );
+        center.setNotificationCategories(&NSSet::from_retained_slice(&[category]));
         registry
     });
 }
@@ -223,6 +236,7 @@ pub(super) fn show(id: String, title: String, body: String, pending: Arc<Pending
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(&title));
         content.setBody(&NSString::from_str(&body));
+        content.setCategoryIdentifier(&NSString::from_str(CATEGORY));
         let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
             &NSString::from_str(&id),
             &content,

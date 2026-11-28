@@ -17,6 +17,8 @@ export type NotificationPreferences = Readonly<{
   enabled: boolean;
   notifyWhileViewing: boolean;
   sound: boolean;
+  /** Off leaves only the title: who wrote and where. */
+  showText: boolean;
   sounds: CategorySounds;
   categories: Readonly<Record<string, boolean>>;
 }>;
@@ -25,6 +27,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences =
     enabled: true,
     notifyWhileViewing: false,
     sound: true,
+    showText: true,
     sounds: DEFAULT_CATEGORY_SOUNDS,
     categories: Object.freeze({
       mention: true,
@@ -60,6 +63,7 @@ export function parsePreferences(raw: unknown): NotificationPreferences {
     typeof value.enabled !== "boolean" ||
     typeof value.notifyWhileViewing !== "boolean" ||
     typeof value.sound !== "boolean" ||
+    (value.showText !== undefined && typeof value.showText !== "boolean") ||
     !value.categories ||
     typeof value.categories !== "object" ||
     Array.isArray(value.categories)
@@ -79,6 +83,8 @@ export function parsePreferences(raw: unknown): NotificationPreferences {
     enabled: value.enabled,
     notifyWhileViewing: value.notifyWhileViewing,
     sound: value.sound as boolean,
+    // Saved before this setting existed: keep showing text, as before.
+    showText: value.showText !== false,
     sounds: parseSounds(value.sounds),
     categories: Object.freeze(Object.fromEntries(categories)),
   });

@@ -28,7 +28,8 @@ export type NotificationEligibility = boolean | "wait";
 export type NotificationInput = Readonly<{
   sourceKey: string;
   target: OpenTarget;
-  /** Optional display text; the host flattens and bounds it before the OS sees it. */
+  /** Optional display text; the host flattens and bounds it before the OS sees it.
+   * On macOS the title still shows when previews are hidden; keep private text in `body`. */
   title?: string;
   body?: string;
   /** Asked again at each host re-check until delivery, as for built-in
@@ -324,6 +325,10 @@ export class NotificationsService extends Service implements Notifications {
       resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
     );
   }
+  private visibleText({ title, body, withoutText }: NotificationText) {
+    if (this.state.preferences.showText) return { title, body };
+    return withoutText ?? { title, body: "" };
+  }
   /** Whether every registered gate lets this target alert. */
   gated(target: OpenTarget) {
     return this.gates.snapshot().every((gate) => {
@@ -544,7 +549,7 @@ export class NotificationsService extends Service implements Notifications {
         await this.platform.show(
           {
             id: crypto.randomUUID(),
-            ...item.text(),
+            ...this.visibleText(item.text()),
           },
           () => {
             if (this.closed || generation !== this.generation) return;

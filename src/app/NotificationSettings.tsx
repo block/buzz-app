@@ -237,6 +237,15 @@ export function NotificationSettings({
                   }
                 />
                 <SwitchPreferenceRow
+                  id="setting-show-text"
+                  label="Show message text"
+                  description="Turn off to show only who it’s from and where."
+                  checked={preferences.showText}
+                  onCheckedChange={(showText) =>
+                    notifications.updatePreferences({ showText })
+                  }
+                />
+                <SwitchPreferenceRow
                   id="setting-sound"
                   label="Sound"
                   description="Choose a sound to preview it."

@@ -75,9 +75,19 @@ it.each([
         { id: "room", name: "new-notifications" },
         { name: "Pinky" },
       ),
-    ).toEqual({ title, body: "Hello Wes" });
+    ).toMatchObject({ title, body: "Hello Wes" });
   },
 );
+it("without message text, the sender is the title and the action is the body", () => {
+  expect(
+    messageNotificationText(
+      message,
+      "thread",
+      { id: "room", name: "new-notifications" },
+      { name: "Pinky" },
+    ).withoutText,
+  ).toEqual({ title: "Pinky", body: "replied in #new-notifications" });
+});
 it("DM mentions do not expose an internal DM name; missing names use key fragments", () => {
   expect(
     messageNotificationText(
@@ -139,7 +149,7 @@ it("normalizes whitespace/control characters in names and body", () => {
     { id: "room", name: "room\nname" },
     { name: "Pinky\u202E\nMouse" },
   );
-  expect(text).toEqual({
+  expect(text).toMatchObject({
     title: "Pinky Mouse mentioned you in #room name",
     body: "hello world",
   });

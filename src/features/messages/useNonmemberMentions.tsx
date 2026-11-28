@@ -1,6 +1,11 @@
-import { useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
+import {
+  addAgentsToDirectMessage,
+  directMessageAddsAgents,
+  FixedDirectMessage,
+} from "./mention-admission";
 import type { MentionRecipient } from "./mention-draft";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -14,7 +19,8 @@ type Pending = {
   error?: string;
 };
 
-/** One consent decision for a captured send. The session owns durable additions. */
+/** One consent decision for a captured send. The session owns durable
+ * additions. In a DM it is asked only about agents, which join it in place. */
 export function useNonmemberMentions(
   session: ComposerSession,
   channelId: string,
@@ -28,7 +34,12 @@ export function useNonmemberMentions(
   const channel = session.channels
     .list()
     .channels.find((item) => item.id === channelId);
-  const canAdd = !!channel && canAddMembers(session, channel);
+  const fixed = useContext(FixedDirectMessage);
+  const dm = channel?.channelType === "dm";
+  const canAdd = dm
+    ? directMessageAddsAgents(session, channel, fixed)
+    : !!channel && canAddMembers(session, channel);
+  const place = dm ? "DM" : "channel";
   async function add() {
     if (!pending || adding.current || !canAdd) return;
     adding.current = true;
@@ -41,15 +52,23 @@ export function useNonmemberMentions(
     setPending({ ...request, busy: true });
     try {
       check();
-      // Requested together, so they go to the relay together.
-      const failed = (
-        await Promise.allSettled(
-          request.people.map((person) =>
-            session.memberAdditions.add(channelId, person.pubkey),
-          ),
-        )
-      ).find((result) => result.status === "rejected");
-      if (failed) throw failed.reason;
+      const keys = request.people.map((person) => person.pubkey);
+      if (dm)
+        await addAgentsToDirectMessage(
+          session,
+          channelId,
+          keys,
+          request.signal,
+        );
+      else {
+        // Requested together, so they go to the relay together.
+        const failed = (
+          await Promise.allSettled(
+            keys.map((key) => session.memberAdditions.add(channelId, key)),
+          )
+        ).find((result) => result.status === "rejected");
+        if (failed) throw failed.reason;
+      }
       check();
       request.finish([]);
     } catch (reason) {
@@ -88,8 +107,8 @@ export function useNonmemberMentions(
         onOpenChange={(open) => {
           if (!open) pending?.finish(null);
         }}
-        title="Mention people outside this channel?"
-        description={pending && describe(pending.people, canAdd)}
+        title={`Mention ${dm ? "agents" : "people"} outside this ${place}?`}
+        description={pending && describe(pending.people, canAdd, place)}
         preventClose={!!pending?.busy}
         initialFocus={canAdd ? inviteAction : undefined}
         finalFocus={() => {
@@ -133,12 +152,20 @@ export function useNonmemberMentions(
 }
 
 /** Match block/buzz desktop: name the people, then the available outcome. */
-function describe(people: readonly MentionRecipient[], canAdd: boolean) {
+function describe(
+  people: readonly MentionRecipient[],
+  canAdd: boolean,
+  place: string,
+) {
   const names = people.map((person) => person.name).join(", ");
   const verb = people.length === 1 ? "is" : "are";
-  return `${names} ${verb} not in this channel. ${
+  return `${names} ${verb} not in this ${place}. ${
     canAdd
-      ? "Invite them to the channel, or send without inviting them."
-      : "You cannot add people to this channel. You can still send without inviting them."
+      ? place === "DM"
+        ? people.length === 1
+          ? "Invite it to the DM, where it can read earlier messages, or send without inviting it."
+          : "Invite them to the DM, where they can read earlier messages, or send without inviting them."
+        : `Invite them to the ${place}, or send without inviting them.`
+      : `You cannot add people to this ${place}. You can still send without inviting them.`
   }`;
 }

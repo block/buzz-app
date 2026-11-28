@@ -1,5 +1,9 @@
-import { expect, it } from "vitest";
-import { directoryChanges, mentionCandidates } from "./mention-candidates";
+import { expect, it, vi } from "vitest";
+import {
+  directoryChanges,
+  mentionCandidates,
+  outsideMentionDetail,
+} from "./mention-candidates";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import {
   type NamePreference,
@@ -46,6 +50,7 @@ function fresh() {
     profiles: { snapshot: () => profiles },
     archives: { snapshot: () => archives },
     outbox: { supports: () => true },
+    directMessages: {},
   } as unknown as ComposerSession;
 }
 
@@ -252,7 +257,30 @@ it("offers the viewer's agents in a DM, where they are named but never added", (
     row.member,
     row.owned,
   ]);
-  // Another community's agent (7) could only join, which a DM cannot do.
+  // Another community's agent (7) could only join, which this DM cannot do.
   expect(offered).toContainEqual([key(6), false, true]);
   expect(offered.map(([pubkey]) => pubkey)).not.toContain(key(7));
+});
+
+it("offers the owner's agents from other communities in a DM that adds agents", () => {
+  const session = fresh();
+  Object.assign(session, {
+    channels: {
+      list: () => ({
+        status: "ready",
+        channels: [{ id: "c", name: "C", channelType: "dm", members }],
+      }),
+    },
+    directMessages: { available: true, agentsInPlace: true, add: vi.fn() },
+  });
+  const far = rows(undefined, session).find(
+    (row) => row.recipient.pubkey === key(7),
+  );
+  expect(far).toMatchObject({ elsewhere: "other.example", agent: true });
+});
+
+it("says an agent outside a DM that adds agents is not in it, and a person is not notified", () => {
+  const dm = { channelType: "dm" } as const;
+  expect(outsideMentionDetail(dm, undefined, true)).toBe("Not in DM");
+  expect(outsideMentionDetail(dm)).toBe("Not in DM · Will not be notified");
 });

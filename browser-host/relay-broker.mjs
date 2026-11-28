@@ -352,6 +352,11 @@ async function relayAuthority(fetch, relay) {
     soloMemberRoleUpdates:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("buzz-solo-member-role"),
+    // kind:41011 `["history","agents"]`: agents join a DM in place, or
+    // nothing changes. Older relays ignore the tag and may start another DM.
+    directMessageAgents:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-dm-agents"),
     // NIP-AR sync: REQ with `"artifact": "current"` keeps a set current.
     artifactSync: nip11.artifacts?.sync?.version === 1,
     artifactSupport:
@@ -1792,6 +1797,8 @@ export function relayBrokerPlugin({
               sidebarMuteWrites: true,
               channelKit: true,
               channelIdentity: (await getAuthority(relay)).channelIdentity,
+              directMessageAgents: (await getAuthority(relay))
+                .directMessageAgents,
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,

@@ -17,7 +17,11 @@ import {
   outsideMentionDetail,
   remoteMentionDetail,
 } from "./mention-candidates";
-import { outsideMentionReferences } from "../../features/messages/mention-admission";
+import {
+  directMessageAddsAgents,
+  FixedDirectMessage,
+  outsideMentionReferences,
+} from "../../features/messages/mention-admission";
 import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
 import {
   channelMember,
@@ -95,6 +99,12 @@ export function MentionCompletion({
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
   const parentAdmission = !!channel && channel.channelType !== "solo";
+  // A DM adds the agents tagged in it; its people stay references.
+  const addsAgents = directMessageAddsAgents(
+    session,
+    channel,
+    useContext(FixedDirectMessage),
+  );
   // The shared budget is append-only for this query, including late teams and
   // directory people. Neither source may displace an already displayed choice.
   const shown = useRef<{
@@ -245,7 +255,11 @@ export function MentionCompletion({
                   ? parentAdmission
                     ? "Adds to channel"
                     : "Adds to chat"
-                  : outsideMentionDetail(channel, elsewhere),
+                  : outsideMentionDetail(
+                      channel,
+                      elsewhere,
+                      agent && addsAgents,
+                    ),
             ]
               .filter(Boolean)
               .join(" · ") ||
@@ -442,6 +456,7 @@ export function MentionCompletion({
     roster,
     inviteAgents,
     parentAdmission,
+    addsAgents,
     selected,
     community,
   ]);

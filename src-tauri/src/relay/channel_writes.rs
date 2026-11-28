@@ -316,7 +316,8 @@ pub(crate) async fn relay_kit_decode(
 /// people and adds any named agents, and an add joins that DM instead of
 /// starting a new DM of its people plus them, its agents left behind. An
 /// add's `"ask"` lets the relay decide, refusing with `needs-choice: history`
-/// when people would join. Returns the DM the relay settled on.
+/// when people would join, and its `"agents"` adds agents alone to this DM,
+/// refused when it names anyone else. Returns the DM the relay settled on.
 #[tauri::command]
 pub(crate) async fn relay_direct_message(
     host: tauri::State<'_, IdentityHost>,
@@ -397,6 +398,7 @@ fn direct_message_refusal(adding: bool, reason: Option<&str>) -> String {
         {
             "needs-choice: history"
         }
+        Some(reason @ "invalid: only agents join this DM in place") if adding => reason,
         Some(reason) if reason.contains("at most 9 people") => {
             if adding {
                 "Couldn’t add them. A DM holds up to 9 people, not counting agents."
@@ -435,7 +437,8 @@ const MAX_DIRECT_MESSAGE_ADDITIONS: usize = 100;
 
 /// The tags of a DM open, or of an addition to the DM `channel`: an `h` tag
 /// first when adding, a `p` per person, `["history", "include"]` or, adding,
-/// `["history", "ask"]` when asked, and a unique `client` tag so a repeat is
+/// `["history", "ask"]` or `["history", "agents"]` when asked, and a unique
+/// `client` tag so a repeat is
 /// a new command.
 pub(super) fn direct_message_tags(
     viewer: &str,
@@ -471,7 +474,9 @@ pub(super) fn direct_message_tags(
     match history {
         None => {}
         Some(value @ "include") => tags.push(vec!["history".into(), value.into()]),
-        Some(value @ "ask") if adding => tags.push(vec!["history".into(), value.into()]),
+        Some(value @ ("ask" | "agents")) if adding => {
+            tags.push(vec!["history".into(), value.into()])
+        }
         Some(_) => return Err("Choose whether they see this DM’s history.".into()),
     }
     tags.push(vec!["client".into(), uuid::Uuid::new_v4().to_string()]);
@@ -1201,7 +1206,7 @@ mod direct_message_tests {
     #[test]
     fn an_addition_leads_with_its_dm_and_carries_the_history_choice() {
         let dm = uuid::Uuid::nil().to_string();
-        for value in ["include", "ask"] {
+        for value in ["include", "ask", "agents"] {
             let tags =
                 direct_message_tags(&key('a'), vec![key('c')], Some(dm.clone()), Some(value))
                     .unwrap();
@@ -1238,6 +1243,11 @@ mod direct_message_tests {
                 Some("invalid: history must be \"include\", got \"x\"")
             ),
             "Couldn’t add them. Try again."
+        );
+        // An agents-only add refused for naming someone else passes on as is.
+        assert_eq!(
+            direct_message_refusal(true, Some("invalid: only agents join this DM in place")),
+            "invalid: only agents join this DM in place"
         );
         assert_eq!(
             direct_message_refusal(true, Some("invalid: DM supports at most 9 people")),
@@ -1304,6 +1314,7 @@ mod direct_message_tests {
                 Some("include"),
             ),
             (vec![key('b')], None, Some("ask")),
+            (vec![key('b')], None, Some("agents")),
             (vec![key('b')], dm, Some("exclude")),
         ] {
             assert!(direct_message_tags(&viewer, pubkeys, channel, history).is_err());

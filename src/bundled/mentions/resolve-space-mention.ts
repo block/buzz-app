@@ -4,6 +4,7 @@ import {
 } from "../../features/messages/composer-session";
 import {
   allowsOutsideMentions,
+  directMessageAddsAgents,
   mentionChannel,
   outsideMentionReferences,
 } from "../../features/messages/mention-admission";
@@ -44,8 +45,8 @@ export type SpaceMentionScope = {
  * text to prose; or, when only longer known names continue the name over the
  * complete choice set, those names, each resolvable under the same rule
  * (`continued`). The words typed after the chip may complete one of them, and
- * the host asks that one. A truncated page, a namesake, a team block, a DM
- * outsider, any failure, the caller's abort or the timeout is null.
+ * the host asks that one. A truncated page, a namesake, a team block, a
+ * person outside a DM, any failure, the caller's abort or the timeout is null.
  */
 export type SpaceMentionResolution =
   | MentionRecipient
@@ -186,11 +187,12 @@ async function resolve(
     });
     const choice = choices.find((c) => c.recipient.pubkey === pubkey);
     if (choice) {
-      // A DM adds nobody and a Solo chat only the viewer's agents, and the
-      // chooser row that says "Will not be notified" was never shown: a chip
-      // must not promise a notification.
+      // A DM adds only agents and a Solo chat only the viewer's agents, and
+      // the chooser row that says "Will not be notified" was never shown: a
+      // chip must not promise a notification.
       if (
         !members.includes(choice.recipient.pubkey) &&
+        !(choice.agent && directMessageAddsAgents(session, channel)) &&
         outsideMentionReferences(
           channel,
           session.agentChoices.snapshot().identities,

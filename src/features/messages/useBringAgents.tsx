@@ -1,6 +1,11 @@
-import { useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
+import {
+  addAgentsToDirectMessage,
+  directMessageAddsAgents,
+  FixedDirectMessage,
+} from "./mention-admission";
 import { communityHost } from "./community-host";
 import type { Agent, Agents } from "../agents/service";
 import { sameAgent } from "../agents/AgentManage";
@@ -43,7 +48,11 @@ export function useBringAgents(
   const channel =
     pending &&
     session.channels.list().channels.find((item) => item.id === channelId);
-  const canAdd = !!channel && canAddMembers(session, channel);
+  const fixed = useContext(FixedDirectMessage);
+  const dm = channel?.channelType === "dm";
+  const canAdd = dm
+    ? directMessageAddsAgents(session, channel, fixed)
+    : !!channel && canAddMembers(session, channel);
   const here =
     (pending &&
       communityHost(splitPartition(session.scope)?.communityOrigin ?? "")) ??
@@ -70,20 +79,32 @@ export function useBringAgents(
         }
       }
       check();
-      // Requested together, so they go to the relay together.
-      const results = await Promise.allSettled(
-        canAdd
-          ? request.agents
-              .filter((agent) => !added.has(agent.pubkey))
-              .map((agent) =>
-                session.memberAdditions
-                  .add(channelId, agent.pubkey)
-                  .then(() => added.add(agent.pubkey)),
-              )
-          : [],
-      );
-      const failed = results.find((result) => result.status === "rejected");
-      if (failed) throw failed.reason;
+      const adding = canAdd
+        ? request.agents
+            .map((agent) => agent.pubkey)
+            .filter((key) => !added.has(key))
+        : [];
+      if (dm && adding.length) {
+        // A DM takes them in one add.
+        await addAgentsToDirectMessage(
+          session,
+          channelId,
+          adding,
+          request.signal,
+        );
+        for (const key of adding) added.add(key);
+      } else {
+        // Requested together, so they go to the relay together.
+        const results = await Promise.allSettled(
+          adding.map((key) =>
+            session.memberAdditions
+              .add(channelId, key)
+              .then(() => added.add(key)),
+          ),
+        );
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed) throw failed.reason;
+      }
       check();
       if (notes.length) setPending({ ...request, busy: false, reviewed: true });
       else request.finish([...added]);
@@ -144,7 +165,7 @@ export function useBringAgents(
             : `Bring ${named(pending.agents)} into ${here}?`)
         }
         description={
-          pending && describe(pending.agents, canAdd, !!pending.reviewed)
+          pending && describe(pending.agents, canAdd, !!pending.reviewed, dm)
         }
         preventClose={!!pending?.busy}
         // Bringing an agent changes who is in the channel, so Enter starts on
@@ -204,6 +225,7 @@ function describe(
   agents: readonly Agent[],
   canAdd: boolean,
   reviewed: boolean,
+  dm: boolean,
 ) {
   const many = agents.length > 1;
   if (reviewed)
@@ -220,8 +242,10 @@ function describe(
       ? `They are in ${other}. Bringing them here adds the same agents. ${sameAgent(true)}`
       : `${agents[0]?.name} is in ${other}. Bringing it here adds the same agent. ${sameAgent()}`
   }${
-    canAdd
-      ? ""
-      : ` You cannot add people to this channel, so ${many ? "they" : "it"} will not be added to it.`
+    !canAdd
+      ? ` You cannot add people to this channel, so ${many ? "they" : "it"} will not be added to it.`
+      : dm
+        ? ` ${many ? "They" : "It"} also ${many ? "join" : "joins"} this DM and can read its earlier messages.`
+        : ""
   }`;
 }

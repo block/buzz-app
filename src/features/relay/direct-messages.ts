@@ -120,6 +120,8 @@ export function createDirectMessages(
   }
   return Object.freeze({
     available,
+    /** The relay adds agents to a DM in place, or changes nothing. */
+    agentsInPlace: available && transport?.directMessageAgents === true,
     /** Observe relay-confirmed opens; opening also unhides the DM on the relay. */
     subscribeOpened(listener: (id: string) => void) {
       opened.add(listener);
@@ -270,15 +272,19 @@ export function createDirectMessages(
      * `pubkeys`, its agents left behind; or an existing DM of the grown set
      * of people. With `"ask"`, the relay decides, and throws
      * `NeedsHistoryChoice` when people would join this DM: the adder chooses,
-     * then adds again with their choice. */
+     * then adds again with their choice. With `"agents"`, agents alone join
+     * this DM, and the relay refuses an add naming anyone else. */
     async add(
       channelId: string,
       pubkeys: readonly string[],
-      includeHistory: boolean | "ask",
+      includeHistory: boolean | "ask" | "agents",
       signal: AbortSignal,
     ) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot add people to messages.");
+      // An older relay ignores the tag and may start another DM.
+      if (includeHistory === "agents" && transport.directMessageAgents !== true)
+        throw new Error("This community cannot add agents to a DM yet.");
       if (!validDirectMessageParticipants(pubkeys, transport.viewer, true))
         throw new Error("Choose who to add to this DM.");
       const active = AbortSignal.any([lifetime, signal]);

@@ -505,6 +505,9 @@ export async function connectNativeTransport(
   const searchSort =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
+  const directMessageAgents =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-dm-agents");
   const artifacts = info.artifacts as
     | { sync?: { version?: unknown } }
     | undefined;
@@ -694,11 +697,9 @@ export async function connectNativeTransport(
           ? {
               channel: history.channelId,
               history:
-                history.includeHistory === "ask"
-                  ? "ask"
-                  : history.includeHistory
-                    ? "include"
-                    : undefined,
+                history.includeHistory === true
+                  ? "include"
+                  : history.includeHistory || undefined,
             }
           : {}),
       }).catch((error: unknown) => {
@@ -1067,6 +1068,7 @@ export async function connectNativeTransport(
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
+    ...(directMessageAgents ? { directMessageAgents: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),
     verifiedProfiles: verifiedProfileAuthority(info),
     async readVerifiedProfileAuthority(signal) {

@@ -2607,6 +2607,26 @@ test("direct-message transport opens and adds to a DM with or without its histor
     ])
       expect((await h.post("direct-message", body)).status).toBe(400);
     expect(h.calls).toHaveLength(3);
+    // An addition may ask, or name agents alone; an open may do neither.
+    for (const includeHistory of ["ask", "agents"]) {
+      await expect(
+        transport.openDirectMessage([person], new AbortController().signal, {
+          channelId,
+          includeHistory,
+        }),
+      ).resolves.toBe(channelId);
+      expect(
+        h.calls.at(-1).body.tags.filter(([tag]) => tag !== "client"),
+      ).toEqual([
+        ["h", channelId],
+        ["p", person],
+        ["history", includeHistory],
+      ]);
+      expect(
+        (await h.post("direct-message", { pubkeys: [person], includeHistory }))
+          .status,
+      ).toBe(400);
+    }
   } finally {
     await h.close();
   }

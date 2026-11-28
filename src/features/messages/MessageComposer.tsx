@@ -44,6 +44,9 @@ import {
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
+  directMessageAddsAgents,
+  FixedDirectMessage,
+  knownAgent,
   outsideMentionReferences,
   pickedAgents,
   mentionAdmission,
@@ -666,6 +669,7 @@ function Composer({
     };
   }, []);
   const mentionRoster = useContext(DraftMentionRoster)?.recipients;
+  const fixedDm = useContext(FixedDirectMessage);
   // A pending mention settles after later renders; admit it against the roster then.
   const currentRoster = useRef(mentionRoster);
   currentRoster.current = mentionRoster;
@@ -3486,13 +3490,22 @@ function Composer({
           const elsewhere = new Map(
             (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
           );
-          const bring = captured.recipients.flatMap((person) => {
+          // One entry per person, however often the draft names them.
+          const named = [
+            ...new Map(
+              captured.recipients.map((person) => [person.pubkey, person]),
+            ).values(),
+          ];
+          const bring = named.flatMap((person) => {
             const agent = elsewhere.get(person.pubkey);
             return agent && !channel.members?.includes(person.pubkey)
               ? [agent]
               : [];
           });
-          if (bring.length && channel.channelType !== "dm") {
+          const dm = channel.channelType === "dm";
+          const addsAgents =
+            dm && directMessageAddsAgents(session, channel, fixedDm);
+          if (bring.length && (!dm || addsAgents)) {
             setSending(true);
             setError(undefined);
             const brought = await bringing.prepare(
@@ -3503,17 +3516,39 @@ function Composer({
             if (brought === null) return;
             added = brought;
           }
-          const missing = captured.recipients.filter(
+          let missing = named.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
               !added.includes(person.pubkey),
           );
-          if (missing.length && channel?.channelType === "dm") {
-            // Nobody can be added to a DM, so there is no choice to offer:
-            // outside people become references without a prompt.
-            references = missing.map((person) => person.pubkey);
-            recipients = recipients.filter((key) => !references.includes(key));
-          } else if (missing.length) {
+          if (dm && missing.length) {
+            // Only agents join a DM from a tag, and only they are asked about,
+            // even where the DM adds no one, so an agent never goes unheard
+            // without a word. Outside people become references without a
+            // prompt. Each tag's profile says which it is, as it did in the
+            // chooser; without it the send stops rather than guess.
+            setSending(true);
+            setError(undefined);
+            await session.profiles
+              .ensure(missing.map((person) => person.pubkey))
+              .catch(() => {
+                throw new Error(
+                  "Could not check who you mentioned. Your draft is kept. Retry.",
+                );
+              });
+            attempt.signal.throwIfAborted();
+            references = missing
+              .filter(
+                (person) =>
+                  !knownAgent(session, person.pubkey) &&
+                  !elsewhere.has(person.pubkey),
+              )
+              .map((person) => person.pubkey);
+            missing = missing.filter(
+              (person) => !references.includes(person.pubkey),
+            );
+          }
+          if (missing.length) {
             setSending(true);
             setError(undefined);
             const decision = await nonmembers.prepare(
@@ -3522,9 +3557,9 @@ function Composer({
               current,
             );
             if (decision === null) return;
-            references = decision;
-            recipients = recipients.filter((key) => !references.includes(key));
+            references = [...references, ...decision];
           }
+          recipients = recipients.filter((key) => !references.includes(key));
         }
       }
       attempt.signal.throwIfAborted();

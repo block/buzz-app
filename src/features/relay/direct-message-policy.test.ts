@@ -4,6 +4,7 @@ import {
   agentPolicyMessage,
   agentPolicyRefusal,
   directMessageRefusal,
+  ONLY_AGENTS_JOIN,
   sameDirectMessage,
 } from "./direct-message-policy";
 
@@ -101,6 +102,15 @@ describe("an agent's add-policy refusal", () => {
     );
     expect(agentPolicyMessage(true, nobody, undefined)).toBe(
       "Couldn’t add them. This agent can’t be added to a DM.",
+    );
+  });
+});
+
+describe("an agents-only add's refusal", () => {
+  it("passes on the relay's refusal", () => {
+    expect(directMessageRefusal(true, ONLY_AGENTS_JOIN)).toBe(ONLY_AGENTS_JOIN);
+    expect(directMessageRefusal(false, ONLY_AGENTS_JOIN)).toBe(
+      "Could not open the direct message. Try again.",
     );
   });
 });

@@ -83,7 +83,9 @@ import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AgentsContext } from "../agents/react";
 import type { Agents, Models } from "../agents/service";
+import { ONLY_AGENTS_JOIN } from "../relay/direct-message-policy";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import { FixedDirectMessage } from "./mention-admission";
 import { ThreadPanel } from "./ThreadPanel";
 import { publishOutgoing, type OutgoingMessage } from "./outgoing-message";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -368,6 +370,8 @@ function mount(
     unread: undefined,
     viewer,
     messages,
+    // No DM additions unless a test grants them.
+    directMessages: {},
     typing: { snapshot: () => typing, subscribe: () => () => {} },
     profiles: {
       snapshot: () => profiles,
@@ -504,51 +508,54 @@ function mount(
   };
   bindChoices();
   let presented = true;
+  let fixed: string | undefined;
   const tree = () => (
     <AgentsContext.Provider value={agents}>
-      <ConversationPresentation value={presented}>
-        <div hidden={!presented} inert={!presented}>
-          {task ? (
-            <ThreadPanel
-              session={{
-                ...props.session,
-                unread: {
-                  subscribe: () => () => {},
-                  snapshot: () => undefined,
-                  attention: () => ({ unread: false }),
-                  threadReadThrough: () => 0,
-                } as unknown as RelaySession["unread"],
-                thread: () => {
-                  const snapshot = {
-                    status: "ready" as const,
-                    root: { ...task, id: props.threadRootId ?? task.id },
-                    replies: [],
-                    canLoadMore: false,
-                    limited: false,
-                  };
-                  return {
-                    snapshot: () => snapshot,
+      <FixedDirectMessage value={fixed}>
+        <ConversationPresentation value={presented}>
+          <div hidden={!presented} inert={!presented}>
+            {task ? (
+              <ThreadPanel
+                session={{
+                  ...props.session,
+                  unread: {
                     subscribe: () => () => {},
-                    refresh: async () => {},
-                    loadMore: async () => {},
-                    dispose: () => {},
-                  } as unknown as ReturnType<RelaySession["thread"]>;
-                },
-              }}
-              scope={props.scope}
-              channelId={props.channelId}
-              channelName={props.channelName}
-              messageId={props.threadRootId ?? task.id}
-              subthreadId={props.threadRootId ?? task.id}
-              extensions={props.extensions}
-              onOpenLink={() => false}
-              active
-            />
-          ) : (
-            <MessageComposer {...props} />
-          )}
-        </div>
-      </ConversationPresentation>
+                    snapshot: () => undefined,
+                    attention: () => ({ unread: false }),
+                    threadReadThrough: () => 0,
+                  } as unknown as RelaySession["unread"],
+                  thread: () => {
+                    const snapshot = {
+                      status: "ready" as const,
+                      root: { ...task, id: props.threadRootId ?? task.id },
+                      replies: [],
+                      canLoadMore: false,
+                      limited: false,
+                    };
+                    return {
+                      snapshot: () => snapshot,
+                      subscribe: () => () => {},
+                      refresh: async () => {},
+                      loadMore: async () => {},
+                      dispose: () => {},
+                    } as unknown as ReturnType<RelaySession["thread"]>;
+                  },
+                }}
+                scope={props.scope}
+                channelId={props.channelId}
+                channelName={props.channelName}
+                messageId={props.threadRootId ?? task.id}
+                subthreadId={props.threadRootId ?? task.id}
+                extensions={props.extensions}
+                onOpenLink={() => false}
+                active
+              />
+            ) : (
+              <MessageComposer {...props} />
+            )}
+          </div>
+        </ConversationPresentation>
+      </FixedDirectMessage>
     </AgentsContext.Provider>
   );
   const view = render(tree(), {
@@ -562,6 +569,11 @@ function mount(
     messages,
     present(active: boolean) {
       presented = active;
+      view.rerender(tree());
+    },
+    /** Show the DM `id` as Bestie does, with its members fixed. */
+    fixDirectMessage(id: string) {
+      fixed = id;
       view.rerender(tree());
     },
     /** A fresh composer for the same chat, as after navigating away and back. */
@@ -11172,6 +11184,328 @@ it("sends someone outside a DM as a reference without asking", async () => {
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
   expect(add).not.toHaveBeenCalled();
+});
+
+function mountGrowableDm(
+  members: string[],
+  directMessages: object,
+  agentsInPlace = true,
+) {
+  const h = mount();
+  const memberAdd = vi.fn();
+  const list = {
+    status: "ready",
+    channels: [{ id: "channel", channelType: "dm", members }],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add: memberAdd },
+    outbox: { ...h.session.outbox, supports: () => true },
+    directMessages: { available: true, agentsInPlace, ...directMessages },
+  });
+  return { ...h, memberAdd };
+}
+
+it("never invites into a DM on a relay that does not add agents in place", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add }, false);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent(
+    "You cannot add people to this DM. You can still send without inviting them.",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Invite" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+  expect(add).not.toHaveBeenCalled();
+  expect(h.messages.send.mock.calls[0]?.[2]).not.toContain(first.pubkey);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+});
+
+it("adds an agent tagged in a DM once its sender invites it, then sends", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("Mention agents outside this DM?");
+  expect(dialog).toHaveTextContent(
+    "Honey is not in this DM. Invite it to the DM, where it can read earlier messages, or send without inviting it.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  // The DM's own add, agents only: the relay adds them to this DM alone.
+  expect(add).toHaveBeenCalledWith(
+    "channel",
+    [first.pubkey],
+    "agents",
+    expect.any(AbortSignal),
+  );
+  expect(h.memberAdd).not.toHaveBeenCalled();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
+});
+
+it("keeps a person tagged in a DM a reference beside an agent it adds", async () => {
+  const add = vi.fn(async () => "channel");
+  const person = { pubkey: "c".repeat(64), name: "Sam" };
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", isAgent: true }],
+      [person.pubkey, { name: "Sam" }],
+    ]),
+  );
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(person);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  // Only the agent is asked about.
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Honey is not in this DM.",
+  );
+  expect(screen.getByRole("dialog")).not.toHaveTextContent("Sam");
+  fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(add).toHaveBeenCalledWith(
+    "channel",
+    [first.pubkey],
+    "agents",
+    expect.any(AbortSignal),
+  );
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([person.pubkey]);
+});
+
+it("asks about and adds an agent tagged twice in a DM once, keeping both tags", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(first);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    /^Mention agents outside this DM\?Honey is not in this DM\./,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(add).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    [first.pubkey],
+    "agents",
+    expect.any(AbortSignal),
+  );
+  expect(h.messages.send.mock.calls[0]?.[1]).toBe("@Honey @Honey ");
+});
+
+it("sends an agent tagged in a DM as a reference when its sender does nothing", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  fireEvent.click(await screen.findByRole("button", { name: "Do nothing" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(add).not.toHaveBeenCalled();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+});
+
+it("keeps the draft when the relay finds a tagged agent is a person", async () => {
+  const add = vi.fn(async () => {
+    throw new Error(ONLY_AGENTS_JOIN);
+  });
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  fireEvent.click(await screen.findByRole("button", { name: "Invite" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Only agents can be added to a DM by mentioning them.",
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent("Your draft is kept.");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("keeps the draft when the relay moves a tagged agent's add to another DM", async () => {
+  const add = vi.fn(async () => "elsewhere");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  fireEvent.click(await screen.findByRole("button", { name: "Invite" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Only agents can be added to a DM by mentioning them.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("reads a tagged name's profile before deciding it is an agent the DM adds", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  // Only the send's own read finds the profile; a chip's background name
+  // read does not.
+  vi.mocked(h.session.profiles.ensure).mockImplementation(
+    async (_ids, priority) => {
+      if (!priority)
+        h.setProfiles(
+          new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
+        );
+    },
+  );
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Honey is not in this DM.",
+  );
+  expect(h.session.profiles.ensure).toHaveBeenCalledWith([first.pubkey]);
+});
+
+it("keeps the draft when a DM send cannot read who its tags are", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  vi.mocked(h.session.profiles.ensure).mockImplementation(
+    async (_ids, priority) => {
+      if (!priority) throw new Error("offline");
+    },
+  );
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not check who you mentioned.",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(add).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("@Honey ");
+});
+
+it("reads a tagged name's profile even when only its verified name is known", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  // A verified name alone says nothing about being an agent.
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  vi.mocked(h.session.profiles.ensure).mockImplementation(
+    async (_ids, priority) => {
+      if (!priority)
+        h.setProfiles(
+          new Map([[first.pubkey, { name: "Honey", isAgent: true }]]),
+        );
+    },
+  );
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Honey is not in this DM.",
+  );
+});
+
+it.each([
+  ["the relay's moderation DM", "moderation"],
+  ["Bestie's one-to-one chat", "bestie"],
+] as const)(
+  "says an agent tagged in %s cannot be added, and adds none",
+  async (_, kind) => {
+    const relay = "e".repeat(64);
+    const add = vi.fn(async () => "channel");
+    const h = mountGrowableDm(
+      ["d".repeat(64), kind === "moderation" ? relay : second.pubkey],
+      { add },
+    );
+    if (kind === "moderation") Object.assign(h.session, { relayAuthor: relay });
+    else h.fixDirectMessage("channel");
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    act(() => h.commands().insertMention(first));
+    fireEvent.submit(screen.getByRole("form"));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Honey is not in this DM. You cannot add people to this DM. You can still send without inviting them.",
+    );
+    expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(add).not.toHaveBeenCalled();
+    expect(h.memberAdd).not.toHaveBeenCalled();
+    expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  },
+);
+
+it("brings the owner's agent from another community into a DM, then adds it there", async () => {
+  const calls: string[] = [];
+  const join = vi.fn(async () => {
+    calls.push("join");
+    return { agent: {} as never, notes: [] };
+  });
+  const snapshot = { agents: [] };
+  const types: never[] = [];
+  const agents = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    find: () => undefined,
+    types: () => types,
+    joinable: () => [
+      {
+        key: first.pubkey,
+        pubkey: first.pubkey,
+        name: "Honey",
+        relay: "wss://oss.example.com",
+      },
+    ],
+    join,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  const add = vi.fn(async () => {
+    calls.push("add");
+    return "channel";
+  });
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "dm",
+        members: ["d".repeat(64), second.pubkey],
+      },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    scope: `https://relay.example.test:${"d".repeat(64)}`,
+    channels: { list: () => list, subscribeList: () => () => {} },
+    directMessages: { available: true, agentsInPlace: true, add },
+  });
+  h.messages.send.mockImplementation(() => {
+    calls.push("send");
+    return "channel-id";
+  });
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Bring Honey into relay.example.test?",
+  );
+  expect(screen.getByRole("dialog")).not.toHaveTextContent("will not be added");
+  // Said before anything joins: bringing it also lets it read this DM.
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "It also joins this DM and can read its earlier messages.",
+  );
+  expect(join).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Bring it here" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(calls).toEqual(["join", "add", "send"]);
+  expect(add).toHaveBeenCalledWith(
+    "channel",
+    [first.pubkey],
+    "agents",
+    expect.any(AbortSignal),
+  );
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
 });
 
 it("does not ask about outside recipients in a Solo chat media-comment composer", async () => {

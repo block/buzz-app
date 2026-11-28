@@ -106,12 +106,14 @@ export interface RelayWriter {
  * its agents left behind. `"ask"` lets
  * the relay decide: agents join, and people joining a DM of two or more
  * people are refused with `NEEDS_HISTORY_CHOICE` so the adder chooses.
+ * `"agents"` adds agents alone to this DM, and the relay refuses an add
+ * naming anyone else with `ONLY_AGENTS_JOIN`, changing nothing.
  * Without `channelId`, it opens a DM: with `includeHistory`, the DM of these
  * people, adding any named agents to it; otherwise the DM of exactly these
  * members. */
 export type DirectMessageHistory =
   | { readonly channelId?: string; readonly includeHistory: boolean }
-  | { readonly channelId: string; readonly includeHistory: "ask" };
+  | { readonly channelId: string; readonly includeHistory: "ask" | "agents" };
 
 export interface ReadTransport {
   /** Hear the relay refuse this account for the whole community, on any
@@ -175,6 +177,11 @@ export interface ReadTransport {
   /** The relay advertises `buzz-search-sort`: bridge search accepts
    * `search_sort: "newest"`. Older relays silently rank by relevance. */
   readonly searchSort?: true;
+  /** The relay advertises `buzz-dm-agents`: kind:41011 with
+   * `["history","agents"]` adds agents to this DM in place or changes
+   * nothing. Older relays ignore the tag and may start another DM, so
+   * without it the tag is never sent. */
+  readonly directMessageAgents?: true;
   /** The relay advertises NIP-AR sync (`artifacts.sync.version` 1 in NIP-11):
    * a REQ with `"artifact": "current"` streams a complete set, then live heads. */
   readonly artifactSync?: true;
@@ -570,6 +577,7 @@ export async function connectBrokerTransport(
     channelIdentity?: boolean;
     soloMemberRoleUpdates?: boolean;
     searchSort?: boolean;
+    directMessageAgents?: boolean;
     artifactSync?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
@@ -939,6 +947,9 @@ export async function connectBrokerTransport(
       ? { workspaceMigration: true as const }
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
+    ...(session.directMessageAgents === true
+      ? { directMessageAgents: true as const }
+      : {}),
     ...(session.artifactSync === true ? { artifactSync: true as const } : {}),
     ...(session.channelKit
       ? {

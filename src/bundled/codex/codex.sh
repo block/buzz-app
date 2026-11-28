@@ -278,10 +278,13 @@ read-window)
   # Copy the snapshot prefix even when a working thread has appended since.
   [ "$3" -gt 0 ] || exit 0
   copy_range() {
-    tail -c "+$2" -- "$1" | head "$3" "$4"
-    codes=("${PIPESTATUS[@]}")
-    [ "${codes[1]}" -eq 0 ] || exit "${codes[1]}"
-    [ "${codes[0]}" -eq 0 ] || [ "${codes[0]}" -eq 141 ] || exit "${codes[0]}"
+    # Seek the shared regular-file descriptor without copying any bytes.
+    # BSD tail -c +OFFSET copies byte by byte, making large rollouts slow.
+    # Both BSD and GNU dd seek with count=0; head inherits that exact offset.
+    {
+      dd bs=1 skip="$(($2 - 1))" count=0 2>/dev/null || return
+      head "$3" "$4"
+    } < "$1"
   }
   path=$1 start=$2 count=$3
   end=$((start - 1 + count))

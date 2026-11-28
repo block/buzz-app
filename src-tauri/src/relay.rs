@@ -187,17 +187,21 @@ pub(crate) async fn relay_workflow_runs(
     community: String,
     id: String,
     cursor: Option<WorkflowCursor>,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<RelayResponse> {
-    let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
-    send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        "GET",
-        None,
-        true,
-        1024 * 1024,
-    )
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
+        send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "GET",
+            None,
+            true,
+            1024 * 1024,
+        )
+        .await
+    })
     .await
 }
 
@@ -773,22 +777,26 @@ pub(crate) async fn relay_publish_read_state(
     fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     event: serde_json::Value,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<RelayResponse> {
-    let url = request_url(&community, "/events", "POST")?;
-    let body = serde_json::to_string(&event).map_err(|_| "Invalid read-state event")?;
-    if body.len() > 64 * 1024 {
-        return Err("Invalid read-state event".into());
-    }
-    host.decode_read_state(vec![event]).await?;
-    send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        "POST",
-        Some(body),
-        true,
-        MAX_RESPONSE,
-    )
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = request_url(&community, "/events", "POST")?;
+        let body = serde_json::to_string(&event).map_err(|_| "Invalid read-state event")?;
+        if body.len() > 64 * 1024 {
+            return Err("Invalid read-state event".into());
+        }
+        host.decode_read_state(vec![event]).await?;
+        send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "POST",
+            Some(body),
+            true,
+            MAX_RESPONSE,
+        )
+        .await
+    })
     .await
 }
 
@@ -844,18 +852,22 @@ pub(crate) async fn relay_publish_thread_follows(
     fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     event: serde_json::Value,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<RelayResponse> {
-    let url = request_url(&community, "/events", "POST")?;
-    let body = readable_own_follows(host.inner(), event).await?;
-    send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        "POST",
-        Some(body),
-        true,
-        MAX_RESPONSE,
-    )
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = request_url(&community, "/events", "POST")?;
+        let body = readable_own_follows(host.inner(), event).await?;
+        send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "POST",
+            Some(body),
+            true,
+            MAX_RESPONSE,
+        )
+        .await
+    })
     .await
 }
 
@@ -1017,6 +1029,7 @@ fn read_cancels() -> &'static Uploads {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri passes each IPC field as an argument.
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
     fi: tauri::State<'_, FederatedIdentity>,
@@ -1025,52 +1038,58 @@ pub(crate) async fn relay_http(
     method: String,
     body: Option<String>,
     id: Option<String>,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<RelayResponse> {
-    let url = request_url(&community, &path, &method)?;
-    if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
-        || (method == "GET" && body.is_some())
-        || (method == "POST" && body.is_none())
-    {
-        return Err("Invalid relay request body".into());
-    }
-    if path == "/events" {
-        let event: serde_json::Value =
-            serde_json::from_str(body.as_deref().ok_or("Invalid relay request body")?)
-                .map_err(|_| "Invalid relay request body")?;
-        let kind = event.get("kind").and_then(serde_json::Value::as_u64);
-        if matches!(kind, Some(41010 | 41011)) {
-            return Err("Choose between one and eight other people.".into());
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = request_url(&community, &path, &method)?;
+        if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
+            || (method == "GET" && body.is_some())
+            || (method == "POST" && body.is_none())
+        {
+            return Err("Invalid relay request body".into());
         }
-        if kind == Some(30078) {
-            admit_app_data(host.inner(), &event, &community).await?;
-        }
-        if kind == Some(30300) {
-            reminders::admit_reminder(host.inner(), &event).await?;
-        }
-        if kind == Some(9007) {
-            verify_owned_event(host.inner(), &event).await?;
-            let template = template(
-                &event,
-                "Agent enrollment or channel operation unavailable or invalid",
-            )?;
-            if !channel_writes::creation(&template) {
-                return Err("Agent enrollment or channel operation unavailable or invalid".into());
+        if path == "/events" {
+            let event: serde_json::Value =
+                serde_json::from_str(body.as_deref().ok_or("Invalid relay request body")?)
+                    .map_err(|_| "Invalid relay request body")?;
+            let kind = event.get("kind").and_then(serde_json::Value::as_u64);
+            if matches!(kind, Some(41010 | 41011)) {
+                return Err("Choose between one and eight other people.".into());
+            }
+            if kind == Some(30078) {
+                admit_app_data(host.inner(), &event, &community).await?;
+            }
+            if kind == Some(30300) {
+                reminders::admit_reminder(host.inner(), &event).await?;
+            }
+            if kind == Some(9007) {
+                verify_owned_event(host.inner(), &event).await?;
+                let template = template(
+                    &event,
+                    "Agent enrollment or channel operation unavailable or invalid",
+                )?;
+                if !channel_writes::creation(&template) {
+                    return Err(
+                        "Agent enrollment or channel operation unavailable or invalid".into(),
+                    );
+                }
+            }
+            if matches!(kind, Some(9002 | 9008 | 9021 | 9022 | 41012 | 9035 | 9036)) {
+                return Err("Invalid outgoing signature".into());
             }
         }
-        if matches!(kind, Some(9002 | 9008 | 9021 | 9022 | 41012 | 9035 | 9036)) {
-            return Err("Invalid outgoing signature".into());
-        }
-    }
-    let request = send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        &method,
-        body,
-        signed_http(&method, &path),
-        MAX_RESPONSE,
-    );
-    cancellable(id.as_deref(), &method, &path, request).await
+        let request = send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            &method,
+            body,
+            signed_http(&method, &path),
+            MAX_RESPONSE,
+        );
+        cancellable(id.as_deref(), &method, &path, request).await
+    })
+    .await
 }
 
 /// Runs `request`, or for a read with an `id`, until `relay_http_cancel` names it.
@@ -1154,11 +1173,19 @@ async fn send(
 ) -> Result<RelayResponse> {
     let community = url.clone();
     let result = async {
+        let mut phase = crate::network_diagnostics::Phase::new(
+            "http.authorization",
+            url.as_str(),
+            None,
+            crate::network_diagnostics::Level::Debug,
+        );
         let assertion = if authenticated {
             evidence(host, fi, &url).await?
         } else {
             None
         };
+        phase.ok = true;
+        drop(phase);
         send_authorized(
             host,
             AuthorizationContext {
@@ -1262,6 +1289,18 @@ async fn send_authorized(
     authenticated: bool,
     response_limit: usize,
 ) -> Result<RelayResponse> {
+    let phase = match url.path() {
+        "/query" => "http.query",
+        "/events" => "http.events",
+        "/info" => "http.discovery",
+        _ => "http.other",
+    };
+    let mut diagnostic = crate::network_diagnostics::Phase::new(
+        phase,
+        url.as_str(),
+        None,
+        crate::network_diagnostics::Level::Debug,
+    );
     let mut request = client()?.request(
         reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| "Invalid relay method")?,
         url.clone(),
@@ -1270,6 +1309,12 @@ async fn send_authorized(
         let payload = body
             .as_ref()
             .map(|body| format!("{:x}", Sha256::digest(body.as_bytes())));
+        let mut sign_phase = crate::network_diagnostics::Phase::new(
+            "http.sign",
+            url.as_str(),
+            None,
+            crate::network_diagnostics::Level::Debug,
+        );
         let auth = host
             .sign(EventTemplate {
                 kind: 27235,
@@ -1291,6 +1336,8 @@ async fn send_authorized(
                 .concat(),
             })
             .await?;
+        sign_phase.ok = true;
+        drop(sign_phase);
         request = request
             .header(
                 "Authorization",
@@ -1315,10 +1362,12 @@ async fn send_authorized(
     let mutation = method != "GET" && !matches!(url.path(), "/query" | "/gifs/search");
     // Never replay a write after a transport error: it may already have reached the relay.
     let operation = async {
-        let response = request
-            .send()
-            .await
-            .map_err(|_| "Relay request could not be confirmed")?;
+        let response = request.send().await.map_err(|error| {
+            diagnostic.reason = Some(crate::network_diagnostics::http_failure(&error));
+            diagnostic.http_error(&error);
+            "Relay request could not be confirmed"
+        })?;
+        diagnostic.status = Some(response.status().as_u16());
         if response.status() == 401 {
             if let (Some(fi), Some(assertion)) = (
                 authorization.fi,
@@ -1335,7 +1384,13 @@ async fn send_authorized(
         {
             return Err(reason.into());
         }
-        read_response(response, response_limit).await
+        let success = response.status().is_success();
+        let result = read_response(response, response_limit).await;
+        diagnostic.ok = success && result.is_ok();
+        if result.is_err() {
+            diagnostic.reason = Some("response-interrupted-or-invalid");
+        }
+        result
     };
     if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
         fi.during_admitted_operation(host, assertion, mutation, operation)
@@ -1376,6 +1431,12 @@ async fn read_bounded(
     interrupted: &str,
     oversized: &str,
 ) -> Result<Vec<u8>> {
+    let mut phase = crate::network_diagnostics::Phase::new(
+        "http.body",
+        response.url().as_str(),
+        None,
+        crate::network_diagnostics::Level::Debug,
+    );
     if response
         .content_length()
         .is_some_and(|length| length > limit as u64)
@@ -1383,12 +1444,17 @@ async fn read_bounded(
         return Err(oversized.into());
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| interrupted)? {
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        phase.http_error(&error);
+        phase.reason = Some("body-interrupted");
+        interrupted
+    })? {
         if chunk.len() > limit - bytes.len() {
             return Err(oversized.into());
         }
         bytes.extend_from_slice(&chunk);
     }
+    phase.ok = true;
     Ok(bytes)
 }
 /// The relay's largest accepted upload (videos).

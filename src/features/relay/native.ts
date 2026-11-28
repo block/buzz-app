@@ -4,6 +4,14 @@ import {
   createArtifactIncrementalReader,
 } from "./artifact-incremental-reader";
 import {
+  networkContext,
+  networkCancellation,
+  networkSignals,
+  markNetworkCancellation,
+} from "../developer/network-context";
+import { networkMetrics } from "../developer/network-metrics";
+import { networkRecorder } from "../developer/network-diagnostics";
+import {
   verifiedProfileAuthority,
   verifiedProfileDiscovery,
 } from "./verified-profile";
@@ -121,6 +129,68 @@ export const nativeWriteKinds = [
   ...WORKFLOW_KINDS,
 ] as const;
 
+/** Observe native relay IPC without changing its admission, cancellation or error
+ * semantics. A paged command is one logical operation, not one sample per page. */
+async function observeNativeRequest<T>(
+  community: string,
+  signal: AbortSignal,
+  dispatch: (diagnostic: {
+    diagnostic?: { operationId: string };
+  }) => Promise<T>,
+  outcome: (result: T) => { ok: boolean; status?: number } = () => ({
+    ok: true,
+  }),
+  deadline?: AbortSignal,
+): Promise<T> {
+  signal.throwIfAborted();
+  const diagnostic = networkRecorder.enabled("debug")
+    ? (networkContext(signal) ?? {
+        operationId: `request:${crypto.randomUUID()}`,
+        owner: "native-http",
+      })
+    : undefined;
+  const metrics = networkMetrics.enabled()
+    ? networkMetrics.relay(community)
+    : undefined;
+  const metric = metrics?.operation("request");
+  const responseLatency = metrics?.timer("http");
+  const cancelled = () =>
+    (deadline?.aborted && signal.reason === deadline.reason) ||
+    (signal.reason instanceof Error && signal.reason.name === "TimeoutError")
+      ? ("deadline" as const)
+      : ("cancelled" as const);
+  let result: T;
+  try {
+    result = await dispatch(
+      diagnostic ? { diagnostic: { operationId: diagnostic.operationId } } : {},
+    );
+  } catch (error) {
+    metric?.(signal.aborted ? cancelled() : "failed");
+    throw error;
+  }
+  const response = outcome(result);
+  metric?.(signal.aborted ? cancelled() : response.ok ? "ok" : "failed");
+  // Retain the in-flight gauge/admission lease until native work acknowledges.
+  if (signal.aborted && networkRecorder.enabled("debug"))
+    networkRecorder.record({
+      level: "debug",
+      event: "native.result-discarded",
+      ...diagnostic,
+      relay: community,
+      status: response.status,
+      cancellation: networkCancellation(signal),
+      outcome: "discarded",
+    });
+  signal.throwIfAborted();
+  responseLatency?.();
+  return result;
+}
+
+const httpOutcome = (result: { status: number }) => ({
+  ok: result.status >= 200 && result.status < 300,
+  status: result.status,
+});
+
 /** Searches and reads native code may abandon. Mirrors `cancellable_read` in
  * `src-tauri/src/relay.rs`. */
 const CANCELLABLE_READS = new Set([
@@ -137,10 +207,12 @@ export async function nativeRelayRequest(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<Response> {
-  const bounded = AbortSignal.any([
-    ...(signal ? [signal] : []),
-    AbortSignal.timeout(30_000),
-  ]);
+  const deadline = AbortSignal.timeout(30_000);
+  markNetworkCancellation(deadline, {
+    initiator: "deadline",
+    owner: "native-http",
+  });
+  const bounded = networkSignals([...(signal ? [signal] : []), deadline]);
   bounded.throwIfAborted();
   const id =
     body !== undefined && CANCELLABLE_READS.has(path)
@@ -151,20 +223,25 @@ export async function nativeRelayRequest(
   };
   if (id) bounded.addEventListener("abort", cancel, { once: true });
   try {
-    const result = await invoke<{
-      status: number;
-      headers: Record<string, string>;
-      body: string;
-    }>("relay_http", {
-      community: communityDestination(community).url,
-      path,
-      method: body === undefined ? "GET" : "POST",
-      body: body === undefined ? null : JSON.stringify(body),
-      ...(id ? { id } : {}),
-    });
-    // The shared admission slot stays held until native work settles: at
-    // once for a cancelled read, otherwise within its timeout.
-    bounded.throwIfAborted();
+    const result = await observeNativeRequest(
+      community,
+      bounded,
+      (diagnostic) =>
+        invoke<{
+          status: number;
+          headers: Record<string, string>;
+          body: string;
+        }>("relay_http", {
+          community: communityDestination(community).url,
+          path,
+          method: body === undefined ? "GET" : "POST",
+          body: body === undefined ? null : JSON.stringify(body),
+          ...(id ? { id } : {}),
+          ...diagnostic,
+        }),
+      httpOutcome,
+      deadline,
+    );
     const response = nativeResponse(result);
     // Only a signed request speaks for the session, as native decides (`send`
     // in relay.rs signs only POST): a refused GET says nothing about it.
@@ -548,11 +625,22 @@ export async function connectNativeTransport(
       validate(event);
       if (event.pubkey !== transport.viewer)
         throw new Error("Invalid channel lifecycle command");
-      const result = await invoke<{
-        status: number;
-        headers: Record<string, string>;
-        body: string;
-      }>("relay_channel_publish", { community: origin, route, event });
+      const result = await observeNativeRequest(
+        origin,
+        signal,
+        (diagnostic) =>
+          invoke<{
+            status: number;
+            headers: Record<string, string>;
+            body: string;
+          }>("relay_channel_publish", {
+            community: origin,
+            route,
+            event,
+            ...diagnostic,
+          }),
+        httpOutcome,
+      );
       signal.throwIfAborted();
       return acceptPublish(
         new Response(result.body, {
@@ -590,17 +678,24 @@ export async function connectNativeTransport(
         origin,
         transport.viewer,
         async () => {
-          const result = await invoke<{
-            status: number;
-            headers: Record<string, string>;
-            body: string;
-          }>("relay_workflow_runs", {
-            community: origin,
-            id: (body as { id: string }).id,
-            cursor:
-              (body as { cursor?: { before: string; beforeId: string } })
-                .cursor ?? null,
-          });
+          const result = await observeNativeRequest(
+            origin,
+            signal,
+            (diagnostic) =>
+              invoke<{
+                status: number;
+                headers: Record<string, string>;
+                body: string;
+              }>("relay_workflow_runs", {
+                community: origin,
+                id: (body as { id: string }).id,
+                cursor:
+                  (body as { cursor?: { before: string; beforeId: string } })
+                    .cursor ?? null,
+                ...diagnostic,
+              }),
+            httpOutcome,
+          );
           return nativeResponse(result);
         },
         signal,
@@ -687,21 +782,24 @@ export async function connectNativeTransport(
       : {}),
     async openDirectMessage(pubkeys, signal, history) {
       signal.throwIfAborted();
-      const id = await invoke<string>("relay_direct_message", {
-        community: origin,
-        pubkeys,
-        ...(history
-          ? {
-              channel: history.channelId,
-              history:
-                history.includeHistory === "ask"
-                  ? "ask"
-                  : history.includeHistory
-                    ? "include"
-                    : undefined,
-            }
-          : {}),
-      }).catch((error: unknown) => {
+      const id = await observeNativeRequest(origin, signal, (diagnostic) =>
+        invoke<string>("relay_direct_message", {
+          community: origin,
+          pubkeys,
+          ...(history
+            ? {
+                channel: history.channelId,
+                history:
+                  history.includeHistory === "ask"
+                    ? "ask"
+                    : history.includeHistory
+                      ? "include"
+                      : undefined,
+              }
+            : {}),
+          ...diagnostic,
+        }),
+      ).catch((error: unknown) => {
         // The command rejects with its refusal's words; callers expect an Error.
         throw typeof error === "string" ? new Error(error) : error;
       });
@@ -836,7 +934,7 @@ export async function connectNativeTransport(
       // decode, and native code bounds each one.
       const bounded = onPage
         ? signal
-        : AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+        : networkSignals([signal, AbortSignal.timeout(10000)]);
       bounded.throwIfAborted();
       // Aborting stops native paging and drops what it decoded.
       const id = crypto.randomUUID();
@@ -846,26 +944,33 @@ export async function connectNativeTransport(
       bounded.addEventListener("abort", cancel, { once: true });
       let result: unknown;
       try {
-        result = await invoke<unknown>("relay_agent_memories_read", {
-          community: origin,
-          agent,
-          slug: slug ?? null,
-          id,
-          onPage: onPage
-            ? new Channel<unknown>((page) => {
-                if (bounded.aborted) return;
-                let listing: MemoryListing;
-                try {
-                  listing = memoryListing(page);
-                } catch {
-                  // The result is validated in full; an invalid page only
-                  // goes unshown.
-                  return;
-                }
-                onPage(listing);
-              })
-            : null,
-        });
+        result = await observeNativeRequest(
+          origin,
+          bounded,
+          (diagnostic) =>
+            invoke<unknown>("relay_agent_memories_read", {
+              community: origin,
+              agent,
+              slug: slug ?? null,
+              id,
+              onPage: onPage
+                ? new Channel<unknown>((page) => {
+                    if (bounded.aborted) return;
+                    let listing: MemoryListing;
+                    try {
+                      listing = memoryListing(page);
+                    } catch {
+                      // The result is validated in full; an invalid page only
+                      // goes unshown.
+                      return;
+                    }
+                    onPage(listing);
+                  })
+                : null,
+              ...diagnostic,
+            }),
+          (result) => ({ ok: !(result as { partial?: boolean })?.partial }),
+        );
       } catch (reason) {
         bounded.throwIfAborted();
         if (reason === "MemoryDenied") {
@@ -960,11 +1065,21 @@ export async function connectNativeTransport(
           async () => {
             // Tauri IPC cannot abort the underlying request. Keep admission until
             // it settles even if the caller no longer needs the receipt.
-            const result = await nativeReadInvoke<{
-              status: number;
-              headers: Record<string, string>;
-              body: string;
-            }>("relay_publish_read_state", { community: origin, event });
+            const result = await observeNativeRequest(
+              origin,
+              signal,
+              (diagnostic) =>
+                nativeReadInvoke<{
+                  status: number;
+                  headers: Record<string, string>;
+                  body: string;
+                }>("relay_publish_read_state", {
+                  community: origin,
+                  event,
+                  ...diagnostic,
+                }),
+              httpOutcome,
+            );
             return nativeResponse(result);
           },
           signal,
@@ -1003,11 +1118,21 @@ export async function connectNativeTransport(
           origin,
           transport.viewer,
           async () => {
-            const result = await nativeReadInvoke<{
-              status: number;
-              headers: Record<string, string>;
-              body: string;
-            }>("relay_publish_thread_follows", { community: origin, event });
+            const result = await observeNativeRequest(
+              origin,
+              signal,
+              (diagnostic) =>
+                nativeReadInvoke<{
+                  status: number;
+                  headers: Record<string, string>;
+                  body: string;
+                }>("relay_publish_thread_follows", {
+                  community: origin,
+                  event,
+                  ...diagnostic,
+                }),
+              httpOutcome,
+            );
             return nativeResponse(result);
           },
           signal,

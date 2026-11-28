@@ -214,23 +214,28 @@ pub(crate) async fn relay_channel_publish(
     community: String,
     route: String,
     event: Value,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<RelayResponse> {
-    let url = request_url(&community, "/events", "POST")?;
-    let viewer = host.viewer().await?;
-    validate(&route, &event, Some(&viewer))?;
-    let body = serde_json::to_string(&event).map_err(|_| "Invalid channel lifecycle command")?;
-    if body.len() > MAX_BODY {
-        return Err("Invalid relay request body".into());
-    }
-    send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        "POST",
-        Some(body),
-        true,
-        MAX_RESPONSE,
-    )
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = request_url(&community, "/events", "POST")?;
+        let viewer = host.viewer().await?;
+        validate(&route, &event, Some(&viewer))?;
+        let body =
+            serde_json::to_string(&event).map_err(|_| "Invalid channel lifecycle command")?;
+        if body.len() > MAX_BODY {
+            return Err("Invalid relay request body".into());
+        }
+        send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "POST",
+            Some(body),
+            true,
+            MAX_RESPONSE,
+        )
+        .await
+    })
     .await
 }
 
@@ -325,61 +330,66 @@ pub(crate) async fn relay_direct_message(
     pubkeys: Vec<String>,
     channel: Option<String>,
     history: Option<String>,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<String> {
-    let url = request_url(&community, "/events", "POST")?;
-    let viewer = host.viewer().await?;
-    let tags = direct_message_tags(&viewer, pubkeys, channel, history.as_deref())?;
-    let adding = tags[0][0] == "h";
-    let failed = || direct_message_refusal(adding, None);
-    let event = host
-        .sign(EventTemplate {
-            kind: if adding { 41011 } else { 41010 },
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| "System clock is unavailable")?
-                .as_secs(),
-            content: String::new(),
-            tags,
-        })
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = request_url(&community, "/events", "POST")?;
+        let viewer = host.viewer().await?;
+        let tags = direct_message_tags(&viewer, pubkeys, channel, history.as_deref())?;
+        let adding = tags[0][0] == "h";
+        let failed = || direct_message_refusal(adding, None);
+        let event = host
+            .sign(EventTemplate {
+                kind: if adding { 41011 } else { 41010 },
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "System clock is unavailable")?
+                    .as_secs(),
+                content: String::new(),
+                tags,
+            })
+            .await?;
+        let body =
+            serde_json::to_string(&event).map_err(|_| "Invalid channel lifecycle command")?;
+        let response = send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "POST",
+            Some(body),
+            true,
+            MAX_RESPONSE,
+        )
         .await?;
-    let body = serde_json::to_string(&event).map_err(|_| "Invalid channel lifecycle command")?;
-    let response = send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        "POST",
-        Some(body),
-        true,
-        MAX_RESPONSE,
-    )
-    .await?;
-    if response.status != 200 {
-        let reason = serde_json::from_str::<Value>(&response.body)
-            .ok()
-            .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
-        return Err(direct_message_refusal(adding, reason.as_deref()));
-    }
-    let receipt: Value = serde_json::from_str(&response.body).map_err(|_| failed())?;
-    if receipt.get("event_id") != event.get("id")
-        || receipt.get("accepted") != Some(&Value::Bool(true))
-    {
-        return Err(failed());
-    }
-    let payload = receipt
-        .get("message")
-        .and_then(Value::as_str)
-        .and_then(|m| m.strip_prefix("response:"))
-        .ok_or_else(failed)?;
-    let result: Value = serde_json::from_str(payload)
-        .map_err(|_| "The relay returned an invalid direct message.")?;
-    let id = result
-        .get("channel_id")
-        .and_then(Value::as_str)
-        .ok_or("The relay returned an invalid direct message.")?;
-    if !uuid(id) {
-        return Err("The relay returned an invalid direct message.".into());
-    }
-    Ok(id.into())
+        if response.status != 200 {
+            let reason = serde_json::from_str::<Value>(&response.body)
+                .ok()
+                .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
+            return Err(direct_message_refusal(adding, reason.as_deref()));
+        }
+        let receipt: Value = serde_json::from_str(&response.body).map_err(|_| failed())?;
+        if receipt.get("event_id") != event.get("id")
+            || receipt.get("accepted") != Some(&Value::Bool(true))
+        {
+            return Err(failed());
+        }
+        let payload = receipt
+            .get("message")
+            .and_then(Value::as_str)
+            .and_then(|m| m.strip_prefix("response:"))
+            .ok_or_else(failed)?;
+        let result: Value = serde_json::from_str(payload)
+            .map_err(|_| "The relay returned an invalid direct message.")?;
+        let id = result
+            .get("channel_id")
+            .and_then(Value::as_str)
+            .ok_or("The relay returned an invalid direct message.")?;
+        if !uuid(id) {
+            return Err("The relay returned an invalid direct message.".into());
+        }
+        Ok(id.into())
+    })
+    .await
 }
 
 /// What to show for the relay's refusal of a DM command, from its exact

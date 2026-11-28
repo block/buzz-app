@@ -24,6 +24,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.emoji": false,
           "buzz.mentions": false,
           "buzz.reminders": false,
+          "buzz.network-diagnostics": true,
           "buzz.workflows": false,
           "buzz.relay-notes": true,
         },
@@ -59,6 +60,18 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       ),
     );
     assert.notEqual(services.accountActions.snapshot()[0], firstFeedback);
+    // Core composition must work when the diagnostics plugin is not installed,
+    // including profiles carrying its former bundled enablement preference.
+    const { networkRecorder } = await vite.ssrLoadModule(
+      "/src/features/developer/network-diagnostics.ts",
+    );
+    assert.equal(networkRecorder.collecting(), false);
+    assert.equal(
+      services.settingsCards
+        .snapshot()
+        .some((card) => card.key.startsWith("buzz.network-diagnostics/")),
+      false,
+    );
     await settle();
     const docsId = "com.squareup.docs";
     const docsPage = () =>

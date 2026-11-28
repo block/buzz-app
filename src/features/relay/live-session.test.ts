@@ -1,4 +1,6 @@
 import { ReadError } from "./errors";
+import { RECOVERY_NOTICE_DELAY_MS } from "./recovery";
+import { networkRecorder } from "../developer/network-diagnostics";
 import { assert, describe, expect, it, vi, afterEach } from "vitest";
 import { createRelaySession } from "./session";
 import type { ChannelStoreOptions } from "./store";
@@ -25,6 +27,93 @@ import {
   scriptedTransport,
   signed,
 } from "./testing";
+
+it("attributes a reconnect notice to a failed preference read while the socket stays connected", async () => {
+  vi.useFakeTimers();
+  networkRecorder.clear();
+  networkRecorder.setEnabled(true);
+  networkRecorder.configure("info");
+  let live!: LiveCallbacks;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let preferenceReads = 0;
+  const retrySocket = vi.fn();
+  const owner = createRelaySession({
+    scope: "https://relay.test",
+    viewer: keypair().pubkey,
+    relayAuthor: keypair().pubkey,
+    media: () => undefined,
+    async query(filters) {
+      if (!filters.some((filter) => filter.kinds?.includes(30078))) return [];
+      if (++preferenceReads === 1)
+        throw new ReadError(
+          "unavailable",
+          "Relay read failed (503)",
+          503,
+          60_000,
+        );
+      return [];
+    },
+    decodeSidebarPreferences: async () => {
+      // Hold the retry in decoding, after its finite read's deadline is released.
+      await gate;
+      return { sections: [], assignments: {}, starred: [], muted: [] };
+    },
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry: retrySocket, dispose() {} };
+    },
+  });
+  try {
+    live.state({ status: "connected", routes: [] });
+    await owner.session.sidebarPreferences.refresh();
+    expect(owner.session.sidebarPreferences.snapshot().status).toBe("error");
+    expect(
+      networkRecorder
+        .snapshot()
+        .events.filter((event) => event.event === "recovery")
+        .at(-1)?.sources,
+    ).toContainEqual({ name: "sidebar-preferences", status: "failed" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(preferenceReads).toBe(2);
+    const completion = owner.session.sidebarPreferences.refresh();
+    await vi.advanceTimersByTimeAsync(RECOVERY_NOTICE_DELAY_MS - 1001);
+    expect(owner.session.recovery?.snapshot().shown).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(owner.session.recovery?.snapshot().shown).toBe(true);
+    expect(owner.session.live.snapshot().status).toBe("connected");
+    expect(
+      networkRecorder
+        .snapshot()
+        .events.filter((event) => event.event === "recovery")
+        .at(-1),
+    ).toMatchObject({
+      shown: true,
+      sources: expect.arrayContaining([
+        { name: "sidebar-preferences", status: "busy" },
+      ]),
+    });
+    release();
+    await completion;
+    expect(owner.session.recovery?.snapshot().recovering).toBe(false);
+    expect(
+      networkRecorder
+        .snapshot()
+        .events.filter((event) => event.event === "recovery")
+        .at(-1)?.recovering,
+    ).toBe(false);
+    expect(retrySocket).not.toHaveBeenCalled();
+    expect(preferenceReads).toBe(2);
+  } finally {
+    release();
+    owner.dispose();
+    networkRecorder.setEnabled(false);
+    networkRecorder.clear();
+    vi.useRealTimers();
+  }
+});
 
 it("clears retained repository homes on live recovery, cache clearing, and disposal", async () => {
   const relay = keypair(),

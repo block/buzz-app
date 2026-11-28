@@ -359,7 +359,16 @@ mentions still work.
   can't be made Admin keeps its current role; make it Admin from **Chat
   access**.
 
-Diagnostics and Outbox are developer tools, not available in release builds.
+For persistent connection trouble, install a compatible **Network diagnostics**
+plugin in **Settings → Plugins → Manage plugins**, enable it, then open its
+settings and select Debug. Reproduce the problem and export JSON, or give your
+agent the displayed local session-file path. Capture continues while Settings
+is closed; disabling the plugin stops collection. Nothing is uploaded
+automatically. Logs omit message bodies and credentials but include relay
+addresses and connection metadata. See [reading network diagnostics](network-diagnostics.md)
+for capture levels, optional automatic reset, file lifetime and interpretation.
+
+The built-in Diagnostics and Outbox pages are developer tools, not available in release builds.
 
 ### Keychain prompts (macOS)
 

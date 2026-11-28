@@ -413,27 +413,31 @@ pub(crate) async fn relay_agent_memories_read<R: tauri::Runtime>(
     slug: Option<String>,
     id: Option<String>,
     on_page: Option<tauri::ipc::JavaScriptChannelId>,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<Value> {
-    let on_page = on_page.map(|channel| channel.channel_on(webview));
-    let Some(id) = id else {
-        return read_agent_memories(&host, &fi, community, agent, slug, None).await;
-    };
-    let id = super::upload_id(Some(&id)).map_err(|_| "Invalid memory read")?;
-    let Some(cancelled) = super::read_cancels()
-        .start(id)
-        .map_err(|_| "Relay reads are busy")?
-    else {
-        return Err("Memory read cancelled".into());
-    };
-    // Dropping the read stops its paging, and a running decode at its next
-    // record.
-    let result = tokio::select! {
-        biased;
-        _ = cancelled => Err("Memory read cancelled".into()),
-        result = read_agent_memories(&host, &fi, community, agent, slug, on_page) => result,
-    };
-    super::read_cancels().finish(id);
-    result
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let on_page = on_page.map(|channel| channel.channel_on(webview));
+        let Some(id) = id else {
+            return read_agent_memories(&host, &fi, community, agent, slug, None).await;
+        };
+        let id = super::upload_id(Some(&id)).map_err(|_| "Invalid memory read")?;
+        let Some(cancelled) = super::read_cancels()
+            .start(id)
+            .map_err(|_| "Relay reads are busy")?
+        else {
+            return Err("Memory read cancelled".into());
+        };
+        // Dropping the read stops its paging, and a running decode at its next
+        // record.
+        let result = tokio::select! {
+            biased;
+            _ = cancelled => Err("Memory read cancelled".into()),
+            result = read_agent_memories(&host, &fi, community, agent, slug, on_page) => result,
+        };
+        super::read_cancels().finish(id);
+        result
+    })
+    .await
 }
 
 /// Reads the listing; with `on_page`, each decoded page's new or changed

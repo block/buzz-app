@@ -256,3 +256,36 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 - Expecting `plugin_reload` to apply a `manifest.host` change.
 - Invalid ids, or an unknown manifest key.
 - Expecting React state to survive a reload, or a dragged-in folder to be reloadable.
+
+## Optional network diagnostics
+
+Network diagnostics is an external desktop plugin, not a bundled dependency.
+Buzz supplies `networkDiagnostics` independently of its installation. Without an
+active capture consumer, collectors stay disabled and no diagnostic timers,
+forwarding IPC or session-file writes run. Small connection-state registrations
+remain so capture can include already-open sockets.
+
+The type-only author package exports `NetworkDiagnostics`,
+`NetworkDiagnosticsSnapshot`, `NetworkCaptureReset`, `NetworkLogLevel`,
+`NetworkEvent`, `NetworkError`, `NetworkRelayMetrics` and `NetworkMetricWindow`.
+Read `ctx.reflect.get("networkDiagnostics")` and check `version === 1` before
+using it; `apiVersion: 1` alone does not establish availability. Older hosts
+should show an upgrade explanation. The first compatible released host version
+will be recorded when this capability ships.
+
+A capture consumer calls `setEnabled(true)` in `ctx.effect` and returns
+`() => diagnostics.setEnabled(false)` as cleanup. Await activation before changing
+levels; cleanup must be registered before activation starts. Settings unmounting
+does not own capture. Disabling, uninstalling or replacing the plugin releases it.
+There is one application-wide capture, not a separate recorder per settings view.
+
+`snapshot()` returns sanitized recent events, aggregate metrics and available
+archive/writer status. `refresh()` reads local native status; it sends no relay
+requests. `setLevel()` and `setAutoReset()` validate capture settings in the host.
+`clear()` resets the current capture, and `export()` returns a saved desktop path
+(or a browser development report). The host owns IPC, sanitization, file locations
+and export; the plugin needs no broad file, process or network grants. These are
+trusted same-WebView capabilities, not a plugin sandbox.
+
+See [reading network diagnostics](network-diagnostics.md) for levels, metric
+semantics, file lifetime and performance limits.

@@ -234,6 +234,12 @@ pub(super) type DiscoveryCache = std::collections::HashMap<String, Arc<Discovery
 /// No credential goes on discovery. The exact relay supplies only the requirement,
 /// never the configured adapter destination.
 pub(crate) async fn discovery(relay: &str) -> Result<bool, String> {
+    let mut diagnostic = crate::network_diagnostics::Phase::new(
+        "community.discovery",
+        relay,
+        None,
+        crate::network_diagnostics::Level::Info,
+    );
     let relay = canonical_relay(relay)?;
     let url = format!("https://{}/info", &relay[6..]);
     let client = protocol::client().map_err(str::to_owned)?;
@@ -241,7 +247,9 @@ pub(crate) async fn discovery(relay: &str) -> Result<bool, String> {
         protocol::json(|| client.get(&url).header("Accept", "application/nostr+json"))
             .await
             .map_err(|_| "Federated community discovery failed".to_owned())?;
-    evaluate_discovery(&document).map_err(str::to_owned)
+    let result = evaluate_discovery(&document).map_err(str::to_owned);
+    diagnostic.ok = result.is_ok();
+    result
 }
 fn evaluate_discovery(document: &serde_json::Value) -> Result<bool, &'static str> {
     if !document.is_object() {
@@ -784,120 +792,132 @@ impl FederatedIdentity {
         token: &str,
         session_expiry: u64,
     ) -> Result<Assertion, Failure> {
-        if viewer.len() != 64
-            || !viewer
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err("invalid-viewer".into());
-        }
-        // Field order and exact bytes are the NIP-FA assertion request contract.
-        #[derive(serde::Serialize)]
-        struct Body<'a> {
-            nostr_pubkey: &'a str,
-            relay_url: &'a str,
-        }
-        let body = serde_json::to_string(&Body {
-            nostr_pubkey: viewer,
-            relay_url: relay,
-        })
-        .map_err(|_| "invalid-request")?;
-        if body.len() > 4096 {
-            return Err("invalid-request".into());
-        }
-        let endpoint = self
-            .0
-            .config
-            .as_ref()
-            .ok_or("unconfigured")?
-            .endpoint("/v1/identity/assertions");
-        let client = protocol::client()?;
-        let payload = format!("{:x}", Sha256::digest(body.as_bytes()));
-        // Every transmitted attempt carries its own proof: the issuer accepts
-        // each proof once, so a retry resending one would be refused as a
-        // replay. The nonce keeps two attempts in one second distinct.
-        let (payload, endpoint, body, client) = (&payload, &endpoint, &body, &client);
-        let proof = move || async move {
-            let mut nonce = [0u8; 16];
-            getrandom::fill(&mut nonce).map_err(|_| "identity-unavailable")?;
-            let proof = identity
-                .sign(EventTemplate {
-                    kind: 27235,
-                    created_at: now()? as u64,
-                    content: String::new(),
-                    tags: vec![
-                        vec!["u".into(), endpoint.to_string()],
-                        vec!["method".into(), "POST".into()],
-                        vec!["payload".into(), payload.clone()],
-                        vec![
-                            "nonce".into(),
-                            nonce.iter().map(|b| format!("{b:02x}")).collect(),
-                        ],
-                    ],
-                })
-                .await
-                .map_err(|_| "identity-unavailable")?;
-            if proof.get("pubkey").and_then(|v| v.as_str()) != Some(viewer) {
-                return Err(Failure::from("invalid-viewer"));
-            }
-            Ok::<_, Failure>(format!(
-                "Nostr {}",
-                STANDARD.encode(serde_json::to_vec(&proof).map_err(|_| "invalid-proof")?)
-            ))
-        };
-        #[derive(Deserialize)]
-        struct Issued {
-            assertion: String,
-            nostr_pubkey: String,
-            expires_at: u64,
-        }
-        let proof = &proof;
-        let (issued, request_start): (Issued, _) = protocol::json_with(move || async move {
-            Ok(client
-                .post(endpoint.clone())
-                .bearer_auth(token)
-                .header("Nostr-Authorization", proof().await?)
-                .header("Content-Type", "application/json")
-                .body(body.clone()))
-        })
-        .await?;
-        let assertion = Zeroizing::new(issued.assertion);
-        // Use one precise wall-clock sample for NumericDate validation and the
-        // conversion to a monotonic deadline. Sampling the monotonic clock first
-        // keeps the derived deadline at or before the issuer's whole-second exp.
-        let monotonic_now = Instant::now();
-        let wall_now = protocol::wall_now();
-        let now = wall_now
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| "clock-unavailable")?
-            .as_secs();
-        let minted = validate_jwt(
-            &assertion,
-            &issued.nostr_pubkey,
-            issued.expires_at,
-            viewer,
+        let mut diagnostic = crate::network_diagnostics::Phase::new(
+            "federated.assertion",
             relay,
-            session_expiry,
-            now,
-        )?;
-        let (expires_at, lifetime) = token_deadline(
-            request_start,
-            minted,
-            issued.expires_at,
-            wall_now,
-            monotonic_now,
-        )
-        .ok_or("invalid-assertion")?;
-        Ok(Assertion {
-            header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
-            expires_at,
-            revision: revision.into(),
-            viewer: viewer.into(),
-            relay: relay.into(),
-            refresh_at: expires_at - refresh_margin(lifetime),
-            received: Received::at(monotonic_now, wall_now),
-            server: Arc::downgrade(&self.0),
-        })
+            None,
+            crate::network_diagnostics::Level::Info,
+        );
+        let result: Result<Assertion, Failure> = async {
+            if viewer.len() != 64
+                || !viewer
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err("invalid-viewer".into());
+            }
+            // Field order and exact bytes are the NIP-FA assertion request contract.
+            #[derive(serde::Serialize)]
+            struct Body<'a> {
+                nostr_pubkey: &'a str,
+                relay_url: &'a str,
+            }
+            let body = serde_json::to_string(&Body {
+                nostr_pubkey: viewer,
+                relay_url: relay,
+            })
+            .map_err(|_| "invalid-request")?;
+            if body.len() > 4096 {
+                return Err("invalid-request".into());
+            }
+            let endpoint = self
+                .0
+                .config
+                .as_ref()
+                .ok_or("unconfigured")?
+                .endpoint("/v1/identity/assertions");
+            let client = protocol::client()?;
+            let payload = format!("{:x}", Sha256::digest(body.as_bytes()));
+            // Every transmitted attempt carries its own proof: the issuer accepts
+            // each proof once, so a retry resending one would be refused as a
+            // replay. The nonce keeps two attempts in one second distinct.
+            let (payload, endpoint, body, client) = (&payload, &endpoint, &body, &client);
+            let proof = move || async move {
+                let mut nonce = [0u8; 16];
+                getrandom::fill(&mut nonce).map_err(|_| "identity-unavailable")?;
+                let proof = identity
+                    .sign(EventTemplate {
+                        kind: 27235,
+                        created_at: now()? as u64,
+                        content: String::new(),
+                        tags: vec![
+                            vec!["u".into(), endpoint.to_string()],
+                            vec!["method".into(), "POST".into()],
+                            vec!["payload".into(), payload.clone()],
+                            vec![
+                                "nonce".into(),
+                                nonce.iter().map(|b| format!("{b:02x}")).collect(),
+                            ],
+                        ],
+                    })
+                    .await
+                    .map_err(|_| "identity-unavailable")?;
+                if proof.get("pubkey").and_then(|v| v.as_str()) != Some(viewer) {
+                    return Err(Failure::from("invalid-viewer"));
+                }
+                Ok::<_, Failure>(format!(
+                    "Nostr {}",
+                    STANDARD.encode(serde_json::to_vec(&proof).map_err(|_| "invalid-proof")?)
+                ))
+            };
+            #[derive(Deserialize)]
+            struct Issued {
+                assertion: String,
+                nostr_pubkey: String,
+                expires_at: u64,
+            }
+            let proof = &proof;
+            let (issued, request_start): (Issued, _) = protocol::json_with(move || async move {
+                Ok(client
+                    .post(endpoint.clone())
+                    .bearer_auth(token)
+                    .header("Nostr-Authorization", proof().await?)
+                    .header("Content-Type", "application/json")
+                    .body(body.clone()))
+            })
+            .await?;
+            let assertion = Zeroizing::new(issued.assertion);
+            // Use one precise wall-clock sample for NumericDate validation and the
+            // conversion to a monotonic deadline. Sampling the monotonic clock first
+            // keeps the derived deadline at or before the issuer's whole-second exp.
+            let monotonic_now = Instant::now();
+            let wall_now = protocol::wall_now();
+            let now = wall_now
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "clock-unavailable")?
+                .as_secs();
+            let minted = validate_jwt(
+                &assertion,
+                &issued.nostr_pubkey,
+                issued.expires_at,
+                viewer,
+                relay,
+                session_expiry,
+                now,
+            )?;
+            let (expires_at, lifetime) = token_deadline(
+                request_start,
+                minted,
+                issued.expires_at,
+                wall_now,
+                monotonic_now,
+            )
+            .ok_or("invalid-assertion")?;
+            Ok(Assertion {
+                header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
+                expires_at,
+                revision: revision.into(),
+                viewer: viewer.into(),
+                relay: relay.into(),
+                refresh_at: expires_at - refresh_margin(lifetime),
+                received: Received::at(monotonic_now, wall_now),
+                server: Arc::downgrade(&self.0),
+            })
+        }
+        .await;
+        diagnostic.ok = result.is_ok();
+        diagnostic.reason = result.as_ref().err().map(|failure| failure.code);
+        result
     }
 }
 
@@ -1070,6 +1090,51 @@ mod tests {
         let next = host.assertion_for_relay(&identity, &url).await.unwrap();
         assert!(next.assertion.unwrap().remaining() > std::time::Duration::from_secs(55));
         assert_eq!(server.await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn clock_skew_remains_a_safe_terminal_assertion_diagnostic() {
+        use crate::network_diagnostics::{
+            network_diagnostics_configure, network_diagnostics_read, Level,
+        };
+        let _capture = crate::network_diagnostics::CAPTURE_TEST.lock().await;
+        let relay = "wss://relay.example";
+        let identity = IdentityHost::fixture();
+        let viewer = identity.viewer().await.unwrap();
+        let wall = protocol::wall_now();
+        let now = wall
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let token = jwt(&viewer, relay, now + 121, now + 600);
+        let (base, server) = scripted_issuer(vec![(
+            std::time::Duration::ZERO,
+            raw("200 OK", "", &issued(&viewer, relay, now + 121, now + 600)),
+        )])
+        .await;
+        let host = super::super::testing::signed_in(base, relay, true);
+        network_diagnostics_configure(Level::Debug, Some(true), None).unwrap();
+        let result = protocol::WALL_NOW
+            .scope(
+                wall,
+                host.assertion_for_relay(&identity, &Url::parse("https://relay.example").unwrap()),
+            )
+            .await;
+        assert!(matches!(result, Err(ref reason) if reason == "clock-skew"));
+        assert_eq!(server.await.unwrap().len(), 1);
+        let diagnostics = network_diagnostics_read(None);
+        let terminal = diagnostics["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| {
+                event["phase"] == "federated.assertion" && event["reason"] == "clock-skew"
+            })
+            .unwrap();
+        assert_eq!(terminal["error"]["code"], "clock-skew");
+        assert_eq!(terminal["error"]["message"], "clock-skew");
+        assert!(!diagnostics.to_string().contains(&token));
+        network_diagnostics_configure(Level::Info, Some(false), None).unwrap();
     }
 
     #[test]

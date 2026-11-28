@@ -1,3 +1,6 @@
+import { networkRecorder } from "../developer/network-diagnostics";
+import { networkMetrics } from "../developer/network-metrics";
+import { abortNetwork, bindNetworkContext } from "../developer/network-context";
 import {
   ARTIFACT_INCREMENTAL_LIMITS,
   ArtifactIncrementalError,
@@ -75,6 +78,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 beforeEach(() => {
+  networkRecorder.setEnabled(true);
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(1700000010000);
   requests.length = 0;
@@ -349,11 +353,103 @@ it("publishes config artifacts straight to the relay, re-sending identical bytes
   ).rejects.toThrow("Not this viewer's artifact");
 });
 afterEach(() => {
+  networkMetrics.setEnabled(false);
+  networkMetrics.reset();
+  networkRecorder.configure("info");
+  networkRecorder.clear();
   for (const owner of owners.splice(0)) owner.dispose();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
+
+it.each([
+  ["deadline", "response"],
+  ["deadline", "rejection"],
+  ["caller", "response"],
+  ["caller", "rejection"],
+] as const)(
+  "counts %s separately from cancellation after IPC %s",
+  async (initiator, result) => {
+    const deadline = new AbortController(),
+      caller = new AbortController();
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(deadline.signal);
+    const gate = deferred<void>();
+    respond = async () => {
+      await gate.promise;
+      if (result === "rejection") throw new Error("native transport failure");
+      return { body: [] };
+    };
+    networkMetrics.setEnabled(true);
+    networkMetrics.reset();
+    const request = nativeRelayRequest(
+      community,
+      "/query",
+      [],
+      caller.signal,
+    ).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      (initiator === "deadline" ? deadline : caller).abort();
+      expect(networkMetrics.snapshot().relays[0]?.inFlight).toBe(1);
+      gate.resolve();
+      await request;
+      expect(networkMetrics.snapshot().relays[0]).toMatchObject({
+        inFlight: 0,
+        session: {
+          latency: { http: { count: 0 } },
+          counts: {
+            requestOk: 0,
+            requestFailed: initiator === "deadline" ? 1 : 0,
+            requestCancelled: initiator === "caller" ? 1 : 0,
+          },
+        },
+      });
+    } finally {
+      gate.resolve();
+      await request;
+      timeout.mockRestore();
+      networkMetrics.setEnabled(false);
+      networkMetrics.reset();
+    }
+  },
+);
+
+it.each(["ok", "refused", "clear", "enable", "resume"] as const)(
+  "samples native HTTP response latency only for a current captured response (%s)",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const gate = deferred<void>();
+    respond = async () => {
+      await gate.promise;
+      return { status: outcome === "refused" ? 503 : 200, body: [] };
+    };
+    networkMetrics.setEnabled(outcome !== "enable");
+    networkMetrics.reset();
+    const request = nativeRelayRequest(community, "/query", []);
+    try {
+      expect(requests).toHaveLength(1);
+      if (outcome === "clear") networkMetrics.reset();
+      if (outcome === "resume") networkMetrics.setEnabled(false);
+      if (outcome === "enable" || outcome === "resume")
+        networkMetrics.setEnabled(true);
+      await vi.advanceTimersByTimeAsync(50);
+      gate.resolve();
+      await request;
+      const sample = networkMetrics.snapshot().relays[0]?.session.latency.http;
+      if (outcome === "ok" || outcome === "refused")
+        expect(sample).toMatchObject({ count: 1, mean: 50 });
+      else expect(sample?.count ?? 0).toBe(0);
+    } finally {
+      gate.resolve();
+      await request;
+      networkMetrics.setEnabled(false);
+      networkMetrics.reset();
+    }
+  },
+);
 
 it("discovers the relay, verifies reads and publishes through the same native identity and destination", async () => {
   const incoming = message(viewer, "channel", "hello", 1700000000);
@@ -634,9 +730,15 @@ it("authenticates live traffic with the native signer and verifies incoming chan
 });
 
 it("cancellation fences a late native response and prevents undispatched work", async () => {
+  networkRecorder.configure("debug");
+  networkRecorder.clear();
   const gate = deferred<{ body: unknown }>();
   respond = () => gate.promise;
   const controller = new AbortController();
+  bindNetworkContext(controller.signal, {
+    operationId: "read:causal-test",
+    owner: "channel-head",
+  });
   const request = nativeRelayRequest(
     community,
     "/query",
@@ -644,7 +746,10 @@ it("cancellation fences a late native response and prevents undispatched work", 
     controller.signal,
   );
   await vi.waitFor(() => expect(requests).toHaveLength(1));
-  controller.abort();
+  expect(requests[0]).toMatchObject({
+    diagnostic: { operationId: "read:causal-test" },
+  });
+  abortNetwork(controller, "superseded", "channel-head");
   try {
     await expect(
       nativeRelayRequest(community, "/query", [], controller.signal),
@@ -654,7 +759,126 @@ it("cancellation fences a late native response and prevents undispatched work", 
     gate.resolve({ body: [] });
   }
   await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  expect(networkRecorder.snapshot().events).toContainEqual(
+    expect.objectContaining({
+      event: "native.result-discarded",
+      operationId: "read:causal-test",
+      status: 200,
+      cancellation: { initiator: "superseded", owner: "channel-head" },
+    }),
+  );
+  networkRecorder.configure("info");
+  networkRecorder.clear();
 });
+
+it.each([
+  "channel",
+  "workflow",
+  "memories",
+  "read-state",
+  "thread-follows",
+  "dm",
+] as const)(
+  "includes dedicated %s IPC in correlated request metrics",
+  async (kind) => {
+    const transport = await connectNativeTransport(community);
+    const controller = new AbortController();
+    const operationId = `read:dedicated-${kind}`;
+    networkRecorder.configure("debug");
+    networkMetrics.setEnabled(true);
+    networkMetrics.reset();
+    bindNetworkContext(controller.signal, { operationId, owner: "test" });
+    const gate = deferred<unknown>();
+    const command = {
+      channel: "relay_channel_publish",
+      workflow: "relay_workflow_runs",
+      memories: "relay_agent_memories_read",
+      "read-state": "relay_publish_read_state",
+      "thread-follows": "relay_publish_thread_follows",
+      dm: "relay_direct_message",
+    }[kind];
+    vi.mocked(invoke).mockImplementationOnce((name, args) => {
+      expect(name).toBe(command);
+      expect(args).toMatchObject({ diagnostic: { operationId } });
+      return gate.promise;
+    });
+    const id = "11111111-1111-4111-8111-111111111111";
+    const event = signed(
+      viewer,
+      kind === "channel"
+        ? {
+            kind: 9002,
+            tags: [
+              ["h", id],
+              ["archived", "true"],
+            ],
+            content: "",
+          }
+        : {
+            kind: 30078,
+            tags: [
+              ["d", `${kind}:${"a".repeat(32)}`],
+              ["t", kind],
+            ],
+            content: "private-ciphertext",
+          },
+    );
+    const pending =
+      kind === "channel"
+        ? transport.channelLifecycle?.publish(event, controller.signal)
+        : kind === "workflow"
+          ? transport.workflows?.runs(id, undefined, controller.signal)
+          : kind === "memories"
+            ? transport.readAgentMemories?.(relay.pubkey, controller.signal)
+            : kind === "read-state"
+              ? transport.readState?.publish?.(event, controller.signal)
+              : kind === "thread-follows"
+                ? transport.readState?.publishFollows?.(
+                    event,
+                    controller.signal,
+                  )
+                : transport.openDirectMessage?.(
+                    [relay.pubkey],
+                    controller.signal,
+                  );
+    try {
+      expect(pending).toBeDefined();
+      await vi.waitFor(() =>
+        expect(networkMetrics.snapshot().relays[0]?.inFlight).toBe(1),
+      );
+      gate.resolve(
+        kind === "dm"
+          ? id
+          : kind === "memories"
+            ? { entries: [], partial: false }
+            : {
+                status: 200,
+                headers: {},
+                body: JSON.stringify(
+                  kind === "workflow"
+                    ? { runs: [], next: null }
+                    : { accepted: true, event_id: event.id },
+                ),
+              },
+      );
+      await pending;
+      expect(networkMetrics.snapshot().relays[0]).toMatchObject({
+        inFlight: 0,
+        session: {
+          counts: { requestOk: 1, requestFailed: 0, requestCancelled: 0 },
+          latency: { http: { count: 1 } },
+        },
+      });
+    } finally {
+      gate.resolve(undefined);
+      await Promise.allSettled([pending]);
+      networkMetrics.setEnabled(false);
+      networkMetrics.reset();
+      networkRecorder.configure("info");
+      networkRecorder.clear();
+    }
+  },
+);
 
 it("cancelled native reads retain the request admission bound until IPC settles", async () => {
   vi.useFakeTimers();
@@ -923,13 +1147,21 @@ it("exposes workflow history over the purpose-bound native route and workflow wr
     transport.workflows.runs(id, undefined, controller.signal),
   ).rejects.toThrow();
   expect(requests).toEqual([
-    { community, path: "/", method: "GET", body: null },
+    expect.objectContaining({
+      community,
+      path: "/",
+      method: "GET",
+      body: null,
+    }),
   ]);
 });
 
 it("workflow history surfaces bounded host refusals and fences late native results", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.workflows);
+  networkMetrics.setEnabled(true);
+  networkMetrics.reset();
+  networkRecorder.configure("debug");
   const id = "11111111-1111-4111-8111-111111111111";
   const pending = deferred<{
     status: number;
@@ -939,13 +1171,27 @@ it("workflow history surfaces bounded host refusals and fences late native resul
   vi.mocked(invoke).mockImplementationOnce(() => pending.promise);
   const controller = new AbortController();
   const read = transport.workflows.runs(id, undefined, controller.signal);
+  await vi.waitFor(() =>
+    expect(networkMetrics.snapshot().relays[0]?.inFlight).toBe(1),
+  );
   controller.abort();
+  expect(networkMetrics.snapshot().relays[0]?.inFlight).toBe(1);
   pending.resolve({
     status: 200,
     headers: {},
     body: '{"runs":[],"next":null}',
   });
   await expect(read).rejects.toThrow();
+  expect(networkMetrics.snapshot().relays[0]).toMatchObject({
+    inFlight: 0,
+    session: {
+      counts: { requestCancelled: 1, requestOk: 0, requestFailed: 0 },
+      latency: { http: { count: 0 } },
+    },
+  });
+  expect(networkRecorder.snapshot().events).toContainEqual(
+    expect.objectContaining({ event: "native.result-discarded" }),
+  );
   vi.mocked(invoke).mockResolvedValueOnce({
     status: 403,
     headers: {},
@@ -954,6 +1200,13 @@ it("workflow history surfaces bounded host refusals and fences late native resul
   await expect(
     transport.workflows.runs(id, undefined, new AbortController().signal),
   ).rejects.toMatchObject({ kind: "denied" });
+  expect(networkMetrics.snapshot().relays[0]).toMatchObject({
+    inFlight: 0,
+    session: {
+      counts: { requestCancelled: 1, requestFailed: 1 },
+      latency: { http: { count: 1 } },
+    },
+  });
 });
 
 it("reads project Git through the signed native command and fences late results", async () => {
@@ -1449,6 +1702,8 @@ it("sorts host memory projections with the same locale collation as the broker",
 
 it("streams memory pages as they land and cancels native paging on abort", async () => {
   const transport = await connectNativeTransport(community);
+  networkMetrics.setEnabled(true);
+  networkMetrics.reset();
   const agent = keypair();
   const entry = (slug: string, i: number) => ({
     slug,
@@ -1480,14 +1735,26 @@ it("streams memory pages as they land and cancels native paging on abort", async
     (page) => pages.push(page.entries.map((e) => e.slug)),
   );
   await vi.waitFor(() => expect(pages).toEqual([["mem/a"]]));
+  expect(networkMetrics.snapshot().relays[0]?.inFlight).toBe(1);
+  expect(networkMetrics.snapshot().relays[0]?.session.latency.http.count).toBe(
+    0,
+  );
   // Leaving mid-stream cancels the native read by its ID.
   dispatch.mockResolvedValueOnce(undefined);
   controller.abort();
   expect(dispatch).toHaveBeenLastCalledWith("relay_http_cancel", {
     id: readId,
   });
+  expect(networkMetrics.snapshot().relays[0]?.inFlight).toBe(1);
   finish({ entries: [entry("mem/a", 1), entry("mem/b", 2)], partial: false });
   await expect(read).rejects.toThrow();
+  expect(networkMetrics.snapshot().relays[0]).toMatchObject({
+    inFlight: 0,
+    session: {
+      counts: { requestCancelled: 1, requestOk: 0, requestFailed: 0 },
+      latency: { http: { count: 0 } },
+    },
+  });
 });
 
 it("skips a streamed Memory page that fails validation and still answers", async () => {
@@ -1522,6 +1789,8 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
   const transport = await connectNativeTransport(community);
   expect(transport.agentActivity).toBe(true);
   const signal = new AbortController().signal;
+  networkMetrics.setEnabled(true);
+  networkMetrics.reset();
   const agent = keypair();
   const dispatch = vi.mocked(invoke);
   dispatch.mockImplementationOnce(async (command, args) => {
@@ -1533,6 +1802,7 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
     definitions: [],
     identities: [],
   });
+  expect(networkMetrics.snapshot().relays).toEqual([]);
   dispatch.mockImplementationOnce(async (command, args) => {
     expect(command).toBe("relay_agent_memories_read");
     expect(args).toEqual({
@@ -1547,6 +1817,13 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
   expect(await transport.readAgentMemories?.(agent.pubkey, signal)).toEqual({
     entries: [],
     partial: true,
+  });
+  expect(networkMetrics.snapshot().relays[0]).toMatchObject({
+    inFlight: 0,
+    session: {
+      counts: { requestFailed: 1, requestOk: 0 },
+      latency: { http: { count: 1 } },
+    },
   });
   await expect(
     transport.readAgentMemories?.(viewer.pubkey, signal),

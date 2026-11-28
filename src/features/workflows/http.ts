@@ -1,3 +1,4 @@
+import { networkSignals } from "../developer/network-context.ts";
 import { ReadError } from "../relay/errors.ts";
 import { readApiFailure } from "../relay/http-admission.ts";
 import type { WorkflowHost } from "./host.ts";
@@ -59,7 +60,7 @@ export function workflowHost(
     async runs(id, cursor, signal) {
       const body = { id, ...(cursor ? { cursor } : {}) };
       workflowRunsPath(body);
-      signal = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+      signal = networkSignals([signal, AbortSignal.timeout(10000)]);
       signal.throwIfAborted();
       const response = await request("workflow-runs", body, signal);
       if (!response.ok) {

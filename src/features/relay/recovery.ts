@@ -6,8 +6,14 @@
  *
  * Sources are background reads only. User actions (sends, moves, deletes) own
  * their own Retry because repeating them silently could repeat a user intent. */
+import {
+  networkRecorder,
+  type NetworkSource,
+} from "../developer/network-diagnostics.ts";
+
 export type RecoveryStatus = "failed" | "busy" | "settled";
 export type RecoverySource = Readonly<{
+  name?: NetworkSource;
   status(): RecoveryStatus;
   subscribe(listener: () => void): () => void;
   /** `background` is true only from recovery's own timer, so a source can
@@ -36,7 +42,16 @@ export type RelayRecovery = Readonly<{
   subscribe(listener: () => void): () => void;
   /** Retry failed sources now and restart the delay sequence. `except` skips
    * a source that already owns its own recovery for the triggering event. */
-  retryNow(except?: RecoverySource): void;
+  retryNow(
+    except?: RecoverySource,
+    trigger?:
+      | "manual"
+      | "focus"
+      | "online"
+      | "wake-gap"
+      | "visible"
+      | "source-connected",
+  ): void;
   /** Credentials changed: retry every source, settled ones included, since a
    * changed credential can clear a refusal recovery deliberately leaves alone.
    * A source busy with a read begun under the old credentials retries again
@@ -97,6 +112,7 @@ export function createRecovery(
     clearTimeout: (handle) =>
       globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
   },
+  diagnostics?: Readonly<{ relay: string; connection: string }>,
 ): RelayRecovery {
   const listeners = new Set<() => void>();
   /** Sources whose pre-reauthorization read is still in flight. */
@@ -116,7 +132,28 @@ export function createRecovery(
     notice: unknown,
     running = false,
     disposed = false;
+  let reported = "";
+  let operationId: string | undefined;
   const publish = (next: RecoverySnapshot) => {
+    if (diagnostics && networkRecorder.collecting()) {
+      if (next.recovering && !snapshot.recovering)
+        operationId = `recovery:${crypto.randomUUID()}`;
+      const sources = sourcesForReport();
+      const key = JSON.stringify([next, sources]);
+      if (key !== reported) {
+        reported = key;
+        if (networkRecorder.collecting())
+          networkRecorder.record({
+            level: "info",
+            event: "recovery",
+            operationId,
+            outcome: next.recovering ? "recovering" : "settled",
+            ...diagnostics,
+            ...next,
+            sources,
+          });
+      }
+    }
     if (
       next.recovering === snapshot.recovering &&
       next.attempt === snapshot.attempt &&
@@ -127,6 +164,10 @@ export function createRecovery(
     snapshot = next;
     for (const listener of [...listeners]) listener();
   };
+  const sourcesForReport = () =>
+    sources.flatMap((source) =>
+      source.name ? [{ name: source.name, status: source.status() }] : [],
+    );
   const cancel = () => {
     if (timer === undefined) return;
     timers.clearTimeout(timer);
@@ -179,8 +220,33 @@ export function createRecovery(
     const delay =
       RECOVERY_DELAYS_MS[Math.min(attempt, RECOVERY_DELAYS_MS.length - 1)] ??
       30_000;
+    const dueAt = Date.now() + delay;
+    const scheduled = performance.now();
+    if (diagnostics)
+      if (networkRecorder.collecting())
+        networkRecorder.record({
+          level: "info",
+          event: "recovery.retry-scheduled",
+          operationId,
+          dueAt,
+          ...diagnostics,
+          attempt,
+          delayMs: delay,
+        });
     timer = timers.setTimeout(() => {
       timer = undefined;
+      if (diagnostics)
+        if (networkRecorder.collecting())
+          networkRecorder.record({
+            level: "info",
+            event: "recovery.retry-fired",
+            ...diagnostics,
+            operationId,
+            dueAt,
+            delayMs: delay,
+            attempt,
+            latenessMs: Math.max(0, performance.now() - scheduled - delay),
+          });
       attempt++;
       run(undefined, true);
     }, delay);
@@ -208,14 +274,35 @@ export function createRecovery(
         listeners.delete(listener);
       };
     },
-    retryNow(except?: RecoverySource) {
+    retryNow(
+      except?: RecoverySource,
+      trigger = except ? "source-connected" : "manual",
+    ) {
       if (disposed) return;
+      if (diagnostics)
+        if (networkRecorder.collecting())
+          networkRecorder.record({
+            level: "info",
+            event: "recovery.retry-now",
+            operationId,
+            detail: trigger,
+            ...diagnostics,
+          });
       cancel();
       attempt = 0;
       run(except);
     },
     retryAll() {
       if (disposed) return;
+      if (diagnostics)
+        if (networkRecorder.collecting())
+          networkRecorder.record({
+            level: "info",
+            event: "recovery.reauthorize",
+            operationId,
+            detail: "credentials-changed",
+            ...diagnostics,
+          });
       cancel();
       attempt = 0;
       reauthorized++;
@@ -232,6 +319,18 @@ export function createRecovery(
       publish({ ...snapshot, reauthorized });
     },
     dispose() {
+      if (diagnostics)
+        if (networkRecorder.collecting())
+          networkRecorder.record({
+            level: "info",
+            event: "recovery",
+            operationId,
+            outcome: "disposed",
+            ...diagnostics,
+            recovering: false,
+            shown: false,
+            sources: [],
+          });
       disposed = true;
       cancel();
       cancelNotice();

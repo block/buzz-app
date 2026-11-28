@@ -740,6 +740,7 @@ it("opens memory Buzz links in their community and rejects a retired page's call
       scope: { viewer, communityOrigin: "https://relay.example" },
       channelId,
       messageId,
+      messageLink: true,
     });
     entryId = "another-page";
     await user.click(link);

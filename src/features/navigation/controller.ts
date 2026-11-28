@@ -62,6 +62,8 @@ export type NavigationOpenOptions = {
 export type OpenAttempt = Readonly<{
   id: string;
   entry: NavigationEntry;
+  /** Original address when this visit presents an admitted message in a page. */
+  address?: OpenTarget;
   signal: AbortSignal;
   focus?: NavigationFocus;
   sidebar?: "preserve";
@@ -105,11 +107,13 @@ export function createNavigationController(
     throw new Error("Invalid open timeout");
   type Operation = {
     attempt: OpenAttempt;
+    address: NavigationEntry;
     controller: AbortController;
     promise: Promise<OpenResult>;
     resolve: (result: OpenResult) => void;
     pending: boolean;
     timer?: ReturnType<typeof setTimeout> | undefined;
+    deadline?: number | undefined;
     /** Cancels a failed visit's reopen after sign-in. */
     reauthorizing?: () => void;
     /** Timed out on the shown page, which stayed: it may still answer. */
@@ -178,6 +182,7 @@ export function createNavigationController(
   }
   function arm(operation: Operation) {
     if (!presenters || !operation.pending || operation.timer) return;
+    operation.deadline = performance.now() + timeoutMs;
     operation.timer = setTimeout(
       () =>
         transaction(() => {
@@ -284,6 +289,7 @@ export function createNavigationController(
     });
     const operation: Operation = {
       attempt,
+      address: state.current,
       controller,
       promise,
       resolve,
@@ -329,25 +335,30 @@ export function createNavigationController(
   // A dismissal's traversal may publish after open() returns; it keeps its focus.
   let returningFocus: NavigationFocus | undefined;
   let returningSidebar: "preserve" | undefined;
+  function presentResolved(entry: NavigationEntry) {
+    // Keep the deadline and caller. Rotate the token to revoke the old presenter.
+    const state = history.snapshot();
+    active.address = state.current;
+    const { address: _address, ...attempt } = active.attempt;
+    active.attempt = Object.freeze({
+      ...attempt,
+      entry,
+      ...(entry !== state.current && { address: state.current.target }),
+    });
+    snapshot = Object.freeze({
+      ...snapshot,
+      retainedVisits: state.retainedVisits,
+      entry,
+      attempt: active.attempt,
+      canGoBack: state.canGoBack,
+      canGoForward: state.canGoForward,
+    });
+    emit();
+  }
   const unsubscribe = history.attach(() => {
     transaction(() => {
       if (resolving && active === resolving) {
-        // Domain normalization keeps the caller, visit, signal and original deadline.
-        // Rotate the immutable attempt token so an old presentation cannot complete it.
-        const state = history.snapshot();
-        active.attempt = Object.freeze({
-          ...active.attempt,
-          entry: state.current,
-        });
-        snapshot = Object.freeze({
-          ...snapshot,
-          retainedVisits: state.retainedVisits,
-          entry: state.current,
-          attempt: active.attempt,
-          canGoBack: state.canGoBack,
-          canGoForward: state.canGoForward,
-        });
-        emit();
+        presentResolved(history.snapshot().current);
       } else {
         const state = history.snapshot();
         if (departure?.from === state.current.id) {
@@ -385,7 +396,7 @@ export function createNavigationController(
           }
           departure = undefined;
         }
-        if (state.current === active.attempt.entry) {
+        if (state.current === active.address) {
           snapshot = Object.freeze({
             ...snapshot,
             retainedVisits: state.retainedVisits,
@@ -427,6 +438,13 @@ export function createNavigationController(
         let target: OpenTarget;
         try {
           target = parseOpenTarget(input);
+          const address = active.attempt.address;
+          if (
+            address &&
+            target.join &&
+            targetKey(withoutJoin(target)) === targetKey(snapshot.entry.target)
+          )
+            target = parseOpenTarget({ ...address, join: target.join });
         } catch {
           return Promise.resolve<OpenResult>({
             status: "failed",
@@ -463,11 +481,25 @@ export function createNavigationController(
           openingDecision = undefined;
         }
         try {
+          const { current, invalidAddress } = history.snapshot();
           if (
-            !history.snapshot().invalidAddress &&
-            targetKey(target) === targetKey(history.snapshot().current.target)
-          )
+            !invalidAddress &&
+            targetKey(target) === targetKey(current.target)
+          ) {
+            if (
+              target.kind === "conversation" &&
+              current.target.kind === "conversation" &&
+              target.messageLink !== current.target.messageLink
+            ) {
+              resolving = active;
+              try {
+                history.resolve(target);
+              } finally {
+                resolving = undefined;
+              }
+            }
             return start(options?.focus, false, options?.sidebar);
+          }
           opening = true;
           openingFocus = options?.focus;
           openingSidebar = options?.sidebar;
@@ -612,10 +644,16 @@ export function createNavigationController(
         if (presenters) return;
         clearTimeout(active.timer);
         active.timer = undefined;
+        active.deadline = undefined;
       };
     },
+    remaining(attempt: OpenAttempt) {
+      return active.pending && active.attempt === attempt && active.deadline
+        ? Math.max(0, active.deadline - performance.now())
+        : 0;
+    },
     /** Normalize a pending presentation, not a new intent; never reset its deadline. */
-    resolve(attempt: OpenAttempt, input: OpenTarget) {
+    resolve(attempt: OpenAttempt, input: OpenTarget, keepAddress = false) {
       return transaction(() => {
         if (
           disposed ||
@@ -635,6 +673,11 @@ export function createNavigationController(
               : parsed;
           if (targetKey(target) === targetKey(snapshot.entry.target))
             return true;
+          if (keepAddress || attempt.address) {
+            // A message link must pass live access checks again on traversal.
+            presentResolved(Object.freeze({ id: attempt.entry.id, target }));
+            return true;
+          }
           resolving = active;
           history.resolve(target);
           return true;
@@ -649,6 +692,7 @@ export function createNavigationController(
     complete(
       attempt: OpenAttempt,
       result: Extract<OpenResult, { status: "opened" | "failed" }>,
+      address?: OpenTarget,
     ) {
       return transaction(() => {
         if (
@@ -658,6 +702,15 @@ export function createNavigationController(
           (!active.pending && !active.late)
         )
           return false;
+        if (address) {
+          // Commit an ordinary fallback after its reader declines the offer.
+          resolving = active;
+          try {
+            history.resolve(address);
+          } finally {
+            resolving = undefined;
+          }
+        }
         // A kept page may still answer after its deadline, either way.
         finish(active, result, "answer");
         return true;

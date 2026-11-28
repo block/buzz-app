@@ -73,6 +73,7 @@ import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useTrailingSheet } from "./use-trailing-sheet";
 import { useMessageReveal } from "./use-message-reveal";
+import { useMessageLinkOffer } from "./use-message-link-offer";
 import { usePendingRequest } from "./use-pending-request";
 import {
   replyTarget,
@@ -140,6 +141,8 @@ export type ThreadPanelProps = {
    * policy: a preview is shown without reading. Its composer follows this. */
   shown?: boolean | undefined;
   navigation?: PageNavigation | undefined;
+  /** A projected inline visit shares proof without owning this reader's position. */
+  linkNavigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
   /** The conversation this thread lives in, named as Inbox rows name it, when
@@ -478,6 +481,7 @@ function OwnedThreadPanel({
   subthreadId,
   sourceThreadId,
   navigation,
+  linkNavigation,
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
@@ -550,6 +554,9 @@ function OwnedThreadPanel({
     revealSelected,
     requireReadyRoot,
   ]);
+  useLayoutEffect(() => {
+    if (error) linkNavigation?.complete({ status: "opened" });
+  }, [error, linkNavigation]);
   return error ? (
     <div className={styles.empty} role="alert">
       <p>{THREAD_FAILED}</p>
@@ -570,6 +577,7 @@ function OwnedThreadPanel({
       channelName={channelName}
       view={view}
       navigation={navigation}
+      linkNavigation={linkNavigation}
       messageId={messageId}
       replyRequest={replyRequest}
       focusRequest={focusRequest}
@@ -605,6 +613,7 @@ function ThreadMessages({
   messageId,
   view,
   navigation,
+  linkNavigation,
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
@@ -663,6 +672,7 @@ function ThreadMessages({
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
   onSend?: ThreadPanelProps["onSend"];
   navigation?: PageNavigation | undefined;
+  linkNavigation?: ThreadPanelProps["linkNavigation"];
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
   canOpenLink?: ((target: string) => boolean) | undefined;
@@ -709,9 +719,6 @@ function ThreadMessages({
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;
-  useEffect(() => {
-    if (resolvedRoot) reportRoot.current?.(resolvedRoot);
-  }, [resolvedRoot]);
   // Read the current root only when sharing; paging must not invalidate every reply row.
   const getThreadRoot = useCallback(() => {
     const current = view.snapshot();
@@ -1059,6 +1066,39 @@ function ThreadMessages({
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
+  const verifiedRoot = useCallback(() => {
+    const { rootVerified, root, target, targetStatus } = view.snapshot();
+    if (!rootVerified || !root || root.delivery || root.threadRootId)
+      return undefined;
+    if (root.id === messageId) return root.id;
+    if (
+      targetStatus === "ready" &&
+      target?.id === messageId &&
+      target.threadRootId === root.id &&
+      !target.delivery
+    )
+      return root.id;
+  }, [view, messageId]);
+  const offeringLink = useMessageLinkOffer(
+    active ? (linkNavigation ?? navigation) : undefined,
+    verifiedRoot,
+    (snapshot.status === "loading" && snapshot.targetStatus === "ready") ||
+      ((snapshot.status === "loading" || snapshot.resumed) &&
+        snapshot.root?.id === messageId),
+  );
+  useLayoutEffect(() => {
+    if (
+      linkNavigation &&
+      !offeringLink &&
+      (snapshot.targetStatus === "ready" ||
+        snapshot.status === "ready" ||
+        snapshot.status === "error")
+    )
+      linkNavigation.complete({ status: "opened" });
+  }, [linkNavigation, offeringLink, snapshot.status, snapshot.targetStatus]);
+  useEffect(() => {
+    if (resolvedRoot && !linkNavigation) reportRoot.current?.(resolvedRoot);
+  }, [resolvedRoot, linkNavigation]);
   // Ordinary opens are positioned, not revealed; so is a return to a saved place.
   const positionedVisit = rootTarget || returning;
   // Reopening an already-shown thread selects nothing new, so its reader needs
@@ -1301,7 +1341,9 @@ function ThreadMessages({
     messageId,
     signal: active ? revealSignal : undefined,
     ready:
-      snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
+      !offeringLink &&
+      snapshot.targetStatus === "ready" &&
+      snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
   });
@@ -1555,7 +1597,7 @@ function ThreadMessages({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (!element || navigation?.signal.aborted) return;
+    if (!element || navigation?.signal.aborted || offeringLink) return;
     // Restored background tabs and returning visits verify their target without
     // revealing it.
     if (
@@ -1846,6 +1888,7 @@ function ThreadMessages({
     navigation,
     routePending,
     rootTarget,
+    offeringLink,
     returning,
     revealed,
     selectedOffset,

@@ -25,6 +25,7 @@ it("resolves the desktop channel/message alias, including UUID v7 and uppercase 
     scope,
     channelId,
     messageId: "b".repeat(64),
+    messageLink: true,
   });
   expect(
     deepLinkStep(href, {
@@ -42,6 +43,7 @@ it("recognizes the reported message link and binds it to the receiving community
     channelId: "c89a3185-29c5-40db-8284-054536d98b09",
     messageId:
       "9a77911a6e94147b1ce2cdb3c4e87046c67a29f29f3dd25626134621a5f6924b",
+    messageLink: true,
   });
   expect(buzzLinkKind(`${example}&thread=${"b".repeat(64)}`)).toBe("thread");
 });
@@ -94,6 +96,7 @@ it("ignores query parameters outside the Buzz link grammar, as the original desk
       channelId: parsed.channelId,
       messageId: parsed.messageId,
       threadRootId: thread,
+      messageLink: true,
     },
   });
   // Unknown keys are dropped with their values and repeats, wherever they sit.

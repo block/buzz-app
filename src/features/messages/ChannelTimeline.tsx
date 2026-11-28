@@ -69,6 +69,7 @@ import {
 } from "./use-reading";
 import { useTrailingSheet } from "./use-trailing-sheet";
 import { useMessageReveal } from "./use-message-reveal";
+import { useMessageLinkOffer } from "./use-message-link-offer";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -249,6 +250,8 @@ export type ChannelTimelineProps = {
   /** A card over the end of the history, in its own scroll layer. */
   trailing?: ConversationWorkspaceProps["trailing"];
   launchPending?: boolean | undefined;
+  /** An inactive timeline can show its rows but cannot replace its workspace. */
+  offerMessageLinks?: boolean | undefined;
   /** Solo chats page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
   /** Personal chats keep their compact initial history spacing. */
@@ -317,6 +320,7 @@ function Timeline({
   transient = false,
   latestRequest,
   marksRead = true,
+  offerMessageLinks = true,
   navigation,
   onOpenThread,
   onOpenMediaReview,
@@ -1300,6 +1304,35 @@ function Timeline({
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members"
   );
+  const linkMessage =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.messageId
+      : undefined;
+  const verifiedRoot = useCallback(() => {
+    const current = queries.channels.window(channelId);
+    return current.status === "ready" &&
+      current.freshness === "verified" &&
+      current.rows.some(
+        (row) => row.id === linkMessage && !row.threadRootId && !row.delivery,
+      )
+      ? linkMessage
+      : undefined;
+  }, [queries, channelId, linkMessage]);
+  const offeringLink = useMessageLinkOffer(
+    offerMessageLinks ? navigation : undefined,
+    verifiedRoot,
+  );
+  const pendingOffer = useRef<PageNavigation | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (offerMessageLinks) {
+      pendingOffer.current = offeringLink ? navigation : undefined;
+      return;
+    }
+    // A tab selection can interrupt this reader's offer before it reveals the row.
+    if (navigation && pendingOffer.current === navigation && verifiedRoot())
+      navigation.complete({ status: "opened" });
+    pendingOffer.current = undefined;
+  }, [navigation, offerMessageLinks, offeringLink, verifiedRoot]);
   useMessageReveal({
     scroller,
     focus: focusesTarget && inlineTarget?.focus !== false,
@@ -1307,7 +1340,7 @@ function Timeline({
     settled,
     messageId: targetId,
     signal: targetSignal,
-    ready: !!size.width && !!size.height && targetIndex >= 0,
+    ready: !offeringLink && !!size.width && !!size.height && targetIndex >= 0,
     prepare: prepareTarget,
     placed: targetPlaced,
     complete: completeTarget,
@@ -1318,7 +1351,7 @@ function Timeline({
   // visit still presented only completes. A place whose row isn't loaded opens
   // as the link first did.
   useLayoutEffect(() => {
-    if (!navigation || navigation.signal.aborted) return;
+    if (!navigation || navigation.signal.aborted || offeringLink) return;
     if (presentedVisit.current?.entryId !== navigation.entryId)
       presentedVisit.current = undefined;
     const prior = presentedVisit.current;
@@ -1380,6 +1413,7 @@ function Timeline({
     activity,
     focusesTarget,
     present,
+    offeringLink,
   ]);
   // Leaving a link's visit once it was presented, revealed or returned to, by
   // navigating on or unmounting, records where the reader was for Back/Forward.

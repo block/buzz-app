@@ -80,6 +80,7 @@ it("copies an original-Buzz message link that opens with the recipient's communi
       channelId: "general",
       messageId: row.id,
       threadRootId: "d".repeat(64),
+      messageLink: true,
     },
   });
   expect(link).not.toContain(person);

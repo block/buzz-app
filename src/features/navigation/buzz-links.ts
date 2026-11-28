@@ -318,6 +318,7 @@ export function buzzLinkTarget(href: string, scope: NavigationScope) {
       kind: link.format === "plugin" ? "plugin" : "conversation",
       scope,
       ...destination,
+      ...(link.format === "legacy" && link.messageId && { messageLink: true }),
     });
   } catch {
     return null;

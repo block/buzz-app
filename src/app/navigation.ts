@@ -26,8 +26,11 @@ import type {
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 import { linkedPage, linkedPageTarget } from "../features/pages/plugin-link";
+import { offerMessageLink } from "../features/pages/message-link";
 
 const channelsKey = "buzz.channels/channels";
+const isMessageLink = (target: OpenTarget) =>
+  target.kind === "conversation" && target.messageLink === true;
 /** Presentation-only lease for an already-confirmed Settings departure. */
 export type PendingSettingsDeparture = {
   attempt: OpenAttempt;
@@ -48,6 +51,7 @@ export function shellSnapshot(navigation: Navigation) {
     if (
       last.status !== "opening" ||
       next.status !== "opened" ||
+      isMessageLink(next.entry.target) ||
       keys.length !== Object.keys(last).length ||
       keys.some((key) => key !== "status" && next[key] !== last[key])
     )
@@ -130,7 +134,12 @@ export function useAppNavigation(
     { target: OpenTarget; entryId: string } | undefined
   >(undefined);
   if (target.kind !== "settings")
-    lastNonSettings.current = { target, entryId: state.entry.id };
+    lastNonSettings.current = {
+      target: state.attempt.address
+        ? withoutJoin(state.attempt.address)
+        : target,
+      entryId: state.entry.id,
+    };
   const scope = "scope" in target ? target.scope : undefined;
   const pageKey =
     target.kind === "page"
@@ -310,12 +319,67 @@ export function useAppNavigation(
   const workspace = useRef<{
     owner: typeof owner;
     presentation: ReturnType<AppServices["navigationHost"]["request"]>;
+    projection?: { key: string; offered: string } | undefined;
+  }>(undefined);
+  const parked = useRef<{
+    workspace: NonNullable<typeof workspace.current>;
+    fromSettings: boolean;
   }>(undefined);
   // Settings' own visit, kept while a join dialog presents over it.
   const settingsView = useRef<{
     attempt: OpenAttempt;
     presentation: ReturnType<AppServices["navigationHost"]["request"]>;
   }>(undefined);
+  const messageAddress =
+    state.entry.target.kind === "conversation"
+      ? (state.attempt.address ?? state.entry.target)
+      : state.entry.target;
+  const replayingMessage = (retained: typeof workspace.current) =>
+    !!retained?.owner.attempt.address &&
+    !!retained.owner.page &&
+    retained.owner.attempt.entry.target.kind === "page" &&
+    pages.includes(retained.owner.page) &&
+    retained.owner.attempt.entry.id === state.entry.id &&
+    targetKey(retained.owner.attempt.address) === targetKey(messageAddress);
+  // Keep the page hidden during a same-visit readmission, including a return
+  // from Settings, and restore it only if the same route is offered again.
+  const parkedWorkspace =
+    state.status === "opening" && !failure && isMessageLink(messageAddress)
+      ? [workspace.current, parked.current?.workspace].find(replayingMessage)
+      : undefined;
+  const parkedFromSettings = parkedWorkspace
+    ? parked.current?.workspace === parkedWorkspace
+      ? parked.current.fromSettings
+      : !!settingsView.current
+    : false;
+  const offered =
+    owner.attempt.address &&
+    owner.attempt.entry.target.kind === "page" &&
+    targetKey(owner.attempt.entry.target);
+  const carriedProjection =
+    workspace.current?.owner.attempt.id === owner.attempt.id &&
+    workspace.current.owner.page === owner.page
+      ? workspace.current.projection
+      : undefined;
+  const restoringWorkspace =
+    parked.current?.workspace.owner.page === owner.page &&
+    parked.current?.workspace.owner.attempt.entry.id ===
+      owner.attempt.entry.id &&
+    parked.current?.workspace.projection?.offered === offered
+      ? parked.current
+      : undefined;
+  // A page can normalize the offered route in place without remounting.
+  const projection = useMemo(
+    () =>
+      offered && owner.page
+        ? (carriedProjection ??
+          restoringWorkspace?.workspace.projection ?? {
+            key: owner.attempt.id,
+            offered,
+          })
+        : undefined,
+    [offered, owner, carriedProjection, restoringWorkspace],
+  );
   useEffect(
     () => () => {
       workspace.current?.presentation.dispose();
@@ -337,8 +401,19 @@ export function useAppNavigation(
     }
     settingsView.current?.presentation.dispose();
     settingsView.current = undefined;
+    if (parked.current?.workspace !== parkedWorkspace)
+      parked.current = parkedWorkspace && {
+        workspace: parkedWorkspace,
+        fromSettings: parkedFromSettings,
+      };
     if (owner.waiting || owner.failure) return;
     const previous = workspace.current;
+    if (
+      !settings &&
+      previous?.owner === owner &&
+      !previous.presentation.request.signal.aborted
+    )
+      return;
     if (!settings && previous?.presentation.resume(owner.attempt)) {
       presented.set({ owner, request: previous.presentation.request });
       previous.owner = owner;
@@ -361,28 +436,47 @@ export function useAppNavigation(
       previous?.presentation.dispose();
       workspace.current = undefined;
     }
+    const visitTarget = owner.attempt.entry.target;
+    const inlineProjection =
+      visitTarget.kind === "conversation" &&
+      visitTarget.inline &&
+      !visitTarget.messageId &&
+      owner.attempt.address;
+    const source = inlineProjection || visitTarget;
+    const link =
+      source.kind === "conversation" &&
+      source.messageLink &&
+      !source.context &&
+      !source.panel &&
+      !source.detail &&
+      !source.forward &&
+      !source.layer &&
+      !source.join
+        ? source
+        : undefined;
+    function valid() {
+      // Check exact registration identity at use time, before eventual React cleanup.
+      if (owner.page && !services.pages.snapshot().includes(owner.page))
+        return false;
+      if (!("scope" in visitTarget) || visitTarget.scope === undefined)
+        return true;
+      const client = services.communities.snapshot();
+      if (client.status === "loading") return false;
+      if (visitTarget.scope === null) return client.selected === null;
+      const scope = visitTarget.scope;
+      return (
+        client.viewer === scope.viewer &&
+        client.memberships.some(
+          (item) =>
+            item.id === client.selected &&
+            communityDestination(item.id).url === scope.communityOrigin,
+        )
+      );
+    }
     const next = services.navigationHost.request(
       owner.attempt,
       {
-        valid() {
-          // Check exact registration identity at use time, before eventual React cleanup.
-          if (owner.page && !services.pages.snapshot().includes(owner.page))
-            return false;
-          const target = owner.attempt.entry.target;
-          if (!("scope" in target) || target.scope === undefined) return true;
-          const client = services.communities.snapshot();
-          if (client.status === "loading") return false;
-          if (target.scope === null) return client.selected === null;
-          const scope = target.scope;
-          return (
-            client.viewer === scope.viewer &&
-            client.memberships.some(
-              (item) =>
-                item.id === client.selected &&
-                communityDestination(item.id).url === scope.communityOrigin,
-            )
-          );
-        },
+        valid,
         subscribe(listener) {
           const stopPages = services.pages.subscribe(listener);
           const stopClient = services.communities.subscribe(listener);
@@ -395,14 +489,92 @@ export function useAppNavigation(
         },
       },
       settings || !!owner.page,
+      link && {
+        available: () =>
+          services.pages
+            .snapshot()
+            .some((page) => page.route?.resolveMessageLink),
+        // Leave time for the ordinary reader to commit its reveal.
+        remaining,
+        projectInline: (target) =>
+          services.navigationHost.resolve(owner.attempt, target, true),
+        ...(inlineProjection && { inlineFallback: visitTarget }),
+        async run(root, verified, signal) {
+          const connection = services.relay.snapshot();
+          const channels = connection.session.channels;
+          const access = new AbortController();
+          const attempt = AbortSignal.any([
+            owner.attempt.signal,
+            signal,
+            access.signal,
+          ]);
+          const live = () => {
+            const state = navigation.snapshot();
+            const channel = channels.get?.(link.channelId);
+            return (
+              !attempt.aborted &&
+              state.attempt === owner.attempt &&
+              !state.ingress &&
+              state.status === "opening" &&
+              valid() &&
+              connection.status === "ready" &&
+              !connection.cached &&
+              connection.origin === link.scope.communityOrigin &&
+              connection.viewer === link.scope.viewer &&
+              !!channel &&
+              !channel.cached &&
+              !channel.pending &&
+              !channel.huddle &&
+              !channel.metadataPending &&
+              verified()
+            );
+          };
+          if (!live()) return;
+          const budget = remaining();
+          if (budget <= 0) return;
+          const stop = channels.subscribeList(() => {
+            if (!live()) access.abort();
+          });
+          try {
+            await offerMessageLink(
+              services.pages,
+              link,
+              root,
+              live,
+              attempt,
+              budget,
+              (target) =>
+                services.navigationHost.resolve(owner.attempt, target, true),
+            );
+          } finally {
+            stop();
+          }
+        },
+      },
     );
+    function remaining() {
+      return Math.max(
+        0,
+        services.navigationHost.remaining(owner.attempt) - 500,
+      );
+    }
     presented.set({ owner, request: next.request });
     if (settings) {
       settingsView.current = { attempt: owner.attempt, presentation: next };
       return;
     }
-    workspace.current = { owner, presentation: next };
-  }, [services, owner, settings, presented, join]);
+    workspace.current = { owner, presentation: next, projection };
+  }, [
+    services,
+    owner,
+    settings,
+    presented,
+    join,
+    navigation,
+    parkedWorkspace,
+    parkedFromSettings,
+    projection,
+  ]);
   const retained = workspace.current;
   // Join over a page retained from its own visit: present that page beneath.
   const covered =
@@ -436,6 +608,8 @@ export function useAppNavigation(
     covered && retainedRequest && retained
       ? withoutJoin(retained.owner.attempt.entry.target)
       : target;
+  const workspaceProjection =
+    covered && retainedRequest ? retained?.projection : projection;
   const workspaceRequestFor = (
     presentation: ReturnType<typeof presented.get>,
   ) => (covered ? retainedRequest : requestFor(presentation));
@@ -568,7 +742,20 @@ export function useAppNavigation(
       !failure && (relay.status === "connecting" || !!relay.retrying),
     workspace: {
       page: workspacePage || undefined,
+      parked: parkedWorkspace?.owner.page &&
+        parkedWorkspace.projection && {
+          page: parkedWorkspace.owner.page,
+          request: parkedWorkspace.presentation.request,
+          key: parkedWorkspace.projection.key,
+          fromSettings: parkedFromSettings,
+        },
+      restoring: restoringWorkspace && {
+        request: restoringWorkspace.workspace.presentation.request,
+        fromSettings: restoringWorkspace.fromSettings,
+      },
       target: workspaceTarget,
+      key: workspaceProjection?.key ?? workspacePage?.key,
+      projected: !!workspaceProjection,
       /** The retained page's request under Settings; a page's own request
        * reaches only subscribers of `presented`, through `workspaceRequestFor`. */
       request: settings ? retainedRequest : undefined,
@@ -745,11 +932,11 @@ function settingsBeneath(
 /** Whether a retained page is the visit this join dialog was opened over: a
  * multi-step traversal can land on a join whose page was never presented. */
 function sameVisitBeneath(
-  retained: { entry: { target: OpenTarget } },
-  join: { entry: { target: OpenTarget } },
+  retained: Pick<OpenAttempt, "address" | "entry">,
+  join: Pick<OpenAttempt, "address" | "entry">,
 ) {
   return (
-    targetKey(joinBeneath(retained.entry.target)) ===
-    targetKey(joinBeneath(join.entry.target))
+    targetKey(joinBeneath(retained.address ?? retained.entry.target)) ===
+    targetKey(joinBeneath(join.address ?? join.entry.target))
   );
 }

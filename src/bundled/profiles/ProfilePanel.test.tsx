@@ -1049,6 +1049,7 @@ it.each([
             kind: "conversation",
             channelId,
             messageId,
+            messageLink: true,
             scope: { viewer, communityOrigin: "https://relay.test" },
           });
           expect(push).not.toHaveBeenCalled();

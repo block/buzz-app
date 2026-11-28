@@ -74,6 +74,12 @@ declare global {
     fixtureRelay?: RelayData;
     revocationProbe?: "complete" | "resolve";
     revocationAccepted?: boolean;
+    fixtureMessageLinks?: {
+      mode: "match" | "decline" | "fail" | "invalid" | "hold";
+      seen: unknown[];
+      signal?: AbortSignal;
+      release?: () => void;
+    };
   }
 }
 declare module "@deepseek-ai/cordis" {
@@ -143,7 +149,71 @@ const fill = (background: string, zIndex?: number) => () => (
   <div style={{ position: "absolute", inset: 0, background, zIndex }} />
 );
 
+function MessageDestinationDraft({ companion }: Pick<PageProps, "companion">) {
+  const [note, setNote] = useState("");
+  return (
+    <>
+      <p>Contributed message destination</p>
+      <input
+        aria-label="Destination draft"
+        value={note}
+        onChange={(event) => setNote(event.currentTarget.value)}
+      />
+      {companion}
+    </>
+  );
+}
+
 export const fixturePlugins: readonly BundledPlugin[] = [
+  {
+    manifest: {
+      id: "fixture.message-link",
+      name: "Message link fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["pages"],
+      apply(ctx) {
+        const control: NonNullable<Window["fixtureMessageLinks"]> = {
+          mode: "match",
+          seen: [],
+        };
+        window.fixtureMessageLinks = control;
+        ctx.pages.register({
+          id: "message",
+          title: "Message link fixture",
+          companion: true,
+          component: function MessageDestination({ companion, navigation }) {
+            const target = navigation?.target;
+            const messageId = target?.kind === "page" && target.route?.params;
+            if (typeof messageId !== "string")
+              return <p role="alert">This message address is invalid.</p>;
+            return (
+              <MessageDestinationDraft key={messageId} companion={companion} />
+            );
+          },
+          route: {
+            version: 1,
+            validate: (params) => typeof params === "string",
+            async resolveMessageLink(link, signal) {
+              control.seen.push(link);
+              control.signal = signal;
+              if (control.mode === "decline") return undefined;
+              if (control.mode === "fail")
+                throw new Error("Fixture declined with error");
+              if (control.mode === "invalid") return { scope: null };
+              if (control.mode === "hold")
+                await new Promise<void>((release) => {
+                  control.release = release;
+                });
+              return link.messageId;
+            },
+          },
+        });
+      },
+    },
+  },
   soloRegionFixture,
   {
     manifest: {

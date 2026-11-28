@@ -159,6 +159,28 @@ function recordFrames() {
   };
 }
 
+it("opens a ready page when Strict Mode replays the first presentation", async () => {
+  const current = createServices();
+  services = current;
+  await waitFor(() => {
+    expect(current.plugins.startup()).toBe("ready");
+    expect(
+      current.pages.snapshot().some(({ key }) => key === "test.held/held"),
+    ).toBe(true);
+  });
+  void current.navigation.open({
+    version: 1,
+    kind: "page",
+    pluginId: "test.held",
+    pageId: "held",
+  });
+  render(<App services={current} />, { reactStrictMode: true });
+  expect(await screen.findByText("Held content")).toBeVisible();
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+});
+
 it("keeps a shown page on screen when a background reopen times out", async () => {
   const current = start();
   expect(await screen.findByText("Held content")).toBeVisible();

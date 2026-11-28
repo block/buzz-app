@@ -141,6 +141,8 @@ if that desktop app is up and running.
   chat. Sharing a chat with a channel shares its whole history.
 - **Channels** are open (anyone can find and join them) or private (invite
   only). The member avatars in the header manage members, access and roles.
+  A private channel or chat that has, or once had, members besides you and
+  your own agents can't be made open or shared; create a new channel instead.
   Archived channels are read-only, and owners and admins can unarchive them.
 - **Workspaces.** Drag conversations in, or use **Move to…**. A workspace can
   set the folders and default agents for new chats started in it.

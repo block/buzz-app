@@ -743,6 +743,50 @@ pub(super) fn location(guest: &WebView) -> Box<dyn Fn() -> Option<String>> {
     })
 }
 
+/// Calls `done` with the engine's default User-Agent, as `webview`'s pages see it.
+#[cfg(target_os = "macos")]
+pub(super) fn read_user_agent(
+    webview: &tauri::Webview,
+    done: impl FnOnce(String) + Send + 'static,
+) {
+    use std::cell::Cell;
+
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{ns_string, NSError, NSString};
+    use objc2_web_kit::WKWebView;
+
+    let read = webview.with_webview(move |platform| {
+        // SAFETY: Wry supplies a WKWebView on the UI thread.
+        let view = unsafe { &*platform.inner().cast::<WKWebView>() };
+        let done = Cell::new(Some(done));
+        let reply = block2::RcBlock::new(move |value: *mut AnyObject, _: *mut NSError| {
+            // SAFETY: WebKit passes the script's result, or null, for this call.
+            let value =
+                unsafe { value.as_ref() }.and_then(|value| value.downcast_ref::<NSString>());
+            if let (Some(value), Some(done)) = (value, done.take()) {
+                done(value.to_string());
+            }
+        });
+        unsafe {
+            view.evaluateJavaScript_completionHandler(
+                ns_string!("navigator.userAgent"),
+                Some(&reply),
+            );
+        }
+    });
+    if let Err(error) = read {
+        eprintln!("Could not read the browser User-Agent: {error}");
+    }
+}
+
+/// Elsewhere guests keep the engine's User-Agent.
+#[cfg(not(target_os = "macos"))]
+pub(super) fn read_user_agent(
+    _webview: &tauri::Webview,
+    _done: impl FnOnce(String) + Send + 'static,
+) {
+}
+
 /// Elsewhere the page-load URL stands in.
 #[cfg(not(target_os = "macos"))]
 pub(super) fn location(_guest: &WebView) -> Box<dyn Fn() -> Option<String>> {

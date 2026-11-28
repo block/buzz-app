@@ -7,7 +7,10 @@ mod policy;
 use std::{
     cell::{Cell, OnceCell, RefCell},
     rc::Rc,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        OnceLock,
+    },
 };
 
 use serde::{Deserialize, Serialize};
@@ -30,6 +33,22 @@ thread_local! {
 const MAX_GUESTS: usize = 8;
 
 static DOCUMENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The engine's own User-Agent, read once from Buzz's webview, which sets none.
+static ENGINE_USER_AGENT: OnceLock<String> = OnceLock::new();
+
+/// The engine's User-Agent with the app's product token appended, the way
+/// browsers and other apps identify themselves. None leaves the engine's.
+fn guest_user_agent(engine: &str, product: &str) -> Option<String> {
+    let engine = engine.trim();
+    if engine.is_empty() || !product.contains('/') {
+        return None;
+    }
+    if engine.split_whitespace().any(|token| token == product) {
+        return Some(engine.to_owned());
+    }
+    Some(format!("{engine} {product}"))
+}
 
 fn reset_document<Session>(
     label: &str,
@@ -64,6 +83,14 @@ pub(crate) fn page_load(webview: &Webview, payload: &tauri::webview::PageLoadPay
             sessions,
         );
     });
+    if webview.label() == "main"
+        && payload.event() == tauri::webview::PageLoadEvent::Finished
+        && ENGINE_USER_AGENT.get().is_none()
+    {
+        platform::read_user_agent(webview, |engine| {
+            let _ = ENGINE_USER_AGENT.set(engine);
+        });
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -570,6 +597,13 @@ fn build_contents(
             false
         })
         .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny);
+    let builder = match ENGINE_USER_AGENT
+        .get()
+        .and_then(|engine| guest_user_agent(engine, crate::relay::user_agent()))
+    {
+        Some(user_agent) => builder.with_user_agent(user_agent),
+        None => builder,
+    };
     let guest = platform::build_guest(builder, &host.window())?;
     let _ = handoff.location.set(platform::location(&guest));
     let permissions = platform::deny_permissions(&guest)?;
@@ -771,6 +805,30 @@ pub async fn browser_status(app: AppHandle, session_id: String) -> Result<Browse
         with_browser(&session_id, BrowserSession::snapshot)
     })
     .await
+}
+
+#[cfg(test)]
+mod user_agent_tests {
+    use super::guest_user_agent;
+
+    const WEBKIT: &str =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+
+    #[test]
+    fn appends_the_product_token_once() {
+        let user_agent = guest_user_agent(WEBKIT, "Buzz/1.2.3").unwrap();
+        assert_eq!(user_agent, format!("{WEBKIT} Buzz/1.2.3"));
+        assert_eq!(
+            guest_user_agent(&user_agent, "Buzz/1.2.3").as_deref(),
+            Some(user_agent.as_str())
+        );
+    }
+
+    #[test]
+    fn leaves_the_engine_default_without_both_parts() {
+        assert_eq!(guest_user_agent("  ", "Buzz/1.2.3"), None);
+        assert_eq!(guest_user_agent(WEBKIT, "Buzz"), None);
+    }
 }
 
 #[cfg(test)]

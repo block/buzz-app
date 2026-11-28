@@ -71,8 +71,9 @@ it("measures coverage for the app's subscriber and for raw batch shapes", async 
   const four = await run("client:4", channels);
   const packed = await run("filters:10", channels);
   const single = await run("multi-h:all", channels);
-  // One live batch and two global routes. The client can also start replay.
-  expect([one.reqs, four.reqs, packed.reqs, single.reqs]).toEqual([4, 4, 2, 1]);
+  // One live batch and two global routes. The client can also start replay
+  // when the probe is still waiting on the canary (`client:4`).
+  expect([one.reqs, four.reqs, packed.reqs, single.reqs]).toEqual([3, 4, 2, 1]);
   for (const result of [one, four, packed, single])
     expect(result).toMatchObject({
       channels: 20,
@@ -243,7 +244,7 @@ it("keeps a timed-out batch failed when its EOSE arrives after CLOSE", async () 
       return late ? 10030 : 40;
     },
   });
-  expect(result).toMatchObject({ reqs: 5, failed: 2048 });
+  expect(result).toMatchObject({ reqs: 4, failed: 2048 });
   expect(result.coverageMs).toBeUndefined();
   expect(result.error).toBeUndefined();
 });

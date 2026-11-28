@@ -10,7 +10,11 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
-import { keypair, signed } from "../features/relay/testing";
+import {
+  keypair,
+  nativeSignatureChecks,
+  signed,
+} from "../features/relay/testing";
 import { stubAvatarBrowserApis } from "../features/agents/avatar-testing";
 import type { RelayEvent } from "../features/relay/events";
 import type { Context } from "@deepseek-ai/cordis";
@@ -391,6 +395,10 @@ function membershipFixture() {
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity"))
         return Response.json({ viewer: viewer.pubkey });
+      if (url.endsWith("/verify-signatures"))
+        return Response.json(
+          nativeSignatureChecks(JSON.parse(String(options?.body))),
+        );
       const community = decodeURIComponent(url.split("/").at(-2) ?? "");
       if (url.endsWith("/session")) {
         if (offline)

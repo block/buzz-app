@@ -11,7 +11,13 @@ import {
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
 import { PublishNotSent, PublishRejected } from "./outbox";
-import { hostSigner, keypair, signed } from "./testing";
+import {
+  hostSigner,
+  keypair,
+  nativeSignatureChecks,
+  signed,
+  verifyTestSignatures,
+} from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
 it.each([
@@ -654,6 +660,7 @@ it("uses each signed transport's own origin for protected media, never a deploym
     request: async () => {
       throw new Error("not requesting");
     },
+    verifySignatures: verifyTestSignatures,
   };
   const a = await connectSignedTransport(
     signer,
@@ -683,7 +690,7 @@ it("presence validates whole snapshots before omission means Offline; busy is no
     tags: [["p", author]],
   });
   let response = () => Response.json([event]);
-  const fetcher = vi.fn(async (url: string) =>
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) =>
     url.endsWith("/session")
       ? Response.json({
           viewer: key.pubkey,
@@ -691,7 +698,9 @@ it("presence validates whole snapshots before omission means Offline; busy is no
           live: true,
           presence: true,
         })
-      : response(),
+      : url.endsWith("/verify-signatures")
+        ? Response.json(nativeSignatureChecks(JSON.parse(String(init?.body))))
+        : response(),
   );
   vi.stubGlobal("fetch", fetcher);
   const transport = await connectBrokerTransport();
@@ -773,7 +782,7 @@ it.each(["busy", '{"status":"busy"}', "{custom-status", '{"status":42}'])(
       tags: [["p", online]],
     });
     let events = [customEvent, onlineEvent];
-    vi.stubGlobal("fetch", async (url: string) =>
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
       Response.json(
         url.endsWith("/session")
           ? {
@@ -782,7 +791,9 @@ it.each(["busy", '{"status":"busy"}', "{custom-status", '{"status":42}'])(
               live: true,
               presence: true,
             }
-          : events,
+          : url.endsWith("/verify-signatures")
+            ? nativeSignatureChecks(JSON.parse(String(init?.body)))
+            : events,
       ),
     );
     const transport = await connectBrokerTransport();
@@ -927,4 +938,125 @@ it("searches profile names through the host's signed /profiles/search request", 
   await expect(
     transport.searchProfiles("wes", 40, 2, controller.signal, "foreground"),
   ).rejects.toThrow();
+});
+
+it("broker transport chunks /verify-signatures requests, exposes verifyStored, and fails closed on host errors", async () => {
+  const relay = keypair();
+  const peer = keypair();
+  const presence = signed(relay, {
+    kind: 20001,
+    content: "online",
+    tags: [["p", peer.pubkey]],
+  });
+  const stored = signed(peer, { kind: 9, content: "cached", tags: [] });
+  const verifyCalls: {
+    claims: unknown[];
+    credentials: RequestCredentials | undefined;
+    signal: AbortSignal | null | undefined;
+  }[] = [];
+  let queryReply: unknown[] = [];
+  let verifyResponse: (
+    body: { claims: unknown[] },
+    signal?: AbortSignal | null,
+  ) => Response | Promise<Response> = (body) =>
+    Response.json(nativeSignatureChecks(body));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/session"))
+        return Response.json({
+          viewer: key.pubkey,
+          relayAuthor: relay.pubkey,
+          live: true,
+          presence: true,
+        });
+      if (url.endsWith("/verify-signatures")) {
+        const body = JSON.parse(String(init?.body)) as { claims: unknown[] };
+        verifyCalls.push({
+          claims: body.claims,
+          credentials: init?.credentials,
+          signal: init?.signal,
+        });
+        return verifyResponse(body, init?.signal);
+      }
+      if (url.endsWith("/query")) return Response.json(queryReply);
+      if (url.endsWith("/presence-snapshot")) return Response.json([presence]);
+      throw new Error(`unexpected fetch ${url}`);
+    }),
+  );
+  const transport = await connectBrokerTransport();
+  assert.exists(transport.verifyStored);
+  assert.exists(transport.presenceSnapshot);
+
+  expect(await transport.verifyStored([stored])).toEqual([stored]);
+  expect(
+    await transport.presenceSnapshot(
+      [peer.pubkey],
+      new AbortController().signal,
+    ),
+  ).toEqual(new Map([[peer.pubkey, "online"]]));
+  expect(verifyCalls).toHaveLength(2);
+  expect(verifyCalls.every((c) => c.credentials === "same-origin")).toBe(true);
+
+  // Batches larger than 1024 unique claims chunk into bounded broker requests.
+  const bulk = Array.from({ length: 1025 }, (_, i) =>
+    signed(peer, { kind: 9, content: `bulk-${i}`, tags: [] }),
+  );
+  verifyCalls.length = 0;
+  verifyResponse = (body) => Response.json(body.claims.map(() => true));
+  expect(await transport.verifyStored(bulk)).toHaveLength(1025);
+  expect(verifyCalls.map((c) => c.claims.length)).toEqual([1024, 1]);
+
+  // Broker HTTP failure and malformed responses fail closed as ReadError.
+  const fresh = () =>
+    signed(peer, { kind: 9, content: crypto.randomUUID(), tags: [] });
+  verifyResponse = () =>
+    Response.json({ error: "verifier failed" }, { status: 500 });
+  await expect(transport.verifyStored([fresh()])).rejects.toMatchObject({
+    name: "ReadError",
+    status: 500,
+  });
+  for (const malformed of [{ ok: true }, [], [true, true], ["true"]]) {
+    verifyResponse = () => Response.json(malformed);
+    await expect(transport.verifyStored([fresh()])).rejects.toMatchObject({
+      name: "ReadError",
+      kind: "invalid-response",
+    });
+  }
+
+  // A 403 from the local verifier must surface as unavailable, never as channel denial.
+  queryReply = [fresh()];
+  verifyResponse = () =>
+    Response.json({ error: "Origin rejected" }, { status: 403 });
+  await expect(
+    transport.query([{ kinds: [9], limit: 1 }], new AbortController().signal),
+  ).rejects.toMatchObject({
+    name: "ReadError",
+    kind: "unavailable",
+    status: 403,
+  });
+
+  // Cancelling a query aborts an in-flight /verify-signatures request immediately.
+  queryReply = [fresh()];
+  const queryCancel = new AbortController();
+  let verifySignal: AbortSignal | null | undefined;
+  verifyResponse = (_body, signal) => {
+    verifySignal = signal;
+    return new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener(
+        "abort",
+        () =>
+          reject(signal.reason ?? new DOMException("Aborted", "AbortError")),
+        { once: true },
+      );
+    });
+  };
+  const pending = transport.query(
+    [{ kinds: [9], limit: 1 }],
+    queryCancel.signal,
+  );
+  await vi.waitFor(() => expect(verifySignal).toBeDefined());
+  queryCancel.abort(new DOMException("Read cancelled", "AbortError"));
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(verifySignal?.aborted).toBe(true);
 });

@@ -24,7 +24,12 @@ test("relay reads recover automatically after the network returns", async ({
     const { pathname } = new URL(url);
     const refused =
       offline || (slept && pathname.endsWith("/read-state-publish"));
-    if (!refused || pathname.endsWith("/session")) return route.fallback();
+    if (
+      !refused ||
+      pathname.endsWith("/session") ||
+      pathname.endsWith("/verify-signatures")
+    )
+      return route.fallback();
     app.report.relayFailures.push(url);
     // The same shape the session treats as a channel's timeline head.
     if (

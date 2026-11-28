@@ -28,6 +28,7 @@ import {
   roster,
   signed,
   scriptedTransport,
+  verifyTestSignatures,
 } from "./testing";
 import type { SignatureVerifier } from "./events";
 import type { ReadTransport } from "./transport";
@@ -121,7 +122,7 @@ function setup(
   // Zero keeps the drop of an authenticated connection from waiting out the
   // reconnect spread in tests that are not about it.
   random: () => number = () => 0,
-  signatures?: SignatureVerifier,
+  signatures: SignatureVerifier = vi.fn(verifyTestSignatures),
 ) {
   const key = keypair(),
     sockets: Socket[] = [];
@@ -137,6 +138,7 @@ function setup(
     async (event) => signed(key, event),
     key.pubkey,
     callbacks,
+    signatures,
     () => {
       const socket = new Socket();
       sockets.push(socket);
@@ -147,12 +149,11 @@ function setup(
     undefined,
     batchSize,
     random,
-    signatures,
   );
   owner.update(channels);
   const first = sockets[0];
   assert.exists(first);
-  return { key, sockets, callbacks, owner, first };
+  return { key, sockets, callbacks, owner, first, signatures };
 }
 
 describe("native live verification", () => {
@@ -1526,8 +1527,10 @@ it("verifies a reconnect's replayed events once and still rejects a changed copy
     assert.exists(route);
     const event = message(keypair(), "a", "heard before the drop", 1700000000);
     vi.mocked(verifyEvent).mockClear();
+    vi.mocked(h.signatures).mockClear();
     await h.first.receive(["EVENT", route[1], event]);
-    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    expect(verifyEvent).not.toHaveBeenCalled();
+    expect(h.signatures).toHaveBeenCalledTimes(1);
     await h.first.receive(["EOSE", route[1]]);
     h.first.close();
     await vi.advanceTimersByTimeAsync(500);
@@ -1537,10 +1540,12 @@ it("verifies a reconnect's replayed events once and still rejects a changed copy
     const replay = next.requests().find((r) => scopeOf(r).includes("a"));
     assert.exists(replay);
     vi.mocked(verifyEvent).mockClear();
+    vi.mocked(h.signatures).mockClear();
     h.callbacks.receive.mockClear();
     // The resume window sends it again, as fresh wire bytes.
     await next.receive(["EVENT", replay[1], JSON.parse(JSON.stringify(event))]);
     expect(verifyEvent).not.toHaveBeenCalled();
+    expect(h.signatures).not.toHaveBeenCalled();
     expect(h.callbacks.receive).toHaveBeenCalledWith(
       [event],
       expect.anything(),
@@ -3472,6 +3477,7 @@ it("retries a failed live signature slowly, but never a signer that does not mat
       established: vi.fn(),
       denied: vi.fn(),
     },
+    verifyTestSignatures,
     () => {
       const socket = new Socket();
       sockets.push(socket);
@@ -3606,6 +3612,7 @@ it("surfaces invalid signatures and terminal auth failure without an automatic p
     async (event) => signed(key, event),
     keypair().pubkey,
     { state, receive: vi.fn(), established: vi.fn(), denied: vi.fn() },
+    verifyTestSignatures,
     () => socket as unknown as WebSocket,
   );
   await socket.receive(["AUTH", "challenge"]);
@@ -3629,6 +3636,7 @@ it.each([false, true])(
       async (event) => signed(key, event),
       key.pubkey,
       { receive() {}, state() {}, established() {}, denied() {} },
+      verifyTestSignatures,
       () => socket as unknown as WebSocket,
       undefined,
       16,
@@ -3711,6 +3719,7 @@ it("preserves host cooldown across subscription replacement and stops bounded qu
       async (e) => signed(key, e),
       key.pubkey,
       callbacks,
+      verifyTestSignatures,
       () => socket as unknown as WebSocket,
       admission,
     );
@@ -4178,6 +4187,7 @@ it.each(["reconnect", "cooldown"])(
       },
       key.pubkey,
       callbacks,
+      verifyTestSignatures,
       () => {
         const s = new Socket();
         sockets.push(s);
@@ -6135,6 +6145,7 @@ it("backs off a relay's sign-in refusal and stops on a local terminal one", asyn
       async (event) => signed(keypair(), event),
       keypair().pubkey,
       { state, receive: vi.fn(), established: vi.fn(), denied: vi.fn() },
+      verifyTestSignatures,
       () => {
         const socket = new Socket();
         sockets.push(socket);

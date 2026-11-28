@@ -5,7 +5,12 @@ import {
   type ArtifactSyncSink,
 } from "./artifact-sync";
 import { createLiveAdmission, subscribeRelayTraffic } from "./live";
-import { keypair, nativeSignatureChecks, signed } from "./testing";
+import {
+  keypair,
+  nativeSignatureChecks,
+  signed,
+  verifyTestSignatures,
+} from "./testing";
 import type { SignatureVerifier } from "./events";
 
 const key = keypair();
@@ -276,13 +281,8 @@ describe("live socket sync wire", () => {
       async (event) => signed(viewer, event),
       viewer.pubkey,
       { receive, state: vi.fn(), established: vi.fn(), denied: vi.fn() },
-      () => socket as unknown as WebSocket,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
       check,
+      () => socket as unknown as WebSocket,
     );
     const failed = { event: vi.fn(), eose: vi.fn(), closed: vi.fn() };
     const healthy = { event: vi.fn(), eose: vi.fn(), closed: vi.fn() };
@@ -338,6 +338,7 @@ describe("live socket sync wire", () => {
       async (event) => signed(viewer, event),
       viewer.pubkey,
       { receive, state: vi.fn(), established: vi.fn(), denied: vi.fn() },
+      verifyTestSignatures,
       () => {
         const socket = new Socket();
         sockets.push(socket);
@@ -399,6 +400,7 @@ describe("live socket sync wire", () => {
         established: vi.fn(),
         denied: vi.fn(),
       },
+      verifyTestSignatures,
       () => socket as unknown as WebSocket,
       admission,
     );

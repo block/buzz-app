@@ -6,6 +6,7 @@ import type { AccountActionsService } from "../../src/features/account-actions/s
 import { ProfileSettings } from "../../src/app/ProfileSettings";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { communityDestination } from "../../src/features/communities/destination";
+import { nativeSignatureChecks } from "../../src/features/relay/testing";
 import { avatarMediaFixture } from "./avatar-media";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -62,6 +63,8 @@ window.fetch = async (input, init) => {
   const id = decodeURIComponent(url.split("/")[3] ?? "");
   if (url.endsWith("/identity"))
     return Response.json({ viewer: profileViewer });
+  if (url.endsWith("/verify-signatures"))
+    return Response.json(nativeSignatureChecks(JSON.parse(String(init?.body))));
   if (url.endsWith("/info")) return Response.json({ name: id, policy: null });
   if (url.endsWith("/session"))
     return Response.json({

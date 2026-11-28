@@ -8,7 +8,14 @@ import { subscribeRelayTraffic } from "../relay/live";
 import { matchesEvent } from "../relay/projection";
 import { provideRelay } from "../relay/service";
 import type { ReadTransport } from "../relay/transport";
-import { keypair, metadata, roster, signed, profile } from "../relay/testing";
+import {
+  keypair,
+  metadata,
+  roster,
+  signed,
+  profile,
+  verifyTestSignatures,
+} from "../relay/testing";
 import type { ReadFilter, RelayEvent } from "../relay/events";
 import { ownerReads, readyOwnerReads } from "./reads";
 import { pubkeyOf } from "./membership";
@@ -79,6 +86,7 @@ async function fixture() {
           async (t) => signed(viewer, t),
           viewer.pubkey,
           callbacks,
+          verifyTestSignatures,
           () => {
             const socket = new Socket();
             sockets.push(socket);

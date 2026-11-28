@@ -7,6 +7,7 @@
 import process from "node:process";
 import { readFile, writeFile } from "node:fs/promises";
 import { finalizeEvent, getPublicKey, nip19 } from "nostr-tools";
+import { verifySignatureClaims } from "../browser-host/verify-signatures.mjs";
 import { setLogLevel } from "../src/features/developer/logging.ts";
 import { percentile } from "../src/features/developer/client-metrics.ts";
 import {
@@ -280,6 +281,7 @@ export function runStrategy({
         established() {},
         denied() {},
       },
+      verifySignatureClaims,
       connect,
       undefined,
       strategy.size === Number.POSITIVE_INFINITY

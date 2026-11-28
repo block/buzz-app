@@ -5,6 +5,7 @@ import type {
 import { createRelaySession } from "../../../src/features/relay/session";
 import {
   keypair,
+  nativeSignatureChecks,
   signed,
   profile,
   metadata,
@@ -35,6 +36,10 @@ export function installCommunityFixture() {
     if (!url.pathname.startsWith("/api/")) return original(input, init);
     const route = url.pathname.split("/").at(-1);
     if (route === "register") return Response.json({});
+    if (route === "verify-signatures")
+      return Response.json(
+        nativeSignatureChecks(JSON.parse(String(init?.body))),
+      );
     if (route === "info")
       return Response.json({
         name: "Design studio",

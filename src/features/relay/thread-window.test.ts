@@ -4,7 +4,13 @@ import { createRelaySession } from "./session";
 import { connectBrokerTransport } from "./transport";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
-import { keypair, message, roster, signed } from "./testing";
+import {
+  keypair,
+  message,
+  nativeSignatureChecks,
+  roster,
+  signed,
+} from "./testing";
 import { threadBinding, threadAuthority } from "./thread-window";
 import { createThreadView, type ThreadResume } from "./threads";
 
@@ -77,6 +83,10 @@ async function setup(
         relayAuthor: relay.pubkey,
         relayUrl: origin,
       });
+    if (url.endsWith("/verify-signatures"))
+      return Response.json(
+        nativeSignatureChecks(JSON.parse(options?.body as string)),
+      );
     const filters = JSON.parse(options?.body as string) as ReadFilter[];
     requests.push(filters);
     return Response.json((await Promise.all(filters.map(answer))).flat());

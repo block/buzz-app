@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { nativeSocket } from "./native-socket";
 import { subscribeRelayTraffic, type LiveCallbacks } from "./live";
-import { keypair, signed } from "./testing";
+import { keypair, signed, verifyTestSignatures } from "./testing";
 
 const channels = vi.hoisted(() => [] as ((event: unknown) => void)[]);
 vi.mock("@tauri-apps/api/core", () => ({
@@ -39,6 +39,7 @@ function connect() {
     async (event) => signed(key, event),
     key.pubkey,
     callbacks,
+    verifyTestSignatures,
     nativeSocket,
   );
   return { owner, callbacks };

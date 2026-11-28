@@ -242,7 +242,7 @@ export type AgentsNative = {
   keepAwake(hold: boolean): Promise<void>;
 };
 
-const verifyAgentRead = createEventVerifier(undefined, verifyNativeSignatures);
+const verifyAgentRead = createEventVerifier(verifyNativeSignatures);
 
 export const nativeAgents = (): AgentsNative | undefined =>
   isTauri()

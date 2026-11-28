@@ -2,6 +2,7 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { artifactSyncFilter } from "./artifact-sync-filter";
 import { subscribeBrokerTraffic } from "./broker-live";
+import { verifyTestSignatures } from "./testing";
 
 afterEach(() => vi.unstubAllGlobals());
 const tick = async () => {
@@ -51,12 +52,16 @@ function fixture() {
       );
     }),
   );
-  const live = subscribeBrokerTraffic("/api/relay", {
-    state() {},
-    receive() {},
-    established() {},
-    denied() {},
-  });
+  const live = subscribeBrokerTraffic(
+    "/api/relay",
+    {
+      state() {},
+      receive() {},
+      established() {},
+      denied() {},
+    },
+    verifyTestSignatures,
+  );
   const sink = { event: vi.fn(), eose: vi.fn(), closed: vi.fn() };
   const streams = () =>
     vi

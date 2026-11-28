@@ -9,6 +9,7 @@ import {
   roster,
   scriptedTransport,
   signed,
+  verifyTestSignatures,
 } from "./testing";
 
 class Socket {
@@ -54,6 +55,7 @@ async function setup(singletons = false) {
         async (event) => signed(viewer, event),
         viewer.pubkey,
         callbacks,
+        verifyTestSignatures,
         () => socket as unknown as WebSocket,
       );
       // Cases asserting independent CLOSED scopes keep explicit singleton inputs;

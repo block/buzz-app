@@ -53,6 +53,17 @@ it("admits only the configured browser origin through a loopback proxy", async (
       "auth",
       getPublicKey(key),
     ]);
+    const verify = await fetch(`${base}/api/relay/verify-signatures`, {
+      method: "POST",
+      headers: {
+        Origin: browserOrigin,
+        "Sec-Fetch-Site": "same-origin",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ claims: [] }),
+    });
+    expect(verify.status).toBe(200);
+    expect(await verify.json()).toEqual([]);
     for (const Origin of [
       "https://other.example.org",
       `${browserOrigin}.evil.example`,
@@ -68,15 +79,17 @@ it("admits only the configured browser origin through a loopback proxy", async (
       {},
       { Origin: browserOrigin, "Sec-Fetch-Site": "cross-site" },
     ]) {
-      const denied = await fetch(
-        `${base}/api/relay/prepare-remote-agent-authorization`,
-        {
+      for (const path of [
+        "/api/relay/prepare-remote-agent-authorization",
+        "/api/relay/verify-signatures",
+      ]) {
+        const denied = await fetch(`${base}${path}`, {
           method: "POST",
           headers,
           body: "{}",
-        },
-      );
-      expect(denied.status).toBe(403);
+        });
+        expect(denied.status, path).toBe(403);
+      }
     }
     const hostStatus = await new Promise((resolve, reject) => {
       const req = request(

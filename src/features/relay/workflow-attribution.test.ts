@@ -4,7 +4,7 @@ import { createEventVerifier, eventDto, hasEventProof } from "./events";
 import { foldMessages } from "./fold";
 import { rowProfileIds } from "./membership";
 import { projectEvents } from "./projection";
-import { keypair, signed } from "./testing";
+import { keypair, signed, verifyTestSignatures } from "./testing";
 import { workflowOwner, workflowMentionOwner } from "./workflow-attribution";
 
 vi.mock("nostr-tools", { spy: true });
@@ -40,11 +40,15 @@ it("uses only admission-owned proof, without verification during repeated folds"
   }
   expect(verify).not.toHaveBeenCalled();
 });
-it("recognizes the bounded HTTP verifier's proof too", () => {
-  const read = createEventVerifier();
+it("recognizes the bounded HTTP verifier's proof too", async () => {
+  const read = createEventVerifier(verifyTestSignatures);
   const event = sample();
-  expect(workflowOwner(read(event), relay.pubkey)).toBe(owner.pubkey);
-  expect(workflowOwner(read(event), relay.pubkey)).toBe(owner.pubkey);
+  const [first] = await read.settle([read.prepare(event)]);
+  const [second] = await read.settle([read.prepare(event)]);
+  assert.exists(first);
+  assert.exists(second);
+  expect(workflowOwner(first, relay.pubkey)).toBe(owner.pubkey);
+  expect(workflowOwner(second, relay.pubkey)).toBe(owner.pubkey);
 });
 it("delegates only to explicit canonical workflow targets", () => {
   const nextTags = [

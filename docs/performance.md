@@ -67,8 +67,10 @@ never arrive) fails instead of reporting a fast time.
 
 The task categories overlap, so don't add them up or read them as CPU
 percentages. Frame gaps show main-thread stalls, not compositor frame rate.
-The browser build verifies signatures in JavaScript, which the desktop app does
-natively, so per-message script time runs higher here.
+The browser build offloads BIP-340 signature verification to the local Node
+relay broker (`/api/relay/verify-signatures`), mirroring how the desktop app
+offloads verification to Rust (`relay_verify_signatures`), while JavaScript
+still validates wire envelopes and hashes event IDs.
 
 ## Compare a change
 

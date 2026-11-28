@@ -4,7 +4,13 @@ import { PublishNotSent, PublishRejected } from "./outbox";
 import { ChatNotStarted } from "./channel-writes";
 import { ReadError } from "./errors";
 import { subscribeRelayTraffic } from "./live";
-import { keypair, metadata, roster, signed } from "./testing";
+import {
+  keypair,
+  metadata,
+  roster,
+  signed,
+  verifyTestSignatures,
+} from "./testing";
 import { matchesEvent } from "./projection";
 import { SOLO_LABEL } from "../solo/labels";
 import { ownerCanvas } from "../agent-harness/project";
@@ -120,6 +126,7 @@ function setup(id: string, deliveryTimeoutMs?: number) {
           async (t) => signed(viewer, t),
           viewer.pubkey,
           callbacks,
+          verifyTestSignatures,
           () => {
             const socket = new Socket();
             sockets.push(socket);

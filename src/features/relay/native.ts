@@ -406,10 +406,7 @@ export const verifyNativeSignatures: SignatureVerifier = (claims) =>
 
 /** Device evidence can be verified before any relay connection exists. */
 export function verifyNativeStored(values: readonly unknown[]) {
-  return parseEvents(
-    values,
-    createEventVerifier(undefined, verifyNativeSignatures),
-  );
+  return parseEvents(values, createEventVerifier(verifyNativeSignatures));
 }
 
 export const NOT_A_COMMUNITY_ERROR =

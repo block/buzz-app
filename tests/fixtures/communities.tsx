@@ -7,6 +7,7 @@ import { communityDestination } from "../../src/features/communities/destination
 import { Context } from "@deepseek-ai/cordis";
 import {
   keypair,
+  nativeSignatureChecks,
   profile as profileEvent,
 } from "../../src/features/relay/testing";
 import type { RelayEvent } from "../../src/features/relay/events";
@@ -22,13 +23,19 @@ window.fetch = async (input, init) => {
   const url = String(input);
   const route = url.split("/").at(-1);
   let id = "local";
-  if (route !== "identity" && route !== "register") {
+  if (
+    route !== "identity" &&
+    route !== "register" &&
+    route !== "verify-signatures"
+  ) {
     const destination = url.split("/")[3];
     if (!destination) throw new Error("Missing fixture community destination");
     id = decodeURIComponent(destination);
   }
   calls.push(`${id}/${route}`);
   if (route === "identity") return Response.json({ viewer });
+  if (route === "verify-signatures")
+    return Response.json(nativeSignatureChecks(JSON.parse(String(init?.body))));
   if (route === "register")
     return Response.json(
       communityDestination(JSON.parse(String(init?.body)).url),

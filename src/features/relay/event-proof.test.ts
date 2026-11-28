@@ -1,6 +1,12 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { getEventHash, verifyEvent, verifiedSymbol } from "nostr-tools";
-import { createEventVerifier, eventDto, hasEventProof } from "./events";
+import {
+  createEventVerifier,
+  eventDto,
+  hasEventProof,
+  type EventVerifier,
+  type RelayEvent,
+} from "./events";
 import { connectBrokerTransport, connectSignedTransport } from "./transport";
 import { hostSigner, keypair, nativeSignatureChecks, signed } from "./testing";
 import { ByteLru } from "./budget";
@@ -19,14 +25,30 @@ const other = keypair();
 const event = signed(key, { kind: 9, content: "original", tags: [["h", "a"]] });
 const wire = () => JSON.parse(JSON.stringify(event));
 
-it("reuses only its own proof while returning newly owned, frozen wire fields", () => {
-  const verify = createEventVerifier();
-  const first = verify(event); // even a genuine incoming verifiedSymbol is ignored
+function makeVerifier() {
+  const check = vi.fn(
+    async (claims: readonly { id: string; pubkey: string; sig: string }[]) =>
+      nativeSignatureChecks({ claims }),
+  );
+  const verifier = createEventVerifier(check);
+  const verifyOne = async (value: unknown): Promise<RelayEvent> => {
+    const [verified] = await verifier.settle([verifier.prepare(value)]);
+    if (!verified)
+      throw new Error("Relay supplied a malformed or invalidly signed event");
+    return verified;
+  };
+  return { verifier, check, verifyOne };
+}
+
+it("reuses only its own proof while returning newly owned, frozen wire fields", async () => {
+  const { check, verifyOne } = makeVerifier();
+  const first = await verifyOne(event); // even a genuine incoming verifiedSymbol is ignored
   const raw = wire();
   raw[verifiedSymbol] = false;
   raw.extra = "not retained";
-  const second = verify(raw);
-  expect(verifyEvent).toHaveBeenCalledTimes(1);
+  const second = await verifyOne(raw);
+  expect(check).toHaveBeenCalledTimes(1);
+  expect(verifyEvent).not.toHaveBeenCalled();
   expect(second).toEqual(first);
   expect(second).not.toBe(first);
   expect(second.tags).not.toBe(first.tags);
@@ -42,15 +64,17 @@ it("reuses only its own proof while returning newly owned, frozen wire fields", 
   expect(second.tags).toEqual([["h", "a"]]);
   expect(getEventHash(second)).toBe(second.id);
   expect(hasEventProof(second)).toBe(true);
-  createEventVerifier()(wire()); // another connection has no proof
-  eventDto(wire()); // uncached boundary remains uncached
+  const isolated = makeVerifier();
+  await isolated.verifyOne(wire()); // another connection has no proof
+  expect(isolated.check).toHaveBeenCalledTimes(1);
+  eventDto(wire()); // uncached single-event boundary remains uncached
   eventDto(wire());
-  expect(verifyEvent).toHaveBeenCalledTimes(4);
+  expect(verifyEvent).toHaveBeenCalledTimes(2);
 });
 
-it("rehashes every signed field on a proof hit and rejects forged markers and IDs", () => {
-  const verify = createEventVerifier();
-  verify(wire());
+it("rehashes every signed field on a proof hit and rejects forged markers and IDs", async () => {
+  const { verifyOne } = makeVerifier();
+  await verifyOne(wire());
   for (const patch of [
     { content: "tampered" },
     { pubkey: other.pubkey },
@@ -61,19 +85,19 @@ it("rehashes every signed field on a proof hit and rejects forged markers and ID
     { sig: "0".repeat(128) },
     { id: "0".repeat(64) },
   ]) {
-    expect(() =>
-      verify({ ...wire(), ...patch, [verifiedSymbol]: true }),
-    ).toThrow(/malformed/);
+    await expect(
+      verifyOne({ ...wire(), ...patch, [verifiedSymbol]: true }),
+    ).rejects.toThrow(/malformed/);
   }
   const changed = { ...wire(), content: "new hash with old signature" };
   changed.id = getEventHash(changed);
-  expect(() => verify(changed)).toThrow(/malformed/);
-  expect(verify(wire()).id).toBe(event.id); // failed input cannot poison valid proof
+  await expect(verifyOne(changed)).rejects.toThrow(/malformed/);
+  expect((await verifyOne(wire())).id).toBe(event.id); // failed input cannot poison valid proof
 });
 
-it("still validates envelope values on hits and never memoizes a failure", () => {
-  const verify = createEventVerifier();
-  verify(wire());
+it("still validates envelope values on hits and never memoizes a failure", async () => {
+  const { check, verifyOne } = makeVerifier();
+  await verifyOne(wire());
   for (const patch of [
     { created_at: Infinity },
     { created_at: 1.5 },
@@ -83,18 +107,20 @@ it("still validates envelope values on hits and never memoizes a failure", () =>
     { content: null },
     { tags: [["h", 1]] },
   ])
-    expect(() => verify({ ...wire(), ...patch })).toThrow(/malformed/);
+    await expect(verifyOne({ ...wire(), ...patch })).rejects.toThrow(
+      /malformed/,
+    );
   const bad = { ...wire(), sig: "0".repeat(128), [verifiedSymbol]: true };
-  vi.mocked(verifyEvent).mockClear();
-  expect(() => verify(bad)).toThrow();
-  expect(() => verify(bad)).toThrow();
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
-  expect(verify(wire()).id).toBe(event.id);
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  check.mockClear();
+  await expect(verifyOne(bad)).rejects.toThrow();
+  await expect(verifyOne(bad)).rejects.toThrow();
+  expect(check).toHaveBeenCalledTimes(2);
+  expect((await verifyOne(wire())).id).toBe(event.id);
+  expect(check).toHaveBeenCalledTimes(2);
 });
 
-it("a different valid signature for the same event ID earns a new proof", () => {
-  const verify = createEventVerifier();
+it("a different valid signature for the same event ID earns a new proof", async () => {
+  const { check, verifyOne } = makeVerifier();
   const alternate = signed(key, {
     kind: event.kind,
     created_at: event.created_at,
@@ -103,34 +129,34 @@ it("a different valid signature for the same event ID earns a new proof", () => 
   });
   expect(alternate.id).toBe(event.id);
   expect(alternate.sig).not.toBe(event.sig);
-  verify(wire());
-  verify(alternate);
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
-  verify(JSON.parse(JSON.stringify(alternate)));
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
-  verify(wire()); // only one signature is retained per ID
-  expect(verifyEvent).toHaveBeenCalledTimes(3);
+  await verifyOne(wire());
+  await verifyOne(alternate);
+  expect(check).toHaveBeenCalledTimes(2);
+  await verifyOne(JSON.parse(JSON.stringify(alternate)));
+  expect(check).toHaveBeenCalledTimes(2);
+  await verifyOne(wire()); // only one signature is retained per ID
+  expect(check).toHaveBeenCalledTimes(3);
 });
 
-it("keeps no proof for an ephemeral event, which a relay never sends again", () => {
-  const verify = createEventVerifier();
+it("keeps no proof for an ephemeral event, which a relay never sends again", async () => {
+  const { check, verifyOne } = makeVerifier();
   const typing = signed(key, { kind: 20002, content: "", tags: [["h", "a"]] });
-  verify(typing);
-  verify(JSON.parse(JSON.stringify(typing)));
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  await verifyOne(typing);
+  await verifyOne(JSON.parse(JSON.stringify(typing)));
+  expect(check).toHaveBeenCalledTimes(2);
   const addressable = signed(key, { kind: 30000, content: "", tags: [] });
-  verify(addressable);
-  verify(JSON.parse(JSON.stringify(addressable)));
-  expect(verifyEvent).toHaveBeenCalledTimes(3);
+  await verifyOne(addressable);
+  await verifyOne(JSON.parse(JSON.stringify(addressable)));
+  expect(check).toHaveBeenCalledTimes(3);
 });
 
-it("evicts the oldest proof at the fixed 8192-entry bound and re-verifies it", () => {
+it("evicts the oldest proof at the fixed 8192-entry bound and re-verifies it", async () => {
   // Observe the real memo populated by cryptographic verification, then fill its
   // remaining slots directly. Cache pressure needs opaque entries, not thousands
   // of signatures generated and verified inside one runner deadline.
   const writes = vi.spyOn(ByteLru.prototype, "set");
-  const verify = createEventVerifier();
-  verify(wire());
+  const { check, verifyOne } = makeVerifier();
+  await verifyOne(wire());
   const memo = writes.mock.contexts[0] as ByteLru<string>;
   writes.mockRestore();
   expect(memo.maxEntries).toBe(8192);
@@ -140,14 +166,14 @@ it("evicts the oldest proof at the fixed 8192-entry bound and re-verifies it", (
   expect(memo.peek(event.id)).toBe(event.sig);
 
   const newest = signed(key, { kind: 9, content: "newest", tags: [] });
-  verify(newest);
+  await verifyOne(newest);
   expect(memo.stats()).toEqual({ entries: 8192, bytes: 8192 * 192 });
   expect(memo.peek(event.id)).toBeUndefined();
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
-  verify(newest);
-  expect(verifyEvent).toHaveBeenCalledTimes(2);
-  verify(wire());
-  expect(verifyEvent).toHaveBeenCalledTimes(3);
+  expect(check).toHaveBeenCalledTimes(2);
+  await verifyOne(newest);
+  expect(check).toHaveBeenCalledTimes(2);
+  await verifyOne(wire());
+  expect(check).toHaveBeenCalledTimes(3);
   expect(memo.peek(event.id)).toBe(event.sig);
 });
 
@@ -155,17 +181,27 @@ it.each(["broker", "signed"])(
   "%s HTTP queries keep fresh reads, reject changed warm bytes and isolate proofs",
   async (mode) => {
     let payload: unknown = wire();
-    const fetcher = vi.fn(async (url: string) =>
-      url.endsWith("/session")
-        ? Response.json({ viewer: key.pubkey, relayAuthor: key.pubkey })
-        : Response.json([payload, payload]),
+    const check = vi.fn(
+      async (claims: readonly { id: string; pubkey: string; sig: string }[]) =>
+        nativeSignatureChecks({ claims }),
     );
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/session"))
+        return Response.json({ viewer: key.pubkey, relayAuthor: key.pubkey });
+      if (url.endsWith("/verify-signatures")) {
+        const body = JSON.parse(String(init?.body)) as {
+          claims: { id: string; pubkey: string; sig: string }[];
+        };
+        return Response.json(await check(body.claims));
+      }
+      return Response.json([payload, payload]);
+    });
     vi.stubGlobal("fetch", fetcher);
     const connect = () =>
       mode === "broker"
         ? connectBrokerTransport()
         : connectSignedTransport(
-            hostSigner(key),
+            hostSigner(key, undefined, check),
             "https://proof.test",
             key.pubkey,
           );
@@ -173,18 +209,20 @@ it.each(["broker", "signed"])(
     const filters = [{ kinds: [9], "#h": ["a"], limit: 2 }];
     expect(await first.query(filters)).toHaveLength(2);
     expect(await first.query(filters)).toHaveLength(2);
-    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(verifyEvent).not.toHaveBeenCalled();
     payload = { ...wire(), content: "corrupted after cold read" };
     await expect(first.query(filters)).rejects.toThrow(/malformed/);
     payload = { ...wire(), sig: "0".repeat(128) };
     await expect(first.query(filters)).rejects.toThrow(/malformed/);
     payload = wire();
-    vi.mocked(verifyEvent).mockClear();
+    check.mockClear();
     expect(await first.query(filters)).toHaveLength(2);
-    expect(verifyEvent).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
     const second = await connect();
     expect(await second.query(filters)).toHaveLength(2);
-    expect(verifyEvent).toHaveBeenCalledTimes(1);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(verifyEvent).not.toHaveBeenCalled();
     expect(
       fetcher.mock.calls.filter(([url]) => url.endsWith("/query")),
     ).toHaveLength(6);
@@ -194,16 +232,12 @@ it.each(["broker", "signed"])(
   },
 );
 
-it("batches memo misses and admits only independently verified native results", async () => {
-  const check = vi.fn(async (claims: readonly { sig: string }[]) =>
-    nativeSignatureChecks({ claims }),
-  );
-  const { native } = createEventVerifier(undefined, check);
-  if (!native) throw new Error("expected a native verifier");
-  const batch = async (values: unknown[]) =>
-    native.settle(values.map((value) => native.prepare(value)));
+it("batches memo misses and admits only independently verified host results", async () => {
+  const { verifier, check } = makeVerifier();
+  const batch = async (v: EventVerifier, values: unknown[]) =>
+    v.settle(values.map((value) => v.prepare(value)));
   const second = signed(key, { kind: 9, content: "second", tags: [] });
-  const events = await batch([wire(), second]);
+  const events = await batch(verifier, [wire(), second]);
   expect(check).toHaveBeenCalledTimes(1);
   expect(check.mock.calls[0]?.[0]).toEqual([
     { id: event.id, pubkey: event.pubkey, sig: event.sig },
@@ -213,28 +247,30 @@ it("batches memo misses and admits only independently verified native results", 
   expect(events.map((item) => item?.[verifiedSymbol])).toEqual([true, true]);
   expect(events.every((item) => item && hasEventProof(item))).toBe(true);
   expect(Object.isFrozen(events[0])).toBe(true);
-  await batch([wire()]); // remembered: no host call
+  await batch(verifier, [wire()]); // remembered: no host call
   expect(check).toHaveBeenCalledTimes(1);
-  await expect(batch([{ ...wire(), content: "changed" }])).rejects.toThrow(
-    "invalidly signed",
-  );
+  await expect(
+    batch(verifier, [{ ...wire(), content: "changed" }]),
+  ).rejects.toThrow("invalidly signed");
   const forged = { ...signed(other, { kind: 9, content: "x", tags: [] }) };
   expect(
-    await batch([wire(), { ...forged, sig: "0".repeat(128) }, forged]),
+    await batch(verifier, [
+      wire(),
+      { ...forged, sig: "0".repeat(128) },
+      forged,
+    ]),
   ).toEqual([event, undefined, forged]);
   const calls = check.mock.calls.length;
-  expect(await batch([forged, { ...forged, sig: "0".repeat(128) }])).toEqual([
-    forged,
-    undefined,
-  ]);
+  expect(
+    await batch(verifier, [forged, { ...forged, sig: "0".repeat(128) }]),
+  ).toEqual([forged, undefined]);
   expect(check).toHaveBeenCalledTimes(calls + 1); // A failed signature never earns a proof.
   check.mockResolvedValueOnce([]);
   await expect(
-    batch([second, { ...forged, sig: "0".repeat(128) }]),
+    batch(verifier, [second, { ...forged, sig: "0".repeat(128) }]),
   ).rejects.toThrow("invalidly signed");
   check.mockRejectedValueOnce(new Error("host failed"));
-  await expect(batch([{ ...forged, sig: "0".repeat(128) }])).rejects.toThrow(
-    "host failed",
-  );
-  expect(createEventVerifier().native).toBeUndefined();
+  await expect(
+    batch(verifier, [{ ...forged, sig: "0".repeat(128) }]),
+  ).rejects.toThrow("host failed");
 });

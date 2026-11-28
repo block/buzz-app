@@ -17,7 +17,11 @@ import { App } from "./App";
 import { createServices, type AppServices } from "./services";
 import { matchesEvent } from "../features/relay/projection";
 import type { ReadFilter, RelayEvent } from "../features/relay/events";
-import { metadata, roster } from "../features/relay/testing";
+import {
+  metadata,
+  nativeSignatureChecks,
+  roster,
+} from "../features/relay/testing";
 import type { ComposerInputElement } from "../features/messages/composer-dom";
 import { composerDOMFixture } from "../features/messages/composer-testing";
 import * as communityApi from "../features/communities/api";
@@ -174,6 +178,10 @@ async function setup(
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/verify-signatures"))
+        return Response.json(
+          nativeSignatureChecks(JSON.parse(String(options?.body))),
+        );
       if (url.endsWith("/session")) {
         if (connectionError) return new Response(null, { status: 502 });
         return Response.json({

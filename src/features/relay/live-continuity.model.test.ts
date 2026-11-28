@@ -14,9 +14,11 @@
 // after the limit, a channel deleted during an outage).
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { subscribeRelayTraffic, type LiveCallbacks } from "./live";
-import { keypair, message, signed } from "./testing";
+import { keypair, message, signed, verifyTestSignatures } from "./testing";
 import { matchesEvent } from "./projection";
 import type { ReadFilter, RelayEvent } from "./events";
+
+vi.mock("./yield", () => ({ yieldToHost: () => Promise.resolve() }));
 
 afterEach(() => vi.useRealTimers());
 
@@ -271,6 +273,7 @@ async function run(seed: number, channelCount: number, steps: number) {
     async (event) => signed(viewer, event),
     viewer.pubkey,
     callbacks,
+    verifyTestSignatures,
     () => {
       const socket = new ModelSocket(model);
       model.sockets.push(socket);

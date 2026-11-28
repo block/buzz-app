@@ -1,6 +1,7 @@
 // Regression controls contributed by Brain; see WS_RETRY_REVIEW_2026_09_09.
 import { assert, afterEach, expect, it, vi } from "vitest";
-import { keypair, message, signed } from "./testing";
+import { artifactSyncFilter } from "./artifact-sync-filter";
+import { keypair, message, nativeSignatureChecks, signed } from "./testing";
 import { connectBrokerTransport } from "./transport";
 function required<T>(value: T | undefined): T {
   assert.exists(value);
@@ -16,13 +17,18 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const tick = async () => {
-  for (let i = 0; i < 12; i++) await Promise.resolve();
+  for (let i = 0; i < 20; i++) await Promise.resolve();
 };
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
-function fixture() {
+function fixture(
+  onVerify?: (
+    body: { claims: unknown[] },
+    signal?: AbortSignal | null,
+  ) => Promise<Response>,
+) {
   const headers: ReturnType<typeof deferred<Response>>[] = [];
   const controls: ReturnType<typeof deferred<Response>>[] = [];
   const interests: ReturnType<typeof deferred<Response>>[] = [];
@@ -46,6 +52,11 @@ function fixture() {
         return d.promise;
       }
       if (
+        url.endsWith("/stream-artifact-sync") ||
+        url.endsWith("/stream-artifact-sync-close")
+      )
+        return Promise.resolve(Response.json({}));
+      if (
         url.endsWith("/stream-retry") ||
         url.endsWith("/stream-observer") ||
         url.endsWith("/stream-presence")
@@ -54,6 +65,12 @@ function fixture() {
         controls.push(d);
         signals.push(init.signal as AbortSignal);
         return d.promise;
+      }
+      if (url.endsWith("/verify-signatures")) {
+        const body = JSON.parse(String(init.body)) as { claims: unknown[] };
+        return onVerify
+          ? onVerify(body, init.signal)
+          : Promise.resolve(Response.json(nativeSignatureChecks(body)));
       }
       if (url.endsWith("/stream")) {
         const d = deferred<Response>();
@@ -95,6 +112,9 @@ function fixture() {
     disconnect(index: number) {
       required(bodyControllers[index]).error(new Error("fixture disconnect"));
     },
+    close(index: number) {
+      required(bodyControllers[index]).close();
+    },
     signals,
     snapshots,
     accept,
@@ -103,6 +123,18 @@ function fixture() {
       required(bodyControllers[0]).enqueue(
         new TextEncoder().encode(
           `event: ${kind}\ndata: ${JSON.stringify(value)}\n\n`,
+        ),
+      );
+    },
+    chunk(frames: [string, unknown][]) {
+      required(bodyControllers[0]).enqueue(
+        new TextEncoder().encode(
+          frames
+            .map(
+              ([kind, value]) =>
+                `event: ${kind}\ndata: ${JSON.stringify(value)}\n\n`,
+            )
+            .join(""),
         ),
       );
     },
@@ -824,3 +856,367 @@ it.each([400, 401, 403, 413])(
     }
   },
 );
+
+it("preserves FIFO ordering and batches SSE events behind async /verify-signatures", async () => {
+  vi.useFakeTimers();
+  const gates: {
+    body: { claims: unknown[] };
+    gate: ReturnType<typeof deferred<Response>>;
+  }[] = [];
+  const f = fixture((body) => {
+    const gate = deferred<Response>();
+    gates.push({ body, gate });
+    return gate.promise;
+  });
+  const order: string[] = [];
+  const author = keypair();
+  const first = message(author, "a", "first", 1700000001);
+  const second = message(author, "a", "second", 1700000002);
+  const artifact = signed(author, {
+    kind: 45010,
+    content: "doc",
+    tags: [],
+  });
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)({
+    state(s) {
+      f.snapshots.push(s);
+      if (s.status === "connected" && s.routes.some((r) => r.channelId === "a"))
+        order.push("state-delta");
+    },
+    receive(events) {
+      for (const e of events) order.push(`receive:${e.content}`);
+    },
+    established() {
+      order.push("established");
+    },
+    denied() {},
+  });
+  try {
+    owner.update(["a"]);
+    f.accept(0);
+    await tick();
+    f.chunk([
+      [
+        "traffic",
+        {
+          event: first,
+          provenance: { phase: "live", channelId: "a" },
+          interestRevision: 1,
+        },
+      ],
+      [
+        "traffic",
+        {
+          event: second,
+          provenance: { phase: "live", channelId: "a" },
+          interestRevision: 1,
+        },
+      ],
+      ["established", { channels: ["a"], interestRevision: 1 }],
+      [
+        "state-delta",
+        {
+          status: "connected",
+          interestRevision: 1,
+          removed: [],
+          routes: [
+            {
+              id: "channel:a",
+              channelId: "a",
+              status: "live",
+              replay: "unknown",
+            },
+          ],
+        },
+      ],
+    ]);
+    await tick();
+    // Both traffic events batch into one verify request; later frames wait in FIFO order.
+    expect(gates).toHaveLength(1);
+    expect(gates[0]?.body.claims).toHaveLength(2);
+    expect(order).toEqual([]);
+    gates[0]?.gate.resolve(
+      Response.json(nativeSignatureChecks(gates[0].body as never)),
+    );
+    await tick();
+    expect(order).toEqual([
+      "receive:first",
+      "receive:second",
+      "established",
+      "state-delta",
+    ]);
+
+    // Artifact sync event stays ahead of its eose and closed frames while gated.
+    const syncOrder: string[] = [];
+    const syncChannel = "11111111-1111-4111-8111-111111111111";
+    required(owner.syncArtifacts)(
+      artifactSyncFilter({ artifact: "current", "#h": [syncChannel] }),
+      {
+        event(e) {
+          syncOrder.push(`event:${e.id}`);
+        },
+        eose() {
+          syncOrder.push("eose");
+        },
+        closed(reason) {
+          syncOrder.push(`closed:${reason}`);
+        },
+      },
+    );
+    await tick();
+    f.chunk([
+      ["artifact-sync", { id: "s1", type: "event", event: artifact }],
+      ["artifact-sync", { id: "s1", type: "eose" }],
+      ["artifact-sync", { id: "s1", type: "closed", reason: "done" }],
+    ]);
+    await tick();
+    expect(gates).toHaveLength(2);
+    expect(syncOrder).toEqual([]);
+    gates[1]?.gate.resolve(
+      Response.json(nativeSignatureChecks(gates[1].body as never)),
+    );
+    await tick();
+    expect(syncOrder).toEqual([`event:${artifact.id}`, "eose", "closed:done"]);
+  } finally {
+    for (const { gate } of gates) gate.resolve(Response.json([]));
+    owner.dispose();
+  }
+});
+
+it.each(["message", "traffic", "presence", "artifact-sync", "verify-error"])(
+  "aborts and retries the SSE stream on async verification failure (%s)",
+  async (kind) => {
+    vi.useFakeTimers();
+    const author = keypair();
+    const valid = message(author, "a", "ok", 1700000010);
+    const bad = { ...valid, sig: "0".repeat(128) };
+    const badPresence = {
+      ...signed(author, { kind: 20001, content: "online", tags: [] }),
+      sig: "0".repeat(128),
+    };
+    const f = fixture(
+      kind === "verify-error"
+        ? async () =>
+            Response.json({ error: "verifier unavailable" }, { status: 500 })
+        : undefined,
+    );
+    const received: unknown[] = [];
+    const presenceEvents: unknown[] = [];
+    const syncEvents: unknown[] = [];
+    const t = await connectBrokerTransport();
+    const owner = required(t.subscribe)({
+      state(s) {
+        f.snapshots.push(s);
+      },
+      receive(events) {
+        received.push(...events);
+      },
+      presence(e) {
+        presenceEvents.push(e);
+      },
+      established() {},
+      denied() {},
+    });
+    try {
+      owner.update(["a"]);
+      owner.watchPresence?.([author.pubkey]);
+      f.accept(0);
+      await tick();
+      if (kind === "artifact-sync") {
+        const syncChannel = "11111111-1111-4111-8111-111111111111";
+        required(owner.syncArtifacts)(
+          artifactSyncFilter({ artifact: "current", "#h": [syncChannel] }),
+          {
+            event(e) {
+              syncEvents.push(e);
+            },
+            eose() {},
+            closed() {},
+          },
+        );
+        await tick();
+        f.frame("artifact-sync", { id: "s1", type: "event", event: bad });
+      } else if (kind === "message") {
+        f.frame("message", bad);
+      } else if (kind === "traffic") {
+        f.frame("traffic", {
+          event: bad,
+          provenance: { phase: "live", channelId: "a" },
+          interestRevision: 1,
+        });
+      } else if (kind === "presence") {
+        f.frame("presence", badPresence);
+      } else {
+        f.frame("message", valid);
+      }
+      await tick();
+      expect(received).toEqual([]);
+      expect(presenceEvents).toEqual([]);
+      expect(syncEvents).toEqual([]);
+      expect(f.snapshots.at(-1)).toMatchObject({ status: "retrying" });
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it("drops in-flight SSE events when a channel is removed or the subscription is disposed", async () => {
+  vi.useFakeTimers();
+  const gates: {
+    body: { claims: unknown[] };
+    gate: ReturnType<typeof deferred<Response>>;
+  }[] = [];
+  const f = fixture((body) => {
+    const gate = deferred<Response>();
+    gates.push({ body, gate });
+    return gate.promise;
+  });
+  const author = keypair();
+  const first = message(author, "a", "stale-channel", 1700000020);
+  const second = message(author, "b", "after-dispose", 1700000021);
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    owner.update(["a", "b"]);
+    f.accept(0);
+    await tick();
+    f.frame("traffic", {
+      event: first,
+      provenance: { phase: "live", channelId: "a" },
+      interestRevision: 1,
+    });
+    await tick();
+    expect(gates).toHaveLength(1);
+    owner.update(["b"]);
+    gates[0]?.gate.resolve(
+      Response.json(nativeSignatureChecks(gates[0].body as never)),
+    );
+    await tick();
+    expect(f.callbacks.receive).not.toHaveBeenCalled();
+
+    f.frame("traffic", {
+      event: second,
+      provenance: { phase: "live", channelId: "b" },
+      interestRevision: 2,
+    });
+    await tick();
+    expect(gates).toHaveLength(2);
+    owner.dispose();
+    gates[1]?.gate.resolve(
+      Response.json(nativeSignatureChecks(gates[1].body as never)),
+    );
+    await tick();
+    expect(f.callbacks.receive).not.toHaveBeenCalled();
+  } finally {
+    for (const { gate } of gates) gate.resolve(Response.json([]));
+    owner.dispose();
+  }
+});
+
+it("fences an in-flight drain batch when the SSE stream disconnects during /verify-signatures", async () => {
+  vi.useFakeTimers();
+  const gates: {
+    body: { claims: unknown[] };
+    gate: ReturnType<typeof deferred<Response>>;
+  }[] = [];
+  const f = fixture((body) => {
+    const gate = deferred<Response>();
+    gates.push({ body, gate });
+    return gate.promise;
+  });
+  const author = keypair();
+  const incoming = message(author, "a", "late-after-disconnect", 1700000030);
+  const established = vi.fn();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)({
+    ...f.callbacks,
+    established,
+  });
+  try {
+    owner.update(["a"]);
+    f.accept(0);
+    await tick();
+    f.chunk([
+      [
+        "traffic",
+        {
+          event: incoming,
+          provenance: { phase: "live", channelId: "a" },
+          interestRevision: 1,
+        },
+      ],
+      ["established", { channels: ["a"], interestRevision: 1 }],
+      ["state", { status: "connected", interestRevision: 1, routes: [] }],
+    ]);
+    await tick();
+    expect(gates).toHaveLength(1);
+    f.disconnect(0);
+    await tick();
+    expect(f.snapshots.at(-1)).toMatchObject({ status: "retrying" });
+    // Resolving verification during retry backoff must not deliver frames or overwrite retrying.
+    gates[0]?.gate.resolve(
+      Response.json(nativeSignatureChecks(gates[0].body as never)),
+    );
+    await tick();
+    expect(f.callbacks.receive).not.toHaveBeenCalled();
+    expect(established).not.toHaveBeenCalled();
+    expect(f.snapshots.at(-1)).toMatchObject({ status: "retrying" });
+  } finally {
+    for (const { gate } of gates) gate.resolve(Response.json([]));
+    owner.dispose();
+  }
+});
+
+it("retries instead of stalling when a recoverable abort fires while draining on EOF", async () => {
+  vi.useFakeTimers();
+  const gates: {
+    body: { claims: unknown[] };
+    signal: AbortSignal | null | undefined;
+    gate: ReturnType<typeof deferred<Response>>;
+  }[] = [];
+  const f = fixture((body, signal) => {
+    const gate = deferred<Response>();
+    gates.push({ body, signal, gate });
+    return gate.promise;
+  });
+  const author = keypair();
+  const incoming = message(author, "a", "final-before-eof", 1700000040);
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    owner.update(["a"]);
+    f.accept(0);
+    await tick();
+    f.frame("traffic", {
+      event: incoming,
+      provenance: { phase: "live", channelId: "a" },
+      interestRevision: 1,
+    });
+    f.close(0);
+    await tick();
+    expect(gates).toHaveLength(1);
+    expect(gates[0]?.signal?.aborted).toBe(false);
+    // Heartbeat aborts `owned` while EOF awaits `drainPromise`.
+    await vi.advanceTimersByTimeAsync(45_000);
+    await tick();
+    expect(gates[0]?.signal?.aborted).toBe(true);
+    expect(f.callbacks.receive).not.toHaveBeenCalled();
+    expect(f.snapshots.at(-1)).toMatchObject({
+      status: "retrying",
+      error: "Live broker heartbeat timed out",
+    });
+    // Retry must be scheduled even while the hung verifier stays unresolved.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(f.headers).toHaveLength(2);
+    gates[0]?.gate.resolve(
+      Response.json(nativeSignatureChecks(gates[0].body as never)),
+    );
+    await tick();
+    expect(f.callbacks.receive).not.toHaveBeenCalled();
+    expect(f.snapshots.at(-1)).toMatchObject({ status: "connecting" });
+  } finally {
+    for (const { gate } of gates) gate.resolve(Response.json([]));
+    owner.dispose();
+  }
+});

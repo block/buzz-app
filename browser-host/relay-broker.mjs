@@ -120,6 +120,7 @@ import {
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
 } from "./sidebar-preferences.mjs";
+import { createSignatureVerifierPool } from "./verify-signatures.mjs";
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
 import { relayKlipySearchPath } from "../src/features/relay/gif-capability.ts";
 import {
@@ -183,8 +184,47 @@ function validProfilePicture(value) {
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 10,
+  MAX_VERIFY_CLAIMS = 4096,
+  MAX_VERIFY_BYTES = 2 * 1024 * 1024,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
+
+async function handleVerifySignatures(req, res, cancel, verifier) {
+  let raw = "";
+  let bytes = 0;
+  req.setEncoding("utf8");
+  for await (const part of req) {
+    bytes += Buffer.byteLength(part);
+    if (bytes > MAX_VERIFY_BYTES)
+      return json(res, 413, {
+        error: "Signature verification request is too large",
+      });
+    raw += part;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return json(res, 400, { error: "Invalid signature verification request" });
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.claims))
+    return json(res, 400, { error: "Invalid signature verification request" });
+  if (parsed.claims.length > MAX_VERIFY_CLAIMS)
+    return json(res, 413, {
+      error: "Signature verification request has too many claims",
+    });
+  cancel.signal.throwIfAborted();
+  let checked;
+  try {
+    checked = await verifier.verify(parsed.claims, cancel.signal);
+  } catch (error) {
+    if (error?.code === "VERIFY_BUSY")
+      return json(res, 503, { error: "Signature verifier is busy" });
+    throw error;
+  }
+  cancel.signal.throwIfAborted();
+  return json(res, 200, checked);
+}
 
 /** Warm, long-lived upstream connections. Node's default pool drops idle sockets after
  * four seconds, so every send after a short pause paid DNS + TCP + TLS again; a cold
@@ -1060,6 +1100,7 @@ export function relayBrokerPlugin({
       const sidebarMutations = new Map();
       const streams = new Map();
       const admissions = createHostAdmission();
+      const verifier = createSignatureVerifierPool();
       const builderlab = createBuilderlab({
         key: () => key,
         ...builderlabOptions,
@@ -1068,6 +1109,7 @@ export function relayBrokerPlugin({
         builderlab.signOut();
         for (const { close } of streams.values()) close();
         archive?.close();
+        verifier.close();
         key.fill(0);
 
         void upstream.close();
@@ -1305,6 +1347,11 @@ export function relayBrokerPlugin({
               });
             }
           }
+          if (
+            url.pathname === "/api/relay/verify-signatures" &&
+            req.method === "POST"
+          )
+            return await handleVerifySignatures(req, res, cancel, verifier);
           const parts = url.pathname.split("/").filter(Boolean);
           const scoped = parts.length === 4;
           let id;
@@ -2325,6 +2372,7 @@ export function relayBrokerPlugin({
                     interestRevision: stream.interestRevision,
                   }),
               },
+              (claims, signal) => verifier.verify(claims, signal),
               socketFactory,
               principal.live,
               undefined,

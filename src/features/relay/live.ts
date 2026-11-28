@@ -63,9 +63,9 @@ export const SETUP_CONCURRENCY = 4;
 export const SETUP_TIMEOUT_MS = 10_000;
 // Include the in-flight batch. Four 10-channel setup REQs can replay 20,000
 // events before globals/syncs; allow that burst while bounding retained payloads.
-const VERIFY_QUEUE_FRAMES = 32_768;
-const VERIFY_QUEUE_BYTES = 64 * 1024 * 1024;
-const VERIFY_BATCH_SIZE = 12; // Same hash-work slice as finite reads.
+export const VERIFY_QUEUE_FRAMES = 32_768;
+export const VERIFY_QUEUE_BYTES = 64 * 1024 * 1024;
+export const VERIFY_BATCH_SIZE = 12; // Same hash-work slice as finite reads.
 const MAX_QUOTA_RETRIES = 3;
 const BASE_RECONNECT_DELAY = 500;
 const MAX_RECONNECT_DELAY = 30_000;
@@ -92,9 +92,9 @@ export const LIVE_RESUME_LAG = RELAY_TIMESTAMP_DRIFT_SECS + 60;
 export const RESUME_READ_AGE = (LIVE_RESUME_LAG - 60) * 1000;
 /** Signature proofs a live subscription keeps across its reconnects. Each resume
  * replays `LIVE_RESUME_LAG` of events the subscription already verified; a
- * fresh signature check costs about 1 ms of main thread per event, a proof hit
- * only the hash. A resume whose window holds more distinct events than this
- * (about 17 a second for 16 minutes, or 33 channels at `LIVE_REPLAY_LIMIT`)
+ * proof hit only rehashes the event instead of sending it back to the host for
+ * signature verification. A resume whose window holds more distinct events than
+ * this (about 17 a second for 16 minutes, or 33 channels at `LIVE_REPLAY_LIMIT`)
  * evicts each proof before its replay reaches it and gains nothing. Artifact
  * sync events share the memo, so that rate is an upper bound, not a proven fit
  * for a typical community. About 3 MiB of IDs and signatures, about 5 MiB of
@@ -429,13 +429,13 @@ export function subscribeRelayTraffic(
   sign: (event: EventTemplate) => Promise<VerifiedEvent>,
   viewer: string,
   callbacks: LiveCallbacks,
+  signatures: SignatureVerifier,
   socketFactory: (url: string) => LiveSocket = (url) => new WebSocket(url),
   admission: LiveAdmission = createLiveAdmission(),
   setupConcurrency = SETUP_CONCURRENCY,
   setupTimeoutMs = SETUP_TIMEOUT_MS,
   channelBatchSize = LIVE_BATCH_SIZE,
   random: () => number = Math.random,
-  signatures?: SignatureVerifier,
 ): LiveSubscription {
   if (
     !Number.isInteger(channelBatchSize) ||
@@ -518,7 +518,7 @@ export function subscribeRelayTraffic(
   // each establishes when its replay ends, with that replay's continuity.
   const awaitingReplay = new Set<string>();
   // Outlives each socket, so a reconnect's replay reuses the proofs.
-  const verify = createEventVerifier(LIVE_PROOF_ENTRIES, signatures);
+  const verify = createEventVerifier(signatures, LIVE_PROOF_ENTRIES);
   const cursorKeys = (route: Route) =>
     scope(route).length
       ? scope(route).map((id) => `channel:${id}`)
@@ -1630,8 +1630,6 @@ export function subscribeRelayTraffic(
     const deliver = (event: VerifiedEvent, provenance: LiveProvenance) =>
       callbacks.receive([event], provenance);
     const drain = async () => {
-      const native = verify.native;
-      if (!native) return;
       draining = true;
       try {
         while (valid() && incoming.length) {
@@ -1643,12 +1641,12 @@ export function subscribeRelayTraffic(
           for (const { data } of batch) {
             if (data[0] !== "EVENT" || !active(data)) continue;
             try {
-              prepared.set(data, native.prepare(data[2]));
+              prepared.set(data, verify.prepare(data[2]));
             } catch {
               // Delivery retains each stream's existing invalid-event policy.
             }
           }
-          const checked = await native.settle([...prepared.values()]);
+          const checked = await verify.settle([...prepared.values()]);
           if (!valid()) return;
           const events = new Map(
             [...prepared.keys()].map((data, index) => [data, checked[index]]),
@@ -1835,18 +1833,6 @@ export function subscribeRelayTraffic(
         !["EVENT", "EOSE", "CLOSED"].includes(data[0] as string)
       )
         return;
-      if (!verify.native) {
-        let checked: RelayEvent | undefined;
-        if (data[0] === "EVENT") {
-          try {
-            checked = verify(data[2]);
-          } catch {
-            // The receiving stream decides whether an invalid event ends it.
-          }
-        }
-        receive(data, checked);
-        return;
-      }
       const bytes = event.data.length * 2;
       if (
         incoming.length >= VERIFY_QUEUE_FRAMES ||

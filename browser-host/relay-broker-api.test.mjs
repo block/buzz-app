@@ -24,6 +24,10 @@ import {
 } from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import {
+  createSignatureVerifierPool,
+  verifySignatureClaims,
+} from "./verify-signatures.mjs";
+import {
   CANVAS_MAX_EVENT_BYTES,
   LIVE_CANVAS_BYTES,
 } from "../src/features/channel-templates/canvas-limits.ts";
@@ -1273,6 +1277,12 @@ test.each([
   ["/api/relay/stream", 64 * 1024 * 1024, "bytes", "Live interests too large"],
   ["/api/relay/query", 65536, "chars", "Filter body too large"],
   ["/api/relay/presence-snapshot", 20 * 1024, "bytes", "Filter body too large"],
+  [
+    "/api/relay/verify-signatures",
+    2 * 1024 * 1024,
+    "bytes",
+    "Signature verification request is too large",
+  ],
 ])(
   "%s measures a split multibyte body exactly at its %i %s limit",
   async (path, limit, unit, tooLarge) => {
@@ -4753,6 +4763,249 @@ test("Builderlab pending sign-in survives its initiating page disconnecting", as
   } finally {
     abort.abort();
     await reader?.cancel();
+    await h.close();
+  }
+});
+
+test("verifies Schnorr signature claims on /api/relay/verify-signatures", async () => {
+  const h = await harness(() => Response.json([]), {}, "");
+  try {
+    const otherKey = generateSecretKey();
+    const validTwo = finalizeEvent(
+      { kind: 9, content: "second", created_at: 1700000001, tags: [] },
+      otherKey,
+    );
+    const claims = [
+      { id: h.event.id, pubkey: h.event.pubkey, sig: h.event.sig },
+      { id: h.event.id, pubkey: h.event.pubkey, sig: "0".repeat(128) },
+      { id: "a".repeat(64), pubkey: h.event.pubkey, sig: h.event.sig },
+      { id: "z".repeat(64), pubkey: h.event.pubkey, sig: h.event.sig },
+      { id: "aa", pubkey: h.event.pubkey, sig: h.event.sig },
+      { id: 1, pubkey: null, sig: {} },
+      null,
+      { id: validTwo.id, pubkey: validTwo.pubkey, sig: validTwo.sig },
+    ];
+    const expected = [true, false, false, false, false, false, false, true];
+
+    // Unscoped endpoint works even when no default relay is configured.
+    const unscoped = await h.post("verify-signatures", { claims });
+    expect(unscoped.status).toBe(200);
+    expect(await unscoped.json()).toEqual(expected);
+
+    const empty = await h.post("verify-signatures", { claims: [] });
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual([]);
+
+    for (const body of ["not-json", "{}", "[]", '{"claims":"bad"}']) {
+      const invalid = await fetch(`${h.base}/api/relay/verify-signatures`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      expect(invalid.status, body).toBe(400);
+    }
+
+    const tooMany = await h.post("verify-signatures", {
+      claims: Array.from({ length: 4097 }, () => null),
+    });
+    expect(tooMany.status).toBe(413);
+  } finally {
+    await h.close();
+  }
+});
+
+test("verifySignatureClaims yields to the event loop every 64 claims and aborts cleanly", async () => {
+  const key = generateSecretKey();
+  const valid = finalizeEvent(
+    { kind: 9, content: "yield", created_at: 1700000003, tags: [] },
+    key,
+  );
+  const claim = { id: valid.id, pubkey: valid.pubkey, sig: valid.sig };
+  const batch = Array.from({ length: 65 }, (_, index) =>
+    index === 0 || index === 64 ? claim : null,
+  );
+
+  let yielded = false;
+  setImmediate(() => {
+    yielded = true;
+  });
+  const results = await verifySignatureClaims(batch);
+  expect(yielded).toBe(true);
+  expect(results).toHaveLength(65);
+  expect(results[0]).toBe(true);
+  expect(results[1]).toBe(false);
+  expect(results[64]).toBe(true);
+
+  const controller = new AbortController();
+  let tailRead = false;
+  const abortBatch = Array.from({ length: 65 }, (_, index) =>
+    index === 64
+      ? {
+          get id() {
+            tailRead = true;
+            return claim.id;
+          },
+          pubkey: claim.pubkey,
+          sig: claim.sig,
+        }
+      : null,
+  );
+  setImmediate(() => controller.abort(new Error("client disconnected")));
+  await expect(
+    verifySignatureClaims(abortBatch, controller.signal),
+  ).rejects.toThrow("client disconnected");
+  expect(tailRead).toBe(false);
+});
+
+test("createSignatureVerifierPool verifies multi-chunk batches across workers, aborts cleanly, and shuts down", async () => {
+  const pool = createSignatureVerifierPool({ threads: 2, chunkSize: 4 });
+  try {
+    const key = generateSecretKey();
+    const validA = finalizeEvent(
+      { kind: 9, content: "pool-a", created_at: 1700000010, tags: [] },
+      key,
+    );
+    const validB = finalizeEvent(
+      { kind: 9, content: "pool-b", created_at: 1700000011, tags: [] },
+      key,
+    );
+    const claimA = { id: validA.id, pubkey: validA.pubkey, sig: validA.sig };
+    const claimB = { id: validB.id, pubkey: validB.pubkey, sig: validB.sig };
+    const claims = [
+      claimA,
+      { ...claimA, sig: "0".repeat(128) },
+      null,
+      { id: 1, pubkey: null, sig: {} },
+      claimB,
+      { ...claimB, id: "a".repeat(64) },
+      claimA,
+      claimB,
+      { id: "zz", pubkey: claimA.pubkey, sig: claimA.sig },
+    ];
+    expect(await pool.verify(claims)).toEqual([
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+    ]);
+    expect(await pool.verify([])).toEqual([]);
+
+    const controller = new AbortController();
+    const pending = pool.verify(
+      Array.from({ length: 32 }, () => claimA),
+      controller.signal,
+    );
+    controller.abort(new Error("cancelled mid-batch"));
+    await expect(pending).rejects.toThrow("cancelled mid-batch");
+  } finally {
+    pool.close();
+  }
+  await expect(pool.verify([null])).rejects.toThrow(/closed/);
+
+  // Medium batches (below the 64-claim cap) shard across workers and preserve
+  // positional results, while large batches keep the 64-claim backpressure cap.
+  const sharded = createSignatureVerifierPool({
+    threads: 4,
+    maxQueuedChunks: 4,
+  });
+  try {
+    const key = generateSecretKey();
+    const valid = finalizeEvent(
+      { kind: 9, content: "sharded", created_at: 1700000012, tags: [] },
+      key,
+    );
+    const ok = { id: valid.id, pubkey: valid.pubkey, sig: valid.sig };
+    const bad = { ...ok, sig: "0".repeat(128) };
+    const medium = Array.from({ length: 51 }, (_, index) =>
+      index % 7 === 0 ? bad : ok,
+    );
+    expect(await sharded.verify(medium)).toEqual(
+      medium.map((_, index) => index % 7 !== 0),
+    );
+    // 256 claims = 4 chunks at the 64-claim cap (fits maxQueuedChunks: 4);
+    // 257 claims = 5 chunks and triggers VERIFY_BUSY backpressure.
+    expect(
+      await sharded.verify(Array.from({ length: 256 }, () => null)),
+    ).toEqual(Array(256).fill(false));
+    await expect(
+      sharded.verify(Array.from({ length: 257 }, () => null)),
+    ).rejects.toMatchObject({ code: "VERIFY_BUSY" });
+  } finally {
+    sharded.close();
+  }
+});
+
+test("broker transport verifies query, verifyStored, and presenceSnapshot through /verify-signatures", async () => {
+  const peerKey = generateSecretKey();
+  const peer = getPublicKey(peerKey);
+  let reply = [];
+  const verifyUrls = [];
+  const h = await harness(() => Response.json(reply), {
+    live: true,
+    presence: true,
+  });
+  h.server.on("request", (req) => {
+    if (req.url?.endsWith("/verify-signatures")) verifyUrls.push(req.url);
+  });
+  try {
+    const relayKey = new Uint8Array(32);
+    relayKey[31] = 7;
+    const presenceEvent = finalizeEvent(
+      {
+        kind: 20001,
+        content: "online",
+        created_at: 1700000000,
+        tags: [["p", peer]],
+      },
+      relayKey,
+    );
+    const transport = await connectBrokerTransport(h.base);
+    expect(transport.verifyStored).toBeTypeOf("function");
+
+    const storedValid = finalizeEvent(
+      { kind: 9, content: "stored", created_at: 1700000002, tags: [] },
+      peerKey,
+    );
+    expect(await transport.verifyStored([storedValid])).toEqual([storedValid]);
+    await expect(
+      transport.verifyStored([{ ...storedValid, sig: "0".repeat(128) }]),
+    ).rejects.toThrow();
+
+    reply = [h.event];
+    expect(
+      await transport.query(
+        [{ kinds: [9], limit: 1 }],
+        new AbortController().signal,
+      ),
+    ).toEqual([h.event]);
+    reply = [{ ...h.event, sig: "0".repeat(128) }];
+    await expect(
+      transport.query([{ kinds: [9], limit: 1 }], new AbortController().signal),
+    ).rejects.toThrow();
+
+    reply = [presenceEvent];
+    expect(
+      await transport.presenceSnapshot([peer], new AbortController().signal),
+    ).toEqual(new Map([[peer, "online"]]));
+    // Scoped community gets its own presence-snapshot admission lane and still
+    // verifies through the unscoped `/api/relay/verify-signatures` endpoint.
+    const scoped = await connectBrokerTransport(
+      h.base,
+      undefined,
+      "https://presence.example",
+    );
+    reply = [{ ...presenceEvent, sig: "0".repeat(128) }];
+    await expect(
+      scoped.presenceSnapshot([peer], new AbortController().signal),
+    ).rejects.toThrow();
+
+    expect(verifyUrls).toEqual(Array(6).fill("/api/relay/verify-signatures"));
+  } finally {
     await h.close();
   }
 });

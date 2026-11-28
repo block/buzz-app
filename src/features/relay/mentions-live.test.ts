@@ -1,7 +1,13 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { LIVE_RESTART_SPREAD_MS, subscribeRelayTraffic } from "./live";
-import { keypair, metadata, roster, signed } from "./testing";
+import {
+  keypair,
+  metadata,
+  roster,
+  signed,
+  verifyTestSignatures,
+} from "./testing";
 import { matchesEvent } from "./projection";
 import { createRelayProfiler } from "./profiling";
 import { deliveryFeedback } from "../messages/delivery";
@@ -96,6 +102,7 @@ function setup(restored?: {
           async (t) => signed(viewer, t),
           viewer.pubkey,
           callbacks,
+          verifyTestSignatures,
           () => {
             const socket = new Socket();
             sockets.push(socket);

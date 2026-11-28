@@ -11,7 +11,13 @@ import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import type { SavedHead } from "./persistence";
 import type { ReadJournal } from "./read-state-storage";
-import { bounds, message, profile, roster } from "./testing";
+import {
+  bounds,
+  message,
+  nativeSignatureChecks,
+  profile,
+  roster,
+} from "./testing";
 import { connectBrokerTransport } from "./transport";
 
 export const workload = {
@@ -165,9 +171,13 @@ export async function threadSample(
         return;
       }
       assert.equal(request.method, "POST");
-      assert.equal(request.url, "/api/relay/query");
       let body = "";
       for await (const chunk of request) body += chunk;
+      if (request.url === "/api/relay/verify-signatures") {
+        response.end(JSON.stringify(nativeSignatureChecks(JSON.parse(body))));
+        return;
+      }
+      assert.equal(request.url, "/api/relay/query");
       const filters = JSON.parse(body) as ReadFilter[];
       const first = filters[0];
       let events: RelayEvent[];

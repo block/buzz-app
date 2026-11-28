@@ -21,7 +21,13 @@ import {
 } from "../features/navigation/targets";
 import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
-import { bounds, message, metadata, roster } from "../features/relay/testing";
+import {
+  bounds,
+  message,
+  metadata,
+  nativeSignatureChecks,
+  roster,
+} from "../features/relay/testing";
 import type { ReadFilter } from "../features/relay/events";
 import type { StorageResult } from "../plugins/types";
 
@@ -197,6 +203,10 @@ it("keeps an OS entity intent through real community selection and Retry in App"
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/verify-signatures"))
+        return Response.json(
+          nativeSignatureChecks(JSON.parse(String(options?.body))),
+        );
       if (url.endsWith("/session"))
         return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
       if (url.endsWith("/query")) {
@@ -693,6 +703,10 @@ it("keeps Messages on screen when only the linked message fails to open", async 
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/verify-signatures"))
+        return Response.json(
+          nativeSignatureChecks(JSON.parse(String(options?.body))),
+        );
       if (url.endsWith("/session"))
         return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
       if (url.endsWith("/query")) {
@@ -768,6 +782,10 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/verify-signatures"))
+        return Response.json(
+          nativeSignatureChecks(JSON.parse(String(options?.body))),
+        );
       if (url.endsWith("/session"))
         return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
       if (url.endsWith("/query")) {
@@ -872,6 +890,10 @@ it("opens and closes a thread without rendering the sidebar", async () => {
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/verify-signatures"))
+        return Response.json(
+          nativeSignatureChecks(JSON.parse(String(options?.body))),
+        );
       if (url.endsWith("/session"))
         return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
       if (url.endsWith("/query")) {

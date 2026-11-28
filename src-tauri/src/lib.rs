@@ -1034,6 +1034,7 @@ pub fn run() {
         .unwrap_or_else(|message| sign_out::exit_with(&message));
     let identity = IdentityHost::default();
     let identifier = context.config().identifier.clone();
+    let buzz_version = context.package_info().version.to_string();
     let builder = tauri::Builder::default();
     let builder = if !tauri::is_dev() {
         // Single instance comes first, as its documentation requires. Its deep-link
@@ -1334,9 +1335,18 @@ pub fn run() {
         .manage(DeepLinks::default())
         // Plugin storage lives in this identifier's app data, so development
         // builds keep theirs apart from the installed app.
-        .manage(PluginManager(Manager::from_env(
-            dirs::data_dir().map(|dir| dir.join(&identifier)),
-        )))
+        .manage(PluginManager(
+            Manager::from_env(dirs::data_dir().map(|dir| dir.join(&identifier)))
+                // A dev build reports tauri.conf.json's version, not the release
+                // it becomes, so it checks no plugin's minBuzzVersion.
+                .map(|manager| {
+                    if tauri::is_dev() {
+                        manager
+                    } else {
+                        manager.with_buzz_version(&buzz_version)
+                    }
+                }),
+        ))
         .invoke_handler({
             let application_commands = commands::<tauri::Wry>();
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![

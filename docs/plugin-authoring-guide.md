@@ -47,6 +47,7 @@ export function apply(ctx) {
 ## Contract rules
 
 - **Manifest:** `id`, `name`, `apiVersion` (`1`), and optional `description`, `discovery` and `host`. Unknown keys reject the whole folder.
+- **Minimum Buzz:** optional `"minBuzzVersion": "1.2.0"` names the oldest Buzz release the plugin runs on, as `MAJOR.MINOR.PATCH`. An older Buzz refuses to install the plugin, or to update, reload or roll it back to that version, and keeps the installed copy. Previews and betas count as their release; development builds (`pnpm tauri dev`) don't check it. A Buzz from before the field rejects it as an unknown key, so it refuses too, with a less helpful message. Set it when a release starts using host features that older Buzz lacks, instead of feature-detecting them.
 - **Plugin id:** lowercase letters, digits, `.` and `-`, starting with a letter, at most 80 bytes, no empty segments, no underscores. Bundled plugins' ids are reserved. Updates match on `id`.
 - **Contribution ids** (pages, panels, shortcuts and so on) match `/^[a-z0-9][a-z0-9._-]*$/` and are unique within the plugin.
 - **No work at module top level.** Do everything in `apply`. Enabled plugins activate even when their page is never opened.

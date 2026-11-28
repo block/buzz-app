@@ -7,6 +7,9 @@ export type PluginManifest = Readonly<{
   id: string;
   name: string;
   apiVersion: 1;
+  /** Oldest Buzz release the plugin runs on, as `MAJOR.MINOR.PATCH`. An older
+   * Buzz refuses to install the plugin or update to it. */
+  minBuzzVersion?: string;
   description?: string;
   /** Support Git update notices. The user's saved choice overrides this default. */
   updates?: Readonly<{ defaultEnabled: boolean }>;

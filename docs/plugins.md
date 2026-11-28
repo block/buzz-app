@@ -43,6 +43,10 @@ version, nothing is promised across versions, and the author types are versioned
 [`src/plugins/author.ts`](../src/plugins/author.ts) and the bundled plugins in
 `src/bundled/`.
 
+A plugin that needs a newer host can say so: a manifest's `minBuzzVersion` stops
+an older Buzz from installing it or updating to it (see the
+[authoring guide](plugin-authoring-guide.md#contract-rules)).
+
 Some parts change less often than others:
 
 - **Steadier:** the envelope (manifest, `inject`/`apply`, `ctx.effect`), owning a

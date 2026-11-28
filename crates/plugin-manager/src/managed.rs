@@ -683,6 +683,7 @@ pub(crate) mod tests {
                 id: id.into(),
                 name: id.into(),
                 api_version: 1,
+                min_buzz_version: None,
                 description: None,
                 discovery: None,
                 updates: None,

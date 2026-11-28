@@ -108,6 +108,11 @@ one. Otherwise the person gets the update to review. The pin wins over the perso
 choice of version. A plugin installed from a folder or bundled with Buzz is never
 replaced.
 
+A pinned version whose manifest sets a `minBuzzVersion` newer than the running Buzz is
+not installed. An installed copy stays at its current version, and an automatic entry is
+tried again on the next run. Pin such a version only once the people it reaches can have
+that Buzz.
+
 ### Signed policies
 
 A build that should honor automatic entries names the key allowed to sign its policy:

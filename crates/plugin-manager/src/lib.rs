@@ -38,6 +38,11 @@ pub struct Manifest {
     pub id: String,
     pub name: String,
     pub api_version: u32,
+    /// The oldest Buzz release the plugin runs on, as `MAJOR.MINOR.PATCH`. A Buzz
+    /// older than this refuses to install the plugin or update to it. A Buzz from
+    /// before this field rejects the manifest as an unknown field, so it refuses too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_buzz_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -233,7 +238,51 @@ fn valid_program(program: &str, args: &[String]) -> bool {
             .iter()
             .all(|argument| argument.len() <= 1024 && !argument.contains('\0'))
 }
+/// A Buzz version, compared by its `MAJOR.MINOR.PATCH` core.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BuzzVersion(u64, u64, u64);
+impl BuzzVersion {
+    /// A release version as a manifest names it: `1.2.0`, with no prerelease or build.
+    pub fn release(text: &str) -> Option<Self> {
+        let mut parts = text.split('.').map(|part| {
+            let digits = !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+            let canonical = part == "0" || !part.starts_with('0');
+            (digits && canonical && part.len() <= 9)
+                .then(|| part.parse().ok())
+                .flatten()
+        });
+        let version = Self(parts.next()??, parts.next()??, parts.next()??);
+        parts.next().is_none().then_some(version)
+    }
+    /// The running app's version, as Tauri reports it. A prerelease counts as its
+    /// release (`1.2.0-preview.3` as `1.2.0`), so the previews and betas of the
+    /// release that adds a feature can install plugins that need it.
+    pub fn app(text: &str) -> Option<Self> {
+        Self::release(text.split(['-', '+']).next()?)
+    }
+}
+impl std::fmt::Display for BuzzVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
 impl Manifest {
+    /// Refuses a plugin that needs a newer Buzz than `app`. This is separate from
+    /// `validate`, which also checks every installed plugin on each read: a plugin
+    /// installed before a downgrade must not stop the others from loading.
+    pub fn check_buzz_version(&self, app: Option<BuzzVersion>) -> Result<()> {
+        let required = self
+            .min_buzz_version
+            .as_deref()
+            .and_then(BuzzVersion::release);
+        match (app, required) {
+            (Some(app), Some(required)) if app < required => Err(format!(
+                "{} needs Buzz {required} or later, and this is Buzz {app}. Update Buzz to install it.",
+                self.name
+            )),
+            _ => Ok(()),
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         valid_id(&self.id)?;
         if self.name.trim().is_empty() || self.name.len() > 80 {
@@ -248,6 +297,13 @@ impl Manifest {
         }
         if self.api_version != 1 {
             return Err("Only page plugin API version 1 is supported".into());
+        }
+        if self
+            .min_buzz_version
+            .as_deref()
+            .is_some_and(|version| BuzzVersion::release(version).is_none())
+        {
+            return Err("minBuzzVersion must be a release version such as 1.2.0".into());
         }
         if let Some(discovery) = &self.discovery {
             if let Some(category) = &discovery.category {
@@ -1081,6 +1137,8 @@ pub struct Manager {
     packaged_fetch: std::sync::Arc<std::sync::Mutex<managed::PackagedFetch>>,
     automatic: automatic::Session,
     policy_signer: Option<String>,
+    /// The running Buzz, for manifests' `minBuzzVersion`. `None` refuses nothing.
+    buzz_version: Option<BuzzVersion>,
 }
 impl Manager {
     /// Host control-plane location that protected workers must not modify.
@@ -1111,7 +1169,16 @@ impl Manager {
             automatic: Default::default(),
             policy_signer: (!managed::PACKAGED_SIGNER.is_empty())
                 .then(|| managed::PACKAGED_SIGNER.to_owned()),
+            buzz_version: None,
         })
+    }
+    /// Refuse to install a plugin, or update, reload or roll one back, when its
+    /// manifest needs a newer Buzz than `version`. The desktop passes its own version. Without
+    /// one, as in the `buzzodz` CLI, or with one that does not parse, nothing is
+    /// refused.
+    pub fn with_buzz_version(mut self, version: &str) -> Self {
+        self.buzz_version = BuzzVersion::app(version);
+        self
     }
     /// Opens the environment's plugin home, else `home`: the desktop passes its own app data folder.
     pub fn from_env(home: Option<PathBuf>) -> Result<Self> {
@@ -1413,6 +1480,7 @@ impl Manager {
         self.trust()
             .check(release.publisher().as_deref(), trust::own_publisher)?;
         let manifest = artifact.manifest.clone();
+        manifest.check_buzz_version(self.buzz_version)?;
         let readme_revision = artifact.readme_revision();
         let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
         let icon_jpg_revision = icon_revision(artifact.icon_jpg.as_deref());
@@ -1522,6 +1590,7 @@ impl Manager {
                             return Err(SIGNED_ROLLBACK_ERROR.into());
                         }
                         let a = self.artifact(id, &previous, p.previous_signature.as_ref())?;
+                        a.manifest.check_buzz_version(self.buzz_version)?;
                         p.current = previous;
                         p.current_signature = p.previous_signature.take();
                         p.current_source = p.previous_source.take();
@@ -1597,6 +1666,7 @@ impl Manager {
         self.trust()
             .check(release.publisher().as_deref(), trust::own_publisher)?;
         let manifest = artifact.manifest.clone();
+        manifest.check_buzz_version(self.buzz_version)?;
         let readme_revision = artifact.readme_revision();
         let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
         let icon_jpg_revision = icon_revision(artifact.icon_jpg.as_deref());
@@ -1991,7 +2061,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::{
         artifact_from_text, bundled_manifests, enabled_by_default, validate_candidate_path,
-        Manager, Manifest, Release, MAX_HOST_COMMAND_OUTPUT_BYTES,
+        BuzzVersion, Manager, Manifest, Release, MAX_HOST_COMMAND_OUTPUT_BYTES,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -3235,6 +3305,195 @@ mod tests {
             paused.host_grants("block.builderlab", "bundled").unwrap(),
             grants
         );
+    }
+
+    #[test]
+    fn min_buzz_version_is_a_release_version_and_absent_by_default() {
+        let old: Manifest =
+            serde_json::from_str(r#"{"id":"example.page","name":"Example","apiVersion":1}"#)
+                .unwrap();
+        assert_eq!(old.min_buzz_version, None);
+        assert!(old.check_buzz_version(BuzzVersion::app("0.0.1")).is_ok());
+        assert_eq!(
+            serde_json::to_value(&old).unwrap(),
+            serde_json::json!({"id":"example.page","name":"Example","apiVersion":1})
+        );
+        let with = |version: &str| {
+            serde_json::from_value::<Manifest>(serde_json::json!({
+                "id": "example.page", "name": "Example", "apiVersion": 1,
+                "minBuzzVersion": version
+            }))
+            .unwrap()
+        };
+        for valid in ["0.0.0", "1.2.0", "10.20.30"] {
+            assert!(with(valid).validate().is_ok(), "{valid}");
+        }
+        for invalid in [
+            "",
+            "1",
+            "1.2",
+            "1.2.3.4",
+            "01.2.3",
+            "1.02.3",
+            "1.2.3-beta.1",
+            "1.2.3+b",
+            ">=1.2.3",
+            "^1.2.3",
+            "v1.2.3",
+            " 1.2.3",
+            "1.2.x",
+            "1..3",
+            "1234567890.0.0",
+        ] {
+            assert!(with(invalid).validate().is_err(), "{invalid:?}");
+        }
+    }
+
+    #[test]
+    fn app_versions_compare_by_release_and_prereleases_count_as_their_release() {
+        assert_eq!(BuzzVersion::app("1.2.3"), BuzzVersion::release("1.2.3"));
+        assert_eq!(
+            BuzzVersion::app("1.2.3-preview.4"),
+            BuzzVersion::release("1.2.3")
+        );
+        assert_eq!(
+            BuzzVersion::app("1.2.3-beta.1+abc"),
+            BuzzVersion::release("1.2.3")
+        );
+        assert_eq!(BuzzVersion::app("not a version"), None);
+        let manifest: Manifest = serde_json::from_str(
+            r#"{"id":"example.page","name":"Example","apiVersion":1,"minBuzzVersion":"1.10.0"}"#,
+        )
+        .unwrap();
+        for (app, ok) in [
+            ("1.9.9", false),
+            ("1.10.0-preview.1", true),
+            ("1.10.0", true),
+            ("1.10.1", true),
+            ("2.0.0", true),
+            ("0.99.0", false),
+        ] {
+            assert_eq!(
+                manifest.check_buzz_version(BuzzVersion::app(app)).is_ok(),
+                ok,
+                "{app}"
+            );
+        }
+        let error = manifest
+            .check_buzz_version(BuzzVersion::app("1.9.9"))
+            .unwrap_err();
+        assert!(error.contains("needs Buzz 1.10.0 or later"), "{error}");
+        assert!(error.contains("this is Buzz 1.9.9"), "{error}");
+        // A manager that does not know its Buzz version refuses nothing.
+        assert!(manifest.check_buzz_version(None).is_ok());
+    }
+
+    #[test]
+    fn a_plugin_that_needs_a_newer_buzz_is_not_installed_updated_or_reloaded() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false)
+            .unwrap()
+            .with_buzz_version("1.4.0");
+        let source = temp.path().join("build");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+        let write = |min: &str| {
+            fs::write(
+                source.join("manifest.json"),
+                format!(
+                    r#"{{"id":"example.page","name":"Example","apiVersion":1,"minBuzzVersion":"{min}"}}"#
+                ),
+            )
+            .unwrap();
+            sign_source(&source);
+        };
+        let installed = |manager: &Manager| {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "example.page")
+        };
+
+        write("1.5.0");
+        let error = manager.install(&source).err().unwrap();
+        assert!(error.contains("needs Buzz 1.5.0 or later"), "{error}");
+        assert!(installed(&manager).is_none());
+
+        write("1.4.0");
+        manager.install(&source).unwrap();
+        let first = installed(&manager).unwrap().revision;
+
+        // An update or reload to a version that needs a newer Buzz keeps the current one.
+        write("1.5.0");
+        for error in [
+            manager.install(&source).err().unwrap(),
+            manager.reload("example.page").err().unwrap(),
+        ] {
+            assert!(error.contains("needs Buzz 1.5.0 or later"), "{error}");
+        }
+        let current = installed(&manager).unwrap();
+        assert_eq!(current.revision, first);
+        assert_eq!(current.manifest.min_buzz_version.as_deref(), Some("1.4.0"));
+
+        // After an update to Buzz it installs, and a later downgrade still lists it:
+        // an installed manifest is not rechecked against the running Buzz.
+        let newer = Manager::open(Some(temp.path().into()), "test", false)
+            .unwrap()
+            .with_buzz_version("1.5.0-beta.2");
+        newer.install(&source).unwrap();
+        assert_ne!(installed(&newer).unwrap().revision, first);
+        assert!(installed(&manager).is_some());
+    }
+
+    #[test]
+    fn a_rollback_to_a_version_that_needs_a_newer_buzz_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let open = |version: &str| {
+            Manager::open(Some(temp.path().into()), "test", false)
+                .unwrap()
+                .with_buzz_version(version)
+        };
+        let source = temp.path().join("build");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+        let install = |manager: &Manager, min: &str| {
+            fs::write(
+                source.join("manifest.json"),
+                format!(
+                    r#"{{"id":"example.page","name":"Example","apiVersion":1,"minBuzzVersion":"{min}"}}"#
+                ),
+            )
+            .unwrap();
+            sign_source(&source);
+            manager
+                .install(&source)
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "example.page")
+                .unwrap()
+                .revision
+        };
+        // Installed and updated on Buzz 1.5, then rolled back on Buzz 1.4.
+        let newer = open("1.5.0");
+        install(&newer, "1.5.0");
+        let current = install(&newer, "1.0.0");
+        let older = open("1.4.0");
+        let error = older.change("rollback", "example.page").err().unwrap();
+        assert!(error.contains("needs Buzz 1.5.0 or later"), "{error}");
+        let plugin = older
+            .catalog()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
+            .unwrap();
+        assert_eq!(plugin.revision, current);
+        assert!(plugin.previous.is_some());
+        // The Buzz it needs can still roll back.
+        newer.change("rollback", "example.page").unwrap();
     }
 
     #[test]

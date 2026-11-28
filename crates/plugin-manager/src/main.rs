@@ -420,6 +420,7 @@ fn init(directory: &Path, id: &str, name: &str) -> Result<()> {
         id: id.into(),
         name: name.into(),
         api_version: 1,
+        min_buzz_version: None,
         description: None,
         discovery: None,
         updates: None,

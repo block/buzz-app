@@ -179,6 +179,11 @@ if that desktop app is up and running.
   **Activity** (its past sessions) and plugin tabs such as **Attention**.
   Local Claude and Codex transcripts can open on recent activity. Choose
   **Load earlier activity** to see more history.
+- **Animated picture**: in an agent's avatar picker choose **Upload image or
+  Gloopie ZIP** and pick an animated Gloopie's ZIP (one PNG and one WebM). It
+  plays wherever the agent's portrait does, keeps its transparent background,
+  and stays still with reduced motion. Converting it needs ffmpeg with VP9
+  support on this computer.
 - **Settings → Agent details → Environment variables** sets variables one local
   Claude Code, Codex, Goose or Pi agent starts with, such as API keys. They're
   kept in the OS credential store on this computer, never synced, and values

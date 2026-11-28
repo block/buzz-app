@@ -74,6 +74,7 @@ import {
   canonicalPublicKey,
   formatPublicKey,
 } from "../../shared/identity/public-key";
+import { useAvatarAnimation } from "../../features/profiles/use-avatar-preview";
 import { AgentPortrait, useAgentPortraitSource } from "./AgentCard";
 import { AgentIdentityDialog } from "./AgentIdentityDialog";
 import { useNamePrompt, useShake } from "./useNamePrompt";
@@ -144,6 +145,11 @@ export function AgentDetails({
 }) {
   const ProfileActions = type?.ProfileActions ?? Fragment;
   const { pack, src: backdrop } = useAgentPortraitSource(agent, agent.relay);
+  // An uploaded Gloopie moves behind the portrait as a pack avatar does.
+  const animatedBackdrop = useAvatarAnimation(
+    pack ? undefined : agent.picture,
+    agent.relay,
+  );
   const tabbed = !!usePanelTabHost();
   const reducedMotion = useReducedMotion();
   const identityTransition = {
@@ -354,7 +360,15 @@ export function AgentDetails({
             }
           >
             <ProfileBackdrop src={backdrop}>
-              {pack && <PackedAgentAvatar avatar={pack} fit="cover" />}
+              {pack ? (
+                <PackedAgentAvatar avatar={pack} fit="cover" />
+              ) : animatedBackdrop ? (
+                <img
+                  src={animatedBackdrop}
+                  alt=""
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              ) : undefined}
             </ProfileBackdrop>
             <motion.div
               className={styles.identityPortrait}

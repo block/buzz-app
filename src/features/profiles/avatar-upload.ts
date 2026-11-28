@@ -1,11 +1,20 @@
 import { prepareAttachment } from "../messages/prepare-attachment";
 import { mediaUrl } from "../relay/transport";
-import type { UploadProgress } from "../relay/attachments";
+import {
+  UploadError,
+  type UploadedAttachment,
+  type UploadProgress,
+} from "../relay/attachments";
 import { nativeIdentityEnabled } from "../identity/service";
 import { nativeMediaUrl } from "../relay/native";
 import { connectCommunityTransport } from "../communities/connection";
 import { communityDestination } from "../communities/destination";
-import { avatarSource, legacyEmojiPicture } from "../../shared/avatar-source";
+import {
+  animatedAvatarPicture,
+  avatarSource,
+  legacyEmojiPicture,
+} from "../../shared/avatar-source";
+import type { GloopieParts } from "./gloopie-zip";
 
 /** Shared save policy; display-only inherited artwork may still fail validation. */
 export function avatarPictureError(value: string): string | undefined {
@@ -65,6 +74,59 @@ export async function uploadAvatar(
   if (!result.type.startsWith("image/") || !avatarSource(result.url))
     throw new Error("The server did not return an avatar image.");
   return result.url;
+}
+
+/** An animated avatar: the WebM converts first, so a failure stores nothing,
+ * then the poster uploads as uploadAvatar does. Both are owner-signed, like
+ * any picker upload. */
+export async function uploadAnimatedAvatar(
+  parts: GloopieParts,
+  community: string,
+  signal: AbortSignal,
+  progress?: UploadProgress,
+): Promise<string> {
+  const transport = await connectCommunityTransport(
+    communityDestination(community).id,
+    signal,
+  );
+  if (!transport.uploadAttachment)
+    throw new Error("Image uploads are unavailable on this connection.");
+  const poster = await prepareAttachment(parts.poster, signal, true);
+  // Each upload reports its own bytes, and the converted animation's size is
+  // unknown until it is sent, so the bar gives each part a fixed share.
+  const share =
+    (start: number, size: number): UploadProgress =>
+    (sent, total) =>
+      progress?.(start + size * Math.min(1, total ? sent / total : 0), 1);
+  let moving: UploadedAttachment;
+  try {
+    moving = await transport.uploadAttachment(
+      parts.animation,
+      signal,
+      progress && share(0, 0.9),
+      "animation",
+    );
+  } catch (error) {
+    if (error instanceof UploadError && error.code === "video")
+      throw new Error(
+        "Couldn't convert this Gloopie's animation. Download the ZIP again, or check that ffmpeg on this computer includes libvpx.",
+      );
+    if (error instanceof UploadError && error.code === "size")
+      throw new Error(
+        "This Gloopie's animation is too large for an avatar. Use a shorter one.",
+      );
+    throw error;
+  }
+  signal.throwIfAborted();
+  const still = await transport.uploadAttachment(
+    poster,
+    signal,
+    progress && share(0.9, 0.1),
+  );
+  signal.throwIfAborted();
+  if (moving.type !== "image/png" || !still.type.startsWith("image/"))
+    throw new Error("The server did not return an animated avatar.");
+  return animatedAvatarPicture(still.url, moving.url);
 }
 
 /** The emoji's longer side as a share of the image: by default the square

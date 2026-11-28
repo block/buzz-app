@@ -39,8 +39,10 @@ import {
   croppedAvatar,
   emojiAvatar,
   emojiAvatarScale,
+  uploadAnimatedAvatar,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
+import { readGloopieZip } from "../../features/profiles/gloopie-zip";
 import { CHECK_MS } from "../../features/agents/recommended";
 import {
   resetModelRoutesForTests,
@@ -56,10 +58,18 @@ import { Select } from "../../shared/design-system/ui/Select";
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
   uploadAvatar: vi.fn(),
+  uploadAnimatedAvatar: vi.fn(),
   emojiAvatar: vi.fn(),
   paintEmojiAvatar: vi.fn(),
   croppedAvatar: vi.fn(),
 }));
+
+// Images still pass through the real reader; a test can stand in a Gloopie.
+vi.mock("../../features/profiles/gloopie-zip", async (actual) => {
+  const real =
+    await actual<typeof import("../../features/profiles/gloopie-zip")>();
+  return { ...real, readGloopieZip: vi.fn(real.readGloopieZip) };
+});
 
 // Exercise our selection callback without emoji-mart's browser-only observers.
 vi.mock("../../bundled/emoji/emoji-mart", () => ({
@@ -468,7 +478,9 @@ it("opens the file picker directly and recovers from an upload failure", async (
     "Upload an image",
   ) as HTMLInputElement;
   const browse = vi.spyOn(input, "click");
-  await user.click(within(dialog).getByRole("tab", { name: "Upload image" }));
+  await user.click(
+    within(dialog).getByRole("tab", { name: "Upload image or Gloopie ZIP" }),
+  );
   expect(browse).toHaveBeenCalledOnce();
   vi.mocked(uploadAvatar).mockRejectedValueOnce(new Error("Upload failed"));
   const file = new File(["image"], "image.png", { type: "image/png" });
@@ -619,6 +631,91 @@ it("pans and zooms an uploaded image, then saves the framed crop", async () => {
     "https://a.example",
     expect.any(AbortSignal),
   );
+});
+
+it("uploads a Gloopie ZIP as an animated avatar and never re-frames it", async () => {
+  // The broker registers the community before its media mounts.
+  vi.stubGlobal("fetch", async () => Response.json({}));
+  const relay = "https://a.example";
+  const animation = `${relay}/media/${"b".repeat(64)}.png`;
+  const descriptor = `${relay}/media/${"a".repeat(64)}.png#buzz-anim=${encodeURIComponent(animation)}`;
+  const parts = {
+    poster: new File(["poster"], "avatar.png", { type: "image/png" }),
+    animation: new File(["webm"], "avatar.webm", { type: "video/webm" }),
+  };
+  vi.mocked(readGloopieZip).mockResolvedValueOnce(parts);
+  vi.mocked(uploadAnimatedAvatar).mockResolvedValueOnce(descriptor);
+  const { agents, dialog, user } = setup([echo], undefined, relay);
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["zip"], "gloopie.zip", { type: "application/zip" })],
+    },
+  });
+  await waitFor(() => expect(createButton()).toBeEnabled());
+  expect(uploadAnimatedAvatar).toHaveBeenCalledExactlyOnceWith(
+    parts,
+    relay,
+    expect.any(AbortSignal),
+    expect.any(Function),
+  );
+  expect(URL.createObjectURL).toHaveBeenCalledWith(parts.poster);
+  expect(
+    within(dialog).queryByRole("application", { name: "Image position" }),
+  ).toBeNull();
+  expect(within(dialog).queryByRole("slider", { name: "Zoom" })).toBeNull();
+  // Once its animation decodes, the picker plays it as it does a pack avatar.
+  await waitFor(() =>
+    expect(
+      within(dialog)
+        .getByRole("img", { name: "Selected avatar" })
+        .querySelector("img"),
+    ).toHaveAttribute(
+      "src",
+      expect.stringContaining(encodeURIComponent(animation)),
+    ),
+  );
+  await user.click(createButton());
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ picture: descriptor }),
+    ),
+  );
+  expect(uploadAvatar).not.toHaveBeenCalled();
+  expect(croppedAvatar).not.toHaveBeenCalled();
+});
+
+it("explains a ZIP that isn't a Gloopie and uploads nothing", async () => {
+  const message =
+    "This ZIP isn't an animated Gloopie. It needs one PNG and one WebM.";
+  vi.mocked(readGloopieZip).mockRejectedValueOnce(new Error(message));
+  const { dialog, user } = setup([echo], undefined, "https://a.example");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["zip"], "other.zip", { type: "application/zip" })],
+    },
+  });
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+  expect(createButton()).toBeEnabled();
+  expect(uploadAnimatedAvatar).not.toHaveBeenCalled();
+  expect(uploadAvatar).not.toHaveBeenCalled();
+});
+
+it("asks for the Gloopie's ZIP when given the video from inside it", async () => {
+  const { dialog, user } = setup([echo], undefined, "https://a.example");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["webm"], "gloopie.webm", { type: "video/webm" })],
+    },
+  });
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Choose the Gloopie's ZIP, not the video inside it.",
+  );
+  expect(createButton()).toBeEnabled();
+  expect(uploadAvatar).not.toHaveBeenCalled();
+  expect(uploadAnimatedAvatar).not.toHaveBeenCalled();
 });
 
 it("cancels a framed save when the dialog closes while the image decodes", async () => {
@@ -1816,6 +1913,49 @@ it("preserves the existing avatar and requested name when saving a proposed upda
   );
   expect(agents.create).not.toHaveBeenCalled();
   expect(onCreated).not.toHaveBeenCalled();
+});
+
+it("saves an untouched animated avatar as it was, never repainting it to a still", async () => {
+  vi.stubGlobal("fetch", async () => Response.json({}));
+  vi.mocked(uploadAvatar).mockClear();
+  vi.mocked(croppedAvatar).mockClear();
+  const relay = "https://relay.example.test";
+  const picture = `${relay}/media/${"a".repeat(64)}.png#buzz-anim=${encodeURIComponent(
+    `${relay}/media/${"b".repeat(64)}.png`,
+  )}`;
+  const onSave = vi.fn().mockResolvedValue(undefined);
+  render(
+    <AgentCreateDialog
+      agents={{ create: vi.fn() } as unknown as Agents}
+      types={[echo]}
+      community={relay}
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+      update={{
+        agent: { ...made, picture },
+        onSave,
+        request: {
+          id: "request",
+          requester: "requester",
+          requesterName: "Ada",
+          owner: made.owner,
+          community: "here",
+          agent: made.pubkey,
+          agentName: made.name,
+          agentType: made.type,
+        },
+      }}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ picture })),
+  );
+  expect(uploadAvatar).not.toHaveBeenCalled();
+  expect(uploadAnimatedAvatar).not.toHaveBeenCalled();
+  expect(croppedAvatar).not.toHaveBeenCalled();
 });
 
 it("starts from an agent card's name, picture and instructions, in each harness that takes them", async () => {

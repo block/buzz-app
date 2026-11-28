@@ -21,7 +21,7 @@ function remember(src: string, outcome: Outcome) {
 // A failed request may be transient (relay, network or native proxy), and a
 // mounted image gets no new source to reset it. Retry the same source a
 // bounded number of times, and whenever another mount loads it.
-const RETRY_DELAYS_MS = [2_000, 10_000, 30_000];
+export const RETRY_DELAYS_MS = [2_000, 10_000, 30_000];
 const failed = new Map<string, Set<() => void>>();
 
 /** A source loaded outside any mount, such as by request warming. Its mounts
@@ -34,10 +34,23 @@ export function rememberLoadedImage(src: string) {
 // gets the same extra attempt once it fails.
 let recoveries = 0;
 
+// Loads made outside any mount, such as a preloaded animation, that want the
+// same second chance.
+const recoveryListeners = new Set<() => void>();
+
+/** Calls `retry` whenever retryFailedImages runs, until unsubscribed. */
+export function onImageRecovery(retry: () => void) {
+  recoveryListeners.add(retry);
+  return () => {
+    recoveryListeners.delete(retry);
+  };
+}
+
 /** Requests every mounted failed source once more, after its timed retries
  * may be spent: a connection that can now serve it has come up. */
 export function retryFailedImages() {
   recoveries++;
+  for (const retry of [...recoveryListeners]) retry();
   for (const retries of [...failed.values()])
     for (const retry of [...retries]) retry();
 }

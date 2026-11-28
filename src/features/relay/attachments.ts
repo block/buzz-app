@@ -1,10 +1,13 @@
 import {
+  ANIMATION_MAX,
+  ANIMATION_PREPARATION_MS,
   isHeic,
   isVoiceNote,
   videoDemuxer,
   VIDEO_PREPARATION_MS,
 } from "./video-preparation.ts";
 import { IMETA_DIM, safeAttachmentName } from "./message-content.ts";
+import { cleanPng } from "../messages/image-metadata.ts";
 
 import {
   mediaByteLimit,
@@ -41,10 +44,12 @@ export function isUploadedAttachment(a: unknown): a is UploadedAttachment {
 }
 /** Bytes of the transferred file handed to the connection so far. */
 export type UploadProgress = (sent: number, total: number) => void;
+/** `animation`: a VP9-alpha WebM the host converts to an APNG avatar animation. */
 export type AttachmentUpload = (
   file: File,
   signal: AbortSignal,
   progress?: UploadProgress,
+  preparation?: "animation",
 ) => Promise<UploadedAttachment>;
 export const UPLOAD_FAILURES = {
   unavailable: "Uploads are unavailable on this connection.",
@@ -157,19 +162,25 @@ async function prepareMedia(
   file: File,
   endpoint: string,
   signal: AbortSignal,
+  preparation?: "animation",
 ): Promise<File> {
   const header = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
   signal.throwIfAborted();
-  const voice = isVoiceNote(file.name);
-  const heic = !voice && isHeic(header, file.name);
+  const animation = preparation === "animation";
+  const voice = !animation && isVoiceNote(file.name);
+  const heic = !animation && !voice && isHeic(header, file.name);
   if (voice && file.size > 128 * 1024 * 1024) throw new UploadError("size");
+  if (animation && videoDemuxer(header) !== "matroska")
+    throw new UploadError("video");
   if (!heic && !voice && !videoDemuxer(header)) {
     if (file.type.startsWith("video/")) throw new UploadError("video");
     return file;
   }
   const bounded = AbortSignal.any([
     signal,
-    AbortSignal.timeout(VIDEO_PREPARATION_MS),
+    AbortSignal.timeout(
+      animation ? ANIMATION_PREPARATION_MS : VIDEO_PREPARATION_MS,
+    ),
   ]);
   const response = await fetch(`${endpoint}/prepare-media`, {
     method: "POST",
@@ -177,11 +188,12 @@ async function prepareMedia(
     headers: {
       "Content-Type": "application/octet-stream",
       "X-Attachment-Name": encodeURIComponent(file.name),
+      ...(animation ? { "X-Buzz-Preparation": "animation" } : {}),
     },
     body: file,
     signal: bounded,
   });
-  const type = heic ? "image/jpeg" : "video/mp4";
+  const type = heic ? "image/jpeg" : animation ? "image/png" : "video/mp4";
   if (!response.ok || response.headers.get("content-type") !== type) {
     await response.body?.cancel();
     throw new UploadError(
@@ -200,7 +212,7 @@ async function prepareMedia(
   if (
     !Number.isSafeInteger(length) ||
     length < 1 ||
-    length > mediaByteLimit(type)
+    length > (animation ? ANIMATION_MAX : mediaByteLimit(type))
   ) {
     await response.body?.cancel();
     throw new UploadError("size");
@@ -210,11 +222,19 @@ async function prepareMedia(
   const blob = await response.blob();
   bounded.throwIfAborted();
   if (blob.size !== length) throw new UploadError("invalid");
+  // ffmpeg always writes pHYs, which the relay refuses.
+  const body = animation
+    ? cleanPng(new Uint8Array(await blob.arrayBuffer()), undefined, true)
+    : blob;
   const name = file.name.replace(/\.[^.]+$/, "") || "Attachment";
-  return new File([blob], `${name}.${heic ? "jpg" : "mp4"}`, {
-    type,
-    lastModified: file.lastModified,
-  });
+  return new File(
+    [body],
+    `${name}.${heic ? "jpg" : animation ? "png" : "mp4"}`,
+    {
+      type,
+      lastModified: file.lastModified,
+    },
+  );
 }
 
 export function brokerUpload(
@@ -232,7 +252,8 @@ export function brokerUpload(
         signal,
       }),
     origin,
-    (file, signal) => prepareMedia(file, endpoint, signal),
+    (file, signal, preparation) =>
+      prepareMedia(file, endpoint, signal, preparation),
   );
 }
 
@@ -245,13 +266,18 @@ export function hostUpload(
     progress?: UploadProgress,
   ) => Promise<Response>,
   origin: string,
-  prepare?: (file: File, signal: AbortSignal) => Promise<File>,
+  prepare?: (
+    file: File,
+    signal: AbortSignal,
+    preparation?: "animation",
+  ) => Promise<File>,
 ): AttachmentUpload {
-  return async (file, signal, progress) => {
+  return async (file, signal, progress, preparation) => {
     signal.throwIfAborted();
     if (!file.size || file.size > UPLOAD_MAX_BYTES)
       throw new UploadError("size");
-    if (prepare) file = await prepare(file, signal);
+    if (preparation && !prepare) throw new UploadError("unavailable");
+    if (prepare) file = await prepare(file, signal, preparation);
     signal.throwIfAborted();
     const bounded = AbortSignal.any([
       signal,

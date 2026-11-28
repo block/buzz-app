@@ -196,6 +196,24 @@ it("leaves out a picture whose query or fragment could carry a token", () => {
   );
 });
 
+it("keeps an animated avatar, which names only two media blobs of one relay", () => {
+  const relay = "https://relay.example.test/media";
+  const descriptor = (animation: string) =>
+    `${relay}/${"a".repeat(64)}.png#buzz-anim=${encodeURIComponent(animation)}`;
+  const picture = descriptor(`${relay}/${"b".repeat(64)}.png`);
+  const definition = shareable(agent(saved, picture), echo);
+  expect(definition).toHaveProperty("picture", picture);
+  expect(JSON.parse(catalogContent(definition))).toHaveProperty(
+    "avatar_url",
+    picture,
+  );
+  expect(snapshotJson(definition)).toContain(JSON.stringify(picture));
+  const leaky = descriptor(
+    `${relay}/${"b".repeat(64)}.png?access_token=syntheticcredential123`,
+  );
+  expect(shareable(agent(saved, leaky), echo)).not.toHaveProperty("picture");
+});
+
 it("publishes a catalog entry the marketplace lists as it was shared", () => {
   const content = catalogContent(shareable(agent(saved), echo));
   expect(JSON.parse(content)).toMatchObject({ acp_command: "buzz-acp" });

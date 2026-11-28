@@ -71,3 +71,60 @@ export function avatarMedia(
     ? source
     : source && media?.(source, "small");
 }
+
+const animationMark = "#buzz-anim=";
+
+/** Old Buzz's animated avatar, `<poster>#buzz-anim=<encodeURIComponent(animation)>`,
+ * as desktop, mobile and the relay read it. Only two blobs of one relay, so no
+ * token can ride along. */
+export function animatedAvatar(
+  picture: unknown,
+): { poster: string; animation: string } | undefined {
+  if (typeof picture !== "string" || picture.length > 2048) return;
+  const mark = picture.indexOf(animationMark);
+  if (mark <= 0) return;
+  const encoded = picture.slice(mark + animationMark.length);
+  // encodeURIComponent's alphabet plus valid escapes, as the relay accepts.
+  if (!/^(?:[A-Za-z0-9\-_.!~*'()]|%[0-9A-Fa-f]{2})+$/.test(encoded)) return;
+  let animation: string;
+  try {
+    animation = decodeURIComponent(encoded);
+  } catch {
+    return;
+  }
+  const poster = picture.slice(0, mark);
+  const still = relayMedia(poster);
+  const moving = relayMedia(animation);
+  if (!still || !moving || still.origin !== moving.origin) return;
+  return { poster, animation };
+}
+
+/** The descriptor for two uploaded blobs; throws unless it reads back as them. */
+export function animatedAvatarPicture(poster: string, animation: string) {
+  const picture = `${poster}${animationMark}${encodeURIComponent(animation)}`;
+  const parts = animatedAvatar(picture);
+  if (parts?.poster !== poster || parts.animation !== animation)
+    throw new Error("The server did not return an animated avatar.");
+  return picture;
+}
+
+/** A relay blob URL as uploads return it: canonical https, no credentials,
+ * query or fragment (not even an empty one), /media/<sha256>[.<ext>]. */
+function relayMedia(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return;
+  }
+  if (
+    url.href !== value ||
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    /[?#]/.test(value) ||
+    !/^\/media\/[0-9a-f]{64}(?:\.[a-z0-9]{1,8})?$/.test(url.pathname)
+  )
+    return;
+  return url;
+}

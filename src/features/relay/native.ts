@@ -318,19 +318,22 @@ async function nativeAttachmentUpload(
   file: File,
   signal: AbortSignal,
   progress?: UploadProgress,
+  preparation?: "animation",
 ) {
   signal.throwIfAborted();
   if (!file.size || file.size > UPLOAD_MAX_BYTES) throw new UploadError("size");
   const header = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
   signal.throwIfAborted();
-  const voice = isVoiceNote(file.name);
-  const heic = !voice && isHeic(header, file.name);
+  const animation = preparation === "animation";
+  const voice = !animation && isVoiceNote(file.name);
+  const heic = !animation && !voice && isHeic(header, file.name);
   if (voice && file.size > 128 * 1024 * 1024) throw new UploadError("size");
   const demuxer = voice
     ? audioDemuxer(header)
     : heic
       ? "mov"
       : videoDemuxer(header);
+  if (animation && demuxer !== "matroska") throw new UploadError("video");
   if (!demuxer) {
     if (voice || file.type.startsWith("video/")) throw new UploadError("video");
     return hostUpload(
@@ -349,13 +352,13 @@ async function nativeAttachmentUpload(
     origin,
     file,
     bounded,
-    `${heic ? "image" : voice ? "voice" : "video"}:${demuxer}`,
+    `${heic ? "image" : voice ? "voice" : animation ? "animation" : "video"}:${demuxer}`,
     progress,
   );
   bounded.throwIfAborted();
   const body = await readUploadResponse(response);
-  const type = heic ? "image/jpeg" : "video/mp4";
-  const name = `${file.name.replace(/\.[^.]+$/, "") || "Attachment"}.${heic ? "jpg" : "mp4"}`;
+  const type = heic ? "image/jpeg" : animation ? "image/png" : "video/mp4";
+  const name = `${file.name.replace(/\.[^.]+$/, "") || "Attachment"}.${heic ? "jpg" : animation ? "png" : "mp4"}`;
   bounded.throwIfAborted();
   const size = (body as { size?: number } | null)?.size;
   if (
@@ -1063,8 +1066,8 @@ export async function connectNativeTransport(
         "background",
       );
     },
-    uploadAttachment: (file, signal, progress) =>
-      nativeAttachmentUpload(origin, file, signal, progress),
+    uploadAttachment: (file, signal, progress, preparation) =>
+      nativeAttachmentUpload(origin, file, signal, progress, preparation),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),

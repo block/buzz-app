@@ -9,6 +9,9 @@ import {
   isVoiceNote,
   audioDemuxer,
   VIDEO_PREPARATION_MS,
+  ANIMATION_FILTER,
+  ANIMATION_MAX,
+  ANIMATION_PREPARATION_MS,
 } from "../src/features/relay/video-preparation.ts";
 import { UploadError, UPLOAD_MAX_BYTES } from "./attachment-upload.mjs";
 
@@ -75,8 +78,9 @@ export async function prepareMedia(req, callerSignal, deliver) {
     const name = req.headers["x-attachment-name"]
       ? decodeURIComponent(req.headers["x-attachment-name"])
       : "";
-    const voice = isVoiceNote(name);
-    const heic = !voice && isHeic(spool.header, name);
+    const animation = req.headers["x-buzz-preparation"] === "animation";
+    const voice = !animation && isVoiceNote(name);
+    const heic = !animation && !voice && isHeic(spool.header, name);
     if (voice && spool.size > 128 * 1024 * 1024)
       throw new UploadError("size", 413);
     const demuxer = voice
@@ -85,12 +89,16 @@ export async function prepareMedia(req, callerSignal, deliver) {
         ? "mov"
         : videoDemuxer(spool.header);
     if (!demuxer) throw new UploadError("video");
-    const type = heic ? "image/jpeg" : "video/mp4";
-    const limit = mediaByteLimit(type);
+    // An animated avatar is a VP9-alpha WebM; the client strips the APNG's pHYs.
+    if (animation && demuxer !== "matroska") throw new UploadError("video");
+    if (animation && spool.size > 64 * 1024 * 1024)
+      throw new UploadError("size", 413);
+    const type = heic ? "image/jpeg" : animation ? "image/png" : "video/mp4";
+    const limit = animation ? ANIMATION_MAX : mediaByteLimit(type);
     const source = spool.path;
     const output = join(
       spool.directory,
-      heic ? "prepared.jpg" : "prepared.mp4",
+      heic ? "prepared.jpg" : animation ? "prepared.png" : "prepared.mp4",
     );
     // Fixed demuxers prevent playlist inputs; MOV external data references are disabled.
     const input =
@@ -129,6 +137,8 @@ export async function prepareMedia(req, callerSignal, deliver) {
           "-f",
           demuxer,
           ...input,
+          // Only libvpx reads the WebM's alpha; the built-in vp9 decoder drops it.
+          ...(animation ? ["-c:v", "libvpx-vp9"] : []),
           "-i",
           source,
           ...(heic
@@ -145,47 +155,79 @@ export async function prepareMedia(req, callerSignal, deliver) {
                 "-q:v",
                 "2",
               ]
-            : [
-                "-map",
-                "0:v:0",
-                "-map",
-                voice ? "1:a:0" : "0:a:0?",
-                ...(voice ? ["-shortest"] : []),
-                "-map_metadata",
-                "-1",
-                "-map_chapters",
-                "-1",
-                "-sn",
-                "-dn",
-                "-fflags",
-                "+bitexact",
-                "-flags:v",
-                "+bitexact",
-                "-flags:a",
-                "+bitexact",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-crf",
-                "23",
-                "-pix_fmt",
-                "yuv420p",
-                "-vf",
-                VIDEO_FILTER,
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-movflags",
-                "+faststart",
-                "-metadata",
-                "encoder=",
-              ]),
+            : animation
+              ? [
+                  "-map",
+                  "0:v:0",
+                  "-an",
+                  "-sn",
+                  "-dn",
+                  "-map_metadata",
+                  "-1",
+                  "-map_chapters",
+                  "-1",
+                  "-fflags",
+                  "+bitexact",
+                  "-flags:v",
+                  "+bitexact",
+                  "-t",
+                  "10",
+                  "-vf",
+                  ANIMATION_FILTER,
+                  "-c:v",
+                  "apng",
+                  "-plays",
+                  "0",
+                  "-pred",
+                  "mixed",
+                  "-f",
+                  "apng",
+                ]
+              : [
+                  "-map",
+                  "0:v:0",
+                  "-map",
+                  voice ? "1:a:0" : "0:a:0?",
+                  ...(voice ? ["-shortest"] : []),
+                  "-map_metadata",
+                  "-1",
+                  "-map_chapters",
+                  "-1",
+                  "-sn",
+                  "-dn",
+                  "-fflags",
+                  "+bitexact",
+                  "-flags:v",
+                  "+bitexact",
+                  "-flags:a",
+                  "+bitexact",
+                  "-c:v",
+                  "libx264",
+                  "-preset",
+                  "fast",
+                  "-crf",
+                  "23",
+                  "-pix_fmt",
+                  "yuv420p",
+                  "-vf",
+                  VIDEO_FILTER,
+                  "-c:a",
+                  "aac",
+                  "-b:a",
+                  "128k",
+                  "-movflags",
+                  "+faststart",
+                  "-metadata",
+                  "encoder=",
+                ]),
           output,
         ],
         bounded,
-        heic ? 60_000 : VIDEO_PREPARATION_MS,
+        heic
+          ? 60_000
+          : animation
+            ? ANIMATION_PREPARATION_MS
+            : VIDEO_PREPARATION_MS,
       );
     } catch (error) {
       signal.throwIfAborted();

@@ -1,10 +1,14 @@
 // An agent as a card: its portrait large, its name, and one line about it.
-// Pack avatars play their animation; any other picture shows still.
+// Pack avatars play their animation, an uploaded animated avatar plays its
+// APNG; any other picture shows still.
 import type { ComponentProps, ReactNode } from "react";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { StarFilledIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
-import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
+import {
+  useAvatarAnimation,
+  useAvatarPreview,
+} from "../../features/profiles/use-avatar-preview";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import styles from "./AgentCard.module.css";
@@ -23,8 +27,9 @@ export function useAgentPortraitSource(agent: Portrayed, community?: string) {
   return { pack, src: pack?.preview ?? src };
 }
 
-/** An agent's picture: a pack avatar animates, any other shows through its
- * community's media access. */
+/** An agent's picture: a pack avatar animates, as does an uploaded animated
+ * avatar unless motion is reduced; any other shows through its community's
+ * media access. */
 export function AgentPortrait({
   agent,
   community,
@@ -33,10 +38,14 @@ export function AgentPortrait({
   community?: string | undefined;
 }) {
   const { pack, src } = useAgentPortraitSource(agent, community);
+  const animation = useAvatarAnimation(
+    pack ? undefined : agent.picture,
+    community,
+  );
   if (pack) return <PackedAgentAvatar avatar={pack} />;
   return (
     <Avatar
-      src={src}
+      src={animation ?? src}
       alt=""
       fallback={agent.name}
       size="fill"

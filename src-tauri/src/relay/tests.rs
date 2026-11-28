@@ -2520,6 +2520,15 @@ async fn only_whole_inline_images_that_fit_an_entry_are_saved() {
         .body(vec![0; media_cache::ENTRY_MAX + 1])
         .unwrap();
     assert_eq!(saved_kind(&large), None);
+    // An animated avatar is fetched full size and still kept.
+    let mut apng = b"\x89PNG\r\n\x1a\n\0\0\0\x08acTL".to_vec();
+    apng.resize(media_cache::ENTRY_MAX + 1, 0);
+    let animated = tauri::http::Response::builder()
+        .status(200)
+        .header("content-type", "image/png")
+        .body(apng)
+        .unwrap();
+    assert_eq!(saved_kind(&animated).as_deref(), Some("image/png"));
 }
 
 #[tokio::test]

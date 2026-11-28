@@ -205,7 +205,11 @@ import {
   prepareRemoteAgentAuthorization,
   type NipOaAuthorization,
 } from "../host/service";
-import { avatarSource } from "../../shared/avatar-source";
+import {
+  animatedAvatar,
+  animatedAvatarPicture,
+  avatarSource,
+} from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import {
   eventDto,
@@ -7920,6 +7924,36 @@ export class AgentsService extends Service implements Agents {
           if (!image?.data) throw new Error("Not an image an agent can show");
           const { url } = await native.upload(joined, image.data, image.type);
           await native.setPicture(joined, url);
+          // An animated avatar's APNG comes too, with one retry for a
+          // transient failure; failing that, it shows still and says so.
+          const animated = animatedAvatar(media);
+          const copyAnimation = async (animation: string) => {
+            const motion = await native.media(source, animation);
+            if (!motion.data || motion.type !== "image/png")
+              throw new Error("Not an animation an agent can show");
+            const moved = await native.upload(joined, motion.data, motion.type);
+            await native.setPicture(
+              joined,
+              animatedAvatarPicture(url, moved.url),
+            );
+          };
+          if (animated)
+            try {
+              // Only a quick failure retries; a stalled relay already took
+              // its full timeout once.
+              const started = performance.now();
+              await copyAnimation(animated.animation).catch(
+                (error: unknown) => {
+                  if (performance.now() - started > 5_000) throw error;
+                  return copyAnimation(animated.animation);
+                },
+              );
+            } catch (error) {
+              console.warn(`Agent ${name} animation was not copied`, error);
+              notes.push(
+                `${name}'s animation didn't come over, so it shows still. Upload its Gloopie ZIP again in its settings.`,
+              );
+            }
         } catch (error) {
           console.warn(`Agent ${name} picture was not copied`, error);
           notes.push(

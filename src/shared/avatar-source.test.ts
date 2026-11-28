@@ -1,5 +1,11 @@
 import { expect, it } from "vitest";
-import { avatarMedia, avatarSource, legacyEmojiPicture } from "./avatar-source";
+import {
+  animatedAvatar,
+  animatedAvatarPicture,
+  avatarMedia,
+  avatarSource,
+  legacyEmojiPicture,
+} from "./avatar-source";
 
 // Exact output of Buzz mobile's emojiAvatarDataUrl("🛹", 0xFFFFB84D).
 const mobile =
@@ -38,3 +44,46 @@ it.each(["\ud83d", "\udef9", "🛹\ud83d"])(
     expect(avatarSource(picture)).toBeUndefined();
   },
 );
+
+const poster = `https://relay.test/media/${"a".repeat(64)}.png`;
+const animation = `https://relay.test/media/${"b".repeat(64)}.png`;
+const descriptor = `${poster}#buzz-anim=https%3A%2F%2Frelay.test%2Fmedia%2F${"b".repeat(64)}.png`;
+
+it("writes and reads old Buzz's animated avatar descriptor", () => {
+  expect(animatedAvatarPicture(poster, animation)).toBe(descriptor);
+  expect(animatedAvatar(descriptor)).toEqual({ poster, animation });
+  expect(avatarSource(descriptor)).toBe(descriptor);
+});
+
+it("reads old desktop's fully escaped animation", () => {
+  const escaped = animation.replace(
+    /[^A-Za-z0-9]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  expect(animatedAvatar(`${poster}#buzz-anim=${escaped}`)).toEqual({
+    poster,
+    animation,
+  });
+});
+
+it.each([
+  ["no mark", poster],
+  ["mark first", descriptor.slice(poster.length)],
+  ["empty payload", `${poster}#buzz-anim=`],
+  ["bad escape", `${descriptor}%zz`],
+  ["cut escape", `${descriptor}%4`],
+  ["raw #", `${descriptor}#x`],
+  ["http part", descriptor.replace("https://", "http://")],
+  ["other relay", descriptor.replace("relay.test%2F", "other.test%2F")],
+  ["query", `${descriptor}%3Fq`],
+  ["not media", descriptor.replace("%2Fmedia%2F", "%2Fother%2F")],
+  ["over 2,048 characters", descriptor.replaceAll("relay", "r".repeat(1000))],
+])("rejects an animated avatar with %s", (_, picture) => {
+  expect(animatedAvatar(picture)).toBeUndefined();
+});
+
+it("refuses to describe a non-relay animation", () => {
+  expect(() =>
+    animatedAvatarPicture(poster, "https://example.test/a.png"),
+  ).toThrow("The server did not return an animated avatar.");
+});

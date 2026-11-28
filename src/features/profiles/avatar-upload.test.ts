@@ -1,18 +1,30 @@
 // @vitest-environment jsdom
-import { expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { pngChunks, snapshotChunk } from "../messages/image-metadata";
+import {
+  type AttachmentUpload,
+  UploadError,
+  type UploadedAttachment,
+} from "../relay/attachments";
 import {
   avatarCropBox,
   avatarPictureError,
   avatarPreview,
   profilePictureError,
+  uploadAnimatedAvatar,
   uploadAvatar,
 } from "./avatar-upload";
 
-const uploadAttachment = vi.fn(async (file: File) => ({
-  type: file.type,
-  url: "https://relay.example.test/media/avatar.png",
-}));
+const uploaded = (type: string, url: string): UploadedAttachment => ({
+  name: "avatar",
+  type,
+  url,
+  size: 1,
+  sha256: "0".repeat(64),
+});
+const uploadAttachment = vi.fn<AttachmentUpload>(async (file) =>
+  uploaded(file.type, "https://relay.example.test/media/avatar.png"),
+);
 vi.mock("../communities/connection", () => ({
   connectCommunityTransport: async () => ({ uploadAttachment }),
 }));
@@ -96,6 +108,80 @@ it.each(["iCCP", "eXIf"])(
     }
   },
 );
+
+describe("an animated avatar", () => {
+  const relay = "https://relay.example.test";
+  const poster = `${relay}/media/${"a".repeat(64)}.png`;
+  const animation = `${relay}/media/${"b".repeat(64)}.png`;
+  const webm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]);
+  const parts = () => ({
+    poster: new File([snapshotPng("Inert")], "avatar.png", {
+      type: "image/png",
+    }),
+    animation: new File([webm], "avatar.webm", { type: "video/webm" }),
+  });
+  beforeEach(() => {
+    uploadAttachment.mockClear();
+  });
+
+  it("converts the WebM first, then uploads the stripped poster, and saves both as one descriptor", async () => {
+    uploadAttachment
+      .mockResolvedValueOnce(uploaded("image/png", animation))
+      .mockResolvedValueOnce(uploaded("image/png", poster));
+    const picture = await uploadAnimatedAvatar(
+      parts(),
+      relay,
+      new AbortController().signal,
+    );
+    expect(picture).toBe(
+      `${poster}#buzz-anim=${encodeURIComponent(animation)}`,
+    );
+    const [moving, still] = uploadAttachment.mock.calls;
+    if (!moving || !still) throw new Error("Both parts were not uploaded");
+    expect(moving[3]).toBe("animation");
+    expect(new Uint8Array(await moving[0].arrayBuffer())).toEqual(webm);
+    expect(still[3]).toBeUndefined();
+    expect(
+      snapshotChunk(pngChunks(new Uint8Array(await still[0].arrayBuffer()))),
+    ).toBeUndefined();
+  });
+
+  it("keeps progress moving forward when the converted animation outgrows the WebM", async () => {
+    uploadAttachment
+      .mockImplementationOnce(async (_file, _signal, progress) => {
+        // Lossless APNG is usually several times the VP9 WebM.
+        progress?.(1_000_000, 2_000_000);
+        progress?.(2_000_000, 2_000_000);
+        return uploaded("image/png", animation);
+      })
+      .mockImplementationOnce(async (file, _signal, progress) => {
+        progress?.(file.size / 2, file.size);
+        progress?.(file.size, file.size);
+        return uploaded("image/png", poster);
+      });
+    const seen: number[] = [];
+    await uploadAnimatedAvatar(
+      parts(),
+      relay,
+      new AbortController().signal,
+      (sent, total) => seen.push(sent / total),
+    );
+    expect(seen.length).toBe(4);
+    expect(seen.at(-1)).toBeCloseTo(1);
+    for (const [i, value] of seen.entries()) {
+      expect(value).toBeLessThanOrEqual(1);
+      expect(value).toBeGreaterThanOrEqual(seen[i - 1] ?? 0);
+    }
+  });
+
+  it("stores nothing when the animation can't be converted", async () => {
+    uploadAttachment.mockRejectedValueOnce(new UploadError("video"));
+    await expect(
+      uploadAnimatedAvatar(parts(), relay, new AbortController().signal),
+    ).rejects.toThrow("Couldn't convert this Gloopie's animation.");
+    expect(uploadAttachment).toHaveBeenCalledOnce();
+  });
+});
 
 function pngChunk(type: string, payload: Uint8Array): Uint8Array {
   const out = new Uint8Array(12 + payload.length);

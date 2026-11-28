@@ -1,5 +1,6 @@
-//! Bounded conversion of uploaded HEIC and video bytes. No paths or ffmpeg
-//! arguments are accepted from the webview; the result is uploaded by relay.rs.
+//! Bounded conversion of uploaded HEIC, video and animated-avatar WebM bytes.
+//! No paths or ffmpeg arguments are accepted from the webview; the result is
+//! uploaded by relay.rs.
 use std::sync::OnceLock;
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::{
@@ -13,10 +14,18 @@ static SLOTS: OnceLock<Semaphore> = OnceLock::new();
 const MAX_INPUT: usize = 500 * 1024 * 1024;
 const MAX_IMAGE: u64 = 50 * 1024 * 1024;
 const MAX_VIDEO: u64 = 500 * 1024 * 1024;
+const MAX_ANIMATION_INPUT: usize = 64 * 1024 * 1024;
+// Below app_agents' MEDIA_LIMIT, so an agent join can copy the animation.
+const MAX_ANIMATION: u64 = 3_670_016;
+// Viewers keep the animation in the media disk cache.
+const _: () = assert!(MAX_ANIMATION as usize <= super::media_cache::ANIMATION_ENTRY_MAX);
 // Fit the relay's 3840x2160 envelope in either orientation (Retina screen
 // recordings exceed it) at even dimensions, never upscale, then pad the odd
 // edges of unscaled input for yuv420p.
 const VIDEO_FILTER: &str = "scale=w='if(lt(min(3840/max(iw,ih),2160/min(iw,ih)),1),round(iw*min(3840/max(iw,ih),2160/min(iw,ih))/2)*2,iw)':h='if(lt(min(3840/max(iw,ih),2160/min(iw,ih)),1),round(ih*min(3840/max(iw,ih),2160/min(iw,ih))/2)*2,ih)',pad=ceil(iw/2)*2:ceil(ih/2)*2";
+// An animated avatar's VP9-alpha WebM becomes an APNG that keeps transparency:
+// 12 fps, within 256x256, never upscaled. Matches video-preparation.ts.
+const ANIMATION_FILTER: &str = "fps=12,scale=w='min(256,iw)':h='min(256,ih)':force_original_aspect_ratio=decrease:flags=lanczos,format=rgba";
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum PreparationError {
@@ -74,9 +83,13 @@ fn allowed_mode(mode: &str, size: usize) -> Option<(&'static str, bool, bool)> {
         "voice:aac" => ("aac", false, true),
         "voice:amr" => ("amr", false, true),
         "voice:mov" => ("mov", false, true),
+        "animation:matroska" => ("matroska", false, false),
         _ => return None,
     };
     if result.2 && size > 128 * 1024 * 1024 {
+        return None;
+    }
+    if mode == "animation:matroska" && size > MAX_ANIMATION_INPUT {
         return None;
     }
     Some(result)
@@ -267,8 +280,11 @@ async fn prepare_file_with_program(
         .get_or_init(|| Semaphore::new(2))
         .try_acquire()
         .map_err(|_| PreparationError::Capacity)?;
+    let animation = mode == "animation:matroska";
     let output = directory.join(if image {
         "prepared.jpg"
+    } else if animation {
+        "prepared.png"
     } else {
         "prepared.mp4"
     });
@@ -283,6 +299,11 @@ async fn prepare_file_with_program(
     cmd.args(["-protocol_whitelist", "file,pipe", "-f", demuxer]);
     if demuxer == "mov" {
         cmd.args(["-enable_drefs", "0", "-use_absolute_path", "0"]);
+    }
+    if animation {
+        // Only libvpx reads the alpha in Matroska BlockAdditional; the built-in
+        // vp9 decoder silently drops it.
+        cmd.args(["-c:v", "libvpx-vp9"]);
     }
     cmd.arg("-i").arg(source);
     if image {
@@ -299,6 +320,34 @@ async fn prepare_file_with_program(
             "+bitexact",
             "-q:v",
             "2",
+        ]);
+    } else if animation {
+        cmd.args([
+            "-map",
+            "0:v:0",
+            "-an",
+            "-sn",
+            "-dn",
+            "-map_metadata",
+            "-1",
+            "-map_chapters",
+            "-1",
+            "-fflags",
+            "+bitexact",
+            "-flags:v",
+            "+bitexact",
+            "-t",
+            "10",
+            "-vf",
+            ANIMATION_FILTER,
+            "-c:v",
+            "apng",
+            "-plays",
+            "0",
+            "-pred",
+            "mixed",
+            "-f",
+            "apng",
         ]);
     } else {
         cmd.args([
@@ -348,13 +397,26 @@ async fn prepare_file_with_program(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let child = spawn_conversion(&mut cmd)?;
-    let limit = if image { MAX_IMAGE } else { MAX_VIDEO };
+    let limit = if image {
+        MAX_IMAGE
+    } else if animation {
+        MAX_ANIMATION
+    } else {
+        MAX_VIDEO
+    };
+    let timeout = if image {
+        60
+    } else if animation {
+        120
+    } else {
+        600
+    };
     wait_for_conversion(
         child,
         &output,
         image,
         cancelled,
-        Duration::from_secs(if image { 60 } else { 600 }),
+        Duration::from_secs(timeout),
         limit,
     )
     .await?;
@@ -362,10 +424,60 @@ async fn prepare_file_with_program(
     if size == 0 || size > limit {
         return Err(PreparationError::Size);
     }
+    if animation {
+        let bytes = tokio::fs::read(&output)
+            .await
+            .map_err(|_| PreparationError::Io)?;
+        let clean = png_rendering_chunks(&bytes).ok_or(PreparationError::Video)?;
+        tokio::fs::write(&output, clean)
+            .await
+            .map_err(|_| PreparationError::Io)?;
+    }
     if cancelled.try_recv().is_ok() {
         return Err(PreparationError::Cancelled);
     }
-    Ok((output, if image { "image/jpeg" } else { "video/mp4" }))
+    Ok((
+        output,
+        if image {
+            "image/jpeg"
+        } else if animation {
+            "image/png"
+        } else {
+            "video/mp4"
+        },
+    ))
+}
+
+/// ffmpeg's PNG encoder always writes pHYs, which the relay refuses. Keep
+/// critical chunks and the rendering chunks the relay allows, as cleanPng does.
+fn png_rendering_chunks(bytes: &[u8]) -> Option<Vec<u8>> {
+    const SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+    const RENDERING: [&[u8; 4]; 11] = [
+        b"cHRM", b"gAMA", b"sBIT", b"sRGB", b"bKGD", b"hIST", b"tRNS", b"sPLT", b"acTL", b"fcTL",
+        b"fdAT",
+    ];
+    if !bytes.starts_with(SIGNATURE) {
+        return None;
+    }
+    let mut out = SIGNATURE.to_vec();
+    let mut i = SIGNATURE.len();
+    loop {
+        let header = bytes.get(i..i.checked_add(8)?)?;
+        let len = usize::try_from(u32::from_be_bytes(header[..4].try_into().ok()?)).ok()?;
+        let kind: &[u8; 4] = header[4..].try_into().ok()?;
+        let end = i.checked_add(12)?.checked_add(len)?;
+        let chunk = bytes.get(i..end)?;
+        if kind == b"iCCP" {
+            return None;
+        }
+        if kind[0] & 0x20 == 0 || RENDERING.contains(&kind) {
+            out.extend_from_slice(chunk);
+        }
+        if kind == b"IEND" {
+            return (end == bytes.len()).then_some(out);
+        }
+        i = end;
+    }
 }
 
 #[cfg(test)]
@@ -596,6 +708,102 @@ mod tests {
         );
     }
 
+    fn png_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
+        chunk.extend_from_slice(kind);
+        chunk.extend_from_slice(data);
+        chunk.extend_from_slice(&[0; 4]);
+        chunk
+    }
+
+    fn png_chunks(bytes: &[u8]) -> Vec<([u8; 4], Vec<u8>)> {
+        let mut chunks = Vec::new();
+        let mut i = 8;
+        while i < bytes.len() {
+            let len = u32::from_be_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
+            let kind = bytes[i + 4..i + 8].try_into().unwrap();
+            chunks.push((kind, bytes[i + 8..i + 8 + len].to_vec()));
+            i += 12 + len;
+        }
+        chunks
+    }
+
+    #[test]
+    fn png_rendering_chunks_drop_only_what_the_relay_refuses() {
+        let signature = b"\x89PNG\r\n\x1a\n";
+        let build = |kinds: &[&[u8; 4]]| {
+            let mut png = signature.to_vec();
+            for kind in kinds {
+                png.extend(png_chunk(kind, &[1, 2, 3]));
+            }
+            png
+        };
+        let clean = build(&[b"IHDR", b"acTL", b"fcTL", b"IDAT", b"fdAT", b"IEND"]);
+        let ffmpeg = build(&[
+            b"IHDR", b"pHYs", b"acTL", b"fcTL", b"IDAT", b"fdAT", b"IEND",
+        ]);
+        assert_eq!(png_rendering_chunks(&ffmpeg), Some(clean));
+        assert_eq!(
+            png_rendering_chunks(&build(&[b"IHDR", b"iCCP", b"IDAT", b"IEND"])),
+            None
+        );
+        let mut trailing = build(&[b"IHDR", b"IDAT", b"IEND"]);
+        trailing.push(0);
+        assert_eq!(png_rendering_chunks(&trailing), None);
+    }
+
+    #[tokio::test]
+    async fn converts_alpha_webm_to_looping_relay_clean_apng() {
+        let _guard = CONVERSIONS.lock().await;
+        if media_tool_version("ffmpeg").is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("avatar.webm");
+        let generated = std::process::Command::new(crate::host_command::resolve_program(
+            "ffmpeg",
+            &crate::host_command::effective_path(),
+        ))
+        .args([
+            "-y",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red@0.5:s=32x32:r=24:d=1,format=yuva420p",
+            "-c:v",
+            "libvpx-vp9",
+            "-auto-alt-ref",
+            "0",
+            "-pix_fmt",
+            "yuva420p",
+        ])
+        .arg(&input)
+        .status();
+        assert!(generated
+            .expect("conversion tests require ffmpeg on PATH")
+            .success());
+        let bytes = std::fs::read(input).unwrap();
+        let (_sender, mut cancelled) = oneshot::channel();
+        let (prepared, mime) = prepare(bytes, "animation:matroska", &mut cancelled)
+            .await
+            .unwrap();
+        assert_eq!(mime, "image/png");
+        assert!(prepared.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let chunks = png_chunks(&prepared);
+        for (kind, _) in &chunks {
+            assert!(
+                [b"IHDR", b"acTL", b"fcTL", b"IDAT", b"fdAT", b"IEND"].contains(&kind),
+                "unexpected {}",
+                String::from_utf8_lossy(kind)
+            );
+        }
+        let (_, actl) = chunks.iter().find(|(kind, _)| kind == b"acTL").unwrap();
+        assert_eq!(&actl[4..8], &[0; 4], "plays forever");
+    }
+
     #[tokio::test]
     async fn cancelled_input_never_starts_conversion() {
         let (sender, mut cancelled) = oneshot::channel();
@@ -769,12 +977,19 @@ mod tests {
             assert!(allowed_mode(&format!("voice:{demuxer}"), 128 * 1024 * 1024 + 1).is_none());
         }
         assert_eq!(allowed_mode("image:mov", 1), Some(("mov", true, false)));
+        assert_eq!(
+            allowed_mode("animation:matroska", 1),
+            Some(("matroska", false, false))
+        );
+        assert!(allowed_mode("animation:matroska", MAX_ANIMATION_INPUT + 1).is_none());
         for mode in [
             "image:concat",
             "video:concat",
             "voice:concat",
             "video:http",
             "image:avi",
+            "animation:mov",
+            "animation:concat",
             "mov",
         ] {
             assert!(allowed_mode(mode, 1).is_none());

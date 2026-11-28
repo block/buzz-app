@@ -1792,6 +1792,31 @@ it("does not repeat consecutive sonar messages across sweeps", () => {
   }
 });
 
+it("shows an uploaded Gloopie through its community's media access, animated once it decodes", async () => {
+  vi.stubGlobal("fetch", async () => Response.json({}));
+  HTMLImageElement.prototype.decode = () => Promise.resolve();
+  try {
+    const relay = "https://relay.example.test";
+    const animation = `${relay}/media/${"b".repeat(64)}.png`;
+    const picture = `${relay}/media/${"a".repeat(64)}.png#buzz-anim=${encodeURIComponent(animation)}`;
+    const { container } = render(
+      <AttentionSonar name="Ada" picture={picture} community={relay} />,
+    );
+    await waitFor(() =>
+      expect(
+        container
+          .querySelector(".attention-sonar-portrait img")
+          ?.getAttribute("src"),
+      ).toBe(
+        `/api/relay/${encodeURIComponent(relay)}/media?url=${encodeURIComponent(animation)}`,
+      ),
+    );
+  } finally {
+    Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
+    vi.unstubAllGlobals();
+  }
+});
+
 it("confirms deleting an Interest whose only watch was skipped", () => {
   const agent = {
     key: "membership-a",

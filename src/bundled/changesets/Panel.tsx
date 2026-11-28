@@ -9,11 +9,12 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { Select } from "../../shared/design-system/ui/Select";
-import { DiffViewer } from "../diffs/DiffViewer";
 import { parsePatch } from "../diffs/parse";
+import { type Comments, type LineComment, formatComment } from "./comments";
+import { CommentableDiff } from "./LineComments";
 import type { ChangedFile } from "./git";
 import { parseTarget } from "./target";
-import type { Turns } from "./turns";
+import type { Turn, Turns } from "./turns";
 import { Counts, plural, totals } from "./Counts";
 import styles from "./Changesets.module.css";
 import { useLoaded } from "./useLoaded";
@@ -22,9 +23,18 @@ import { useLoaded } from "./useLoaded";
 export function ChangesetPanel({
   target,
   turns,
-}: Pick<PanelProps, "target"> & { turns: Turns }) {
+  comments,
+  send,
+}: Pick<PanelProps, "target"> & {
+  turns: Turns;
+  comments: Comments;
+  /** Posts `text` to the turn's agent in its conversation; throws with the
+   * reason it could not. */
+  send(turn: Turn, text: string): void;
+}) {
   const link = useMemo(() => parseTarget(target), [target]);
   const found = link && turns.find(link.turn, link.checkout);
+  const draft = link ? `${link.turn}:${link.checkout}` : "";
   const [chosen, setChosen] = useState(link?.file);
   useEffect(() => setChosen(link?.file), [link?.file]);
   const listed = useLoaded(
@@ -53,6 +63,15 @@ export function ChangesetPanel({
     return <p role="alert">This changeset was recorded in another Buzz.</p>;
   const pending = listed.error === undefined && !files;
   const step = (by: number) => files && setChosen(files[index + by]?.path);
+  const post = (comment: Omit<LineComment, "id">) =>
+    send(
+      found.turn,
+      formatComment(
+        found.checkout.dir.split(/[\\/]/).filter(Boolean).at(-1) ??
+          found.checkout.dir,
+        comment,
+      ),
+    );
   return (
     <div className={styles.panel}>
       <InlineHeader
@@ -117,7 +136,15 @@ export function ChangesetPanel({
                 />
               </div>
             )}
-            <FileDiff file={file} patch={patch} parsed={parsed} />
+            <FileDiff
+              key={`${draft}:${file.path}`}
+              file={file}
+              patch={patch}
+              parsed={parsed}
+              comments={comments}
+              draft={draft}
+              send={post}
+            />
           </>
         )}
       </LoadingRegion>
@@ -129,6 +156,9 @@ function FileDiff({
   file,
   patch,
   parsed,
+  comments,
+  draft,
+  send,
 }: {
   file: ChangedFile;
   patch: {
@@ -137,6 +167,9 @@ function FileDiff({
     retry?: (() => void) | undefined;
   };
   parsed: ReturnType<typeof parsePatch>;
+  comments: Comments;
+  draft: string;
+  send(comment: Omit<LineComment, "id">): void;
 }) {
   if (file.binary)
     return <p className="text-body-sm">Binary file: no text diff to show.</p>;
@@ -154,6 +187,13 @@ function FileDiff({
   if (patch.value === undefined)
     return <p className="text-body-sm">Reading {file.path}…</p>;
   return (
-    <DiffViewer content={patch.value} files={parsed} filePath={file.path} />
+    <CommentableDiff
+      content={patch.value}
+      files={parsed}
+      path={file.path}
+      comments={comments}
+      draft={draft}
+      send={send}
+    />
   );
 }

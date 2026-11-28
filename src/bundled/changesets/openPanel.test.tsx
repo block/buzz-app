@@ -22,7 +22,7 @@ function registeredPanel() {
     host: { spawn: vi.fn() },
     effect: vi.fn(),
     relay: { snapshot: vi.fn(), subscribe: vi.fn() },
-    conversation: { registerAccessory: vi.fn() },
+    conversation: { registerAccessory: vi.fn(), registerTool: vi.fn() },
     panels: { register },
   } as unknown as Parameters<typeof apply>[0]);
   return {

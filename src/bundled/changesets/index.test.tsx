@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { isTauri } from "@tauri-apps/api/core";
 import { afterEach, expect, it, vi } from "vitest";
-import { apply } from "./index";
+import { apply, sendToAgent } from "./index";
+import type { Turn } from "./turns";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
@@ -50,4 +51,44 @@ it("adds the card and its panel on desktop", () => {
   ).toBe(true);
   expect(panel.matches("https://example.com/")).toBe(false);
   expect(ctx.effect).toHaveBeenCalledOnce();
+});
+
+const turn = {
+  agent: "A",
+  channelId: "c",
+  viewer: "me",
+  origin: "o",
+} as Turn;
+const relay = (origin = "o", viewer = "me") => {
+  const messages = { send: vi.fn(), reply: vi.fn() };
+  return {
+    messages,
+    relay: {
+      snapshot: () => ({
+        status: "ready",
+        origin,
+        session: { viewer, messages },
+      }),
+    } as unknown as Parameters<typeof sendToAgent>[0],
+  };
+};
+
+it("sends a comment to the turn's agent in its chat or thread", () => {
+  const top = relay();
+  sendToAgent(top.relay, turn, "hi");
+  expect(top.messages.send).toHaveBeenCalledWith("c", "hi", ["A"]);
+  const threaded = relay();
+  sendToAgent(threaded.relay, { ...turn, thread: "root" }, "hi");
+  expect(threaded.messages.reply).toHaveBeenCalledWith("c", "root", "hi", [
+    "A",
+  ]);
+});
+
+it("refuses to send from another community or account", () => {
+  for (const other of [relay("x"), relay("o", "you")]) {
+    expect(() => sendToAgent(other.relay, turn, "hi")).toThrow(
+      "Switch to the community and account",
+    );
+    expect(other.messages.send).not.toHaveBeenCalled();
+  }
 });

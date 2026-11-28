@@ -7,6 +7,7 @@ Shows the files a local agent changed during its reply, with a diff for each.
 1. Turn it on in **Settings → Plugins**. It works in the desktop app, for agents that run on this computer in a chat with project folders.
 2. After an agent finishes a turn, a card under its last message lists the files it changed with their added and removed lines.
 3. Choose a file to open its diff beside the chat.
+4. To ask the agent for changes, choose a line number in the diff, or the **+** beside a line, then drag or Shift-click to cover a range, and write a comment. **Send** posts it to the agent right away, mentioning it in the chat or thread where it worked, with the file, lines and code it points at. Sent comments stay on the diff while Buzz runs.
 
 ---
 

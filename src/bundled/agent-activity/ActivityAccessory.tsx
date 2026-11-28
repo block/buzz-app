@@ -374,6 +374,13 @@ function MessageWork(
           picture: avatarMedia(entry.picture, session.media),
         }))}
         picture={avatarMedia(primary.picture, session.media)}
+        responding={
+          shown.length > 0 &&
+          primary.working &&
+          (!primary.lifecycle || !!primary.step)
+            ? { source: primary.picture, media: session.media }
+            : undefined
+        }
         layout={props.messageLayout}
       >
         {shown.map((entry) => (

@@ -217,6 +217,15 @@ if that desktop app is up and running.
   model, and a model chosen beside Send still wins.
 - **While it works**, the agent shows typing dots, and you can stop it. If it
   can't finish, it says why and offers **Retry**.
+- **Animated avatars.** Uploaded animated avatars play beside the current
+  response, including in compact conversations, and in the expanded agent
+  profile. Hover or focus a conversation avatar to play it and its open profile
+  preview. Playback stops when the response or preview ends. Cards, sidebar
+  entries and idle replies use a still portrait. Reduce Motion keeps uploaded
+  avatars still. The still portrait stays visible while an animation loads or
+  if it cannot load. Playback supports loops up to 16 MiB, 512 pixels per side
+  and 128 frames, with a 64 MiB estimated decoded-frame budget. Larger loops
+  keep the still portrait.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents

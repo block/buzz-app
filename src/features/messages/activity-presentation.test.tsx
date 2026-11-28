@@ -10,10 +10,42 @@ import {
   type ActivityRowPresentation,
 } from "./activity-presentation";
 import { useActivityIndicator } from "./use-activity-indicator";
-import { useLiveConversationAgents } from "./TypingIndicator";
+import {
+  useLiveConversationAgents,
+  useLiveConversationActivity,
+} from "./TypingIndicator";
 import { agent, entry, fixture, root } from "./typing-indicator-testing";
 
 afterEach(cleanup);
+
+it("keeps waiting and starting cues still, and retires response playback with their exact request", () => {
+  const live = fixture();
+  const work = {
+    scope: "test",
+    agent,
+    channelId: "channel",
+    messageId: "request",
+    threadRootId: root,
+    startedAt: 1,
+  };
+  const { result } = renderHook(() =>
+    useLiveConversationActivity(live.session, "channel", root),
+  );
+  for (const state of ["waiting", "working"] as const) {
+    live.update([], { local: [{ ...work, state }] });
+    expect(result.current.agents).toEqual([agent]);
+    expect(result.current.responding).toEqual([]);
+  }
+  live.update([], {
+    local: [{ ...work, state: "working", step: { tool: "Thinking" } }],
+  });
+  expect(result.current.responding).toEqual([agent]);
+  for (const state of ["done", "error"] as const) {
+    live.update([entry()], { local: [{ ...work, state }] });
+    expect(result.current.agents).toEqual([]);
+    expect(result.current.responding).toEqual([]);
+  }
+});
 
 it("keeps row activity props identical while each projection's values are equal", () => {
   const { result } = renderHook(() => useStableRowActivity());

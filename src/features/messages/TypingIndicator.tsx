@@ -117,6 +117,21 @@ export function useLiveConversationAgents(
   threadRootId: string | undefined,
   includeThreads = true,
 ): readonly string[] {
+  return useLiveConversationActivity(
+    session,
+    channelId,
+    threadRootId,
+    includeThreads,
+  ).agents;
+}
+
+/** The same scoped cue owns its visible group avatar in compact conversations. */
+export function useLiveConversationActivity(
+  session: AgentSession,
+  channelId: string,
+  threadRootId: string | undefined,
+  includeThreads = true,
+) {
   const presented = usePresentedAgents(session, channelId, threadRootId);
   const presentedRequests = usePresentedRequests(session, channelId);
   const watchChannel = !threadRootId && !includeThreads;
@@ -153,7 +168,7 @@ export function useLiveConversationAgents(
       includeThreads,
       threadRootsOf(channelRowsOf(session, channelId, watchChannel)),
     );
-    return [...details.keys()]
+    const agents = [...details.keys()]
       .filter(
         (key) =>
           !presented.has(key) &&
@@ -166,11 +181,18 @@ export function useLiveConversationAgents(
             includeThreads,
           ),
       )
-      .sort()
-      .join(",");
+      .sort();
+    const responding = agents.filter((agent) => {
+      const label = details.get(agent)?.label;
+      return label !== "Received · waiting to start" && label !== "Starting";
+    });
+    return JSON.stringify([agents, responding]);
   };
   const key = useSyncExternalStore(subscribe, getKey, getKey);
-  return useMemo(() => (key ? key.split(",") : []), [key]);
+  return useMemo(() => {
+    const [agents, responding] = JSON.parse(key) as [string[], string[]];
+    return { agents, responding };
+  }, [key]);
 }
 
 /** Agents working in one conversation, over existing stores; no reads or capture. */
@@ -509,11 +531,12 @@ export function TypingIndicator({
         )}${humans.length > 2 ? ` and ${humans.length - 2} others` : ""}${humans.length === 1 ? " is typing" : " are typing"}`
     : "";
   const firstStep = firstAgent ? details.get(firstAgent)?.label : undefined;
+  const waiting =
+    firstStep === "Received · waiting to start" || firstStep === "Starting";
   const previewText =
     (firstAgent && replaced.has(firstAgent)) ||
     firstStep === "Working" ||
-    firstStep === "Received · waiting to start" ||
-    firstStep === "Starting"
+    waiting
       ? undefined
       : firstStep;
   const visibleStep = activityStepLabel(previewText);
@@ -558,6 +581,14 @@ export function TypingIndicator({
                 profiles.get(firstAgent)?.picture,
                 session.media,
               )}
+              responding={
+                waiting
+                  ? undefined
+                  : {
+                      source: profiles.get(firstAgent)?.picture,
+                      media: session.media,
+                    }
+              }
               layout={threadRootId ? "thread" : "timeline"}
             >
               <AgentChooser
@@ -580,13 +611,7 @@ export function TypingIndicator({
                         />
                       )
                     }
-                    state={
-                      details.get(firstAgent)?.label ===
-                        "Received · waiting to start" ||
-                      details.get(firstAgent)?.label === "Starting"
-                        ? "waiting"
-                        : "working"
-                    }
+                    state={waiting ? "waiting" : "working"}
                     text={previewText}
                   />
                 }

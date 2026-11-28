@@ -28,6 +28,7 @@ import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 vi.mock("./TypingIndicator", () => ({
   TypingIndicator: () => null,
   useLiveConversationAgents: () => [],
+  useLiveConversationActivity: () => ({ agents: [], responding: [] }),
 }));
 vi.mock("./use-reading", () => ({
   useReading: vi.fn(),

@@ -125,7 +125,9 @@ if that desktop app is up and running.
   folder and **/** a skill. Attach files by pasting or dragging them in. Typed
   Markdown formats as you type; **Settings → Appearance → Disable formatting
   while typing** leaves it as plain characters until you send, and hides the
-  formatting toolbar.
+  formatting toolbar. Emoticons such as :) or ;P become emoji when you type a
+  space after them or send; undo right away to keep the text, or turn it
+  off in **Appearance**.
 - **Drafts.** Every message box open on a conversation shares its draft. A box
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my

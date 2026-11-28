@@ -20,6 +20,7 @@ import {
 } from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { Node as EditorNode } from "prosemirror-model";
+import { emoticonPreference } from "./emoticon-preference";
 import { MessageMarkdown } from "./MessageMarkdown";
 import {
   EditableInput,
@@ -5060,4 +5061,36 @@ describe("quoting timeline content", () => {
     expect(onPasteTooLong).toHaveBeenCalledOnce();
     expect(h.markdown()).toBe("keep");
   });
+});
+
+it.each([
+  ["", false],
+  [" while Markdown stays as typed", true],
+])(
+  "converts a typed emoticon on Space%s, and one undo restores it",
+  async (_, asTyped) => {
+    try {
+      act(() => setMarkdownAsTypedPreference(asTyped));
+      const h = mount();
+      await h.user.keyboard("nice :) ");
+      expect(h.input).toHaveValue("nice 🙂 ");
+      act(() => h.input.undo(false));
+      expect(h.input).toHaveValue("nice :) ");
+    } finally {
+      act(() => setMarkdownAsTypedPreference(false));
+      localStorage.removeItem("buzz-message-markdown-as-typed.v1");
+    }
+  },
+);
+
+it("keeps typed emoticons when conversion is turned off", async () => {
+  emoticonPreference.set(false);
+  try {
+    const h = mount();
+    await h.user.keyboard(":) :P");
+    act(() => h.input.convertEmoticon());
+    expect(h.input).toHaveValue(":) :P");
+  } finally {
+    emoticonPreference.set(true);
+  }
 });

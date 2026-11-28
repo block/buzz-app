@@ -33,6 +33,7 @@ import {
   setMessageAutocorrectPreference,
   useMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
+import { emoticonPreference } from "../features/messages/emoticon-preference";
 import {
   setMarkdownAsTypedPreference,
   useMarkdownAsTypedPreference,
@@ -91,6 +92,8 @@ export function AppearanceSettings({
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const markdownAsTyped = useMarkdownAsTypedPreference();
+  const emoticons = emoticonPreference.usePreference();
+  const emoticonSaveError = emoticonPreference.useSaveError();
   const unreadFirst = useUnreadFirstPreference();
   const deviceSearch = useDeviceSearchPreference();
   const messageSort = useMessageSortPreference();
@@ -509,6 +512,12 @@ export function AppearanceSettings({
               onCheckedChange={setMarkdownAsTypedPreference}
             />
             <SwitchPreferenceRow
+              label="Convert emoticons to emoji"
+              description="Turns :) and ;P into emoji when you type a space after them or send."
+              checked={emoticons}
+              onCheckedChange={emoticonPreference.set}
+            />
+            <SwitchPreferenceRow
               label="Show unread first in search"
               description="With nothing typed, search leads with unread channels and DMs and selects the newest."
               checked={unreadFirst.enabled}
@@ -615,6 +624,20 @@ export function AppearanceSettings({
               }
             >
               Retry saving formatting preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && emoticonSaveError && (
+          <ToastNotice
+            title="Emoticon preference wasn’t saved"
+            description={emoticonSaveError}
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => emoticonPreference.set(emoticons)}
+            >
+              Retry saving emoticon conversion
             </Button>
           </ToastNotice>
         )}

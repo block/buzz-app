@@ -35,6 +35,7 @@ it("offers appearance and the message and agent preferences, and nothing else", 
     },
     { key: "conversations.autocorrect", value: false, saved: true },
     { key: "conversations.disable_live_formatting", value: false, saved: true },
+    { key: "conversations.emoticons", value: true, saved: true },
     { key: "agents.remember_mentioned", value: true, saved: true },
     { key: "search.unread_first", value: true, saved: true },
     { key: "search.device_messages", value: false, saved: true },
@@ -147,6 +148,7 @@ it("changes the message and agent preferences through their own setters", () => 
   const events = [
     "buzz-follow-up-behavior-changed",
     "buzz-message-autocorrect-changed",
+    "buzz-convert-emoticons-changed",
     "buzz-remember-mentioned-agents-changed",
   ];
   for (const event of events) window.addEventListener(event, changed);
@@ -154,10 +156,12 @@ it("changes the message and agent preferences through their own setters", () => 
     "queue",
   );
   expect(set(settings, "conversations.autocorrect", true).value).toBe(true);
+  expect(set(settings, "conversations.emoticons", false).value).toBe(false);
   expect(set(settings, "agents.remember_mentioned", false).value).toBe(false);
-  expect(changed).toHaveBeenCalledTimes(3);
+  expect(changed).toHaveBeenCalledTimes(4);
   expect(localStorage.getItem("buzz-follow-up-behavior.v1")).toBe("queue");
   expect(localStorage.getItem("buzz-message-autocorrect.v1")).toBe("on");
+  expect(localStorage.getItem("buzz-convert-emoticons.v1")).toBe("off");
   expect(localStorage.getItem("buzz-remember-mentioned-agents.v1")).toBe("off");
   // Booleans take only true or false, not their stored spelling.
   for (const value of ["on", "off", 1, 0])
@@ -170,6 +174,7 @@ it("changes the message and agent preferences through their own setters", () => 
   for (const [key, value] of [
     ["conversations.follow_up_behavior", "immediate"],
     ["conversations.autocorrect", false],
+    ["conversations.emoticons", true],
     ["agents.remember_mentioned", true],
   ] as const)
     expect(set(settings, key, value)).toMatchObject({
@@ -182,6 +187,7 @@ it("changes the message and agent preferences through their own setters", () => 
   for (const key of [
     "conversations.follow_up_behavior",
     "conversations.autocorrect",
+    "conversations.emoticons",
     "agents.remember_mentioned",
   ])
     expect(set(settings, key, settings.get(key).value).saved).toBe(true);

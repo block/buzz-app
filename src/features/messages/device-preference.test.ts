@@ -2,6 +2,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { editKeyPreference } from "./edit-key-preference";
+import { emoticonPreference } from "./emoticon-preference";
 import { sendKeyPreference } from "./send-key-preference";
 
 const preferences = [
@@ -107,4 +108,18 @@ it("isolates unsaved choices and their save errors, and ignores unrelated storag
   expect(edit.result.current).toBe(false);
   expect(editError.result.current).toBeNull();
   expect(send.result.current).toBe(true);
+});
+
+it("keeps a default-on choice on unless it is saved off", () => {
+  const key = "buzz-convert-emoticons.v1";
+  expect(emoticonPreference.read()).toBe(true);
+  localStorage.setItem(key, "unknown");
+  expect(emoticonPreference.read()).toBe(true);
+  localStorage.setItem(key, "off");
+  expect(emoticonPreference.read()).toBe(false);
+  localStorage.removeItem(key);
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("unavailable");
+  });
+  expect(emoticonPreference.read()).toBe(true);
 });

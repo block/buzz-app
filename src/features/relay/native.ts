@@ -25,6 +25,7 @@ import {
   UPLOAD_TIMEOUT_MS,
   UploadError,
   UPLOAD_MAX_BYTES,
+  uploadVoiceNoteM4a,
   validateUploadResult,
   type UploadProgress,
 } from "./attachments";
@@ -331,13 +332,18 @@ async function nativeAttachmentUpload(
     : heic
       ? "mov"
       : videoDemuxer(header);
+  const direct = hostUpload(
+    (item, bounded, report) =>
+      nativeUpload(origin, item, bounded, undefined, report),
+    origin,
+  );
   if (!demuxer) {
     if (voice || file.type.startsWith("video/")) throw new UploadError("video");
-    return hostUpload(
-      (item, bounded, report) =>
-        nativeUpload(origin, item, bounded, undefined, report),
-      origin,
-    )(file, signal, progress);
+    return direct(file, signal, progress);
+  }
+  if (voice) {
+    const uploaded = await uploadVoiceNoteM4a(file, signal, progress, direct);
+    if (uploaded) return uploaded;
   }
   // Native preparation has its own 600 s deadline; leave a separate upload
   // budget, as broker prepareMedia + hostUpload do.

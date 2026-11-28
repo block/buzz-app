@@ -4,6 +4,8 @@ import {
   videoDemuxer,
   VIDEO_PREPARATION_MS,
 } from "./video-preparation.ts";
+import { MAX_VOICE_UPLOAD_SECONDS } from "./voice-media.ts";
+import { encodeVoiceNoteM4a } from "./voice-m4a.ts";
 import { IMETA_DIM, safeAttachmentName } from "./message-content.ts";
 
 import {
@@ -20,6 +22,8 @@ export type UploadedAttachment = Readonly<{
   size: number;
   sha256: string;
   dim?: string;
+  /** The relay's stored audio/video duration, which imeta `duration` must match. */
+  duration?: number;
   voice?: Readonly<{ duration: number; waveform: readonly number[] }>;
 }>;
 /** A descriptor read back from device storage. */
@@ -123,6 +127,11 @@ export function validateUploadResult(
     ...(typeof v.dim === "string" && IMETA_DIM.test(v.dim)
       ? { dim: v.dim }
       : {}),
+    ...(typeof v.duration === "number" &&
+    Number.isFinite(v.duration) &&
+    v.duration > 0
+      ? { duration: v.duration }
+      : {}),
   });
 }
 /** A file's name as relay filename metadata takes it: a basename capped at
@@ -222,18 +231,47 @@ export function brokerUpload(
   origin: string,
   send: typeof fetch = fetch,
 ): AttachmentUpload {
-  return hostUpload(
-    (file, signal) =>
-      send(`${endpoint}/upload`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-        signal,
-      }),
-    origin,
-    (file, signal) => prepareMedia(file, endpoint, signal),
+  const post = (file: File, signal: AbortSignal) =>
+    send(`${endpoint}/upload`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+      signal,
+    });
+  const direct = hostUpload(post, origin);
+  const prepared = hostUpload(post, origin, (file, signal) =>
+    prepareMedia(file, endpoint, signal),
   );
+  return async (file, signal, progress) =>
+    (isVoiceNote(file.name) &&
+      (await uploadVoiceNoteM4a(file, signal, progress, direct))) ||
+    prepared(file, signal, progress);
+}
+
+/** Relays that predate `audio/mp4` reject it; the legacy conversion still works there. */
+const VOICE_M4A_FALLBACK: ReadonlySet<UploadCode> = new Set([
+  "rejected",
+  "codec",
+  "metadata",
+]);
+/** Upload a WAV voice note as an AAC `.m4a`. `undefined` means this platform
+ * or relay cannot take it, so the caller runs the legacy ffmpeg conversion. */
+export async function uploadVoiceNoteM4a(
+  file: File,
+  signal: AbortSignal,
+  progress: UploadProgress | undefined,
+  upload: AttachmentUpload,
+): Promise<UploadedAttachment | undefined> {
+  const m4a = await encodeVoiceNoteM4a(file, signal);
+  if (!m4a) return undefined;
+  try {
+    return await upload(m4a, signal, progress);
+  } catch (error) {
+    if (error instanceof UploadError && VOICE_M4A_FALLBACK.has(error.code))
+      return undefined;
+    throw error;
+  }
 }
 
 /** Shared upload policy for any host that signs and sends the exact bytes it
@@ -365,7 +403,7 @@ function validateVoiceMetadata(
   if (
     !Number.isFinite(voice.duration) ||
     voice.duration <= 0 ||
-    voice.duration > 300.1 ||
+    voice.duration > MAX_VOICE_UPLOAD_SECONDS ||
     !Array.isArray(voice.waveform) ||
     !voice.waveform.length ||
     voice.waveform.length > 100 ||

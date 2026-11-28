@@ -1,0 +1,60 @@
+@reference "../../shared/styles/globals.css";
+
+/* Fills its panel whether the host lays that out as a flex column or a grid. */
+.canvas {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-height: var(--size-row);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-standard);
+}
+.status {
+  flex: 1;
+  min-width: 8rem;
+  color: var(--text-subtle);
+}
+.status[data-driving] {
+  color: var(--text-standard);
+  font-weight: var(--type-weight-medium);
+}
+.stage {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+.empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.error {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-danger);
+}

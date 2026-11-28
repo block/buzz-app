@@ -1,0 +1,99 @@
+@reference "../../../shared/styles/globals.css";
+
+.fill {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.address {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-standard);
+}
+.address > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.hint {
+  margin: auto;
+  padding: var(--space-4);
+  color: var(--text-subtle);
+  text-align: center;
+}
+.frame,
+.video {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+}
+.video {
+  background: var(--bg-media-canvas);
+}
+.map {
+  position: relative;
+  flex: 1;
+  min-height: 12rem;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+.map[data-dragging] {
+  cursor: grabbing;
+}
+.tile {
+  position: absolute;
+  width: 256px;
+  height: 256px;
+  max-width: none;
+  pointer-events: none;
+}
+.pin {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  pointer-events: none;
+}
+.pinLabel {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-popover);
+  color: var(--text-standard);
+  font-size: var(--type-xsmall-size);
+}
+.pinDot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 2px solid var(--surface-popover);
+  border-radius: 50%;
+  background: var(--text-danger);
+}
+.mapControls {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.credit {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 0 var(--space-1);
+  background: var(--surface-popover);
+  color: var(--text-subtle);
+  font-size: var(--type-xsmall-size);
+}

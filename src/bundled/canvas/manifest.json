@@ -1,0 +1,7 @@
+{
+  "id": "buzz.canvas",
+  "name": "Canvas",
+  "apiVersion": 1,
+  "description": "Share web pages, maps, video and other views beside a conversation. One person or agent drives, and everyone else chooses whether to follow.",
+  "discovery": { "category": "communication" }
+}

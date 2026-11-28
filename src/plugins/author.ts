@@ -29,6 +29,8 @@ export type {
   PagePreviewProps,
   PageSidebarProps,
   Pages,
+  QuickView,
+  QuickViewProps,
 } from "../features/pages/service";
 export type { Seen } from "../features/seen/service";
 export type { Backdrop, Backdrops } from "../features/backdrops/service";

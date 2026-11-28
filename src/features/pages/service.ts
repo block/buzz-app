@@ -83,8 +83,32 @@ export type PagesReader = {
  * system's toasts and dialogs work in it. */
 export type AppOverlay = Readonly<{ id: string; component: ComponentType }>;
 export type RegisteredOverlay = Contribution<AppOverlay>;
+/** Props for a plugin's quick view body. */
+export type QuickViewProps = {
+  /** Close the quick view, for example after its content opened something. */
+  close(): void;
+};
+/** A plugin's body for a host-drawn command palette style dialog. The host owns
+ * the frame, focus, Escape and outside clicks; the plugin owns only the body. */
+export type QuickView = Readonly<{
+  id: string;
+  /** The dialog's accessible name. The palette shows no visible header. */
+  title: string;
+  component: ComponentType<QuickViewProps>;
+}>;
+export type RegisteredQuickView = Contribution<QuickView>;
 export type Pages = PagesReader & {
   register(page: Page): void;
+  registerQuickView(view: QuickView): void;
+  /** Open one of the calling plugin's own quick views, replacing any other. */
+  openQuickView(id: string): void;
+  readonly quickViews: Readonly<{
+    snapshot: () => readonly RegisteredQuickView[];
+    subscribe: (listener: () => void) => () => void;
+    /** The open quick view, if it is still registered and active. */
+    open: () => RegisteredQuickView | undefined;
+    close: () => void;
+  }>;
   /** Bundled plugins only. */
   registerOverlay(overlay: AppOverlay): void;
   readonly overlays: Readonly<{
@@ -103,15 +127,77 @@ const dataImageUrl = /^data:image\/[\w.+-]+(?:;[^,]*)?,/i;
 export class PagesService extends Service implements Pages {
   private readonly contributions;
   private readonly overlayContributions;
+  private readonly quickViewContributions;
+  // Held in one object: plugins call through scoped views of this service.
+  private readonly quickViewState: {
+    key: string | undefined;
+    readonly listeners: Set<() => void>;
+  } = { key: undefined, listeners: new Set() };
   constructor(ctx: Context) {
     super(ctx, "pages");
     this.contributions = createContributions<Page>(ctx);
     this.overlayContributions = createContributions<AppOverlay>(ctx);
+    this.quickViewContributions = createContributions<QuickView>(ctx);
     // Read-only: registering goes through `registerOverlay`'s check.
     const { snapshot, subscribe } = this.overlayContributions;
     this.overlays = Object.freeze({ snapshot, subscribe });
+    const quickViews = this.quickViewContributions;
+    const openEntry = () =>
+      this.quickViewState.key === undefined
+        ? undefined
+        : quickViews
+            .snapshot()
+            .find((entry) => entry.key === this.quickViewState.key);
+    // A quick view whose plugin stops closes, and doesn't reopen on restart.
+    ctx.effect(() =>
+      quickViews.subscribe(() => {
+        if (this.quickViewState.key !== undefined && !openEntry())
+          this.setOpenQuickView(undefined);
+      }),
+    );
+    this.quickViews = Object.freeze({
+      snapshot: quickViews.snapshot,
+      subscribe: (listener: () => void) => {
+        const stop = quickViews.subscribe(listener);
+        this.quickViewState.listeners.add(listener);
+        return () => {
+          stop();
+          this.quickViewState.listeners.delete(listener);
+        };
+      },
+      open: openEntry,
+      close: () => this.setOpenQuickView(undefined),
+    });
   }
   readonly overlays;
+  readonly quickViews;
+  private setOpenQuickView(key: string | undefined) {
+    if (key === this.quickViewState.key) return;
+    this.quickViewState.key = key;
+    for (const listener of this.quickViewState.listeners) listener();
+  }
+  registerQuickView(view: QuickView) {
+    if (
+      !view ||
+      typeof view.id !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(view.id) ||
+      typeof view.title !== "string" ||
+      !view.title.trim() ||
+      typeof view.component !== "function"
+    )
+      throw new Error(
+        "A quick view needs an id, a title, and a React component function",
+      );
+    this.quickViewContributions.register(this.ctx, view);
+  }
+  openQuickView(id: string) {
+    const owner = this.ctx.pluginOwner;
+    if (!owner) throw new Error("Only a plugin can open its quick views");
+    const key = `${owner.id}/${id}`;
+    if (!this.quickViewContributions.snapshot().some((e) => e.key === key))
+      throw new Error(`No active quick view ${key}`);
+    this.setOpenQuickView(key);
+  }
   registerOverlay(overlay: AppOverlay) {
     if (!this.ctx.pluginOwner || !isBundledOwner(this.ctx.pluginOwner))
       throw new Error("App overlays are available only to bundled plugins");

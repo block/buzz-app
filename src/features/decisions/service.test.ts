@@ -625,3 +625,58 @@ it("stops waiting at the deadline and aborts the provider", async () => {
   expect(signal?.aborted).toBe(true);
   expect(timers).toEqual([]);
 });
+
+it("cancels through caller signal before provider setup finishes without sending message context", async () => {
+  const { service, plugin } = setup();
+  let status: "checking" | "ready" = "checking";
+  const listeners = new Set<() => void>();
+  const decide = vi.fn(async () => reply);
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
+    status: () => status,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    decide,
+  });
+  const controller = new AbortController();
+  const pending = service.decide(request, { signal: controller.signal });
+  await flush();
+  expect(decide).not.toHaveBeenCalled();
+
+  controller.abort();
+  await expect(pending).resolves.toEqual({
+    outcome: "failed",
+    backend: "buzz.typesafe/typesafe",
+    reason: "cancelled",
+  });
+  // Becoming ready later must never dispatch the abandoned request.
+  status = "ready";
+  for (const listener of listeners) listener();
+  await flush();
+  expect(decide).not.toHaveBeenCalled();
+});
+
+it("aborts an in-flight provider when the caller signal aborts", async () => {
+  const { service, plugin } = setup();
+  let providerSignal: AbortSignal | undefined;
+  await plugin("buzz.typesafe", {
+    id: "typesafe",
+    decide: (_request, options) => {
+      providerSignal = options.signal;
+      return new Promise(() => {});
+    },
+  });
+  const controller = new AbortController();
+  const pending = service.decide(request, { signal: controller.signal });
+  await flush();
+  expect(providerSignal?.aborted).toBe(false);
+  controller.abort();
+  await expect(pending).resolves.toEqual({
+    outcome: "failed",
+    backend: "buzz.typesafe/typesafe",
+    reason: "cancelled",
+  });
+  expect(providerSignal?.aborted).toBe(true);
+});

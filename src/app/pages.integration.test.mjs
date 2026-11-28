@@ -145,6 +145,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.drafts-and-sent",
           "buzz.changesets",
           "buzz.performance-diagnostics",
+          "buzz.smart-routing",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );

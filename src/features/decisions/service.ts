@@ -71,6 +71,7 @@ export type DecisionFailure =
   | "invalid_request"
   | "input_limit"
   | "timeout"
+  | "cancelled"
   | "service_error"
   | "invalid_response";
 const FAILURES: readonly DecisionFailure[] = [
@@ -80,6 +81,7 @@ const FAILURES: readonly DecisionFailure[] = [
   "invalid_request",
   "input_limit",
   "timeout",
+  "cancelled",
   "service_error",
   "invalid_response",
 ];
@@ -151,7 +153,10 @@ export type DecisionProvider = Readonly<{
 
 /** What plugins get as `ctx.decisions`. `decide` never rejects. */
 export interface Decisions {
-  decide(request: DecisionRequest): Promise<DecisionResult>;
+  decide(
+    request: DecisionRequest,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<DecisionResult>;
   /** The key of the provider that answers this device's decisions, or
    * undefined when none is registered. */
   backend(): string | undefined;
@@ -388,11 +393,16 @@ export class DecisionsService extends Service implements Decisions {
     this.listeners.add(listener);
     return () => void this.listeners.delete(listener);
   };
-  async decide(request: DecisionRequest): Promise<DecisionResult> {
+  async decide(
+    request: DecisionRequest,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<DecisionResult> {
     let provider = this.current();
     let backend = provider?.key;
     const failed = (reason: DecisionFailure): DecisionResult =>
       Object.freeze({ outcome: "failed", backend, reason });
+    const caller = options?.signal;
+    if (caller?.aborted) return failed("cancelled");
     if (!provider) return failed("unavailable");
     const invalid = checkRequest(request);
     if (invalid) return failed(invalid);
@@ -406,34 +416,56 @@ export class DecisionsService extends Service implements Decisions {
       ),
     );
     const abort = new AbortController();
+    const signal = caller
+      ? AbortSignal.any([abort.signal, caller])
+      : abort.signal;
     let stopTimer = () => {};
+    let stopAbort = () => {};
     const deadline = new Promise<"timeout">((resolve) => {
       stopTimer = this.setTimer(() => resolve("timeout"), timeoutMs);
     });
+    const cancelled = caller
+      ? new Promise<"cancelled">((resolve) => {
+          if (caller.aborted) return resolve("cancelled");
+          const onAbort = () => resolve("cancelled");
+          caller.addEventListener("abort", onAbort, { once: true });
+          stopAbort = () => caller.removeEventListener("abort", onAbort);
+        })
+      : undefined;
     let reply: unknown;
     try {
+      const work = this.known(signal).then(
+        (): DecisionReply | Promise<DecisionReply> => {
+          // Past the deadline or cancelled: never send the request anywhere.
+          if (caller?.aborted)
+            return { outcome: "failed", reason: "cancelled" };
+          if (abort.signal.aborted)
+            return { outcome: "failed", reason: "timeout" };
+          provider = this.current();
+          backend = provider?.key;
+          if (!provider) return { outcome: "failed", reason: "unavailable" };
+          return provider.decide(Object.freeze({ ...request, timeoutMs }), {
+            signal,
+          });
+        },
+      );
+      void work.catch(() => {});
       reply = await Promise.race([
         // A provider still checking its setup may stop answering, or a
         // default may start to: route once it knows, within the deadline.
-        this.known(abort.signal).then(
-          (): DecisionReply | Promise<DecisionReply> => {
-            // Past the deadline: never send the request anywhere.
-            if (abort.signal.aborted)
-              return { outcome: "failed", reason: "timeout" };
-            provider = this.current();
-            backend = provider?.key;
-            if (!provider) return { outcome: "failed", reason: "unavailable" };
-            return provider.decide(Object.freeze({ ...request, timeoutMs }), {
-              signal: abort.signal,
-            });
-          },
-        ),
+        work,
         deadline,
+        ...(cancelled ? [cancelled] : []),
       ]);
     } catch {
-      return failed("service_error");
+      return failed(caller?.aborted ? "cancelled" : "service_error");
     } finally {
       stopTimer();
+      stopAbort();
+    }
+    if (reply === "cancelled" || caller?.aborted) {
+      abort.abort();
+      return failed("cancelled");
     }
     if (reply === "timeout") {
       abort.abort();

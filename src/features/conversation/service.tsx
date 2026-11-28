@@ -420,6 +420,8 @@ export class ConversationService extends Service implements Conversation {
     validate(value);
     if (
       typeof value.matches !== "function" ||
+      (value.subscribe !== undefined &&
+        typeof value.subscribe !== "function") ||
       (value.icon !== undefined && typeof value.icon !== "function") ||
       (value.marker !== undefined && typeof value.marker !== "function")
     )

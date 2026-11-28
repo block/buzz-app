@@ -1,0 +1,35 @@
+.marker {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: var(--space-1);
+  flex: none;
+  color: var(--text-metadata);
+  user-select: none;
+}
+
+.marker[data-undelivered="true"] {
+  color: var(--text-warning);
+}
+
+.arrow {
+  display: block;
+  flex: none;
+}
+
+.avatar {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.warningDot {
+  position: absolute;
+  right: calc(var(--space-half) * -1);
+  bottom: calc(var(--space-half) * -1);
+  width: var(--space-1h);
+  height: var(--space-1h);
+  border-radius: var(--radius-pill);
+  background: var(--text-warning);
+  box-shadow: 0 0 0 1.5px var(--surface-base);
+}

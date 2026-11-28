@@ -277,6 +277,9 @@ export type MessageAction = Readonly<{
   title: string;
   icon?: ComponentType;
   matches(message: ChannelMessage, session: RelaySession): boolean;
+  /** Notifies rendered rows when `matches` may give a different answer for an
+   * already visible message, such as after an asynchronous check settles. */
+  subscribe?: (listener: () => void) => () => void;
   /** `menu` mounts inside the menu. `toolbar` uses a host icon button.
    * Without a placement, the host adds a menu entry that opens the component. */
   placement?: "menu" | "toolbar";

@@ -2960,6 +2960,79 @@ it("contains a broken plugin message action to its own contribution", () => {
   }
 });
 
+it("refreshes a rendered row when a subscribed plugin message action begins matching", async () => {
+  let ready = false;
+  const matchListeners = new Set<() => void>();
+  const action = {
+    id: "async-routing",
+    title: "Async routing",
+    key: "test.plugin/async-routing",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: (message: { id: string }) => ready && message.id === row.id,
+    subscribe(listener: () => void) {
+      matchListeners.add(listener);
+      return () => void matchListeners.delete(listener);
+    },
+    component: () => <div>routing details</div>,
+    marker: () => <span>routed mark</span>,
+  };
+  const none: never[] = [];
+  const registered = [action];
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          actions: { snapshot: () => registered, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    expect(screen.queryByText("routed mark")).toBeNull();
+
+    ready = true;
+    act(() => {
+      for (const listener of matchListeners) listener();
+    });
+    expect(screen.getByText("routed mark")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "More message actions" }),
+    );
+    await screen.findByRole("menu");
+    expect(
+      screen.getByRole("menuitem", { name: "Async routing" }),
+    ).toBeInTheDocument();
+  } finally {
+    cleanup();
+  }
+});
+
 it("contains a throwing plugin action icon and opened component", async () => {
   const broken = () => {
     throw new Error("broken contribution");

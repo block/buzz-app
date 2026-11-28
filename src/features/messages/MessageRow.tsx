@@ -602,6 +602,46 @@ function MessageRowContent({
         }
       })
     : [];
+  const [, setActionMatchKeys] = useState(() =>
+    actions.map((action) => action.key).join("\0"),
+  );
+  useEffect(() => {
+    if (!session) return;
+    const subscribed = registeredActions.filter((action) => action.subscribe);
+    if (!subscribed.length) return;
+    const stops: (() => void)[] = [];
+    const check = () => {
+      const next = registeredActions
+        .filter((action) => {
+          try {
+            return action.matches(row, session);
+          } catch {
+            return false;
+          }
+        })
+        .map((action) => action.key)
+        .join("\0");
+      setActionMatchKeys(next);
+    };
+    for (const action of subscribed) {
+      try {
+        const stop = action.subscribe?.(check);
+        if (typeof stop === "function") stops.push(stop);
+      } catch {
+        // A broken optional action leaves the row usable.
+      }
+    }
+    check();
+    return () => {
+      for (const stop of stops) {
+        try {
+          stop();
+        } catch {
+          // Ignore teardown failures from optional actions.
+        }
+      }
+    };
+  }, [registeredActions, row, session]);
   // The instance, not its key: a reinstalled plugin must not reopen a dialog.
   const [openAction, setOpenAction] = useState<{
     action: (typeof actions)[number];

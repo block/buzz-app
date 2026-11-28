@@ -11874,6 +11874,30 @@ describe("a turn closing or reloading the app stopped", () => {
       "watch",
       "mention",
     ]);
+    // Delivery eligibility tracks whether this copy actually runs the agent.
+    expect(app.ctx.agents.canDeliverMention?.(bot)).toBe(true);
+    expect(app.ctx.agents.canDeliverMention?.("f".repeat(64))).toBe(false);
+  });
+
+  it("reports canDeliverMention false for a local agent whose type has no runner", async () => {
+    const noRunner = {
+      ...echo,
+      pubkey: sibling,
+      name: "Other",
+      type: "other/missing",
+    };
+    const app = await setup({ identities: [echo, noRunner] });
+    try {
+      expect(app.service.snapshot().running.map((a) => a.pubkey)).toEqual(
+        expect.arrayContaining([echo.pubkey, noRunner.pubkey]),
+      );
+      await vi.waitFor(() =>
+        expect(app.ctx.agents.canDeliverMention?.(echo.pubkey)).toBe(true),
+      );
+      expect(app.ctx.agents.canDeliverMention?.(noRunner.pubkey)).toBe(false);
+    } finally {
+      await app.ctx.fiber.dispose();
+    }
   });
 
   it.each([false, true])(

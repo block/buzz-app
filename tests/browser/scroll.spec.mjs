@@ -339,7 +339,7 @@ readingTest(
 );
 
 test("cursor paging preserves visible anchors and keeps a large history virtualized", {
-  tag: "@local-webkit",
+  tag: "@macos-webkit",
 }, async ({ page, app, browserName }) => {
   const ahead = await open(page, app);
   await observeWork(page);
@@ -518,7 +518,6 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
 
 editTest(
   "live edits follow the bottom without stealing a reader's message anchor",
-  { tag: "@local-webkit" },
   async ({ page, app }) => {
     await open(page, app);
     await end(page);

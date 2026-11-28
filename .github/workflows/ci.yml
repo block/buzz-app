@@ -463,9 +463,11 @@ jobs:
 
   media_recorder:
     if: github.event_name != 'workflow_dispatch'
-    name: WebKit recording (macOS)
-    # Playwright disables ENABLE_MEDIA_RECORDER in its GTK/WPE builds.
-    # Keep the real recorder and every assertion on the supported WebKit host.
+    name: WebKit (macOS)
+    # Playwright disables ENABLE_MEDIA_RECORDER in its GTK/WPE builds, and
+    # Linux WebKit's wheel scrolling exceeds the 120s per-test timeout on the
+    # 640-row cursor-paging measurement. Keep both real WebKit suites and every
+    # assertion on this macOS runner.
     runs-on: macos-15
     timeout-minutes: 10
     steps:
@@ -479,12 +481,20 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="WebKit recording (macOS)" -- ./bin/pnpm test:browser --project webkit --grep @media-recorder --no-deps --reporter=list,json
+      # Separate outputDir keeps this serial invocation from clearing the
+      # recording evidence and report written above.
+      - name: macOS WebKit measurements
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser-macos-webkit/ci-report.json
+        run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser-macos-webkit/ci-report.json evidence=test-results/browser-macos-webkit/ci-timing.json title="WebKit measurements (macOS)" -- ./bin/pnpm test:browser --project webkit-measurements --grep @macos-webkit --no-deps --workers=1 --output=test-results/browser-macos-webkit --reporter=list,json
       - name: Recording evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: browser-media-recorder-webkit
-          path: test-results/browser
+          path: |
+            test-results/browser
+            test-results/browser-macos-webkit
           retention-days: 7
 
   # Advisory flake check: repeat the tests a pull request changes. These lanes

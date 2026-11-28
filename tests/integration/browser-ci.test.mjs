@@ -179,6 +179,176 @@ test("Linux shards and macOS recording discover every CI functional test/project
   );
 });
 
+test("Linux and macOS measurements discover every Chromium and WebKit measurement test exactly once without clearing recording evidence", () => {
+  const parsed = parse(workflow);
+  const linuxStep = parsed.jobs.measurements.steps.find(
+    (entry) => entry.name === "Serial Chromium and WebKit measurements",
+  );
+  assert.ok(linuxStep, "Linux measurement step must exist");
+  assert.equal(linuxStep.if, undefined);
+  assert.equal(linuxStep["continue-on-error"], undefined);
+  const linuxCommand = linuxStep.run.match(
+    /^\.\/bin\/node scripts\/ci-test-report\.mjs kind=playwright report=(\S+) evidence=\S+ title="[^"]+" -- (\.\/bin\/pnpm test:browser:ci .+)$/,
+  );
+  assert.ok(
+    linuxCommand,
+    "Linux measurement step must report through ci-test-report",
+  );
+  const [, linuxReport, linuxInvocation] = linuxCommand;
+  assert.equal(linuxStep.env.PLAYWRIGHT_JSON_OUTPUT_FILE, linuxReport);
+
+  const macSteps = parsed.jobs.media_recorder.steps;
+  const recordingIndex = macSteps.findIndex(
+    (entry) => entry.name === "Recording journeys",
+  );
+  const macStep = macSteps.find(
+    (entry) => entry.name === "macOS WebKit measurements",
+  );
+  assert.ok(
+    recordingIndex >= 0 && macStep,
+    "both macOS WebKit steps must exist",
+  );
+  assert.ok(
+    macSteps.indexOf(macStep) > recordingIndex,
+    "macOS WebKit measurements run after recording journeys",
+  );
+  assert.equal(macStep.if, undefined);
+  assert.equal(macStep["continue-on-error"], undefined);
+  const macCommand = macStep.run.match(
+    /^\.\/bin\/node scripts\/ci-test-report\.mjs kind=playwright report=(\S+) evidence=(\S+) title="[^"]+" -- (\.\/bin\/pnpm test:browser .+)$/,
+  );
+  assert.ok(
+    macCommand,
+    "macOS measurement step must report through ci-test-report",
+  );
+  const [, macReport, macEvidence, macInvocation] = macCommand;
+  assert.equal(macStep.env.PLAYWRIGHT_JSON_OUTPUT_FILE, macReport);
+  const macArgs = macInvocation
+    .replace(/^\.\/bin\/pnpm /, "")
+    .split(/\s+/)
+    .map((arg) => arg.replace(/^'(.*)'$/, "$1"));
+  const outputFlag = macArgs.find((arg) => arg.startsWith("--output="));
+  assert.ok(outputFlag, "macOS measurement step must set --output");
+  const recordingDir = posix.normalize(
+    posix.join("tests/browser", config.outputDir),
+  );
+  const macDir = posix.normalize(outputFlag.slice("--output=".length));
+  assert.notEqual(macDir, recordingDir);
+  assert.ok(!macDir.startsWith(`${recordingDir}/`));
+  assert.ok(!recordingDir.startsWith(`${macDir}/`));
+  assert.ok(
+    macSteps[recordingIndex].env.PLAYWRIGHT_JSON_OUTPUT_FILE.startsWith(
+      `${recordingDir}/`,
+    ),
+  );
+  for (const path of [macReport, macEvidence])
+    assert.ok(
+      path.startsWith(`${macDir}/`),
+      `${path} stays in macOS measurement dir`,
+    );
+  const macUpload = macSteps.find(
+    (entry) => entry.name === "Recording evidence",
+  );
+  assert.equal(macUpload.if, "always()");
+  assert.deepEqual(
+    macUpload.with.path
+      .trim()
+      .split("\n")
+      .map((line) => line.trim())
+      .sort(),
+    [recordingDir, macDir].sort(),
+  );
+
+  const localChromium = config.projects.find(
+    (project) => project.name === "chromium-measurements",
+  );
+  const localWebkit = config.projects.find(
+    (project) => project.name === "webkit-measurements",
+  );
+  assert.ok(localChromium && localWebkit, "local measurement projects exist");
+  assert.deepEqual(
+    ciConfig.projects.find(
+      (project) => project.name === "chromium-measurements",
+    ),
+    localChromium,
+    "CI must run chromium-measurements exactly as the local gate defines it",
+  );
+  assert.deepEqual(
+    ciConfig.projects.find((project) => project.name === "webkit-measurements"),
+    { ...localWebkit, grepInvert: /@macos-webkit/ },
+    "CI webkit-measurements may exclude only @macos-webkit cases",
+  );
+
+  const discover = (args) => {
+    const listed = JSON.parse(
+      run("pnpm", ["--silent", ...args, "--list", "--reporter=json"]),
+    );
+    assert.deepEqual(listed.errors, []);
+    const collect = (suites) =>
+      suites.flatMap((suite) => [
+        ...(suite.specs ?? []).flatMap((spec) =>
+          spec.tests.map((entry) => {
+            assert.ok(
+              ["chromium-measurements", "webkit-measurements"].includes(
+                entry.projectName,
+              ),
+              "only measurement projects on measurement steps",
+            );
+            return {
+              id: `${entry.projectName}:${spec.id}`,
+              projectName: entry.projectName,
+              tags: spec.tags ?? [],
+            };
+          }),
+        ),
+        ...collect(suite.suites ?? []),
+      ]);
+    return collect(listed.suites);
+  };
+  const linux = discover(
+    linuxInvocation
+      .replace(/^\.\/bin\/pnpm /, "")
+      .split(/\s+/)
+      .map((arg) => arg.replace(/^'(.*)'$/, "$1")),
+  );
+  const mac = discover(macArgs);
+  const expected = discover([
+    "test:browser",
+    "--project",
+    "chromium-measurements",
+    "--project",
+    "webkit-measurements",
+    "--no-deps",
+  ]);
+  assert.ok(linux.length > 0, "Linux measurements must select tests");
+  assert.ok(
+    linux.some(({ projectName }) => projectName === "chromium-measurements"),
+  );
+  assert.ok(
+    linux.some(({ projectName }) => projectName === "webkit-measurements"),
+  );
+  assert.ok(mac.length > 0, "macOS WebKit measurements must select tests");
+  assert.ok(
+    mac.every(
+      ({ projectName, tags }) =>
+        projectName === "webkit-measurements" && tags.includes("macos-webkit"),
+    ),
+    "macOS measurement step must select only @macos-webkit webkit-measurements tests",
+  );
+  const actualIds = [...linux, ...mac].map(({ id }) => id);
+  const expectedIds = expected.map(({ id }) => id);
+  assert.equal(
+    new Set(actualIds).size,
+    actualIds.length,
+    "no duplicate measurement test/project across Linux and macOS",
+  );
+  assert.deepEqual(
+    actualIds.sort(),
+    expectedIds.sort(),
+    "Linux and macOS measurements must cover every Chromium and WebKit measurement test",
+  );
+});
+
 test("classic-scrollbar cases run exactly once, after the measurements, without clearing their evidence", () => {
   const { steps } = parse(workflow).jobs.measurements;
   const serial = steps.findIndex(

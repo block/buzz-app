@@ -26,7 +26,6 @@
     "perf": "node tests/browser/perf/run.mjs",
     "probe:live": "node --experimental-transform-types --no-warnings scripts/live-setup-probe.mjs",
     "test:browser:ci": "playwright test --config tests/browser/playwright.ci.config.mjs",
-    "test:browser:local-only": "pnpm test:browser --project webkit-measurements --grep @local-webkit --no-deps --workers=1",
     "test:browser:install": "playwright install chromium webkit",
     "design:dev": "vite --config vite.design.config.ts",
     "design:build": "pnpm design:typecheck && vite build --config vite.design.config.ts && vite build --config vite.message-gallery.config.ts",

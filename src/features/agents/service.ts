@@ -7363,12 +7363,12 @@ export class AgentsService extends Service implements Agents {
     if (head && settingsType(head) === type) return;
     const live = this.communityConfigs.get(this.configHome(identity));
     if (!live) throw new Error("Connect to the community to change its type");
-    const saved = await live.save(
-      this.configAgent({ ...identity, type }, config),
-      config,
-      { settings: head?.id ?? null },
-    );
-    const result = saved.settings;
+    const agent = this.configAgent({ ...identity, type }, config);
+    const saved = await live.save(agent, config, {
+      settings: head?.id ?? null,
+    });
+    const result =
+      saved.settings ?? (head && (await live.saveType(agent, config, head.id)));
     if (result?.status !== "saved")
       throw new Error(
         result

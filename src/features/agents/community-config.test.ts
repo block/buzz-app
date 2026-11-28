@@ -379,6 +379,67 @@ describe("a newly selected channel", () => {
     });
   });
 
+  describe("while the agent's type has no schema here", () => {
+    const typed: ConfigAgent = {
+      ...agent,
+      schema: { model: "string" },
+      config: { instructions: "local text", model: "m1" },
+    };
+    const retyped: ConfigAgent = { ...agent, type: "other/relay", schema: {} };
+    const settingsHead = async (f: ReturnType<typeof setup>) =>
+      f.heads.get(await artifactD("buzz.agent.settings", channel));
+
+    /** A restart with the agent's plugin off, after its settings synced. */
+    async function restarted() {
+      const before = setup();
+      await before.configs.attach([typed]);
+      const f = setup({ heads: before.heads, storage: before.storage });
+      await f.configs.attach([agent]);
+      expect(f.configs.binding(agent.pubkey)?.settings).toBeUndefined();
+      const head = await settingsHead(f);
+      if (!head) throw new Error("no settings head");
+      return { f, head };
+    }
+
+    it("publishes its confirmed settings as another type's, which then binds them", async () => {
+      const { f, head } = await restarted();
+      const saved = await f.configs.saveType(retyped, agent.config, head.id);
+      expect(saved?.status).toBe("saved");
+      const next = await settingsHead(f);
+      expect(next && tag(next, "prev")).toBe(head.id);
+      expect(JSON.parse(next?.content ?? "null")).toEqual({
+        version: 1,
+        agentType: "other/relay",
+        settings: {},
+      });
+      expect(f.configs.history(agent.pubkey).map(({ side }) => side)).toEqual([
+        "instructions",
+      ]);
+      await f.configs.attach([retyped]);
+      expect(f.configs.binding(agent.pubkey)?.settings?.mode).toBe("synced");
+      expect((await settingsHead(f))?.id).toBe(next?.id);
+    });
+
+    it("keeps them out of an ordinary save, and a stale change from them", async () => {
+      const { f, head } = await restarted();
+      const base = { settings: head.id };
+      expect(await f.configs.save(retyped, { model: "m2" }, base)).toEqual({});
+      expect(
+        await f.configs.saveType(retyped, agent.config, "f".repeat(64)),
+      ).toBeUndefined();
+      expect((await settingsHead(f))?.id).toBe(head.id);
+    });
+
+    it("never publishes a first settings revision", async () => {
+      const f = setup();
+      await f.configs.attach([agent]);
+      expect(
+        await f.configs.saveType(retyped, agent.config, "f".repeat(64)),
+      ).toBeUndefined();
+      expect(await settingsHead(f)).toBeUndefined();
+    });
+  });
+
   it("copies the source channel through the real sync, which drops its head on unbind", async () => {
     const f = setup({ realSync: true });
     await f.configs.attach([agent]);

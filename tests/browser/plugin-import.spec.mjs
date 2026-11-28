@@ -112,11 +112,14 @@ async function nativeImports(
                 ...entry,
                 state: !plugin
                   ? "missing"
-                  : plugin.revision === entry.sha256
-                    ? "current"
-                    : plugin.updateSource?.url
-                      ? "outdated"
-                      : "other",
+                  : plugin.source !== "external"
+                    ? "other"
+                    : plugin.revision === entry.sha256
+                      ? "current"
+                      : plugin.updateSource?.url ||
+                          plugin.updateSource?.repository
+                        ? "outdated"
+                        : "other",
               };
             }),
           },
@@ -2407,92 +2410,6 @@ test("a new pinned URL link updates a URL installation without Git discovery", a
   ).toHaveLength(2);
 });
 
-test("a Git-installed plugin reviews its URL self-update and survives requester replacement", async ({
-  page,
-  app,
-}) => {
-  const sample = {
-    ...artifactPlugin[0],
-    code: `export function apply(ctx) {
-      const installer = ctx.reflect.get("pluginInstaller");
-      window.requestMigration = () => {
-        window.migrationOutcome = "pending";
-        installer.requestInstall(${JSON.stringify({ id: "example.artifact", url: artifactUrl, sha256: artifactSha })})
-          .then(result => { window.migrationOutcome = result; });
-      };
-      ctx.effect(() => () => { window.migrationDisposals = (window.migrationDisposals ?? 0) + 1; });
-    }`,
-  };
-  await page.addInitScript((sample) => {
-    window.installedPlugins = [
-      {
-        ...sample,
-        source: "external",
-        enabled: true,
-        revision: "git-revision",
-        previous: null,
-        reloadable: false,
-        error: null,
-        updateSource: {
-          repository: "https://example.com/plugins",
-          reference: "v1",
-          path: ".",
-        },
-      },
-    ];
-  }, sample);
-  await nativeImports(page, [sample], { warnings: [] });
-  await servesArtifact(page);
-  await page.goto(app.origin);
-  await expect
-    .poll(() => page.evaluate(() => typeof window.requestMigration))
-    .toBe("function");
-  await page.evaluate(() => window.requestMigration());
-  const migrationReview = page
-    .getByRole("dialog", { name: "Update Artifact", exact: true })
-    .filter({
-      hasText:
-        "This update switches this plugin from Git to a packaged download.",
-    });
-  await expect(migrationReview).toContainText(artifactUrl);
-  await migrationReview
-    .getByRole("button", { name: "Update", exact: true })
-    .click();
-  await expect(migrationReview).toBeHidden();
-  await expect
-    .poll(() => page.evaluate(() => window.migrationOutcome))
-    .toBe("updated");
-  await expect
-    .poll(() => page.evaluate(() => window.migrationDisposals))
-    .toBe(1);
-  await expect(pluginAction(page, "Artifact")).toHaveAccessibleName(
-    "Disable Artifact",
-  );
-  await button(page, "View Artifact details").click();
-  await expect(
-    page.getByRole("region", { name: "Plugin updates", exact: true }),
-  ).toContainText(artifactUrl);
-  expect(
-    await page.evaluate(() =>
-      window.importCalls.filter(({ command }) => command === "plugin_change"),
-    ),
-  ).toEqual([]);
-  // Startup may check the installed Git source before this URL migration.
-  const migrationCalls = (await importCalls(page)).filter(
-    ({ command, args }) => command !== "plugin_import_git" || !args?.checkOnly,
-  );
-  expect(migrationCalls).toEqual([
-    {
-      command: "plugin_import_url",
-      args: { url: artifactUrl, sha256: artifactSha },
-    },
-    {
-      command: "plugin_import_install",
-      args: { token: "preview-1", path: "." },
-    },
-  ]);
-});
-
 // Native IPC throws Git's own text, as plugin_import_git does when offline.
 test("a failed update check stays on its Settings row, and Check again clears it while it checks", async ({
   page,
@@ -3841,4 +3758,319 @@ test("document table paste observes the combined cell budget", async ({
   await expect(rich.getByRole("table")).toHaveCount(0);
   await markdown.click();
   await expect(source).toHaveValue(`${table}\n\n${table}`);
+});
+
+const recordedTest = test.extend({ video: "on" });
+// With no distributor opt-in, a different revision still offers the policy pin.
+recordedTest(
+  "an advisory policy still governs installed updates by default",
+  async ({ page, app }, info) => {
+    await page.addInitScript(
+      ({ manifest, url }) => {
+        window.installedPlugins = [
+          {
+            manifest,
+            source: "external",
+            enabled: false,
+            revision: "b".repeat(64),
+            previous: null,
+            reloadable: true,
+            error: null,
+            updateSource: { url, sha256: "b".repeat(64) },
+          },
+        ];
+      },
+      { manifest: artifactPlugin[0].manifest, url: artifactUrl },
+    );
+    await recommendArtifact(page);
+    await nativeImports(page, artifactPlugin, { warnings: [] });
+    await openRecommendedPlugins(page, app.origin);
+    await expect(button(page, "Review update example.artifact")).toBeVisible();
+    await button(page, "View Artifact details").click();
+    await expect(button(page, "Review update")).toBeVisible();
+    await settingsDialog(page).screenshot({
+      path: info.outputPath("advisory-pinned-update.png"),
+    });
+  },
+);
+
+const installOnlyTest = recordedTest.extend({
+  installOnlyRecommendations: [
+    [{ source: "Example Org", id: "example.artifact" }],
+    { option: true, scope: "worker" },
+  ],
+});
+installOnlyTest.describe("install-only recommendations", () => {
+  installOnlyTest(
+    "a bootstrap retains consent and reappears after removal",
+    async ({ page, app }, info) => {
+      await nativeImports(page, artifactPlugin, { warnings: [] });
+      await recommendArtifact(page);
+      await servesArtifact(page);
+      await openRecommendedPlugins(page, app.origin);
+      await button(page, "Review and install example.artifact").click();
+      const review = page.getByRole("dialog", {
+        name: "Review Artifact Plugin access",
+        exact: true,
+      });
+      await expect(review).toBeVisible();
+      expect(
+        (await importCalls(page)).filter(
+          ({ command }) => command === "plugin_import_install",
+        ),
+      ).toEqual([]);
+      await button(review, "Install plugin").click();
+      await expect(review).toBeHidden();
+      await expect(
+        button(page, "Review and install example.artifact"),
+      ).toHaveCount(0);
+      await expect(
+        settingsDialog(page).getByRole("button", {
+          name: "Manage plugins",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await button(page, "View Artifact details").click();
+      await expect(
+        page.getByRole("region", { name: "Plugin updates", exact: true }),
+      ).toContainText(artifactUrl);
+      await expect(button(page, "Review update")).toHaveCount(0);
+      await button(page, "More plugin actions").click();
+      await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+      await page
+        .getByRole("alertdialog", { name: "Delete Artifact?" })
+        .getByRole("button", { name: "Delete plugin", exact: true })
+        .click();
+      await expect(
+        button(page, "Review and install example.artifact"),
+      ).toBeVisible();
+      await expect(
+        settingsDialog(page).getByRole("button", {
+          name: "Manage plugins 1 recommended plugin",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await closeSettings(page);
+      await button(page, "Your profile").click();
+      await expect(
+        page.getByRole("menuitem", {
+          name: "Plugins 1 recommended plugin",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await openSettings(page);
+      await settingsDialog(page).screenshot({
+        path: info.outputPath("bootstrap-offered-after-removal.png"),
+      });
+    },
+  );
+
+  for (const [label, revision, enabled, updateSource] of [
+    ["pinned", artifactSha, true, { url: artifactUrl, sha256: artifactSha }],
+    [
+      "different disabled URL copy",
+      "b".repeat(64),
+      false,
+      { url: artifactUrl, sha256: "b".repeat(64) },
+    ],
+    [
+      "different disabled Git copy",
+      "b".repeat(64),
+      false,
+      {
+        repository: "https://example.com/plugins",
+        reference: "main",
+        path: ".",
+      },
+    ],
+    [
+      "folder copy",
+      "b".repeat(64),
+      false,
+      { root: "/fixture/plugins", path: "." },
+    ],
+  ]) {
+    installOnlyTest(
+      `an installed ${label} keeps its updates without a competing bootstrap`,
+      async ({ page, app }, info) => {
+        await page.addInitScript(
+          ({ manifest, revision, enabled, updateSource, url, sha256 }) => {
+            window.installedPlugins = [
+              {
+                manifest,
+                source: "external",
+                enabled,
+                revision,
+                previous: null,
+                reloadable: true,
+                error: null,
+                updateSource,
+              },
+              {
+                manifest: { id: "example.other", name: "Other", apiVersion: 1 },
+                source: "external",
+                enabled: false,
+                revision: "b".repeat(64),
+                previous: null,
+                reloadable: true,
+                error: null,
+                updateSource: { url, sha256: "b".repeat(64) },
+              },
+            ];
+            window.managedPolicy = {
+              status: "ready",
+              source: "Example Org",
+              path: "/fixture/managed-plugins.json",
+              problems: [],
+              plugins: [
+                { id: manifest.id, url, sha256 },
+                { id: "example.other", url, sha256 },
+              ],
+            };
+          },
+          {
+            manifest: artifactPlugin[0].manifest,
+            revision,
+            enabled,
+            updateSource,
+            url: artifactUrl,
+            sha256: artifactSha,
+          },
+        );
+        await nativeImports(page, artifactPlugin, { warnings: [] });
+        await openRecommendedPlugins(page, app.origin);
+        await expect(
+          button(page, "Review update example.artifact"),
+        ).toHaveCount(0);
+        await expect(button(page, "Review update example.other")).toBeVisible();
+        await button(page, "View Artifact details").click();
+        await expect(
+          button(page, enabled ? "Disable" : "Enable"),
+        ).toBeVisible();
+        await expect(button(page, "Review update")).toHaveCount(0);
+        const updates = page.getByRole("region", {
+          name: "Plugin updates",
+          exact: true,
+        });
+        if ("url" in updateSource)
+          await expect(updates).toContainText(`SHA-256: ${revision}`);
+        else await expect(button(page, "Check for updates")).toBeVisible();
+        await settingsDialog(page).screenshot({
+          path: info.outputPath("installed-with-unrelated-managed-update.png"),
+        });
+        // The independent update notice can sit above Settings' close button.
+        await activate(button(settingsDialog(page), "Close Settings"));
+        await expect(settingsDialog(page)).toHaveCount(0);
+        await button(page, "Your profile").click();
+        const menu = page.getByRole("menuitem", {
+          name:
+            "repository" in updateSource
+              ? "Plugins 2 recommended plugins"
+              : "Plugins 1 recommended plugin",
+          exact: true,
+        });
+        await expect(menu).toBeVisible();
+        if ("repository" in updateSource) {
+          await menu.click();
+          await expect(
+            page.getByRole("menuitem", {
+              name: "Update Artifact",
+              exact: true,
+            }),
+          ).toBeVisible();
+        }
+      },
+    );
+  }
+
+  installOnlyTest(
+    "a Git-installed plugin reviews its URL self-update and survives requester replacement",
+    async ({ page, app }) => {
+      const sample = {
+        ...artifactPlugin[0],
+        code: `export function apply(ctx) {
+      const installer = ctx.reflect.get("pluginInstaller");
+      window.requestMigration = () => {
+        window.migrationOutcome = "pending";
+        installer.requestInstall(${JSON.stringify({ id: "example.artifact", url: artifactUrl, sha256: artifactSha })})
+          .then(result => { window.migrationOutcome = result; });
+      };
+      ctx.effect(() => () => { window.migrationDisposals = (window.migrationDisposals ?? 0) + 1; });
+    }`,
+      };
+      await page.addInitScript((sample) => {
+        window.installedPlugins = [
+          {
+            ...sample,
+            source: "external",
+            enabled: true,
+            revision: "git-revision",
+            previous: null,
+            reloadable: false,
+            error: null,
+            updateSource: {
+              repository: "https://example.com/plugins",
+              reference: "v1",
+              path: ".",
+            },
+          },
+        ];
+      }, sample);
+      await recommendArtifact(page);
+      await nativeImports(page, [sample], { warnings: [] });
+      await servesArtifact(page);
+      await page.goto(app.origin);
+      await expect
+        .poll(() => page.evaluate(() => typeof window.requestMigration))
+        .toBe("function");
+      await page.evaluate(() => window.requestMigration());
+      const migrationReview = page
+        .getByRole("dialog", { name: "Update Artifact", exact: true })
+        .filter({
+          hasText:
+            "This update switches this plugin from Git to a packaged download.",
+        });
+      await expect(migrationReview).toContainText(artifactUrl);
+      await migrationReview
+        .getByRole("button", { name: "Update", exact: true })
+        .click();
+      await expect(migrationReview).toBeHidden();
+      await expect
+        .poll(() => page.evaluate(() => window.migrationOutcome))
+        .toBe("updated");
+      await expect
+        .poll(() => page.evaluate(() => window.migrationDisposals))
+        .toBe(1);
+      await expect(pluginAction(page, "Artifact")).toHaveAccessibleName(
+        "Disable Artifact",
+      );
+      await button(page, "View Artifact details").click();
+      await expect(
+        page.getByRole("region", { name: "Plugin updates", exact: true }),
+      ).toContainText(artifactUrl);
+      expect(
+        await page.evaluate(() =>
+          window.importCalls.filter(
+            ({ command }) => command === "plugin_change",
+          ),
+        ),
+      ).toEqual([]);
+      // Startup may check the installed Git source before this URL migration.
+      const migrationCalls = (await importCalls(page)).filter(
+        ({ command, args }) =>
+          command !== "plugin_import_git" || !args?.checkOnly,
+      );
+      expect(migrationCalls).toEqual([
+        {
+          command: "plugin_import_url",
+          args: { url: artifactUrl, sha256: artifactSha },
+        },
+        {
+          command: "plugin_import_install",
+          args: { token: "preview-1", path: "." },
+        },
+      ]);
+    },
+  );
 });

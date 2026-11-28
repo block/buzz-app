@@ -31,6 +31,7 @@ token or other secret in one**. Open-source builds leave them all unset.
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | The Apps cookie domain for in-app SSO, for Builderlab deployments other than the public one. Empty disables SSO. |
 | `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | The Apps control plane origin, for deployments the built-in table doesn't list. |
 | `BUZZ_BUILD_MANAGED_PLUGINS_URL` | An `https` URL of a version 1 [managed plugin policy](managed-plugins.md#packaged-policy), used when no `managed-plugins.json` exists. |
+| `BUZZ_BUILD_INSTALL_ONLY_RECOMMENDATIONS` | JSON source/id selectors for [install-only plugin recommendations](managed-plugins.md#install-only-recommendations), including local and cached policies. |
 | `BUZZ_BUILD_REPOSITORY_ACCESS` | Default [repository access rules](repository-access.md#default-rules). |
 | `BUZZ_DATABRICKS_HOST` | An `https://` Databricks workspace URL passed to every bundled goose as `DATABRICKS_HOST`. Only the host; model and sign-in stay goose's. |
 | `BUZZ_MOBILE_APP_IOS_URL`, `BUZZ_MOBILE_APP_ANDROID_URL` | Store links shown with QR codes on the mobile Settings card, for people whose Builderlab account holds this device's backed-up key. |

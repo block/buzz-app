@@ -68,6 +68,24 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             // reuse the loaded factory without rebuilding its module graph.
             const { default: config } = await import(pathToFileURL(configFile).href);
             const configure = (env) => config({ isSsrBuild: false, isPreview: false, ...env });
+            // The install-only selector is distributor configuration, not policy JSON.
+            const selectorInput = 'BUZZ_BUILD_INSTALL_ONLY_RECOMMENDATIONS';
+            const selectorDefine = 'import.meta.env.VITE_BUZZ_INSTALL_ONLY_RECOMMENDATIONS';
+            const selectors = JSON.stringify([{ source: 'Example Org', id: 'example.notes' }]);
+            delete process.env[selectorInput];
+            writeFileSync('.env.local', selectorInput + "='" + selectors + "'");
+            writeFileSync('.env.production', selectorInput + '=invalid-mode-file');
+            const selected = await configure({ command: 'build', mode: 'production' });
+            assert.equal(selected.define[selectorDefine], JSON.stringify(selectors));
+            process.env[selectorInput] = '';
+            const optedOut = await configure({ command: 'build', mode: 'production' });
+            assert.equal(optedOut.define[selectorDefine], JSON.stringify(''));
+            process.env[selectorInput] = 'invalid-selector-value';
+            await assert.rejects(configure({ command: 'build', mode: 'production' }), error =>
+              /Install-only recommendations/.test(error.message) && !error.message.includes('invalid-selector-value'));
+            delete process.env[selectorInput];
+            rmSync('.env.local');
+            rmSync('.env.production');
             for (const command of ['serve', 'build']) {
               for (const setting of [undefined, '', '0', '1', 'true', 'invalid']) {
                 if (setting === undefined) delete process.env.BUZZ_DEV_NOTIFICATIONS;

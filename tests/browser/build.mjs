@@ -41,6 +41,7 @@ export async function buildApp(
     pairingFixture,
     startupFailureFixture,
     diagnostics,
+    installOnlyRecommendations,
   },
   use,
 ) {
@@ -105,6 +106,8 @@ export async function buildApp(
           : []),
       ],
       define: {
+        "import.meta.env.VITE_BUZZ_INSTALL_ONLY_RECOMMENDATIONS":
+          JSON.stringify(JSON.stringify(installOnlyRecommendations)),
         ...(builderlabLogin
           ? {
               "import.meta.env.VITE_BUZZ_BUILDERLAB_URL":

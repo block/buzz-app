@@ -51,6 +51,32 @@ fetches `<url>.sig` for a [signature](#signed-policies); a `404` means unsigned.
 file, when there is one, replaces the packaged policy completely. Serve the policy with
 little or no edge caching. Leave this unset for OSS builds.
 
+### Install-only recommendations
+
+A distributor can select advisory entries that bootstrap a plugin but should not govern
+its updates:
+
+```sh
+BUZZ_BUILD_INSTALL_ONLY_RECOMMENDATIONS='[{"source":"Example Org","id":"example.notes"}]' bin/pnpm tauri build
+```
+
+Each selector matches the policy's exact `source` and plugin `id`. A selected entry is
+offered only while the plugin is missing. Once any copy is installed, even disabled or
+from another source, the recommendation and its pending indicators disappear and the
+plugin keeps its own update controls. Removing the plugin offers the recommendation again.
+Other entries keep their existing behavior.
+
+This applies only to entries with `install: "recommend"` and `update: "review"`, including
+the defaults when those fields are absent. Explicit `automatic` or `manual` modes are
+unchanged. Native installation, access review and automatic policy enforcement are not
+changed by this presentation option.
+
+The build reads this input from the process or repository-root `.env.local` (process
+wins). Leave it unset for the existing behavior. Rebuild and distribute the app to change
+it; changing a policy file alone cannot enable it. It applies to the effective local or
+packaged policy, including cached version 1 files, without adding schema fields that older
+apps reject. Older apps continue to offer those files' pinned updates.
+
 ## Schema (version 1)
 
 ```json

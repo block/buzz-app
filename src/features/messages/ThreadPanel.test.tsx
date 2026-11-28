@@ -477,7 +477,7 @@ it("keeps initial rows pending until positioned, exposes errors, and lets readin
   h.render();
   expect(h.element.scrollTop).toBe(500);
 });
-it("starts a single older page after scrolling through 80% of loaded history", () => {
+it("starts a single older page after scrolling through 80% of loaded history, capped at 2400px on tall threads", () => {
   const h = messagesHarness();
   h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
@@ -493,6 +493,17 @@ it("starts a single older page after scrolling through 80% of loaded history", (
   h.render();
   h.scroll(0);
   expect(h.view.loadMore).toHaveBeenCalledOnce();
+
+  // Tall scroll ranges cap the trigger distance at 2400px instead of 20%.
+  h.snapshot.status = "ready";
+  h.render();
+  h.resize(50_600); // scrollable range 50,000px; 20% would be 10,000px.
+  h.scroll(4000);
+  fireEvent.wheel(section, { deltaY: -1 });
+  h.scroll(2401);
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  h.scroll(2400);
+  expect(h.view.loadMore).toHaveBeenCalledTimes(2);
 });
 it("keeps initial thread loading until available content has been positioned", () => {
   vi.useFakeTimers();

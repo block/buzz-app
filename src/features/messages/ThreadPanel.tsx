@@ -2332,7 +2332,10 @@ function ThreadMessages({
       snapshot.status !== "ready" ||
       !snapshot.canLoadMore ||
       element.scrollTop >
-        Math.max(80, (element.scrollHeight - element.clientHeight) * 0.2)
+        Math.max(
+          80,
+          Math.min((element.scrollHeight - element.clientHeight) * 0.2, 2400),
+        )
     )
       return;
     olderDemand.current = false;

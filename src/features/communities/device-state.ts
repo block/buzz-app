@@ -8,6 +8,7 @@ import { forgetThreadFollows } from "../relay/thread-follows";
 import { clearViewScope } from "../../shared/view-state";
 import { saveLocalCommunityName } from "./names";
 import { saveRepositoriesFolder } from "./repositories";
+import { forgetRecentStatuses } from "../user-status/recent-statuses";
 
 /** One piece of a left community's device state that could not be cleared. */
 export type PurgeFailure = { store: string; error: unknown };
@@ -57,6 +58,7 @@ export async function purgeCommunityDeviceState(
   await attempt("view state", () => clearViewScope(scope));
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));
+  await attempt("recent statuses", () => forgetRecentStatuses(scope));
   await attempt("thread follows", () => forgetThreadFollows(scope));
   await purgeRelayPartition(origin, viewer, attempt);
   return failures;

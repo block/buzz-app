@@ -25,6 +25,7 @@ import {
 import type { RelaySession } from "../relay/session";
 import { STATUS_TEXT_LIMIT, type UserStatus } from "../relay/user-status";
 import { StatusEmoji, useEmojiName } from "./StatusEmoji";
+import { recentStatuses, rememberStatus } from "./recent-statuses";
 import styles from "./Status.module.css";
 
 const choices = [
@@ -34,6 +35,8 @@ const choices = [
   ["🏖️", "Vacationing"],
   ["🏠", "Working remotely"],
 ] as const;
+const isChoice = (emoji: string, text: string) =>
+  choices.some(([icon, label]) => icon === emoji && label === text);
 function draftFrom(status: UserStatus | undefined) {
   return {
     text: status?.text ?? "",
@@ -75,6 +78,9 @@ export function StatusEditor({
   const [duration, setDuration] = useState(initialDraft.duration);
   const [durationChanged, setDurationChanged] = useState(false);
   const [date, setDate] = useState(initialDraft.date);
+  const [recent] = useState(() =>
+    recentStatuses(scope).filter(({ emoji, text }) => !isChoice(emoji, text)),
+  );
   const effectiveEmoji = emoji || (text.trim() ? "💬" : "");
   const emojiName = useEmojiName(effectiveEmoji);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -132,6 +138,12 @@ export function StatusEditor({
     setChecking(false);
     setCheckError(false);
   }
+  function choose(icon: string, label: string) {
+    markEdited();
+    setEmoji(icon);
+    setText(label);
+    message.current?.focus();
+  }
   const durationLabel =
     duration === "custom"
       ? "Custom date and time"
@@ -168,6 +180,8 @@ export function StatusEditor({
         emoji: clear ? "" : effectiveEmoji,
         ...(expiresAt === undefined ? {} : { expiresAt }),
       });
+      if (!clear && !isChoice(effectiveEmoji, text.trim()))
+        rememberStatus(scope, { text, emoji: effectiveEmoji });
       if (mounted.current) close();
     } catch (reason) {
       if (mounted.current)
@@ -327,18 +341,37 @@ export function StatusEditor({
                     variant="option"
                     key={label}
                     type="button"
-                    onClick={() => {
-                      markEdited();
-                      setEmoji(icon);
-                      setText(label);
-                      message.current?.focus();
-                    }}
+                    onClick={() => choose(icon, label)}
                     icon={
                       <span aria-hidden="true" className="text-body-lg">
                         {icon}
                       </span>
                     }
                     label={label}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          {!current && recent.length > 0 && (
+            <div className={styles.section}>
+              <span className="text-label-sm text-subtle">Recent</span>
+              <div className={styles.choices}>
+                {recent.map((entry) => (
+                  <NavigationItem
+                    variant="option"
+                    key={`${entry.emoji} ${entry.text}`}
+                    type="button"
+                    onClick={() => choose(entry.emoji, entry.text)}
+                    icon={
+                      <StatusEmoji
+                        value={entry.emoji}
+                        fallback="💬"
+                        session={session}
+                        decorative
+                      />
+                    }
+                    label={entry.text}
                   />
                 ))}
               </div>

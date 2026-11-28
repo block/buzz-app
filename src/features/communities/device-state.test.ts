@@ -58,6 +58,7 @@ const origin = "https://left.example";
 const kept = "https://kept.example";
 const receipt = (scope: string) => `buzz-channel-setup.v2:${scope}:general`;
 const reactions = (scope: string) => `buzz.quick-reactions.v1:${scope}`;
+const statuses = (scope: string) => `buzz.recent-statuses.v1:${scope}`;
 const follows = (scope: string) => `buzz.thread-follows.v1:${scope}`;
 
 afterEach(() => {
@@ -82,6 +83,11 @@ it("forgets every store partitioned to the left community and viewer, and nothin
   // A scope that merely extends the left one is a different partition.
   writeView(`${scope}0`, "draft:general", "longer viewer");
   localStorage.setItem(reactions(scope), '[{"emoji":"🎉","count":1,"used":1}]');
+  localStorage.setItem(statuses(scope), '[{"text":"Pairing","emoji":"🍐"}]');
+  localStorage.setItem(
+    statuses(`${kept}:${viewer}`),
+    '[{"text":"Pairing","emoji":"🍐"}]',
+  );
   localStorage.setItem(
     reactions(`${kept}:${viewer}`),
     '[{"emoji":"🎉","count":1,"used":1}]',
@@ -114,6 +120,8 @@ it("forgets every store partitioned to the left community and viewer, and nothin
   expect(readView(`${scope}0`, "draft:general", "")).toBe("longer viewer");
   expect(localStorage.getItem(reactions(scope))).toBeNull();
   expect(localStorage.getItem(reactions(`${kept}:${viewer}`))).not.toBeNull();
+  expect(localStorage.getItem(statuses(scope))).toBeNull();
+  expect(localStorage.getItem(statuses(`${kept}:${viewer}`))).not.toBeNull();
   expect(localStorage.getItem(receipt(scope))).toBeNull();
   expect(localStorage.getItem(receipt(`${kept}:${viewer}`))).toBe("1");
 });

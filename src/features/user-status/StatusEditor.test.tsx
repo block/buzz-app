@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -21,6 +22,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  localStorage.clear();
 });
 function setup(current?: UserStatus) {
   const owner = createRelaySession(null);
@@ -625,3 +627,62 @@ it.each(["pending", "checking", "failed"] as const)(
     }
   },
 );
+
+it("offers the last two saved custom statuses below the quick statuses", async () => {
+  const user = userEvent.setup();
+  const saveAs = async (text: string) => {
+    const { save, close } = setup();
+    fireEvent.change(screen.getByLabelText("Status message"), {
+      target: { value: text },
+    });
+    await user.click(screen.getByRole("button", { name: "Save status" }));
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    cleanup();
+    return save;
+  };
+  await saveAs("Pairing");
+  await saveAs("  Writing docs ");
+  await saveAs("Reviewing");
+  // A quick status is already offered, so it does not take a recent slot.
+  const { close } = setup();
+  await user.click(screen.getByRole("button", { name: "Commuting" }));
+  await user.click(screen.getByRole("button", { name: "Save status" }));
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  cleanup();
+  // Saving a remembered status again moves it to the front without a duplicate.
+  await saveAs("Writing docs");
+
+  const { save } = setup();
+  const sections = screen.getAllByText(/^(Quick statuses|Recent)$/);
+  expect(sections.map((label) => label.textContent)).toEqual([
+    "Quick statuses",
+    "Recent",
+  ]);
+  const recent = sections[1]?.nextElementSibling as HTMLElement;
+  const rows = within(recent).getAllByRole("button");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    "💬Writing docs",
+    "💬Reviewing",
+  ]);
+  await user.click(rows[1] as HTMLElement);
+  expect(screen.getByLabelText("Status message")).toHaveValue("Reviewing");
+  await user.click(screen.getByRole("button", { name: "Save status" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Reviewing", emoji: "💬" }),
+    ),
+  );
+});
+
+it("does not remember a status that failed to save", async () => {
+  const { save } = setup();
+  save.mockRejectedValueOnce(new Error("Offline"));
+  fireEvent.change(screen.getByLabelText("Status message"), {
+    target: { value: "Unsaved" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save status" }));
+  await screen.findByText("Offline");
+  cleanup();
+  setup();
+  expect(screen.queryByText("Recent")).not.toBeInTheDocument();
+});

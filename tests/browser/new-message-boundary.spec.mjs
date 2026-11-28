@@ -822,9 +822,51 @@ appTest.describe("a visit that begins before its first verified page", () => {
   );
 });
 
+// Records the rows as painted in every frame: a task posted from the frame
+// callback runs after that frame's rendering, so a row moved by a later
+// measurement is seen where the reader saw it. Playwright's page clock fakes
+// the page's own requestAnimationFrame, so the journey keeps the native one.
+const startPaintLog = (page) =>
+  page.evaluate(() => {
+    const log = { stop: false, frames: [] };
+    const frame = () => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        channel.port1.close();
+        const scroller = document.querySelector(
+          '[aria-label="Channel message history"]',
+        );
+        if (!scroller) return;
+        const bounds = scroller.getBoundingClientRect();
+        log.frames.push({
+          line: !!scroller.querySelector("[data-new-messages-boundary]"),
+          rows: Array.from(scroller.querySelectorAll("[data-message-id]"))
+            .map((row) => [row.dataset.messageId, row.getBoundingClientRect()])
+            .filter(
+              ([, rect]) =>
+                rect.bottom > bounds.top && rect.top < bounds.bottom,
+            )
+            .map(([id, rect]) => [id, rect.top]),
+        });
+      };
+      channel.port2.postMessage(null);
+      if (!log.stop) window.nativeFrame(frame);
+    };
+    window.nativeFrame(frame);
+    window.paintLog = log;
+  });
+const stopPaintLog = (page) =>
+  page.evaluate(() => {
+    window.paintLog.stop = true;
+    return window.paintLog.frames;
+  });
+
 // Hold the channel's head read until released: an explicit gate, so a read
 // slower than the reading dwell needs no timed delay.
-async function holdHead(page, channel) {
+// `afterFrame` lands the response just after a painted frame, so the render it
+// causes is the next frame's: where in a frame it arrives otherwise decides
+// whether a row that moves while measuring is painted.
+async function holdHead(page, channel, { afterFrame = false } = {}) {
   let release;
   let started;
   const held = new Promise((resolve) => {
@@ -847,6 +889,13 @@ async function holdHead(page, channel) {
     ) {
       started();
       await held;
+      if (afterFrame)
+        await page.evaluate(
+          () =>
+            new Promise((resolve) =>
+              window.nativeFrame(() => window.nativeFrame(resolve)),
+            ),
+        );
     }
     await route.continue().catch(() => {});
   });
@@ -890,40 +939,113 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
     await expect(separator(page)).toHaveCount(1);
   };
 
+  // Revisits Beta after new messages arrived, holding the head read until the
+  // rows are showing, so the line arrives after them. A `tail` message reaches
+  // the window only through that read, landing with the line.
+  const revisitWithSlowHead = async (page, app, { tail = false } = {}) => {
+    await page.addInitScript(() => {
+      window.nativeFrame = window.requestAnimationFrame.bind(window);
+    });
+    // Installed before the app loads, so every timer is the page clock's.
+    await page.clock.install();
+    await open(page, app);
+    await go(page, "Beta");
+    await read(page, app, "Beta");
+    await go(page, "Alpha");
+    await settle(page);
+    const arrivals = arrive(app, "beta", true);
+    await expect
+      .poll(() => unreadIn(page, "beta", arrivals))
+      .toEqual({ unread: true, status: "ready", rows: 18 });
+    if (tail) app.append("primary", "beta", "Undelivered tail", false, false);
+
+    const head = await holdHead(page, "beta", { afterFrame: true });
+    try {
+      // Past the head's 60-second freshness lease. Only the wall clock
+      // moves, and it returns before anything is signed with it.
+      await page.clock.setSystemTime(Date.now() + 61_000);
+      await startPaintLog(page);
+      await go(page, "Beta");
+      await head.reading;
+      await page.clock.setSystemTime(Date.now());
+      await expectHeld(page, arrivals, {
+        status: "ready",
+        freshness: "verified",
+        refreshing: true,
+        rows: 18,
+      });
+    } finally {
+      head.release();
+    }
+    await expectBoundaryAt(page, arrivals);
+    await expectRead(page, arrivals);
+    return arrivals;
+  };
+  const fromEnd = (page) =>
+    page.evaluate(() => {
+      const scroller = document.querySelector(
+        '[aria-label="Channel message history"]',
+      );
+      return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    });
+
   appTest(
     "marks new messages when the revisit head read is slow",
     async ({ page, app }) => {
-      // Installed before the app loads, so every timer is the page clock's.
-      await page.clock.install();
-      await open(page, app);
-      await go(page, "Beta");
-      await read(page, app, "Beta");
-      await go(page, "Alpha");
-      await settle(page);
-      const arrivals = arrive(app, "beta", true);
-      await expect
-        .poll(() => unreadIn(page, "beta", arrivals))
-        .toEqual({ unread: true, status: "ready", rows: 18 });
+      const arrivals = await revisitWithSlowHead(page, app);
 
-      const head = await holdHead(page, "beta");
-      try {
-        // Past the head's 60-second freshness lease. Only the wall clock
-        // moves, and it returns before anything is signed with it.
-        await page.clock.setSystemTime(Date.now() + 61_000);
-        await go(page, "Beta");
-        await head.reading;
-        await page.clock.setSystemTime(Date.now());
-        await expectHeld(page, arrivals, {
-          status: "ready",
-          freshness: "verified",
-          refreshing: true,
-          rows: 18,
-        });
-      } finally {
-        head.release();
-      }
-      await expectBoundaryAt(page, arrivals);
-      await expectRead(page, arrivals);
+      // The rows were already showing when the line arrived, and the reader
+      // is at the end: the newest message stays where it is in every frame.
+      const frames = await stopPaintLog(page);
+      const arrival = frames.findIndex((frame) => frame.line);
+      expect(arrival, "the line is painted after the rows").toBeGreaterThan(0);
+      const newest = arrivals.at(-1).id;
+      const tops = frames
+        .slice(arrival - 1)
+        .map((frame) => frame.rows.find(([id]) => id === newest)?.[1]);
+      expect(tops.every((top) => top !== undefined)).toBe(true);
+      expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(1);
+
+      // A reader who then leaves the end stays where they are when a row
+      // above them grows. Some engines animate the wheel, so the reader's
+      // place is taken once the scroll has come to rest.
+      await page.locator('[aria-label="Channel message history"]').hover();
+      await page.mouse.wheel(0, -400);
+      let away = 0;
+      await expect
+        .poll(async () => {
+          const previous = away;
+          away = await fromEnd(page);
+          return away > 300 && away === previous;
+        })
+        .toBe(true);
+      await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const row = document.querySelector(
+              '[aria-label="Channel message history"] [data-message-id]',
+            );
+            row.append(
+              Object.assign(document.createElement("div"), {
+                style: "height: 150px",
+              }),
+            );
+            window.nativeFrame(() => window.nativeFrame(resolve));
+          }),
+      );
+      expect(Math.abs((await fromEnd(page)) - away)).toBeLessThan(1);
+    },
+  );
+
+  appTest(
+    "keeps a reader at the end when the slow head read brings a message with the line",
+    async ({ page, app }) => {
+      await revisitWithSlowHead(page, app, { tail: true });
+      await stopPaintLog(page);
+      await expect(
+        page.getByText("Undelivered tail", { exact: true }),
+      ).toBeVisible();
+      await expect.poll(() => fromEnd(page)).toBeLessThan(1);
     },
   );
 

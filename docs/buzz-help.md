@@ -241,7 +241,7 @@ agent uses for typed work. In agent settings, open **Voice settings** beside
 **Goose default model**, then expand **Voice**. Choose OpenAI or a Custom
 GPT-Live-compatible sessions URL. Custom requires its own key; changing the URL
 requires entering a key again. A plain `http` URL is allowed, with a warning
-that the key, audio and text travel unencrypted. Provider, endpoint, model,
+that the key and text travel unencrypted. Provider, endpoint, model,
 voice and key are shared with the goose CLI and desktop app on this Mac; the
 huddle on/off switch belongs only to Buzz. Failed saves turn that switch off. A
 goose-acp build with live-voice support is required; the card reports

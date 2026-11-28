@@ -108,7 +108,7 @@ export function VoiceSettings({ settings }: { settings: GooseVoiceSettings }) {
                             .trim()
                             .toLowerCase()
                             .startsWith("http:")
-                            ? "Not encrypted. Your key, audio and conversation text travel over the network in plain text. Use a network you trust."
+                            ? "Not encrypted. Your key and conversation text travel over the network in plain text. Use a network you trust."
                             : "The full sessions URL."
                         }
                       >

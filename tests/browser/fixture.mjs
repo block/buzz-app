@@ -2,7 +2,6 @@ import { fixtureRelayUrl, fixtureAliases } from "../relay-config.ts";
 import { test as base, expect, stopRoutes } from "./playwright-test.mjs";
 import { preview } from "./vite-server.mjs";
 import {
-  finalizeEvent,
   generateSecretKey,
   getPublicKey,
   nip44,
@@ -19,6 +18,7 @@ import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
 import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
+import { createFixtureSigner } from "./fixture-signer.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 import { seedThreadPlacement } from "./thread-placement.mjs";
 import { validTypingTemplate } from "../../src/features/relay/typing-protocol.ts";
@@ -229,6 +229,7 @@ export const test = base.extend({
     use,
     testInfo,
   ) => {
+    const finalizeEvent = createFixtureSigner();
     const channels = firstSeenHistory ? [...channelIds, "busy"] : channelIds;
     const key = (seed) =>
       actionProfile || fixedKeys

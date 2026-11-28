@@ -102,6 +102,12 @@
     -webkit-font-smoothing: antialiased;
     /* Keep wheel/trackpad gestures from rubber-banding the whole app. */
     overscroll-behavior: none;
+    /* While any image on the page is being resized, WebKit draws every scaled
+       image with unfiltered sampling, and repaints at full quality only after
+       resizing has stopped for half a second. A recurring resize anywhere
+       leaves avatars and attachments speckled. optimizeQuality opts out of
+       that shortcut in WebKit; Chromium treats it as auto. */
+    image-rendering: optimizeQuality;
   }
   * {
     box-sizing: border-box;

@@ -115,9 +115,21 @@ export function nameStarts(name: string) {
 export const startKey = (needle: string) =>
   [...needle].slice(0, startLength).join("");
 
+/**
+ * `anyOrder` adds tier 4 for a query of several words, for people search
+ * (README section 3). Mentions leave it off: they keep a multi-word query open
+ * only while it starts a known name.
+ */
+export type MatchOptions = { anyOrder?: boolean };
+
+/** The options for people search surfaces: a name's words in any order. */
+export const peopleSearch: MatchOptions = { anyOrder: true };
+
 export type PersonMatch = {
-  /** 0 equal, 1 name starts with the query, 2 a word equals it, 3 a word starts with it. */
-  tier: 0 | 1 | 2 | 3;
+  /** 0 equal, 1 name starts with the query, 2 a word equals it, 3 a word starts
+   * with it, 4 (only with `anyOrder`) the query's words match different words
+   * of the name in any order. */
+  tier: 0 | 1 | 2 | 3 | 4;
   /** Code point indexes of `name` that matched, for underlining. */
   positions: number[];
 };
@@ -145,8 +157,50 @@ const foldedChars = (name: string) => {
 export const normalizeName = (text: string) =>
   foldedChars(text).join("").trim();
 
+/**
+ * Tier 4: each query word but the last equals a different word of the name,
+ * and the last starts another, in any order. Returns the matched spans, as
+ * `[from, length]` code point ranges of `chars`.
+ */
+function wordsInAnyOrder(
+  chars: readonly string[],
+  start: number,
+  end: number,
+  needle: readonly string[],
+) {
+  const words: { from: number; text: string }[] = [];
+  for (let from = start; from < end; from += 1) {
+    if (!isWord(chars[from]) || isWord(chars[from - 1])) continue;
+    let stop = from;
+    while (stop < end && isWord(chars[stop])) stop += 1;
+    words.push({ from, text: chars.slice(from, stop).join("") });
+  }
+  const query = needle.join("").split(/\s+/u).filter(Boolean);
+  const prefix = query.pop();
+  if (!query.length || prefix === undefined) return undefined;
+  const spans: [number, number][] = [];
+  const free = [...words];
+  const take = (matches: (text: string) => boolean, length: number) => {
+    const at = free.findIndex(({ text }) => matches(text));
+    const [word] = at < 0 ? [] : free.splice(at, 1);
+    if (word) spans.push([word.from, length]);
+    return !!word;
+  };
+  // Equal words take their own copies first; copies of one word are alike, so
+  // which one is taken cannot matter. The last word then needs one left.
+  for (const text of query)
+    if (!take((word) => word === text, [...text].length)) return undefined;
+  if (!take((word) => word.startsWith(prefix), [...prefix].length))
+    return undefined;
+  return { tier: 4 as const, from: start, spans };
+}
+
 /** Where and how well folded `chars` match the folded `needle`, or undefined. */
-function search(chars: readonly string[], needle: readonly string[]) {
+function search(
+  chars: readonly string[],
+  needle: readonly string[],
+  anyOrder: boolean,
+) {
   let start = 0;
   let end = chars.length;
   while (start < end && space.test(chars[start] ?? "")) start += 1;
@@ -161,8 +215,9 @@ function search(chars: readonly string[], needle: readonly string[]) {
     return { tier: 1 as const, from: start };
   // A later word: the match starts where a word starts. It is that whole
   // word (tier 2) when it also ends where a word ends. A query with a space
-  // matches only from the start of the name.
-  if (needle.some((char) => space.test(char))) return undefined;
+  // matches only from the start of the name, or, for search, in any order.
+  if (needle.some((char) => space.test(char)))
+    return anyOrder ? wordsInAnyOrder(chars, start, end, needle) : undefined;
   let prefix: number | undefined;
   for (let from = start + 1; from < end; from += 1) {
     if (!isWord(chars[from]) || isWord(chars[from - 1]) || !at(from)) continue;
@@ -174,13 +229,17 @@ function search(chars: readonly string[], needle: readonly string[]) {
 }
 
 /** The tier of `matchPerson`, given `[...normalizeName(query)]`. */
-export const matchTier = (name: string, foldedQuery: readonly string[]) =>
-  search(foldedChars(name), foldedQuery)?.tier;
+export const matchTier = (
+  name: string,
+  foldedQuery: readonly string[],
+  options: MatchOptions = {},
+) => search(foldedChars(name), foldedQuery, !!options.anyOrder)?.tier;
 
 /** How `name` matches `query`, or undefined. An empty query matches at tier 0. */
 export function matchPerson(
   name: string,
   query: string,
+  options: MatchOptions = {},
 ): PersonMatch | undefined {
   const needle = [...normalizeName(query)];
   // Folded code points of the name, each with the name code points it came
@@ -196,13 +255,18 @@ export function matchPerson(
       origin.push([index]);
     }
   });
-  const found = search(chars, needle);
-  return (
-    found && {
-      tier: found.tier,
-      positions: [
-        ...new Set(origin.slice(found.from, found.from + needle.length).flat()),
-      ],
-    }
-  );
+  const found = search(chars, needle, !!options.anyOrder);
+  if (!found) return undefined;
+  // One span for tiers 0 to 3; tier 4 underlines each matched word.
+  const spans = "spans" in found ? found.spans : [[found.from, needle.length]];
+  return {
+    tier: found.tier,
+    positions: [
+      ...new Set(
+        spans.flatMap(([from = 0, length = 0]) =>
+          origin.slice(from, from + length).flat(),
+        ),
+      ),
+    ].sort((a, b) => a - b),
+  };
 }

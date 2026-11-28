@@ -3,7 +3,7 @@ import type { Agents } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useAgents } from "../../features/agents/react";
 import { useNamesRevision } from "../../features/identity-names/react";
-import { matchPerson } from "../../features/search/person-match";
+import { matchPerson, peopleSearch } from "../../features/search/person-match";
 import { avatarMedia } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import type { RelaySession } from "../../features/relay/session";
@@ -159,8 +159,12 @@ export function BestieChooser({
                 itemToStringValue={(agent) => agent.pubkey}
                 isItemEqualToValue={(a, b) => a.pubkey === b.pubkey}
                 filter={(agent, query) =>
-                  !!matchPerson(agent.label, query) ||
-                  !!matchPerson(agent.managedName ?? agent.name, query)
+                  !!matchPerson(agent.label, query, peopleSearch) ||
+                  !!matchPerson(
+                    agent.managedName ?? agent.name,
+                    query,
+                    peopleSearch,
+                  )
                 }
                 inputValue={search}
                 onInputValueChange={setSearch}

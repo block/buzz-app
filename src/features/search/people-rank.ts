@@ -1,4 +1,4 @@
-import { matchTier, normalizeName } from "./person-match";
+import { matchTier, normalizeName, peopleSearch } from "./person-match";
 import { searchOrder, type SearchUsage } from "./usage";
 import { typedPublicKey } from "../../shared/identity/public-key";
 
@@ -27,8 +27,8 @@ export const personKey = (pubkey: string) => `person:${pubkey}`;
 /**
  * How well a person matches the typed text, or undefined. The shown label,
  * username and verified full name use the shared name rule (person-match). A
- * hidden agent or profile name ranks after every shown name, as `mentionMatch`
- * ranks hidden aliases.
+ * hidden agent or profile name ranks after every shown name (a hidden tier 0 is
+ * 5, after the shown tiers 0 to 4), as `mentionMatch` ranks hidden aliases.
  */
 function personMatch(
   person: PersonCandidate,
@@ -37,7 +37,7 @@ function personMatch(
   // Blank suggestions have no exact name; relationship and usage order them.
   if (!folded) return 1;
   const tier = (name: string | undefined) =>
-    name === undefined ? undefined : matchTier(name, folded);
+    name === undefined ? undefined : matchTier(name, folded, peopleSearch);
   const shown = [
     tier(person.label),
     tier(person.username),
@@ -48,7 +48,7 @@ function personMatch(
     tier(person.agentName),
     ...(person.profileNames ?? []).map(tier),
   ].filter((value) => value !== undefined);
-  return hidden.length ? 4 + Math.min(...hidden) : undefined;
+  return hidden.length ? 5 + Math.min(...hidden) : undefined;
 }
 
 /**

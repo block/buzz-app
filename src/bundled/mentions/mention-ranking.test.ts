@@ -9,7 +9,11 @@ import {
   type MentionChoice,
 } from "./mention-ranking";
 import { fixtureChoice, mentionConformance } from "./mention-rules.conformance";
-import { matchPerson, nameStarts } from "../../features/search/person-match";
+import {
+  matchPerson,
+  nameStarts,
+  peopleSearch,
+} from "../../features/search/person-match";
 const choice = (
   key: string,
   name: string,
@@ -270,6 +274,18 @@ it.each(mentionConformance.matching)(
     );
   },
 );
+it.each(mentionConformance.peopleSearch)(
+  "conforms to the portable people search contract: $name",
+  ({ label, query, expected }) => {
+    expect(matchPerson(label, query, peopleSearch)?.tier ?? null).toBe(
+      expected,
+    );
+    // Mentions never match in any order: only tiers 0 to 3 are theirs.
+    expect(matchPerson(label, query)?.tier ?? null).toBe(
+      expected === 4 ? null : expected,
+    );
+  },
+);
 it.each(mentionConformance.ranking)(
   "conforms to the portable ranking contract: $name",
   (fixture) => {
@@ -320,6 +336,12 @@ it("returns index matches in list order and skips names that cannot match", () =
   expect(matchingMentions(rows, "jane")).toEqual([rows[0], rows[2], rows[3]]);
   expect(matchingMentions(rows, "oney")).toEqual([]);
   expect(matchingMentions(rows, "jane d")).toEqual([rows[2]]);
+  // A multi-word mention query still means the start of a name: `mary j`
+  // lists Mary Jane, not Jay Mary Jane, though people search finds both.
+  const marys = [choice("5", "Mary Jane"), choice("6", "Jay Mary Jane")];
+  expect(rankMentions(matchingMentions(marys, "mary j"), "mary j")).toEqual([
+    marys[0],
+  ]);
   expect(matchingMentions(rows, "")).toBe(rows);
   // A repeated query reuses its matches; another query is matched afresh.
   const jane = matchingMentions(rows, "Jane");

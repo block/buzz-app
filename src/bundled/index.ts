@@ -68,6 +68,8 @@ import linksManifest from "./links/manifest.json";
 import * as links from "./links";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
+import communityAppearanceManifest from "./community-appearance/manifest.json";
+import * as communityAppearance from "./community-appearance";
 import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
 import typesafeManifest from "./typesafe/manifest.json";
@@ -257,6 +259,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
     module: moderation,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...communityAppearanceManifest, apiVersion: 1 },
+    module: communityAppearance,
     enabledByDefault: true,
   },
   {

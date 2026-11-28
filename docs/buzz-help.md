@@ -83,7 +83,8 @@ if that desktop app is up and running.
   - **Community**: **Profile**, **Local settings** (community address,
     repositories folder, cache, **New Solo chats** lifetime), **Mobile app**
     (or **Pair mobile**) and **Leave or remove**.
-  - **Community admin**: **Membership** for owners and admins.
+  - **Community admin**: **Membership** and **Community icon** (from the
+    bundled Community appearance plugin) for owners and admins.
   - **Buzz**: **Identity**, **Security** (desktop only), **Appearance**,
     **Notifications**, **Shortcuts**, **Agent setup**, **Decisions API**,
     **Speech to text**, **External apps** and **Software updates**. In the

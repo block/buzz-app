@@ -608,6 +608,10 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
         ))
         .expect("moderation manifest"),
         serde_json::from_str(include_str!(
+            "../../../src/bundled/community-appearance/manifest.json"
+        ))
+        .expect("community appearance manifest"),
+        serde_json::from_str(include_str!(
             "../../../src/bundled/relay-staff/manifest.json"
         ))
         .expect("relay staff manifest"),
@@ -665,6 +669,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.goose"
             | "block.builderlab"
             | "buzz.moderation"
+            | "buzz.community-appearance"
             | "buzz.relay-staff"
             | "buzz.typesafe"
             | "buzz.plugin-development"

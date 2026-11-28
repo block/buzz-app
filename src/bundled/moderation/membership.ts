@@ -177,3 +177,30 @@ export type CommunityMembership = ReturnType<typeof createCommunityMembership>;
 export const canManageMembership = (snapshot: MembershipSnapshot) =>
   snapshot.status === "ready" &&
   (snapshot.role === "owner" || snapshot.role === "admin");
+
+/** Settings card visibility for owner/admin cards; the relay still decides every change. */
+export const adminCardVisibility = (
+  relay: RelayData,
+  membership: CommunityMembership,
+) => ({
+  snapshot: () => {
+    const connection = relay.snapshot();
+    const state = membership.snapshot();
+    if (canManageMembership(state)) return true;
+    if (
+      connection.status === "error" ||
+      connection.status === "disconnected" ||
+      state.error
+    )
+      return "error" as const;
+    if (
+      state.status === "idle" ||
+      state.status === "loading" ||
+      state.refreshing
+    )
+      return "pending" as const;
+    return false;
+  },
+  subscribe: membership.subscribe,
+  ensure: membership.ensure,
+});

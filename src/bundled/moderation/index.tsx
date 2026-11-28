@@ -1,6 +1,6 @@
 import type { PluginModule } from "../../plugins/api";
 import { CommunityAdmin } from "./CommunityAdmin";
-import { canManageMembership } from "./membership";
+import { adminCardVisibility } from "./membership";
 
 export const inject = ["relay", "settingsCards", "adminAccess", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -13,28 +13,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "membership",
     title: "Membership",
     section: "administration",
-    visibility: {
-      snapshot: () => {
-        const connection = relay.snapshot();
-        const state = membership.snapshot();
-        if (canManageMembership(state)) return true;
-        if (
-          connection.status === "error" ||
-          connection.status === "disconnected" ||
-          state.error
-        )
-          return "error";
-        if (
-          state.status === "idle" ||
-          state.status === "loading" ||
-          state.refreshing
-        )
-          return "pending";
-        return false;
-      },
-      subscribe: membership.subscribe,
-      ensure: membership.ensure,
-    },
+    visibility: adminCardVisibility(relay, membership),
     component: ({ active, community, navigation }) => (
       <CommunityAdmin
         relay={relay}

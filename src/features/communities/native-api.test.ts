@@ -175,6 +175,47 @@ it.each([
   },
 );
 
+it("signs one bounded icon command and rejects malformed icons unsent", async () => {
+  respond = (_path, body) => ({
+    body: { event_id: (body as { id: string }).id, accepted: true },
+  });
+  for (const icon of ["data:image/png;base64,AAAA", ""])
+    await expect(
+      communityRequest(community, "icon", { icon }),
+    ).resolves.toMatchObject({ accepted: true });
+  expect(requests).toMatchObject([
+    {
+      path: "/events",
+      body: {
+        kind: 9033,
+        content: "",
+        tags: [["icon", "data:image/png;base64,AAAA"]],
+      },
+    },
+    { path: "/events", body: { kind: 9033, tags: [["icon", ""]] } },
+  ]);
+  for (const icon of [
+    "https://cdn.test/icon.png",
+    "data:image/svg+xml;base64,AAAA",
+    `data:image/png;base64,${"A".repeat(49_152)}`,
+    undefined,
+  ])
+    await expect(communityRequest(community, "icon", { icon })).rejects.toThrow(
+      "Invalid community icon",
+    );
+  expect(requests).toHaveLength(2);
+});
+
+it("keeps the relay's refusal of an icon change from a non-admin", async () => {
+  respond = () => ({
+    status: 403,
+    body: { error: "invalid: actor not authorized: must be admin or owner" },
+  });
+  await expect(
+    communityRequest(community, "icon", { icon: "" }),
+  ).rejects.toThrow("invalid: actor not authorized: must be admin or owner");
+});
+
 it("mints only bounded invites on the captured community", async () => {
   respond = () => ({
     body: { code: "invite", url: `${community}/invite/invite` },

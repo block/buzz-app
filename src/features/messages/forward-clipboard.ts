@@ -46,12 +46,12 @@ export function forwardClipboard(
     html: `<a href="${escapeHtml(url)}">Forwarded message</a><pre>${escapeHtml(text)}</pre>`,
   };
 }
-/** HTML is only a locator. Never render or trust clipboard attribution/content. */
+/** The forward a paste's text/html locates. The caller reads that HTML, so a
+ * paste reads it once. HTML is only a locator. Never render or trust clipboard
+ * attribution/content. */
 export function pastedForward(
-  data: Pick<DataTransfer, "getData">,
+  html: string,
 ): (ForwardReference & { note?: string }) | undefined {
-  if (typeof data?.getData !== "function") return;
-  const html = data.getData("text/html");
   if (!html || html.length > 262144) return;
   const doc = new DOMParser().parseFromString(html, "text/html");
   const links = [...doc.querySelectorAll("a[href]")].filter((a) =>

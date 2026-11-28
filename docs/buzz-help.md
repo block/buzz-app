@@ -122,10 +122,24 @@ if that desktop app is up and running.
   pinned. A community that doesn't take pins refuses them, and Buzz says so.
   Agents pin with the `pin` tool.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
-  folder and **/** a skill. Attach files by pasting or dragging them in. Typed
-  Markdown formats as you type; **Settings → Appearance → Disable formatting
+  folder and **/** a skill. Attach files by pasting or dragging them in.
+  Text copied with a picture of the selection pastes as text; a picture or
+  file copied on its own attaches where uploads are available. Rich text with
+  inline pictures pastes its text and, in the macOS app, attaches its pictures.
+  Send waits for the pictures; a **Could not attach** notice means one could
+  not be read: copy it again or attach it as a file. Message edits and browsers
+  such as Chrome paste only the text.
+  Typed Markdown formats as you type; **Settings → Appearance → Disable formatting
   while typing** leaves it as plain characters until you send, and hides the
   formatting toolbar.
+- **Editing a message** keeps unsaved changes across channel switches, thread
+  closes and restarts. A new message started before it reopens keeps it closed;
+  image and video reviews also leave it closed. Choose **Edit message** to
+  resume, moving it here if it is open elsewhere. Finish or cancel a kept edit
+  before editing another message; if its message is unavailable, choosing Edit
+  again discards it after a warning. If saving on this device fails, changes
+  stay only in that composer until **Retry edit save** succeeds. Save or Cancel
+  ends the edit; unsaved edits are not listed in Drafts.
 - **Drafts.** Every message box open on a conversation shares its draft. A box
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my

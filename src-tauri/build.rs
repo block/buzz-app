@@ -358,7 +358,7 @@ fn configure_federated_identity() {
     println!("cargo:rerun-if-env-changed=BUZZ_DEV_VIEWER");
     let local = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
         .join("../.env.local");
-    println!("cargo:rerun-if-changed={}", local.display());
+    build_env::watch_local(&local);
     let servers = federated_identity_servers(&local, |key| std::env::var(key).ok());
     if !servers.is_empty() {
         println!(

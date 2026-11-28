@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "vite";
 import {
@@ -40,6 +41,12 @@ const port = values.port === undefined ? undefined : Number(values.port);
 const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
 const root = fileURLToPath(new URL("../", import.meta.url));
 const env = launchEnvironment(root);
+// Lets Cargo detect a newly created .env.local on the next dev start.
+env.BUZZ_DESKTOP_DEV_ENV_LOCAL = existsSync(
+  new URL("../.env.local", import.meta.url),
+)
+  ? "present"
+  : "missing";
 delete env.BUZZ_DEV_RELEASE_KEY;
 if (me) env.BUZZ_DEV_RELEASE_KEY = "1";
 // On macOS `me` also routes Keychain items through a helper it installs once,

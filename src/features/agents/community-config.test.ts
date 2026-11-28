@@ -1,6 +1,12 @@
+import { isTauri } from "@tauri-apps/api/core";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import type { EventTemplate } from "nostr-tools";
 import { describe, expect, it, vi } from "vitest";
+import { apply as applyPi } from "../../bundled/pi";
+import {
+  type Config as PiConfig,
+  DEFAULT_CONFIG as PI_DEFAULT_CONFIG,
+} from "../../bundled/pi/runtime";
 import type { RelayEvent } from "../relay/events";
 import type { VerifiedEvent } from "nostr-tools";
 import type {
@@ -15,12 +21,16 @@ import {
   artifactTemplate,
   type SnapshotRead,
 } from "./agent-config-artifacts";
+import { resolveStart } from "./agent-start";
 import { agentConfigs, type ConfigAgent, fields } from "./community-config";
 import { type ConfigFeed, createConfigSync } from "./config-sync";
 import { createConfigWriter } from "./config-writes";
+import type { AgentType } from "./service";
 import { memoryStorage } from "./test-fakes";
 import { teamSubject } from "./config-channels";
 import { SyncedTeams, teamSources } from "./team-config";
+
+vi.mock("@tauri-apps/api/core", { spy: true });
 
 const key = generateSecretKey();
 const channel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
@@ -300,6 +310,80 @@ describe("migration races and restarts", () => {
     expect(again.configs.binding(agent.pubkey)?.instructions?.mode).toBe(
       "synced",
     );
+  });
+
+  it("starts a retyped Pi agent after restarting and can switch its harness again", async () => {
+    const register = vi.fn<(type: AgentType<PiConfig>) => void>();
+    const desktop = vi.mocked(isTauri).mockReturnValue(true);
+    try {
+      applyPi({
+        agentProtection: { registerModels: vi.fn() },
+        pluginOwner: { id: "buzz.pi", revision: "r1" },
+        host: { request: vi.fn() },
+        agents: { register, relay: () => undefined },
+        effect: vi.fn(),
+      } as never);
+    } finally {
+      desktop.mockReset();
+    }
+    const merge = register.mock.calls[0]?.[0].syncedSettings;
+    const source = {
+      ...agent,
+      schema: { model: "string" },
+      config: { instructions: "local text", model: "source-model" },
+    } as const;
+    const pi = {
+      ...agent,
+      type: "buzz.pi/pi",
+      config: {
+        ...PI_DEFAULT_CONFIG,
+        instructions: "local text",
+        model: "local-model",
+        provider: "local-provider",
+        workspace: "/local/workspace",
+      },
+    };
+    const first = setup();
+    await first.configs.attach([source]);
+    const d = await artifactD("buzz.agent.settings", channel);
+    const original = first.heads.get(d);
+    if (!original) throw new Error("No original settings head");
+    // Reproduce the Settings revision written before Pi had a sync schema.
+    const { settings: saved } = await first.configs.save(pi, pi.config, {
+      settings: original.id,
+    });
+    if (saved?.status !== "saved") throw new Error("Pi settings weren't saved");
+    expect(JSON.parse(saved.head.content)).toEqual({
+      version: 1,
+      agentType: pi.type,
+      settings: {},
+    });
+    first.configs.dispose();
+
+    const again = setup({ heads: first.heads, storage: first.storage });
+    await again.configs.attach([{ ...pi, schema: merge?.schema }]);
+    const binding = again.configs.binding(pi.pubkey);
+    expect(binding?.settings?.mode).toBe("synced");
+    if (!binding?.settings || !merge) throw new Error("No Pi settings binding");
+    expect(
+      resolveStart({
+        store: again.store,
+        agentType: pi.type,
+        local: pi.config,
+        settings: { ...binding.settings, ...merge },
+        ...(binding.instructions && { instructions: binding.instructions }),
+      }),
+    ).toMatchObject({ ok: true, config: pi.config, synced: {} });
+
+    const restored = await again.configs.save(source, source.config, {
+      settings: saved.head.id,
+    });
+    expect(restored.settings?.status).toBe("saved");
+    expect(JSON.parse(again.heads.get(d)?.content ?? "null")).toMatchObject({
+      agentType: source.type,
+      settings: { model: "source-model" },
+    });
+    again.configs.dispose();
   });
 });
 

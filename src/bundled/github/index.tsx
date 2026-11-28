@@ -58,6 +58,10 @@ import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { stateIcons } from "./pull-state-view";
 import { GitHubLink } from "./GitHubLink";
 import {
+  ChatPullMessageAction,
+  hasChatPullAction,
+} from "./ChatPullMessageAction";
+import {
   SoloPullIcon,
   SoloPullLink,
   SoloPullMenu,
@@ -148,6 +152,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
     order: -1,
     className: inlineStyles.link,
     component: ({ url }) => <GitHubLink url={url} states={states} />,
+  });
+  ctx.conversation.registerMessageAction({
+    id: "chat-pull-link",
+    title: "Link PR to chat",
+    placement: "menu",
+    matches: hasChatPullAction,
+    component: ({ message, session }) => (
+      <ChatPullMessageAction
+        message={message}
+        session={session}
+        relay={ctx.relay}
+        pulls={pullsFor(session)}
+      />
+    ),
   });
   ctx.conversation.registerChatMenu(({ session, channelId }) => (
     <SoloPullMenu

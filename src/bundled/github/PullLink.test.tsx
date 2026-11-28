@@ -253,6 +253,7 @@ function renderers() {
     conversation: {
       registerChatIcon: () => {},
       registerChatMenu: () => {},
+      registerMessageAction: () => {},
       registerLink: register("buzz.github"),
     },
     relay: {},

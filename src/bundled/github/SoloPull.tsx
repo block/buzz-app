@@ -105,7 +105,7 @@ export function SessionPullLauncher({
   );
 }
 
-function useSoloPull(pulls: SoloPulls, channelId: string) {
+export function useSoloPull(pulls: SoloPulls, channelId: string) {
   const subscribe = useCallback(
     (listener: () => void) => pulls.watch(channelId, listener),
     [pulls, channelId],

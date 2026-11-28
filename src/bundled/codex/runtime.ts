@@ -31,8 +31,7 @@ import {
 } from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
-  wakeAnchor,
-  wakeLands,
+  turnOf,
 } from "../../features/agent-harness/plugin-wake";
 import { compactAt } from "../../features/agents/compact-at";
 import { routeFor } from "../../features/agents/model-routes";
@@ -223,7 +222,7 @@ type Request = {
   answered: (stopped?: boolean) => void;
   /** A failed final delivery stays pending until this request gets a reply. */
   finalDelivery?: Error | true;
-  step?: (tool: string, target?: string) => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -1489,7 +1488,7 @@ export class CodexRuntime {
       if (!host?.serveMcp)
         throw new Error("Protected Codex requires the desktop security host");
       const serveMcp = host.serveMcp.bind(host);
-      const rpc = new AppServer((call) => this.tool(call));
+      const rpc = new AppServer((call, tokens) => this.tool(call, tokens));
       const server: Server = {
         rpc,
         protection,
@@ -1665,7 +1664,7 @@ export class CodexRuntime {
   }
   private shared() {
     if (this.server) return this.server;
-    const rpc = new AppServer((call) => this.tool(call));
+    const rpc = new AppServer((call, tokens) => this.tool(call, tokens));
     // Threads set their own cwd; the process just needs a directory that exists.
     const open = () => rpc.open(this.spawnOrdinary(), defaults.workspace);
     const previous = this.closingSharedServer;
@@ -2432,8 +2431,6 @@ export class CodexRuntime {
     // code, and the agent's own handoff comes from a turn already acting
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     // A workflow's mention waits out a reconnect; the check below decides.
     const ready =
       trigger.type === "mention" && workflowMarked(trigger.event, agent.owner)
@@ -2468,8 +2465,12 @@ export class CodexRuntime {
     const channel = await reads.channel(channelId);
     const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
     const huddle = isHuddleRoom(channel?.about);
-    const topLevel = solo || huddle || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
+    // Where the host placed it. A Huddle room is Codex's own reason to
+    // answer at the top level.
+    const turn = turnOf(trigger, delivery, channelId, solo || huddle);
+    if (!turn) return delivery.ignored?.();
+    const { event } = turn;
+    const topLevel = turn.topLevel || huddle;
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
     const [canvasRead, folders] = await Promise.all([
@@ -3568,7 +3569,10 @@ export class CodexRuntime {
       ],
     });
   }
-  private async tool(call: ToolCall): Promise<ToolReply> {
+  private async tool(
+    call: ToolCall,
+    contextTokens?: number,
+  ): Promise<ToolReply> {
     const entries = [...this.entries.values()];
     const matches = (turn?: { threadId?: string; turnId?: string }) =>
       turn?.threadId === call?.threadId && turn?.turnId === call?.turnId;
@@ -3626,6 +3630,8 @@ export class CodexRuntime {
     const { agent } = owner;
     const client = () =>
       appClient(agent, {
+        // Each message it posts carries its thread's context size.
+        contextTokens: () => contextTokens,
         // Its tool registry reviews every call, Buzz's dynamic tools included.
         ...(!this.target ? { nativeCall: check } : {}),
         nativeToolGate: true,
@@ -4365,7 +4371,7 @@ export class CodexRuntime {
         const step = method === "item/started" ? codexStep(item) : undefined;
         if (step)
           for (const taken of active.activity.values())
-            taken.step?.(step.tool, step.target);
+            taken.step?.(step.tool, step.target, step.origin);
         if (method === "item/started" && item.command)
           this.status(agent.key, key, "Working", item.command);
         if (method === "item/completed" && item.type === "commandExecution")
@@ -4898,10 +4904,12 @@ function continueSession(
 }
 
 /** A started Codex item as a step, named in the shared step vocabulary.
- * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase). */
+ * Shapes follow codex app-server v2 `ThreadItem` / `CommandAction` (camelCase).
+ * `origin` marks a call in the `buzz` tool namespace or to a `buzz` MCP
+ * server. */
 export function codexStep(
   item: Record<string, unknown> | undefined,
-): { tool: string; target?: string } | undefined {
+): { tool: string; target?: string; origin?: "buzz" } | undefined {
   const text = (value: unknown) =>
     typeof value === "string" && value ? value : undefined;
   const step = (tool: string, target?: unknown) => {
@@ -4931,8 +4939,14 @@ export function codexStep(
       return step("Edit", file(first?.path));
     }
     case "mcpToolCall":
-    case "dynamicToolCall":
-      return text(item.tool) ? step(String(item.tool)) : undefined;
+    case "dynamicToolCall": {
+      if (!text(item.tool)) return undefined;
+      const from = item.type === "mcpToolCall" ? item.server : item.namespace;
+      return {
+        tool: String(item.tool),
+        ...(from === "buzz" ? { origin: "buzz" as const } : {}),
+      };
+    }
     case "collabAgentToolCall":
       return step("Agent", item.prompt);
     case "webSearch":

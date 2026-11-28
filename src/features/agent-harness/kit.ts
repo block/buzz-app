@@ -32,8 +32,9 @@ import { soloChat } from "../agents/solo-chat";
 import type { EventData } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { threadReference } from "../relay/thread-reference";
+import { contextSize } from "./context-meter";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
-import { wakeAnchor, wakeLands } from "./plugin-wake";
+import { turnChannel, turnOf } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
 import { readProject, worksElsewhere } from "./project";
 import { placeOf } from "./sections/compose";
@@ -111,7 +112,13 @@ export type HarnessKit = Readonly<{
   tools(
     agent: AgentHandle,
     conversation?: HarnessConversation,
-    options?: Readonly<{ read?(path: string): Promise<Uint8Array> }>,
+    options?: Readonly<{
+      read?(path: string): Promise<Uint8Array>;
+      /** The calling session's context size now: the tokens of its last
+       * model call, which each message it posts carries; undefined when
+       * unknown. A harness feeds in what its protocol reports per call. */
+      contextTokens?(): number | undefined;
+    }>,
   ): McpHandler;
   /** Posts `text` as the agent in the conversation: in the event's thread, or
    * at the top level. `notifyOwner` tags the owner, as for a failed turn. */
@@ -212,10 +219,8 @@ export function harnessKit(sources: Sources): HarnessKit {
   };
 
   return Object.freeze({
-    async conversation(
-      { trigger, agent, channelId, signal, routeConversation }: Delivery,
-      scope: HarnessScope,
-    ) {
+    async conversation(delivery: Delivery, scope: HarnessScope) {
+      const { trigger, agent, signal, routeConversation } = delivery;
       if (
         trigger.type !== "mention" &&
         trigger.type !== "attention" &&
@@ -232,10 +237,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         if (!(await fromOwner(trigger.event, agent.owner))) return undefined;
         signal.throwIfAborted();
       }
-      const event =
-        trigger.type === "mention" ? trigger.event : wakeAnchor(trigger);
-      const channel =
-        channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
+      const channel = turnChannel(trigger, delivery);
       if (!channel) return undefined;
       const solo = await soloChat(
         () => sources.relay(agent.key),
@@ -243,8 +245,11 @@ export function harnessKit(sources: Sources): HarnessKit {
         channel,
         signal,
       );
-      const topLevel = solo || wake?.topLevel === true;
-      if (wake && !wakeLands(wake, topLevel)) return undefined;
+      // Where the host placed it: a harness built on the kit needs no
+      // placement code of its own.
+      const turn = turnOf(trigger, delivery, channel, solo);
+      if (!turn) return undefined;
+      const { event, topLevel } = turn;
       const found = await reader(agent.key)?.channel(channel);
       const dm = found?.dm === true;
       const nativeRoot = threadReference(event)?.rootId ?? event.id;
@@ -490,6 +495,9 @@ export function harnessKit(sources: Sources): HarnessKit {
         const client = () => {
           const ready = session(agent.key);
           return appClient(agent, {
+            ...(options.contextTokens
+              ? { contextTokens: () => contextSize(options.contextTokens?.()) }
+              : {}),
             relayAuthor: ready?.relayAuthor,
             signingAuthority: ready && (ready.workflowAuthority ?? null),
             read: (path) =>

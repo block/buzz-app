@@ -119,9 +119,9 @@ export function WorkspaceRow({
     if (measured) reportFloating(!docked);
   }, [measured, docked]);
 
-  // The box starts at the history's top, beside its scrollbar; floating, it
-  // stops at the history's bottom, above the composer. It wakes reading whenever it shows, moves, floats, docks or hides. A reader
-  // can show its history later, as a thread does once loaded, or replace it.
+  // The box starts at the history's top, beside its scrollbar. It wakes
+  // reading whenever it shows, moves, floats, docks or hides. A reader can
+  // show its history later, as a thread does once loaded, or replace it.
   const [geometry, setGeometry] = useState<CSSProperties>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: docking or floating changes what covers the rows, so reading wakes.
   useLayoutEffect(() => {
@@ -135,7 +135,6 @@ export function WorkspaceRow({
       const history = scroller.getBoundingClientRect();
       setGeometry({
         "--aside-top": `${history.top - outer.top}px`,
-        "--aside-height": `${history.height}px`,
         "--aside-scrollbar": `${scroller.offsetWidth - scroller.clientWidth}px`,
       } as CSSProperties);
       readingPositioned(scroller);
@@ -164,7 +163,9 @@ export function WorkspaceRow({
     };
   }, [shown, floating]);
 
-  // A nested surface: Escape and a press elsewhere in the row close only it.
+  // A nested surface: Escape, and a press or focus elsewhere in the row,
+  // close only it. Focus leaving it would otherwise land on composer
+  // controls it covers.
   const previous = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const element = box.current;
@@ -178,13 +179,17 @@ export function WorkspaceRow({
           : null;
       element.focus({ preventScroll: true });
     }
-    const pointerdown = (event: PointerEvent) => {
+    const outside = (event: Event) => {
       const target = event.target as Node;
       if (container.contains(target) && !element.contains(target))
         change(false);
     };
-    document.addEventListener("pointerdown", pointerdown, true);
-    return () => document.removeEventListener("pointerdown", pointerdown, true);
+    document.addEventListener("pointerdown", outside, true);
+    container.addEventListener("focusin", outside);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      container.removeEventListener("focusin", outside);
+    };
   }, [floating]);
   // After the aside's own controls, which may take Escape first; a portaled
   // popover's Escape is its own.

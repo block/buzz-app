@@ -24,9 +24,13 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import type { FinderCorpus, FinderDoc, FinderResults } from "./corpus.ts";
+import type {
+  FinderCorpus,
+  FinderDoc,
+  FinderResults,
+} from "../../features/search/fuzzy/corpus.ts";
 import { useFinderAll, useFinderChannel, useFinderHeld } from "./search.ts";
-import type { FinderSync } from "./sync";
+import { type FinderSync, lost } from "./sync";
 
 export type FinderScope = "channel" | "buzz";
 
@@ -347,6 +351,8 @@ function Choices({
         mentioned: { content: doc.text, mentions: [] },
       },
       run: () => {
+        // Access can go between drawing a row and choosing it.
+        if (session && lost(session, doc.channelId)) return;
         onOpenChange(false);
         openMessage(doc);
       },

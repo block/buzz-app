@@ -115,6 +115,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     protection: true,
     conversationFolders: true,
     conversationSections: true,
+    skillFolders: ["~/.agents/skills"],
     notes: true,
     title: "Pi",
     icon: PiLogoIcon,

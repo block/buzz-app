@@ -43,7 +43,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { XIcon } from "../../shared/design-system/icons/index";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  ConversationExtensions,
+  ConversationWorkspaceProps,
+} from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import { compareMessages } from "../relay/message-order";
 import type { RelaySession } from "../relay/session";
@@ -69,6 +72,7 @@ import { useComposerWrites } from "./composer-writes";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
+import { useTrailingSheet } from "./use-trailing-sheet";
 import { useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
 import {
@@ -87,6 +91,8 @@ import { contentSelector } from "./useFloatingActionBar";
 
 export type ThreadPanelProps = {
   intro?: ReactNode;
+  /** A workspace's card over the end of the replies, as in a channel. */
+  trailing?: ConversationWorkspaceProps["trailing"];
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -480,6 +486,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
 }
 function OwnedThreadPanel({
   intro,
+  trailing,
   session,
   extensions,
   scope,
@@ -571,6 +578,7 @@ function OwnedThreadPanel({
   ) : view ? (
     <ThreadMessages
       intro={intro}
+      trailing={trailing}
       soloConversation={soloConversation}
       disabled={disabled}
       extensions={extensions}
@@ -606,6 +614,7 @@ function OwnedThreadPanel({
 }
 function ThreadMessages({
   intro,
+  trailing,
   session,
   extensions,
   scope,
@@ -638,6 +647,7 @@ function ThreadMessages({
   routePending,
 }: {
   intro?: ReactNode;
+  trailing?: ThreadPanelProps["trailing"];
   subthreadId?: string | undefined;
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A route to this reader is on its way: until it lands, a reader not yet
@@ -834,6 +844,17 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  // The trailing card scrolls in its own sheet over the replies' end; rows it
+  // stops covering can be read.
+  const {
+    restSpace,
+    sheet,
+    rest: restSheet,
+    revealFocus: revealSheetFocus,
+    coveredFrom,
+  } = useTrailingSheet(trailing, scroller, () =>
+    readingPositioned(scroller.current),
+  );
   const positioned = useRef(false);
   const positionedLatestRequest = useRef<AbortSignal | undefined>(undefined);
   const shown = useRef(active);
@@ -1614,6 +1635,7 @@ function ThreadMessages({
     // When neither is loaded the visit opens again as it first did.
     if (openLatest) {
       positionedLatestRequest.current = latestRequest;
+      restSheet();
       targetAnchor.current = undefined;
       olderAnchor.current = undefined;
       remounted.current = undefined;
@@ -1849,6 +1871,7 @@ function ThreadMessages({
     expanded,
     expandedActivity,
     boundary,
+    restSheet,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
   // shrinks this viewport, late media grows rows and a join error grows the end
@@ -1963,6 +1986,7 @@ function ThreadMessages({
     element.focus({ preventScroll: true });
     setShowJumpToLatest(false);
     setNewMessageCount(0);
+    restSheet();
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
     if (jumpTimer.current !== undefined) clearTimeout(jumpTimer.current);
     jumpTimer.current = setTimeout(() => {
@@ -2436,6 +2460,8 @@ function ThreadMessages({
         channelId={channelId}
         scroller={scroller}
         settled={readingSettled}
+        // Rows under the trailing card aren't shown.
+        trailing={coveredFrom}
         // The thread opened bounds DM reads even before its root resolves. An
         // exact reply under an unavailable original shows alone, so it, not
         // its signed root, is the thread: its hidden siblings stay unread.
@@ -2473,6 +2499,8 @@ function ThreadMessages({
           aria-busy={positioning}
           data-positioning={positioning || undefined}
           data-jump-visible={showJumpToLatest || undefined}
+          data-trailing={trailing ? "" : undefined}
+          onFocus={(event) => revealSheetFocus(event.target)}
           onScroll={(event) => {
             if (!positioned.current) return;
             const element = event.currentTarget;
@@ -2697,12 +2725,16 @@ function ThreadMessages({
               </Button>
             </div>
           )}
-          <div
-            className={styles.timelineEnd}
-            data-thread-end=""
-            aria-hidden="true"
-          />
+          {/* Its resize keeps a reader at the latest reply there, as the
+              card's rest space changes too. */}
+          <div data-thread-end="">
+            <div className={styles.timelineEnd} aria-hidden="true" />
+            {restSpace}
+          </div>
         </section>
+        {/* After the history, so keyboard order follows the card's place
+            between the history and the composer. */}
+        {sheet}
         <DialogBarMaterial className={styles.threadEdgeBottom} />
       </div>
       {/* After the scroller, so its ref is attached when this registers. */}
@@ -2797,6 +2829,7 @@ function ThreadMessages({
           onDraftSaved={onDraftSaved}
           onSend={(id) => {
             onSend?.(id);
+            restSheet();
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

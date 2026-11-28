@@ -3,16 +3,18 @@
 // the desktop app has plugins to manage; elsewhere the tools refuse.
 import type { PluginRequestAction } from "../plugins/requests";
 import type { BuzzClient, Context } from "./client";
+import { type BuzzToolName, TOOL_TITLES } from "./tool-titles";
 import type { Tool } from "./tools";
 
 const str = { type: "string" } as const;
 const tool = (
-  name: string,
+  name: BuzzToolName,
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[] = [],
 ): Tool => ({
   name,
+  title: TOOL_TITLES[name],
   description,
   inputSchema: {
     type: "object",

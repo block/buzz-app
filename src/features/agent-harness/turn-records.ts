@@ -1,6 +1,7 @@
 // Buzz messages in a turn's prompt as exact JSON records, the same for every
 // runtime. A protection plugin re-encodes them exactly, which is how it finds
 // each message to check, and remember, on its own.
+import { CONTEXT_TAG } from "../relay/context-size";
 import type { EventData } from "../relay/events";
 
 /** JSON with `<` and `>` escaped, so no text in it opens or closes a section. */
@@ -38,12 +39,14 @@ export function withNames<T extends { id: string; pubkey: string }>(
 
 /** Tags that say what a message means: who it mentions, what it quotes or
  * refers to, the thread it came from, the message it answers, its files,
- * topics and custom emoji. Transport and runtime bookkeeping stays out. */
+ * topics and custom emoji, and how big its agent's context was when it
+ * posted. Transport and runtime bookkeeping stays out. */
 const READABLE = new Set([
   "p",
   "q",
   "e",
   "buzz:request",
+  CONTEXT_TAG,
   "buzz:sent-from-thread",
   "imeta",
   "t",

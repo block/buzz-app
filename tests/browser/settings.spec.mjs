@@ -1384,9 +1384,11 @@ test("Local settings saves a device name without changing the community identity
   ).toHaveValue("https://primary.example");
   await name.fill("My work");
   await name.press("Enter");
-  await expect(region.getByRole("status")).toHaveText(
-    "Display name saved on this device.",
-  );
+  await expect(
+    region
+      .getByRole("status")
+      .filter({ hasText: "Display name saved on this device." }),
+  ).toBeVisible();
   await closeSettings(page);
   await expect(button(page, "Community switcher: My work")).toBeVisible();
   await openSettings(page);

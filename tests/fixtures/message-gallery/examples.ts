@@ -97,6 +97,73 @@ const references =
   "@Sam Rivera and @Studio assistant — check [the design notes](https://example.com/notes), [PR #42](https://github.com/block/buzz/pull/42), and [#design](buzz://channel/gallery).\n\nRaw service link: https://github.com/block/buzz/issues/42\n\n||The surprise is in the [release notes](https://example.com/release).||";
 const patch =
   "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
+const reactionAuthorId = (index: number) =>
+  index.toString(16).padStart(2, "0").repeat(32);
+const readOnlyReactionAuthors = Array.from({ length: 12 }, (_, index) =>
+  reactionAuthorId(index),
+);
+const reactionEvents = (prefix: string, authors: readonly string[]) =>
+  authors.map((authorId, index) => ({ id: `${prefix}-${index}`, authorId }));
+const readOnlyReactions = [
+  {
+    content: "👀",
+    events: [
+      ...reactionEvents("attention", readOnlyReactionAuthors),
+      { id: "attention-repeat", authorId: reactionAuthorId(0) },
+    ],
+  },
+  {
+    content: "👍",
+    events: reactionEvents("approval", readOnlyReactionAuthors.slice(0, 3)),
+  },
+  {
+    content: "🎉",
+    events: reactionEvents("celebration", readOnlyReactionAuthors.slice(0, 4)),
+  },
+  {
+    content: ":party:",
+    emoji: { shortcode: "party", url: "https://fixture.test/media/avatar" },
+    events: reactionEvents("party-image", readOnlyReactionAuthors.slice(0, 2)),
+  },
+  {
+    content: ":party:",
+    emoji: { shortcode: "party", url: "https://fixture.test/media/party" },
+    events: reactionEvents("party-text", readOnlyReactionAuthors.slice(0, 1)),
+  },
+  {
+    content:
+      ":celebrating_the_quarterly_release_readiness_milestone_together_:",
+    emoji: {
+      shortcode:
+        "celebrating_the_quarterly_release_readiness_milestone_together_",
+      url: "https://fixture.test/media/long-shortcode-unavailable",
+    },
+    events: reactionEvents(
+      "long-shortcode",
+      readOnlyReactionAuthors.slice(0, 5),
+    ),
+  },
+  {
+    content: "✅",
+    events: reactionEvents("check", readOnlyReactionAuthors),
+  },
+  {
+    content: "🔥",
+    events: reactionEvents("fire", readOnlyReactionAuthors),
+  },
+  {
+    content: "💡",
+    events: reactionEvents("idea", readOnlyReactionAuthors),
+  },
+  {
+    content: "🚀",
+    events: reactionEvents("launch", readOnlyReactionAuthors),
+  },
+  {
+    content: "💙",
+    events: reactionEvents("heart", readOnlyReactionAuthors),
+  },
+];
 export const groups: Group[] = [
   {
     id: "agent-coordination",
@@ -689,6 +756,26 @@ export const groups: Group[] = [
           })),
         },
       ),
+      {
+        id: "read-only-reactions",
+        title: "Read-only grouped reactions",
+        description:
+          "A local message row with many fictional reactions and a stable neighbor.",
+        rows: [
+          message(
+            "read-only-reactions-main",
+            "A short update with reactions.",
+            {
+              reactions: readOnlyReactions,
+            },
+          ),
+          message(
+            "read-only-reactions-next",
+            "The next message remains separate.",
+            { authorId: teammate },
+          ),
+        ],
+      },
       single(
         "thread",
         "Thread summary",

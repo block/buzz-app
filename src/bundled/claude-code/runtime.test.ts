@@ -46,7 +46,11 @@ import {
   standaloneSessions,
 } from "../../features/agents/standalone-sessions";
 import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
-import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  RESUMED_PROMPT,
+  TOP_LEVEL_MENTION_PROMPT,
+  TOP_LEVEL_PROMPT,
+} from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import {
@@ -2734,6 +2738,67 @@ it("stops a routed community wake before Claude receives its prompt", async () =
     release();
     await Promise.allSettled([running]);
     f.runtime.dispose();
+  }
+});
+
+it("answers a placed mention where the matching wake goes, framed as the owner's request", async () => {
+  const earlier = message("1", "The checklist");
+  const mention = message("2", "@Claude back to the checklist", {
+    created_at: 101,
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const turn = async (
+    trigger: Delivery["trigger"],
+    picks: Partial<Delivery> = {},
+  ) => {
+    const f = setup([earlier], { hold: true });
+    try {
+      await f.deliver(trigger, picks);
+      await vi.waitFor(() =>
+        expect(f.claudes().some((process) => process.prompts.length)).toBe(
+          true,
+        ),
+      );
+      const claude = f.claudes().find((process) => process.prompts.length);
+      const prompt = claude?.prompts[0] ?? "";
+      await send(claude, "placed-send", { text: "Placed" });
+      return {
+        context: prompt.match(/<context>[\s\S]*?<\/context>/)?.[0],
+        tags: f.published.filter((event) => event.kind === 9).at(-1)?.tags,
+      };
+    } finally {
+      f.runtime.dispose();
+    }
+  };
+  for (const [placement, wake] of [
+    [{ topLevel: true }, { ...pluginWake(), topLevel: true }],
+    [{ root: earlier.id }, pluginWake(earlier.id)],
+  ] as const) {
+    const placed = await turn(
+      { type: "mention", event: mention },
+      { placement },
+    );
+    const woken = await turn(wake);
+    const where = (context = "") =>
+      context
+        .split("\n")
+        .filter((line) =>
+          /^(Scope|Session scope|Channel|Thread root):/.test(line),
+        );
+    // The same session and default `send` target as the wake.
+    expect(where(placed.context), JSON.stringify(placement)).toEqual(
+      where(woken.context),
+    );
+    expect(placed.tags, JSON.stringify(placement)).toEqual(woken.tags);
+    // Framed as a mention: no wake or Interest wording at the top level.
+    if ("topLevel" in placement) {
+      expect(placed.context).toContain(TOP_LEVEL_MENTION_PROMPT);
+      expect(placed.context).not.toContain("Interest");
+      expect(placed.tags).toEqual([["h", channel]]);
+    } else expect(placed.context).toEqual(woken.context);
   }
 });
 

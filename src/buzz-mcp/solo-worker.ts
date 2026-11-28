@@ -8,6 +8,7 @@
 import { channelVisibility } from "../features/relay/channel-details-protocol";
 import type { RelayEvent } from "../features/relay/events";
 import type { BuzzClient, BuzzEvent } from "./client";
+import { type BuzzToolName, TOOL_TITLES } from "./tool-titles";
 import {
   ACK_HORIZON,
   ADMISSION_WINDOW,
@@ -68,13 +69,14 @@ const retry = {
 } as const;
 const limit = { type: "integer", minimum: 1, maximum: PAGE_MAX } as const;
 const workerTool = (
-  name: string,
+  name: BuzzToolName,
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[],
   annotations: Readonly<{ readOnlyHint?: true; destructiveHint?: boolean }>,
 ) => ({
   name,
+  title: TOOL_TITLES[name],
   description,
   inputSchema: {
     type: "object",

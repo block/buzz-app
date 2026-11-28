@@ -504,10 +504,17 @@ it("reuses a captured opening frame when a virtualized preview remounts", async 
   expect(first.seek).toHaveBeenCalledWith(0.1);
   fireEvent.seeked(first.video);
   await waitFor(() => expect(first.video).toHaveAttribute("poster", FRAME));
+  const poster = first.container.querySelector(`img[src="${FRAME}"]`);
+  if (!poster) throw new Error("Missing poster");
+  // jsdom decodes nothing; give the painted frame its size.
+  for (const key of ["naturalWidth", "naturalHeight"])
+    Object.defineProperty(poster, key, { configurable: true, value: 640 });
   first.unmount();
 
   const second = mountCapturable(url);
   expect(second.video).toHaveAttribute("poster", FRAME);
+  // A new element would paint empty for a frame in WebKit.
+  expect(second.container.querySelector(`img[src="${FRAME}"]`)).toBe(poster);
   expect(second.video.style.getPropertyValue("--media-ratio")).toBe(
     "1280 / 720",
   );

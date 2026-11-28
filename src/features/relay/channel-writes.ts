@@ -8,6 +8,7 @@ import {
   promoteSoloAdmins,
   soloAdminKey,
   soloAdminRecovery,
+  soloAdminSetupExpired,
   soloAgentOwnership,
 } from "./solo-admins";
 import { isBatchAddition } from "../channel-members/members";
@@ -584,12 +585,20 @@ export function createChannelWrites(
     if (original?.channelType === "solo")
       await refresh(id, { members: unique });
   }
-  /** Cached discovery is not evidence for a new automatic Admin grant. */
-  async function freshOwnership(key: string) {
+  /** Cached discovery is not evidence for a new automatic Admin grant. A
+   * `required` profile that cannot be read is unknown, not unowned. */
+  async function freshOwnership(key: string, required = false) {
     const events = await discovery.read(
       [{ kinds: [0], authors: [key], limit: 1, consistency: "strong" }],
       { signal, fresh: true, priority: "foreground" },
     );
+    if (
+      required &&
+      !events.some((event) => event.kind === 0 && event.pubkey === key)
+    )
+      throw new Error(
+        "An opening agent's profile is unavailable. Retry the opening message.",
+      );
     const owned = await soloAgentOwnership(
       agents?.profiles,
       agents?.viewer,
@@ -613,39 +622,57 @@ export function createChannelWrites(
     const pending = (receipts ?? outbox)
       ?.snapshot()
       .find((item) => item.recovery?.key === soloAdminKey(id));
-    if (!pending) return;
+    if (!pending?.recovery) return;
     const active = adminSetups.get(id);
     if (active) return active;
+    const opening = pending.recovery;
     const work = (async () => {
+      // An expired create can no longer land, so a relay roster listing its
+      // creator shows the chat exists without the create lookup.
+      await created(
+        pending.event.id,
+        async () =>
+          soloAdminSetupExpired(pending.event) &&
+          (await listsMember(id, pending.event.pubkey, signal).catch(
+            () => false,
+          )),
+      );
+      // Checked first, so no other failure can block the chat past expiry.
+      if (soloAdminSetupExpired(pending.event))
+        return outbox?.dismiss(pending.event.id, opening);
       const source = writer();
       const withRecovery = source.withRecovery;
       const finishRecovery = source.finishRecovery;
       if (!adminWriter || !relayAuthor || !withRecovery || !finishRecovery)
         throw new Error("This connection cannot set up chat admins.");
-      await created(pending.event.id);
       const saved = await source.recovery(soloAdminKey(id));
-      if (!saved?.recovery)
-        throw new Error(
-          "Chat admin setup ended in another window. Retry this message to continue.",
-        );
+      // Another window finished it.
+      if (!saved?.recovery) return;
       const recovery = saved.recovery;
-      await promoteSoloAdmins(
-        saved,
-        {
-          ...adminWriter,
-          publish: (event, signal, checkOwnership) =>
-            withRecovery(saved.event.id, recovery, () => {
-              checkOwnership();
-              return adminWriter.publish(event, signal);
-            }),
-        },
-        discovery,
-        relayAuthor,
-        signal,
-        freshOwnership,
-      );
-      signal.throwIfAborted();
-      await finishRecovery(saved.event.id, recovery);
+      try {
+        await promoteSoloAdmins(
+          saved,
+          {
+            ...adminWriter,
+            publish: (event, signal, checkOwnership) =>
+              withRecovery(saved.event.id, recovery, () => {
+                checkOwnership();
+                return adminWriter.publish(event, signal);
+              }),
+          },
+          discovery,
+          relayAuthor,
+          signal,
+          (key) => freshOwnership(key, true),
+        );
+        signal.throwIfAborted();
+        await finishRecovery(saved.event.id, recovery);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        // Drops this window's copy if another window finished it meanwhile.
+        await withRecovery(saved.event.id, recovery, async () => {}, true);
+        if ((await source.recovery(soloAdminKey(id)))?.recovery) throw error;
+      }
     })();
     adminSetups.set(id, work);
     void work.catch(() => {}).finally(() => adminSetups.delete(id));
@@ -657,9 +684,10 @@ export function createChannelWrites(
   /** Settles once the relay has the create, or rejects with ChatNotStarted
    * once it is known to have none. A lost acknowledgment resends the same
    * create, which the relay confirms; when the attempts run out, the relay is
-   * asked for the create until it answers. */
-  async function created(create: string) {
+   * asked for the create until it answers or `exists` shows the chat. */
+  async function created(create: string, exists?: () => Promise<boolean>) {
     for (let tries = 1; tries <= 3; tries++) {
+      if (await exists?.()) return;
       try {
         return await delivered(create);
       } catch (error) {
@@ -681,6 +709,7 @@ export function createChannelWrites(
     }
     for (let wait = 1_000; ; wait = Math.min(wait * 2, 30_000)) {
       if (signal.aborted) throw new Error("The community connection changed.");
+      if (await exists?.()) return;
       try {
         const events = await reader.read(
           [{ ids: [create], limit: 1, consistency: "strong" }],

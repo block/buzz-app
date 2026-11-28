@@ -619,6 +619,10 @@ const TASK_POLL_MS = 1_000;
 const DENY_MS = 5_000;
 /** Entries a transcript reads at a time. */
 const PAGE = 200;
+/** How far back, in pages of entries, a Buzz tool call looks for the
+ * answer that asked for it, whose usage is the conversation's context size. */
+const SIZE_PAGE = 32;
+const SIZE_PAGES = 4;
 /** Buzz tools are `buzz_<name>`, apart from Pi's own `read` and `edit`. */
 const PREFIX = "buzz_";
 /** The prompt section of the agent's `core` memory. */
@@ -1443,6 +1447,31 @@ export function serve({
     return opened;
   }
 
+  /** A conversation's context size: the tokens of its latest model call, as
+   * its newest answer in the transcript records them. Read by the host, not
+   * by a hook, so a protected agent, which takes no extension hooks, has it
+   * too. Undefined when none of its recent entries has one. */
+  async function sizeOf(opened, conversation, context) {
+    const found = await opened.harness.conversation(conversation, context);
+    let cursor;
+    // The answer that asked for the call is the newest one, behind only the
+    // results of its other calls.
+    for (let page = 0; found && page < SIZE_PAGES; page++) {
+      const entries = await found.entries({}, SIZE_PAGE, cursor, context);
+      for (const entry of entries.items)
+        for (const message of (entry.model ?? []).toReversed())
+          if (message.role === "assistant") {
+            const tokens = message.usage?.totalTokens;
+            return Number.isSafeInteger(tokens) && tokens > 0
+              ? tokens
+              : undefined;
+          }
+      cursor = entries.next;
+      if (!cursor) break;
+    }
+    return undefined;
+  }
+
   /** The agent's Buzz tools, served by the plugin. Those it lists to load on
    * search are deferred: the model finds them with `tool_search`, which
    * `hint` says what it can find with. */
@@ -1522,6 +1551,11 @@ export function serve({
                   agent: opened.agent,
                   conversation: api.conversationId,
                   context: opened.contexts.get(api.conversationId) ?? {},
+                  contextTokens: await sizeOf(
+                    opened,
+                    api.conversationId,
+                    signalled,
+                  ).catch(() => undefined),
                   name: tool.name,
                   arguments: args,
                 },
@@ -1616,6 +1650,9 @@ export function serve({
         send({
           type: "step",
           tool: name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name,
+          // Only the prefix says a tool is Buzz's: Pi's own tools and its
+          // extensions' are reported bare.
+          ...(name.startsWith(PREFIX) ? { origin: "buzz" } : {}),
           target: targetOf(
             // A nested call shows the arguments it runs with. A call the
             // model made runs with what the hooks left of its arguments.

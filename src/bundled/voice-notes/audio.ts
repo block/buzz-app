@@ -145,6 +145,25 @@ export function voiceNoteBarHeight(level: number): number {
   return 3 + Math.round(audibleLevel * 17);
 }
 
+// Older notes carry no peaks. Like mobile, give each URL a stable placeholder.
+export function voiceNoteDisplayPeaks(
+  source: string,
+  waveform: readonly number[] | undefined,
+  barCount: number,
+): number[] {
+  if (waveform?.length)
+    return waveformPeaks(Float32Array.from(waveform.slice(0, 100)), barCount);
+
+  let seed = 0;
+  for (let i = 0; i < source.length; i++)
+    seed = (Math.imul(seed, 31) + source.charCodeAt(i)) | 0;
+  const samples = Float32Array.from({ length: 48 }, () => {
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+    return 0.12 + (seed % 760) / 1000;
+  });
+  return waveformPeaks(samples, barCount);
+}
+
 export function waveformPeaks(
   samples: Float32Array,
   barCount: number,

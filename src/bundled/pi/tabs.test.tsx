@@ -196,9 +196,21 @@ function created(pi = fakePi(), modelAppearance?: "glass-ghost") {
 
 async function choose(label: string, option: string) {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: label }));
-  await user.click(await screen.findByRole("option", { name: option }));
+  if (label !== "Model") {
+    await user.click(screen.getByRole("combobox", { name: label }));
+    await user.click(await screen.findByRole("option", { name: option }));
+    return;
+  }
+  // Models are grouped by family, each in its own submenu.
+  await user.click(modelPicker());
+  const family = option.startsWith("GPT") ? "OpenAI" : "Claude";
+  (await screen.findByRole("menuitem", { name: family })).focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitemradio", { name: option }));
 }
+
+const modelPicker = (within_: ReturnType<typeof within> = screen) =>
+  within_.getByRole("button", { name: /^Model: / });
 
 const modelButton = () =>
   screen.getByRole("button", { name: /^Model: (Pi default|Choose a|GPT X)/ });
@@ -733,10 +745,10 @@ it.each([
 it("describes the inherited Pi model without nesting a Pi default label", async () => {
   created();
   const dialog = await openChoices();
-  const picker = within(dialog).getByRole("combobox", { name: "Model" });
+  const picker = modelPicker(within(dialog));
   await waitFor(() => expect(picker).toHaveTextContent("Claude X · Default"));
   await userEvent.setup().click(picker);
-  const option = await screen.findByRole("option", { name: "Default" });
+  const option = await screen.findByRole("menuitemradio", { name: "Default" });
   expect(option).toHaveAccessibleDescription("Currently Claude X");
   expect(option).not.toHaveTextContent("Pi default");
 });
@@ -758,11 +770,7 @@ it("blocks an unsupported proposal effort and lets the owner clear it", async ()
       settingsHost={{ proposedModelOrEffort: true, pendingSave: save }}
     />,
   );
-  await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Claude X",
-    ),
-  );
+  await waitFor(() => expect(modelPicker()).toHaveTextContent("Claude X"));
   const submit = screen.getByRole("button", { name: "Save" });
   await user.click(submit);
   expect(

@@ -307,6 +307,7 @@ export function createTabs({
         )}
         <ModelPicker
           allowCustomModel={false}
+          groupByFamily
           models={models.value ?? []}
           loading={models.status === "loading"}
           value={value.model}

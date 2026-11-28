@@ -16,7 +16,7 @@ pub(crate) fn write_executable(path: &Path, contents: impl AsRef<[u8]>) {
     source.push(".source");
     let source = Path::new(&source);
     std::fs::write(source, contents).unwrap();
-    let status = std::process::Command::new("/bin/cp")
+    let status = std::process::Command::new("cp")
         .arg(source)
         .arg(path)
         .status()

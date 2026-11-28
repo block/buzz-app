@@ -529,7 +529,7 @@ async fn the_hook_guard_says_why_it_stopped_a_worker() {
 async fn a_guarded_worker_s_last_frame_reaches_the_page_after_it_exits() {
     let dir = tempfile::tempdir().unwrap();
     let gate = dir.path().join("gate");
-    assert!(std::process::Command::new("/usr/bin/mkfifo")
+    assert!(std::process::Command::new("mkfifo")
         .arg(&gate)
         .status()
         .unwrap()

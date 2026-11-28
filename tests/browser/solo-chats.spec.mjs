@@ -88,8 +88,9 @@ test("chat row menus open Share with the chat's people and restore focus", async
   await expect(
     dialog.getByRole("searchbox", { name: "Search people and channels" }),
   ).toBeFocused();
-  const agentGroup = dialog.getByRole("region", {
-    name: "Agents",
+  await dialog.getByRole("tab", { name: "Agents · 2" }).click();
+  const agentGroup = dialog.getByRole("tabpanel", {
+    name: "Agents · 2",
     exact: true,
   });
   await expect(agentGroup.getByText("Blossom", { exact: true })).toBeVisible();

@@ -22,6 +22,15 @@ import {
 } from "../../src/features/relay/testing";
 import "../../src/shared/styles/globals.css";
 
+// Enough destinations to exercise backward focus through a sticky Channels group.
+const soloDestinations = new URLSearchParams(location.search).has(
+  "solo-channels",
+)
+  ? Array.from({ length: 18 }, (_, index) => ({
+      id: `destination-${index}`,
+      name: `Destination ${String(index + 1).padStart(2, "0")}`,
+    }))
+  : [];
 const solo = new URLSearchParams(location.search).has("solo");
 const plugin = new URLSearchParams(location.search).has("plugin");
 const administration =
@@ -29,15 +38,24 @@ const administration =
 const rejectRemoval = new URLSearchParams(location.search).has(
   "reject-removal",
 );
+const lateArchives = new URLSearchParams(location.search).has("late-archives");
+let releaseArchives = () => {};
+const archivesReady = new Promise<void>((resolve) => {
+  releaseArchives = resolve;
+});
 const viewer = keypair();
 const relay = keypair();
 const person = keypair();
+const memberSearch = new URLSearchParams(location.search).has("member-search");
 const candidates = new URLSearchParams(location.search).has("multiple")
   ? [1, 2, 3].map((index) => ({
       key: keypair(),
       name: `Morgan Field Tester ${index}`,
     }))
-  : [{ key: person, name: "Morgan" }];
+  : [
+      { key: person, name: "Morgan" },
+      ...(memberSearch ? [{ key: keypair(), name: "Morgan Visitor" }] : []),
+    ];
 const candidateProfiles = candidates.map(({ key, name }) =>
   profile(key, { name }),
 );
@@ -49,13 +67,15 @@ const namesReady = new Promise<void>((resolve) => {
 let namesRequested = false;
 const additions: string[] = [];
 const channelId = "11111111-1111-4111-8111-111111111111";
-// Only the scroll-dismissal journey needs an overflowing roster.
-const scrollMembers = new URLSearchParams(location.search).has("scroll")
-  ? Array.from({ length: 16 }, (_, index) => ({
-      key: keypair(),
-      name: `Member ${index + 1}`,
-    }))
-  : [];
+// Overflow for scroll dismissal, or a second page for one-group paging.
+const peopleScale = new URLSearchParams(location.search).has("people-scale");
+const scrollMembers =
+  new URLSearchParams(location.search).has("scroll") || peopleScale
+    ? Array.from({ length: peopleScale ? 60 : 16 }, (_, index) => ({
+        key: keypair(),
+        name: `Member ${index + 1}`,
+      }))
+    : [];
 // Real owner signatures for the opt-in search workload, not a mocked verifier.
 const invitationScale = new URLSearchParams(location.search).has(
   "invitation-scale",
@@ -76,13 +96,16 @@ const inventory =
 const lastPageAlone = new URLSearchParams(location.search).has(
   "last-page-alone",
 );
+const shortPanel = new URLSearchParams(location.search).has("short-panel");
 const searchScale =
-  new URLSearchParams(location.search).has("search-scale") || lastPageAlone;
+  new URLSearchParams(location.search).has("search-scale") ||
+  lastPageAlone ||
+  shortPanel;
 const idleOverlap = new URLSearchParams(location.search).has("idle-overlap");
 const managed =
   searchScale || idleOverlap
     ? Array.from(
-        { length: idleOverlap ? 2 : lastPageAlone ? 51 : 60 },
+        { length: shortPanel ? 1 : idleOverlap ? 2 : lastPageAlone ? 51 : 60 },
         (_, index) => ({
           key: keypair(),
           name: `Agent ${index + 1}`,
@@ -143,16 +166,39 @@ const { session: sharedSession } = createRelaySession(
     viewer: viewer.pubkey,
     scope: "https://relay.example.test",
     relayAuthor: relay.pubkey,
+    ...(lateArchives ? { archiveAuthority: relay.pubkey } : {}),
+    ...(new URLSearchParams(location.search).has("editable-access")
+      ? {
+          channelDetails: {
+            sign: async (template: import("nostr-tools").EventTemplate) =>
+              signed(viewer, template),
+            publish: async () => {},
+          },
+        }
+      : {}),
     media: () => {
       searchWork.images++;
       return undefined;
     },
     readAgentLibrary: async () => ({ definitions: [], identities: inventory }),
     query: async (filters) => {
+      if (
+        lateArchives &&
+        filters.some((filter) => filter.kinds?.includes(13535))
+      ) {
+        await archivesReady;
+        return [
+          signed(relay, {
+            kind: 13535,
+            content: "",
+            tags: [["-"], ["p", person.pubkey]],
+          }),
+        ];
+      }
       if (filters.some((filter) => filter.search)) {
         // The roster-only workload must not introduce a new identity: random
         // npub suffix collisions legitimately change every row's key label.
-        if (invitationScale || searchScale) return [];
+        if ((invitationScale || searchScale) && !memberSearch) return [];
         return candidateProfiles;
       }
       if (holdNames && filters.some((filter) => filter.kinds?.includes(0))) {
@@ -160,6 +206,33 @@ const { session: sharedSession } = createRelaySession(
         await namesReady;
       }
       return [
+        ...soloDestinations.flatMap((destination) => [
+          signed(relay, {
+            kind: 39000,
+            content: "",
+            tags: [
+              ["d", destination.id],
+              ["t", "stream"],
+              ["name", destination.name],
+            ],
+          }),
+          signed(relay, {
+            kind: 39002,
+            content: "",
+            tags: [
+              ["d", destination.id],
+              ["p", viewer.pubkey, "", "owner"],
+            ],
+          }),
+          signed(relay, {
+            kind: 39001,
+            content: "",
+            tags: [
+              ["d", destination.id],
+              ["p", viewer.pubkey, "owner"],
+            ],
+          }),
+        ]),
         ...(administration
           ? [
               signed(relay, {
@@ -368,6 +441,7 @@ Object.assign(window, {
     published,
     namesRequested: () => namesRequested,
     releaseNames: () => releaseNames(),
+    releaseArchives: () => releaseArchives(),
     additions,
     confirm: () => releasePublish(),
     settleAddition: (index: number, rejected = false) => {

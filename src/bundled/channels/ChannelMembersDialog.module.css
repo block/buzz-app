@@ -67,6 +67,9 @@
 .memberList > section + section:not(.memberGroup) {
   margin-block-start: calc(-1 * var(--space-2));
 }
+.memberTabs {
+  min-width: 0;
+}
 .loadingMembers {
   display: grid;
   flex: 1;

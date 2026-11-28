@@ -7,6 +7,7 @@ const members = Array.from({ length: 2525 }, (_, i) =>
 const channelId = "11111111-1111-4111-8111-111111111111";
 test.use({
   pluginFixtures: true,
+  soloAgentNames: Array.from({ length: 15 }, (_, i) => `Scale agent ${i + 1}`),
   channelIds: [channelId, "beta"],
   channelNames: { [channelId]: "Large channel" },
   sessionMembers: { [channelId]: members },
@@ -17,6 +18,10 @@ test("large channel members stays usable while browsing and searching the roster
   page,
   app,
 }, testInfo) => {
+  app.serveMembers(channelId, [
+    ...members,
+    ...app.soloAgents.map((agent) => agent.pubkey),
+  ]);
   await page.goto(app.origin);
   await openPage(page, "Messages");
   await page.locator(`button[data-channel-id="${channelId}"]`).click();
@@ -32,16 +37,18 @@ test("large channel members stays usable while browsing and searching the roster
   await expect(dialog.getByText("Loading members…")).toHaveCount(0);
   await expect(list.getByRole("listitem").first()).toBeVisible();
   await expect(
-    list.getByRole("heading", { name: "People · 2526" }),
+    dialog.getByRole("tab", { name: "People · 2526", exact: true }),
   ).toBeVisible();
   expect(await list.getByRole("listitem").count()).toBeLessThan(100);
-  const pages = list.getByRole("navigation", { name: "People member pages" });
+  const panel = list.getByRole("tabpanel", { name: /^People ·/ });
+  const pages = panel.getByRole("navigation", { name: "People member pages" });
   await pages.getByRole("button", { name: "Next" }).click();
   await expect(pages.getByText("2 of 51")).toBeVisible();
-  await expect(
-    list.getByRole("heading", { name: "People · 2526" }),
-  ).toBeFocused();
+  await expect(panel).toBeFocused();
   await expect(list.getByRole("listitem").first()).toBeInViewport();
+  await dialog.getByRole("tab", { name: /^Agents ·/ }).click();
+  await dialog.getByRole("tab", { name: /^People ·/ }).click();
+  await expect(pages.getByText("2 of 51")).toBeVisible();
   await pages.getByRole("button", { name: "Previous" }).click();
   await expect(pages.getByText("1 of 51")).toBeVisible();
   await expect(list.getByRole("listitem").first()).toBeInViewport();

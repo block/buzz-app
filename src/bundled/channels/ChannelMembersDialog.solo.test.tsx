@@ -1355,10 +1355,13 @@ it("groups agents and people by role while only verified additional humans mark 
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
   let dialog = screen.getByRole("dialog", { name: "Share access" });
-  const agents = await within(dialog).findByRole("region", { name: "Agents" });
+  await user.click(
+    await within(dialog).findByRole("tab", { name: "Agents · 1" }),
+  );
+  const agents = within(dialog).getByRole("tabpanel", { name: "Agents · 1" });
   await within(agents).findByText("Helper Bot");
-  expect(within(agents).getByRole("heading")).toHaveTextContent("Agents · 1");
-  const people = within(dialog).getByRole("region", { name: "People" });
+  await user.click(within(dialog).getByRole("tab", { name: "People · 1" }));
+  const people = within(dialog).getByRole("tabpanel", { name: "People · 1" });
   expect(people).toHaveTextContent("(you)");
   expect(people).not.toHaveTextContent("Helper Bot");
 
@@ -1369,11 +1372,11 @@ it("groups agents and people by role while only verified additional humans mark 
   await waitFor(() =>
     expect(
       within(
-        within(dialog).getByRole("region", { name: "People" }),
+        within(dialog).getByRole("tabpanel", { name: "People · 2" }),
       ).getAllByRole("listitem"),
     ).toHaveLength(2),
   );
-  expect(within(dialog).getAllByText("Helper Bot")).toHaveLength(1);
+  expect(within(dialog).queryByText("Helper Bot")).toBeNull();
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
   expect(document.querySelector("[data-solo-shared]")).toBeNull();
   t.addProfile(unknown, "Guest Human");
@@ -1384,7 +1387,7 @@ it("groups agents and people by role while only verified additional humans mark 
   await user.click(screen.getByRole("button", { name: "Access" }));
   dialog = screen.getByRole("dialog", { name: "Share access" });
   expect(
-    await within(dialog).findByRole("region", { name: "People" }),
+    await within(dialog).findByRole("tabpanel", { name: "People · 2" }),
   ).toHaveTextContent("Guest Human");
   expect(t.publish).not.toHaveBeenCalled();
 

@@ -88,9 +88,9 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
-  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
@@ -668,6 +668,7 @@ export function ChannelMembersDialog({
       : undefined;
   const selection = shownIntent?.change;
   const scrollport = useRef<HTMLElement>(null);
+  const memberTabs = useRef<HTMLDivElement>(null);
   // Set when the step is left by confirming. That member's Actions are then
   // watched until its row leaves and until the change settles.
   const confirmed = useRef(false);
@@ -788,8 +789,8 @@ export function ChannelMembersDialog({
   });
   // A late archive list moves archived members to the Archived group, which
   // remounts a focused row. Its control leaves without a blur, so focus falls
-  // to the dialog or the body. Hand off to its group's heading, as a page
-  // change does, or Search, unless focus has moved on to another control.
+  // to the dialog or the body. Hand off to the selected tab, group heading or Search,
+  // unless focus has moved on to another control.
   const listFocus = useRef<{ control: HTMLElement; group: string }>(undefined);
   useLayoutEffect(() => {
     const previous = listFocus.current;
@@ -798,6 +799,13 @@ export function ChannelMembersDialog({
     listFocus.current = undefined;
     const active = document.activeElement;
     if (!list || (active && !active.contains(list))) return;
+    const tab = memberTabs.current?.querySelector<HTMLElement>(
+      '[role="tab"][aria-selected="true"]',
+    );
+    if (tab) {
+      tab.focus();
+      return;
+    }
     (
       document.getElementById(`${presenceId}-${previous.group}-page`) ??
       input.current
@@ -805,7 +813,7 @@ export function ChannelMembersDialog({
   });
   const lifetime = useRef<AbortController>(undefined);
   const [query, setQuery] = useState("");
-  const [selectedIdentity, setSelectedIdentity] = useState("All");
+  const [selectedGroup, setSelectedGroup] = useState<string>();
   const [selectedAccess, setSelectedAccess] = useState("All");
   const [directAdditions, setDirectAdditions] = useState<
     Record<string, { pending: boolean; error?: string }>
@@ -1326,43 +1334,36 @@ export function ChannelMembersDialog({
   );
   const narrowed = text.length > 0 || accessFilter !== "All";
   const presentGroups = groups.filter((group) => group.count > 0);
-  const identityFilter =
-    query.length === 0 &&
-    presentGroups.length > 1 &&
-    presentGroups.some((group) => group.name === selectedIdentity)
-      ? selectedIdentity
-      : "All";
+  const memberGroup = presentGroups.some(
+    (group) => group.name === selectedGroup,
+  )
+    ? selectedGroup
+    : presentGroups[0]?.name;
   if (
     !initialLoading &&
     administration.status !== "loading" &&
-    selectedIdentity !== identityFilter
+    !agentChoices.pending &&
+    selectedGroup !== memberGroup
   )
-    setSelectedIdentity(identityFilter);
-  const identityChoices = presentGroups.length > 1;
+    setSelectedGroup(memberGroup);
+  const showTabs = !initialLoading && presentGroups.length > 1;
   const accessChoices = rolesSettled && accessGroups.length > 1;
-  const filterSummary =
-    [identityFilter, accessFilter]
-      .filter((name) => name !== "All")
-      .join(", ") || "All";
+  const filterSummary = accessFilter;
   const filteredGroups = groups.filter(
-    (group) =>
-      (identityFilter === "All" || group.name === identityFilter) &&
-      group.keys.length > 0,
+    (group) => group.name === memberGroup && group.keys.length > 0,
   );
+  const panelGroups = showTabs ? presentGroups : filteredGroups;
   const listedOrder = filteredGroups.flatMap((group) => group.keys).join("\n");
   useLayoutEffect(() => {
     listedMembers.current = listedOrder ? listedOrder.split("\n") : [];
   }, [listedOrder]);
   const [memberPages, setMemberPages] = useState({
     text,
-    identityFilter,
     accessFilter,
     pages: {} as Record<string, number>,
   });
   let pages =
-    memberPages.text === text &&
-    memberPages.identityFilter === identityFilter &&
-    memberPages.accessFilter === accessFilter
+    memberPages.text === text && memberPages.accessFilter === accessFilter
       ? memberPages.pages
       : {};
   for (const group of groups) {
@@ -1374,28 +1375,37 @@ export function ChannelMembersDialog({
       pages = { ...pages, [group.name]: lastPage };
   }
   if (pages !== memberPages.pages)
-    setMemberPages({ text, identityFilter, accessFilter, pages });
+    setMemberPages({ text, accessFilter, pages });
   const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {
     const group = pendingMemberPage.current;
-    pendingMemberPage.current = null;
     if (group === null) return;
-    const heading = document.getElementById(`${presenceId}-${group}-page`);
-    heading?.focus({ preventScroll: true });
-    heading?.parentElement?.scrollIntoView({ block: "start" });
+    pendingMemberPage.current = null;
+    const target = document.getElementById(`${presenceId}-${group}-page`);
+    target?.focus({ preventScroll: true });
+    if (!showTabs) {
+      target?.parentElement?.scrollIntoView({ block: "start" });
+      return;
+    }
+    const list = scrollport.current;
+    if (list && target)
+      list.scrollTop = Math.floor(
+        list.scrollTop +
+          target.getBoundingClientRect().top -
+          list.getBoundingClientRect().top,
+      );
   });
   const changeMemberPage = (group: string, page: number) => {
     pendingMemberPage.current = group;
     setMemberPages({
       text,
-      identityFilter,
       accessFilter,
       pages: { ...pages, [group]: page },
     });
   };
   const profileKey = !largeRoster
     ? memberKey
-    : filteredGroups
+    : groups
         .flatMap((group) => {
           const page = Math.min(
             pages[group.name] ?? 0,
@@ -1503,7 +1513,6 @@ export function ChannelMembersDialog({
   const offering =
     !initialLoading &&
     canAdd &&
-    identityFilter === "All" &&
     (!!text ||
       (members.size === 1 &&
         members.has(session.viewer ?? "") &&
@@ -1514,10 +1523,9 @@ export function ChannelMembersDialog({
     "Other agents",
     "Your other agents",
   ].map((name, index) => {
-    const people =
-      identityFilter === "All"
-        ? available.filter((person) => candidateGroup(person) === index)
-        : [];
+    const people = available.filter(
+      (person) => candidateGroup(person) === index,
+    );
     const ranked = rankPeople(
       people.map((person) => {
         const dm = relationships.dm(person.pubkey);
@@ -1807,7 +1815,6 @@ export function ChannelMembersDialog({
           )
         ) {
           setQuery("");
-          setSelectedIdentity("All");
           setSelectedAccess("All");
           setNotice(`${name} added.`);
         }
@@ -1859,7 +1866,6 @@ export function ChannelMembersDialog({
               [key]: { pending: false },
             }));
             setQuery("");
-            setSelectedIdentity("All");
             setSelectedAccess("All");
           }
           // Without history, or into a DM these people already have: go there.
@@ -2221,7 +2227,6 @@ export function ChannelMembersDialog({
         onValueChange={(value) => {
           setQuery(value);
           if (value.length > 0) {
-            setSelectedIdentity("All");
             setSelectedAccess("All");
           }
         }}
@@ -2229,9 +2234,7 @@ export function ChannelMembersDialog({
           highlight.keyDown(event);
         }}
         trailing={
-          !initialLoading &&
-          query.length === 0 &&
-          (identityChoices || accessChoices) ? (
+          !initialLoading && query.length === 0 && accessChoices ? (
             <MenuRoot>
               <MenuTrigger
                 render={
@@ -2244,33 +2247,6 @@ export function ChannelMembersDialog({
                 }
               />
               <MenuPopup align="end">
-                {identityChoices && (
-                  <MenuGroup>
-                    <MenuGroupLabel>People and agents</MenuGroupLabel>
-                    <MenuRadioGroup
-                      value={identityFilter}
-                      onValueChange={(value) => {
-                        setSelectedIdentity(value);
-                        if (scrollport.current)
-                          scrollport.current.scrollTop = 0;
-                      }}
-                    >
-                      {[
-                        { name: "All", count: members.size },
-                        ...presentGroups,
-                      ].map((group) => (
-                        <MenuRadioItem
-                          key={group.name}
-                          value={group.name}
-                          closeOnClick
-                        >
-                          {`${group.name} · ${group.count}`}
-                        </MenuRadioItem>
-                      ))}
-                    </MenuRadioGroup>
-                  </MenuGroup>
-                )}
-                {identityChoices && accessChoices && <MenuSeparator />}
                 {accessChoices && (
                   <MenuGroup>
                     <MenuGroupLabel>Access</MenuGroupLabel>
@@ -2520,6 +2496,25 @@ export function ChannelMembersDialog({
               )}
             </div>
           )}
+          {showTabs && (
+            <div className={styles.memberTabs} ref={memberTabs}>
+              <Tabs
+                label="Member type"
+                variant="panel"
+                size="sm"
+                value={memberGroup ?? null}
+                items={presentGroups.map((group) => ({
+                  value: group.name,
+                  label: `${group.name} · ${narrowed ? group.keys.length : group.count}`,
+                  panelId: `${presenceId}-${group.name}-page`,
+                }))}
+                onValueChange={(group) => {
+                  if (scrollport.current) scrollport.current.scrollTop = 0;
+                  setSelectedGroup(group);
+                }}
+              />
+            </div>
+          )}
           <MemberMenus
             scrollport={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
@@ -2570,80 +2565,116 @@ export function ChannelMembersDialog({
               )
             ) : (
               <>
-                {filteredGroups.map((group) => {
+                {panelGroups.map((group) => {
                   const pageCount = Math.ceil(
                     group.keys.length / MEMBER_PAGE_SIZE,
                   );
-                  const page = Math.min(pages[group.name] ?? 0, pageCount - 1);
+                  const page = Math.max(
+                    0,
+                    Math.min(pages[group.name] ?? 0, pageCount - 1),
+                  );
                   return (
-                    <section key={group.name} aria-label={group.name}>
-                      <h3
-                        id={`${presenceId}-${group.name}-page`}
-                        tabIndex={-1}
-                        className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
-                      >
-                        {group.name} ·{" "}
-                        {narrowed ? group.keys.length : group.count}
-                      </h3>
-                      <ul
-                        aria-busy={refreshing}
-                        onFocus={(event) => {
-                          // Portaled menus bubble here too; keep only rows.
-                          if (
-                            event.currentTarget.contains(event.target) &&
-                            event.target instanceof HTMLElement
-                          )
-                            listFocus.current = {
-                              control: event.target,
-                              group: group.name,
-                            };
-                        }}
-                      >
-                        {group.keys
-                          .slice(
-                            page * MEMBER_PAGE_SIZE,
-                            (page + 1) * MEMBER_PAGE_SIZE,
-                          )
-                          .map((key) => row(key, memberLabel(key), false))}
-                      </ul>
-                      {pageCount > 1 && (
-                        <nav
-                          aria-label={`${group.name} member pages`}
-                          className="flex items-center justify-between gap-2 px-control-inset"
-                        >
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={page === 0}
-                            onClick={() =>
-                              changeMemberPage(group.name, page - 1)
-                            }
-                          >
-                            Previous
-                          </Button>
-                          <span
-                            className="text-caption text-subtle"
-                            aria-live="polite"
-                          >
-                            <span className="sr-only">Page </span>
-                            {page + 1} of {pageCount}
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={page + 1 === pageCount}
-                            onClick={() =>
-                              changeMemberPage(group.name, page + 1)
-                            }
-                          >
-                            Next
-                          </Button>
-                        </nav>
+                    <section
+                      key={group.name}
+                      hidden={showTabs && group.name !== memberGroup}
+                      role={showTabs ? "tabpanel" : undefined}
+                      id={
+                        showTabs
+                          ? `${presenceId}-${group.name}-page`
+                          : undefined
+                      }
+                      aria-labelledby={
+                        showTabs
+                          ? `${presenceId}-${group.name}-page-tab`
+                          : undefined
+                      }
+                      aria-label={showTabs ? undefined : group.name}
+                      tabIndex={showTabs ? -1 : undefined}
+                    >
+                      {(!showTabs || group.name === memberGroup) && (
+                        <>
+                          {!showTabs && (
+                            <h3
+                              id={`${presenceId}-${group.name}-page`}
+                              tabIndex={-1}
+                              className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
+                            >
+                              {group.name} ·{" "}
+                              {narrowed ? group.keys.length : group.count}
+                            </h3>
+                          )}
+                          {group.keys.length === 0 && (
+                            <p className="px-control-inset text-body-sm text-subtle">
+                              {query
+                                ? "No members match your search."
+                                : "No members match this filter."}
+                            </p>
+                          )}
+                          {group.keys.length > 0 && (
+                            <ul
+                              aria-busy={refreshing}
+                              onFocus={(event) => {
+                                // Portaled menus bubble here too; keep only rows.
+                                if (
+                                  event.currentTarget.contains(event.target) &&
+                                  event.target instanceof HTMLElement
+                                )
+                                  listFocus.current = {
+                                    control: event.target,
+                                    group: group.name,
+                                  };
+                              }}
+                            >
+                              {group.keys
+                                .slice(
+                                  page * MEMBER_PAGE_SIZE,
+                                  (page + 1) * MEMBER_PAGE_SIZE,
+                                )
+                                .map((key) =>
+                                  row(key, memberLabel(key), false),
+                                )}
+                            </ul>
+                          )}
+                          {pageCount > 1 && (
+                            <nav
+                              aria-label={`${group.name} member pages`}
+                              className="flex items-center justify-between gap-2 px-control-inset"
+                            >
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={page === 0}
+                                onClick={() =>
+                                  changeMemberPage(group.name, page - 1)
+                                }
+                              >
+                                Previous
+                              </Button>
+                              <span
+                                className="text-caption text-subtle"
+                                aria-live="polite"
+                              >
+                                <span className="sr-only">Page </span>
+                                {page + 1} of {pageCount}
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={page + 1 === pageCount}
+                                onClick={() =>
+                                  changeMemberPage(group.name, page + 1)
+                                }
+                              >
+                                Next
+                              </Button>
+                            </nav>
+                          )}
+                        </>
                       )}
                     </section>
                   );
                 })}
-                {!filteredGroups.length &&
+                {!panelGroups.length &&
                   !rosterBusy &&
                   !offering &&
                   !search.loading &&

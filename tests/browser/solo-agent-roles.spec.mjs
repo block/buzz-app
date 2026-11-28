@@ -35,7 +35,12 @@ async function openSoloAccess(page, app) {
     { chat, viewer: app.viewer },
   );
   await page.getByRole("button", { name: /^Share access to / }).click();
-  return page.getByRole("button", {
+  const dialog = page.getByRole("dialog", {
+    name: "Share access",
+    exact: true,
+  });
+  await dialog.getByRole("tab", { name: "Agents · 1", exact: true }).click();
+  return dialog.getByRole("button", {
     name: "Actions for Owner Agent",
     exact: true,
   });

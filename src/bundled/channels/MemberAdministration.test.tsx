@@ -76,6 +76,7 @@ async function setup(
     | "dm" = "private",
   targetPicture?: string,
   targetProfiled = true,
+  libraryAgent = false,
 ) {
   const solo = visibility === "solo" || visibility === "view-only-solo";
   const visibilityFlag =
@@ -197,12 +198,18 @@ async function setup(
     (url: string, size?: "small") =>
       `https://media.example/${size ?? "original"}?url=${encodeURIComponent(url)}`,
   );
+  const library = {
+    definitions: [],
+    identities: libraryAgent ? [{ pubkey: target.pubkey, name: "Morgan" }] : [],
+  };
+  const readAgentLibrary = vi.fn(async () => library);
   const sessionOwner = createRelaySession(
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       media,
       query,
+      ...(libraryAgent ? { readAgentLibrary } : {}),
       ...(supported
         ? {
             memberAdministration: {
@@ -279,10 +286,11 @@ async function setup(
   await user.click(screen.getByRole("button", { name: "Access" }));
   if (roleRead || initialReads)
     await screen.findByRole("status", { name: "Loading members" });
-  else
-    await screen.findByText(
-      targetRole === "absent" || !targetProfiled ? "Carl (you)" : "Morgan",
-    );
+  else {
+    await screen.findByText("Carl (you)");
+    if (targetAgent && targetRole !== "absent" && targetProfiled)
+      await user.click(await screen.findByRole("tab", { name: /^Agents ·/ }));
+  }
   if (!initialReads)
     await vi.waitFor(() =>
       expect(session.memberAdministration.snapshot(id).status).toBe(
@@ -295,6 +303,7 @@ async function setup(
     publish,
     write,
     query,
+    readAgentLibrary,
     onOpenLink,
     onOpenMessage,
     openMessage,
@@ -426,6 +435,10 @@ it.each([
       ["p", t.target.pubkey],
       ["role", role],
     ]);
+    if (agent)
+      await t.user.click(
+        await screen.findByRole("tab", { name: "Agents · 1" }),
+      );
     await vi.waitFor(() => {
       const row = required(screen.getByText("Morgan").closest("li"));
       expect(
@@ -556,14 +569,16 @@ it.each([
     const row = screen.getByRole("button", {
       name: /^Open profile for Morgan/,
     });
-    expect(row.closest("section")).toHaveAttribute("aria-label", expected);
+    expect(row.closest("section")).toHaveAccessibleName(
+      agent ? "Agents · 1" : expected,
+    );
     expect(memberOrder()).toEqual(
-      agent ? ["Carl", "Owner", "Morgan"] : ["Carl", "Morgan", "Owner"],
+      agent ? ["Morgan"] : ["Carl", "Morgan", "Owner"],
     );
     await t.user.type(screen.getByRole("searchbox"), "Morgan");
     expect(memberOrder()).toEqual(["Morgan"]);
     expect(
-      screen.getByRole("heading", { name: `${expected} · 1` }),
+      screen.getByRole(agent ? "tab" : "heading", { name: `${expected} · 1` }),
     ).toBeVisible();
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -585,7 +600,9 @@ it("updates an agent's role label after refresh while keeping it under Agents", 
       ).toHaveAccessibleName(new RegExp(`, ${role}$`)),
     );
     const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
-    expect(row.closest("section")).toHaveAttribute("aria-label", "Agents");
+    expect(
+      screen.getByRole("tabpanel", { name: "Agents · 1" }),
+    ).toContainElement(row);
     const labels = within(required(row.closest("li")));
     if (role === "member") {
       expect(labels.queryByText("Admin")).not.toBeInTheDocument();
@@ -1120,9 +1137,9 @@ it.each(["agents", "filtered"] as const)(
         screen.queryByRole("button", { name: "Actions for Morgan" }),
       ).not.toBeInTheDocument(),
     );
-    // The agent was the last row, alone in Agents; People's last row precedes it.
+    // Emptying Agents selects People; focus stays on a surviving dialog control.
     expect(
-      list === "agents" ? actionsFor("Owner") : screen.getByRole("searchbox"),
+      list === "agents" ? actionsFor("Carl") : screen.getByRole("searchbox"),
     ).toHaveFocus();
   },
 );
@@ -1392,7 +1409,9 @@ it.each([false, true])(
       expect(
         row.closest("li")?.querySelector('[data-avatar-shape="squircle"]'),
       ).toBeInTheDocument();
-      expect(row.closest("section")).toHaveAttribute("aria-label", "Agents");
+      expect(
+        screen.getByRole("tabpanel", { name: "Agents · 1" }),
+      ).toContainElement(row);
       expect(
         within(required(row.closest("li"))).queryByText("bot"),
       ).not.toBeInTheDocument();
@@ -1500,7 +1519,9 @@ it.each(["admin", "owner", "guest"])(
     expect(
       within(required(row.closest("li"))).queryByText(role),
     ).not.toBeInTheDocument();
-    expect(row.closest("section")).toHaveAttribute("aria-label", "Agents");
+    expect(
+      screen.getByRole("tabpanel", { name: "Agents · 1" }),
+    ).toContainElement(row);
     expect(row).toHaveAccessibleName(new RegExp(`, ${role}$`));
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -2165,6 +2186,8 @@ it.each([
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
     ).toEqual(offered ? ["View profile", "Send message"] : ["View profile"]);
     await t.user.keyboard("{Escape}");
+    if (agent)
+      await t.user.click(screen.getByRole("tab", { name: "People · 2" }));
     await t.user.click(
       screen.getByRole("button", { name: /^Actions for Carl$/ }),
     );
@@ -2386,125 +2409,93 @@ it("shows action feedback above the member list so a long roster cannot hide it"
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("filters by present groups and resets to All on any search input", async () => {
+it("shows member type tabs with counts and retains the selected group while searching", async () => {
   const t = await setup("admin", "member", true, undefined, true);
-  const list = screen.getByRole("region", { name: "Member list" });
-  const filter = () => screen.getByRole("button", { name: /^Filter members:/ });
-  expect(filter()).toHaveAccessibleName("Filter members: All");
-  expect(filter()).toHaveAttribute("data-variant", "ghost");
-  expect(filter().closest(".buzz-input-group")).toContainElement(
-    screen.getByRole("searchbox"),
+  await t.user.click(screen.getByRole("tab", { name: "People · 2" }));
+  const list = memberData();
+  const tabs = screen.getByRole("tablist", { name: "Member type" });
+  expect(
+    within(tabs)
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent),
+  ).toEqual(["People · 2", "Agents · 1"]);
+  expect(screen.getByRole("tab", { name: "People · 2" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
-  await t.user.click(filter());
-  await screen.findByRole("menuitemradio", { name: /^All/ });
-  expect(
-    screen.getAllByRole("menuitemradio").map((item) => item.textContent),
-  ).toEqual([
-    "All · 3",
-    "People · 2",
-    "Agents · 1",
-    "Any access · 3",
-    "Owner · 1",
-    "Admin · 1",
-    "Participating · 1",
-  ]);
-  expect(
-    screen.getByRole("menuitemradio", { name: "All · 3" }),
-  ).toHaveAttribute("aria-checked", "true");
-  await t.user.click(screen.getByRole("menuitemradio", { name: "Agents · 1" }));
-  expect(within(list).getByText("Morgan")).toBeVisible();
-  expect(within(list).queryByText("Carl (you)")).not.toBeInTheDocument();
-  expect(within(list).queryByText("Owner")).not.toBeInTheDocument();
-  expect(filter()).toHaveAccessibleName("Filter members: Agents");
-  expect(filter()).toHaveAttribute("data-variant", "prominent");
-  // Whitespace still starts search mode, even though matching trims it.
-  await t.user.type(screen.getByRole("searchbox"), " ");
-  expect(
-    screen.queryByRole("button", { name: /^Filter members:/ }),
-  ).not.toBeInTheDocument();
   expect(within(list).getByText("Carl (you)")).toBeVisible();
-  await t.user.clear(screen.getByRole("searchbox"));
-  expect(filter()).toHaveAccessibleName("Filter members: All");
-  await t.user.click(filter());
-  await t.user.click(
-    await screen.findByRole("menuitemradio", { name: "Agents · 1" }),
+  expect(within(list).queryByText("Morgan")).toBeNull();
+  await t.user.click(screen.getByRole("tab", { name: "Agents · 1" }));
+  expect(screen.getByRole("tabpanel", { name: "Agents · 1" })).toContainElement(
+    within(list).getByText("Morgan"),
   );
+  expect(within(list).queryByText("Carl (you)")).toBeNull();
   await t.user.type(screen.getByRole("searchbox"), "Carl");
+  expect(screen.getByRole("tab", { name: "Agents · 0" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tab", { name: "People · 1" })).toBeVisible();
   expect(
-    screen.queryByRole("button", { name: /^Filter members:/ }),
+    screen.getByRole("tabpanel", { name: "Agents · 0" }),
+  ).toHaveTextContent("No members match your search.");
+  expect(
+    within(screen.getByRole("tabpanel", { name: "Agents · 0" })).queryByRole(
+      "list",
+    ),
   ).not.toBeInTheDocument();
+  await t.user.click(screen.getByRole("tab", { name: "People · 1" }));
   const carl = within(list).getByText("Carl (you)");
   expect(carl).toBeVisible();
-  // Only rows you can add show the typed letters; members stay unchanged.
   expect(carl.querySelector("mark")).toBeNull();
-  expect(within(list).queryByText("Morgan")).not.toBeInTheDocument();
   await t.user.clear(screen.getByRole("searchbox"));
-  expect(within(list).getByText("Carl (you)")).toBeVisible();
-  expect(within(list).getByText("Morgan")).toBeVisible();
-  expect(
-    within(list).getByRole("button", { name: /^Open profile for Owner/ }),
-  ).toBeVisible();
+  expect(screen.getByRole("tab", { name: "People · 2" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("hides the identity filter when everyone is a person, including owners", async () => {
+it("keeps a heading without tabs when everyone is a person, including owners", async () => {
   await setup("owner", "owner");
   expect(
     screen.queryByRole("button", { name: /^Filter members:/ }),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "People · 3" })).toBeVisible();
+  expect(screen.queryByRole("tablist", { name: "Member type" })).toBeNull();
 });
 
-it("filters by access and combines with the identity filter", async () => {
+it("filters access within the selected member tab and resets access on search", async () => {
   const t = await setup("admin", "guest", true, undefined, true);
-  const list = screen.getByRole("region", { name: "Member list" });
+  await t.user.click(screen.getByRole("tab", { name: "People · 2" }));
   const filter = () => screen.getByRole("button", { name: /^Filter members:/ });
   await t.user.click(filter());
   await screen.findByRole("menuitemradio", { name: "Any access · 3" });
   expect(
-    screen.getByRole("menuitemradio", { name: "Any access · 3" }),
-  ).toHaveAttribute("aria-checked", "true");
+    screen.getAllByRole("menuitemradio").map((item) => item.textContent),
+  ).toEqual(["Any access · 3", "Owner · 1", "Admin · 1", "Viewing only · 1"]);
+  expect(screen.queryByRole("group", { name: "People and agents" })).toBeNull();
   await t.user.click(
     screen.getByRole("menuitemradio", { name: "Viewing only · 1" }),
   );
   expect(filter()).toHaveAccessibleName("Filter members: Viewing only");
-  expect(filter()).toHaveAttribute("data-variant", "prominent");
-  expect(within(list).getByText("Morgan")).toBeVisible();
-  expect(within(list).queryByText("Carl (you)")).not.toBeInTheDocument();
-  expect(
-    within(list).queryByRole("button", { name: /^Open profile for Owner/ }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Agents · 1" })).toBeVisible();
-  expect(
-    screen.queryByRole("heading", { name: /^People/ }),
-  ).not.toBeInTheDocument();
-  await t.user.click(filter());
-  await t.user.click(
-    await screen.findByRole("menuitemradio", { name: "People · 2" }),
+  expect(screen.getByRole("tab", { name: "People · 0" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
-  expect(filter()).toHaveAccessibleName("Filter members: People, Viewing only");
-  expect(within(list).queryByText("Morgan")).not.toBeInTheDocument();
-  expect(screen.getByText("No members match this filter.")).toBeVisible();
-  await t.user.click(filter());
-  await t.user.click(
-    await screen.findByRole("menuitemradio", { name: "Admin · 1" }),
+  expect(screen.getByRole("tabpanel")).toHaveTextContent(
+    "No members match this filter.",
   );
-  expect(filter()).toHaveAccessibleName("Filter members: People, Admin");
-  expect(within(list).getByText("Carl (you)")).toBeVisible();
-  expect(
-    within(list).queryByRole("button", { name: /^Open profile for Owner/ }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "People · 1" })).toBeVisible();
+  await t.user.click(screen.getByRole("tab", { name: "Agents · 1" }));
+  expect(screen.getByRole("tabpanel")).toHaveTextContent("Morgan");
   await t.user.type(screen.getByRole("searchbox"), "M");
-  expect(
-    screen.queryByRole("button", { name: /^Filter members:/ }),
-  ).not.toBeInTheDocument();
-  expect(within(list).getByText("Morgan")).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Agents · 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await t.user.clear(screen.getByRole("searchbox"));
   expect(filter()).toHaveAccessibleName("Filter members: All");
-  expect(
-    within(list).getByRole("button", { name: /^Open profile for Owner/ }),
-  ).toBeVisible();
+  expect(screen.getByRole("tabpanel")).toHaveTextContent("Morgan");
   expect(t.publish).not.toHaveBeenCalled();
 });
 
@@ -2546,12 +2537,9 @@ it("drops an access filter whose members are gone and keeps it through refresh",
   ).toEqual(["Any access · 3", "Owner · 1", "Admin · 2"]);
 });
 
-it("keeps agent owners in the Agents filter", async () => {
+it("keeps agent owners in the Agents tab", async () => {
   const t = await setup("owner", "owner", true, undefined, true);
-  await t.user.click(screen.getByRole("button", { name: /^Filter members:/ }));
-  await t.user.click(
-    await screen.findByRole("menuitemradio", { name: "Agents · 1" }),
-  );
+  await t.user.click(screen.getByRole("tab", { name: "Agents · 1" }));
   expect(
     screen.getByRole("button", { name: /^Open profile for Morgan/ }),
   ).toBeVisible();
@@ -2560,25 +2548,99 @@ it("keeps agent owners in the Agents filter", async () => {
   ).not.toBeInTheDocument();
 });
 
-it("preserves the identity filter through role changes and resets on reopen", async () => {
-  const t = await setup("admin", "member", true, undefined, true);
-  const filter = () => screen.getByRole("button", { name: /^Filter members:/ });
-  await t.user.click(filter());
-  await t.user.click(
-    await screen.findByRole("menuitemradio", { name: "Agents · 1" }),
+it("preserves the selected agent tab while a role retry reloads the existing library", async () => {
+  const t = await setup(
+    "admin",
+    "member",
+    true,
+    undefined,
+    false,
+    undefined,
+    false,
+    true,
+    undefined,
+    undefined,
+    "private",
+    undefined,
+    true,
+    true,
   );
+  await t.user.click(await screen.findByRole("tab", { name: "Agents · 1" }));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
+  const query = required(t.query.getMockImplementation());
+  t.query.mockImplementation(async (filters) => {
+    if (filters.some((filter) => filter.kinds?.includes(39001)))
+      throw new Error("Role read failed");
+    return query(filters);
+  });
+  await act(async () => {
+    await t.session.memberAdministration.refresh(id);
+  });
+  await screen.findByText("Role read failed");
+  t.query.mockImplementation(query);
+  const delayedLibrary = deferred();
+  const library = await t.readAgentLibrary();
+  t.readAgentLibrary.mockImplementation(async () => {
+    await delayedLibrary.promise;
+    return library;
+  });
+  try {
+    await t.user.click(
+      screen.getByRole("button", { name: "Retry member data" }),
+    );
+    await vi.waitFor(() =>
+      expect(t.session.memberAdministration.snapshot(id).status).toBe("ready"),
+    );
+    expect(memberData()).toHaveAttribute("data-refreshing", "true");
+  } finally {
+    await act(async () => delayedLibrary.resolve());
+  }
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
+  expect(screen.getByRole("tab", { name: "Agents · 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tabpanel")).toHaveTextContent("Morgan");
+});
+
+it("focuses the surviving group heading when a focused person leaves a one-group roster", async () => {
+  const t = await setup();
+  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+  actions.focus();
+  expect(actions).toHaveFocus();
+  t.confirm(undefined);
+  await act(async () => {
+    await t.session.memberAdministration.refresh(id);
+  });
+  expect(
+    screen.queryByRole("button", { name: "Actions for Morgan" }),
+  ).toBeNull();
+  expect(screen.getByRole("heading", { name: "People · 2" })).toHaveFocus();
+});
+
+it("preserves the member tab through role changes and selects People on reopen", async () => {
+  const t = await setup("admin", "member", true, undefined, true);
+  await t.user.click(screen.getByRole("tab", { name: "Agents · 1" }));
   t.confirm("admin");
   await act(async () => {
     await t.session.memberAdministration.refresh(id);
   });
-  expect(filter()).toHaveAccessibleName("Filter members: Agents");
+  expect(screen.getByRole("tab", { name: "Agents · 1" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   expect(
     screen.getByRole("button", { name: /Open profile for Morgan/ }),
   ).toHaveAccessibleName(/, admin$/);
   await t.user.click(screen.getByRole("button", { name: "Close" }));
   await t.user.click(screen.getByRole("button", { name: "Access" }));
-  await screen.findByText("Morgan");
-  expect(filter()).toHaveAccessibleName("Filter members: All");
+  expect(
+    await screen.findByRole("tab", { name: "People · 2" }),
+  ).toHaveAttribute("aria-selected", "true");
 });
 
 it.each(["bot", "member"])(
@@ -2698,7 +2760,9 @@ it.each(["owner", "admin"])(
       screen.queryByText("Member change confirmed."),
     ).not.toBeInTheDocument();
     const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
-    expect(row.closest("section")).toHaveAttribute("aria-label", "Agents");
+    expect(
+      screen.getByRole("tabpanel", { name: "Agents · 1" }),
+    ).toContainElement(row);
     expect(
       row.closest("li")?.querySelector('[data-avatar-shape="squircle"]'),
     ).toBeInTheDocument();

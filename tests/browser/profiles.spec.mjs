@@ -1002,183 +1002,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     exact: true,
     includeHidden: true,
   });
-  // The popup owns modal semantics; the active step owns the visible card.
-  const surface = dialog.locator(".buzz-dialog-step:not([inert])");
-  const body = dialog.locator(".buzz-dialog-body");
-  const group = dialog.getByRole("region", { name: "People", exact: true });
-  const list = dialog.getByRole("region", { name: "Member list", exact: true });
   const search = dialog.getByRole("searchbox");
-  // Browser-only: one flexing list owns scrolling; title and search
-  // remain fixed across themes and viewport widths.
-  for (const mode of ["light", "dark"]) {
-    await page.evaluate((mode) => {
-      document.documentElement.dataset.colorMode = mode;
-    }, mode);
-    for (const width of [1280, 900, 390]) {
-      await page.setViewportSize({ width, height: 320 });
-      await expect(surface).toBeInViewport({ ratio: 1 });
-      // Measure the settled layout, not the open or resize transition.
-      await animationsSettled(dialog, { subtree: true });
-      await expect(surface).toHaveCSS(
-        "background-color",
-        mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
-      );
-      await expect(surface).toHaveCSS("backdrop-filter", "none");
-      await expect(body).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await expect(body).toHaveCSS("border-top-width", "0px");
-      await expect(body).toHaveCSS("overflow-y", "hidden");
-      const bodyBounds = await list.locator("..").boundingBox();
-      const footerBounds = await dialog
-        .locator(".buzz-dialog-actions")
-        .boundingBox();
-      // The roster scrolls inside the body, above the Copy link / Done footer.
-      expect(bodyBounds.y + bodyBounds.height).toBeLessThanOrEqual(
-        footerBounds.y + 1,
-      );
-      await expect(list).toHaveCSS("overflow-y", "auto");
-      await expect(list).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      // The unframed roster scrolls to the dialog edge with a thin scrollbar.
-      for (const edge of ["top", "right", "bottom", "left"]) {
-        await expect(list).toHaveCSS(`border-${edge}-width`, "0px");
-      }
-      await expect(list).toHaveCSS("scrollbar-width", "thin");
-      await expect(group).toHaveCSS("border-top-width", "0px");
-      await expect(group).toHaveCSS("overflow-y", "visible");
-      const member = group.getByRole("listitem").first();
-      await expect(member).toHaveCSS("padding-inline-end", "0px");
-      const header = dialog.locator(".buzz-dialog-header");
-      await expect(
-        dialog.getByRole("button", { name: "Refresh member data" }),
-      ).toHaveCount(0);
-      const close = header.getByRole("button", { name: "Close" });
-      await expect(close.locator("svg")).toHaveCSS("width", "16px");
-      await expect(close.locator("svg")).toHaveCSS("height", "16px");
-      expect(await body.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
-        false,
-      );
-      const headerBounds = await header.boundingBox();
-      const searchBounds = await search.boundingBox();
-      const listBounds = await list.boundingBox();
-      const groupBounds = await group.boundingBox();
-      expect(await list.evaluate((el) => el.clientTop)).toBe(0);
-      expect(await list.evaluate((el) => el.clientLeft)).toBe(0);
-      expect(await list.evaluate((el) => el.clientHeight)).toBe(
-        Math.round(listBounds.height),
-      );
-      expect(await list.evaluate((el) => el.clientWidth)).toBe(
-        Math.round(listBounds.width),
-      );
-      expect(await list.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
-        false,
-      );
-      // Short result viewports let headings scroll away so they cannot cover
-      // actions. This read-only fixture has a notice before the first group.
-      await expect(list).toHaveCSS("padding-top", "0px");
-      const firstHeading = list.getByRole("heading").first();
-      await expect(firstHeading).toHaveCSS("position", "static");
-      const headingBounds = await firstHeading.boundingBox();
-      const leadingContent = Math.round(headingBounds.y - listBounds.y);
-      for (const scrollTop of [0, 1, 8, 16]) {
-        await list.evaluate((el, top) => {
-          el.scrollTop = top;
-        }, leadingContent + scrollTop);
-        await expect
-          .poll(() => list.evaluate((el) => el.scrollTop))
-          .toBe(leadingContent + scrollTop);
-        await expect
-          .poll(async () => Math.round((await firstHeading.boundingBox()).y))
-          .toBe(Math.round(headingBounds.y) - leadingContent - scrollTop);
-      }
-      await list.evaluate((el) => {
-        el.scrollTop = el.scrollHeight;
-      });
-      await expect
-        .poll(() => list.evaluate((el) => el.scrollTop))
-        .toBeGreaterThan(0);
-      expect(await header.boundingBox()).toEqual(headerBounds);
-      expect(await search.boundingBox()).toEqual(searchBounds);
-      expect(await list.boundingBox()).toEqual(listBounds);
-      expect((await group.boundingBox()).y).toBeLessThan(groupBounds.y);
-      expect(await body.evaluate((el) => el.scrollTop)).toBe(0);
-      expect(await dialog.evaluate((el) => el.scrollTop)).toBe(0);
-      // The list owns scrolling. At this short frame, its parent layout is the
-      // only other scroller, a fallback that keeps one row reachable.
-      expect(
-        await dialog.evaluate((el) =>
-          [...el.querySelectorAll("*")]
-            .filter(
-              (child) =>
-                /^(auto|scroll)$/.test(getComputedStyle(child).overflowY) &&
-                child.scrollHeight > child.clientHeight,
-            )
-            .map(
-              (child) =>
-                child.getAttribute("aria-label") ??
-                (child.querySelector(':scope > [aria-label="Member list"]')
-                  ? "layout"
-                  : "unexpected"),
-            )
-            .filter((label) => label !== "layout"),
-        ),
-      ).toEqual(["Member list"]);
-      await list.evaluate((el) => {
-        el.scrollTop = 0;
-      });
-      // With room for a heading and its rows, the heading still pins as soon
-      // as the preceding notice scrolls out, without an extra padding slide.
-      await page.setViewportSize({ width, height: 530 });
-      // Give the collection 9rem: above the 8rem sticky-heading threshold,
-      // while retaining scroll range past its notice. Derive viewport height
-      // from native layout so wrapped recovery content cannot change the state.
-      const contentHeight = () =>
-        list.evaluate((el) => {
-          const style = getComputedStyle(el);
-          return (
-            el.clientHeight -
-            parseFloat(style.paddingTop) -
-            parseFloat(style.paddingBottom)
-          );
-        });
-      const measuredHeight = await contentHeight();
-      await page.setViewportSize({ width, height: 530 + 144 - measuredHeight });
-      await expect.poll(contentHeight).toBe(144);
-      await expect(firstHeading).toHaveCSS("position", "sticky");
-      const roomyListBounds = await list.boundingBox();
-      const roomyHeadingBounds = await firstHeading.boundingBox();
-      const roomyLeadingContent = Math.round(
-        roomyHeadingBounds.y - roomyListBounds.y,
-      );
-      // Prove the fixture can scroll past its notice and exercise pinning.
-      expect(
-        await list.evaluate((el) => el.scrollHeight - el.clientHeight),
-      ).toBeGreaterThanOrEqual(roomyLeadingContent + 16);
-      for (const scrollTop of [0, 1, 8, 16]) {
-        await list.evaluate((el, top) => {
-          el.scrollTop = top;
-        }, roomyLeadingContent + scrollTop);
-        await expect
-          .poll(() => list.evaluate((el) => el.scrollTop))
-          .toBe(roomyLeadingContent + scrollTop);
-        // Sticky headings snap to whole pixels inside a fractional frame.
-        await expect
-          .poll(async () => Math.round((await firstHeading.boundingBox()).y))
-          .toBe(Math.round(roomyListBounds.y));
-      }
-      await list.evaluate((el) => {
-        el.scrollTop = 0;
-      });
-      // The viewport fills spare height, not the Members group. Search results
-      // and recovery content must follow the short roster without a flex spacer.
-      await page.setViewportSize({ width, height: 900 });
-      await expect
-        .poll(() => list.evaluate((el) => el.clientHeight))
-        .toBeGreaterThan(roomyListBounds.height);
-      await expect(group).toHaveCSS("flex-grow", "0");
-      expect((await group.boundingBox()).height).toBeLessThan(
-        (await list.boundingBox()).height,
-      );
-    }
-  }
   await page.setViewportSize({ width: 1440, height: 950 });
   const row = dialog.getByRole("button", {
     name: /^Open profile for Viewer/,
@@ -1187,15 +1011,6 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const memberRow = row.locator("xpath=ancestor::li[1]");
   const name = memberRow.getByText("Viewer (you)", { exact: true });
   await expect(name).toBeVisible();
-  await search.hover();
-  const nameAtRest = await name.boundingBox();
-  const rowAtRest = await row.boundingBox();
-  // Hover never reveals a second line or moves the identity.
-  await row.hover();
-  await expect(name).toBeVisible();
-  await expect(name.locator("..")).toHaveCSS("opacity", "1");
-  expect(await name.boundingBox()).toEqual(nameAtRest);
-  expect(await row.boundingBox()).toEqual(rowAtRest);
   await row.locator("[data-avatar-shape]").click();
   const panel = page.getByRole("complementary", {
     name: "Profile",
@@ -1228,34 +1043,22 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   await profileTab.press("Escape");
   await expect(members).toBeFocused();
   await profileReturned();
-  // Every row, including the viewer and protected identities, has one
-  // always-visible action slot. Hover/focus never changes row geometry.
   await members.click();
   const actions = memberRow.getByRole("button", {
     name: "Actions for Viewer",
     includeHidden: true,
   });
-  const actionSlot = actions.locator("..");
   await search.focus();
-  await search.hover();
-  await expect(actionSlot).toHaveCSS("opacity", "1");
-  await animationsSettled(dialog, { subtree: true });
-  const restingBounds = await row.boundingBox();
-  await memberRow.hover();
-  await expect(actionSlot).toHaveCSS("opacity", "1");
-  expect(await row.boundingBox()).toEqual(restingBounds);
   await actions.click();
   const menu = page.getByRole("menu", { name: "Actions for Viewer" });
   await expect(menu.getByRole("menuitem")).toHaveText(["View profile"]);
   await expect(menu).toBeFocused();
   await page.mouse.move(0, 0);
-  await expect(actionSlot).toHaveCSS("opacity", "1");
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(actions).toBeFocused();
   await expect(dialog).toBeVisible();
   await row.focus();
-  await expect(actionSlot).toHaveCSS("opacity", "1");
   await page.keyboard.press("Tab");
   await expect(actions).toBeFocused();
   await actions.press("Enter");

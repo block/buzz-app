@@ -186,7 +186,8 @@ test.describe("View only channel share", () => {
     });
     await expect(search).toBeFocused();
     // Access is grouped by role, like a channel: Bob and Carol are agents.
-    const agents = dialog.getByRole("region", { name: "Agents", exact: true });
+    await dialog.getByRole("tab", { name: "Agents · 2" }).click();
+    const agents = dialog.getByRole("tabpanel", { name: "Agents · 2" });
     await expect(
       agents.getByText("Bob Fixture", { exact: true }),
     ).toBeVisible();
@@ -194,8 +195,8 @@ test.describe("View only channel share", () => {
       agents.getByText("Carol Fixture", { exact: true }),
     ).toBeVisible();
     // People holds the owner, the 14 legacy humans and Alice.
-    const people = dialog.getByRole("region", { name: "People", exact: true });
-    await expect(people.getByRole("heading")).toHaveText("People · 16");
+    await dialog.getByRole("tab", { name: "People · 16" }).click();
+    const people = dialog.getByRole("tabpanel", { name: "People · 16" });
     await expect(
       people.getByText("Existing person 14", { exact: true }),
     ).toBeAttached();

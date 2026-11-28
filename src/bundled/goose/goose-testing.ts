@@ -51,8 +51,8 @@ export type FakeGoose = {
   configured: string[];
   /** When set, the next system prompt set fails with it. */
   promptError?: string;
-  /** Rejects the next native turn before it begins. */
-  rejectPrompt?: boolean;
+  /** Rejects the next native turn before it begins, with this error if one. */
+  rejectPrompt?: boolean | { code: number; message: string; data?: string };
   /** When set, system prompt sets wait for it. */
   promptGate?: Promise<void>;
   /** When set, `session/set_config_option` fails with it. */
@@ -365,11 +365,15 @@ export function fakeSpawn(
         }
         case "session/prompt": {
           if (fake.rejectPrompt) {
+            const rejected = fake.rejectPrompt;
             fake.rejectPrompt = false;
             return send({
               jsonrpc: "2.0",
               ...(id !== undefined && { id }),
-              error: { code: -32603, message: "Native prompt rejected" },
+              error:
+                rejected === true
+                  ? { code: -32603, message: "Native prompt rejected" }
+                  : rejected,
             });
           }
           // Mirrors ActiveRunRegistry::start_prompt_run: the reservation

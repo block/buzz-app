@@ -12,7 +12,7 @@ import type {
   AcpSession,
   ConfigOptions,
 } from "../../features/agent-harness/acp/session";
-import { errorMessage } from "../../features/agent-harness/acp/steps";
+import { codeOf, errorMessage } from "../../features/agent-harness/acp/steps";
 import type { HostProcessOptions } from "../../features/host/service";
 import type {
   AcpHooks,
@@ -95,8 +95,12 @@ export const GOOSE: AcpHooks = {
   closeSession: "always",
   // A stopped voice interaction holds the session until goose has saved its
   // transcript, after it has answered the stop and ended delegated work.
+  // Exactly goose's refusal before a prompt runs (`StartRunError::
+  // LiveVoiceInteractionExists`), never an error quoting it after.
   heldByOther: (error) =>
-    errorMessage(error).includes("session already has an active Live run"),
+    codeOf(error) === -32602 &&
+    (error as { data?: unknown }).data ===
+      "session already has an active Live run",
   // goose names an untitled session with a model call, unless its config
   // sets `GOOSE_DISABLE_SESSION_NAMING`.
   names: (goose) =>

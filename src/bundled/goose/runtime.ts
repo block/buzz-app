@@ -397,31 +397,37 @@ export class GooseRuntime {
       abort.abort();
       closing = (async () => {
         await opened;
-        // A session still on voice's instructions never runs typed work.
-        let reusable = !promptChanged;
+        // A session still on voice's instructions never runs typed work: a
+        // clear that did not finish is owed, and its next turn runs it first.
+        let owed = promptChanged
+          ? () =>
+              // Untimed, as a timed request that ran late would stop the process.
+              seatBound(
+                held.process.request(
+                  "_goose/unstable/session/system-prompt/set",
+                  {
+                    sessionId: held.sessionId,
+                    mode: "append",
+                    key: "buzz-voice",
+                    text: "",
+                  },
+                ),
+                "Goose did not clear its voice instructions in time",
+              ).then(() => undefined)
+          : undefined;
         try {
           await media?.close();
           // Before admission, the busy task belongs to typed work. Canceling
           // this opening must release its lease without waiting for that task.
-          if (reusable) return;
+          if (!owed) return;
           held.interrupt();
           await held.externalIdle();
-          // Untimed, as a timed request that ran late would stop the process.
-          // One that fails, or whose process has exited, retires the session.
-          await seatBound(
-            held.process.request("_goose/unstable/session/system-prompt/set", {
-              sessionId: held.sessionId,
-              mode: "append",
-              key: "buzz-voice",
-              text: "",
-            }),
-            "Goose did not clear its voice instructions in time",
-          ).then(
-            () => (reusable = true),
+          await owed().then(
+            () => (owed = undefined),
             () => undefined,
           );
         } finally {
-          held.release(!reusable);
+          held.release(owed);
           this.voiceSeats.delete(abort);
           for (const pending of this.refreshVoice.keys())
             this.refreshVoiceProcess(pending);

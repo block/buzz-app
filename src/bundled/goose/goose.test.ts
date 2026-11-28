@@ -231,6 +231,40 @@ describe("GooseProcess", () => {
     await goose.kill();
   });
 
+  it.each([
+    {
+      code: -32603,
+      message: "Internal error",
+      data: "Error in agent response stream: session already has an active Live run",
+    },
+    {
+      code: -32602,
+      message: "Invalid params",
+      data: "provider said: session already has an active Live run",
+    },
+    {
+      code: -32603,
+      message: "Internal error",
+      data: "session already has an active Live run",
+    },
+  ])(
+    "never resends a prompt goose failed with code $code after it may have run",
+    async (error) => {
+      const { open, process, goose } = await start();
+      const session = await open();
+      process.rejectPrompt = error;
+      await expect(session.send("ran once")).resolves.toMatchObject({
+        ok: false,
+      });
+      expect(
+        process.received.filter(
+          (message) => message.method === "session/prompt",
+        ),
+      ).toHaveLength(1);
+      await goose.kill();
+    },
+  );
+
   it("stops resending a held prompt once the owner stops the work", async () => {
     const { open, process, goose } = await start();
     const session = await open();

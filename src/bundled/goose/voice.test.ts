@@ -119,9 +119,13 @@ it("fails only the seat, never the process, when goose stops voice slowly", asyn
       (run) => run(),
     );
     await wire.start("offer");
-    const stopped = expect(wire.stop()).rejects.toThrow("in time");
-    // goose may take 12 s to close and 20 s to clean up: neither kills it.
+    let settled = false;
+    const stop = wire.stop().finally(() => (settled = true));
+    const stopped = expect(stop).rejects.toThrow("in time");
+    // goose may take 12 s to close and 20 s to clean up: neither kills it,
+    // nor fails the seat early.
     await vi.advanceTimersByTimeAsync(25_000);
+    expect(settled).toBe(false);
     expect(fake.geese[0]?.killed).toBe(false);
     await vi.advanceTimersByTimeAsync(VOICE_STOP_TIMEOUT_MS);
     await stopped;

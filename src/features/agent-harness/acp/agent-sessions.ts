@@ -413,16 +413,22 @@ export class AgentSessions {
         },
         externalIdle: () => held.session.externalIdle(),
         interrupt: () => held.session.interruptExternalRun(),
-        /** With `retire`, the session is closed rather than kept for the
-         * conversation's next turn, as one voice could not clean up. */
-        release: (retire = false) => {
+        /** With `owed`, cleanup voice could not finish: the session's next
+         * turn runs it first, and fails undelivered while it fails. */
+        release: (owed?: () => Promise<void>) => {
           if (released) return;
           released = true;
           held.retained = false;
+          if (owed) {
+            const before = held.session.beforeTurn;
+            held.session.beforeTurn = async () => {
+              await owed();
+              held.session.beforeTurn = before;
+              await before?.();
+            };
+          }
           held.session.observeExternalRuns(false);
-          if (this.live.get(key) !== held) return;
-          if (retire) this.drop(key, held);
-          else this.touch(key, held);
+          if (this.live.get(key) === held) this.touch(key, held);
         },
       };
     }

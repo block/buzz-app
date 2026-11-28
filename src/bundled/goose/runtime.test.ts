@@ -4332,7 +4332,7 @@ it("runs typed text queued during voice once goose lets go of the session", asyn
 });
 
 it.each(["slow", "rejected"] as const)(
-  "retires a voice session whose %s instruction clear fails, never the process",
+  "runs text queued during voice once a %s instruction clear lands, never stopping the process",
   async (failure) => {
     const f = setup({ scope: "channel", hold: true });
     const listed = f.session.channels.list();
@@ -4346,6 +4346,7 @@ it.each(["slow", "rejected"] as const)(
       input: vi.fn(),
       close: vi.fn(async () => {}),
     }));
+    let land = () => {};
     try {
       await f.runtime.voiceSettings.setEnabled(true);
       // Typed work in another channel shares the process, and runs on.
@@ -4378,28 +4379,44 @@ it.each(["slow", "rejected"] as const)(
         process.received.find((m) => m.params?.key === "buzz-voice")?.params
           ?.sessionId,
       );
+      const roomUntil = vi.fn<Delivery["workingUntil"]>();
+      await f.deliver(message("2", "queued in the room"), {
+        workingUntil: roomUntil,
+      });
       if (failure === "rejected") process.promptError = "disk full";
-      else process.promptGate = new Promise(() => {});
+      else
+        process.promptGate = new Promise<void>((resolve) => {
+          land = resolve;
+        });
       vi.useFakeTimers();
       const closed = seat.close();
       await vi.advanceTimersByTimeAsync(VOICE_STOP_TIMEOUT_MS);
-      vi.useRealTimers();
       await closed;
-      expect(process.killed).toBe(false);
-      await vi.waitFor(() => expect(process.closed).toContain(voiceSession));
-      delete process.promptGate;
-      // The room's next typed turn runs in a new session.
-      await f.deliver(message("2", "typed in the room"));
+      // Still on voice's instructions: the queued text waits for the clear.
+      if (failure === "slow") expect(process.turns).toHaveLength(1);
+      vi.useRealTimers();
+      land();
       await vi.waitFor(() => expect(process.turns).toHaveLength(2));
-      expect(process.turns[1]?.text).toContain("typed in the room");
-      expect(process.turns[1]?.sessionId).not.toBe(voiceSession);
-      // The other channel's turn was never touched.
-      expect(process.closed).not.toContain(process.turns[0]?.sessionId);
+      // The turn sent the clear the seat could not finish again, first.
+      const clears = process.received.filter(
+        (m) => m.params?.key === "buzz-voice" && m.params.text === "",
+      );
+      expect(clears).toHaveLength(2);
+      expect(process.prompts.get(voiceSession)).toBe("");
+      expect(process.turns[1]).toMatchObject({ sessionId: voiceSession });
+      expect(process.turns[1]?.text).toContain("queued in the room");
+      expect(process.killed).toBe(false);
+      expect(process.closed).toEqual([]);
       for (const turn of process.turns) turn.finish();
       await expect(workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
         ok: true,
       });
+      await expect(roomUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+        ok: true,
+      });
+      expect(process.turns).toHaveLength(2);
     } finally {
+      land();
       vi.useRealTimers();
       f.runtime.dispose();
       vi.mocked(openVoice).mockReset();

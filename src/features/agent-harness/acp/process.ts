@@ -565,6 +565,7 @@ export class AcpProcess {
         call?.reject(
           Object.assign(new Error(errorMessage(message.error)), {
             code: message.error.code,
+            data: message.error.data,
           }),
         );
       else call?.resolve(message.result);

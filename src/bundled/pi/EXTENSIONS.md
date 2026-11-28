@@ -25,7 +25,7 @@ under `pi.durable`:
     "@earendil-works/pi-durable": "*",
     "@earendil-works/pi-schema": "*"
   },
-  "pi": { "durable": ["./durable.ts"] }
+  "pi": { "extensions": [], "durable": ["./durable.ts"] }
 }
 ```
 
@@ -92,9 +92,12 @@ Things to know:
   (`buzz-tools`) load last, so a package's tool or section with one of those
   names never runs.
 - **`pi` ignores `pi.durable`.** It reads only the `extensions`, `skills`,
-  `prompts` and `themes` lists under `pi`, so a package with only `pi.durable`
-  gives `pi` nothing. One package can serve both: keep a `pi.extensions` entry
-  for `pi` next to `pi.durable`.
+  `prompts` and `themes` lists under `pi`. When none of them is there, `pi`
+  looks for folders with those names, and without them it loads the package's
+  folder as an extension, which fails each time `pi` starts. Keep
+  `"extensions": []` next to `pi.durable`, as above, so `pi` loads nothing from
+  the package. One package can serve both: list an extension for `pi` in
+  `pi.extensions`.
 
 ## 2. Add a provider (optional)
 

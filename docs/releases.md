@@ -170,6 +170,9 @@ A repository admin does these before the first release:
    history. One check is known to fail upstream in every version so far: Goose
    saves the MCP server's URL and bearer header in session data.
 
+Distribution builds without network access can set `BUZZ_GOOSE_ACP_BINARY` to
+a goose-acp they built themselves; the build then stages that file instead.
+
 **buzz CLI.** Every package ships `buzz` at
 `Buzz.app/Contents/Resources/bin/buzz` (`bin\buzz.exe` on Windows). It's built
 from the `buzz-audio-client` revision in `src-tauri/Cargo.toml`, so bumping that

@@ -12,7 +12,7 @@ import type {
   AcpSession,
   ConfigOptions,
 } from "../../features/agent-harness/acp/session";
-import { errorMessage } from "../../features/agent-harness/acp/steps";
+import { codeOf, errorMessage } from "../../features/agent-harness/acp/steps";
 import type { HostProcessOptions } from "../../features/host/service";
 import type {
   AcpHooks,
@@ -69,6 +69,11 @@ export const ENV: Readonly<Record<string, string | null>> = {
   BUZZ_RELAY_URL: null,
   GOOSE_PROVIDER: null,
   GOOSE_MODEL: null,
+  GOOSE_LIVE_VOICE_ENABLED: "false",
+  GOOSE_LIVE_VOICE_ENDPOINT: null,
+  GOOSE_LIVE_VOICE_MODEL: null,
+  GOOSE_LIVE_VOICE_API_KEY: null,
+  GOOSE_LIVE_VOICE: null,
 };
 
 /** A packaged Databricks workspace, which goose prefers to its own config. */
@@ -82,8 +87,20 @@ export const GOOSE: AcpHooks = {
   program: "goose",
   missing: "goose-acp is missing from this Buzz build.",
   env: ENV,
+  clientCapabilities: { _meta: { goose: { customNotifications: true } } },
+  acceptSessionUpdate: (update) =>
+    (update._meta as { goose?: { liveTranscript?: unknown } } | undefined)
+      ?.goose?.liveTranscript !== true,
   // goose is asked to close every session, advertised or not.
   closeSession: "always",
+  // A stopped voice interaction holds the session until goose has saved its
+  // transcript, after it has answered the stop and ended delegated work.
+  // Exactly goose's refusal before a prompt runs (`StartRunError::
+  // LiveVoiceInteractionExists`), never an error quoting it after.
+  heldByOther: (error) =>
+    codeOf(error) === -32602 &&
+    (error as { data?: unknown }).data ===
+      "session already has an active Live run",
   // goose names an untitled session with a model call, unless its config
   // sets `GOOSE_DISABLE_SESSION_NAMING`.
   names: (goose) =>

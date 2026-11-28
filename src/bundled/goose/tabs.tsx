@@ -2,6 +2,7 @@ import {
   COMMUNITY_SESSION,
   sessionScope,
 } from "../../features/agent-harness/session-scope";
+import { VoiceSettings } from "./VoiceSettings";
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 // goose's New agent choices and agent settings. Providers, their keys and
 // their models are goose's own: listed from it, and saved into its config.
@@ -335,6 +336,9 @@ export function createTabs({
             }}
           />
         </ModelDiscoveryRecovery>
+        <Button size="sm" onClick={onConfigure}>
+          Voice settings
+        </Button>
         {error && <span role="alert">{error}</span>}
       </>
     );
@@ -381,6 +385,7 @@ export function createTabs({
         ) : (
           <p role="status">Loading Goose defaults…</p>
         )}
+        <VoiceSettings settings={runtime.voiceSettings} />
         {error && <p role="alert">{error}</p>}
         <ProviderDialogActions>
           <Button disabled={!!state.blocking || saving} onClick={onClose}>

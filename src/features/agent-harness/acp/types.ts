@@ -102,6 +102,10 @@ export type AcpHooks = Readonly<{
   /** Whether the harness names an untitled session itself, read once per
    * process. Without it, a session opened to be named keeps its title. */
   names?(process: AcpProcess): Promise<boolean>;
+  /** Harness extensions advertised during initialize. */
+  clientCapabilities?: Record<string, unknown>;
+  /** Keeps auxiliary updates out of typed turn state; raw subscribers still receive them. */
+  acceptSessionUpdate?(update: Record<string, unknown>): boolean;
   /** `session/new`'s `_meta`. */
   newSessionMeta?(
     buzz: McpServer | undefined,
@@ -149,4 +153,8 @@ export type AcpHooks = Readonly<{
   /** Whether `session/close` is sent: always, or only when
    * `sessionCapabilities.close` is advertised (the default). */
   closeSession?: "always" | "advertised";
+  /** Whether the harness refused a prompt, before it ran, only because
+   * another of the session's clients still holds it. Such a prompt is sent
+   * again for up to `HELD_RETRY_MS`. */
+  heldByOther?(error: unknown): boolean;
 }>;

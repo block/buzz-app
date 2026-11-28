@@ -33,6 +33,7 @@ export class AgentProcess {
   /** Every start whose process has not exited, even when its start failed
    * or a newer one replaced it, so `shutdown` stops each. */
   private readonly starts = new Set<Start>();
+  private refreshing: Promise<void> | undefined;
   constructor(
     private readonly host: GooseHost,
     /** Starts a session's MCP server for its agent's tools. */
@@ -44,6 +45,7 @@ export class AgentProcess {
       | undefined = () => undefined,
     /** The context size, in tokens, its sessions compact at. */
     private readonly compactAt: () => number | undefined = () => undefined,
+    private readonly voiceEnabled: () => boolean = () => false,
   ) {}
 
   /** The running process. One that failed to start is started again on the
@@ -54,6 +56,7 @@ export class AgentProcess {
     drained: (process: GooseProcess) => boolean = () => false,
   ): Promise<GooseProcess> {
     this.protection?.assertAvailable();
+    if (this.refreshing) return this.refreshing.then(() => this.get(drained));
     const limit = this.compactAt();
     if (this.current && limit === this.current.limit) return this.current.ready;
     const previous = this.current;
@@ -84,6 +87,7 @@ export class AgentProcess {
               ...(limit && { compactAt: limit }),
               cwd: await this.host.resolveDirectory("~"),
               serve: this.serve,
+              env: { GOOSE_LIVE_VOICE_ENABLED: String(this.voiceEnabled()) },
               onProcess: (goose) => {
                 start.process = goose;
               },
@@ -96,6 +100,7 @@ export class AgentProcess {
                 protected: true,
                 env: {
                   ...bridge.env,
+                  GOOSE_LIVE_VOICE_ENABLED: String(this.voiceEnabled()),
                   BASH_ENV: null,
                   ENV: null,
                   DYLD_INSERT_LIBRARIES: null,
@@ -134,6 +139,18 @@ export class AgentProcess {
     this.starts.add(start);
     this.current = start;
     return start.ready;
+  }
+  /** Retires the launch environment. New sessions wait for the old process
+   * to exit; a failed shutdown refuses admission until refresh is retried. */
+  refresh() {
+    const refreshing = this.shutdown();
+    this.refreshing = refreshing;
+    void refreshing.then(
+      () => {
+        if (this.refreshing === refreshing) this.refreshing = undefined;
+      },
+      () => undefined,
+    );
   }
   /** Stops it, failing every session in it. */
   stop() {

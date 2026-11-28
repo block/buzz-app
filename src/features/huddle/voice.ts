@@ -174,7 +174,12 @@ export function createHuddleVoices(
                 agent.owner === destination.viewer &&
                 relayOrigin(agent.relay) ===
                   relayOrigin(destination.relayUrl) &&
-                types.some((type) => type.key === agent.type && type.voice),
+                types.some(
+                  (type) =>
+                    type.key === agent.type &&
+                    type.voice &&
+                    (type.voiceReady?.() ?? true),
+                ),
             )
         : [];
     if (connected && candidates.length && !resolution) {

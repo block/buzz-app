@@ -170,6 +170,11 @@ A repository admin does these before the first release:
    history. One check is known to fail upstream in every version so far: Goose
    saves the MCP server's URL and bearer header in session data.
 
+For a local Goose rig, `GOOSE_ACP_BIN=/abs/path/goose-acp just desktop` stages
+that executable instead, with the same macOS system-library check. Only `--dev`
+runs accept it; a package build refuses it. The next run without it restores the
+pinned bytes.
+
 **buzz CLI.** Every package ships `buzz` at
 `Buzz.app/Contents/Resources/bin/buzz` (`bin\buzz.exe` on Windows). It's built
 from the `buzz-audio-client` revision in `src-tauri/Cargo.toml`, so bumping that

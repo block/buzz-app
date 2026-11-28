@@ -1,5 +1,5 @@
 // Stage the pinned upstream executable for development and packaged builds.
-// --dev remains accepted; both modes use identical release bytes.
+// Both use identical release bytes unless a --dev run sets GOOSE_ACP_BIN.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -10,9 +10,10 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { join, win32 } from "node:path";
+import { isAbsolute, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export function hostTriple(version = run("rustc", ["-vV"]).toString()) {
@@ -46,6 +47,57 @@ function run(command, args) {
   if (result.status !== 0)
     throw new Error(`${command} ${args[0]} failed: ${result.stderr}`);
   return result.stdout;
+}
+
+function installGoose(bytes, triple, destination, temporary, label) {
+  const name = triple.includes("windows") ? "goose-acp.exe" : "goose-acp";
+  const staged = join(temporary, name);
+  writeFileSync(staged, bytes);
+  chmodSync(staged, 0o755);
+  if (process.platform === "darwin" && triple.includes("apple")) {
+    for (const line of run("otool", ["-L", staged])
+      .toString()
+      .split("\n")
+      .slice(1)) {
+      const library = line.trim().split(" (compatibility version")[0];
+      if (
+        library &&
+        !library.startsWith("/usr/lib/") &&
+        !library.startsWith("/System/Library/")
+      )
+        throw new Error(`goose-acp links ${library}, which Macs do not ship`);
+    }
+  }
+  const binary = join(destination, name);
+  // Compare with the verified bytes, not a mutable stamp.
+  if (existsSync(binary) && hash(readFileSync(binary)) === hash(bytes)) {
+    chmodSync(binary, 0o755);
+    console.log(`goose-acp ready (${label}, ${triple})`);
+  } else {
+    renameSync(staged, binary);
+    console.log(`goose-acp staged at ${binary} (${label})`);
+  }
+}
+
+// A local goose-acp build for development rigs. Packaged builds always stage
+// the pinned release bytes, and the next run without the override restores them.
+export function stageLocalGoose(root, bin, triple) {
+  if (!isAbsolute(bin) || !statSync(bin).isFile())
+    throw new Error(`GOOSE_ACP_BIN must be an absolute path to a file: ${bin}`);
+  const bytes = readFileSync(bin);
+  const destination = join(root, "src-tauri/resources/bin");
+  const cache = join(root, "target/goose-acp-download");
+  mkdirSync(cache, { recursive: true });
+  mkdirSync(destination, { recursive: true });
+  const temporary = mkdtempSync(join(cache, "stage-"));
+  try {
+    console.warn(
+      `GOOSE_ACP_BIN: staging local goose-acp ${bin} (sha256 ${hash(bytes)}), not the pinned release`,
+    );
+    installGoose(bytes, triple, destination, temporary, "local");
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 }
 
 export async function stageGoose(root, pin, triple, download = fetch) {
@@ -90,32 +142,7 @@ export async function stageGoose(root, pin, triple, download = fetch) {
       unzip ? ["-p", archive, name] : ["-xOf", archive, name],
     );
     if (!bytes.length) throw new Error("Goose archive has no executable bytes");
-    const staged = join(temporary, name);
-    writeFileSync(staged, bytes);
-    chmodSync(staged, 0o755);
-    if (process.platform === "darwin" && triple.includes("apple")) {
-      for (const line of run("otool", ["-L", staged])
-        .toString()
-        .split("\n")
-        .slice(1)) {
-        const library = line.trim().split(" (compatibility version")[0];
-        if (
-          library &&
-          !library.startsWith("/usr/lib/") &&
-          !library.startsWith("/System/Library/")
-        )
-          throw new Error(`goose-acp links ${library}, which Macs do not ship`);
-      }
-    }
-    const binary = join(destination, name);
-    // Compare with the verified archive's bytes, not a mutable stamp.
-    if (existsSync(binary) && hash(readFileSync(binary)) === hash(bytes)) {
-      chmodSync(binary, 0o755);
-      console.log(`goose-acp ready (${pin.version}, ${triple})`);
-    } else {
-      renameSync(staged, binary);
-      console.log(`goose-acp staged at ${binary}`);
-    }
+    installGoose(bytes, triple, destination, temporary, pin.version);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
@@ -123,12 +150,17 @@ export async function stageGoose(root, pin, triple, download = fetch) {
 
 if (import.meta.main) {
   const root = fileURLToPath(new URL("../", import.meta.url));
-  const pin = JSON.parse(
-    readFileSync(join(root, "runtime/goose-acp.json"), "utf8"),
-  );
-  await stageGoose(
-    root,
-    pin,
-    process.env.TAURI_ENV_TARGET_TRIPLE || hostTriple(),
-  );
+  const triple = process.env.TAURI_ENV_TARGET_TRIPLE || hostTriple();
+  const bin = process.env.GOOSE_ACP_BIN;
+  if (bin && !process.argv.includes("--dev"))
+    throw new Error(
+      "GOOSE_ACP_BIN is for development only; unset it to build a package",
+    );
+  if (bin) stageLocalGoose(root, bin, triple);
+  else {
+    const pin = JSON.parse(
+      readFileSync(join(root, "runtime/goose-acp.json"), "utf8"),
+    );
+    await stageGoose(root, pin, triple);
+  }
 }

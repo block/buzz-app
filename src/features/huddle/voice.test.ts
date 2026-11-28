@@ -177,8 +177,8 @@ function setup() {
       running = next;
       a.notify();
     },
-    types: () => {
-      types = [];
+    types: (next: RegisteredAgentType[] = []) => {
+      types = next;
       a.notify();
     },
     relay: (patch: Partial<RelaySnapshot>) => {
@@ -231,6 +231,26 @@ it.each([
     expect(f.voice).not.toHaveBeenCalled();
   },
 );
+it("opens no seat for an agent whose voice is not ready, and closes one that stops being", async () => {
+  const f = setup();
+  let ready = false;
+  f.types([
+    { key: "test/voice", voice: f.voice, voiceReady: () => ready },
+  ] as unknown as RegisteredAgentType[]);
+  f.start();
+  await Promise.resolve();
+  f.room({ members: ["owner", "a", "b"] });
+  await Promise.resolve();
+  expect(f.bridge.open).not.toHaveBeenCalled();
+  ready = true;
+  f.room({ members: ["owner", "a", "b"] });
+  await vi.waitFor(() => expect(f.connections.size).toBe(2));
+  ready = false;
+  f.room({ members: ["owner", "a", "b"] });
+  await vi.waitFor(() =>
+    expect(required(f.connections.get("a")).close).toHaveBeenCalledOnce(),
+  );
+});
 it("keeps its opening config across snapshots but closes on protection revision", async () => {
   const f = setup();
   f.start();

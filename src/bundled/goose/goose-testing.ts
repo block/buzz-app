@@ -13,7 +13,7 @@ type Message = {
   method?: string;
   params?: Record<string, unknown>;
   result?: unknown;
-  error?: { code: number; message: string };
+  error?: { code: number; message: string; data?: string };
 };
 
 export type FakeTurn = {
@@ -49,10 +49,11 @@ export type FakeGoose = {
   deleted: string[];
   /** Each `session/set_config_option`, as `sessionId configId=value`. */
   configured: string[];
-  /** When set, the next system prompt set fails with it. */
-  promptError?: string;
-  /** Rejects the next native turn before it begins. */
-  rejectPrompt?: boolean;
+  /** When set, the next system prompt set fails with it; a list fails one
+   * set with each in turn. */
+  promptError?: string | string[];
+  /** Rejects the next native turn before it begins, with this error if one. */
+  rejectPrompt?: boolean | { code: number; message: string; data?: string };
   /** When set, system prompt sets wait for it. */
   promptGate?: Promise<void>;
   /** When set, `session/set_config_option` fails with it. */
@@ -65,6 +66,9 @@ export type FakeGoose = {
   endOnSteer: boolean;
   /** Requests it never answers, as a goose that hangs. */
   silent: Set<string>;
+  /** When set, a stopped voice interaction answers at once but keeps the
+   * session busy until this settles, as goose does while it saves. */
+  liveRelease?: Promise<void>;
   killed: boolean;
   /** Asks the client a request and resolves with its response. */
   ask(method: string, params: Record<string, unknown>): Promise<Message>;
@@ -105,6 +109,12 @@ export type FakeMcpServer = {
  * in-memory MCP servers those processes reach. */
 export function fakeSpawn(
   options: Readonly<{
+    /** Shared device config, including secrets (masked by config/read). */
+    config?: Map<string, unknown>;
+    configWrite?: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<void>;
     /** Whether goose says it can reach HTTP MCP servers. */
     http?: boolean;
     /** Whether goose says it can resume a saved session. */
@@ -214,6 +224,7 @@ export function fakeSpawn(
     const reply = (id: number | string | undefined, result: unknown) =>
       send({ jsonrpc: "2.0", ...(id !== undefined && { id }), result });
     const running = new Map<string, FakeTurn>();
+    const liveInteractions = new Set<string>();
     const fake: FakeGoose = {
       id,
       options: process,
@@ -320,8 +331,11 @@ export function fakeSpawn(
           });
         }
         case "_goose/unstable/session/system-prompt/set": {
-          const failure = fake.promptError;
-          delete fake.promptError;
+          const failure = Array.isArray(fake.promptError)
+            ? fake.promptError.shift()
+            : fake.promptError;
+          if (!Array.isArray(fake.promptError) || !fake.promptError.length)
+            delete fake.promptError;
           if (failure)
             return send({
               jsonrpc: "2.0",
@@ -335,15 +349,49 @@ export function fakeSpawn(
           if (fake.promptGate) return void fake.promptGate.then(set);
           return set();
         }
+        case "_goose/unstable/session/live-voice/start":
+          if (running.has(sessionId) || liveInteractions.has(sessionId))
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: "Goose is already working" },
+            });
+          liveInteractions.add(sessionId);
+          return reply(id, {
+            interactionId: `voice-${sessionId}`,
+            answerSdp: "answer",
+          });
+        case "_goose/unstable/session/live-voice/stop": {
+          const release = () => liveInteractions.delete(sessionId);
+          if (fake.liveRelease) void fake.liveRelease.then(release);
+          else release();
+          return reply(id, {});
+        }
         case "session/prompt": {
           if (fake.rejectPrompt) {
+            const rejected = fake.rejectPrompt;
             fake.rejectPrompt = false;
             return send({
               jsonrpc: "2.0",
               ...(id !== undefined && { id }),
-              error: { code: -32603, message: "Native prompt rejected" },
+              error:
+                rejected === true
+                  ? { code: -32603, message: "Native prompt rejected" }
+                  : rejected,
             });
           }
+          // Mirrors ActiveRunRegistry::start_prompt_run: the reservation
+          // spans the entire interaction, including quiet delegation gaps.
+          if (liveInteractions.has(sessionId))
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: {
+                code: -32602,
+                message: "Invalid params",
+                data: "session already has an active Live run",
+              },
+            });
           const runId = `run-${fake.turns.length + 1}`;
           const text = (params.prompt as { text: string }[])
             .map((block) => block.text)
@@ -432,8 +480,30 @@ export function fakeSpawn(
                   ? (options.namingDisabled ?? null)
                   : params.key === "DATABRICKS_MODEL_FILTER"
                     ? (options.modelFilter ?? null)
-                    : null,
+                    : options.config?.has(String(params.key))
+                      ? params.isSecret
+                        ? "********"
+                        : options.config.get(String(params.key))
+                      : null,
           });
+        case "_goose/unstable/config/upsert":
+        case "_goose/unstable/config/remove":
+          void (async () => {
+            try {
+              await options.configWrite?.(method, params);
+              if (method.endsWith("/remove"))
+                options.config?.delete(String(params.key));
+              else options.config?.set(String(params.key), params.value);
+              reply(id, {});
+            } catch {
+              send({
+                jsonrpc: "2.0",
+                ...(id !== undefined && { id }),
+                error: { code: -32603, message: "Config write failed" },
+              });
+            }
+          })();
+          return;
         case "_goose/unstable/defaults/read":
           return reply(id, defaults ?? {});
         case "_goose/unstable/defaults/save": {

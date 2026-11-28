@@ -48,6 +48,13 @@ export function dmVoiceAgent(
       !agent.executionBinding &&
       relayOrigin(agent.relay) === relayOrigin(destination.relayUrl) &&
       !agent.protection &&
-      agents.types().some((type) => type.key === agent.type && type.voice),
+      agents
+        .types()
+        .some(
+          (type) =>
+            type.key === agent.type &&
+            type.voice &&
+            (type.voiceReady?.() ?? true),
+        ),
   );
 }

@@ -4,6 +4,7 @@ import type { AgentType } from "../../features/agents/service";
 import { GooseRuntime } from "./runtime";
 import { GooseSetup } from "./setup";
 import { GooseHistory } from "./transcript";
+import { GooseVoiceSettings } from "./voice-settings";
 import { apply } from "./index";
 import { fakeSpawn } from "./goose-testing";
 import type { Spawn } from "./goose";
@@ -41,6 +42,12 @@ it("observes saved conversations with the status of open sessions", () => {
   } as never);
   // A reload stops its turns, so the owner is asked to resume them.
   expect(type?.resumes).toBe(true);
+  // Huddles invite it only while this device's voice switch is on.
+  const enabled = vi.spyOn(GooseVoiceSettings.prototype, "enabled", "get");
+  enabled.mockReturnValue(false);
+  expect(type?.voiceReady?.()).toBe(false);
+  enabled.mockReturnValue(true);
+  expect(type?.voiceReady?.()).toBe(true);
   expect(type?.skillFolders).toEqual(["~/.agents/skills"]);
   expect(
     type?.importShared?.({

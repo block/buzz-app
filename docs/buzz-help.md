@@ -226,12 +226,29 @@ if that desktop app is up and running.
 ## Huddles
 
 Huddles need the desktop app. The headphone button in a channel or DM header
-starts or joins one. Only Codex agents have voice. Your running Codex agent
-joins when it's a member of the huddle: starting a huddle in its DM adds it,
-and otherwise you add it from the huddle's members. Transcripts post in the
-huddle's room. Each agent's **Huddle voice** setting picks its voice. An agent
-hears whatever your microphone picks up, including people near you, and audio
-sent just before someone leaves can be credited to whoever takes their place.
+starts or joins one. Codex agents have voice, and Goose agents can too. Your
+running agent joins when it's a member of the huddle: starting a huddle in its
+DM adds it, and otherwise you add it from the huddle's members. Transcripts post
+in the huddle's room. Each Codex agent's **Huddle voice** setting picks its
+voice. An agent hears whatever your microphone picks up, including people near
+you, and audio sent just before someone leaves can be credited to whoever takes
+their place.
+
+Goose voice is optional and off by default on each device. In a huddle, Goose
+sends the voice provider your audio, the conversation's recent messages, and the
+agent's instructions, team and memory; this provider can differ from the one the
+agent uses for typed work. In agent settings, open **Voice settings** beside
+**Goose default model**, then expand **Voice**. Choose OpenAI or a Custom
+GPT-Live-compatible sessions URL. Custom requires its own key; changing the URL
+requires entering a key again. A plain `http` URL is allowed, with a warning
+that the key and text travel unencrypted. Provider, endpoint, model,
+voice and key are shared with the goose CLI and desktop app on this Mac; the
+huddle on/off switch belongs only to Buzz. Failed saves turn that switch off. A
+goose-acp build with live-voice support is required; the card reports
+availability. Existing calls keep their settings until rejoin. Turning voice off
+ends them. Starting a huddle in a Goose agent's DM adds it only while the switch
+is on. Typed messages in the same conversation wait until Goose leaves voice.
+Each spoken line posts to the transcript after a second of quiet.
 
 ## Workflows
 
@@ -385,7 +402,8 @@ browser asks only from Settings.
 Check microphone permission (macOS: **System Settings → Privacy & Security →
 Microphone**) and the devices in the huddle's **Audio settings**. A dropped
 huddle doesn't reconnect by itself, so click the headphone button again. A
-silent agent must be your running Codex agent and a member of the huddle.
+silent agent must be your running Codex agent, or a Goose agent with voice on,
+and a member of the huddle.
 
 ### Buzz is using a lot of memory
 

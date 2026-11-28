@@ -1,3 +1,5 @@
+import { GooseVoiceSettings } from "./voice-settings";
+import { openVoice, seatBound } from "./voice";
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
@@ -24,6 +26,7 @@ import {
 // fails.
 import type { Context } from "../../buzz-mcp/client";
 import {
+  coreMemorySection,
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
@@ -39,6 +42,7 @@ import {
   mentionAuthority,
   type Agent,
   type AgentHandle,
+  type AgentVoiceSeat,
   type Agents,
   type Delivery,
   type StandaloneTurn,
@@ -137,6 +141,7 @@ import { forwardedTurn, type GatewayProvider } from "./forwarded";
 import { marked, sessionTags, unforged } from "./transcript";
 import {
   absolute,
+  abortable,
   AgentProcess,
   AgentSessions,
   localSessions,
@@ -265,6 +270,23 @@ type Entry = {
 
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
+  readonly voiceSettings: GooseVoiceSettings;
+  private readonly voiceSeats = new Set<AbortController>();
+  /** Agents whose process still has the previous voice switch, each with
+   * what settles once it is retired. */
+  private readonly refreshVoice = new Map<
+    Entry,
+    { done: Promise<void>; resolve: () => void }
+  >();
+
+  private refreshVoiceProcess(entry: Entry) {
+    const pending = this.refreshVoice.get(entry);
+    if (!pending || !entry.sessions.quiescent) return;
+    this.refreshVoice.delete(entry);
+    entry.goose.refresh();
+    entry.sessions.reconfigure(true);
+    pending.resolve();
+  }
   private readonly memoryReads = new MemoryReads();
   private readonly listeners = new Set<() => void>();
   private readonly views = new Map<
@@ -304,8 +326,183 @@ export class GooseRuntime {
       key: AgentKey,
     ) => AgentReads | undefined,
   ) {
+    const desktop =
+      host.spawn && host.resolveDirectory
+        ? {
+            spawn: host.spawn.bind(host),
+            resolveDirectory: host.resolveDirectory.bind(host),
+          }
+        : undefined;
+    this.voiceSettings = new GooseVoiceSettings(desktop, storage, (enabled) => {
+      if (!enabled) for (const seat of this.voiceSeats) seat.abort();
+      for (const entry of this.agents.values()) {
+        if (!this.refreshVoice.has(entry)) {
+          let resolve!: () => void;
+          const done = new Promise<void>((settle) => (resolve = settle));
+          this.refreshVoice.set(entry, { done, resolve });
+        }
+        this.refreshVoiceProcess(entry);
+      }
+    });
     // Once found, agents on Recommended take it up.
     this.unfollow = recommended?.subscribe(() => this.sync(this.synced));
+  }
+
+  async voice(seat: AgentVoiceSeat, agent: AgentHandle) {
+    seat.signal.throwIfAborted();
+    if (!this.voiceSettings.enabled)
+      throw new Error("Turn on Goose voice in settings first.");
+    if (seat.agent.protection || agent.protection)
+      throw new Error("Voice is unavailable for protected agents");
+    const entry = this.entry(agent.key, config(seat.config));
+    entry.handle = agent;
+    entry.team = seat.team ?? "";
+    const { channelId } = seat.conversation;
+    const abort = new AbortController();
+    const signal = AbortSignal.any([
+      seat.signal,
+      entry.lifetime.signal,
+      abort.signal,
+    ]);
+    // Switching voice off cancels a seat that is still waiting, too.
+    this.voiceSeats.add(abort);
+    let held: Awaited<ReturnType<typeof entry.sessions.retain>>;
+    try {
+      // A process started before the switch changed cannot start voice, and
+      // holding its session would keep it from being replaced.
+      for (;;) {
+        const pending = this.refreshVoice.get(entry);
+        if (!pending) break;
+        await abortable(pending.done, signal);
+      }
+      held = await entry.sessions.retain(
+        channelId,
+        signal,
+        sessionTitle(entry.name, channelId),
+      );
+    } catch (error) {
+      this.voiceSeats.delete(abort);
+      throw error;
+    }
+    let media: Awaited<ReturnType<typeof openVoice>> | undefined;
+    let promptChanged = false;
+    let openingDone!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      openingDone = resolve;
+    });
+    let closing: Promise<void> | undefined;
+    const close = () => {
+      if (closing) return closing;
+      signal.removeEventListener("abort", onAbort);
+      abort.abort();
+      closing = (async () => {
+        await opened;
+        // A session still on voice's instructions never runs typed work: a
+        // clear that did not finish is owed, and its next turn runs it first.
+        // One that is late is waited for again, never sent beside: goose
+        // could apply it after a later seat's instructions.
+        let clearing: Promise<unknown> | undefined;
+        let owed = promptChanged
+          ? async () => {
+              clearing ??= held.process
+                .request("_goose/unstable/session/system-prompt/set", {
+                  sessionId: held.sessionId,
+                  mode: "append",
+                  key: "buzz-voice",
+                  text: "",
+                })
+                .catch((error: unknown) => {
+                  clearing = undefined;
+                  throw error;
+                });
+              // Untimed, as a timed request that ran late would stop the process.
+              await seatBound(
+                clearing,
+                "Goose did not clear its voice instructions in time",
+              );
+            }
+          : undefined;
+        try {
+          await media?.close();
+          // Before admission, the busy task belongs to typed work. Canceling
+          // this opening must release its lease without waiting for that task.
+          if (!owed) return;
+          held.interrupt();
+          await held.externalIdle();
+          await owed().then(
+            () => (owed = undefined),
+            () => undefined,
+          );
+        } finally {
+          held.release(owed);
+          this.voiceSeats.delete(abort);
+          for (const pending of this.refreshVoice.keys())
+            this.refreshVoiceProcess(pending);
+        }
+      })();
+      return closing;
+    };
+    const onAbort = () => {
+      void close();
+      if (!seat.signal.aborted) seat.ended(new Error("Goose voice stopped"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      // Who the agent is reaches the voice model too, not just delegated work.
+      const memory = await this.core(agent.key, signal);
+      const instructions = [
+        `You are ${agent.name}.`,
+        entry.config.instructions.trim()
+          ? `<agent-instructions>\n${entry.config.instructions.trim()}\n</agent-instructions>`
+          : "",
+        entry.team.trim(),
+        memory ? coreMemorySection(memory) : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      await abortable(held.idle(), signal);
+      signal.throwIfAborted();
+      held.reserve();
+      await held.select();
+      // Delegated work runs on this session's prompt, which only a typed
+      // turn would otherwise bring up to date.
+      await held.prepare();
+      signal.throwIfAborted();
+      entry.contexts.set(channelId, { channel: channelId, topLevel: true });
+      promptChanged = true;
+      await held.process.request(
+        "_goose/unstable/session/system-prompt/set",
+        {
+          sessionId: held.sessionId,
+          mode: "append",
+          key: "buzz-voice",
+          text: `Voice work acts for owner ${agent.owner}. Buzz tools default to room ${channelId} at top level. Answer delegated spoken requests in a few plain spoken sentences as your final answer; the voice model speaks it. Do not use send merely to repeat that spoken answer.`,
+        },
+        REQUEST_TIMEOUT_MS,
+      );
+      signal.throwIfAborted();
+      media = await openVoice(
+        held.process,
+        held.sessionId,
+        {
+          ...seat,
+          signal,
+          ended: (error) => {
+            void close();
+            seat.ended(error);
+          },
+        },
+        instructions,
+        (run) => this.voiceSettings.start(signal, run),
+      );
+      signal.throwIfAborted();
+      openingDone();
+      return { input: media.input, close };
+    } catch (error) {
+      openingDone();
+      await close();
+      throw error;
+    }
   }
   private reads(key: AgentKey) {
     return (
@@ -1729,6 +1926,7 @@ export class GooseRuntime {
         undefined,
         () => entry.handle,
         () => compactAt(entry.config.compactAt),
+        () => this.voiceSettings.enabled,
       ),
       tools: undefined as unknown as ToolServer,
       retiring: new Set(),
@@ -1840,6 +2038,7 @@ export class GooseRuntime {
         protection,
         () => entry.handle,
         () => compactAt(entry.config.compactAt),
+        () => this.voiceSettings.enabled,
       );
       const worker = entry.worker;
       const { stopping } = entry;
@@ -1870,7 +2069,10 @@ export class GooseRuntime {
           );
       },
       tags: (conversation) => sessionTags(agent, conversation),
-      onChange: () => this.notify(),
+      onChange: () => {
+        this.notify();
+        this.refreshVoiceProcess(entry);
+      },
       // Read as each turn starts, so a change needs no restart.
       choice: () => this.choice(entry),
       // The prompt's other parts, its instructions, team, name, core memory

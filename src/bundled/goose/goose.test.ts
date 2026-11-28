@@ -9,6 +9,7 @@ import {
   type ToolServer,
 } from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
+import { HELD_RETRY_MS } from "../../features/agent-harness/acp/session";
 import {
   createLocalAgentActivity,
   stepText,
@@ -79,6 +80,325 @@ afterEach(() => {
 });
 
 describe("GooseProcess", () => {
+  it("authorizes only the current external run while voice retains the session", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    const run = (activeRunId: string | null) =>
+      process.update(session.id, {
+        sessionUpdate: "session_info_update",
+        _meta: { goose: { activeRunId } },
+      });
+    run("unowned");
+    await flush();
+    expect(session.current()()).toBe(false);
+    session.observeExternalRuns(true);
+    run("first");
+    await flush();
+    const first = session.current();
+    expect(first()).toBe(true);
+    run("second");
+    await flush();
+    expect(first()).toBe(false);
+    const second = session.current();
+    expect(second()).toBe(true);
+    session.interrupt();
+    expect(second()).toBe(false);
+    run(null);
+    await flush();
+    await session.idle();
+    run("third");
+    await flush();
+    expect(session.current()()).toBe(true);
+    session.observeExternalRuns(false);
+    expect(session.current()()).toBe(false);
+    await goose.kill();
+  });
+
+  it("gives each delegated run's Buzz tools a cancellation that ends with it", async () => {
+    const signals: AbortSignal[] = [];
+    const { open, process, goose } = await start(
+      async (_c, message, signal) => {
+        if (signal) signals.push(signal);
+        return { jsonrpc: "2.0", id: message.id, result: { content: [] } };
+      },
+    );
+    const session = await open();
+    session.observeExternalRuns(true);
+    session.reserveExternal();
+    const run = async (activeRunId: string | null) => {
+      process.update(session.id, {
+        sessionUpdate: "session_info_update",
+        _meta: { goose: { activeRunId } },
+      });
+      await flush();
+    };
+    await run("first");
+    await process.mcp(session.id, "tools/call", {
+      name: "read",
+      arguments: {},
+    });
+    await run("second");
+    await process.mcp(session.id, "tools/call", {
+      name: "read",
+      arguments: {},
+    });
+    const [first, second] = signals;
+    expect(first?.aborted).toBe(true);
+    expect(second?.aborted).toBe(false);
+    session.interruptExternalRun();
+    expect(second?.aborted).toBe(true);
+    await goose.kill();
+  });
+
+  it.each([false, true])(
+    "queues typed work for the whole live reservation (delegated=%s)",
+    async (delegated) => {
+      const { open, process, goose } = await start();
+      const session = await open();
+      session.observeExternalRuns(true);
+      session.reserveExternal();
+      await goose.request("_goose/unstable/session/live-voice/start", {
+        sessionId: session.id,
+      });
+      // Positive control: a real prompt in a quiet live gap is refused by
+      // goose's registry, so a fixture that allowed it cannot pass this test.
+      await expect(
+        goose.request("session/prompt", {
+          sessionId: session.id,
+          prompt: [{ type: "text", text: "must be refused" }],
+        }),
+      ).rejects.toThrow("session already has an active Live run");
+      if (delegated) {
+        process.update(session.id, {
+          sessionUpdate: "session_info_update",
+          _meta: { goose: { activeRunId: "delegated" } },
+        });
+        await flush();
+      }
+      const typed = session.send("typed after speech");
+      await flush();
+      const before = process.received.filter(
+        (message) => message.method === "session/prompt",
+      ).length;
+      expect(before).toBe(1); // Only the deliberate refused positive control.
+      if (delegated) {
+        process.update(session.id, {
+          sessionUpdate: "session_info_update",
+          _meta: { goose: { activeRunId: null } },
+        });
+        await flush();
+      }
+      await session.externalIdle(); // Must not deadlock on queued typed work.
+      expect(session.current()()).toBe(false); // Queued work has no tool authority.
+      expect(process.turns).toHaveLength(0);
+      expect(
+        process.received.filter(
+          (message) => message.method === "session/prompt",
+        ),
+      ).toHaveLength(before);
+      await goose.request("_goose/unstable/session/live-voice/stop", {
+        sessionId: session.id,
+      });
+      session.observeExternalRuns(false);
+      await expect(typed).resolves.toMatchObject({ ok: true });
+      expect(process.turns.map((turn) => turn.text)).toEqual([
+        "typed after speech",
+      ]);
+      await goose.kill();
+    },
+  );
+
+  it("fails a prompt goose keeps refusing for a held live session once the retry runs out", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    await goose.request("_goose/unstable/session/live-voice/start", {
+      sessionId: session.id,
+    });
+    vi.useFakeTimers();
+    const typed = session.send("typed after leaving");
+    await vi.advanceTimersByTimeAsync(HELD_RETRY_MS + 2_000);
+    await expect(typed).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("session already has an active Live run"),
+    });
+    const prompts = process.received.filter(
+      (message) => message.method === "session/prompt",
+    );
+    expect(prompts.length).toBeGreaterThan(2);
+    expect(prompts.length).toBeLessThan(40);
+    expect(process.turns).toHaveLength(0);
+    expect(process.killed).toBe(false);
+    vi.useRealTimers();
+    await goose.kill();
+  });
+
+  it.each([
+    {
+      code: -32603,
+      message: "Internal error",
+      data: "Error in agent response stream: session already has an active Live run",
+    },
+    {
+      code: -32602,
+      message: "Invalid params",
+      data: "provider said: session already has an active Live run",
+    },
+    {
+      code: -32603,
+      message: "Internal error",
+      data: "session already has an active Live run",
+    },
+  ])(
+    "never resends a prompt goose failed with code $code after it may have run",
+    async (error) => {
+      const { open, process, goose } = await start();
+      const session = await open();
+      process.rejectPrompt = error;
+      await expect(session.send("ran once")).resolves.toMatchObject({
+        ok: false,
+      });
+      expect(
+        process.received.filter(
+          (message) => message.method === "session/prompt",
+        ),
+      ).toHaveLength(1);
+      await goose.kill();
+    },
+  );
+
+  it("stops resending a held prompt once the owner stops the work", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    await goose.request("_goose/unstable/session/live-voice/start", {
+      sessionId: session.id,
+    });
+    vi.useFakeTimers();
+    const delivered = vi.fn();
+    const typed = session.send("typed after leaving", { delivered });
+    await vi.advanceTimersByTimeAsync(300);
+    const sent = () =>
+      process.received.filter((message) => message.method === "session/prompt")
+        .length;
+    expect(sent()).toBeGreaterThan(1);
+    session.interrupt();
+    await expect(typed).resolves.toMatchObject({ ok: true, stopped: true });
+    const after = sent();
+    await vi.advanceTimersByTimeAsync(HELD_RETRY_MS);
+    expect(sent()).toBe(after);
+    expect(process.turns).toHaveLength(0);
+    // goose never took it, so it was never delivered.
+    expect(delivered).not.toHaveBeenCalled();
+    vi.useRealTimers();
+    await goose.kill();
+  });
+
+  it("refuses to claim voice after typed work won the idle-to-reserve race", async () => {
+    const { open, process, goose } = await start();
+    process.hold = true;
+    const session = await open();
+    session.observeExternalRuns(true);
+    await session.idle();
+    const typed = session.send("typed won");
+    expect(() => session.reserveExternal()).toThrow("not idle");
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    process.turns[0]?.finish();
+    await typed;
+    await goose.kill();
+  });
+
+  it("routes marked voice transcript to subscribers without adding it to typed output", async () => {
+    const { open, process, goose } = await start();
+    process.hold = true;
+    const session = await open();
+    const received = vi.fn();
+    const off = goose.onNotification(received);
+    const typed = session.send("typed work");
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    const transcript = {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "spoken transcript" },
+      _meta: { goose: { liveTranscript: true, messageId: "voice-1" } },
+    };
+    process.update(session.id, transcript);
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "typed reply" },
+    });
+    process.turns[0]?.finish();
+    await expect(typed).resolves.toEqual({ ok: true, text: "typed reply" });
+    expect(received).toHaveBeenCalledWith("session/update", {
+      sessionId: session.id,
+      update: transcript,
+    });
+    off();
+    await goose.kill();
+  });
+
+  it("does not publish a voice delegation result as the queued typed reply", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    session.observeExternalRuns(true);
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: "delegated" } },
+    });
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "spoken result only" },
+    });
+    await flush();
+    const typed = session.send("unrelated typed request");
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: null } },
+    });
+    await expect(typed).resolves.toEqual({ ok: true });
+    await goose.kill();
+  });
+
+  it("leaving voice preserves a running typed turn and its authority", async () => {
+    const { open, process, goose } = await start();
+    process.hold = true;
+    const session = await open();
+    session.observeExternalRuns(true);
+    const typed = session.send("typed work");
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    const current = session.current();
+    session.interruptExternalRun();
+    session.observeExternalRuns(false);
+    expect(process.cancelled).toEqual([]);
+    expect(current()).toBe(true);
+    process.turns[0]?.finish();
+    await expect(typed).resolves.toMatchObject({ ok: true });
+    await goose.kill();
+  });
+
+  it("leaving voice cancels delegated authority but preserves queued typed work", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    session.observeExternalRuns(true);
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: "delegated" } },
+    });
+    await flush();
+    const current = session.current();
+    const typed = session.send("queued typed work");
+    session.interruptExternalRun();
+    expect(current()).toBe(false);
+    await flush();
+    expect(process.cancelled).toEqual([session.id]);
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: null } },
+    });
+    await expect(typed).resolves.toMatchObject({ ok: true });
+    expect(process.turns.map((turn) => turn.text)).toEqual([
+      "queued typed work",
+    ]);
+    await goose.kill();
+  });
+
   it.each([false, true])(
     "suppresses auxiliary title inference only for protected workers (%s)",
     async (protectedWorker) => {

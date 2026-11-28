@@ -178,6 +178,17 @@ export function parseAttachments(
   return result;
 }
 
+/** Whether `after` differs from `before` only by links rewritten to `<url>`,
+ * the edit a dismissed link preview publishes; it does not mark a message as
+ * edited. */
+function onlyPreviewsRemoved(before: string, after: string) {
+  const plain = (text: string) =>
+    text
+      .replace(/<([a-z][a-z\d+.-]*:[^\s<>]*)>/gi, "$1")
+      .replace(/\[([a-z][a-z\d+.-]*:[^\s\]]*)\]\(\1\)/gi, "$1");
+  return plain(before) === plain(after);
+}
+
 function parseSummary(
   event: EventData | undefined,
 ): Pick<ChannelMessage, "replyCount" | "participants"> {
@@ -522,7 +533,19 @@ export function foldMessages(
               }),
             }
           : {}),
-        ...(edits[0] ? { edited: true as const, editId: edits[0].id } : {}),
+        ...(edits.some((edit, index) => {
+          const shown = (item: EventData) => {
+            if (event.kind !== 40002) return item.content;
+            const body = objectBody(item.content)?.content;
+            return typeof body === "string" ? body : item.content;
+          };
+          const before = shown(edits[index + 1] ?? event);
+          const after = shown(edit);
+          return after === before || !onlyPreviewsRemoved(before, after);
+        })
+          ? { edited: true as const }
+          : {}),
+        ...(edits[0] ? { editId: edits[0].id } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(

@@ -13,6 +13,9 @@ import {
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
+import { LinkMessageIdContext } from "../conversation/LinkLabelContext";
+import { remarkLinkForms } from "./link-forms";
+import type { LinkWritten } from "../conversation/contracts";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { bareHostParts, messageLinkParts } from "./message-link-parts";
 import { labelText } from "./label-text";
@@ -540,22 +543,24 @@ export function MessageMarkdown({
       </div>
     );
   return (
-    <PreparedMessageMarkdown
-      row={row}
-      prepared={prepared}
-      directory={directory}
-      session={session}
-      scope={scope}
-      extensions={extensions}
-      media={media}
-      onOpenLink={onOpenLink}
-      canOpenLink={canOpenLink}
-      participantProfiles={participantProfiles}
-      resolveName={resolveName}
-      largeEmoji={largeEmoji}
-      interactive={interactive}
-      edited={edited}
-    />
+    <LinkMessageIdContext value={interactive ? row.id : undefined}>
+      <PreparedMessageMarkdown
+        row={row}
+        prepared={prepared}
+        directory={directory}
+        session={session}
+        scope={scope}
+        extensions={extensions}
+        media={media}
+        onOpenLink={onOpenLink}
+        canOpenLink={canOpenLink}
+        participantProfiles={participantProfiles}
+        resolveName={resolveName}
+        largeEmoji={largeEmoji}
+        interactive={interactive}
+        edited={edited}
+      />
+    </LinkMessageIdContext>
   );
 }
 
@@ -583,11 +588,19 @@ function PreparedMessageMarkdown({
   prepared: Extract<PreparedMarkdown, { kind: "markdown" }>;
   resolveName: (pubkey: string, fallback: string) => string;
 }) {
-  const row =
-    prepared.content === sourceRow.content
-      ? sourceRow
-      : { ...sourceRow, content: prepared.content };
-  const renderLink = (url: string, label?: string, children?: ReactNode) => {
+  const verbatim = prepared.content === sourceRow.content;
+  const row = verbatim
+    ? sourceRow
+    : { ...sourceRow, content: prepared.content };
+  const renderLink = (
+    url: string,
+    label?: string,
+    children?: ReactNode,
+    form?: {
+      written: LinkWritten;
+      source?: { url: string; occurrence: number } | undefined;
+    },
+  ) => {
     const channel = channelForLink(url, directory.channels);
     return (
       <MessageLink
@@ -602,6 +615,7 @@ function PreparedMessageMarkdown({
         interactive={interactive}
         channelPrivate={!!channel?.private}
         channelSolo={channel?.channelType === "solo"}
+        {...form}
       >
         {children}
       </MessageLink>
@@ -697,7 +711,17 @@ function PreparedMessageMarkdown({
         data-single-emoji={largeEmoji || undefined}
       />
     ),
-    a: ({ href: target, children }) => {
+    a: (props) => {
+      const { href: target, children } = props;
+      const written = props["data-link-written" as keyof typeof props] as
+        | LinkWritten
+        | undefined;
+      const sourceUrl = props["data-link-source" as keyof typeof props] as
+        | string
+        | undefined;
+      const position = Number(
+        props["data-link-occurrence" as keyof typeof props],
+      );
       const href =
         target &&
         (parseBuzzLink(target) ||
@@ -711,11 +735,22 @@ function PreparedMessageMarkdown({
         const label = labelText(children);
         return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
       }
+      const plain = labelText(children) === href;
       return href ? (
         renderLink(
           href,
-          labelText(children) === href ? undefined : labelText(children),
-          labelText(children) === href ? undefined : children,
+          plain ? undefined : labelText(children),
+          plain ? undefined : children,
+          written && {
+            written,
+            source:
+              verbatim &&
+              written !== "angle" &&
+              sourceUrl !== undefined &&
+              (written === "bare" || labelText(children) === sourceUrl)
+                ? { url: sourceUrl, occurrence: position }
+                : undefined,
+          },
         )
       ) : (
         <span>{children}</span>
@@ -820,6 +855,7 @@ const MarkdownBody = memo(function MarkdownBody({
           ],
           [remarkInlineContent, protectedContent],
           remarkLiteralHtml,
+          [remarkLinkForms, protectedContent.content],
         ],
         rehypePlugins: [rehypeMarkupNewlines, rehypeEditedSlot],
         components: markdownComponents,

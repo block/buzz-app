@@ -10,7 +10,11 @@ import {
   type MouseEvent,
 } from "react";
 import { resolveMatch, type Contribution } from "../../plugins/contributions";
-import type { ContributionReader, LinkRenderer } from "./contracts";
+import type {
+  ContributionReader,
+  LinkRenderer,
+  LinkWritten,
+} from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import {
   ContextMenuRoot,
@@ -39,9 +43,11 @@ import {
   LinkChannelKindContext,
   LinkDescriptionContext,
   LinkAccessibleNameContext,
+  LinkDismissContext,
   LinkInteractiveContext,
   LinkLabelContext,
   LinkContentContext,
+  LinkMessageIdContext,
   LinkPreviewContext,
   LinkThreadTabContext,
   type LinkPreview,
@@ -98,6 +104,8 @@ export function MessageLink({
   interactive = true,
   channelPrivate = false,
   channelSolo = false,
+  written = "bare",
+  source,
 }: {
   url: string;
   children?: ReactNode;
@@ -114,6 +122,10 @@ export function MessageLink({
   channelPrivate?: boolean;
   /** The joined list holds the destination as a Solo chat, confirmed or not. */
   channelSolo?: boolean;
+  written?: LinkWritten;
+  /** The link's address as written in the message and its position among links
+   * written that way; present only where `dismiss` may rewrite it. */
+  source?: Readonly<{ url: string; occurrence: number }> | undefined;
 }) {
   const active = useConversationPresentation();
   const renderers = useSyncExternalStore(
@@ -198,7 +210,7 @@ export function MessageLink({
   // a Solo chat's title is not a channel name. The length is checked first:
   // it keeps the canonical-name scan, quadratic in whitespace, off an
   // arbitrary label.
-  const written =
+  const typedName =
     !channelSolo &&
     channelName?.startsWith("#") &&
     channelName !== `#${destination?.channelId.slice(0, 8)}` &&
@@ -207,9 +219,9 @@ export function MessageLink({
       ? children.slice(1)
       : "";
   const current =
-    written &&
-    [...written].length <= 120 &&
-    written === canonicalDetailsName(written)
+    typedName &&
+    [...typedName].length <= 120 &&
+    typedName === canonicalDetailsName(typedName)
       ? channelName
       : undefined;
   // Any other authored label is message text, so it stays; the lock marks it.
@@ -240,6 +252,12 @@ export function MessageLink({
   if (!active && menuOpen) setMenuOpen(false);
   if (!active && notice) setNotice(undefined);
   const external = /^https?:\/\//i.test(url);
+  const dismissLink = useContext(LinkDismissContext);
+  const messageId = useContext(LinkMessageIdContext);
+  const dismiss =
+    interactive && dismissLink && source
+      ? () => dismissLink({ ...source, written })
+      : undefined;
   const openThreadTab = useContext(LinkThreadTabContext);
   const thread =
     openThreadTab && destination?.messageId
@@ -329,7 +347,17 @@ export function MessageLink({
   };
   const anchor = (entry?: Contribution<LinkRenderer>) => {
     const Content = entry?.component;
-    const content = Content ? <Content url={url} /> : (shown ?? display ?? url);
+    const content = Content ? (
+      <Content
+        url={url}
+        written={written}
+        messageId={messageId}
+        interactive={interactive}
+        dismiss={dismiss}
+      />
+    ) : (
+      (shown ?? display ?? url)
+    );
     // Selection copy reads the authored label; empty marks a raw destination.
     const element = interactive ? (
       <a

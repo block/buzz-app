@@ -113,7 +113,8 @@ import {
 } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { LinkPreviews } from "./LinkPreviews";
-import { previewLinks } from "./preview-links";
+import { LinkDismissalScope } from "./LinkDismissalScope";
+import { previewCards } from "./preview-links";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
@@ -746,10 +747,10 @@ function MessageRowContent({
     (!messageRenderer || messageRenderer === failedRenderer);
   const editedInBody = markdownBody && !row.forward;
   const linkPreviewRegistry = extensions?.linkPreviews;
-  const previewUrls = useMemo(
+  const previewed = useMemo(
     () =>
       linkPreviewRegistry && markdownBody && !row.agentEnvelope
-        ? previewLinks(
+        ? previewCards(
             displayRow.content,
             row.attachments.map((attachment) => attachment.url),
           )
@@ -1152,19 +1153,21 @@ function MessageRowContent({
         />
       </DetailsMessage>
     ) : (
-      <MessageMarkdown
-        directory={directory}
-        session={references}
-        scope={scope}
-        row={displayRow}
-        extensions={extensions}
-        media={media}
-        onOpenLink={openLink}
-        canOpenLink={canOpenLink}
-        participantProfiles={participantProfiles}
-        largeEmoji={emojiOnly}
-        edited={editedInBody && displayRow.edited}
-      />
+      <LinkDismissalScope row={shown} session={session}>
+        <MessageMarkdown
+          directory={directory}
+          session={references}
+          scope={scope}
+          row={displayRow}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+          largeEmoji={emojiOnly}
+          edited={editedInBody && displayRow.edited}
+        />
+      </LinkDismissalScope>
     ));
   const avatarSize = compactAvatar && !flat ? "small" : "default";
   const authorName = (
@@ -1828,14 +1831,16 @@ function MessageRowContent({
                   {reactionsInBubble && !withoutReactions && reactionContent}
                 </div>
               )}
-              {previewUrls.length > 0 && (
-                <LinkPreviews
-                  urls={previewUrls}
-                  messageId={row.id}
-                  registry={linkPreviewRegistry}
-                  onOpenLink={openLink}
-                  settings={extensions?.settings}
-                />
+              {previewed.length > 0 && (
+                <LinkDismissalScope row={shown} session={session}>
+                  <LinkPreviews
+                    links={previewed}
+                    messageId={row.id}
+                    registry={linkPreviewRegistry}
+                    onOpenLink={openLink}
+                    settings={extensions?.settings}
+                  />
+                </LinkDismissalScope>
               )}
               {attachmentContent()}
               {!editedInBody && !editedInBubble && shown.edited && (

@@ -3,6 +3,33 @@ import { createServer } from "./vite-server.mjs";
 import { activate } from "./navigation.mjs";
 import { clickRow, virtuaIdle } from "./timeline.mjs";
 
+test("an agent-only message with replies opens its thread from the timeline", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/activity-groups.html?thread`,
+    );
+    const root = page.getByRole("button", {
+      name: /Activity update 15.*2 replies/,
+    });
+    await expect(root).toBeVisible();
+    await expect(root.getByText("2 replies", { exact: true })).toBeVisible();
+    await root.click();
+    await page.getByRole("button", { name: /^View thread: 2 replies/ }).click();
+    await expect(page.getByText("Opened agent thread")).toBeVisible();
+  } finally {
+    await server.close();
+  }
+});
+
 test("a long relayed message fits the chat before and after opening", async ({
   page,
 }) => {

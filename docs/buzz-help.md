@@ -57,8 +57,10 @@ if that desktop app is up and running.
 - **Left nav**: the icons at the top of the far left switch between
   **Messages**, **Agents** and any pages plugins add. Your communities are at
   the bottom, and your profile picture below them opens **Settings**.
-- **Threads and tabs**: threads, profiles and link panels open by default as a
-  sheet over the conversation's message box; Back or **X** closes it. **Move to
+- **Threads and tabs**: an agent-only message with replies shows its reply count
+  in the timeline. Expand the message to open its thread. Threads, profiles and
+  link panels open by default as a sheet over the conversation's message box.
+  Back or **X** closes it. **Move to
   side panel** on the sheet moves that thread into a tab. To open them as tabs
   instead, set **Settings → Appearance → Open threads in** to **Side pane** or
   **Main pane**. A thread opened from the side pane, as from a link in a thread

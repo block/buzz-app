@@ -3787,6 +3787,11 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.audienceReplyCount {
+  flex: none;
+  white-space: nowrap;
+  color: var(--text-subtle);
+}
 .audienceRow:has(.audienceBody) .audiencePreviewText {
   display: none;
 }

@@ -1,7 +1,7 @@
 import type { ChannelMessage } from "../relay/contracts";
 
 /** Only consecutive agent-only messages on one local day fold together.
- * Human messages, public agent replies and membership notices stay visible. */
+ * Public messages, membership notices and thread roots stay visible. */
 export function activityRuns(
   rows: readonly ChannelMessage[],
   requests?: ReadonlyMap<string, string>,
@@ -10,7 +10,7 @@ export function activityRuns(
   let group: ChannelMessage[] | undefined;
   let previous: ChannelMessage | undefined;
   for (const row of rows) {
-    if (row.audience !== "agents" || row.membership) {
+    if (row.audience !== "agents" || row.membership || row.replyCount > 0) {
       group = undefined;
     } else {
       if (

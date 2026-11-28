@@ -80,6 +80,13 @@ it("folds consecutive activity into one preview and includes different agents in
   expect(activityRuns(rows)).toEqual([rows]);
 });
 
+it("leaves an agent-only thread root visible between activity groups", () => {
+  const before = run("before");
+  const after = run("after");
+  const root = activity("thread-root", { replyCount: 2 });
+  expect(activityRuns([...before, root, ...after])).toEqual([before, after]);
+});
+
 it.each(["human", "agent", "membership"])(
   "keeps ordinary messages and membership notices outside groups: %s",
   (kind) => {

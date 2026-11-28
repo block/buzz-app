@@ -11,6 +11,8 @@ import styles from "../../src/features/messages/Messages.module.css";
 import "../../src/shared/styles/globals.css";
 
 const relayed = new URLSearchParams(location.search).get("relayed");
+const withThread = new URLSearchParams(location.search).has("thread");
+const threadRootId = "a".repeat(64);
 const viewer = keypair();
 const relay = keypair();
 const source = "source";
@@ -73,8 +75,14 @@ function Fixture() {
               ]
             : []),
         ]
-      : Array.from({ length: 16 }, (_, index) => update(index)),
+      : Array.from({ length: 16 }, (_, index) => ({
+          ...update(index),
+          ...(withThread && index === 15
+            ? { id: threadRootId, replyCount: 2 }
+            : {}),
+        })),
   );
+  const [openThread, setOpenThread] = useState<string>();
   const [inlineTarget, setTarget] = useState<{
     messageId: string;
     signal: AbortSignal;
@@ -132,8 +140,19 @@ function Fixture() {
             error: undefined,
           }}
           onOpenLink={() => false}
+          onOpenThread={
+            withThread ? (_, rootId) => setOpenThread(rootId) : undefined
+          }
+          openThreadRootId={openThread}
         />
       </div>
+      {openThread && (
+        <output>
+          {openThread === threadRootId
+            ? "Opened agent thread"
+            : "Opened a different thread"}
+        </output>
+      )}
     </main>
   );
 }

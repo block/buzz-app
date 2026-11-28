@@ -24,11 +24,11 @@ const trigger = {
 } as unknown as WakeTrigger;
 
 describe("wakePrompt", () => {
-  it("gives plugins' instructions only to a standalone turn, whose prompt is the whole turn", async () => {
-    // A conversation's turn adds them itself, so its wake text leaves them out.
+  it("leaves plugin instructions and the Attention review to the conversation turn", async () => {
     const anchored = await wakePrompt(agent, trigger, "daily", () => true);
     expect(anchored).toContain("Run daily");
     expect(anchored).not.toContain("<plugin-instructions");
+    expect(anchored).not.toContain("<attention>");
     const standalone = await wakePrompt(agent, trigger, "daily", () => true, {
       standalone: true,
     });

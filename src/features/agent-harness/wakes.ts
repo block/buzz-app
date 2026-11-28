@@ -54,10 +54,9 @@ export async function wake(
   }
 }
 
-/** The prompt for a wake as its watch or timer now is, with the end-of-turn
- * review, or undefined when it should no longer run. A `standalone` turn's
- * prompt is the whole turn, so it also has the instructions plugins give the
- * agent; a conversation's turn adds them itself. */
+/** The prompt for a wake as its watch or timer now is, or undefined when it
+ * should no longer run. A standalone prompt includes plugin instructions
+ * and the Attention review. The conversation turn supplies its own notes. */
 export async function wakePrompt(
   agent: AgentHandle,
   trigger: WakeTrigger,
@@ -120,11 +119,8 @@ export async function wakePrompt(
             });
   // Asked again: the attention can change while it is read.
   if (!stillCurrent()) return undefined;
-  return [
-    text,
-    standalone ? pluginInstructions(agent.instructions?.()) : undefined,
-    ATTENTION_REVIEW,
-  ]
+  if (!standalone) return text;
+  return [text, pluginInstructions(agent.instructions?.()), ATTENTION_REVIEW]
     .filter(Boolean)
     .join("\n\n");
 }

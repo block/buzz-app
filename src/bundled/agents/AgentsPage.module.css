@@ -258,16 +258,19 @@
   margin-inline: 0;
 }
 
-/* Each tab's content, centered in the inventory column. */
+/* Each tab's content, filling the inventory column so its card grids use
+   the working area's whole width instead of a centered reading strip. */
 .content {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
   width: 100%;
-  max-width: 48rem;
-  margin-inline: auto;
   padding: clamp(var(--space-4), 6vh, calc(var(--space-16) + var(--space-4)))
     var(--space-6) var(--space-8);
+}
+/* A tab's form keeps the Settings reading measure, which the grids give up. */
+.content .sideBody {
+  max-width: 48rem;
 }
 .typeLabel {
   display: inline-flex;

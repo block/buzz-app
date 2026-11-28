@@ -796,6 +796,39 @@ test("owner profile keeps its pane and caret stable during inline name editing",
   expect((await profile.boundingBox()).height).toBe(before.height);
 });
 
+// The tab column's card grid follows the pane's width, while a tab's form
+// keeps the reading measure the grids give up.
+test("the Agents grid fills a wide pane while its forms keep a reading measure", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.goto("/tests/fixtures/agent-library.html");
+  const pane = page.getByRole("region", { name: "Agents", exact: true });
+  const grid = pane.getByRole("grid", { name: "Agents", exact: true });
+  const columns = () =>
+    grid.evaluate(
+      (element) =>
+        getComputedStyle(element.parentElement).gridTemplateColumns.split(" ")
+          .length,
+    );
+  await expect.poll(columns).toBeGreaterThan(4);
+  const gridWidth = await grid.evaluate(
+    (element) => element.parentElement.getBoundingClientRect().width,
+  );
+  // The old column capped the grid at 48rem (768px) regardless of pane width.
+  expect(gridWidth).toBeGreaterThan(768);
+  expect(gridWidth).toBeGreaterThan((await pane.boundingBox()).width * 0.8);
+
+  await page.getByRole("tab", { name: "Your teams", exact: true }).click();
+  await page.getByRole("button", { name: "New team", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Create a new team", exact: true })
+    .click();
+  const form = page.getByRole("form", { name: "New team" });
+  await expect(form).toBeVisible();
+  expect((await form.boundingBox()).width).toBeLessThanOrEqual(768);
+});
+
 // A persisted interface size changes rem geometry; real pointer hit testing
 // must keep each split action inside its own card.
 test("scaled import controls keep pointer actions on their own agent", async ({

@@ -1316,9 +1316,11 @@ it("switches sending to Ctrl+Enter and shows the editor keys that follow", async
       [...row(title).querySelectorAll(".buzz-keyboard-shortcut")].map((chord) =>
         chord.getAttribute("data-binding"),
       );
-    const toggle = screen.getByRole("switch", { name: "Send with Ctrl+Enter" });
+    const toggle = screen.getByRole("switch", {
+      name: "Require Ctrl+Enter to send",
+    });
     expect(toggle).not.toBeChecked();
-    expect(chords("Send message")).toEqual(["Enter"]);
+    expect(chords("Send message")).toEqual(["Enter", "Ctrl+Enter"]);
     expect(chords("New line")).toEqual(["Shift+Enter"]);
     await userEvent.setup().click(toggle);
     expect(toggle).toBeChecked();
@@ -1365,7 +1367,7 @@ it("saves the Up Arrow editing choice and restores it when settings remounts", a
 
 it.each([
   ["Edit last message with Up Arrow", "buzz-edit-with-up-arrow.v1"],
-  ["Send with Ctrl+Enter", "buzz-send-with-mod-enter.v1"],
+  ["Require Ctrl+Enter to send", "buzz-send-with-mod-enter.v1"],
 ])(
   "keeps %s active on a storage failure and retries saving",
   async (label, key) => {

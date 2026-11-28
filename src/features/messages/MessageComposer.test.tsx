@@ -7507,6 +7507,32 @@ it.each([
   },
 );
 
+it("sends with Ctrl+Enter by default, from prose and from inside a list", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "prose");
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "prose",
+    [],
+    [],
+  );
+  await h.user.type(h.input(), "- one{Enter}two");
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+  // A held Ctrl+Enter neither sends nor splits the item.
+  fireEvent.keyDown(h.input(), { key: "Enter", ctrlKey: true, repeat: true });
+  expect(h.messages.send).toHaveBeenCalledTimes(1);
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    "- one\n- two",
+    [],
+    [],
+  );
+  expect(h.input()).toHaveValue("");
+});
+
 it("exits an empty list item on Enter, then sends from ordinary prose", async () => {
   const h = mount();
   await h.user.type(h.input(), "- first");

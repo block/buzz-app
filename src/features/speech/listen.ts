@@ -157,6 +157,29 @@ export function transcriptItems() {
   };
 }
 
+/** The microphone through a delay line from the moment it opens, so words
+ * said while the provider connects are sent once it does. */
+function delayLine(media: MediaStream) {
+  if (typeof AudioContext === "undefined") return;
+  const audio = new AudioContext();
+  const delay = audio.createDelay(30);
+  const out = audio.createMediaStreamDestination();
+  audio.createMediaStreamSource(media).connect(delay).connect(out);
+  void audio.resume();
+  const opened = audio.currentTime;
+  return {
+    audio,
+    delay: delay.delayTime,
+    track: out.stream.getAudioTracks()[0],
+    /** Sends from the moment the microphone opened, then catches up at 1.15x. */
+    replay() {
+      const now = audio.currentTime;
+      delay.delayTime.setValueAtTime(now - opened, now);
+      delay.delayTime.linearRampToValueAtTime(0, now + (now - opened) / 0.15);
+    },
+  };
+}
+
 export type Connect = (
   offer: string,
   signal: AbortSignal,
@@ -178,10 +201,13 @@ export function listenHosted(
   const items = transcriptItems();
   const abort = new AbortController();
   let stream: MediaStream | undefined;
+  let line: ReturnType<typeof delayLine>;
   let peer: RTCPeerConnection | undefined;
   let channel: RTCDataChannel | undefined;
   let ended = false;
   let ending = false;
+  /** Ending, while the delay line still sends what it holds. */
+  let draining = false;
   /** The transcript last reported. */
   let text = "";
   /** The pause or end the listen waits for, and the short pause. */
@@ -220,12 +246,13 @@ export function listenHosted(
     channel?.close();
     peer?.close();
     stopMicrophone();
+    void line?.audio.close();
     options.onState?.("idle");
     if (report && text.trim()) options.onEnd(text.trim());
   };
   /** Ending, and every word is in: report them. */
   const settle = () => {
-    if (ending && unanswered <= 0 && items.settled()) close(true);
+    if (ending && !draining && unanswered <= 0 && items.settled()) close(true);
   };
   /** Ends listening once the last commit's words are in. Stop commits
    * even before the first word, so speech cut short still counts. */
@@ -233,9 +260,16 @@ export function listenHosted(
     if (ended || ending) return;
     ending = true;
     stopMicrophone();
-    commit(stopped);
-    wait(FINAL_MS, () => close(true));
-    settle();
+    const last = () => {
+      draining = false;
+      commit(stopped);
+      wait(FINAL_MS, () => close(true));
+      settle();
+    };
+    const lag = (line?.delay.value ?? 0) * 1000;
+    draining = lag > 0;
+    if (draining) wait(lag, last);
+    else last();
   };
   const finish = () => end(false);
   const cancel = () => close(false);
@@ -291,6 +325,7 @@ export function listenHosted(
       channel = peer.createDataChannel("oai-events");
       // Transcripts arrive here, so listening starts once it opens.
       channel.addEventListener("open", () => {
+        line?.replay();
         state("listening");
         if (!ending && !text) wait(SILENCE_MS, finish);
       });
@@ -323,6 +358,8 @@ export function listenHosted(
           // Stopped meanwhile: release the microphone at once.
           if (ended || ending)
             for (const track of media.getTracks()) track.stop();
+          else line = delayLine(media);
+          if (line) state("listening");
           return media;
         });
       const [media, answer] = await Promise.all([
@@ -333,7 +370,11 @@ export function listenHosted(
       if (answer.outcome === "failed") return fail(answer.reason);
       if (answer.maxSeconds !== undefined)
         options.onCallLimit?.(answer.maxSeconds);
-      await sender.replaceTrack(media.getAudioTracks()[0] ?? null);
+      // A suspended delay line would send silence.
+      if (line?.audio.state === "suspended") line = void line.audio.close();
+      await sender.replaceTrack(
+        line?.track ?? media.getAudioTracks()[0] ?? null,
+      );
       if (ended) return;
       await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
     } catch (error) {

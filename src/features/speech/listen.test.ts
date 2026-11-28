@@ -199,6 +199,51 @@ it("commits on stop, stops the microphone, and waits for the last words", async 
   expect(quick.onEnd.mock.calls).toEqual([["Yes."]]);
 });
 
+it("sends what was said while connecting, and the rest before ending", async () => {
+  const r = hosted();
+  const sent = {};
+  const now = { currentTime: 0, state: "running" };
+  const delayTime = {
+    value: 0,
+    setValueAtTime(value: number) {
+      delayTime.value = value;
+    },
+    linearRampToValueAtTime() {},
+  };
+  const node = { connect: (next: unknown) => next, delayTime };
+  vi.stubGlobal(
+    "AudioContext",
+    class {
+      get currentTime() {
+        return now.currentTime;
+      }
+      state = now.state;
+      resume = async () => {};
+      close = async () => {};
+      createDelay = () => node;
+      createMediaStreamSource = () => node;
+      createMediaStreamDestination = () => ({
+        stream: { getAudioTracks: () => [sent] },
+      });
+    },
+  );
+  let answer = (_: Awaited<ReturnType<Connect>>) => {};
+  r.connect.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+  const listening = listenHosted(r.options, r.connect);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(r.onState).toHaveBeenLastCalledWith("listening");
+  now.currentTime = 1.5;
+  answer({ outcome: "answered", sdp: "answer" });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(r.replaceTrack).toHaveBeenCalledWith(sent);
+  r.channel.dispatchEvent(new Event("open"));
+  expect(delayTime.value).toBe(1.5);
+  listening.stop();
+  expect(r.commits()).toBe(0);
+  await vi.advanceTimersByTimeAsync(1_500);
+  expect(r.commits()).toBe(1);
+});
+
 it("reports what it heard when the final words don't come", async () => {
   const r = hosted();
   const listening = await r.start();

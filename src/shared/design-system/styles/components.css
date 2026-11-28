@@ -1348,7 +1348,9 @@
   .buzz-tabs[data-variant="dock"]:where([data-orientation="vertical"])
     .buzz-tabs-list {
     flex-direction: column;
-    gap: var(--space-1);
+    /* A corner count rises half its height above its tile; the gap must
+       exceed that or the count reads as belonging to the tile above. */
+    gap: var(--space-5);
   }
 
   /* Outlined filters with a trailing search. */

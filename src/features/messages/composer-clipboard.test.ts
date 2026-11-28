@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   buzzCopyDocument,
   composerClipboard,
+  externalLinkMarkdown,
   pastedFiles,
 } from "./composer-clipboard";
 import { composerSchema } from "./composer-document";
@@ -301,4 +302,197 @@ it("keeps pasted text that carries the timeline's copy-skip marker", () => {
       { type: "paragraph", content: [{ type: "text", text: "Thanks" }] },
     ],
   });
+});
+
+it.each([
+  [
+    "Chinese inline link",
+    "请阅读文档了解详情",
+    '请阅读<a href="https://example.com">文档</a>了解详情',
+    "请阅读[文档](https://example.com/)了解详情",
+  ],
+  [
+    "Japanese prose with kana, kanji and prolonged sound mark",
+    "ユーザーガイドとドキュメントを確認してください",
+    '<a href="https://a.example">ユーザーガイド</a>と<a href="https://b.example">ドキュメント</a>を確認してください',
+    "[ユーザーガイド](https://a.example/)と[ドキュメント](https://b.example/)を確認してください",
+  ],
+  [
+    "Korean link touching particle",
+    "문서를 읽어주세요",
+    '<a href="https://example.com">문서</a>를 읽어주세요',
+    "[문서](https://example.com/)를 읽어주세요",
+  ],
+  [
+    "intra-word English infix",
+    "Check foobarbaz now",
+    'Check foo<a href="https://example.com">bar</a>baz now',
+    "Check foo[bar](https://example.com/)baz now",
+  ],
+  [
+    "intra-word English prefix and suffix",
+    "supernova is unlinked",
+    '<a href="https://a.example">super</a>nova is un<a href="https://b.example">linked</a>',
+    "[super](https://a.example/)nova is un[linked](https://b.example/)",
+  ],
+  [
+    "adjacent links inside one word",
+    "foobar",
+    '<a href="https://a.example">foo</a><a href="https://b.example">bar</a>',
+    "[foo](https://a.example/)[bar](https://b.example/)",
+  ],
+  [
+    "multi-word link starting and ending mid-word",
+    "prefoo barpost",
+    'pre<a href="https://example.com">foo bar</a>post',
+    "pre[foo bar](https://example.com/)post",
+  ],
+  [
+    "anchor with leading and trailing whitespace",
+    "Read guide now",
+    'Read<a href="https://example.com"> guide </a>now',
+    "Read [guide](https://example.com/) now",
+  ],
+])(
+  "preserves external links without whitespace boundaries: %s",
+  (_, plain, html, expected) => {
+    expect(externalLinkMarkdown(html, plain)).toBe(expected);
+  },
+);
+
+it("preserves CJK and intra-word links with Slack and Codex noise", () => {
+  const slackPlain = [
+    "[2:43 PM]:robot_face: 请阅读文档，然后再次查看文档。",
+    "• 查看 PR #296 的修改与unlinked说明",
+  ].join("\n");
+  const slackHtml = [
+    '<a href="https://example.slack.com/p1">2:43 PM</a>',
+    '<img alt="🤖" data-stringify-emoji=":robot_face:"> ',
+    '请阅读文档，然后再次查看<a href="https://example.com/doc">文档</a>。',
+    '<ul><li>查看<a href="https://github.com/org/repo/pull/296">PR #296</a>的修改与un<a href="https://example.com/note">linked</a>说明</li></ul>',
+  ].join("");
+  expect(externalLinkMarkdown(slackHtml, slackPlain)).toBe(
+    [
+      "[[2:43 PM](https://example.slack.com/p1)]:robot_face: 请阅读文档，然后再次查看[文档](https://example.com/doc)。",
+      "• 查看 [PR #296](https://github.com/org/repo/pull/296) 的修改与un[linked](https://example.com/note)说明",
+    ].join("\n"),
+  );
+
+  const codexPlain = [
+    "```ts",
+    "run()",
+    "```",
+    "复制请先查看`src/parser.ts`并阅读foobarbaz了解详情。",
+  ].join("\n");
+  const codexHtml = [
+    '<div><div><span>ts</span><button type="button">Copy</button></div><pre><code>run()</code></pre></div>',
+    '<p><button type="button">复制</button>请先查看<a href="https://example.com/parser"><code>src/parser.ts</code><svg><title>open</title></svg></a>并阅读foo<a href="https://example.com/bar">bar</a>baz了解详情。</p>',
+  ].join("");
+  expect(externalLinkMarkdown(codexHtml, codexPlain)).toBe(
+    [
+      "```ts",
+      "run()",
+      "```",
+      "复制请先查看[`src/parser.ts`](https://example.com/parser)并阅读foo[bar](https://example.com/bar)baz了解详情。",
+    ].join("\n"),
+  );
+});
+
+it("keeps mismatch, hidden and unsafe-scheme guards for CJK and intra-word links", () => {
+  expect(
+    externalLinkMarkdown(
+      '打开<a href="https://evil.example">文档</a>',
+      "点击文档",
+    ),
+  ).toBeUndefined();
+  expect(
+    externalLinkMarkdown(
+      'pay<a href="https://evil.example">bar</a>baz',
+      "clickbarbaz",
+    ),
+  ).toBeUndefined();
+  expect(
+    externalLinkMarkdown(
+      'Pay <a href="https://evil.example">Al</a><a href="https://evil.example/2">ice</a>',
+      "Click Alice",
+    ),
+  ).toBeUndefined();
+  expect(
+    externalLinkMarkdown(
+      'foo<span hidden><a href="https://evil.example">bar</a></span>barbaz',
+      "foobarbaz",
+    ),
+  ).toBeUndefined();
+  expect(
+    externalLinkMarkdown(
+      '<noscript><a href="https://evil.example">guide</a></noscript>guide',
+      "guide",
+    ),
+  ).toBeUndefined();
+  expect(
+    externalLinkMarkdown(
+      'foo<a href="javascript:alert(1)">bad</a><a href="https://safe.example">good</a>baz',
+      "foobadgoodbaz",
+    ),
+  ).toBe("foobad[good](https://safe.example/)baz");
+});
+
+it("keeps full bare URLs and bare host paths intact when HTML links only the host", () => {
+  expect(
+    externalLinkMarkdown(
+      '<a href="https://example.com/docs">example.com</a>',
+      "https://example.com/docs",
+    ),
+  ).toBeUndefined();
+  expect(
+    externalLinkMarkdown(
+      'Check <a href="https://example.com/docs">example.com</a> and <a href="https://example.com/guide">guide</a>',
+      "Check https://example.com/docs and guide",
+    ),
+  ).toBe(
+    "Check https://example.com/docs and [guide](https://example.com/guide)",
+  );
+  expect(
+    externalLinkMarkdown(
+      'Check <a href="https://example.com/docs">example.com</a> and <a href="https://example.com/guide">guide</a>',
+      "Check example.com/docs and guide",
+    ),
+  ).toBe("Check example.com/docs and [guide](https://example.com/guide)");
+  expect(
+    externalLinkMarkdown(
+      'Check <a href="https://example.com/docs">example.com</a>',
+      "Check example.com",
+    ),
+  ).toBe("Check [example.com](https://example.com/docs)");
+});
+
+it("skips external links whose labels align ambiguously across extra UI text", () => {
+  // Extra linked UI chrome before matching prose with the same label.
+  expect(
+    externalLinkMarkdown(
+      '<p>Run tests:</p><div><a href="https://ui.example/edit">Edit</a> <span>View</span></div><p>Edit the file and save</p>',
+      "Run tests:\nEdit the file and save",
+    ),
+  ).toBeUndefined();
+  // Extra linked UI text whose adjacent token also matches a prefix of the prose.
+  expect(
+    externalLinkMarkdown(
+      '<div><a href="https://ui.example/guide">guide</a> and</div><p>guide and notes</p>',
+      "guide and notes",
+    ),
+  ).toBeUndefined();
+  // Ambiguous middle gap leaves the repeated label unlinked while keeping unambiguous links.
+  expect(
+    externalLinkMarkdown(
+      'Read: <span>UI</span> <a href="https://ui.example/guide">guide</a> <span>bar</span> guide and <a href="https://example.com/notes">notes</a> details',
+      "Read: guide and notes details",
+    ),
+  ).toBe("Read: guide and [notes](https://example.com/notes) details");
+  // Ambiguous duplicate on the plain side leaves both occurrences unlinked.
+  expect(
+    externalLinkMarkdown(
+      'Read: <a href="https://example.com/guide">guide</a> and save',
+      "Read: extra guide foo guide bar and save",
+    ),
+  ).toBeUndefined();
 });

@@ -1197,22 +1197,20 @@ export function EditableInput({
       if (focus) editor.focus();
       return true;
     };
-    const insertPastedText = (text: string) =>
-      insert(
-        text,
-        undefined,
-        undefined,
-        undefined,
-        true,
-        current.current.onPasteTooLong,
-      );
+    const insertPastedText = (
+      text: string,
+      onTooLong: (() => void) | undefined = current.current.onPasteTooLong,
+    ) => insert(text, undefined, undefined, undefined, true, onTooLong);
     /** Paste this app's own copied blocks and marks as the nodes they are. One
      * paragraph joins the caret's line; anything else lands as sibling blocks,
      * splitting the caret's paragraph rather than merging into its text. The
      * caret then ends inside the last pasted block, as ProseMirror leaves it,
      * so Enter continues a pasted list or quote; that is deliberate. Returns
      * the range the paste occupies, which can start after the caret's text. */
-    const insertDocument = (doc: EditorNode) => {
+    const insertDocument = (
+      doc: EditorNode,
+      onTooLong: (() => void) | undefined = current.current.onPasteTooLong,
+    ) => {
       if (!editable() || composing.current || editor.composing) return null;
       const { nodes } = composerSchema;
       const single = doc.childCount === 1 ? doc.firstChild : null;
@@ -1271,7 +1269,7 @@ export function EditableInput({
       const projected = projectComposerDocument(tr.doc);
       const markdown = current.current.serializeDraft(projected.draft);
       if (markdown.length > current.current.maxLength) {
-        current.current.onPasteTooLong?.();
+        onTooLong?.();
         return null;
       }
       if (projected.tables.length && !fitsDocumentRenderBudget(markdown))
@@ -2807,13 +2805,16 @@ export function EditableInput({
             const source = projection(),
               start = source.source(editor.state.selection.from),
               end = source.source(editor.state.selection.to);
-            let text =
-              (!code &&
-                (prose ??
-                  externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
-              plain ||
-              "";
+            const externalLinks =
+              !code && prose === undefined
+                ? externalLinkMarkdown(html, hasPlain ? plain : undefined)
+                : undefined;
+            const text = (!code && (prose ?? externalLinks)) || plain || "";
             if (!text) return true;
+            const fallbackPlain =
+              externalLinks && hasPlain && plain && externalLinks !== plain
+                ? plain
+                : undefined;
             // A bare URL pasted over selected text links the selection, as other
             // editors do. editLink() owns the guards (code, resources, unsafe
             // URLs, limits); when it declines, the paste replaces as before.
@@ -2839,56 +2840,74 @@ export function EditableInput({
               )
                 return true;
             }
-            let link = false;
-            if (!code)
-              messageLinkParts(text, undefined, (start, end) => {
-                if (start === 0 && end === text.length) link = true;
-              });
-            const reuse = link && source.draft.text[end] === " ";
-            if (
-              link &&
-              !reuse &&
-              source.draft.text.length - (end - start) + text.length <
-                current.current.maxLength
-            )
-              text += " ";
-            if (
-              !code &&
-              current.current.markdownMode === "document" &&
-              text.trim()
-            ) {
-              const draft = documentEditorDraft(text);
-              if (draft.document) {
-                const parsed = readComposerDocument(draft, [], "document");
-                const paragraph =
-                  parsed.childCount === 1 ? parsed.firstChild : null;
-                // Fallback blocks keep embedded source newlines; supported prose
-                // has already folded them and still inherits the caret's marks.
-                if (
-                  paragraph?.type === composerSchema.nodes.paragraph &&
-                  paragraph.childCount <= 1 &&
-                  !paragraph.firstChild?.marks.length
-                )
-                  insertPastedText(
-                    /[\r\n]/.test(paragraph.textContent)
-                      ? text
-                      : text.replace(/\r\n?|\n/g, " "),
-                  );
-                else insertDocument(parsed);
-                return true;
+            const pasteText = (
+              candidate: string,
+              onTooLong: (() => void) | undefined,
+            ) => {
+              let value = candidate;
+              let link = false;
+              if (!code)
+                messageLinkParts(value, undefined, (start, end) => {
+                  if (start === 0 && end === value.length) link = true;
+                });
+              const reuse = link && source.draft.text[end] === " ";
+              if (
+                link &&
+                !reuse &&
+                source.draft.text.length - (end - start) + value.length <
+                  current.current.maxLength
+              )
+                value += " ";
+              if (
+                !code &&
+                current.current.markdownMode === "document" &&
+                value.trim()
+              ) {
+                const draft = documentEditorDraft(value);
+                if (draft.document) {
+                  const parsed = readComposerDocument(draft, [], "document");
+                  const paragraph =
+                    parsed.childCount === 1 ? parsed.firstChild : null;
+                  // Fallback blocks keep embedded source newlines; supported prose
+                  // has already folded them and still inherits the caret's marks.
+                  if (
+                    paragraph?.type === composerSchema.nodes.paragraph &&
+                    paragraph.childCount <= 1 &&
+                    !paragraph.firstChild?.marks.length
+                  )
+                    return !!insertPastedText(
+                      /[\r\n]/.test(paragraph.textContent)
+                        ? value
+                        : value.replace(/\r\n?|\n/g, " "),
+                      onTooLong,
+                    );
+                  return !!insertDocument(parsed, onTooLong);
+                }
               }
-            }
-            if (!insertPastedText(text)) return true;
-            const inserted = projection().source(editor.state.selection.to);
-            if (reuse) {
-              const pos = editor.state.selection.to + 1;
-              editor.dispatch(
-                editor.state.tr.setSelection(
-                  TextSelection.create(editor.state.doc, pos),
-                ),
-              );
-            }
-            promoteRecipients(start, inserted);
+              if (!insertPastedText(value, onTooLong)) return false;
+              const inserted = projection().source(editor.state.selection.to);
+              if (reuse) {
+                const pos = editor.state.selection.to + 1;
+                editor.dispatch(
+                  editor.state.tr.setSelection(
+                    TextSelection.create(editor.state.doc, pos),
+                  ),
+                );
+              }
+              promoteRecipients(start, inserted);
+              return true;
+            };
+            const silentTooLong = current.current.onPasteTooLong
+              ? () => {}
+              : undefined;
+            if (
+              !pasteText(
+                text,
+                fallbackPlain ? silentTooLong : current.current.onPasteTooLong,
+              ) &&
+              fallbackPlain
+            )
+              pasteText(fallbackPlain, current.current.onPasteTooLong);
             return true;
           },
           drop(_view, event) {

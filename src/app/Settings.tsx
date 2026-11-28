@@ -798,6 +798,7 @@ export function Settings({
     speech?.providers ?? noSpeechProviders,
   );
   const identityCards = contributed.filter((card) => card.identityRow);
+  const securityCards = contributed.filter((card) => card.securityRow);
   const client = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
@@ -1690,7 +1691,28 @@ export function Settings({
           />
         )}
         {selected === "security" && (
-          <SecuritySettings viewer={identity ? client.viewer : undefined} />
+          <SecuritySettings
+            viewer={identity ? client.viewer : undefined}
+            pluginRows={
+              securityCards.length
+                ? securityCards.map(
+                    (card) =>
+                      card.securityRow && (
+                        <OwnedContribution
+                          key={card.key}
+                          entry={card}
+                          registry={cards}
+                        >
+                          {(entry, active) => {
+                            const Row = entry.securityRow;
+                            return Row ? <Row active={active} /> : null;
+                          }}
+                        </OwnedContribution>
+                      ),
+                  )
+                : undefined
+            }
+          />
         )}
         {developerMode && (
           <div hidden={selected !== "developer"}>

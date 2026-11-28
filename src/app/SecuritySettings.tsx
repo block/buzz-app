@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
@@ -91,9 +97,12 @@ function WebInspectorSettings() {
 /** Local access for paired tools, external apps, and diagnostics. */
 export function SecuritySettings({
   viewer,
+  pluginRows,
 }: {
   /** Available only when the host has a native identity. */
   viewer?: string | undefined;
+  /** Rows plugins contribute, such as an agent protection plugin's entry. */
+  pluginRows?: ReactNode;
 }) {
   const [tools, setTools] = useState<PairedTool[] | null>(null);
   const [error, setError] = useState("");
@@ -244,6 +253,15 @@ export function SecuritySettings({
         </AlertDialog>
       )}
       {viewer && <ExternalIdentityAuthorization key={viewer} viewer={viewer} />}
+      {pluginRows && (
+        <section
+          className="mt-section-gap"
+          aria-labelledby="security-plugins-title"
+        >
+          <InlineHeader id="security-plugins-title" title="Plugins" />
+          {pluginRows}
+        </section>
+      )}
       <WebInspectorSettings />
     </section>
   );

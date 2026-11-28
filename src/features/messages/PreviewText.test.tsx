@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { afterEach, expect, it, vi } from "vitest";
 import { eventMentions, searchText } from "../../app/shell/useSearchMessages";
@@ -71,6 +71,7 @@ const session = {
   viewer,
   profiles: { subscribe: () => () => {}, snapshot: () => profiles },
   channels: { list: () => list, subscribeList: () => () => {} },
+  media: (url: string) => url,
 } as unknown as RelaySession;
 type Signed = Omit<PreviewMentions, "content">;
 /** `body`'s preview; `text` shows `full` (the body by default) from `start`. */
@@ -634,6 +635,104 @@ it("keeps chips beside text the Markdown decodes", () => {
   expect(
     chips(preview(body, { mentions: [tomb] }, { text: messagePreview(body) })),
   ).toEqual(["tomb"]);
+});
+
+const party = { shortcode: "party", url: "https://example.test/party.png" };
+const emojiImages = (container: HTMLElement) =>
+  [...container.querySelectorAll("img")].map((image) => image.alt);
+
+it("shows the message's own custom emoji as images, and other shortcodes as text", () => {
+  const body = "ship it :party: or :PARTY:, not :nope: or `:party:`";
+  const text = messagePreview(body);
+  const view = preview(body, { mentions: [], emoji: [party] }, { text });
+  expect(emojiImages(view)).toEqual([":party:", ":party:"]);
+  expect(view).toHaveTextContent("ship it or , not :nope: or :party:");
+  expect(emojiImages(preview(body, { mentions: [] }, { text }))).toEqual([]);
+  const spoiled = "||:party:|| ok";
+  const hidden = { text: messagePreview(spoiled) };
+  expect(
+    emojiImages(preview(spoiled, { mentions: [], emoji: [party] }, hidden)),
+  ).toEqual([]);
+  const edited = preview(body, { mentions: [], emoji: [party], edited: true });
+  expect(emojiImages(edited)).toEqual([]);
+});
+
+it("shows an emoji beside chips, and its shortcode when the image fails", () => {
+  // Its own source: a failed one shows its text at once in later previews.
+  const broken = { shortcode: "broken", url: "https://example.test/broken" };
+  const view = preview("@tomb :broken:", { mentions: [tomb], emoji: [broken] });
+  expect(chips(view)).toEqual(["tomb"]);
+  const image = view.querySelector("img");
+  expect(image).toHaveAttribute("src", broken.url);
+  fireEvent.error(image as HTMLImageElement);
+  expect(view).toHaveTextContent("tomb :broken:");
+});
+
+it("keeps an emoji a cut splits as text, and marks a highlighted one whole", () => {
+  const body = `${"i ".repeat(97)}:party: tail`;
+  const activity = messagePreview(body);
+  expect(activity).toMatch(/:pa?r?t?y?…$/);
+  const cut = preview(
+    body,
+    { mentions: [], emoji: [party] },
+    { text: activity },
+  );
+  expect(emojiImages(cut)).toEqual([]);
+  const text = "ship :party: now";
+  const matches = [...":party:"].map((_, index) => 5 + index);
+  const view = preview(text, { mentions: [], emoji: [party] }, { matches });
+  const marks = [...view.querySelectorAll("mark.search-match")];
+  expect(marks).toHaveLength(1);
+  expect(marks[0]?.querySelector("img")).toHaveAttribute("alt", ":party:");
+});
+
+it("shows a channel link and a custom emoji together, each marked whole", () => {
+  const joined = {
+    ...session,
+    channels: {
+      list: () => ({
+        channels: [{ id: "beta", name: "Beta", channelType: "stream" }],
+      }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const body = "see buzz://channel/beta :party: done";
+  const text = messagePreview(body);
+  const at = (word: string) => [...text.slice(0, text.indexOf(word))].length;
+  const shown = (edited?: true) =>
+    render(
+      <PreviewText
+        text={text}
+        mentions={{
+          content: body,
+          mentions: [],
+          emoji: [party],
+          ...(edited && { edited }),
+        }}
+        matches={[at("beta"), at("party")]}
+        session={joined}
+        channelId="room"
+      />,
+    ).container;
+  const view = shown();
+  expect(view).toHaveTextContent("see #Beta done");
+  const marks = [...view.querySelectorAll("mark.search-match")];
+  expect(marks.map((mark) => mark.textContent)).toEqual(["#Beta", ""]);
+  expect(marks[1]?.querySelector("img")).toHaveAttribute("alt", ":party:");
+  cleanup();
+  // An edited body keeps its channel's name, but not the original's emoji.
+  expect(shown(true)).toHaveTextContent("see #Beta :party: done");
+});
+
+it("shows a search hit's custom emoji from its tags", () => {
+  const tags = [["emoji", "party", party.url]];
+  expect(eventMentions({ kind: 9, content: "ship :party:", tags })).toEqual({
+    content: "ship :party:",
+    mentions: [],
+    mentionReferences: [],
+    emoji: [party],
+  });
+  expect(emojiImages(searched("ship :party:", tags, 12))).toEqual([":party:"]);
 });
 
 it("waits for a preview to near its scroll pane, not the window", () => {

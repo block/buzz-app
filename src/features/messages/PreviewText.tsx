@@ -20,6 +20,8 @@ import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
 import { linkedSoloChatName } from "../solo/labels";
+import { emojiMatches, type CustomEmoji as Emoji } from "../relay/emoji";
+import { CustomEmoji } from "../../bundled/emoji/CustomEmoji";
 import { preparedMarkdown, recentResults } from "./markdown-preparation";
 import { placeholderPattern, protectInlineContent } from "./MessageMarkdown";
 import { placeholder } from "./placeholder-characters";
@@ -34,13 +36,19 @@ import {
 } from "./ReferenceText";
 
 /** A message as its previews bind it: its body as its conversation shows
- * it, attachments already projected out, and its signed identities. */
+ * it, attachments already projected out, its signed identities and its own
+ * custom emoji. */
 export type PreviewMentions = Pick<
   ChannelMessage,
-  "content" | "mentions" | "mentionReferences" | "edited" | "attachmentSeams"
+  | "content"
+  | "mentions"
+  | "mentionReferences"
+  | "edited"
+  | "attachmentSeams"
+  | "emoji"
 >;
 
-type Part = { text: string; target?: string | undefined };
+type Part = { text: string; target?: string | undefined; emoji?: Emoji };
 
 /** Every identity a preview may name, for reading their profiles. */
 export const mentionedIds = (mentioned: PreviewMentions) => [
@@ -175,12 +183,13 @@ const LONGEST_BODY = 16_384;
  * literal held in a placeholder, flattened once, and each placeholder read
  * back as its text. A channel link that reads as its URL, outside code, is a
  * part too. Undefined when the conversation renders the body as plain text
- * or it binds no one and links no channel.
+ * or it binds no one, shows no custom emoji and links no channel.
  */
 function flatParts(
   content: string,
   seams: readonly number[] | undefined,
   labels: Labels,
+  emoji: readonly Emoji[],
 ): Part[] | undefined {
   if (content.length > LONGEST_BODY) return undefined;
   const prepared = preparedMarkdown(content);
@@ -190,6 +199,7 @@ function flatParts(
       content,
       mentions: labels.map((label) => label.id),
       mentionLabels: labels,
+      emoji,
       ...(seams ? { attachmentSeams: seams } : {}),
     },
     undefined,
@@ -210,24 +220,33 @@ function flatParts(
       },
     },
   );
-  if (!protectedContent.parts.some((part) => part.target)) return undefined;
   const parts: Part[] = [];
   let [plain, at] = ["", 0];
   for (const match of flat.matchAll(placeholderPattern(protectedContent))) {
     const part = protectedContent.parts[Number(match[1])];
     plain += flat.slice(at, match.index);
     at = match.index + match[0].length;
-    if (!part?.target) {
+    const image =
+      part && !part.target && !part.literal
+        ? emoji.find(
+            ({ shortcode }) => `:${shortcode}:` === part.text.toLowerCase(),
+          )
+        : undefined;
+    if (!part || (!part.target && !image)) {
       plain += part?.text ?? match[0];
       continue;
     }
     if (plain) parts.push({ text: plain });
-    parts.push({ text: flatChip(part.text), target: part.target });
+    parts.push(
+      image
+        ? { text: part.text, emoji: image }
+        : { text: flatChip(part.text), target: part.target },
+    );
     plain = "";
   }
   plain += flat.slice(at);
   if (plain) parts.push({ text: plain });
-  return parts;
+  return parts.some((part) => part.target || part.emoji) ? parts : undefined;
 }
 
 /**
@@ -277,12 +296,12 @@ function previewParts(
   return cut;
 }
 
-/** Flattened preview text with its signed mentions as chips, bound and
- * labelled as its message binds them, and its links to joined channels by
- * their names. `text` shows `full` (itself by default) from `start`, as
- * `previewParts` describes. `matches` are the code points MatchedLabel marks
- * in `text`; a chip holding one is marked whole, since its label can differ
- * from its text. */
+/** Flattened preview text with its signed mentions as chips and its custom
+ * emoji as images, bound and labelled as its message binds them, and its
+ * links to joined channels by their names. `text` shows `full` (itself by
+ * default) from `start`, as `previewParts` describes. `matches` are the code
+ * points MatchedLabel marks in `text`; a chip or emoji holding one is marked
+ * whole, since it does not show its text. */
 export function PreviewText({
   text,
   full = text,
@@ -304,26 +323,39 @@ export function PreviewText({
   const resolveName = useChannelIdentityNames(session, channelId);
   const shown = useNearScreen();
   const { content, edited, attachmentSeams: seams } = mentions;
+  const emoji = JSON.stringify(mentions.emoji ?? []);
   // Binding reruns only when what it reads changes: the body and the names
   // its identities bind by, not every profile the directory loads.
   const labels = JSON.stringify(
     mentionLabels(mentionedIds(mentions), directory.profiles, directory.agents),
   );
   // Binding parses the body's Markdown, and only for previews on or near the
-  // screen whose text can show a name or a channel link. Channel links come
-  // from the body's text, not its signed tags, so an edited body keeps them.
+  // screen whose text can show a name, a custom emoji or a channel link.
+  // Channel links come from the body's text, not its signed tags, so an
+  // edited body keeps them.
   const parts = useMemo(() => {
     if (!shown.near) return [{ text }];
     const parsed: Labels = edited ? [] : JSON.parse(labels);
     const named = parsed.length > 0 && mayName(text, parsed);
-    if (!named && !/buzz:\/\//i.test(text)) return [{ text }];
+    const images: Emoji[] = edited ? [] : JSON.parse(emoji);
+    const pictured = !emojiMatches(text, images).next().done;
+    if (!named && !pictured && !/buzz:\/\//i.test(text)) return [{ text }];
     const bound = named ? parsed : [];
-    const key = JSON.stringify([bound, seams, content, full, text, start]);
+    const drawn = pictured ? images : [];
+    const key = JSON.stringify([
+      bound,
+      drawn,
+      seams,
+      content,
+      full,
+      text,
+      start,
+    ]);
     return recentParts(key, () => {
-      const flat = flatParts(content, seams, bound);
+      const flat = flatParts(content, seams, bound, drawn);
       return (flat && previewParts(flat, full, text, start)) ?? [{ text }];
     });
-  }, [shown.near, edited, labels, content, seams, full, text, start]);
+  }, [shown.near, edited, labels, emoji, content, seams, full, text, start]);
   // Code points before each part, as `matches` count them.
   let point = 0;
   const shownParts = parts.map((part) => {
@@ -337,36 +369,43 @@ export function PreviewText({
       part.target && !profileKey(part.target)
         ? channelForLink(part.target, directory.channels)
         : undefined;
-    if (!part.target || (!profileKey(part.target) && !channel))
+    // A row is its own control and nothing in it opens, so a channel name
+    // reads as the row's own text behind its icon, not as a link.
+    const whole =
+      part.emoji && session ? (
+        <CustomEmoji
+          key={start}
+          emoji={part.emoji}
+          media={(url) => session.media(url)}
+        />
+      ) : part.target && channel ? (
+        <ChannelName
+          key={start}
+          url={part.target}
+          channel={channel}
+          session={session}
+        />
+      ) : part.target && profileKey(part.target) ? (
+        <ProfileMention
+          key={start}
+          text={part.text}
+          target={part.target}
+          profiles={directory.profiles}
+          agents={directory.agents}
+          viewer={session?.viewer}
+          resolveName={resolveName}
+        />
+      ) : undefined;
+    if (!whole)
       return (
         <MatchedLabel key={start} label={part.text} positions={positions} />
       );
-    // A row is its own control and nothing in it opens, so a channel name
-    // reads as the row's own text behind its icon, not as a link.
-    const chip = channel ? (
-      <ChannelName
-        key={start}
-        url={part.target}
-        channel={channel}
-        session={session}
-      />
-    ) : (
-      <ProfileMention
-        key={start}
-        text={part.text}
-        target={part.target}
-        profiles={directory.profiles}
-        agents={directory.agents}
-        viewer={session?.viewer}
-        resolveName={resolveName}
-      />
-    );
     return positions?.length ? (
       <mark key={start} className="search-match">
-        {chip}
+        {whole}
       </mark>
     ) : (
-      chip
+      whole
     );
   });
   return <span ref={shown.ref}>{shownParts}</span>;

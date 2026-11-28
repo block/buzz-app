@@ -199,3 +199,41 @@ it.each([
     expect(view.getByText(context)).toBeInTheDocument();
   },
 );
+
+it("shows the reacted message's own custom emoji in its preview", async () => {
+  const party = "https://example.test/party.png";
+  const target = message(viewer, "dm", "Shipped :party:", 1, [
+    ["emoji", "party", party],
+  ]);
+  const folded = foldMessages("dm", viewer.pubkey, [target])[0];
+  if (!folded) throw new Error("Missing fixture message");
+  const view = render(
+    <ReactionRowButton
+      item={{
+        id: `reaction:${target.id}`,
+        channelId: "dm",
+        message: folded,
+        createdAt: 2,
+        events: [
+          signed(alice, {
+            kind: 7,
+            content: "❤️",
+            created_at: 2,
+            tags: [["e", target.id]],
+          }),
+        ],
+      }}
+      session={{ ...session, media: (url: string) => url } as RelaySession}
+      profiles={profiles}
+      name={name}
+      channel={dm(alice)}
+    />,
+  );
+  await view.findByRole("button", {
+    name: "Alice reacted with heart to your message: Shipped :party:",
+  });
+  expect(view.getByRole("img", { name: ":party:" })).toHaveAttribute(
+    "src",
+    party,
+  );
+});

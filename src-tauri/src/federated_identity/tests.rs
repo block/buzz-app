@@ -6,9 +6,13 @@ pub(super) struct Memory {
     pub(super) raw: Mutex<Option<Zeroizing<Vec<u8>>>>,
     pub(super) compare_gate: Mutex<Option<super::agent::grant::tests::Gate>>,
     /// Holds the next read after it reads the item. `load` reads too.
-    read_gate: Mutex<Option<super::agent::grant::tests::Gate>>,
+    pub(super) read_gate: Mutex<Option<super::agent::grant::tests::Gate>>,
     refusal: Mutex<Option<String>>,
     pub(super) denied: AtomicBool,
+    /// `remove` marks the refusal, then finds secure storage busy.
+    pub(super) busy: AtomicBool,
+    /// `load` finds secure storage busy.
+    pub(super) load_busy: AtomicBool,
     reads: AtomicUsize,
 }
 impl Store for Memory {
@@ -42,6 +46,9 @@ impl Store for Memory {
         Ok(())
     }
     fn load(&self) -> Result<store::LoadedRecord, &'static str> {
+        if self.load_busy.load(Ordering::SeqCst) {
+            return Err("storage-busy");
+        }
         Ok((self.read()?, self.refusal.lock().unwrap().clone()))
     }
     fn remove(&self, expected: &[u8], revision: &str) -> Result<(), &'static str> {
@@ -52,6 +59,9 @@ impl Store for Memory {
         *self.refusal.lock().unwrap() = Some(revision.into());
         if self.denied.load(Ordering::SeqCst) {
             return Err("storage-denied");
+        }
+        if self.busy.load(Ordering::SeqCst) {
+            return Err("storage-busy");
         }
         *raw = None;
         *self.refusal.lock().unwrap() = None;

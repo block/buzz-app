@@ -1087,6 +1087,27 @@ impl IdentityHost {
         })))
     }
 
+    /// Holds this identity's lock on another thread until the returned
+    /// sender sends or drops, so a test can stop `viewer()` partway.
+    #[cfg(test)]
+    pub(crate) fn hold(&self) -> std::sync::mpsc::Sender<()> {
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (held, holding) = std::sync::mpsc::channel();
+        let identity = self.0.clone();
+        std::thread::spawn(move || {
+            let _held = identity.lock().unwrap();
+            held.send(()).unwrap();
+            let _ = released.recv();
+        });
+        holding.recv().unwrap();
+        release
+    }
+    /// How many handles share this identity: `viewer()` takes one while it waits.
+    #[cfg(test)]
+    pub(crate) fn handles(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
+
     /// The saved key's public key, or `None` when secure storage confirms none.
     pub(crate) async fn saved_viewer(&self) -> Result<Option<String>> {
         with_identity(self.clone(), Identity::restore).await

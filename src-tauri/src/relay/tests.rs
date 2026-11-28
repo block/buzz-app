@@ -5214,3 +5214,45 @@ fn pin_commands_name_one_channel_and_one_message() {
         assert!(validate_event("https://relay.test", &pin(tags)).is_err());
     }
 }
+
+/// A relay that refuses the assertion it was sent (`403 evidence rejected`)
+/// gets a fresh one on the next try, not the same one again; another 403
+/// keeps it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rejected_assertion_is_dropped_so_the_next_try_gets_a_fresh_one() {
+    use crate::federated_identity::assertion::{test_issued, test_live_authorization};
+    let identity = IdentityHost::fixture();
+    let (fi, authorization) =
+        test_live_authorization(&identity, "wss://relay.example", Duration::from_secs(60)).await;
+    for (body, kept) in [
+        ("authorization denied\n", true),
+        ("evidence rejected\n", false),
+    ] {
+        assert!(test_issued(&fi, &authorization, true).await);
+        let (url, task) = fixture_server(format!(
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ));
+        let response = send_authorized(
+            &identity,
+            AuthorizationContext {
+                fi: Some(&fi),
+                assertion: Some(&authorization),
+            },
+            url,
+            "POST",
+            Some("[]".into()),
+            true,
+            8192,
+        )
+        .await
+        .unwrap();
+        assert_eq!((response.status, response.body.as_str()), (403, body));
+        task.join().unwrap();
+        assert_eq!(
+            test_issued(&fi, &authorization, false).await,
+            kept,
+            "{body:?}"
+        );
+    }
+}

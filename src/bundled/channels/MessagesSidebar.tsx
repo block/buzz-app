@@ -15,7 +15,6 @@ import {
   type ReactNode,
 } from "react";
 import { sidebarTarget } from "../../features/channel-navigation/routes";
-import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import { ChannelInventory } from "./ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
@@ -43,6 +42,8 @@ import {
   CommunityRefusalNotice,
   CommunitySignIn,
   issuerMayAnswerAgain,
+  CommunityRecoveryNotice,
+  SavedSignInTrouble,
 } from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { Membership } from "../../features/communities/service";
@@ -277,8 +278,12 @@ function ScopedSidebar({
                         {/* Relay outages for every inventory recover through one
                     automatic owner; its one notice shows on every page. */}
                         {!connection.cached && (
-                          <RecoveryNotice
+                          <CommunityRecoveryNotice
                             recovery={connection.session.recovery}
+                            identity={communityIdentity(
+                              props.federatedIdentity,
+                              connection.origin,
+                            )}
                           />
                         )}
                         <LiveSignIn
@@ -342,6 +347,7 @@ function ScopedSidebar({
                 retry={props.relay.tryAgain}
                 relay={connection.origin}
                 memberships={props.memberships}
+                attempt={connection.generation}
               />
             ) : (
               <div className={styles.connectionStatus}>
@@ -352,6 +358,15 @@ function ScopedSidebar({
                       ? "Couldn’t load channels."
                       : "Choose a community to see channels."}
                 </p>
+                {(connection.status === "connecting" ||
+                  connection.retrying) && (
+                  <SavedSignInTrouble
+                    identity={communityIdentity(
+                      props.federatedIdentity,
+                      connection.origin,
+                    )}
+                  />
+                )}
                 {connection.status === "error" && !connection.retrying && (
                   <>
                     <CommunitySignIn

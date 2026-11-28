@@ -41,6 +41,10 @@ it("classifies only failures a retry can fix as transient", () => {
   ).toBe(true);
   // Native IPC rejects with the host's plain transport strings.
   expect(isTransientFailure("Relay request could not be confirmed")).toBe(true);
+  // A saved sign-in native could not check just now is retried, not shown
+  // as signed out (assertion.rs `UNCONFIRMED`).
+  expect(isTransientFailure("Saved sign-in could not be confirmed")).toBe(true);
+  expect(isTransientFailure("Federated sign-in is required")).toBe(false);
   // A context wrapper keeps its cause's classification.
   expect(
     isTransientFailure(

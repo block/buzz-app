@@ -79,6 +79,28 @@ pub(crate) struct Snapshot {
     clock_offset: Option<i64>,
 }
 
+impl Snapshot {
+    /// A saved sign-in this device could not check just now: the issuer,
+    /// the network, the clock or secure storage did not answer, and nothing
+    /// said the session ended. The next restore checks again, after a short
+    /// cooldown when the network failed. A retired session whose record
+    /// could not be removed (`cleanup`) has ended; it is not unconfirmed.
+    fn unconfirmed(&self) -> bool {
+        self.status == Status::Unavailable
+            && !self.cleanup
+            && matches!(
+                self.failure,
+                Some(
+                    "network-unavailable"
+                        | "network-timeout"
+                        | "clock-unavailable"
+                        | "storage-unavailable"
+                        | "storage-busy"
+                )
+            )
+    }
+}
+
 // No Debug, no IPC serialization. Only the secure store serializes this record.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -864,19 +886,25 @@ impl FederatedIdentity {
         }
     }
     pub(crate) async fn restore(&self) -> Snapshot {
+        self.restore_then(|state| state.snapshot.clone()).await
+    }
+    /// Restores, then reads the state with `read` in the same step: no other
+    /// restore can begin in between, so the caller never acts on a state
+    /// another caller's restore is about to replace (`Status::Restoring`).
+    async fn restore_then<T>(&self, read: impl FnOnce(&State) -> T) -> T {
         let attempt = {
             let state = self.state();
             let expired = state.session.as_ref().is_some_and(|session| {
                 matches!((expiry(&session.record.expires_at), now()), (Ok(expiry), Ok(now)) if expiry <= now)
             });
             if self.0.config.is_none() || state.closed || (state.restored && !expired) {
-                return state.snapshot.clone();
+                return read(&state);
             }
             state.restore_attempt
         };
         let _operation = self.0.operation.lock().await;
         self.restore_locked(attempt).await;
-        self.snapshot()
+        read(&self.state())
     }
     // Return this operation's revision so callers can fence concurrent retirement.
     async fn restore_locked(&self, attempt: u64) -> String {
@@ -914,9 +942,25 @@ impl FederatedIdentity {
                 return revision;
             }
         }
+        // A session known to have ended, whose record could not be removed.
+        let ended = self.state().snapshot.cleanup;
         self.change_current(&revision, Status::Restoring, None);
+        // Removing a stored session that has ended can fail. The end still
+        // stands, and the failed removal is reported beside it as cleanup:
+        // the record keeps its refusal mark (or is denied again), so it is
+        // never restored, and requests don't wait for it to be confirmed.
+        let mut cleanup = None;
         let result = async {
-            let (raw, refusal) = self.storage(|store| store.load()).await?;
+            let (raw, refusal) = match self.storage(|store| store.load()).await {
+                Ok(loaded) => loaded,
+                // A read that doesn't answer leaves a known end standing:
+                // only its record's absence or replacement changes it.
+                Err(failure) if ended && !failure.session_denied => {
+                    cleanup = Some(failure.code);
+                    return Ok(None);
+                }
+                Err(failure) => return Err(failure),
+            };
             let Some(raw) = raw else {
                 return Ok(None);
             };
@@ -941,7 +985,7 @@ impl FederatedIdentity {
                 issued_at: 0,
             });
             if refused {
-                self.remove(session).await?;
+                cleanup = self.remove_ended(session).await?;
                 return Ok(None);
             }
             let checked = self.verify(&session.record).await;
@@ -957,7 +1001,7 @@ impl FederatedIdentity {
                     })))
                 }
                 Err(failure) if failure.session_denied => {
-                    self.remove(session).await?;
+                    cleanup = self.remove_ended(session).await?;
                     Err(failure)
                 }
                 Err(failure) => Err(failure),
@@ -1009,8 +1053,26 @@ impl FederatedIdentity {
                 state.restored = failure.session_denied;
             }
         }
+        if let Some(code) = cleanup {
+            // As `cleanup_failed` reports a retired session's removal; the
+            // next restore tries the removal again.
+            state.snapshot.status = Status::Unavailable;
+            state.snapshot.failure = Some(code);
+            state.snapshot.cleanup = true;
+            state.restored = false;
+        }
         self.publish(&state);
         revision
+    }
+    /// Removes a stored session that has ended. Its failure code when the
+    /// removal failed, for `Snapshot::cleanup`; a record another copy
+    /// already replaced is that copy's to restore, so that one is an error.
+    async fn remove_ended(&self, session: Arc<Session>) -> Result<Option<&'static str>, Failure> {
+        match self.remove(session).await {
+            Ok(()) => Ok(None),
+            Err(failure) if failure.code == "session-changed" => Err(failure),
+            Err(failure) => Ok(Some(failure.code)),
+        }
     }
     /// A renewal that fails returns its failure code; it changes nothing else.
     /// `start` is what the browser step asks of the identity provider.

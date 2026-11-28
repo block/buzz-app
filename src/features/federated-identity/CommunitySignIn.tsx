@@ -1,4 +1,10 @@
-import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { FederatedIdentity, SessionSnapshot } from "./service";
 import type { Membership } from "../communities/service";
 import { communityDestination } from "../communities/destination";
@@ -6,6 +12,8 @@ import { serverName, useSignInCommunities } from "./community-servers";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import type { CommunityRefusal } from "../relay/http-admission";
+import { RecoveryNotice } from "../relay/RecoveryNotice";
+import type { RelayRecovery } from "../relay/recovery";
 
 /** Native's rejection when the browser step outlasts its wait (`oauth_callback::TIMED_OUT`). */
 export const SIGN_IN_TIMED_OUT = "Sign-in timed out. Try again.";
@@ -28,6 +36,56 @@ export function recoveryMessage(code: string) {
   if (code === "reauthentication-required")
     return "Your sign-in has expired. Sign in again to continue.";
   return "Sign-in did not finish. Try again.";
+}
+
+/** Why a saved sign-in could not be checked, when only this device can
+ * fix it: secure storage or the clock did not answer (`Snapshot::unconfirmed`
+ * in native). Requests wait and retry meanwhile, so the community's recovery
+ * notice says this beside its retry. */
+function savedSignInTrouble(state: SessionSnapshot | undefined) {
+  if (state?.status !== "unavailable" || state.cleanup) return undefined;
+  if (state.failure === "clock-unavailable")
+    return "Buzz can’t read this computer’s clock. Check its date and time settings.";
+  if (
+    state.failure === "storage-busy" ||
+    state.failure === "storage-unavailable"
+  )
+    return recoveryMessage(state.failure);
+  return undefined;
+}
+/** `savedSignInTrouble` for a community's sign-in server, as it changes. */
+function useSavedSignInTrouble(identity: FederatedIdentity | undefined) {
+  const state = useSyncExternalStore(
+    identity?.subscribe ?? noSubscribe,
+    identity?.snapshot ?? noSnapshot,
+    identity?.snapshot ?? noSnapshot,
+  );
+  return savedSignInTrouble(state);
+}
+/** The community's relay recovery notice, saying what on this device keeps
+ * its saved sign-in from being checked when that is why it retries. */
+export function CommunityRecoveryNotice({
+  recovery,
+  identity,
+}: {
+  recovery: RelayRecovery | undefined;
+  identity: FederatedIdentity | undefined;
+}) {
+  return (
+    <RecoveryNotice
+      recovery={recovery}
+      detail={useSavedSignInTrouble(identity)}
+    />
+  );
+}
+/** While connecting waits on a saved sign-in this device can't check, why. */
+export function SavedSignInTrouble({
+  identity,
+}: {
+  identity: FederatedIdentity | undefined;
+}) {
+  const trouble = useSavedSignInTrouble(identity);
+  return trouble ? <p role="status">{trouble}</p> : null;
 }
 
 /** Issuer refusals native keeps for the session revision (`refused()` in
@@ -491,6 +549,52 @@ function SwitchProgress({
 }
 
 const noSubscription = () => () => {};
+/** Sign in again's check of a saved sign-in, per community and session
+ * (`useSavedSignInCheck`): while `pending`, and until a refusal newer than
+ * `attempt` comes, Sign in again waits instead of signing out. */
+type SavedSignInCheck = { pending: boolean; attempt: unknown };
+const savedSignInChecks = new WeakMap<object, Map<string, SavedSignInCheck>>();
+/** Where a notice without a sign-in server keeps its (never used) checks. */
+const NO_SERVER = {};
+/** A sign-in refusal while Buzz still holds a saved sign-in can come from a
+ * request Buzz sent without it, as when the sign-in server was briefly out of
+ * reach. The first Sign in again for that community and session asks the
+ * server once more and retries, without the browser: the server still decides,
+ * and a session that ended is signed out. Sign in again then waits: only a
+ * refusal that came after the retry (a new `attempt`) signs out and opens the
+ * browser, so a second click can't revoke a session the retry may restore. */
+function useSavedSignInCheck(
+  identity: FederatedIdentity | undefined,
+  revision: string,
+  relay: string | undefined,
+  attempt: unknown,
+  retry: () => void,
+) {
+  const [, changed] = useReducer((count: number) => count + 1, 0);
+  const key = `${relay ?? ""} ${revision}`;
+  const checks = savedSignInChecks.get(identity ?? NO_SERVER) ?? new Map();
+  savedSignInChecks.set(identity ?? NO_SERVER, checks);
+  const check = checks.get(key);
+  return {
+    /** The check is under way, or its retry has had no answer yet. */
+    waiting: !!check && (check.pending || check.attempt === attempt),
+    /** True when there was nothing left to check: sign out and in. */
+    run() {
+      if (check) return !check.pending && check.attempt !== attempt;
+      const started: SavedSignInCheck = { pending: true, attempt };
+      checks.set(key, started);
+      changed();
+      void Promise.resolve(relay ? identity?.askAgain?.(relay) : undefined)
+        .catch(() => {})
+        .then(() => {
+          started.pending = false;
+          changed();
+          retry();
+        });
+      return false;
+    },
+  };
+}
 const NO_ACCESS = "You don’t have access to this community";
 const SIGN_IN = "Sign in to open this community";
 /** What a page that the refusal left empty says; its notice says what fixes it. */
@@ -506,6 +610,7 @@ export function CommunityRefusalNotice({
   retry,
   relay,
   memberships = [],
+  attempt,
 }: {
   refusal: CommunityRefusal;
   /** The sign-in session of the refusing community's own server. */
@@ -513,6 +618,9 @@ export function CommunityRefusalNotice({
   retry: () => void;
   relay?: string | undefined;
   memberships?: readonly Membership[] | undefined;
+  /** The connection attempt that was refused; a new one is a fresh
+   * refusal. Without it, each notice that appears is one. */
+  attempt?: unknown;
 }) {
   const state = useSyncExternalStore(
     identity?.subscribe ?? noSubscription,
@@ -521,6 +629,14 @@ export function CommunityRefusalNotice({
   );
   // As in `Action`: sign-out ends the state that offered the switch.
   const [switching, setSwitching] = useState<Switching | null>(null);
+  const shown = useRef({}).current;
+  const check = useSavedSignInCheck(
+    identity,
+    state?.revision ?? "",
+    relay,
+    attempt ?? shown,
+    retry,
+  );
   const authority = state?.authority;
   const checkAgain = <Button onClick={retry}>Check again</Button>;
   if (!identity || !state || !authority)
@@ -573,13 +689,19 @@ export function CommunityRefusalNotice({
         />
       )}
       <Button
-        onClick={() =>
+        disabled={refusal === "sign-in" && check.waiting}
+        onClick={() => {
+          if (refusal === "sign-in" && !check.run()) return;
           setSwitching(
             runSwitch(identity, authority, "sign-out", setSwitching, retry),
-          )
-        }
+          );
+        }}
       >
-        {refusal === "sign-in" ? "Sign in again" : "Switch account"}
+        {refusal !== "sign-in"
+          ? "Switch account"
+          : check.waiting
+            ? "Checking your sign-in…"
+            : "Sign in again"}
       </Button>
       {refusal === "access" && checkAgain}
     </>

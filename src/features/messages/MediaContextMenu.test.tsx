@@ -30,8 +30,32 @@ const source = `buzz-media://localhost/${encodeURIComponent(url)}`;
 const proxy = `/api/relay/primary/media?url=${encodeURIComponent(url)}`;
 const props = { url, source, name: "photo.png", kind: "image" as const };
 
+/** The host keyed by command. An open menu asks whether a copy is already
+ * saved, so a result can't be queued by call order. */
+let host: Record<string, () => Promise<unknown>>;
+/** The next call to `command` fails; the one after it behaves normally. */
+function failsOnce(command: string) {
+  host[command] = () => {
+    delete host[command];
+    return Promise.reject(new Error("offline"));
+  };
+}
+const downloads = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command === "media_download");
+
 beforeEach(() => {
-  vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
+  host = {};
+  vi.mocked(invoke)
+    .mockReset()
+    .mockImplementation((command: string) =>
+      host[command]
+        ? host[command]()
+        : Promise.resolve(
+            command === "media_download_status" ? false : undefined,
+          ),
+    );
   vi.mocked(writeClipboardText).mockReset().mockResolvedValue(undefined);
   vi.mocked(copyImageToClipboard).mockReset().mockResolvedValue(undefined);
   vi.stubGlobal(
@@ -80,7 +104,10 @@ it("copies the original native media URL rather than its private source", async 
     screen.getByRole("menuitem", { name: "Copy image URL" }),
   );
   await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith(url));
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke).not.toHaveBeenCalledWith(
+    "media_copy_image",
+    expect.anything(),
+  );
 });
 
 it.each([
@@ -95,17 +122,19 @@ it.each([
       finish = resolve;
       fail = reject;
     });
-    vi.mocked(invoke).mockReturnValueOnce(pending);
+    host.media_download = () => {
+      delete host.media_download;
+      return pending;
+    };
     render(menu({ kind }));
     try {
       await open();
       await userEvent.click(
         screen.getByRole("menuitem", { name: `Download ${kind}` }),
       );
-      expect(invoke).toHaveBeenCalledExactlyOnceWith("media_download", {
-        source,
-        name: "photo.png",
-      });
+      expect(downloads()).toEqual([
+        ["media_download", { source, name: "photo.png" }],
+      ]);
       expect(await screen.findByText("Starting download…")).toBeVisible();
       expect(screen.queryByText("Saved to Downloads")).toBeNull();
       expect(screen.queryByText(/Couldn’t download/)).toBeNull();
@@ -115,7 +144,7 @@ it.each([
       await userEvent.click(
         screen.getByRole("menuitem", { name: `Download ${kind}` }),
       );
-      expect(invoke).toHaveBeenCalledOnce();
+      expect(downloads()).toHaveLength(1);
       expect(screen.getAllByText("Starting download…")).toHaveLength(1);
 
       await act(async () => {
@@ -137,7 +166,7 @@ it.each([
       await userEvent.click(
         screen.getByRole("menuitem", { name: `Download ${kind}` }),
       );
-      await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(downloads()).toHaveLength(2));
       if (result === "failed") {
         expect(await screen.findByText("Saved to Downloads")).toBeVisible();
       }
@@ -157,9 +186,8 @@ it("tracks pending downloads separately when the selected attachment changes", a
   }
   const first = deferredDownload();
   const second = deferredDownload();
-  vi.mocked(invoke)
-    .mockReturnValueOnce(first.promise)
-    .mockReturnValueOnce(second.promise);
+  const queued = [first.promise, second.promise];
+  host.media_download = () => queued.shift() ?? Promise.resolve(undefined);
   const secondUrl = `https://relay.test/media/${"b".repeat(64)}.png`;
   const secondSource = `buzz-media://localhost/${encodeURIComponent(secondUrl)}`;
   const rendered = render(menu());
@@ -176,20 +204,57 @@ it("tracks pending downloads separately when the selected attachment changes", a
       menu({ url: secondUrl, source: secondSource, name: "second.png" }),
     );
     await download();
-    expect(vi.mocked(invoke).mock.calls).toEqual([
+    expect(downloads()).toEqual([
       ["media_download", { source, name: "photo.png" }],
       ["media_download", { source: secondSource, name: "second.png" }],
     ]);
 
     await act(async () => first.resolve());
     await download();
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(downloads()).toHaveLength(2);
   } finally {
     await act(async () => {
       first.resolve();
       second.resolve();
     });
   }
+});
+
+it("shows a saved copy in its folder and offers another download", async () => {
+  host.media_download_status = () => Promise.resolve(true);
+  render(menu());
+  await open();
+  expect(
+    screen.getByRole("menuitem", { name: "Download image again" }),
+  ).toBeVisible();
+  // jsdom reports no Apple platform, so the folder wording appears.
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Show in folder" }),
+  );
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("media_download_open", {
+      source,
+      name: "photo.png",
+      reveal: true,
+    }),
+  );
+  expect(downloads()).toHaveLength(0);
+});
+
+it("asks for another download once the saved copy is gone", async () => {
+  host.media_download_status = () => Promise.resolve(true);
+  host.media_download_open = () =>
+    Promise.reject("Saved file moved or changed");
+  render(menu());
+  await open();
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Show in folder" }),
+  );
+  expect(
+    await screen.findByText(
+      "That image is no longer in Downloads. Download it again.",
+    ),
+  ).toBeVisible();
 });
 
 it("copies native image bytes through the host", async () => {
@@ -306,7 +371,7 @@ it("preserves a host's image-copy restriction and omits it for videos", async ()
 it.each(["Copy image", "Copy image URL"])(
   "reports %s failures and permits a retry",
   async (action) => {
-    vi.mocked(invoke).mockRejectedValueOnce(new Error("offline"));
+    failsOnce("media_copy_image");
     vi.mocked(writeClipboardText).mockRejectedValueOnce(new Error("denied"));
     render(menu());
     await open();

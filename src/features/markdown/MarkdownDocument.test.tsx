@@ -21,13 +21,22 @@ const diagram: Contribution<CodeBlockRenderer> = {
   matches: (language) => language === "mermaid",
   component: ({ code }) => <figure>{code}</figure>,
 };
-const renderers = [diagram];
+const unlabelled: Contribution<CodeBlockRenderer> = {
+  ...diagram,
+  id: "unlabelled",
+  key: "test/unlabelled",
+  title: "Unlabelled code",
+  matches: (language) => language === "",
+};
+const renderers = [diagram, unlabelled];
 const codeBlocks = { snapshot: () => renderers, subscribe: () => () => {} };
 
 it("renders a document with copy and plugin blocks", () => {
   render(
     <MarkdownDocument
-      content={"# Title\n\n- item\n\n```\nplain\n```\n\n```mermaid\ngraph\n```"}
+      content={
+        "# Title\n\n- item\n\n```\nunlabelled source\n```\n\n```mermaid\ngraph\n```\n\n```text\nplain source\n```"
+      }
       profile={DOCUMENT_PROFILE}
       components={sharedComponents}
       capabilities={{ codeBlocks, copy: true, openLink: () => false }}
@@ -38,10 +47,13 @@ it("renders a document with copy and plugin blocks", () => {
   );
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Title");
   expect(screen.getByRole("listitem")).toHaveTextContent("item");
-  expect(screen.getByRole("figure")).toHaveTextContent("graph");
+  expect(
+    screen.getAllByRole("figure").map((figure) => figure.textContent),
+  ).toEqual(["unlabelled source", "graph"]);
+  expect(screen.getByText("plain source")).toBeInTheDocument();
   expect(
     screen.getAllByRole("button", { name: "Copy code block" }),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
 });
 
 it("leaves code plain without copy or a registry", () => {

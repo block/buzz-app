@@ -205,6 +205,14 @@ its members, the host keeps the source on individual additions for the rest.
 Both calls report relay migration throttling with an error that starts with
 `rate-limited:`. Pause the import before issuing another write when you see it.
 
+## Code block renderers
+
+`ctx.conversation.registerCodeBlock({ id, title, matches, component, action? })`
+adds a fenced code renderer. `matches(language)` receives the fence's language
+label, or an empty string for an unlabelled fence. The renderer and optional
+action receive `{ code, language }`. Buzz keeps the default plain code block
+when no plugin matches and copies the original code.
+
 ## Host access (`manifest.host`)
 
 Declare in `manifest.json` the commands, processes, network origins and files your plugin uses, then add `"host"` to `inject`. The host's own APIs only do what's declared, so this is how they get wired up. It isn't a security boundary: plugin code runs in the app and can reach past it.

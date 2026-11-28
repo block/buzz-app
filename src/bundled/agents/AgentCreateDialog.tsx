@@ -335,6 +335,11 @@ export function AgentCreateDialog({
   const type =
     choices.find((item) => item.key === typeKey) ??
     (reviewingSettings ? undefined : types[0]);
+  // A requested harness this computer lacks waits for the owner to pick one.
+  const requestedMissing =
+    !!request &&
+    typeKey === request.type &&
+    !types.some((item) => item.key === request.type);
   const migration = (item: RegisteredAgentType | undefined) => {
     if (!edited || !item || item.key === edited.type) return undefined;
     try {
@@ -521,7 +526,7 @@ export function AgentCreateDialog({
   }, [pick]);
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
-    if (!item || key === type?.key) return;
+    if (!item || (key === type?.key && !requestedMissing)) return;
     restoreHarnessFocus.current = item.key;
     setConfigurationReady(false);
     chooseModel(item, carried(item));
@@ -554,7 +559,8 @@ export function AgentCreateDialog({
   // Automatic has nothing to create with until, and unless, a pick is found.
   const waiting = automatic && !type?.remote && !pick;
   const create = async (introduced = false, settings?: { config: unknown }) => {
-    if (!type || pending || waiting || (!settings && !canCreate)) return;
+    if (!type || requestedMissing || pending || waiting) return;
+    if (!settings && !canCreate) return;
     if (avatarBusy) {
       if (settings) throw new Error("Wait for the picture to finish preparing");
       return;
@@ -623,15 +629,21 @@ export function AgentCreateDialog({
     <PreferenceRow
       id={harnessId}
       title="Harness"
+      {...(requestedMissing && {
+        subtitle: `${request.type} isn’t available here. Choose another harness.`,
+      })}
       trailing={
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
           <Select
             label="Harness"
             variant="compact"
             align="end"
-            value={type?.key ?? ""}
-            leading={<TypeIcon type={type} size={20} />}
-            disabled={pending || choices.length < 2}
+            value={requestedMissing ? "" : (type?.key ?? "")}
+            placeholder="Choose a harness"
+            leading={
+              <TypeIcon type={requestedMissing ? undefined : type} size={20} />
+            }
+            disabled={pending || (choices.length < 2 && !requestedMissing)}
             groups={[true, false]
               .map((remote) => ({
                 label: remote ? "Remote" : "Local",
@@ -777,6 +789,7 @@ export function AgentCreateDialog({
                 avatarBusy ||
                 pending ||
                 !type ||
+                requestedMissing ||
                 !canCreate ||
                 waiting ||
                 !name.trim()

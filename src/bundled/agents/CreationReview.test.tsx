@@ -83,6 +83,17 @@ it("prefills an editable review and creates only when the owner submits", async 
   expect(agents.create).not.toHaveBeenCalled();
 });
 
+it("names the plugin that asked for the agent", async () => {
+  fixture({
+    requester: "plugin:example.dash",
+    requesterName: "example.dash plugin",
+  });
+  await screen.findByDisplayValue("Child");
+  expect(
+    screen.getByText(/example\.dash plugin requested this agent\. Review/),
+  ).toBeVisible();
+});
+
 it("starts from a requested picture and creates the agent with it", async () => {
   const user = userEvent.setup();
   const agents = fixture({ picture: "https://example.test/kid.png" });
@@ -119,4 +130,25 @@ it("dismisses an unsaved request when the owner closes its review", async () => 
   );
   expect(agents.approveCreation).not.toHaveBeenCalled();
   expect(agents.create).not.toHaveBeenCalled();
+});
+
+it("waits for the owner to pick a harness when the requested one is gone", async () => {
+  const user = userEvent.setup();
+  const agents = fixture({ type: "gone/harness" });
+  await screen.findByDisplayValue("Child");
+  expect(screen.getByText(/gone\/harness isn’t available here/)).toBeVisible();
+  const create = screen.getByRole("button", { name: /^Create agent$/ });
+  expect(create).toBeDisabled();
+  const harness = screen.getByRole("combobox", { name: "Harness" });
+  expect(harness).toBeEnabled();
+  await user.click(harness);
+  await user.click(await screen.findByRole("option", { name: "Echo" }));
+  await waitFor(() => expect(create).toBeEnabled());
+  await user.click(create);
+  await waitFor(() =>
+    expect(agents.approveCreation).toHaveBeenCalledWith(
+      "draft",
+      expect.objectContaining({ type: "test/echo" }),
+    ),
+  );
 });

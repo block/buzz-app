@@ -67,7 +67,7 @@ Each line is the main call. Read the types for every field.
 | `accountActions` | An account menu entry | `ctx.accountActions.register({ id, title, component })` |
 | `sidebarSections` (optional) | A Team sidebar section | `register({ version: 1, id, title, icon, rows, select })` |
 | `conversation` | Composer and message UI | `registerAccessory`, `registerMessage`, `registerMessageAction`, `registerLink`, `registerLinkPreview` (a link-preview renderer that needs setup first adds `status()`, `subscribe(listener)` and `settings`, its Settings card id; while `status()` is `"needs-setup"` the host draws a card that opens that Settings card), `registerSendGate`, and host components under `ctx.conversation.ui` (Markdown, DocumentEditor, ImageViewer, MembersDialog, Workspace) |
-| `agents` | Agent tools and instructions | `ctx.agents.addTool({ name, description, inputSchema, call })`; `addInstructions({ id, text })`; `wake`; hooks need `host.agentHooks` |
+| `agents` | Agent tools, instructions and creation requests | `ctx.agents.addTool({ name, description, inputSchema, call })`; `addInstructions({ id, text })`; `wake`; `requestCreation({ type, name, instructions? })`; hooks need `host.agentHooks` |
 | `shortcuts` | Key bindings | `ctx.shortcuts.register({ id, title, binding, run })` |
 | `navigation` | Open a destination | `await ctx.navigation.open({ version: 1, kind: "plugin", pluginId, pageId? })` |
 | `notifications` | OS notifications | `ctx.notifications.register({ id, label }).submit({ sourceKey, target, title?, body? })` |
@@ -79,7 +79,7 @@ Each line is the main call. Read the types for every field.
 | `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`, and `Menu` (newer hosts: check `ui.Menu`). `Menu` takes `items` (`label`, `onSelect`, `tone: "destructive"`, `disabled`), a `label` or `aria-label`, `icon` and `align`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
 
-Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short.
+Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short. `requestCreation` opens the owner's Create agent form, filled in, and returns `{ requestId, outcome }`; `outcome` resolves `{ status: "created", agent }` or `{ status: "dismissed" }`. Call it from a user action. It throws while this plugin has 4 requests pending, or for a minute after the owner dismisses one.
 
 In a Solo region, check `ui.headerMenuActions === true` before passing
 `headerMenuActions` to `ui.Workspace` or `ui.ChannelGroup`. Each **Actions**

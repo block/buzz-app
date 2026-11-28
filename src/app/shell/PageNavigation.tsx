@@ -255,11 +255,15 @@ function PagePreview({
       actionsRef={actions}
       onOpenChange={(next, details) => {
         // Hover only: pressing the row selects the page instead.
+        if (next && (!enabled || details.reason === "trigger-press")) {
+          details.cancel();
+          return;
+        }
         if (next) {
           handoff.current = false;
           setBoundary(details.trigger?.closest(".shell-workspace") ?? null);
         }
-        setOpen(enabled && next && details.reason !== "trigger-press");
+        setOpen(next);
       }}
     >
       {/* Marked transient, so a conversation's default focus is not held back. */}

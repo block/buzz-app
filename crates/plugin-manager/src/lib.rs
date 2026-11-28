@@ -631,6 +631,8 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
             "../../../src/bundled/changesets/manifest.json"
         ))
         .expect("changesets manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/vim/manifest.json"))
+            .expect("vim manifest"),
     ];
     manifests.extend(org_plugins().into_iter().map(|plugin| plugin.manifest));
     manifests

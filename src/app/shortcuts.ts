@@ -112,6 +112,7 @@ export function registerAppShortcuts(
     shortcuts.registerHost({
       id: "settings",
       title: "Open Settings",
+      forPlugins: true,
       binding: { key: ",", mod: true },
       order: HOST_SHORTCUT_ORDER.settings,
       allowInEditable: true,
@@ -388,6 +389,7 @@ export function registerNavigationShortcuts(
     shortcuts.registerHost({
       id: "home",
       title: "Home",
+      forPlugins: true,
       order: HOST_SHORTCUT_ORDER.home,
       // Placeholder chord: Slack's ⌘⇧A belongs to Inbox's unread view.
       binding: { key: "o", mod: true, shift: true },

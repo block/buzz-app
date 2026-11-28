@@ -114,7 +114,8 @@ if that desktop app is up and running.
   Mentioning a team mentions each member.
 - **Messages.** Hover or right-click a message to react, **Reply**, copy a link,
   forward it, or start a chat about it. On an agent's reply, **View activity**
-  shows what it did.
+  shows what it did. Shift+F10 or the Menu key opens the same menu from the
+  keyboard.
 - **Pins.** **Pin to channel** (**Pin to DM** in a DM) in a message's More
   menu adds it to the pin list, up to 250; the pin button in the header lists
   them. Solo chats have no pins.
@@ -265,6 +266,20 @@ one only if you trust its author with your account and your computer. An optiona
 [plugin trust file](plugin-trust.md) restricts external plugins to trusted
 publishers and can include plugins you sign with your own Buzz identity. Manage
 the policy with `buzzodz plugin trust`. Blocked plugins stay listed with the reason.
+
+**Vim keys**, off by default, runs Buzz from the keyboard. There is one cursor,
+where focus is. `j`/`k`/`h`/`l`, `gg`/`G` and `Ctrl-d`/`Ctrl-u` move it
+through messages, the sidebar, menus, Settings and dialogs, and
+`Ctrl-h`/`Ctrl-l` move between panes (`Alt` on Windows and Linux). Enter
+enters a message's thread or opens a choice; `go` opens the actions under the
+cursor, each with a key; Space starts leader keys, such as `Space i` to type
+a message and `Space n` to start a new chat, channel, DM or workspace. The
+message box has Vim's normal, insert and visual modes: Escape goes to normal
+mode, with a block cursor, where motions, `d`/`c`/`y`, text objects such as
+`ciw`, `p` and `u` edit, and a second Escape leaves. Opening a conversation
+or thread, inline or in a tab, selects its newest message; `Space i` types
+there. Other text fields are selected without typing; `i` or Enter edits one.
+The plugin's page in **Settings → Plugins** is its manual.
 
 ## Docs
 

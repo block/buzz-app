@@ -29,7 +29,12 @@ import { LayerAddressContext, layerInView } from "./view-layer";
 import { retireReplyTarget, threadDraftKey } from "./reply-target";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
-import { selectNewestMessage } from "./message-selection";
+import {
+  composerMessageList,
+  selectMessage,
+  selectNewestMessage,
+} from "./message-selection";
+import { messagesOnOpen } from "./focus-service";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
 import {
@@ -173,6 +178,7 @@ import { normalizeName } from "../search/person-match";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
+import { useComposerStatus } from "./composer-status";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import { useMarkdownAsTypedPreference } from "./markdown-input-preference";
 import { AgentsContext, useSessionState } from "../agents/react";
@@ -1175,6 +1181,7 @@ function Composer({
 
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const keyStatus = useComposerStatus(input);
   const hasFocused = useRef(false);
   const focusFromControl = useRef(
     typeof autoFocus === "object" ? autoFocus : undefined,
@@ -1208,6 +1215,9 @@ function Composer({
       return endOnFocusMove();
     }
     if (!focusOnMount.current) return;
+    let frame = 0;
+    /** Ends a handoff still waiting for a plugin's message to render. */
+    let stopWaiting: (() => void) | undefined;
     const focus = () => {
       const handoff = focusFromControl.current;
       if (handoff && !handoff.current) return;
@@ -1233,6 +1243,59 @@ function Composer({
         'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
       );
       if (owner && !owner.contains(editor)) return;
+      if (messagesOnOpen()) {
+        // A plugin asked for a message instead. Give its row a few frames to
+        // render, then fall back to the message box. Focus moving meanwhile,
+        // even to something that then disappears, ends the handoff, as does
+        // the plugin letting go of its choice.
+        let frames = 30;
+        let moved = false;
+        const onFocusMove = () => {
+          moved = true;
+          // Ends the handoff at once, so an effect re-run can't revive it.
+          focusOnMount.current = undefined;
+        };
+        const stopListening = () =>
+          document.removeEventListener("focusin", onFocusMove, true);
+        document.addEventListener("focusin", onFocusMove, true);
+        // An effect re-run only stops listening; the handoff stays pending,
+        // so the replay starts it again.
+        stopWaiting = stopListening;
+        const finish = () => {
+          stopListening();
+          stopWaiting = undefined;
+          focusOnMount.current = undefined;
+        };
+        const focusEditor = () => {
+          finish();
+          editor.focus();
+          if (document.activeElement === editor) focusOnMount.current = editor;
+        };
+        const selectInstead = () => {
+          if (moved || !editor.isConnected) return finish();
+          // The choice held now: a plugin may let go while this waits.
+          const pick = messagesOnOpen();
+          if (!pick) return focusEditor();
+          const list = composerMessageList(editor);
+          if (list) {
+            // The plugin's own choice may move focus; that wins too.
+            const row = pick(list);
+            if (moved) return finish();
+            // Selecting moves focus; that move is the handoff, not a cancel.
+            stopListening();
+            if (row?.isConnected) {
+              selectMessage(row);
+              return finish();
+            }
+            if (selectNewestMessage(list)) return finish();
+            document.addEventListener("focusin", onFocusMove, true);
+          }
+          if (--frames > 0) frame = requestAnimationFrame(selectInstead);
+          else focusEditor();
+        };
+        selectInstead();
+        return;
+      }
       const end = editor.value.length;
       // Let the visit's listener recognize its own successful focus handoff.
       if (handoff) handoff.current = editor;
@@ -1259,9 +1322,15 @@ function Composer({
       return () => {
         observer.disconnect();
         stopWatching();
+        cancelAnimationFrame(frame);
+        stopWaiting?.();
       };
     }
     focus();
+    return () => {
+      cancelAnimationFrame(frame);
+      stopWaiting?.();
+    };
   }, [disabled]);
   const linkSharing = useChatLinkSharing(
     fullSession(session),
@@ -4703,6 +4772,12 @@ function Composer({
                     place={sessionPlace}
                   />
                 )}
+              {keyStatus && (
+                // Beside Send, so showing it never changes the composer's height.
+                <span className="shrink-0 whitespace-nowrap text-caption text-subtle">
+                  {keyStatus}
+                </span>
+              )}
               <IconButton
                 variant={
                   draft.trim() ||

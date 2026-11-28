@@ -232,6 +232,7 @@ function AppShellContent({
       searchServices?.shortcuts.registerHost({
         id: "new",
         title: "Open New menu",
+        forPlugins: true,
         binding: { key: "n", mod: true },
         order: 75,
         allowInEditable: true,

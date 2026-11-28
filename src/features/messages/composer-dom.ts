@@ -101,6 +101,9 @@ export type ComposerInputElement = HTMLDivElement & {
   selectionStart: number;
   selectionEnd: number;
   selectionDirection: "forward" | "backward" | "none";
+  /** Source ranges that select and delete only as a whole, such as chips and
+   * tables. A selection that ends inside one opens it as plain text. */
+  readonly atoms: readonly Readonly<{ start: number; end: number }>[];
   disabled: boolean;
   readOnly: boolean;
   setSelectionRange(start: number, end: number, direction?: string): void;
@@ -157,6 +160,8 @@ export type ComposerInputElement = HTMLDivElement & {
   insertQuote(html: string, sourceLinks?: readonly string[]): boolean;
   removeRecipient(pubkey: string): void;
   undo(redo: boolean): void;
+  /** How many steps `undo(false)` can take back now. */
+  readonly undoDepth: number;
   reset(draft: MentionDraft): void;
   /** Retain this editor's document, selection and undo state across a temporary edit. */
   checkpoint(): () => void;

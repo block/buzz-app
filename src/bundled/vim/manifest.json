@@ -1,0 +1,7 @@
+{
+  "id": "buzz.vim",
+  "name": "Vim keys",
+  "apiVersion": 1,
+  "description": "Move around Buzz, act on messages and edit them with Vim-style keys.",
+  "discovery": { "category": "communication", "tags": ["messaging"] }
+}

@@ -50,7 +50,7 @@ Some parts change less often than others:
   notifications, settings cards, the host's UI controls, and opening plugin pages,
   Home and Settings.
 - **In between:** decisions, and renderers for links and code blocks.
-- **Expect breakage:** the relay session read model, conversation contributions,
+- **Expect breakage:** the `messages` and `focus` services, the relay session read model, conversation contributions,
   sidebar sections and rows, the Solo region and backdrops, agent hooks and the
   harness kit, artifact storage, the plugin installer, federated identity, the
   browser view, and where pages and panels are placed.

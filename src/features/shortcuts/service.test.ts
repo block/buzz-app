@@ -143,9 +143,11 @@ it("real plugin activation, stable conflicts, host reservations, replacement and
   const b = browser(),
     root = new Context(),
     calls: string[] = [];
+  let fromPlugin: Context["shortcuts"] | undefined;
   const runtime = new PluginRuntime(root, async (info) => ({
     inject: ["shortcuts"],
     apply(ctx) {
+      fromPlugin = ctx.shortcuts;
       ctx.shortcuts.register(
         shortcut(() => {
           calls.push(`${info.manifest.id}:${info.revision}`);
@@ -194,6 +196,32 @@ it("real plugin activation, stable conflicts, host reservations, replacement and
     );
     b.key();
     expect(calls.at(-1)).toBe("host");
+    // Plugins run only what Buzz marks for them; Buzz itself runs anything.
+    const marked = service.registerHost({
+      ...shortcut(() => {
+        calls.push("marked");
+      }),
+      id: "marked",
+      binding: { key: "m", mod: true },
+      forPlugins: true,
+    });
+    const action = service.registerHostAction({
+      id: "marked-action",
+      title: "Marked action",
+      run: () => {
+        calls.push("marked-action");
+      },
+      forPlugins: true,
+    });
+    expect(fromPlugin?.runHost("action")).toBe(false);
+    expect(calls.at(-1)).toBe("host");
+    expect(fromPlugin?.runHost("marked")).toBe(true);
+    expect(fromPlugin?.runHost("marked-action")).toBe(true);
+    expect(calls.slice(-2)).toEqual(["marked", "marked-action"]);
+    expect(service.runHost("action")).toBe(true);
+    expect(calls.at(-1)).toBe("host");
+    marked();
+    action();
     host();
     await runtime.dispose();
     expect(service.snapshot()).toHaveLength(0);
@@ -500,9 +528,32 @@ it("exposes host bindings to the host with change notifications", async () => {
   expect(service.hostSnapshot()).toEqual([]);
   expect(service.hostSnapshot()).not.toBe(registered);
   stop();
-  service.registerHost(shortcut());
+  const run = vi.fn();
+  service.registerHost(shortcut(run));
   expect(listener).toHaveBeenCalledTimes(2);
   expect(service.hostSnapshot()).toHaveLength(1);
+
+  // Plugins run host shortcuts and unbound host actions by id, if they can run now.
+  expect(service.runHost("action")).toBe(true);
+  expect(run).toHaveBeenCalledOnce();
+  let available = true;
+  const act = vi.fn();
+  const removeAction = service.registerHostAction({
+    id: "new-dm",
+    title: "New DM",
+    run: act,
+    when: () => available,
+  });
+  expect(service.hostSnapshot()).toHaveLength(1);
+  expect(service.runHost("new-dm")).toBe(true);
+  expect(act).toHaveBeenCalledOnce();
+  available = false;
+  expect(service.runHost("new-dm")).toBe(false);
+  expect(service.runHost("missing")).toBe(false);
+  removeAction();
+  available = true;
+  expect(service.runHost("new-dm")).toBe(false);
+  expect(act).toHaveBeenCalledOnce();
   await ctx.fiber.dispose();
   expect(service.hostSnapshot()).toEqual([]);
 });

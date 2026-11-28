@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package exposes shared messages, captured-read Undo, host, identity names, agent sessions, decisions, page navigation metadata, and composer send gates", async () => {
+test("generated author package exposes shared messages, captured-read Undo, host, identity names, agent sessions, decisions, page navigation metadata, composer send gates, and keyboard plugin APIs", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -50,7 +50,7 @@ const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
 };
 const ExamplePreview = ({ close }: PagePreviewProps) =>
   createElement("button", { type: "button", onClick: close }, "Open");
-export const inject = ["agents", "decisions", "host", "identityNames", "pages", "relay"];
+export const inject = ["agents", "decisions", "focus", "host", "identityNames", "messages", "pages", "relay", "shortcuts"];
 export function apply(ctx: Context) {
   const seen: Seen | undefined = ctx.reflect.get("seen");
   const key = "example.plugin/welcome";
@@ -69,6 +69,10 @@ export function apply(ctx: Context) {
   createElement(ctx.conversation.ui.MembersDialog, picker);
   const gate: SendGate = { id: "later", hold: (message: OutgoingMessage) => message.text === "Later" };
   ctx.conversation.registerSendGate(gate);
+  const ranHost: boolean = ctx.shortcuts.runHost("new-dm");
+  const releaseFocus: () => void = ctx.focus.preferMessagesOnOpen((list) => ctx.messages.listOf(list) && ctx.messages.selected()?.row);
+  ctx.messages.composerOf(document.activeElement)?.setStatus(ranHost ? "Ready" : undefined);
+  releaseFocus();
   const held: OutgoingMessage = { channelId: "record", text: "Later", recipients: [], references: [], attachments: [], picks: {} };
   const sent: Promise<string> = ctx.conversation.publish(ctx.relay.snapshot().session, held);
   void sent;

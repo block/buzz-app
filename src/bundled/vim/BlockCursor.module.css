@@ -1,0 +1,24 @@
+/* Vim's block cursor in a message box's normal mode: the character under it
+   in the text selection's colours, or a block where there is no character,
+   such as an empty line. */
+::highlight(vim-block-cursor) {
+  background-color: var(--surface-text-selection);
+  color: var(--text-on-selection);
+}
+
+.block {
+  position: fixed;
+  width: 1ch;
+  pointer-events: none;
+  background-color: var(--surface-text-selection);
+}
+
+@media (forced-colors: active) {
+  ::highlight(vim-block-cursor) {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+  .block {
+    background-color: Highlight;
+  }
+}

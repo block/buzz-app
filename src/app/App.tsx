@@ -824,6 +824,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               relay={services.relay}
               navigator={services.navigation}
               agents={services.agents}
+              shortcuts={services.shortcuts}
             />
           )}
           workspaceRef={setWorkspaceElement}

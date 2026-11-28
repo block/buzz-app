@@ -25,6 +25,8 @@ export type MessageList = Readonly<{
   /** Append copied message HTML and its source links to this list's own composer. */
   quote(html: string, sourceLinks?: readonly string[]): boolean;
   canQuote(): boolean;
+  /** Keeps a message rendered while it is scrolled away, until released. */
+  keepMounted?(id: string): () => void;
 }>;
 
 const ROW = "[data-message-id]";
@@ -37,8 +39,14 @@ export function registerMessageList(element: HTMLElement, list: MessageList) {
   };
 }
 
+/** Every registered list element, for plugins that track a per-list cursor. */
+export const messageListElements = () => [...lists.keys()];
+/** The list whose message box is `composer`. */
+export const composerMessageList = (composer: Element) =>
+  [...lists].find(([, list]) => list.composer() === composer)?.[0];
+
 /** The row's message box, not its day divider, takes focus. */
-function focusTarget(row: HTMLElement) {
+export function focusTarget(row: HTMLElement) {
   return row.querySelector<HTMLElement>(":scope > [data-layout]") ?? row;
 }
 
@@ -179,7 +187,16 @@ export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
   )
     return;
   const selected = selectedMessage();
-  if (!selected || !event.currentTarget.contains(selected.element)) return;
+  if (
+    !selected ||
+    !event.currentTarget.contains(selected.element) ||
+    // Only the message's own keys: a menu's Escape can arrive after the menu
+    // has already returned focus to the message.
+    event.target !== focusTarget(selected.element) ||
+    // A menu it opened owns the keys, even before focus moves into it.
+    focusTarget(selected.element).hasAttribute("data-menu-origin")
+  )
+    return;
   const owner = listFor(selected.element);
   if (!owner) return;
   if (event.key === "Escape") {

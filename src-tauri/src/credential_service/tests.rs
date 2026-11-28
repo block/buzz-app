@@ -1187,4 +1187,5 @@ fn a_launch_token_reaches_no_child_the_app_spawns() {
     assert!(stdout.contains("child saw [unset]"), "{stdout}");
 }
 
+mod agent_files;
 mod pairing;

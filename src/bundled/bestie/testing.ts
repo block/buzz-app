@@ -377,6 +377,7 @@ export async function bestieFixture(
       rename: vi.fn(),
       setType: vi.fn(),
       setPicture: vi.fn(),
+      setAbout: vi.fn(),
       remove: vi.fn(),
       beginDelete: vi.fn(),
       forget: vi.fn(),

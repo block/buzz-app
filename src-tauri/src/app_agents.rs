@@ -594,6 +594,8 @@ pub(crate) struct AppAgentSummary {
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     picture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    about: Option<String>,
     deleted: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     deleting: bool,
@@ -614,6 +616,7 @@ impl From<AppAgent> for AppAgentSummary {
             agent_type: agent.agent_type,
             name: agent.name,
             picture: agent.picture,
+            about: agent.about,
             deleted: agent.deleted,
             deleting: agent.deleting,
             home: agent.home,
@@ -860,6 +863,18 @@ pub(crate) async fn app_agent_set_picture(
 ) -> Result<(), String> {
     let agents = state.agents.clone()?;
     blocking(move || agents.set_picture(&pubkey, &relay, picture)).await
+}
+
+/// Sets or clears its profile description in the community at `relay`.
+#[tauri::command]
+pub(crate) async fn app_agent_set_about(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    relay: String,
+    about: Option<String>,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.set_about(&pubkey, &relay, about)).await
 }
 
 /// Adds the agent, as it is in the community at `from`, to the community at

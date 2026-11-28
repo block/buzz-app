@@ -135,6 +135,7 @@ function provideAgents(
     rename: vi.fn(),
     beginDelete: vi.fn(),
     setPicture: vi.fn(),
+    setAbout: vi.fn(),
     setType: vi.fn(),
     join: vi.fn(),
     beginLeave: vi.fn(),

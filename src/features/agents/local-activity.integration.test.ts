@@ -76,6 +76,7 @@ it("carries a verified mention through host handover into all three scopes witho
     beginDelete: vi.fn(),
     port: vi.fn(),
     setPicture: vi.fn(),
+    setAbout: vi.fn(),
     setType: vi.fn(),
     join: vi.fn(),
     beginLeave: vi.fn(),

@@ -318,6 +318,12 @@ mentions still work.
 
 - **The `buzz` CLI** comes with the desktop app. `buzz auth desktop pair` asks
   you to **Allow** it, and then it can read and post as you.
+- **Agent files.** Once paired, `buzz agents export <agent>` writes one of
+  your agents that runs on this computer as an `AGENT.md` file, and
+  `buzz agents import <dir>` or `buzz agents edit <agent>` changes it from one.
+  Buzz asks you to **Apply** each change, and refuses one made after the agent
+  changed. The file holds its profile, persona, synced settings, Interests,
+  watches, timers and channels; never its keys or history.
 - **External apps** connect from the app's side: you approve them in Buzz, for
   one community and agent, and they get that agent's full access. Approve only
   setups you started.

@@ -72,6 +72,10 @@ pub(crate) enum Notice {
     Closed(String),
     /// The list changed.
     Changed,
+    /// A paired tool's `agent_read` or `agent_apply`, for the page to answer.
+    Agent(super::agent_files::AgentCall),
+    /// The agent call with this id is over: answered, expired or abandoned.
+    AgentClosed(String),
 }
 pub(crate) type Notify = Arc<dyn Fn(Notice) + Send + Sync>;
 

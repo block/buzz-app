@@ -15,6 +15,7 @@
 //!   that sends `Origin` (a web page) is refused, and nothing is logged.
 //! - Windows has no transport in version 1, so no token is issued there.
 mod advertise;
+mod agent_files;
 mod keychain;
 mod owner;
 mod pairing;
@@ -69,7 +70,7 @@ const BURST: f64 = 120.0;
 const REFILL: f64 = 20.0;
 /// Evidence handed out stays valid at least this long, for the caller's request.
 const EVIDENCE: Duration = Duration::from_secs(60);
-const METHODS: [&str; 9] = [
+const METHODS: [&str; 11] = [
     "describe",
     "get_public_key",
     "sign_event",
@@ -79,7 +80,11 @@ const METHODS: [&str; 9] = [
     "federated_identity",
     "auth_tag",
     "pair",
+    "agent_read",
+    "agent_apply",
 ];
+/// Methods only a paired tool, acting as the human, may call.
+const OWNER_ONLY: [&str; 2] = ["agent_read", "agent_apply"];
 
 #[derive(Clone)]
 pub(crate) struct CredentialService(Arc<Inner>);
@@ -93,6 +98,8 @@ struct Inner {
     identity: IdentityHost,
     session: FederatedIdentity,
     pairings: Pairings,
+    /// Paired tools' `agent_read` and `agent_apply`, waiting on the page.
+    agent_calls: agent_files::AgentCalls,
     /// Each paired token's rate, by its digest; only for this run.
     owner_budgets: Mutex<HashMap<[u8; 32], [Budget; METHODS.len() + 1]>>,
     /// The home this service advertised in, so it removes only its own.
@@ -204,6 +211,7 @@ impl CredentialService {
             callers: Mutex::default(),
             identity,
             session,
+            agent_calls: agent_files::AgentCalls::new(notify.clone()),
             pairings: Pairings::new(keychain, notify),
             owner_budgets: Mutex::default(),
             advertised: Mutex::default(),
@@ -614,6 +622,10 @@ impl CredentialService {
                 let (agent, _) = key().await.map_err(Failure::unavailable)?;
                 Ok(agent.auth)
             }
+            (method, _) if OWNER_ONLY.contains(&method) => Err(Failure::new(
+                "denied",
+                &format!("{method} is only for tools the human paired"),
+            )),
             (method, _) => Err(unsupported(method)),
         }
     }
@@ -628,7 +640,11 @@ impl CredentialService {
             "pubkey": pubkey,
             "role": if owner.is_some() { "agent" } else { "owner" },
             "relays": [relay],
-            "methods": METHODS.iter().filter(|method| **method != "pair").collect::<Vec<_>>(),
+            "methods": METHODS
+                .iter()
+                .filter(|method| **method != "pair")
+                .filter(|method| owner.is_none() || !OWNER_ONLY.contains(method))
+                .collect::<Vec<_>>(),
         });
         if let Some(owner) = owner {
             described["owner_pubkey"] = owner.into();
@@ -775,9 +791,11 @@ impl Failure {
     }
     fn status(&self) -> StatusCode {
         match self.code {
-            "approval_required" | "denied" => StatusCode::FORBIDDEN,
+            "approval_required" | "denied" | "declined" => StatusCode::FORBIDDEN,
+            "not_found" => StatusCode::NOT_FOUND,
             "rate_limited" => StatusCode::TOO_MANY_REQUESTS,
             "revoked" => StatusCode::UNAUTHORIZED,
+            "conflict" => StatusCode::CONFLICT,
             "unavailable" => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::BAD_REQUEST,
         }
@@ -917,6 +935,32 @@ pub(crate) async fn credential_pairing_communities(
     service.0.pairings.set_active(active);
     service.0.pairings.set_communities(communities).await;
     Ok(())
+}
+
+/// The page's answer to a paired tool's agent call: its result, or an error
+/// `code` and `message`.
+#[tauri::command]
+pub(crate) fn credential_agent_answer(
+    service: tauri::State<'_, CredentialService>,
+    id: String,
+    result: Option<String>,
+    code: Option<String>,
+    message: Option<String>,
+) {
+    let answer = match result {
+        Some(result) => Ok(result),
+        None => Err((
+            code.unwrap_or_default(),
+            message.unwrap_or_else(|| "Buzz refused the request".into()),
+        )),
+    };
+    service.0.agent_calls.answer(&id, answer);
+}
+
+/// The page's agent-call handler began (`mounted`) or stopped listening.
+#[tauri::command]
+pub(crate) fn credential_agent_listen(service: tauri::State<'_, CredentialService>, mounted: bool) {
+    service.0.agent_calls.listen(mounted);
 }
 
 /// The page's pairing prompt began (`mounted`) or stopped listening.

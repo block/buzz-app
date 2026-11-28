@@ -168,6 +168,66 @@ export function gitHubDiff(host: Pick<Host, "spawn">): GitHubDiff | undefined {
   };
 }
 
+/** A review comment on lines of a pull request's diff, as GitHub's REST API
+ * takes it. */
+export type ReviewComment = Readonly<{
+  body: string;
+  commit_id: string;
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  start_line?: number;
+  start_side?: "LEFT" | "RIGHT";
+}>;
+export type GitHubComment = (
+  pull: Readonly<{ repository: string; number: number }>,
+  comment: ReviewComment,
+  signal?: AbortSignal,
+) => Promise<{ html_url?: string }>;
+
+/** Posts review comments through the manifest's `comment` process, or
+ * undefined where processes cannot run. */
+export function gitHubComment(
+  host: Pick<Host, "spawn">,
+): GitHubComment | undefined {
+  const spawn = host.spawn?.bind(host);
+  if (!spawn) return undefined;
+  return async ({ repository, number }, comment, signal) => {
+    if (
+      !/^[\w.-]+\/[\w.-]+$/.test(repository) ||
+      repository.split("/").some((part) => /^\.+$/.test(part)) ||
+      !(Number.isSafeInteger(number) && number > 0)
+    )
+      throw new GitHubError("Unsupported pull request");
+    const { stdout, stderr, code } = await runGh(spawn, "comment", {
+      args: [`repos/${repository}/pulls/${number}/comments`],
+      input: JSON.stringify(comment),
+      signal,
+    });
+    let answer: { message?: unknown; errors?: unknown; html_url?: string } = {};
+    try {
+      answer = JSON.parse(stdout);
+    } catch {}
+    if (code === 0) return answer;
+    // GitHub's reason, such as a line that is not part of the diff.
+    const details = Array.isArray(answer.errors)
+      ? answer.errors
+          .map((error) =>
+            typeof error === "string" ? error : (error?.message ?? ""),
+          )
+          .filter((text): text is string => typeof text === "string" && !!text)
+      : [];
+    if (typeof answer.message === "string")
+      throw new GitHubError(
+        [answer.message, ...details].join(": "),
+        answer.message === "Not Found" ? "NOT_FOUND" : undefined,
+      );
+    throw new GhUnavailable(
+      stderr.trim().replace(/^gh: /, "") || "gh did not answer",
+    );
+  };
+}
+
 /** GitHub's `data`, or the first error GitHub or `gh` gave. */
 export function parseAnswer<T>(
   stdout: string,

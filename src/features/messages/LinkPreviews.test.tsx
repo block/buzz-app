@@ -70,6 +70,39 @@ it("lets the lowest order claim a link ahead of the default card", () => {
   expect(screen.queryByText("web https://special.example/")).toBeNull();
 });
 
+it("draws a message-placed card only inside the message, without the default card below", () => {
+  const registry = reader([
+    entry("web", () => true, 100, card("web")),
+    {
+      ...entry("code", (url) => url.includes("code"), 0, card("code")),
+      placement: "message",
+    },
+  ]);
+  const urls = ["https://a.example/", "https://code.example/"];
+  const { unmount } = render(
+    <LinkPreviews
+      urls={urls}
+      messageId="m"
+      registry={registry}
+      onOpenLink={() => true}
+      placement="message"
+    />,
+  );
+  expect(screen.getByText("code https://code.example/")).toBeTruthy();
+  expect(screen.queryByText("web https://a.example/")).toBeNull();
+  unmount();
+  render(
+    <LinkPreviews
+      urls={urls}
+      messageId="m"
+      registry={registry}
+      onOpenLink={() => true}
+    />,
+  );
+  expect(screen.getByText("web https://a.example/")).toBeTruthy();
+  expect(screen.queryByText(/code\.example/)).toBeNull();
+});
+
 it("folds past three cards and opens links through the host", () => {
   const onOpenLink = vi.fn(() => true);
   const urls = [1, 2, 3, 4, 5].map((n) => `https://${n}.example/`);

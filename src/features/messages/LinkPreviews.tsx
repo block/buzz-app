@@ -121,6 +121,7 @@ export function LinkPreviews({
   registry,
   onOpenLink,
   settings,
+  placement = "below",
 }: {
   urls: readonly string[];
   messageId: string;
@@ -128,6 +129,8 @@ export function LinkPreviews({
   onOpenLink(url: string): boolean;
   /** Plugin Settings cards; without them, renderers that need setup draw no card. */
   settings?: LinkPreviewSettings | undefined;
+  /** Draws only the cards of renderers with this placement. */
+  placement?: "below" | "message" | undefined;
 }) {
   const renderers = useSyncExternalStore(
     registry?.subscribe ?? noSubscribe,
@@ -144,7 +147,9 @@ export function LinkPreviews({
   }, []);
   const matched = urls.flatMap((url) => {
     const renderer = resolveMatch(renderers, url);
-    return renderer ? [{ url, renderer }] : [];
+    return renderer && (renderer.placement ?? "below") === placement
+      ? [{ url, renderer }]
+      : [];
   });
   const distinct = [...new Set(matched.map(({ renderer }) => renderer))];
   const identity = distinct.map(contributionKey).join(",");

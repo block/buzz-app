@@ -168,6 +168,12 @@ if that desktop app is up and running.
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.
   Types are `bar`, `line` and `scatter`.
+- **GitHub code links.** A link to a file on github.com shows the file's name,
+  and opening it shows the whole file highlighted in a side panel. A line or
+  range link (`#L42-L60`) also shows those lines in the message. On lines in a
+  pull request's changes, select lines and use the comment button to post a
+  review comment as your `gh` account (desktop only). Without `gh`, public
+  files still show.
 
 ## Agents
 

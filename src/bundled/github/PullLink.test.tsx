@@ -254,6 +254,7 @@ function renderers() {
       registerChatIcon: () => {},
       registerChatMenu: () => {},
       registerLink: register("buzz.github"),
+      registerLinkPreview: () => {},
     },
     relay: {},
     agents: { addTool: () => {} },
@@ -284,7 +285,7 @@ const message = (
     </ToastProvider>,
   );
 
-it("takes repository, pull request, issue and commit links from Links, which keeps the rest of GitHub and stands in without it", async () => {
+it("takes repository, pull request, issue, commit and file links from Links, which keeps the rest of GitHub and stands in without it", async () => {
   const { links, github } = renderers();
   expect(resolveLink(pull, [links, github])).toBe(github);
   for (const url of [issue, `${issue}?q=1`, `${issue}/`, issueCased])
@@ -295,11 +296,11 @@ it("takes repository, pull request, issue and commit links from Links, which kee
   for (const url of [
     "https://github.com/block/buzz-app",
     "https://github.com/block/buzz-app/commit/abcdef1",
+    "https://github.com/block/buzz-app/blob/main/README.md",
   ])
     expect(resolveLink(url, [links, github])).toBe(github);
   for (const url of [
     "https://github.com/block",
-    "https://github.com/block/buzz-app/blob/main/README.md",
     `${issue}#issuecomment-1`,
     `${issue}/timeline`,
   ])

@@ -83,6 +83,7 @@ const samePlacement = (a: SoloNavigationSnapshot, b: SoloNavigationSnapshot) =>
 /** The connection owns source binding even while the sidebar is unmounted. */
 export class SoloNavigationService extends Service implements SoloNavigation {
   readonly version = 2 as const;
+  readonly independentWorkspaces = true as const;
   readonly workspaces;
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
@@ -503,12 +504,18 @@ export class SoloNavigationService extends Service implements SoloNavigation {
       : undefined;
   }
   async openCreatedWorkspace(workspaceId: string): Promise<boolean> {
-    const region = this.value.regions.find(
-      (item) => item.source && !item.hidden && item.reason !== "disabled",
+    const candidates = this.value.regions.filter(
+      (item) =>
+        typeof item.source?.openWorkspace === "function" &&
+        !item.hidden &&
+        item.reason !== "disabled",
     );
-    const source = region?.source;
-    if (!source?.composeWorkspaces || !source.openWorkspace) return false;
     const binding = this.value.binding;
+    const ready = binding ? candidates.find((item) => !item.reason) : undefined;
+    const region =
+      ready ?? candidates.find((item) => item.source?.composeWorkspaces);
+    const source = region?.source;
+    if (!source?.openWorkspace) return false;
     if (!binding || region?.reason)
       throw new Error("Workspace selection is not ready. Try again.");
     await source.openWorkspace(binding, workspaceId);

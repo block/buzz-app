@@ -5,6 +5,7 @@ import {
 } from "../../features/channel-navigation/RegionChannelGroup";
 import {
   WorkspaceCompositionContext,
+  RegionWorkspaceHostContext,
   RegionWorkspace,
   RegionChats,
   RegionChatList,
@@ -364,6 +365,14 @@ function RegionFrame({
       {composing && <RegionChats all />}
     </>
   );
+  const workspaceHost = useMemo(
+    () => ({
+      sectionKey,
+      collapsed: sidebar.collapsed,
+      toggle: sidebar.toggle,
+    }),
+    [sectionKey, sidebar.collapsed, sidebar.toggle],
+  );
   const body =
     source &&
     binding &&
@@ -390,7 +399,12 @@ function RegionFrame({
                     Chats: RegionChats,
                     ChatList: RegionChatList,
                   }
-                : destinationUi
+                : source.composeWorkspaces
+                  ? destinationUi
+                  : {
+                      ...destinationUi,
+                      Workspace: RegionWorkspace,
+                    }
             }
           />
         )}
@@ -423,7 +437,11 @@ function RegionFrame({
           headerNotice={headerNotice}
         >
           <RegionChannelGroups session={session}>
-            {contents}
+            <RegionWorkspaceHostContext
+              value={source?.composeWorkspaces ? undefined : workspaceHost}
+            >
+              {contents}
+            </RegionWorkspaceHostContext>
           </RegionChannelGroups>
         </SidebarSection>
         {composing ? null : ordinary}

@@ -81,6 +81,13 @@ Each line is the main call. Read the types for every field.
 
 Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short.
 
+In a Solo region, check `ctx.soloNavigation.independentWorkspaces === true`
+before registering a source without `composeWorkspaces: true` when you want
+native `ui.Workspace` controls and `openWorkspace` selection routing while
+leaving ordinary Solo chats and workspace sections in their host sections.
+Older hosts omit that property and provide `ui.Workspace` and `openWorkspace`
+only when `composeWorkspaces: true`.
+
 In a Solo region, check `ui.headerMenuActions === true` before passing
 `headerMenuActions` to `ui.Workspace` or `ui.ChannelGroup`. Each **Actions**
 entry has a unique `id`, a `label`, and an `onSelect` callback.

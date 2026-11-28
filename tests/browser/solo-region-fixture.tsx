@@ -101,11 +101,38 @@ export const soloRegionFixture: BundledPlugin = {
       const channelMenuAction = new URL(location.href).searchParams.has(
         "channel-menu-action",
       );
+      const independentWorkspaces = new URL(location.href).searchParams.has(
+        "independent-workspaces",
+      );
+      if (independentWorkspaces && navigation.independentWorkspaces !== true)
+        throw new Error("Independent workspaces capability unavailable");
       function Workspaces({
         ui,
         binding,
-      }: Pick<SoloRegionProps, "ui" | "binding">) {
-        const [selected, select] = useState<string>();
+        state,
+        onCreateInWorkspace,
+      }: Pick<SoloRegionProps, "ui" | "binding"> & {
+        state?: SoloRegionProps["state"] | undefined;
+        onCreateInWorkspace?: ((workspaceId: string) => void) | undefined;
+      }) {
+        const [localSelected, setLocalSelected] = useState<string>();
+        const savedSelected = useSyncExternalStore(
+          (listener) => state?.subscribe(listener) ?? (() => {}),
+          () => {
+            const value = state?.get();
+            return value &&
+              typeof value === "object" &&
+              !Array.isArray(value) &&
+              typeof value.selectedWorkspace === "string"
+              ? value.selectedWorkspace
+              : undefined;
+          },
+        );
+        const selected = state ? savedSelected : localSelected;
+        const select = (workspaceId: string | undefined) => {
+          if (state) state.set({ selectedWorkspace: workspaceId ?? null });
+          else setLocalSelected(workspaceId);
+        };
         const summary = useHeaderSummary("Work");
         const workspaces = useSyncExternalStore(
           (notify) => navigation.workspaces.subscribe(binding, notify),
@@ -118,9 +145,23 @@ export const soloRegionFixture: BundledPlugin = {
               id={workspace.id}
               selected={selected === workspace.id}
               onSelect={() => select(workspace.id)}
-              onNewTask={() => select(undefined)}
+              onNewTask={() => {
+                if (onCreateInWorkspace) onCreateInWorkspace(workspace.id);
+                else select(undefined);
+              }}
               headerLeading={
                 leadingHeader && workspace.id === "work" ? summary : undefined
+              }
+              headerMenuActions={
+                independentWorkspaces && ui.headerMenuActions === true
+                  ? [
+                      {
+                        id: "select-workspace",
+                        label: "Select workspace",
+                        onSelect: () => select(workspace.id),
+                      },
+                    ]
+                  : undefined
               }
               headerAccessory={
                 headerAccessories &&
@@ -138,7 +179,11 @@ export const soloRegionFixture: BundledPlugin = {
                 ) : undefined
               }
             >
-              <button type="button">Workspace task</button>
+              <button type="button">
+                {independentWorkspaces
+                  ? `${workspace.name} task`
+                  : "Workspace task"}
+              </button>
             </ui.Workspace>
           ) : null,
         );
@@ -222,8 +267,25 @@ export const soloRegionFixture: BundledPlugin = {
       }
       const handle = ctx.soloNavigation.registerSource({
         ...(composing ? { composeWorkspaces: true } : {}),
+        ...(independentWorkspaces
+          ? {
+              openWorkspace: async (currentBinding, workspaceId) => {
+                handle
+                  .state(currentBinding)
+                  .set({ selectedWorkspace: workspaceId });
+              },
+              actions: (currentBinding) => [
+                {
+                  id: "new-item",
+                  label: "New item",
+                  icon: "plus",
+                  onSelect: () => handle.openDraft(currentBinding),
+                },
+              ],
+            }
+          : {}),
         id: "work",
-        title: "Solo",
+        title: independentWorkspaces ? "Items" : "Solo",
         icon: null,
         bind(next) {
           binding = next;
@@ -240,46 +302,65 @@ export const soloRegionFixture: BundledPlugin = {
             notify = () => {};
           };
         },
-        component: ({ ui, live, binding, state }) => (
-          <>
-            {stateFixture && <SavedState state={state} />}
-            {hitTargets && <Workspaces ui={ui} binding={binding} />}
-            {(headerAccessories ||
-              teamRowChannelGroup ||
-              channelMenuAction) && <ChannelGroup ui={ui} id="alpha" />}
-            {headerAccessories && <ChannelGroup ui={ui} id="gamma" />}
-            {/* A source can retain a keyed conversation across roster changes. */}
-            {(first
-              ? [first, ...[...live].filter((id) => id !== first)]
-              : [...live]
-            )
-              .filter((id) => !removed.includes(id))
-              .map((id) => (
-                <div
-                  key={id}
-                  style={hidden.includes(id) ? { display: "none" } : undefined}
-                >
-                  <ui.Conversation channelId={id}>
-                    {(c) => (
-                      <ui.Card>
-                        <c.Menu>
-                          <c.Link label={c.name} />
-                          {wrapActions ? (
-                            <span className="pointer-events-none absolute end-0 top-0">
+        component: ({ ui, live, binding, state }) => {
+          if (independentWorkspaces && (ui.Chats || ui.ChatList))
+            throw new Error(
+              "Independent source must not receive chat composition",
+            );
+          return (
+            <>
+              {stateFixture && <SavedState state={state} />}
+              {(hitTargets || independentWorkspaces) && (
+                <Workspaces
+                  ui={ui}
+                  binding={binding}
+                  state={independentWorkspaces ? state : undefined}
+                  onCreateInWorkspace={
+                    independentWorkspaces
+                      ? (workspace) => handle.openDraft(binding, { workspace })
+                      : undefined
+                  }
+                />
+              )}
+              {(headerAccessories ||
+                teamRowChannelGroup ||
+                channelMenuAction) && <ChannelGroup ui={ui} id="alpha" />}
+              {headerAccessories && <ChannelGroup ui={ui} id="gamma" />}
+              {/* A source can retain a keyed conversation across roster changes. */}
+              {(first
+                ? [first, ...[...live].filter((id) => id !== first)]
+                : [...live]
+              )
+                .filter((id) => !removed.includes(id))
+                .map((id) => (
+                  <div
+                    key={id}
+                    style={
+                      hidden.includes(id) ? { display: "none" } : undefined
+                    }
+                  >
+                    <ui.Conversation channelId={id}>
+                      {(c) => (
+                        <ui.Card>
+                          <c.Menu>
+                            <c.Link label={c.name} />
+                            {wrapActions ? (
+                              <span className="pointer-events-none absolute end-0 top-0">
+                                <c.Actions />
+                              </span>
+                            ) : (
                               <c.Actions />
-                            </span>
-                          ) : (
-                            <c.Actions />
-                          )}
-                        </c.Menu>
-                      </ui.Card>
-                    )}
-                  </ui.Conversation>
-                </div>
-              ))}
-            {composing && ui.Chats && <ui.Chats all={!hitTargets} />}
-          </>
-        ),
+                            )}
+                          </c.Menu>
+                        </ui.Card>
+                      )}
+                    </ui.Conversation>
+                  </div>
+                ))}
+              {composing && ui.Chats && <ui.Chats all={!hitTargets} />}
+            </>
+          );
+        },
       });
       let disposeTransient = async () => {};
       window.fixtureSoloRegion = {

@@ -55,6 +55,14 @@ export function apply(ctx: Context) {
   const seen: Seen | undefined = ctx.reflect.get("seen");
   const key = "example.plugin/welcome";
   if (seen?.has(key) === false) seen.mark(key);
+  const independentWorkspaces: true | undefined =
+    ctx.soloNavigation?.independentWorkspaces;
+  if (ctx.soloNavigation) {
+    const nav = ctx.soloNavigation;
+    const useIndependent = nav.independentWorkspaces === true;
+    void (useIndependent ? nav.workspaces : nav.registerSource);
+  }
+  void independentWorkspaces;
   const relaySession = ctx.relay.snapshot().session;
   if (relaySession.supportsMigrationWrites === true) {
     void relaySession.channelCreation.create({ name: "Imported", visibility: "private", migration: "example-import" });

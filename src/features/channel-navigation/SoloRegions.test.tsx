@@ -67,6 +67,7 @@ function mount(
   target: OpenTarget = { version: 1, kind: "home" },
   wrap: (children: ReactNode) => ReactNode = (children) => children,
   fallback?: ReactNode,
+  composeOrdinary?: Parameters<typeof SoloRegions>[0]["composeOrdinary"],
 ) {
   const open = vi.fn<Navigation["open"]>(async () => ({
     status: "opened" as const,
@@ -94,6 +95,7 @@ function mount(
         target={target}
         navigator={navigator}
         fallback={fallback}
+        composeOrdinary={composeOrdinary}
         sidebar={{
           list,
           savedLocation: undefined,
@@ -3296,5 +3298,717 @@ it("channel groups share a 3,000-record roster and retain the complete native me
     "View channel details",
     ...offered,
     "Channel actions unavailable on this connection",
+  ]);
+});
+
+it("renders native workspace controls for an independent source without consuming ordinary chats", async () => {
+  const h = fixture();
+  const viewer = h.session.viewer;
+  assert(viewer);
+  h.roster([
+    ...h.session.channels.list().channels,
+    {
+      id: "team-work",
+      name: "Team work",
+      channelType: "stream",
+      members: [viewer],
+    },
+  ]);
+  let saved = {
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "other", name: "Other", order: 1 },
+    ],
+    assignments: { "team-work": "work" } as Record<string, string>,
+    starred: [] as string[],
+    muted: [] as string[],
+    sectionOrder: [
+      "pages",
+      "starred",
+      "solo",
+      "group:work",
+      "channels",
+      "group:other",
+      "dms",
+    ],
+  };
+  let snap = { status: "ready" as const, data: saved };
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    snap = { status: "ready" as const, data: saved };
+    for (const listener of listeners) listener();
+  };
+  const reorderSections = vi.fn(
+    async (_sectionId: string, sectionIds: readonly string[]) => {
+      saved = { ...saved, sectionOrder: [...sectionIds] };
+      notify();
+      return saved;
+    },
+  );
+  const removeSection = vi
+    .fn(async (id: string) => {
+      saved = {
+        ...saved,
+        sections: saved.sections.filter((section) => section.id !== id),
+        sectionOrder: saved.sectionOrder.filter((key) => key !== `group:${id}`),
+      };
+      notify();
+      return saved;
+    })
+    .mockRejectedValueOnce(new Error("Delete refused"));
+  h.session.sidebarPreferences = {
+    ...h.session.sidebarPreferences,
+    sectionOrderWritable: true,
+    sectionRemovalWritable: true,
+    snapshot: () => snap,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    reorderSections,
+    removeSection,
+  };
+  const select = vi.fn();
+  const create = vi.fn();
+  const custom = vi
+    .fn()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("Action failed"));
+  const leadingActivate = vi.fn();
+  await h.register({
+    component: ({ ui }) => {
+      const [selected, setSelected] = useState<string>();
+      const Workspace = ui.Workspace;
+      assert(Workspace);
+      expect(ui.Chats).toBeUndefined();
+      expect(ui.ChatList).toBeUndefined();
+      return (
+        <>
+          <Workspace
+            id="work"
+            selected={selected === "work"}
+            onSelect={() => {
+              select("work");
+              setSelected("work");
+            }}
+            onNewTask={() => create("work")}
+            headerLeading={{
+              icon: <span>Lead</span>,
+              label: "Open Work summary",
+              onActivate: leadingActivate,
+            }}
+            headerAccessory={<button type="button">Accessory</button>}
+            headerMenuActions={
+              ui.headerMenuActions === true
+                ? [{ id: "pin", label: "Pin", onSelect: custom }]
+                : undefined
+            }
+          >
+            <button type="button">Work item</button>
+          </Workspace>
+          <Workspace id="other" onNewTask={() => create("other")}>
+            <button type="button">Other item</button>
+          </Workspace>
+        </>
+      );
+    },
+  });
+  mount(h);
+  const user = userEvent.setup();
+  const workTitle = screen.getByRole("button", { name: "Work" });
+  await user.click(workTitle);
+  expect(select).toHaveBeenCalledExactlyOnceWith("work");
+  expect(workTitle).toHaveAttribute("aria-current", "page");
+
+  await user.click(screen.getByRole("button", { name: "Hide tasks in Work" }));
+  expect(screen.queryByRole("button", { name: "Work item" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Show tasks in Work" }));
+  expect(screen.getByRole("button", { name: "Work item" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "New task in Work" }));
+  expect(create).toHaveBeenCalledExactlyOnceWith("work");
+
+  await user.click(screen.getByRole("button", { name: "Open Work summary" }));
+  expect(leadingActivate).toHaveBeenCalledTimes(1);
+
+  // Context menu stays suppressed on the independent accessory control.
+  const accessory = screen.getByRole("button", { name: "Accessory" });
+  accessory.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(screen.queryByRole("menu", { name: "Actions for Work" })).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  const workMenu = await screen.findByRole("menu", {
+    name: "Actions for Work",
+  });
+  expect(
+    within(workMenu).getByRole("menuitem", { name: "Move up" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(within(workMenu).getByRole("menuitem", { name: "Pin" }));
+  expect(custom).toHaveBeenCalledTimes(1);
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Workspace settings",
+    }),
+  );
+  const settings = await screen.findByRole("dialog", {
+    name: "Workspace settings",
+  });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(settings).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Work" })).toHaveFocus();
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Pin",
+    }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The action could not run.",
+  );
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Move down",
+    }),
+  );
+  expect(reorderSections).toHaveBeenCalledExactlyOnceWith("group:work", [
+    "pages",
+    "starred",
+    "solo",
+    "group:other",
+    "channels",
+    "group:work",
+    "dms",
+  ]);
+
+  // Removing a shared/mixed workspace prompts before clearing assignments.
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Remove workspace",
+    }),
+  );
+  const removeDialog = await screen.findByRole("dialog", {
+    name: "Remove Work?",
+  });
+  expect(removeDialog).toHaveTextContent(
+    "1 conversation will return to their default sections.",
+  );
+  await waitFor(() =>
+    expect(
+      within(removeDialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  await user.click(
+    within(removeDialog).getByRole("button", { name: "Cancel" }),
+  );
+  await waitFor(() => expect(removeDialog).not.toBeInTheDocument());
+  expect(removeSection).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Work" })).toHaveFocus(),
+  );
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Remove workspace",
+    }),
+  );
+  const retryDialog = await screen.findByRole("dialog", {
+    name: "Remove Work?",
+  });
+  await user.click(
+    within(retryDialog).getByRole("button", { name: "Remove workspace" }),
+  );
+  expect(await within(retryDialog).findByRole("alert")).toHaveTextContent(
+    "Delete refused",
+  );
+
+  await user.click(
+    within(retryDialog).getByRole("button", { name: "Remove workspace" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Work" })).toBeNull(),
+  );
+  expect(removeSection).toHaveBeenCalledTimes(2);
+  // Removing Work from confirmation recovers focus to the surviving sibling workspace.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Other" })).toHaveFocus(),
+  );
+});
+
+it("recovers focus, isolates keyed settings, and prevents duplicate context menus in independent workspaces", async () => {
+  const h = fixture();
+  let saved = {
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "other", name: "Other", order: 1 },
+    ],
+    assignments: {},
+    starred: [] as string[],
+    muted: [] as string[],
+  };
+  let snap: ReturnType<typeof h.session.sidebarPreferences.snapshot> = {
+    status: "idle",
+  };
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  const ensure = vi.fn(async () => {
+    snap = { status: "ready", data: saved };
+    notify();
+  });
+  const reorderSections = vi.fn(
+    async (_sectionId: string, sectionIds: readonly string[]) => {
+      saved = {
+        ...saved,
+        sections: sectionIds
+          .map((id, order) => {
+            const match = saved.sections.find((item) => item.id === id);
+            return match ? { ...match, order } : undefined;
+          })
+          .filter((item): item is NonNullable<typeof item> => item != null),
+      };
+      snap = { status: "ready", data: saved };
+      notify();
+      return saved;
+    },
+  );
+  const removeSection = vi.fn(async (id: string) => {
+    saved = {
+      ...saved,
+      sections: saved.sections.filter((section) => section.id !== id),
+    };
+    snap = { status: "ready", data: saved };
+    notify();
+    return saved;
+  });
+  h.session.sidebarPreferences = {
+    ...h.session.sidebarPreferences,
+    sectionOrderWritable: true,
+    sectionRemovalWritable: true,
+    snapshot: () => snap,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    ensure,
+    reorderSections,
+    removeSection,
+  };
+  let switchId!: (next: string) => void;
+  await h.register({
+    component: ({ ui }) => {
+      const [activeId, setActiveId] = useState("work");
+      switchId = setActiveId;
+      const Workspace = ui.Workspace;
+      assert(Workspace);
+      return (
+        <>
+          <Workspace
+            id={activeId}
+            headerMetadata={<time dateTime="PT2M">2m</time>}
+          >
+            <button type="button">Custom panel item</button>
+          </Workspace>
+          {activeId === "work" && (
+            <Workspace id="other">
+              <button type="button">Other panel item</button>
+            </Workspace>
+          )}
+        </>
+      );
+    },
+  });
+  mount(h);
+  const user = userEvent.setup();
+  expect(ensure).toHaveBeenCalled();
+  expect(await screen.findByRole("button", { name: "Work" })).toBeVisible();
+  expect(screen.getByText("2m")).toBeVisible();
+
+  // Shift+F10 on the header opens the context menu; Shift+F10 inside the
+  // overflow menu must not open a second context menu.
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  const overflowMenu = await screen.findByRole("menu", {
+    name: "Actions for Work",
+  });
+  const firstItem = within(overflowMenu).getAllByRole("menuitem")[0];
+  assert(firstItem);
+  firstItem.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(
+    screen.getAllByRole("menu", { name: "Actions for Work" }),
+  ).toHaveLength(1);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+  // Legacy sectionOrder: undefined passes bare section IDs to reorderSections.
+  const workHeader = screen.getByRole("button", { name: "Work" });
+  workHeader.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await user.click(
+    within(
+      await screen.findByRole("menu", { name: "Actions for Work" }),
+    ).getByRole("menuitem", { name: "Move down" }),
+  );
+  expect(reorderSections).toHaveBeenCalledExactlyOnceWith("work", [
+    "other",
+    "work",
+  ]);
+
+  // Changing props.id without remounting resets settings state via key={props.id}.
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Workspace settings",
+    }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Workspace settings" }),
+  ).toBeVisible();
+  act(() => switchId("other"));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Workspace settings" }),
+    ).toBeNull(),
+  );
+
+  // Removing the last workspace while a custom panel button holds focus
+  // recovers focus to the outer region summary (not document.body).
+  const customItem = screen.getByRole("button", { name: "Custom panel item" });
+  customItem.focus();
+  expect(customItem).toHaveFocus();
+  await act(async () => {
+    await removeSection("other");
+  });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Custom panel item" }),
+    ).toBeNull(),
+  );
+  await waitFor(() =>
+    expect(
+      document.querySelector(
+        '[data-sidebar-section="solo-region:example/work"] summary',
+      ),
+    ).toHaveFocus(),
+  );
+  expect(document.activeElement).not.toBe(document.body);
+
+  // Reappearing after a context-menu unmount must not pop open a ghost menu,
+  // and disappearing while a keyboard-opened context menu is open recovers focus.
+  act(() => {
+    saved = {
+      ...saved,
+      sections: [{ id: "other", name: "Other", order: 0 }],
+    };
+    snap = { status: "ready", data: saved };
+    notify();
+  });
+  const otherHeader = await screen.findByRole("button", { name: "Other" });
+  otherHeader.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(
+    await screen.findByRole("menu", { name: "Actions for Other" }),
+  ).toBeVisible();
+  await act(async () => {
+    await removeSection("other");
+  });
+  await waitFor(() =>
+    expect(
+      document.querySelector(
+        '[data-sidebar-section="solo-region:example/work"] summary',
+      ),
+    ).toHaveFocus(),
+  );
+  act(() => {
+    saved = {
+      ...saved,
+      sections: [{ id: "other", name: "Other", order: 0 }],
+    };
+    snap = { status: "ready", data: saved };
+    notify();
+  });
+  expect(await screen.findByRole("button", { name: "Other" })).toBeVisible();
+  expect(screen.queryByRole("menu", { name: "Actions for Other" })).toBeNull();
+});
+
+it("keeps ui.Workspace absent for secondary composing sources without a composition provider", async () => {
+  const h = fixture();
+  const seen: Record<
+    string,
+    { workspace: boolean; chats: boolean; chatList: boolean }
+  > = {};
+  await h.register(
+    {
+      id: "first",
+      order: 0,
+      composeWorkspaces: true,
+      component: ({ ui }) => {
+        seen.first = {
+          workspace: Boolean(ui.Workspace),
+          chats: Boolean(ui.Chats),
+          chatList: Boolean(ui.ChatList),
+        };
+        return <div>Primary composing</div>;
+      },
+    },
+    "first",
+  );
+  await h.register(
+    {
+      id: "second",
+      order: 1,
+      composeWorkspaces: true,
+      component: ({ ui }) => {
+        seen.second = {
+          workspace: Boolean(ui.Workspace),
+          chats: Boolean(ui.Chats),
+          chatList: Boolean(ui.ChatList),
+        };
+        return <div>Secondary composing</div>;
+      },
+    },
+    "second",
+  );
+  mount(h, undefined, undefined, undefined, (compose) =>
+    compose({
+      ordinary: <div>Ordinary</div>,
+      chats: <div>Chats</div>,
+      chatList: <div>Chat list</div>,
+      workspaces: [],
+    }),
+  );
+  expect(screen.getByText("Primary composing")).toBeVisible();
+  expect(screen.getByText("Secondary composing")).toBeVisible();
+  expect(seen.first).toEqual({
+    workspace: true,
+    chats: true,
+    chatList: true,
+  });
+  expect(seen.second).toEqual({
+    workspace: false,
+    chats: false,
+    chatList: false,
+  });
+});
+
+it("recovers focus to a surviving sidebar heading when an independent region disappears while a dialog or menu is open", async () => {
+  const h = fixture();
+  const saved = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {},
+    starred: [] as string[],
+    muted: [] as string[],
+  };
+  const snap = { status: "ready" as const, data: saved };
+  h.session.sidebarPreferences = {
+    ...h.session.sidebarPreferences,
+    sectionOrderWritable: true,
+    sectionRemovalWritable: true,
+    snapshot: () => snap,
+    subscribe: () => () => {},
+  };
+  const source = await h.register({
+    id: "work",
+    order: 0,
+    component: ({ ui }) => {
+      const Workspace = ui.Workspace;
+      assert(Workspace);
+      return <Workspace id="work" />;
+    },
+  });
+  mount(h, undefined, (children) => (
+    <>
+      {children}
+      <div data-sidebar-section="solo">
+        <details open>
+          <summary tabIndex={0}>Solo</summary>
+        </details>
+      </div>
+    </>
+  ));
+  const user = userEvent.setup();
+  const soloSummary = document.querySelector<HTMLElement>(
+    '[data-sidebar-section="solo"] summary',
+  );
+  assert(soloSummary);
+
+  // Hiding the entire region while Workspace settings holds focus recovers to Solo.
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Workspace settings",
+    }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Workspace settings" }),
+  ).toBeVisible();
+  act(() => {
+    source.update({
+      status: "ready",
+      binding: source.binding(),
+      revision: 2,
+      hidden: true,
+    });
+  });
+  await waitFor(() => expect(soloSummary).toHaveFocus());
+
+  // Reappear, open the context menu by keyboard, and hide the region again.
+  act(() => {
+    source.update({
+      status: "ready",
+      binding: source.binding(),
+      revision: 3,
+      hidden: false,
+    });
+  });
+  const workHeader = await screen.findByRole("button", { name: "Work" });
+  workHeader.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(
+    await screen.findByRole("menu", { name: "Actions for Work" }),
+  ).toBeVisible();
+  act(() => {
+    source.update({
+      status: "ready",
+      binding: source.binding(),
+      revision: 4,
+      hidden: true,
+    });
+  });
+  await waitFor(() => expect(soloSummary).toHaveFocus());
+});
+
+it("moves independent workspaces across their visible neighbors when the region renders a subset", async () => {
+  const h = fixture();
+  let saved = {
+    sections: [
+      { id: "b", name: "Beta", order: 0 },
+      { id: "a", name: "Alpha", order: 1 },
+      { id: "c", name: "Gamma", order: 2 },
+    ],
+    assignments: {},
+    starred: [] as string[],
+    muted: [] as string[],
+    sectionOrder: [
+      "pages",
+      "starred",
+      "solo",
+      "group:b",
+      "group:a",
+      "channels",
+      "group:c",
+      "dms",
+    ],
+  };
+  let snap = { status: "ready" as const, data: saved };
+  const listeners = new Set<() => void>();
+  const reorderSections = vi.fn(
+    async (_sectionId: string, sectionIds: readonly string[]) => {
+      saved = { ...saved, sectionOrder: [...sectionIds] };
+      snap = { status: "ready", data: saved };
+      for (const listener of listeners) listener();
+      return saved;
+    },
+  );
+  h.session.sidebarPreferences = {
+    ...h.session.sidebarPreferences,
+    sectionOrderWritable: true,
+    snapshot: () => snap,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    reorderSections,
+  };
+  await h.register({
+    component: ({ ui }) => {
+      const Workspace = ui.Workspace;
+      assert(Workspace);
+      const [order, setOrder] = useState<readonly string[]>(saved.sectionOrder);
+      useEffect(
+        () =>
+          h.session.sidebarPreferences.subscribe(() => {
+            const next =
+              h.session.sidebarPreferences.snapshot().data?.sectionOrder;
+            if (next) setOrder([...next]);
+          }),
+        [],
+      );
+      const visibleOrder = order
+        .filter((key) => key === "group:a" || key === "group:c")
+        .map((key) => key.slice(6));
+      return (
+        <>
+          {visibleOrder.map((id) => (
+            <Workspace key={id} id={id} />
+          ))}
+        </>
+      );
+    },
+  });
+  mount(h);
+  const user = userEvent.setup();
+
+  // Alpha is first in the region even though Beta precedes it in shared order.
+  await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+  const alphaMenu = await screen.findByRole("menu", {
+    name: "Actions for Alpha",
+  });
+  expect(
+    within(alphaMenu).getByRole("menuitem", { name: "Move up" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(
+    within(alphaMenu).getByRole("menuitem", { name: "Move down" }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+  // Moving Gamma up crosses visible neighbor Alpha (not hidden Beta).
+  await user.click(screen.getByRole("button", { name: "Actions for Gamma" }));
+  const gammaMenu = await screen.findByRole("menu", {
+    name: "Actions for Gamma",
+  });
+  expect(
+    within(gammaMenu).getByRole("menuitem", { name: "Move down" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(
+    within(gammaMenu).getByRole("menuitem", { name: "Move up" }),
+  );
+  expect(reorderSections).toHaveBeenLastCalledWith("group:c", [
+    "pages",
+    "starred",
+    "solo",
+    "group:b",
+    "group:c",
+    "channels",
+    "group:a",
+    "dms",
+  ]);
+
+  // Now Gamma is first visually; moving it down crosses Alpha back into [Beta, Alpha, Gamma].
+  await user.click(screen.getByRole("button", { name: "Actions for Gamma" }));
+  const movedGammaMenu = await screen.findByRole("menu", {
+    name: "Actions for Gamma",
+  });
+  await user.click(
+    within(movedGammaMenu).getByRole("menuitem", { name: "Move down" }),
+  );
+  expect(reorderSections).toHaveBeenLastCalledWith("group:c", [
+    "pages",
+    "starred",
+    "solo",
+    "group:b",
+    "group:a",
+    "channels",
+    "group:c",
+    "dms",
   ]);
 });

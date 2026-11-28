@@ -1,6 +1,7 @@
 import { test as appTest } from "./fixture.mjs";
 import { test, expect } from "./playwright-test.mjs";
 import {
+  clickSidebarHeadingAction,
   closeSettings,
   openPage,
   openSettings,
@@ -323,6 +324,320 @@ appTest.describe("workspace composition", () => {
       await expect(
         work.getByRole("button", { name: "Beta", exact: true }),
       ).toHaveCount(0);
+    },
+  );
+});
+
+appTest.describe("independent workspace controls", () => {
+  const ordinary = "61000000-0000-4000-8000-000000000001";
+  const owned = "61000000-0000-4000-8000-000000000002";
+  appTest.use({
+    viewport: { width: 1440, height: 1000 },
+    productionBroker: true,
+    channelIds: ["alpha", "beta", ordinary, owned],
+    channelNames: {
+      alpha: "Alpha",
+      beta: "Beta",
+      [ordinary]: "Ordinary chat",
+      [owned]: "Owned item",
+    },
+    soloChannels: ["beta", ordinary, owned],
+    ownSoloChannels: ["beta", ordinary, owned],
+    savedSidebar: [{ id: "mixed", name: "Mixed", order: 1 }],
+    historyCounts: { alpha: 1, beta: 1, [ordinary]: 1, [owned]: 1 },
+  });
+
+  // Real pointer/keyboard disclosure, creation, workspace routing and reload
+  // persistence across both sections require the built browser shell.
+  appTest(
+    "keeps Solo and an independent source separate with native workspace controls and new-workspace routing across reload",
+    async ({ page, app }) => {
+      await page.goto(
+        `${app.origin}/?solo-region-fixture&independent-workspaces`,
+      );
+      await openPage(page, "Messages");
+      const sidebar = page.getByRole("navigation", {
+        name: "Subscribed channels",
+      });
+      const solo = sidebar.locator('[data-sidebar-section="solo"]');
+      const items = sidebar.locator(
+        '[data-sidebar-section="solo-region:fixture.solo-region/work"]',
+      );
+      const workGroup = sidebar.locator('[data-sidebar-section="group:work"]');
+      const mixedGroup = sidebar.locator(
+        '[data-sidebar-section="group:mixed"]',
+      );
+
+      // Put Alpha in Mixed so Mixed is a real mixed/Team workspace, and classify
+      // Owned item into the independent source.
+      await sidebar
+        .locator('button[data-channel-id="alpha"]')
+        .first()
+        .click({ button: "right" });
+      await page
+        .getByRole("menuitem", { name: "Move to…", exact: true })
+        .hover();
+      await page
+        .getByRole("menuitemradio", { name: "Mixed", exact: true })
+        .click();
+      await expect(
+        mixedGroup.getByRole("button", { name: "Alpha", exact: true }),
+      ).toBeVisible();
+      await page.evaluate((id) => window.fixtureSoloRegion.classify(id), owned);
+
+      await expect(
+        items.getByRole("button", { name: "Owned item", exact: true }),
+      ).toBeVisible();
+      await expect(
+        solo.getByRole("button", { name: "Ordinary chat", exact: true }),
+      ).toBeVisible();
+      await expect(
+        workGroup.getByRole("button", { name: "Beta", exact: true }),
+      ).toBeVisible();
+      await expect(items.locator('[data-solo-workspace="work"]')).toBeVisible();
+      await expect(
+        items.locator('[data-solo-workspace="mixed"]'),
+      ).toBeVisible();
+
+      const expectUniqueRows = async () => {
+        await expect(
+          sidebar.locator(`[data-solo-destination-id="${ordinary}"]`),
+        ).toHaveCount(1);
+        await expect(
+          sidebar.locator('[data-solo-destination-id="beta"]'),
+        ).toHaveCount(1);
+        await expect(
+          sidebar.locator(`[data-solo-destination-id="${owned}"]`),
+        ).toHaveCount(1);
+        await expect(
+          items.locator(
+            `[data-solo-destination-id="${ordinary}"], [data-solo-destination-id="beta"]`,
+          ),
+        ).toHaveCount(0);
+        await expect(
+          solo.locator(`[data-solo-destination-id="${owned}"]`),
+        ).toHaveCount(0);
+      };
+      await expectUniqueRows();
+
+      // Close Items by pointer; Solo navigation and host New chat stay usable.
+      const itemsSummary = items.locator("summary");
+      const soloSummary = solo.locator("summary");
+      await itemsSummary.click();
+      await expect(
+        items.getByRole("button", { name: "Owned item", exact: true }),
+      ).toBeHidden();
+      await solo
+        .getByRole("button", { name: "Ordinary chat", exact: true })
+        .click();
+      await expect(
+        page.getByRole("region", { name: "Chat Ordinary chat", exact: true }),
+      ).toBeVisible();
+      const newSoloChat = solo.getByRole("button", {
+        name: "New Solo chat",
+        exact: true,
+      });
+      await clickSidebarHeadingAction(newSoloChat);
+      await expect(
+        page.getByRole("heading", { name: "New chat", exact: true }),
+      ).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              window.fixtureNavigation.snapshot().entry.target.route?.params,
+          ),
+        )
+        .toEqual({ kind: "solo-draft" });
+
+      // Reopen Items and close Solo by keyboard; Items navigation and source New stay usable.
+      await itemsSummary.focus();
+      await page.keyboard.press("Enter");
+      await expect(
+        items.getByRole("button", { name: "Owned item", exact: true }),
+      ).toBeVisible();
+      await soloSummary.focus();
+      await page.keyboard.press("Enter");
+      await expect(
+        solo.getByRole("button", { name: "Ordinary chat", exact: true }),
+      ).toBeHidden();
+      await items
+        .getByRole("button", { name: "Owned item", exact: true })
+        .click();
+      await expect(
+        page.getByRole("region", { name: "Chat Owned item", exact: true }),
+      ).toBeVisible();
+      const newItem = items.getByRole("button", {
+        name: "New item",
+        exact: true,
+      });
+      await clickSidebarHeadingAction(newItem);
+      await expect(
+        page.getByRole("heading", { name: "New chat", exact: true }),
+      ).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              window.fixtureNavigation.snapshot().entry.target.route?.params,
+          ),
+        )
+        .toEqual({
+          kind: "solo-draft",
+          region: "buzz.region:fixture.solo-region:work",
+        });
+
+      // Native workspace disclosure inside Items stays independent of unified Work.
+      const itemsWork = items.locator('[data-solo-workspace="work"]');
+      await itemsWork
+        .getByRole("button", { name: "Hide tasks in Work", exact: true })
+        .click();
+      await expect(
+        itemsWork.getByRole("button", { name: "Work task", exact: true }),
+      ).toBeHidden();
+      await expect(
+        workGroup.getByRole("button", { name: "Beta", exact: true }),
+      ).toBeVisible();
+
+      // Reopen Solo by pointer.
+      await soloSummary.click();
+      await expect(
+        solo.getByRole("button", { name: "Ordinary chat", exact: true }),
+      ).toBeVisible();
+
+      // Create a workspace via New options -> New workspace and verify openWorkspace routing.
+      await page
+        .getByRole("button", { name: "New options", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "New workspace", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "New workspace",
+        exact: true,
+      });
+      await dialog
+        .getByRole("textbox", { name: "Name", exact: true })
+        .fill("Roadmap");
+      await dialog.getByRole("button", { name: "Create", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+
+      const roadmapHeading = items.getByRole("button", {
+        name: "Roadmap",
+        exact: true,
+      });
+      await expect(roadmapHeading).toBeVisible();
+      await expect(roadmapHeading).toHaveAttribute("aria-current", "page");
+      await expect(
+        sidebar.locator('[data-sidebar-section^="group:"] summary', {
+          hasText: "Roadmap",
+        }),
+      ).toHaveCount(1);
+      await expect(
+        items.locator("[data-solo-workspace]", { hasText: "Roadmap" }),
+      ).toHaveCount(1);
+
+      // Reload and verify persisted workspace selection, collapse state, uniqueness and reopening.
+      await page.reload();
+      await expect(
+        solo.getByRole("button", { name: "Ordinary chat", exact: true }),
+      ).toBeVisible();
+      await expect(
+        items.getByRole("button", { name: "Owned item", exact: true }),
+      ).toBeVisible();
+      await expectUniqueRows();
+
+      const reloadedRoadmap = items.getByRole("button", {
+        name: "Roadmap",
+        exact: true,
+      });
+      await expect(reloadedRoadmap).toBeVisible();
+      await expect(reloadedRoadmap).toHaveAttribute("aria-current", "page");
+
+      // Work stays collapsed inside Items while unified Work stays open; keyboard reopens it.
+      const reloadedItemsWork = items.locator('[data-solo-workspace="work"]');
+      const showWork = reloadedItemsWork.getByRole("button", {
+        name: "Show tasks in Work",
+        exact: true,
+      });
+      await expect(showWork).toHaveAttribute("aria-expanded", "false");
+      await expect(
+        workGroup.getByRole("button", { name: "Beta", exact: true }),
+      ).toBeVisible();
+      await showWork.focus();
+      await page.keyboard.press("Enter");
+      await expect(
+        reloadedItemsWork.getByRole("button", {
+          name: "Work task",
+          exact: true,
+        }),
+      ).toBeVisible();
+
+      // Reopen destinations in both sections and select a workspace after reload.
+      await items.getByRole("button", { name: "Mixed", exact: true }).click();
+      await expect(
+        items.getByRole("button", { name: "Mixed", exact: true }),
+      ).toHaveAttribute("aria-current", "page");
+      await reloadedRoadmap.focus();
+      await page.keyboard.press("Enter");
+      await expect(reloadedRoadmap).toHaveAttribute("aria-current", "page");
+      const roadmapCard = items.locator("[data-solo-workspace]", {
+        hasText: "Roadmap",
+      });
+      await expect(roadmapCard).toBeVisible();
+      const roadmapId = await roadmapCard.getAttribute("data-solo-workspace");
+      // Native workspace header menu, Workspace settings, and New task work in both dark and light modes.
+      for (const theme of ["dark", "light"]) {
+        await page.emulateMedia({ colorScheme: theme });
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-color-mode",
+          theme,
+        );
+        await reloadedRoadmap.hover();
+        await roadmapCard
+          .getByRole("button", { name: "Actions for Roadmap", exact: true })
+          .click();
+        await page
+          .getByRole("menuitem", { name: "Workspace settings", exact: true })
+          .click();
+        const settings = page.getByRole("dialog", {
+          name: "Workspace settings",
+          exact: true,
+        });
+        await expect(settings).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect(settings).toHaveCount(0);
+        await expect(reloadedRoadmap).toBeFocused();
+        await reloadedRoadmap.hover();
+        await roadmapCard
+          .getByRole("button", { name: "New task in Roadmap", exact: true })
+          .click();
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                window.fixtureNavigation.snapshot().entry.target.route?.params,
+            ),
+          )
+          .toEqual({
+            kind: "solo-draft",
+            region: "buzz.region:fixture.solo-region:work",
+            project: roadmapId,
+          });
+      }
+      await solo
+        .getByRole("button", { name: "Ordinary chat", exact: true })
+        .click();
+      await expect(
+        page.getByRole("region", { name: "Chat Ordinary chat", exact: true }),
+      ).toBeVisible();
+      await items
+        .getByRole("button", { name: "Owned item", exact: true })
+        .click();
+      await expect(
+        page.getByRole("region", { name: "Chat Owned item", exact: true }),
+      ).toBeVisible();
+      await expectUniqueRows();
     },
   );
 });

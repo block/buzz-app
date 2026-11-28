@@ -652,6 +652,99 @@ it("skips a disabled source when opening a newly created workspace", async () =>
   );
 });
 
+it("exposes independentWorkspaces and routes new workspaces to an active non-composing source", async () => {
+  const h = fixture();
+  expect(h.service.independentWorkspaces).toBe(true);
+  const openWorkspace = vi.fn(async () => {});
+  await h.register({ order: -1, id: "plain" }, "plain");
+  const source = await h.register({ order: 0, openWorkspace });
+
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(true);
+  expect(openWorkspace).toHaveBeenCalledExactlyOnceWith(
+    source.binding(),
+    "created-workspace",
+  );
+
+  source.update({ status: "loading", binding: source.binding(), revision: 2 });
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(false);
+
+  source.update({
+    status: "unavailable",
+    binding: source.binding(),
+    revision: 3,
+  });
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(false);
+
+  source.update({
+    status: "ready",
+    binding: source.binding(),
+    revision: 4,
+    hidden: true,
+  });
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(false);
+
+  const composingOpen = vi.fn(async () => {});
+  const composing = await h.register(
+    {
+      order: 1,
+      id: "composing",
+      composeWorkspaces: true,
+      openWorkspace: composingOpen,
+    },
+    "composing",
+  );
+  composing.update({
+    status: "loading",
+    binding: composing.binding(),
+    revision: 2,
+  });
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).rejects.toThrow("Workspace selection is not ready");
+  expect(composingOpen).not.toHaveBeenCalled();
+});
+
+it("prefers a ready openWorkspace source over an earlier unready one and allows composing sources without openWorkspace", async () => {
+  const h = fixture();
+  const brokenOpen = vi.fn(async () => {});
+  const readyOpen = vi.fn(async () => {});
+  await h.register(
+    { order: -2, id: "composing-only", composeWorkspaces: true },
+    "composing",
+  );
+  const broken = await h.register(
+    { order: -1, id: "broken", openWorkspace: brokenOpen },
+    "broken",
+  );
+  broken.update({
+    status: "unavailable",
+    binding: broken.binding(),
+    revision: 2,
+  });
+  const ready = await h.register({
+    order: 0,
+    id: "ready",
+    openWorkspace: readyOpen,
+  });
+
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(true);
+  expect(brokenOpen).not.toHaveBeenCalled();
+  expect(readyOpen).toHaveBeenCalledExactlyOnceWith(
+    ready.binding(),
+    "created-workspace",
+  );
+});
+
 it.each(["starting", "failed", "paused", "stale"] as const)(
   "uses the installed plugin's current activation for recovery (%s)",
   (state) => {

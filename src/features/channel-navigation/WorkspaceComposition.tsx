@@ -1,15 +1,54 @@
-import { createContext, useContext, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type SyntheticEvent,
+} from "react";
+import type { RelaySession } from "../relay/session";
+import { Collapsible } from "@base-ui/react/collapsible";
 import {
   NavigationCard,
   NavigationItem,
 } from "../../shared/design-system/ui/NavigationItem";
+import { Button } from "../../shared/design-system/ui/Button";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { MenuItem } from "../../shared/design-system/ui/Menu";
-import type { NavigationSectionTrailing } from "../../shared/design-system/ui/NavigationSection";
-import { Cube3dSphereIcon, PlusIcon } from "../../shared/design-system/icons";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuIcon,
+  MenuItem,
+  MenuPopup,
+  MenuRoot,
+  MenuSeparator,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
+import {
+  NavigationSectionHeading,
+  type NavigationSectionTrailing,
+} from "../../shared/design-system/ui/NavigationSection";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  Cube3dSphereIcon,
+  DotsThreeIcon,
+  PlusIcon,
+  TrashIcon,
+} from "../../shared/design-system/icons";
+import { workspaceSectionOrder } from "../relay/sidebar-preferences";
+import { WorkspaceSettings } from "../solo/WorkspaceSettings";
 import { SoloDisclosure } from "./SoloDisclosure";
 import { RegionDestinationContext } from "./SoloDestination";
+import { soloNavigationFor } from "./solo-navigation";
 import type { SoloWorkspaceProps } from "./solo-navigation-contract";
+import channelStyles from "../../bundled/channels/Channels.module.css";
+import workspaceStyles from "../../bundled/channels/SoloWorkspaces.module.css";
 import styles from "./WorkspaceComposition.module.css";
 
 export type WorkspaceHeaderTrailing = NavigationSectionTrailing & {
@@ -41,6 +80,23 @@ export const WorkspaceCompositionContext = createContext<
   WorkspaceComposition | undefined
 >(undefined);
 
+export type RegionWorkspaceHost = Readonly<{
+  sectionKey: string;
+  collapsed: readonly string[];
+  toggle(key: string, open: boolean): void;
+}>;
+export const RegionWorkspaceHostContext = createContext<
+  RegionWorkspaceHost | undefined
+>(undefined);
+
+const noSubscription = () => () => {};
+const emptyPreferencesSnapshot: ReturnType<
+  RelaySession["sidebarPreferences"]["snapshot"]
+> = {
+  status: "idle",
+};
+const readEmptyPreferences = () => emptyPreferencesSnapshot;
+
 /** Ordinary chats remain available in task views that group by status or time. */
 export function RegionChats({ all = false }: { all?: boolean }) {
   const parts = useContext(WorkspaceCompositionContext);
@@ -53,11 +109,93 @@ export function RegionChatList() {
   return list ? <div data-solo-chat-list="">{list}</div> : null;
 }
 
+function renderWorkspaceHeading({
+  id,
+  title,
+  selected,
+  onSelect,
+  leading,
+  disclosure,
+}: {
+  id: string;
+  title: string;
+  selected?: boolean | undefined;
+  onSelect?: (() => void) | undefined;
+  leading: SoloWorkspaceProps["headerLeading"];
+  disclosure: ReactNode;
+}) {
+  return (
+    <div className={styles.heading}>
+      {leading && disclosure}
+      <NavigationItem
+        label={title}
+        icon={leading && <Cube3dSphereIcon size={14} aria-hidden="true" />}
+        selected={!!selected}
+        data-solo-workspace-id={id}
+        onClick={() => onSelect?.()}
+      />
+      {!leading && disclosure}
+    </div>
+  );
+}
+
+function WorkspaceSourceMenuActions({
+  leading,
+  onNewTask,
+  headerMenuActions,
+  runAction,
+}: {
+  leading: SoloWorkspaceProps["headerLeading"];
+  onNewTask?: (() => void) | undefined;
+  headerMenuActions?: SoloWorkspaceProps["headerMenuActions"];
+  runAction?:
+    | ((action: () => void | Promise<void>) => Promise<void>)
+    | undefined;
+}) {
+  return (
+    <>
+      {leading && (
+        <MenuItem onClick={leading.onActivate}>{leading.label}</MenuItem>
+      )}
+      {onNewTask && <MenuItem onClick={onNewTask}>New task</MenuItem>}
+      {headerMenuActions?.map((action) => (
+        <MenuItem
+          key={action.id}
+          onClick={() => void runAction?.(() => action.onSelect())}
+        >
+          {action.label}
+        </MenuItem>
+      ))}
+    </>
+  );
+}
+
+function WorkspaceNewTaskButton({
+  title,
+  onNewTask,
+}: {
+  title: string;
+  onNewTask?: (() => void) | undefined;
+}) {
+  if (!onNewTask) return null;
+  return (
+    <IconButton
+      size="compact"
+      data-solo-workspace-new-task=""
+      aria-label={`New task in ${title}`}
+      title="New task"
+      icon={<PlusIcon size={15} strokeWidth={2.5} />}
+      onClick={onNewTask}
+    />
+  );
+}
+
 /** One shared workspace surface. A source supplies its tasks and selection. */
 export function RegionWorkspace(props: SoloWorkspaceProps) {
   const parts = useContext(WorkspaceCompositionContext);
   const destination = useContext(RegionDestinationContext);
-  const workspace = parts?.workspaces.find(
+  if (!parts) return <IndependentRegionWorkspace key={props.id} {...props} />;
+  const workspace = parts.workspaces.find(
     (item) => item.id === (props.id ?? ""),
   );
   if (!workspace || !props.id) return null;
@@ -77,21 +215,14 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
       onToggle={() => workspace.toggle(!workspace.open)}
     />
   );
-  const primary = props.id ? (
-    <div className={styles.heading}>
-      {leading && disclosure}
-      <NavigationItem
-        label={title}
-        icon={leading && <Cube3dSphereIcon size={14} aria-hidden="true" />}
-        selected={!!props.selected}
-        data-solo-workspace-id={workspace.id}
-        onClick={() => props.onSelect?.()}
-      />
-      {!leading && disclosure}
-    </div>
-  ) : (
-    disclosure
-  );
+  const primary = renderWorkspaceHeading({
+    id: workspace.id,
+    title,
+    selected: props.selected,
+    onSelect: props.onSelect,
+    leading,
+    disclosure,
+  });
   return workspace.frame(
     <div data-solo-workspace={workspace.id}>
       <NavigationCard
@@ -102,33 +233,14 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
         {workspace.header(
           primary,
           props.onNewTask && (
-            <IconButton
-              size="compact"
-              data-solo-workspace-new-task=""
-              aria-label={`New task in ${title}`}
-              title="New task"
-              icon={<PlusIcon size={15} strokeWidth={2.5} />}
-              onClick={props.onNewTask}
-            />
+            <WorkspaceNewTaskButton title={title} onNewTask={props.onNewTask} />
           ),
-          <>
-            {leading && (
-              <MenuItem onClick={leading.onActivate}>{leading.label}</MenuItem>
-            )}
-            {props.onNewTask && (
-              <MenuItem onClick={props.onNewTask}>New task</MenuItem>
-            )}
-            {props.headerMenuActions?.map((action) => (
-              <MenuItem
-                key={action.id}
-                onClick={() =>
-                  void destination?.runAction(() => action.onSelect())
-                }
-              >
-                {action.label}
-              </MenuItem>
-            ))}
-          </>,
+          <WorkspaceSourceMenuActions
+            leading={leading}
+            onNewTask={props.onNewTask}
+            headerMenuActions={props.headerMenuActions}
+            runAction={destination?.runAction}
+          />,
           {
             accessory,
             metadata: props.headerMetadata,
@@ -137,5 +249,610 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
         )}
       </NavigationCard>
     </div>,
+  );
+}
+
+function independentFallbackCandidates(
+  sectionKey: string | undefined,
+  exclude?: Element | null,
+) {
+  const section = sectionKey
+    ? document.querySelector(
+        `[data-sidebar-section="${CSS.escape(sectionKey)}"]`,
+      )
+    : null;
+  const candidates = [
+    ...(section
+      ? section.querySelectorAll<HTMLElement>("[data-solo-workspace-id]")
+      : []),
+    section?.querySelector<HTMLElement>("summary") ?? null,
+    document.querySelector<HTMLElement>("[data-solo-heading]"),
+    document.querySelector<HTMLElement>(
+      '[data-sidebar-section="solo"] summary',
+    ),
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-sidebar-section^="solo-region:"] summary',
+    ),
+    ...document.querySelectorAll<HTMLElement>("[data-sidebar-section] summary"),
+  ];
+  return candidates.filter(
+    (candidate): candidate is HTMLElement =>
+      !!candidate &&
+      !exclude?.contains(candidate) &&
+      !candidate.closest("[hidden], [inert]"),
+  );
+}
+
+function independentFallbackFocus(
+  sectionKey: string | undefined,
+  exclude?: Element | null,
+) {
+  return independentFallbackCandidates(sectionKey, exclude)[0] ?? null;
+}
+
+function focusIndependentFallback(
+  sectionKey: string | undefined,
+  exclude?: Element | null,
+) {
+  for (const candidate of independentFallbackCandidates(sectionKey, exclude)) {
+    candidate.focus({ preventScroll: true });
+    if (document.activeElement === candidate) return;
+  }
+}
+
+function visibleRegionWorkspaceIds(
+  sectionKey: string | undefined,
+  groupIds: ReadonlySet<string>,
+) {
+  if (!sectionKey) return [];
+  const section = document.querySelector(
+    `[data-sidebar-section="${CSS.escape(sectionKey)}"]`,
+  );
+  if (!section) return [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const node of section.querySelectorAll<HTMLElement>(
+    "[data-solo-workspace]",
+  )) {
+    const id = node.dataset.soloWorkspace;
+    if (
+      !id ||
+      seen.has(id) ||
+      !groupIds.has(id) ||
+      node.closest("[hidden], [inert]")
+    )
+      continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/** Native workspace chrome for an independent source without consuming ordinary chats. */
+function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
+  const destination = useContext(RegionDestinationContext);
+  const host = useContext(RegionWorkspaceHostContext);
+  const preferences = destination?.session.sidebarPreferences;
+  const snapshot = useSyncExternalStore(
+    preferences?.subscribe ?? noSubscription,
+    preferences?.snapshot ?? readEmptyPreferences,
+    preferences?.snapshot ?? readEmptyPreferences,
+  );
+  useEffect(() => {
+    if (preferences && snapshot.status === "idle" && destination?.active())
+      void preferences.ensure();
+  }, [preferences, snapshot.status, destination]);
+  const panelId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const cancelRemove = useRef<HTMLButtonElement>(null);
+  const pendingDialog = useRef<"settings" | "remove" | undefined>(undefined);
+  const deletingRef = useRef(false);
+  const ownsFocusRef = useRef(false);
+  const overflowOpenRef = useRef(false);
+  const contextOpenRef = useRef(false);
+  const settingsOpenRef = useRef(false);
+  const removeOpenRef = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [contextMenuAnchor, setContextMenuAnchor] = useState<HTMLElement>();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [removeError, setRemoveError] = useState("");
+  overflowOpenRef.current = overflowMenuOpen;
+  settingsOpenRef.current = settingsOpen;
+  removeOpenRef.current = removeOpen;
+  contextOpenRef.current = contextMenuOpen;
+  const sectionKey = host?.sectionKey;
+  const order = workspaceSectionOrder(snapshot.data);
+  const sections = snapshot.data?.sections ?? [];
+  const groups = snapshot.data?.sectionOrder
+    ? order.flatMap((key) => sections.filter(({ id }) => key === `group:${id}`))
+    : sections;
+  const groupIndex = props.id
+    ? groups.findIndex((group) => group.id === props.id)
+    : -1;
+  const section = groupIndex >= 0 ? groups[groupIndex] : undefined;
+  const rendered = Boolean(
+    destination &&
+      host &&
+      preferences &&
+      props.id &&
+      destination.active() &&
+      section,
+  );
+  useEffect(() => {
+    if (rendered) return;
+    pendingDialog.current = undefined;
+    if (settingsOpen) setSettingsOpen(false);
+    if (removeOpen) setRemoveOpen(false);
+    if (removeError) setRemoveError("");
+    if (overflowMenuOpen) setOverflowMenuOpen(false);
+    if (contextMenuOpen) setContextMenuOpen(false);
+    if (contextMenuAnchor) setContextMenuAnchor(undefined);
+  }, [
+    rendered,
+    settingsOpen,
+    removeOpen,
+    removeError,
+    overflowMenuOpen,
+    contextMenuOpen,
+    contextMenuAnchor,
+  ]);
+  useLayoutEffect(() => {
+    if (!rendered) return;
+    const root = rootRef.current;
+    return () => {
+      const active = document.activeElement;
+      const inOwnRoot =
+        root?.contains(active) &&
+        !active?.closest("[data-solo-destination-root]");
+      const owned =
+        inOwnRoot ||
+        ownsFocusRef.current ||
+        overflowOpenRef.current ||
+        contextOpenRef.current ||
+        pendingDialog.current !== undefined ||
+        settingsOpenRef.current ||
+        removeOpenRef.current ||
+        deletingRef.current;
+      ownsFocusRef.current = false;
+      overflowOpenRef.current = false;
+      contextOpenRef.current = false;
+      pendingDialog.current = undefined;
+      if (!owned) return;
+      queueMicrotask(() => {
+        if (document.activeElement !== document.body) return;
+        focusIndependentFallback(sectionKey, root);
+      });
+    };
+  }, [sectionKey, rendered]);
+  if (
+    !destination ||
+    !host ||
+    !preferences ||
+    !section ||
+    !destination.active()
+  )
+    return null;
+  const title = section.name;
+  const collapseKey = `${host.sectionKey}:workspace:${section.id}`;
+  const open = !host.collapsed.includes(collapseKey);
+  const leading = props.headerLeading
+    ? {
+        ...props.headerLeading,
+        onActivate: () => {
+          if (destination.active()) props.headerLeading?.onActivate();
+        },
+      }
+    : undefined;
+  const onSelect = props.onSelect
+    ? () => {
+        if (destination.active()) props.onSelect?.();
+      }
+    : undefined;
+  const onNewTask = props.onNewTask
+    ? () => {
+        if (destination.active()) props.onNewTask?.();
+      }
+    : undefined;
+  const accessory =
+    props.headerAccessory != null && typeof props.headerAccessory !== "boolean"
+      ? props.headerAccessory
+      : undefined;
+  const hasInteractiveDecoration = !!leading || accessory != null;
+  const orderWritable = preferences.sectionOrderWritable;
+  const groupIds = new Set(groups.map((group) => group.id));
+  const visibleIds =
+    overflowMenuOpen || contextMenuOpen
+      ? visibleRegionWorkspaceIds(sectionKey, groupIds)
+      : [];
+  const visibleIndex = visibleIds.indexOf(section.id);
+  const canMoveUp = visibleIndex > 0;
+  const canMoveDown = visibleIndex >= 0 && visibleIndex < visibleIds.length - 1;
+  const moveWorkspace = (direction: -1 | 1) => {
+    if (!destination.active() || !orderWritable || deletingRef.current) return;
+    const currentVisible = visibleRegionWorkspaceIds(sectionKey, groupIds);
+    const at = currentVisible.indexOf(section.id);
+    const neighborId = at >= 0 ? currentVisible[at + direction] : undefined;
+    if (!neighborId) return;
+    const ids = groups
+      .map((group) => group.id)
+      .filter((key) => key !== section.id);
+    const neighborIndex = ids.indexOf(neighborId);
+    if (neighborIndex < 0) return;
+    ids.splice(
+      direction < 0 ? neighborIndex : neighborIndex + 1,
+      0,
+      section.id,
+    );
+    if (!snapshot.data?.sectionOrder) {
+      void preferences.reorderSections(section.id, ids).catch(() => {});
+      return;
+    }
+    let next = 0;
+    const reordered = order.map((key) =>
+      key.startsWith("group:") ? `group:${ids[next++]}` : key,
+    );
+    void preferences
+      .reorderSections(`group:${section.id}`, reordered)
+      .catch(() => {});
+  };
+  const assignedCount = (() => {
+    if (!removeOpen) return undefined;
+    const list = destination.session.channels.list();
+    const assignments = snapshot.data?.assignments ?? {};
+    const starred = new Set(snapshot.data?.starred);
+    const managed = soloNavigationFor(destination.session)?.snapshot().managed;
+    const count = list.channels.filter(
+      (channel) =>
+        !channel.archived &&
+        !channel.hidden &&
+        !starred.has(channel.id) &&
+        !managed?.has(channel.id) &&
+        assignments[channel.id] === section.id,
+    ).length;
+    if (
+      list.status !== "ready" &&
+      count === 0 &&
+      Object.values(assignments).includes(section.id)
+    )
+      return undefined;
+    return count;
+  })();
+  const confirmRemove = async () => {
+    if (!destination.active() || deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setRemoveError("");
+    try {
+      await preferences.removeSection(section.id);
+      host.toggle(collapseKey, true);
+      if (mounted.current) setRemoveOpen(false);
+    } catch (error) {
+      if (mounted.current)
+        setRemoveError(
+          error instanceof Error
+            ? error.message
+            : "Workspace could not be removed. Try again.",
+        );
+    } finally {
+      deletingRef.current = false;
+      if (mounted.current) setDeleting(false);
+    }
+  };
+  const restoreFocus = () => {
+    const header = headerRef.current;
+    if (header?.isConnected && !header.closest("[hidden], [inert]")) {
+      const target = header.querySelector<HTMLElement>(
+        "[data-solo-workspace-id]",
+      );
+      if (target) return target;
+    }
+    return independentFallbackFocus(sectionKey, rootRef.current) ?? false;
+  };
+  const menuFinalFocus = () =>
+    settingsOpenRef.current || removeOpenRef.current
+      ? (false as const)
+      : restoreFocus();
+  const finishOpeningDialog = (isOpen: boolean) => {
+    if (isOpen || !pendingDialog.current) return;
+    const next = pendingDialog.current;
+    pendingDialog.current = undefined;
+    if (!mounted.current || !destination.active() || deletingRef.current)
+      return;
+    if (next === "settings") setSettingsOpen(true);
+    else {
+      setRemoveError("");
+      setRemoveOpen(true);
+    }
+  };
+  const ownsContextTarget = ({ target, currentTarget }: SyntheticEvent) =>
+    target instanceof Element &&
+    currentTarget.contains(target) &&
+    !target.closest(
+      "[data-solo-workspace-accessory], [data-solo-leading-action]",
+    );
+  const menuContent = (
+    <>
+      <WorkspaceSourceMenuActions
+        leading={leading}
+        onNewTask={onNewTask}
+        headerMenuActions={props.headerMenuActions}
+        runAction={destination.runAction}
+      />
+      <MenuItem
+        disabled={!orderWritable || deleting || !canMoveUp}
+        onClick={() => moveWorkspace(-1)}
+      >
+        <MenuIcon>
+          <ArrowUpIcon size={14} />
+        </MenuIcon>
+        Move up
+      </MenuItem>
+      <MenuItem
+        disabled={!orderWritable || deleting || !canMoveDown}
+        onClick={() => moveWorkspace(1)}
+      >
+        <MenuIcon>
+          <ArrowDownIcon size={14} />
+        </MenuIcon>
+        Move down
+      </MenuItem>
+      <MenuItem
+        disabled={deleting}
+        onClick={() => {
+          if (!destination.active() || deletingRef.current) return;
+          pendingDialog.current = "settings";
+        }}
+      >
+        Workspace settings
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem
+        tone="danger"
+        data-delete-solo-project=""
+        disabled={!preferences.sectionRemovalWritable || deleting}
+        onClick={() => {
+          if (!destination.active() || deletingRef.current) return;
+          setRemoveError("");
+          pendingDialog.current = "remove";
+        }}
+      >
+        <MenuIcon>
+          <TrashIcon size={14} />
+        </MenuIcon>
+        Remove workspace
+      </MenuItem>
+    </>
+  );
+  const overflow = (
+    <MenuRoot
+      open={overflowMenuOpen}
+      onOpenChange={(next) => {
+        overflowOpenRef.current = next;
+        if (next) pendingDialog.current = undefined;
+        setOverflowMenuOpen(next);
+      }}
+      onOpenChangeComplete={finishOpeningDialog}
+    >
+      <MenuTrigger
+        render={(triggerProps) => (
+          <IconButton
+            {...triggerProps}
+            variant="bare"
+            size="compact"
+            aria-label={`Actions for ${title}`}
+            icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+          />
+        )}
+      />
+      <MenuPopup
+        aria-label={`Actions for ${title}`}
+        align="end"
+        finalFocus={menuFinalFocus}
+      >
+        {menuContent}
+      </MenuPopup>
+    </MenuRoot>
+  );
+  const disclosure = (
+    <SoloDisclosure
+      leading={leading}
+      label={`${open ? "Hide" : "Show"} tasks in ${title}`}
+      summary=""
+      expanded={open}
+      controls={panelId}
+      onToggle={() => host.toggle(collapseKey, !open)}
+    />
+  );
+  const newTask = onNewTask && (
+    <WorkspaceNewTaskButton title={title} onNewTask={onNewTask} />
+  );
+  return (
+    <Collapsible.Root
+      className={`${workspaceStyles.project} ${channelStyles.channelSection}`}
+      data-project=""
+      open={open}
+      onOpenChange={(next) => host.toggle(collapseKey, next)}
+    >
+      <div
+        ref={rootRef}
+        data-solo-workspace={section.id}
+        onFocusCapture={(event) => {
+          ownsFocusRef.current = !(
+            event.target instanceof Element &&
+            event.target.closest("[data-solo-destination-root]")
+          );
+        }}
+        onBlurCapture={(event) => {
+          const next = event.relatedTarget;
+          if (!(next instanceof Node) || !event.currentTarget.contains(next))
+            ownsFocusRef.current = false;
+        }}
+      >
+        <NavigationCard
+          tone="tonal"
+          data-drop-target={props.dropTarget || undefined}
+          body={
+            <Collapsible.Panel
+              keepMounted
+              className={workspaceStyles.projectPanel}
+              id={panelId}
+            >
+              {props.children}
+            </Collapsible.Panel>
+          }
+        >
+          <ContextMenuRoot
+            open={contextMenuOpen}
+            onOpenChange={(next) => {
+              contextOpenRef.current = next;
+              if (next) pendingDialog.current = undefined;
+              setContextMenuOpen(next);
+              if (!next) setContextMenuAnchor(undefined);
+            }}
+            onOpenChangeComplete={finishOpeningDialog}
+          >
+            <ContextMenuTrigger
+              render={
+                <div
+                  ref={headerRef}
+                  className={workspaceStyles.workspaceHeader}
+                  data-solo-menu-id={`${host.sectionKey}:project-${section.id}`}
+                />
+              }
+              onContextMenu={(event) => {
+                if (!ownsContextTarget(event)) event.preventBaseUIHandler();
+              }}
+              onTouchStart={(event) => {
+                if (!ownsContextTarget(event)) event.preventBaseUIHandler();
+              }}
+              onKeyDown={(event) => {
+                if (!ownsContextTarget(event)) return;
+                if (
+                  event.key === "ContextMenu" ||
+                  (event.shiftKey && event.key === "F10")
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  pendingDialog.current = undefined;
+                  setContextMenuAnchor(event.currentTarget);
+                  setContextMenuOpen(true);
+                }
+              }}
+            >
+              <NavigationSectionHeading
+                disclosure
+                revealActions="in-flow"
+                trailing={{
+                  metadata: props.headerMetadata,
+                  accessory: accessory != null && (
+                    <div
+                      className="relative flex shrink-0 items-center"
+                      data-solo-workspace-accessory=""
+                    >
+                      {accessory}
+                    </div>
+                  ),
+                }}
+                actions={
+                  <>
+                    {hasInteractiveDecoration && newTask}
+                    {overflow}
+                    {!hasInteractiveDecoration && newTask}
+                  </>
+                }
+              >
+                {renderWorkspaceHeading({
+                  id: section.id,
+                  title,
+                  selected: props.selected,
+                  onSelect,
+                  leading,
+                  disclosure,
+                })}
+              </NavigationSectionHeading>
+            </ContextMenuTrigger>
+            <MenuPopup
+              aria-label={`Actions for ${title}`}
+              anchor={contextMenuAnchor}
+              finalFocus={menuFinalFocus}
+            >
+              {menuContent}
+            </MenuPopup>
+          </ContextMenuRoot>
+        </NavigationCard>
+        <Dialog
+          key={`remove-${section.id}`}
+          size="compact"
+          open={removeOpen}
+          onOpenChange={(next) => {
+            if (!next && deletingRef.current) return;
+            setRemoveOpen(next);
+            if (!next) setRemoveError("");
+          }}
+          dismissOnOutsideClick
+          preventClose={deleting}
+          initialFocus={cancelRemove}
+          finalFocus={restoreFocus}
+          title={`Remove ${title}?`}
+          description={`${assignedCount === undefined ? "Assigned conversations" : `${assignedCount} ${assignedCount === 1 ? "conversation" : "conversations"}`} will return to their default sections.`}
+          actions={
+            <>
+              <Button
+                ref={cancelRemove}
+                type="button"
+                disabled={deleting}
+                onClick={() => {
+                  setRemoveError("");
+                  setRemoveOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                loading={deleting}
+                onClick={() => void confirmRemove()}
+              >
+                Remove workspace
+              </Button>
+            </>
+          }
+        >
+          {removeError && <p role="alert">{removeError}</p>}
+          {deleting && (
+            <p role="status" className="sr-only">
+              Removing section and waiting for confirmation…
+            </p>
+          )}
+        </Dialog>
+        {settingsOpen && (
+          <WorkspaceSettings
+            key={section.id}
+            session={destination.session}
+            scope={destination.scope}
+            target={{
+              kind: "project",
+              id: section.id,
+              name: section.name,
+              icon: section.icon,
+            }}
+            finalFocus={restoreFocus}
+            close={() => setSettingsOpen(false)}
+          />
+        )}
+      </div>
+    </Collapsible.Root>
   );
 }

@@ -272,7 +272,8 @@ describe("GooseProcess", () => {
       sessionId: session.id,
     });
     vi.useFakeTimers();
-    const typed = session.send("typed after leaving");
+    const delivered = vi.fn();
+    const typed = session.send("typed after leaving", { delivered });
     await vi.advanceTimersByTimeAsync(300);
     const sent = () =>
       process.received.filter((message) => message.method === "session/prompt")
@@ -284,6 +285,8 @@ describe("GooseProcess", () => {
     await vi.advanceTimersByTimeAsync(HELD_RETRY_MS);
     expect(sent()).toBe(after);
     expect(process.turns).toHaveLength(0);
+    // goose never took it, so it was never delivered.
+    expect(delivered).not.toHaveBeenCalled();
     vi.useRealTimers();
     await goose.kill();
   });

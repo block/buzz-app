@@ -399,21 +399,28 @@ export class GooseRuntime {
         await opened;
         // A session still on voice's instructions never runs typed work: a
         // clear that did not finish is owed, and its next turn runs it first.
+        // One that is late is waited for again, never sent beside: goose
+        // could apply it after a later seat's instructions.
+        let clearing: Promise<unknown> | undefined;
         let owed = promptChanged
-          ? () =>
+          ? async () => {
+              clearing ??= held.process
+                .request("_goose/unstable/session/system-prompt/set", {
+                  sessionId: held.sessionId,
+                  mode: "append",
+                  key: "buzz-voice",
+                  text: "",
+                })
+                .catch((error: unknown) => {
+                  clearing = undefined;
+                  throw error;
+                });
               // Untimed, as a timed request that ran late would stop the process.
-              seatBound(
-                held.process.request(
-                  "_goose/unstable/session/system-prompt/set",
-                  {
-                    sessionId: held.sessionId,
-                    mode: "append",
-                    key: "buzz-voice",
-                    text: "",
-                  },
-                ),
+              await seatBound(
+                clearing,
                 "Goose did not clear its voice instructions in time",
-              ).then(() => undefined)
+              );
+            }
           : undefined;
         try {
           await media?.close();

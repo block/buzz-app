@@ -4401,7 +4401,8 @@ it.each(["slow", "rejected"] as const)(
       const clears = process.received.filter(
         (m) => m.params?.key === "buzz-voice" && m.params.text === "",
       );
-      expect(clears).toHaveLength(2);
+      // A late one is waited for, never sent again beside it.
+      expect(clears).toHaveLength(failure === "slow" ? 1 : 2);
       expect(process.prompts.get(voiceSession)).toBe("");
       expect(process.turns[1]).toMatchObject({ sessionId: voiceSession });
       expect(process.turns[1]?.text).toContain("queued in the room");
@@ -4423,6 +4424,128 @@ it.each(["slow", "rejected"] as const)(
     }
   },
 );
+
+it("keeps owing a voice clear that fails again, then runs the next turn on current instructions", async () => {
+  const f = setup({ scope: "channel" });
+  vi.mocked(openVoice).mockImplementation(async () => ({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  }));
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    const seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    const process = f.fake.geese.at(-1);
+    if (!process) throw new Error("goose did not start");
+    const voiceSession = String(
+      process.received.find((m) => m.params?.key === "buzz-voice")?.params
+        ?.sessionId,
+    );
+    // The agent's instructions change while it is in the huddle.
+    const config = {
+      ...DEFAULT_CONFIG,
+      scope: "channel",
+      instructions: "Speak like a pirate.",
+    };
+    f.runtime.sync([{ ...f.agent, config } as unknown as Agent]);
+    const first = vi.fn<Delivery["workingUntil"]>();
+    await f.deliver(message("1", "queued in the room"), {
+      config,
+      workingUntil: first,
+    } as Partial<Delivery>);
+    // The seat's clear fails, and so does the first turn's try.
+    process.promptError = ["disk full", "disk full"];
+    await seat.close();
+    const [settled] = first.mock.calls.at(-1) ?? [];
+    await expect(settled).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("disk full"),
+      undelivered: true,
+    });
+    expect(process.turns).toHaveLength(0);
+    // The next turn owes it still: the clear goes first, then the
+    // refreshed instructions, then the turn, once, in the same session.
+    await f.deliver(message("2", "typed next"), { config });
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    expect(process.turns[0]).toMatchObject({ sessionId: voiceSession });
+    expect(process.turns[0]?.text).toContain("typed next");
+    const sets = process.received
+      .filter((m) => m.params?.sessionId === voiceSession && m.params?.key)
+      .map(
+        (m) => `${m.params?.key}:${m.params?.text === "" ? "clear" : "set"}`,
+      );
+    expect(sets.filter((set) => set === "buzz-voice:clear")).toHaveLength(3);
+    expect(sets.at(-1)).toBe("buzz:set");
+    expect(process.prompts.get(voiceSession)).toContain("Speak like a pirate.");
+    process.turns[0]?.finish();
+  } finally {
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
+
+it("lets a late voice clear land before the next seat installs its instructions", async () => {
+  const f = setup({ scope: "channel" });
+  vi.mocked(openVoice).mockImplementation(async () => ({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  }));
+  const open = () =>
+    f.runtime.voice(
+      {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+  let land = () => {};
+  let next: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    const seat = await open();
+    const process = f.fake.geese.at(-1);
+    if (!process) throw new Error("goose did not start");
+    process.promptGate = new Promise<void>((resolve) => {
+      land = resolve;
+    });
+    vi.useFakeTimers();
+    const closed = seat.close();
+    await vi.advanceTimersByTimeAsync(VOICE_STOP_TIMEOUT_MS);
+    await closed;
+    const rejoined = open();
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
+    land();
+    next = await rejoined;
+    const voice = process.received
+      .filter((m) => m.params?.key === "buzz-voice")
+      .map((m) => (m.params?.text === "" ? "clear" : "set"));
+    // One clear, still in flight when the seat came back, never a second.
+    expect(voice).toEqual(["set", "clear", "set"]);
+    expect(process.killed).toBe(false);
+  } finally {
+    land();
+    vi.useRealTimers();
+    await next?.close();
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
 
 it("puts a reused session on the agent's current instructions before voice delegates", async () => {
   const f = setup({ scope: "channel" });

@@ -49,8 +49,9 @@ export type FakeGoose = {
   deleted: string[];
   /** Each `session/set_config_option`, as `sessionId configId=value`. */
   configured: string[];
-  /** When set, the next system prompt set fails with it. */
-  promptError?: string;
+  /** When set, the next system prompt set fails with it; a list fails one
+   * set with each in turn. */
+  promptError?: string | string[];
   /** Rejects the next native turn before it begins, with this error if one. */
   rejectPrompt?: boolean | { code: number; message: string; data?: string };
   /** When set, system prompt sets wait for it. */
@@ -330,8 +331,11 @@ export function fakeSpawn(
           });
         }
         case "_goose/unstable/session/system-prompt/set": {
-          const failure = fake.promptError;
-          delete fake.promptError;
+          const failure = Array.isArray(fake.promptError)
+            ? fake.promptError.shift()
+            : fake.promptError;
+          if (!Array.isArray(fake.promptError) || !fake.promptError.length)
+            delete fake.promptError;
           if (failure)
             return send({
               jsonrpc: "2.0",

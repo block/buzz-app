@@ -141,7 +141,7 @@ export function objectAt(
   return timerObject(record, parsed.id, value, now);
 }
 
-function canonical(value: unknown): unknown {
+export function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === "object")
     return Object.fromEntries(

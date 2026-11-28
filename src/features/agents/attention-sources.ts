@@ -70,7 +70,14 @@ export class AttentionSources {
         current: () => boolean,
       ): void;
       completed(agent: string, object: SourceObject): boolean;
-      finish(agent: string, object: SourceObject): Promise<void>;
+      /** `revision` is the relay head the run started from, if any. */
+      finish(
+        agent: string,
+        object: SourceObject,
+        revision: string | undefined,
+      ): Promise<void>;
+      /** The relay head of `slug`, when the agent's attention is there. */
+      revision?(agent: string, slug: string): string | undefined;
     },
     private tails = new Map<string, Promise<void>>(),
   ) {}
@@ -82,6 +89,8 @@ export class AttentionSources {
   ) {
     const wanted = new Map<string, { agent: Agent; object: SourceObject }>();
     for (const agent of agents) {
+      // Also while its attention on the relay is not read yet
+      // (`attentionPending`): a run stops then, and starts again once it is.
       if (!agent.attentionEnabled) continue;
       for (const object of Object.values(agent.attention)) {
         const value = object.value;
@@ -126,6 +135,7 @@ export class AttentionSources {
       registration.stop = stop;
       const current = () => this.registrations.get(key) === registration;
       let finished = false;
+      const revision = this.host.revision?.(agent.key, object.slug);
       const emit = (text: string) => {
         if (stop.signal.aborted || finished)
           throw new Error("This source watch is no longer running");
@@ -148,7 +158,7 @@ export class AttentionSources {
           finished = true;
           if (!stop.signal.aborted)
             await this.host
-              .finish(agent.key, object)
+              .finish(agent.key, object, revision)
               .catch((error) =>
                 console.warn(
                   "Attention source completion was not saved",

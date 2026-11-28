@@ -52,7 +52,10 @@ import { Context } from "@deepseek-ai/cordis";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
-import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
+import { PublishRejected } from "../relay/outbox";
+import { attentionD, revision } from "./attention-relay";
+import type { AttentionValue } from "./attention";
 import {
   afterEach,
   assert,
@@ -303,6 +306,14 @@ async function setup({
   /** The base prompt sections the example plugin's manifest declares. */
   promptSections = [] as readonly string[],
   sessions = undefined as AgentType<Config>["sessions"],
+  /** Extends the community's session and the native fake before anything
+   * binds them. */
+  extend = undefined as
+    | ((fakes: {
+        session: ReturnType<typeof fakeRelay>["session"];
+        native: ReturnType<typeof fakeNative>;
+      }) => void)
+    | undefined,
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -334,6 +345,7 @@ async function setup({
   const second = fakeRelay("https://other.example.test");
   const client = fakeCommunities(fake, second);
   const native = fakeNative(identities);
+  extend?.({ session: fake.session, native });
   fake.listed.push(...listed);
   fake.history.push(...history);
   for (const id of pendingChannels) fake.pending.add(id);
@@ -7437,6 +7449,64 @@ describe("an agent in several communities", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("leaves a community whose relay has no NIP-CL system channels", async () => {
+    const { service, second } = await joined();
+    Object.assign(second.session, { relayAuthor: "c".repeat(64) });
+    // NIP-11 lacks nip-cl, so the relay store's findLabeled throws: such a
+    // relay holds no system channel, so none to leave.
+    Object.assign(second.session.channels, {
+      channelIdentity: () => false,
+      findLabeled: vi.fn(async () => {
+        throw new Error(
+          "This community's relay does not support channel labels or system channels yet.",
+        );
+      }),
+    });
+    await service.leave(away);
+    expect(service.memberships(bot).map(({ key }) => key)).toEqual([bot]);
+  });
+
+  it("takes it out of its attention channel there when it leaves", async () => {
+    const { service, second } = await joined();
+    const attention = "6a1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b";
+    let change: object | undefined;
+    const run = vi.fn(async (_channel: string, next: object) => {
+      change = next;
+    });
+    Object.assign(second.session, {
+      relayAuthor: "c".repeat(64),
+      memberAdministration: {
+        refresh: async () => {},
+        snapshot: () => ({
+          status: "ready",
+          authority: { roles: { [bot]: "member", [viewer]: "owner" } },
+          ...(change && { operation: { change, status: "confirmed" } }),
+        }),
+        run,
+      },
+    });
+    Object.assign(second.session.channels, {
+      findLabeled: vi.fn(async () => [
+        {
+          id: attention,
+          name: "Attention",
+          channelType: "system",
+          visibility: "private",
+          creator: viewer,
+          labels: ["agent-attention", bot],
+          members: [viewer, bot],
+        },
+      ]),
+    });
+    await service.leave(away);
+    // The channel and its records stay its owner's.
+    expect(run).toHaveBeenCalledWith(attention, {
+      pubkey: bot,
+      expectedRole: "member",
+      role: "remove",
+    });
   });
 
   it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
@@ -17707,6 +17777,885 @@ it("fails an agent's attention write that agent storage could not save, and keep
     { expected: shown.expected_state },
   );
   expect(written.object).toMatchObject({ instructions: "Saved." });
+});
+
+/** An agent whose attention is on the relay: its record says so, and the
+ * community holds its attention channel, with the records `seed` puts there. */
+async function relayAttentionSetup(
+  options: {
+    synced?: boolean;
+    enabled?: boolean;
+    /** Continues the device record and progress saved there, its attention
+     * now on the relay. */
+    storage?: AgentStore;
+    history?: RelayEvent[];
+  } = {},
+) {
+  const relayKey = generateSecretKey();
+  const writerKey = generateSecretKey();
+  const home = "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b";
+  const heads = new Map<string, RelayEvent>();
+  const views = new Set<() => void>();
+  let synced = options.synced ?? true;
+  let resynced = false;
+  const tag = (event: Pick<RelayEvent, "tags">, name: string) =>
+    event.tags.find((t) => t[0] === name)?.[1];
+  const current = () =>
+    [...heads.values()].filter((event) => tag(event, "op") !== "delete");
+  /** NIP-AR's prev rule; throws a typed refusal on a stale revision. */
+  const accept = (event: RelayEvent) => {
+    const d = tag(event, "d") ?? "";
+    const head = heads.get(d);
+    const stale =
+      tag(event, "op") === "create" ? !!head : tag(event, "prev") !== head?.id;
+    if (stale) throw new Error("conflict: stale prev");
+    heads.set(d, event);
+    for (const listener of views) listener();
+  };
+  const signedBy = (key: Uint8Array) => (template: object) =>
+    finalizeEvent(
+      { created_at: Math.floor(Date.now() / 1000), ...template } as never,
+      key,
+    ) as RelayEvent;
+  const asAgent = signedBy(writerKey);
+  // Its owner's attention channel (NIP-AP), with the agent a member.
+  let members = [viewer, bot];
+  const followers = new Set<(events: readonly RelayEvent[]) => void>();
+  const ownerWrites: RelayEvent[] = [];
+  const storage = options.storage ?? (memoryStorage() as AgentStore);
+  const saved = await storage.get(`buzz.agent.v1:${bot}`);
+  await storage.set(
+    `buzz.agent.v1:${bot}`,
+    JSON.stringify({
+      ...(saved
+        ? JSON.parse(saved)
+        : { pubkey: bot, attention: {}, config: { reply: "ok" } }),
+      attentionStorage: "relay",
+      ...(options.enabled && { attentionEnabled: true }),
+    }),
+  );
+  const f = await setup({
+    storage,
+    ...(options.history && { history: options.history }),
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://relay.example.test",
+        owner: viewer,
+        type: "example/echo",
+        name: "Echo",
+        deleted: false,
+      },
+    ],
+    extend: ({ session, native }) => {
+      Object.assign(session, {
+        relayAuthor: getPublicKey(relayKey),
+        snapshotRead: async ([filter]: readonly ReadFilter[]) => {
+          const head = heads.get(filter?.["#d"]?.[0] ?? "");
+          return head ? [head] : [];
+        },
+        configArtifactWriter: {
+          kinds: [45010],
+          sign: async (template: object) =>
+            signedBy(generateSecretKey())(template),
+          publish: async (event: RelayEvent) => {
+            ownerWrites.push(event);
+            try {
+              accept(event);
+            } catch (error) {
+              throw new PublishRejected("conflict", String(error));
+            }
+          },
+        },
+        artifactSync: true,
+        artifacts: {
+          follow(
+            _channels: readonly string[],
+            listener: (events: readonly RelayEvent[]) => void,
+          ) {
+            followers.add(listener);
+            return () => followers.delete(listener);
+          },
+          sync: () => {
+            const listeners = new Set<() => void>();
+            const notify = () => {
+              for (const listener of listeners) listener();
+            };
+            views.add(notify);
+            return {
+              snapshot: () =>
+                resynced
+                  ? {
+                      status: "stale",
+                      events: [],
+                      error: "resync: channel access changed",
+                    }
+                  : synced
+                    ? { status: "live", events: current() }
+                    : { status: "loading", events: [] },
+              subscribe(listener: () => void) {
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+              },
+              dispose: () => views.delete(notify),
+            };
+          },
+        },
+      });
+      Object.assign(session.channels, {
+        findLabeled: vi.fn(async () => [
+          {
+            id: home,
+            name: "Attention",
+            channelType: "system",
+            visibility: "private",
+            creator: viewer,
+            labels: ["agent-attention", bot],
+            members,
+          },
+        ]),
+      });
+      native.publish.mockImplementation(async (_, template) => {
+        const event = asAgent(template);
+        if (template.kind === 45010)
+          try {
+            accept(event);
+          } catch (error) {
+            throw new Error(
+              `The community refused the agent event: ${(error as Error).message}`,
+            );
+          }
+        return event;
+      });
+    },
+  });
+  /** Puts a record there as another writer would, which the live sync shows. */
+  const seed = async (slug: string, value: AttentionValue | null) => {
+    const d = await attentionD(home, slug);
+    const head = heads.get(d);
+    accept(
+      asAgent(
+        revision({
+          channel: home,
+          d,
+          slug,
+          op: value === null ? "delete" : head ? "update" : "create",
+          prev: head?.id,
+          value: value ?? undefined,
+        }),
+      ),
+    );
+  };
+  return {
+    ...f,
+    home,
+    heads,
+    ownerWrites,
+    seed,
+    /** Changes the channel's roster, as its live metadata shows. */
+    members(next: string[]) {
+      members = next;
+      for (const follower of [...followers])
+        follower([{ kind: 39002, tags: [["d", home]] } as RelayEvent]);
+    },
+    finds: () =>
+      (f.session.channels.findLabeled as ReturnType<typeof vi.fn>).mock.calls
+        .length,
+    /** Lets the first sync reach EOSE. */
+    sync() {
+      synced = true;
+      for (const listener of views) listener();
+    },
+    /** The open sync closes with an access-change resync. */
+    resync() {
+      resynced = true;
+      for (const listener of [...views]) listener();
+      resynced = false;
+    },
+    /** The next sync loads again, as a new session's does until EOSE. */
+    unsync() {
+      synced = false;
+    },
+    /** Changes a record without the live sync telling anyone. */
+    async behind(slug: string, value: AttentionValue) {
+      const d = await attentionD(home, slug);
+      const head = heads.get(d) as RelayEvent;
+      heads.set(
+        d,
+        asAgent(
+          revision({
+            channel: home,
+            d,
+            slug,
+            op: "update",
+            prev: head.id,
+            value,
+          }),
+        ),
+      );
+    },
+    agentWrites: () =>
+      f.native.publish.mock.calls
+        .map(([, template]) => template)
+        .filter((template) => template.kind === 45010),
+  };
+}
+
+it("keeps a relay agent's source completion when the relay refuses its removal", async () => {
+  const root = "e".repeat(64);
+  const f = await relayAttentionSetup({ enabled: true });
+  f.native.query.mockResolvedValue([event(root, { tags: [["h", channel]] })]);
+  await f.seed("interest/pr", { type: "interest", instructions: "Report" });
+  await f.seed("watch/pr", {
+    type: "source",
+    provider: "example/command",
+    enabled: true,
+    interest_id: "pr",
+    channel,
+    root,
+    config: { command: ["check"] },
+  });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["watch/pr"]).toBeDefined(),
+  );
+  // The agent may not write there now, as a guest or in an archived channel.
+  const publish = f.native.publish.getMockImplementation();
+  f.native.publish.mockImplementation(async (member, template) => {
+    if (template.kind === 45010)
+      throw new Error(
+        "The community refused the agent event: restricted: guest",
+      );
+    return publish?.(member, template) as never;
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  let runs = 0;
+  f.plugin.agents.addAttentionSource({
+    id: "command",
+    run: async () => {
+      runs++;
+    },
+  });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+  );
+  await vi.waitFor(() =>
+    expect(warn).toHaveBeenCalledWith(
+      "Attention source completion was not saved",
+      expect.anything(),
+    ),
+  );
+  warn.mockRestore();
+  // Still on the relay, and completed here: the producer does not run again.
+  expect(f.service.find(bot)?.attention["watch/pr"]).toBeDefined();
+  await settle();
+  expect(runs).toBe(1);
+});
+
+it("runs nothing from a relay agent removed from its attention channel", async () => {
+  const f = await relayAttentionSetup({ enabled: true });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionEnabled).toBe(true),
+  );
+  f.members([viewer]);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionProblem).toBe(
+      "This agent is not a member of its attention channel",
+    ),
+  );
+  // Nothing runs, and nothing waits for a set either.
+  expect(f.service.find(bot)?.attentionEnabled).toBe(false);
+  expect(f.service.find(bot)?.attentionPending).toBeUndefined();
+});
+
+it("waits for a new set after a relay resync, then runs again", async () => {
+  const f = await relayAttentionSetup({ enabled: true });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionEnabled).toBe(true),
+  );
+  f.unsync();
+  f.resync();
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionPending).toBe(true),
+  );
+  expect(f.service.find(bot)?.attentionEnabled).toBe(false);
+  f.sync();
+  // Find runs again after the first resync wait: half a second to a second.
+  await vi.waitFor(
+    () => expect(f.service.find(bot)?.attentionEnabled).toBe(true),
+    { timeout: 3_000 },
+  );
+  expect(f.finds()).toBe(2);
+});
+
+it("runs no watch of a relay agent before its first complete set, then mirrors the relay", async () => {
+  const f = await relayAttentionSetup({ synced: false });
+  await vi.waitFor(() => expect(f.finds()).toBe(1));
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "From the relay.",
+  });
+  await settle();
+  expect(f.service.find(bot)?.attentionEnabled).toBe(false);
+  f.sync();
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionEnabled).toBe(true),
+  );
+  expect(f.service.find(bot)?.attention["interest/default"]?.value).toEqual({
+    type: "interest",
+    instructions: "From the relay.",
+  });
+  // A live change from another writer applies; a removal removes it.
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "Edited.",
+  });
+  await vi.waitFor(() =>
+    expect(
+      f.service.find(bot)?.attention["interest/default"]?.value,
+    ).toMatchObject({ instructions: "Edited." }),
+  );
+  await f.seed("interest/default", null);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["interest/default"]).toBeUndefined(),
+  );
+});
+
+it("catches a relay agent's watch up from its saved checkpoint once its first set is read", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage() as AgentStore;
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: { ...chat, "watch/channel": null },
+    });
+    await settle();
+    const attention = first.service.find(bot)?.attention ?? {};
+    vi.setSystemTime((start + 20) * 1000);
+    first.recover();
+    await settle();
+    first.connect(false);
+    // Moved to its community while closed; the relay has the same set.
+    vi.setSystemTime((start + 60) * 1000);
+    const f = await relayAttentionSetup({
+      storage,
+      synced: false,
+      history: [...first.history, posted("while closed", start + 30)],
+    });
+    for (const [slug, object] of Object.entries(attention))
+      await f.seed(slug, object.value);
+    await vi.waitFor(() => expect(f.finds()).toBe(1));
+    await settle();
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+    // What it hears live meanwhile waits too.
+    f.emit({ events: [event("live", { created_at: start + 61 })] });
+    await settle();
+    expect(f.run).not.toHaveBeenCalled();
+    f.sync();
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(heard(f.run)).toEqual(["while closed", "hello live"]);
+    expect(f.service.find(bot)?.attentionPending).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("gives a relay agent an event heard while its set was read that only the new set's watch matches", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage() as AgentStore;
+    const first = await setup({ storage, identities: [echo] });
+    // Here, its watch hears only the owner.
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        "watch/chat": { ...chat["watch/chat"], authors: [viewer] },
+      },
+    });
+    await settle();
+    const attention = first.service.find(bot)?.attention ?? {};
+    first.recover();
+    await settle();
+    first.connect(false);
+    vi.setSystemTime((start + 60) * 1000);
+    const f = await relayAttentionSetup({
+      storage,
+      synced: false,
+      history: [...first.history],
+    });
+    // Another device widened it to everyone.
+    for (const [slug, object] of Object.entries(attention))
+      await f.seed(slug, object.value);
+    await f.seed("watch/chat", chat["watch/chat"]);
+    await vi.waitFor(() => expect(f.finds()).toBe(1));
+    await settle();
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+    const widened = message(author, channel, "widened", start + 59);
+    f.history.push(eventDto(widened));
+    f.emit({ events: [widened], channelId: channel });
+    await settle();
+    expect(f.run).not.toHaveBeenCalled();
+    f.sync();
+    await vi.waitFor(() => expect(heard(f.run)).toEqual(["widened"]));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("catches up a relay agent's lost mentions while its watches wait for its set", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const start = nowSeconds();
+    const f = await relayAttentionSetup({ synced: false });
+    await f.seed("watch/chat", chat["watch/chat"]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+    // The live subscription lost it; the set is still not read.
+    f.history.push(
+      eventDto(
+        message(author, lobby, "lost mention", start + 20, [["p", bot]]),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.waitFor(() => expect(heard(f.run)).toEqual(["lost mention"]));
+    expect(turns(f.run)).toEqual(["mention"]);
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a failed watch read's backoff while a relay agent's set is read again", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  try {
+    const f = await relayAttentionSetup();
+    f.unrouted.add(lobby);
+    await f.seed("interest/default", {
+      type: "interest",
+      instructions: "Be brief.",
+    });
+    await f.seed("watch/chat", { ...chat["watch/chat"], channels: [lobby] });
+    await vi.advanceTimersByTimeAsync(1_000);
+    // The set is read before time moves, so the watch's poll is due.
+    await vi.waitFor(() => {
+      const agent = f.service.find(bot);
+      expect(agent?.attentionPending).toBeUndefined();
+      expect(agent?.attention["watch/chat"]).toBeDefined();
+    });
+    const read = vi.mocked(f.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    const failures: number[] = [];
+    read.mockImplementation(async (filters, options) => {
+      if (
+        filters[0]?.["#h"]?.includes(lobby) &&
+        filters[0]?.kinds?.includes(9)
+      ) {
+        failures.push(Date.now());
+        throw new Error("down");
+      }
+      return original(filters, options);
+    });
+    await vi.advanceTimersByTimeAsync(35_000);
+    await vi.waitFor(() => expect(failures).toHaveLength(1));
+    const failure = f.service.snapshot().watchReadFailures?.[0];
+    expect(failure).toMatchObject({ consecutiveFailures: 1 });
+    // A new session reads the set again before its watches run.
+    f.unsync();
+    f.connect(false);
+    f.connect(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+    f.sync();
+    // Reading the set also waits on real work, such as hashing.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.attentionPending).toBeUndefined(),
+    );
+    expect(f.service.snapshot().watchReadFailures).toEqual([failure]);
+    const deadline = failure?.retryAt as number;
+    await vi.advanceTimersByTimeAsync(deadline - Date.now() - 1);
+    expect(failures).toHaveLength(1);
+    // The retry runs on the service's next tick (TIMER_TICK_MS, 5 s).
+    await vi.advanceTimersByTimeAsync(5_001);
+    await vi.waitFor(() => expect(failures).toHaveLength(2));
+    expect(f.service.snapshot().watchReadFailures).toMatchObject([
+      { consecutiveFailures: 2 },
+    ]);
+  } finally {
+    random.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it("saves a relay agent's attention tool write on the relay first, as the agent, with prev", async () => {
+  const f = await relayAttentionSetup();
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "Be brief.",
+  });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["interest/default"]).toBeDefined(),
+  );
+  const { attention } = await handleOf(f.run, f.emit);
+  const shown = await attention.show("interest/default");
+  const head = f.heads.get(
+    await attentionD(f.home, "interest/default"),
+  ) as RelayEvent;
+  const written = await attention.write(
+    "interest/default",
+    { type: "interest", instructions: "Be briefer." },
+    { expected: shown.expected_state },
+  );
+  expect(written.object).toMatchObject({ instructions: "Be briefer." });
+  const [sent] = f.agentWrites();
+  expect(sent?.tags).toEqual(
+    expect.arrayContaining([
+      ["op", "update"],
+      ["prev", head.id],
+      ["h", f.home],
+    ]),
+  );
+  expect(
+    f.service.find(bot)?.attention["interest/default"]?.value,
+  ).toMatchObject({ instructions: "Be briefer." });
+  // A write that would publish nothing publishes nothing.
+  const again = await attention.show("interest/default");
+  await attention.write(
+    "interest/default",
+    { type: "interest", instructions: "Be briefer." },
+    { expected: again.expected_state },
+  );
+  expect(f.agentWrites()).toHaveLength(1);
+});
+
+it("fails a relay agent's write with conflict when the relay changed, from the fresh read or prev", async () => {
+  const f = await relayAttentionSetup();
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "Be brief.",
+  });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["interest/default"]).toBeDefined(),
+  );
+  const { attention } = await handleOf(f.run, f.emit);
+  const shown = await attention.show("interest/default");
+  // Another writer changed it, unseen live: the writer's own read finds it.
+  await f.behind("interest/default", {
+    type: "interest",
+    instructions: "Theirs.",
+  });
+  await expect(
+    attention.write(
+      "interest/default",
+      { type: "interest", instructions: "Mine." },
+      { expected: shown.expected_state },
+    ),
+  ).rejects.toThrow(/^conflict:/);
+  expect(f.agentWrites()).toHaveLength(0);
+  expect(
+    f.service.find(bot)?.attention["interest/default"]?.value,
+  ).toMatchObject({ instructions: "Theirs." });
+  // A change between the read and the revision: the relay refuses prev.
+  const fresh = await attention.show("interest/default");
+  f.native.publish.mockImplementationOnce(async () => {
+    throw new Error(
+      "The community refused the agent event: conflict: stale prev",
+    );
+  });
+  await expect(
+    attention.write(
+      "interest/default",
+      { type: "interest", instructions: "Mine." },
+      { expected: fresh.expected_state },
+    ),
+  ).rejects.toThrow(/^conflict:/);
+  expect(
+    f.service.find(bot)?.attention["interest/default"]?.value,
+  ).toMatchObject({ instructions: "Theirs." });
+});
+
+it("checks a relay agent's no-op write against a fresh read", async () => {
+  const f = await relayAttentionSetup();
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "Be brief.",
+  });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["interest/default"]).toBeDefined(),
+  );
+  const { attention } = await handleOf(f.run, f.emit);
+  const shown = await attention.show("interest/default");
+  await f.behind("interest/default", {
+    type: "interest",
+    instructions: "Theirs.",
+  });
+  // The old mirror would show no change and pass the old token.
+  await expect(
+    attention.write(
+      "interest/default",
+      { type: "interest", instructions: "Be brief." },
+      { expected: shown.expected_state },
+    ),
+  ).rejects.toThrow(/^conflict:/);
+  expect(f.agentWrites()).toHaveLength(0);
+});
+
+it("signs an owner's Attention edit of a relay agent as the owner, one revision per object", async () => {
+  const f = await relayAttentionSetup();
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "Be brief.",
+  });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["interest/default"]).toBeDefined(),
+  );
+  await f.service.save(bot, {
+    attention: {
+      "interest/other": { type: "interest", instructions: "Also." },
+    },
+  });
+  expect(
+    f.ownerWrites.map((event) => event.tags.find((t) => t[0] === "op")?.[1]),
+  ).toEqual(["create"]);
+  expect(f.agentWrites()).toHaveLength(0);
+  expect(f.service.find(bot)?.attention["interest/other"]).toBeDefined();
+  const timer = {
+    type: "timer" as const,
+    interest_id: "other",
+    prompt: "tick",
+    enabled: true,
+    interval_secs: 3600,
+    armed_at: Math.floor(Date.now() / 1000),
+    max_occurrences: 3,
+    expires_at: null,
+  };
+  await f.service.save(bot, { attention: { "watch/t": timer } });
+  // Removing an Interest with its watch: the watch goes first.
+  await f.service.save(bot, {
+    attention: { "interest/other": null, "watch/t": null },
+  });
+  const sent = f.ownerWrites.map((event) => [
+    event.tags.find((t) => t[0] === "op")?.[1],
+    event.tags.find((t) => t[0] === "title")?.[1],
+  ]);
+  expect(sent.slice(2)).toEqual([
+    ["delete", undefined],
+    ["delete", undefined],
+  ]);
+  const deleted = await Promise.all(
+    ["watch/t", "interest/other"].map((slug) => attentionD(f.home, slug)),
+  );
+  expect(
+    f.ownerWrites
+      .slice(2)
+      .map((event) => event.tags.find((t) => t[0] === "d")?.[1]),
+  ).toEqual(deleted);
+  expect(f.service.find(bot)?.attention["interest/other"]).toBeUndefined();
+  expect(f.service.find(bot)?.attention["watch/t"]).toBeUndefined();
+  // A live set made before those writes does not bring them back.
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "Edited.",
+  });
+  await vi.waitFor(() =>
+    expect(
+      f.service.find(bot)?.attention["interest/default"]?.value,
+    ).toMatchObject({ instructions: "Edited." }),
+  );
+  expect(f.service.find(bot)?.attention["interest/other"]).toBeUndefined();
+});
+
+it("removes a relay agent's spent timer as the agent, with prev, after its last task", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  const f = await relayAttentionSetup({ enabled: true });
+  await f.seed("interest/default", { type: "interest", instructions: "Hi." });
+  await f.seed("watch/once", {
+    type: "timer",
+    interest_id: "default",
+    prompt: "tick",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000_000,
+    max_occurrences: 1,
+    expires_at: null,
+  });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["watch/once"]).toBeDefined(),
+  );
+  const seeded = f.heads.get(await attentionD(f.home, "watch/once"));
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["watch/once"]).toBeUndefined(),
+  );
+  const removal = f.agentWrites().at(-1);
+  expect(removal?.tags).toEqual(
+    expect.arrayContaining([
+      ["op", "delete"],
+      ["prev", seeded?.id as string],
+    ]),
+  );
+});
+
+it("keeps a relay agent's timer that its owner saved again during its last task", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  const f = await relayAttentionSetup({ enabled: true });
+  const timer = {
+    type: "timer",
+    interest_id: "default",
+    prompt: "tick",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000_000,
+    max_occurrences: 1,
+    expires_at: null,
+  } as const;
+  await f.seed("interest/default", { type: "interest", instructions: "Hi." });
+  await f.seed("watch/once", timer);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["watch/once"]).toBeDefined(),
+  );
+  const d = await attentionD(f.home, "watch/once");
+  // The same value as a new revision, the owner's new registration, which
+  // the live view has not shown (as across a reconnect) when the task runs.
+  await f.behind("watch/once", timer);
+  const added = f.heads.get(d);
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+  await vi.advanceTimersByTimeAsync(1_000);
+  // Barrier: the removal's fresh Find ran, and its change has settled.
+  await vi.waitFor(() => expect(f.finds()).toBe(2));
+  await vi.waitFor(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.service.find(bot)?.attentionEnabled).toBe(true);
+    expect(
+      (f.service as unknown as { changing: Map<string, number> }).changing.has(
+        bot,
+      ),
+    ).toBe(false);
+  });
+  // The finished task removes nothing it did not run from.
+  expect(f.heads.get(d)?.id).toBe(added?.id);
+  expect(
+    f
+      .agentWrites()
+      .some((template) =>
+        template.tags?.some(
+          ([key, value]) => key === "op" && value === "delete",
+        ),
+      ),
+  ).toBe(false);
+  expect(f.service.find(bot)?.attention["watch/once"]).toBeDefined();
+});
+
+it("keeps an unreadable Interest while a skipped watch still names it", async () => {
+  const f = await relayAttentionSetup();
+  const interest = `interest/${(chat["watch/chat"] as { interest_id: string }).interest_id}`;
+  // Unreadable, so its watch is skipped too and runs nothing.
+  await f.seed(interest, { type: "interest" } as unknown as AttentionValue);
+  await f.seed("watch/chat", chat["watch/chat"] as AttentionValue);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.skipped["watch/chat"]).toBeDefined(),
+  );
+  // Removing the Interest alone would let the watch run without it.
+  await expect(
+    f.service.save(bot, { attention: { [interest]: null } }),
+  ).rejects.toThrow("Remove or move the watches and timers");
+  expect(f.service.find(bot)?.skipped[interest]).toBeDefined();
+});
+
+it("refuses Remove unreadable once another writer repaired the record", async () => {
+  const f = await relayAttentionSetup();
+  // An unreadable record: an Interest with no instructions.
+  await f.seed("interest/broken", {
+    type: "interest",
+  } as unknown as AttentionValue);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.skipped["interest/broken"]).toBeDefined(),
+  );
+  // Another member repairs it before this device's live view shows that.
+  await f.behind("interest/broken", {
+    type: "interest",
+    instructions: "Fixed.",
+  });
+  const d = await attentionD(f.home, "interest/broken");
+  const repaired = f.heads.get(d);
+  // The owner confirmed removing the unreadable record it was shown.
+  await expect(
+    f.service.save(bot, { attention: { "interest/broken": null } }),
+  ).rejects.toThrow();
+  expect(f.heads.get(d)?.id).toBe(repaired?.id);
+});
+
+it("drops a watch this device created once the relay deleted it, with the channel idle", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const f = await relayAttentionSetup({ enabled: true });
+    await f.seed("interest/default", { type: "interest", instructions: "Hi." });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.attentionEnabled).toBe(true),
+    );
+    // The owner's create lands before the live view shows it.
+    const writer = (
+      f.session as unknown as {
+        configArtifactWriter: { publish(event: RelayEvent): Promise<void> };
+      }
+    ).configArtifactWriter;
+    writer.publish = async (event: RelayEvent) => {
+      f.ownerWrites.push(event);
+      f.heads.set(event.tags.find((t) => t[0] === "d")?.[1] ?? "", event);
+    };
+    await f.service.save(bot, {
+      attention: { "watch/chat": chat["watch/chat"] },
+    });
+    // Another writer deletes it before this device's live view shows it.
+    const d = await attentionD(f.home, "watch/chat");
+    const created = f.heads.get(d) as RelayEvent;
+    f.heads.set(
+      d,
+      finalizeEvent(
+        {
+          created_at: nowSeconds(),
+          ...revision({
+            channel: f.home,
+            d,
+            slug: "watch/chat",
+            op: "delete",
+            prev: created.id,
+          }),
+        } as never,
+        generateSecretKey(),
+      ) as RelayEvent,
+    );
+    // NIP-AR sync rule 3: in scope neither before nor after, so the relay
+    // sends this device nothing for it.
+    await vi.advanceTimersByTimeAsync(0);
+    // Past the minute this device's write is kept for, with no other change.
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(f.service.find(bot)?.attention["watch/chat"]).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("shows why a relay agent's attention is not current", async () => {
+  const f = await relayAttentionSetup({ synced: false });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionProblem).toBe(
+      "Reading this agent's attention from its community",
+    ),
+  );
+  f.sync();
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionProblem).toBeUndefined(),
+  );
 });
 
 it("stops watches and timers while attention is off, keeps every object, and resumes them", async () => {

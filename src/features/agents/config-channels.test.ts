@@ -56,6 +56,7 @@ function channel(overrides: Partial<ChannelSummary>): ChannelSummary {
     id: "11111111-1111-4111-8111-111111111111",
     name: "Agent config",
     channelType: "system",
+    visibility: "private",
     creator: owner,
     labels: ["agent-config", agent],
     ...overrides,
@@ -81,6 +82,9 @@ describe("config channels", () => {
         channel({ id: "x", channelType: "stream" }),
         channel({ id: "y", creator: agent }),
         channel({ id: "z", labels: [agent] }),
+        // An open channel would show its records to anyone.
+        channel({ id: "open", visibility: "public" }),
+        channel({ id: "unknown", visibility: undefined }),
         oldest,
         channel({ id: "newer" }),
       ],
@@ -99,6 +103,24 @@ describe("config channels", () => {
       { creator: owner, label: agent },
       { consistency: "strong" },
     );
+  });
+
+  it("keeps an agent's attention channel apart from its config channel", async () => {
+    const config = channel({ id: "config" });
+    const attention = channel({
+      id: "attention",
+      labels: ["agent-attention", agent],
+      members: [owner, agent],
+    });
+    const { session } = fakeSession([
+      [config, attention],
+      [config, attention],
+    ]);
+    const channels = createConfigChannels(session, owner, noRelay);
+    expect((await channels.find("agent-attention", agent))?.id).toBe(
+      "attention",
+    );
+    expect((await channels.find("agent-config", agent))?.id).toBe("config");
   });
 
   it("creates a private system channel with both labels only when none is found", async () => {

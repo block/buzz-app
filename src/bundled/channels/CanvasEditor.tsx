@@ -312,7 +312,7 @@ export function CanvasEditor({
     ) : undefined;
   const body = (
     <>
-      <div className={`${styles.stack} ${panelStyles.views}`}>
+      <div className={panelStyles.body}>
         {readOnly && <p role="status">Canvas is read-only.</p>}
         <Tabs
           variant="panel"
@@ -358,37 +358,36 @@ export function CanvasEditor({
           role="tabpanel"
           id={`${panelId}-edit`}
           aria-labelledby={`${panelId}-edit-tab`}
+          className={panelStyles.edit}
         >
-          <div className={styles.stack}>
-            <p className="text-secondary">Shared Markdown for this channel.</p>
-            {readOnly && loaded && dirty && (
-              <p role="status">
-                Showing your unsaved local draft. Open History to view saved
-                versions.
-              </p>
-            )}
-            <Textarea
-              ref={editor}
-              data-tab-focus
-              readOnly={readOnly || busy}
-              aria-label="Canvas Markdown"
-              variant="code"
-              rows={16}
-              value={draft}
-              disabled={!loaded}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                if (differs(e.target.value))
-                  writeView(scope, key, { content: e.target.value, base });
-                else retire(viewRevision(scope, key));
-              }}
-            />
-            {error && (
-              <p role="alert" className={styles.error}>
-                {error}
-              </p>
-            )}
-          </div>
+          <p className="text-secondary">Shared Markdown for this channel.</p>
+          {readOnly && loaded && dirty && (
+            <p role="status">
+              Showing your unsaved local draft. Open History to view saved
+              versions.
+            </p>
+          )}
+          <Textarea
+            ref={editor}
+            data-tab-focus
+            readOnly={readOnly || busy}
+            aria-label="Canvas Markdown"
+            variant="code"
+            rows={16}
+            value={draft}
+            disabled={!loaded}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              if (differs(e.target.value))
+                writeView(scope, key, { content: e.target.value, base });
+              else retire(viewRevision(scope, key));
+            }}
+          />
+          {error && (
+            <p role="alert" className={styles.error}>
+              {error}
+            </p>
+          )}
         </div>
         <div
           hidden={tab !== "history"}

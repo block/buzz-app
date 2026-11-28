@@ -33,6 +33,7 @@ token or other secret in one**. Open-source builds leave them all unset.
 | `BUZZ_BUILD_MANAGED_PLUGINS_URL` | An `https` URL of a version 1 [managed plugin policy](managed-plugins.md#packaged-policy), used when no `managed-plugins.json` exists. |
 | `BUZZ_BUILD_REPOSITORY_ACCESS` | Default [repository access rules](repository-access.md#default-rules). |
 | `BUZZ_DATABRICKS_HOST` | An `https://` Databricks workspace URL passed to every bundled goose as `DATABRICKS_HOST`. Only the host; model and sign-in stay goose's. |
+| `BUZZ_DATABRICKS_MODEL_FILTER` | Comma-separated model ID patterns (`*`, `?`) used as the default Databricks AI Gateway (`databricks_v2`) model picker filter when goose's `DATABRICKS_MODEL_FILTER` is unset. An explicit `DATABRICKS_MODEL_FILTER` (including empty or `*`) wins, and an agent's configured model stays visible. |
 | `BUZZ_MOBILE_APP_IOS_URL`, `BUZZ_MOBILE_APP_ANDROID_URL` | Store links shown with QR codes on the mobile Settings card, for people whose Builderlab account holds this device's backed-up key. |
 | `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Release builds only. Both together turn on the updater; the release workflow sets them (see [releases](releases.md)). |
 

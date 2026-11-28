@@ -151,6 +151,18 @@ export default defineConfig(async ({ command, mode }) => {
         "BUZZ_DATABRICKS_HOST must be an https:// URL without credentials.",
       );
   }
+  // Packagers may narrow the bundled goose's Databricks AI Gateway model picker
+  // when the user has not set DATABRICKS_MODEL_FILTER.
+  const databricksModelFilter = env.BUZZ_DATABRICKS_MODEL_FILTER?.trim() ?? "";
+  if (
+    [...databricksModelFilter].some((ch) => {
+      const code = ch.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    })
+  )
+    throw new Error(
+      "BUZZ_DATABRICKS_MODEL_FILTER must not contain control characters.",
+    );
   // Packagers may link their mobile app's store listings from the mobile card.
   const [mobileIos, mobileAndroid] = (
     ["BUZZ_MOBILE_APP_IOS_URL", "BUZZ_MOBILE_APP_ANDROID_URL"] as const
@@ -253,6 +265,9 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
       "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":
         JSON.stringify(databricksHost),
+      "import.meta.env.VITE_BUZZ_DATABRICKS_MODEL_FILTER": JSON.stringify(
+        databricksModelFilter,
+      ),
       "import.meta.env.VITE_BUZZ_MOBILE_APP_IOS_URL": JSON.stringify(mobileIos),
       "import.meta.env.VITE_BUZZ_MOBILE_APP_ANDROID_URL":
         JSON.stringify(mobileAndroid),

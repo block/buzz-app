@@ -1,6 +1,7 @@
 const MODEL_WORD_LABELS: ReadonlyMap<string, string> = new Map([
   ["bge", "BGE"],
   ["claude", "Claude"],
+  ["deepseek", "DeepSeek"],
   ["en", "EN"],
   ["glm", "GLM"],
   ["gpt", "GPT"],
@@ -9,6 +10,7 @@ const MODEL_WORD_LABELS: ReadonlyMap<string, string> = new Map([
   ["meta", "Meta"],
   ["mlflow", "MLflow"],
   ["openai", "OpenAI"],
+  ["oss", "OSS"],
 ]);
 
 /** A Unity Catalog model service: `catalog.schema.name`. */
@@ -49,13 +51,15 @@ export function formatModelDisplayName(
     const part = parts[index] ?? "";
     const nextPart = parts[index + 1];
 
-    if (/^\d+$/.test(part) && nextPart && /^\d+$/.test(nextPart)) {
-      labelParts.push(`${part}.${nextPart}`);
+    if (/^[a-z]?\d+$/i.test(part) && nextPart && /^\d+$/.test(nextPart)) {
+      labelParts.push(
+        `${part.slice(0, 1).toUpperCase()}${part.slice(1)}.${nextPart}`,
+      );
       index += 1;
       continue;
     }
 
-    if (/^\d+b$/i.test(part)) {
+    if (/^[a-z]?\d+b$/i.test(part)) {
       labelParts.push(part.toUpperCase());
       continue;
     }

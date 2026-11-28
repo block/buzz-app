@@ -75,6 +75,7 @@ import {
 import {
   type GooseSetup,
   keyLabel,
+  DATABRICKS_LABEL_PREFIXES,
   type Provider,
   type Providers,
   type Tested,
@@ -282,9 +283,17 @@ export function createTabs({
     );
     const current = listing.value?.defaults;
     const id = current?.provider ?? "";
+    const value =
+      current?.model ||
+      listing.value?.providers.find((item) => item.id === id)?.defaultModel ||
+      "";
     const [models, reloadModels] = useRead(
-      () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
-      `${id}:${state.readiness}:${!!state.blocking}`,
+      // goose's default runs even when the picker filter hides it.
+      () =>
+        id
+          ? setup.models(id, { include: value })
+          : Promise.resolve([] as ModelChoice[]),
+      `${id}:${value}:${state.readiness}:${!!state.blocking}`,
       id,
     );
     const [saving, setSaving] = useState(false);
@@ -304,15 +313,10 @@ export function createTabs({
             groupByFamily
             label="Goose default model"
             models={models.value ?? []}
-            value={
-              current?.model ||
-              listing.value?.providers.find((item) => item.id === id)
-                ?.defaultModel ||
-              ""
-            }
+            value={value}
             modelLabelPrefixes={
               id.startsWith("databricks")
-                ? ["databricks-", "goose-"]
+                ? DATABRICKS_LABEL_PREFIXES
                 : undefined
             }
             defaultLabel="Provider default"
@@ -578,7 +582,7 @@ export function createTabs({
             groupByFamily
             modelLabelPrefixes={
               id.startsWith("databricks")
-                ? ["databricks-", "goose-"]
+                ? DATABRICKS_LABEL_PREFIXES
                 : undefined
             }
             label="Model"
@@ -1346,7 +1350,7 @@ export function createTabs({
             }
             modelLabelPrefixes={
               provider.startsWith("databricks")
-                ? ["databricks-", "goose-"]
+                ? DATABRICKS_LABEL_PREFIXES
                 : undefined
             }
             disabled={disabled}
@@ -1483,7 +1487,8 @@ export function createTabs({
               next.provider || (await setup.providers()).defaults.provider;
             if (
               !provider ||
-              !(await setup.models(provider)).some(
+              // Any model goose serves, even one the picker filter hides.
+              !(await setup.models(provider, { filter: false })).some(
                 (model) => model.id === next.model,
               )
             )

@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Spawn } from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
 import { explainTurn, GooseSetup, keyLabel, modelFilter } from "./setup";
 import manifest from "./manifest.json";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 it("declares protected file reads through the bundled helper with a positional path", () => {
   expect(
@@ -635,6 +639,154 @@ describe("GooseSetup", () => {
 
     const empty = setup({ providers: [v2], supported, modelFilter: "none-*" });
     expect(await empty.setup.models("databricks_v2")).toEqual([]);
+  });
+
+  it("applies the build default filter to databricks_v2 only, respects overrides, formats picks, and keeps offers unfiltered", async () => {
+    vi.stubEnv("VITE_BUZZ_DATABRICKS_MODEL_FILTER", "system.ai.*");
+    const v1 = {
+      providerId: "databricks",
+      providerName: "Databricks",
+      configured: true,
+      visibleInSetup: true,
+    };
+    const v2 = {
+      providerId: "databricks_v2",
+      providerName: "Databricks AI Gateway",
+      configured: true,
+      visibleInSetup: true,
+    };
+    const supported = [
+      "databricks-gpt-5-5",
+      "goose-gpt-5-5",
+      "system.ai.claude-opus-5-5",
+      "system.ai.gpt-6-1-sol",
+      "acme_models.prod.gpt-6-1-sol",
+    ];
+    const { setup: goose } = setup({
+      providers: [v1, v2],
+      supported,
+      thinking: {
+        "acme_models.prod.gpt-6-1-sol": {
+          current: "low",
+          levels: ["low", "high"],
+        },
+      },
+    });
+
+    // Build default narrows databricks_v2 when DATABRICKS_MODEL_FILTER is unset.
+    expect((await goose.models("databricks_v2")).map(({ id }) => id)).toEqual([
+      "system.ai.claude-opus-5-5",
+      "system.ai.gpt-6-1-sol",
+    ]);
+    // Legacy databricks (v1) has no system.ai.* endpoints and keeps its own list.
+    expect((await goose.models("databricks")).map(({ id }) => id)).toEqual([
+      "databricks-gpt-5-5",
+      "goose-gpt-5-5",
+    ]);
+    // picks() formats clean display names and still preserves a non-matching
+    // saved model (disambiguating any colliding display name).
+    await expect(
+      goose.picks({
+        provider: "databricks_v2",
+        model: "acme_models.prod.gpt-6-1-sol",
+      }),
+    ).resolves.toMatchObject({
+      current: "acme_models.prod.gpt-6-1-sol",
+      models: [
+        {
+          id: "acme_models.prod.gpt-6-1-sol",
+          label: "acme_models.prod.gpt-6-1-sol",
+        },
+        { id: "system.ai.claude-opus-5-5", label: "Claude Opus 5.5" },
+        { id: "system.ai.gpt-6-1-sol", label: "system.ai.gpt-6-1-sol" },
+      ],
+    });
+    await expect(
+      goose.picks({
+        provider: "databricks_v2",
+        model: "system.ai.gpt-6-1-sol",
+      }),
+    ).resolves.toMatchObject({
+      current: "system.ai.gpt-6-1-sol",
+      models: [
+        { id: "system.ai.claude-opus-5-5", label: "Claude Opus 5.5" },
+        { id: "system.ai.gpt-6-1-sol", label: "GPT-6.1 Sol" },
+      ],
+    });
+    // A turn can still run on a served model the filter hides: picked before
+    // the build default hid it, or a route's fallback. Pickers never list it.
+    const picks = await goose.picks({
+      provider: "databricks_v2",
+      model: "system.ai.gpt-6-1-sol",
+      effort: "high",
+    });
+    await expect(
+      picks.unlisted?.("acme_models.prod.gpt-6-1-sol"),
+    ).resolves.toEqual({
+      id: "acme_models.prod.gpt-6-1-sol",
+      label: "acme_models.prod.gpt-6-1-sol",
+      efforts: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+      ],
+      effort: "high",
+    });
+    await expect(
+      picks.unlisted?.("acme_models.prod.does-not-exist"),
+    ).resolves.toBeUndefined();
+    // A device default the filter hides stays listed where it is shown.
+    expect(
+      (
+        await goose.models("databricks_v2", {
+          include: "databricks-gpt-5-5",
+        })
+      ).map(({ id }) => id),
+    ).toEqual([
+      "databricks-gpt-5-5",
+      "system.ai.claude-opus-5-5",
+      "system.ai.gpt-6-1-sol",
+    ]);
+    expect(
+      (await goose.models("databricks_v2", { include: "gone-model" })).map(
+        ({ id }) => id,
+      ),
+    ).toEqual(["system.ai.claude-opus-5-5", "system.ai.gpt-6-1-sol"]);
+    // offers() checks what the provider actually serves, so recommended models
+    // hidden from the picker still resolve as offered while absent ones do not.
+    await expect(
+      goose.offers({
+        provider: "databricks_v2",
+        model: "acme_models.prod.gpt-6-1-sol",
+        effort: "high",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      goose.offers({
+        provider: "databricks_v2",
+        model: "acme_models.prod.does-not-exist",
+        effort: "high",
+      }),
+    ).resolves.toBe(false);
+
+    // Explicit user DATABRICKS_MODEL_FILTER (custom, "*", or empty "") wins.
+    const custom = setup({
+      providers: [v2],
+      supported,
+      modelFilter: "goose-*",
+    });
+    expect(
+      (await custom.setup.models("databricks_v2")).map(({ id }) => id),
+    ).toEqual(["goose-gpt-5-5"]);
+
+    const star = setup({ providers: [v2], supported, modelFilter: "*" });
+    expect(
+      (await star.setup.models("databricks_v2")).map(({ id }) => id),
+    ).toEqual(supported);
+
+    const cleared = setup({ providers: [v2], supported, modelFilter: "" });
+    expect(
+      (await cleared.setup.models("databricks_v2")).map(({ id }) => id),
+    ).toEqual(supported);
   });
 
   it("discovers Databricks V2 models despite a populated catalog and refreshes on check", async () => {

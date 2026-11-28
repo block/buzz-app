@@ -426,6 +426,15 @@ async function setup({
         },
         { id: "deep", label: "Deep", efforts: [{ id: "max", label: "Max" }] },
       ],
+      // Served, but kept out of pickers.
+      unlisted: async (model: string) =>
+        model === "hidden"
+          ? {
+              id: "hidden",
+              label: "Hidden",
+              efforts: [{ id: "max", label: "Max" }],
+            }
+          : undefined,
     }),
     run,
     ...(voice ? { voice } : {}),
@@ -4239,9 +4248,10 @@ it("passes the model and effort its owner asked for, and no other", async () => 
       asked("model", viewer, ["model", bot, "deep"], ["effort", bot, "max"]),
       asked("mismatch", viewer, ["model", bot, "deep"], ["effort", bot, "low"]),
       asked("unknown", viewer, ["model", bot, "gone"], ["effort", bot, "low"]),
+      asked("hidden", viewer, ["model", bot, "hidden"], ["effort", bot, "max"]),
     ],
   });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(7));
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(8));
   expect(run.mock.calls[0]?.[0]).not.toHaveProperty("session");
   expect(
     run.mock.calls.map(([{ model, effort }]) => ({ model, effort })),
@@ -4254,6 +4264,8 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     { model: "deep", effort: "max" },
     { model: "deep", effort: undefined },
     { model: undefined, effort: "low" },
+    // A model the type serves outside its pickers still runs.
+    { model: "hidden", effort: "max" },
   ]);
 });
 

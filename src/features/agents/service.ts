@@ -1118,6 +1118,10 @@ export type Models = Readonly<{
   /** Send displayed defaults as per-turn picks even when untouched. Opt in only
    * when explicit defaults preserve this provider's running-turn semantics. */
   sendDefaults?: boolean;
+  /** A model left out of `models` that a turn can still run on, such as one a
+   * picker filter hides: how a pick or a route's choice of it runs, or
+   * undefined when the type doesn't serve it. Pickers never list these. */
+  unlisted?(model: string): Promise<Model | undefined>;
 }>;
 export type AgentProviderSnapshot = Readonly<{
   readiness: "checking" | "ready" | "attention";
@@ -4205,6 +4209,7 @@ export class AgentsService extends Service implements Agents {
         current: offered.current,
         automatic,
         models: offered.models,
+        ...(offered.unlisted && { unlisted: offered.unlisted }),
         request: {
           agent: { pubkey: agent.pubkey, name: agent.name },
           prompt: promptOf(trigger),

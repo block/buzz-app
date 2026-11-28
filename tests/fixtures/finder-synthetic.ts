@@ -1,4 +1,4 @@
-import type { FinderDoc } from "../../src/bundled/finder/corpus.ts";
+import type { FinderDoc } from "../../src/features/search/fuzzy/corpus.ts";
 
 /** A repeatable, realistic-looking message history for benchmarks and the
  * fixture page: the same seed always gives the same messages. */

@@ -134,7 +134,9 @@ it("draws the request in its message and applies the change the owner confirms t
     within(dialog).getByRole("button", { name: "Enable plugin" }),
   );
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(await screen.findByRole("status")).toHaveTextContent("Enabled");
+  expect(
+    await screen.findByText("Enabled", { selector: '[role="status"]' }),
+  ).toBeVisible();
   const { configuration } = plugins.snapshot();
   expect(
     configuration.status === "ready" &&

@@ -102,14 +102,19 @@ export function agentProviderTarget(
 }
 
 /** Opens an activity turn's channel, or its thread at the root, in `scope`'s
- * community; undefined where the host can't navigate there. */
+ * community; undefined where the host can't navigate there. `open` is how
+ * the host shows it: a plain opening unless it says otherwise. */
 export function conversationOpener(
   navigation: Navigation | undefined,
   scope: NavigationScope | undefined,
+  open: (navigation: Navigation, target: OpenTarget) => void = (
+    navigation,
+    target,
+  ) => void navigation.open(target),
 ): AgentViewProps["openConversation"] {
   if (!navigation || !scope) return undefined;
   return (channelId, threadRootId) =>
-    void navigation.open({
+    open(navigation, {
       version: 1,
       kind: "conversation",
       scope,

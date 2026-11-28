@@ -4,6 +4,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { afterEach, expect, it, vi } from "vitest";
 import { eventMentions, searchText } from "../../app/shell/useSearchMessages";
+import { LinkContentContext } from "../conversation/LinkLabelContext";
 import { messagePreview, plainText } from "../notifications/content";
 import { profileTarget } from "../profiles/target";
 import type { Profile } from "../relay/contracts";
@@ -317,12 +318,105 @@ it("keeps chips beside a repaired wrapped link", () => {
   );
 });
 
-it("does not prepare a body without signed mentions", () => {
+it("does not prepare a body without signed mentions or channel links", () => {
   vi.mocked(renderedProfileMentionParts).mockClear();
-  const body = `**${"x ".repeat(5000)}** @tomb`;
+  const body = `**${"x ".repeat(5000)}** @tomb https://example.org/buzz`;
   const view = preview(body, { mentions: [] }, { text: messagePreview(body) });
   expect(chips(view)).toEqual([]);
   expect(renderedProfileMentionParts).not.toHaveBeenCalled();
+});
+
+it("names joined channels a link reads as, as the conversation does", () => {
+  const joined = {
+    ...session,
+    channels: {
+      list: () => ({
+        channels: [{ id: "beta", name: "Beta", channelType: "stream" }],
+      }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const body =
+    "see buzz://channel/beta, <buzz://channel/beta>, `buzz://channel/beta`, [label](buzz://channel/beta), buzz://channel/gone";
+  const shown = (edited?: true) =>
+    render(
+      <PreviewText
+        text={messagePreview(body)}
+        mentions={{ content: body, mentions: [], ...(edited && { edited }) }}
+        session={joined}
+        channelId="room"
+      />,
+    ).container;
+  expect(shown()).toHaveTextContent(
+    "see #Beta, #Beta, buzz://channel/beta, label, buzz://channel/gone",
+  );
+  cleanup();
+  expect(shown(true)).toHaveTextContent("see #Beta, #Beta,");
+  cleanup();
+  // A protected entity or mention right after a link ends it, as in the
+  // conversation, and still reads after the channel's name.
+  const adjacent =
+    "buzz://channel/beta&#58;x, buzz://channel/beta&#46; and <buzz://channel/beta>@tomb";
+  const view = render(
+    <PreviewText
+      text={messagePreview(adjacent)}
+      mentions={{ content: adjacent, mentions: [tomb] }}
+      session={joined}
+      channelId="room"
+    />,
+  ).container;
+  expect(view).toHaveTextContent("#Beta:x, #Beta. and #Betatomb");
+  expect(chips(view)).toEqual(["tomb"]);
+});
+
+it("leads a joined channel's name with the icon its conversation link shows", () => {
+  const joined = {
+    ...session,
+    channels: {
+      list: () => ({
+        channels: [
+          { id: "beta", name: "Beta", channelType: "stream" },
+          { id: "vault", name: "Vault", channelType: "stream", private: true },
+          { id: "plan", name: "Plan", channelType: "solo" },
+          { id: "pat", name: "Pat", channelType: "dm", private: true },
+        ],
+      }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const body = `buzz://channel/beta buzz://channel/vault buzz://channel/plan buzz://channel/pat buzz://channel/beta/${tomb} buzz://channel/gone`;
+  // Inside a link's hover card, whose link has a label of its own.
+  const view = render(
+    <LinkContentContext value="the hovered link">
+      <PreviewText
+        text={messagePreview(body)}
+        mentions={{ content: body, mentions: [] }}
+        session={joined}
+        channelId="room"
+      />
+    </LinkContentContext>,
+  ).container;
+  expect(
+    [...view.querySelectorAll("[data-link-kind]")].map((name) => [
+      name
+        .querySelector("svg")
+        ?.getAttribute("class")
+        ?.match(/icon-([\w-]+)/)?.[1],
+      name.textContent,
+    ]),
+  ).toEqual([
+    ["hash", "Beta"],
+    ["lock", "Vault"],
+    ["message-circle", "Plan"],
+    ["lock", "Pat"],
+    ["message-2", "Beta"],
+  ]);
+  // Readers hear each "#" once: no icon is read out.
+  expect(view).toHaveTextContent(
+    "#Beta #Vault Plan Pat Beta buzz://channel/gone",
+  );
+  expect(view.querySelector("svg:not([aria-hidden=true])")).toBeNull();
+  expect(view.querySelector("a, button")).toBeNull();
 });
 
 it("reads named identities before the optional mentioned ones, within budget", () => {

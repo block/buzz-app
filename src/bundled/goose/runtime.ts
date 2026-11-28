@@ -92,10 +92,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
-import {
-  wakeAnchor,
-  wakeLands,
-} from "../../features/agent-harness/plugin-wake";
+import { turnChannel, turnOf } from "../../features/agent-harness/plugin-wake";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -108,6 +105,7 @@ import {
   readCanvas,
   worksElsewhere,
 } from "../../features/agent-harness/project";
+import { referencedSkills } from "../../features/agent-harness/referenced-folders";
 import type { Exclusive } from "../../features/agent-harness/acp/agent-sessions";
 import {
   placeOf,
@@ -897,10 +895,7 @@ export class GooseRuntime {
       entry.handle = agent;
       entry.team = team ?? "";
     }
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
-    const channel =
-      channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
+    const channel = turnChannel(trigger, delivery);
     if (!channel) return;
     // Where it answers needs the channel's kind, which a reconnecting
     // community, or one still listing its channels, does not know yet: it
@@ -923,8 +918,10 @@ export class GooseRuntime {
       channel,
       signal,
     );
-    const topLevel = solo || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // Where the host placed it; this harness has no rules of its own.
+    const turn = turnOf(trigger, delivery, channel, solo);
+    if (!turn) return ignored?.();
+    const { event, topLevel } = turn;
     const gateway = offered && (await this.routed(entry, offered));
     if (offered && !admittedDeferred) signal.throwIfAborted();
     // A wake run without the gateway says so beside its prompt in Activity:
@@ -1840,6 +1837,12 @@ export class GooseRuntime {
       scope === "community" && admitted && current()
         ? entry.project.preview(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
+    const projectContext = [
+      turnProject?.section,
+      referencedSkills(event, owner, agent.pubkey),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     return {
       key,
       event,
@@ -1864,7 +1867,7 @@ export class GooseRuntime {
       total: earlier.length + 1,
       ...(signingAuthority ? { signingAuthority } : {}),
       names,
-      ...(turnProject ? { project: turnProject.section } : {}),
+      ...(projectContext ? { project: projectContext } : {}),
       ...(scope === "community" && turnProject
         ? { acceptProject: () => entry.project.resolve(channelId, turnProject) }
         : {}),
@@ -1914,7 +1917,12 @@ export class GooseRuntime {
     };
     // Every session of the agent shares them, so they read the settings, the
     // handle and the conversation's place as they are when called.
-    const tools: ToolServer = async (conversation, message, workSignal) => {
+    const tools: ToolServer = async (
+      conversation,
+      message,
+      workSignal,
+      contextTokens,
+    ) => {
       const handle = entry.handle;
       // A call in a conversation answers only while its turn runs unstopped.
       // A forwarded turn's session runs in its own goose, outside `sessions`;
@@ -1937,6 +1945,8 @@ export class GooseRuntime {
               if (!current()) throw new Error("The Goose turn has ended");
             },
           }),
+          // Each message it posts carries its session's context size.
+          contextTokens: () => contextTokens,
           // Its pre-tool check reviews every call, Buzz's extension included.
           nativeToolGate: true,
           // Read from the process hosting the session, which it never starts.

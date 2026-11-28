@@ -1,5 +1,6 @@
 import { readSubthread } from "../features/relay/subthread";
 import { messageAuthor } from "../features/relay/fold";
+import { contextTags } from "../features/relay/context-size";
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
@@ -62,6 +63,7 @@ import {
 } from "../features/agents/compact-at";
 import { attestedOwner } from "../features/agents/owner-attestation";
 import type { AgentSettingsProposal } from "../features/agents/settings-proposal";
+import { type BuzzToolName, TOOL_TITLES } from "./tool-titles";
 import type {
   BuzzClient,
   BuzzEvent,
@@ -106,13 +108,14 @@ const joinRole = {
     "Role for people who join or are added without one. guest on an open channel: anyone reads, only members post.",
 } as const;
 const tool = (
-  name: string,
+  name: BuzzToolName,
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[] = [],
   annotations?: Readonly<{ readOnlyHint: boolean; destructiveHint?: boolean }>,
 ) => ({
-  name,
+  name: name as string,
+  title: TOOL_TITLES[name],
   description,
   inputSchema: {
     type: "object",
@@ -472,14 +475,17 @@ export const TOOLS: readonly Tool[] = [
     ["name"],
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
-  tool("canvas_get", "Read a channel's canvas.", { channel: str }),
+  tool("canvas_get", "Read a channel's canvas and its version.", {
+    channel: str,
+  }),
   tool(
     "canvas_set",
-    `Replace a channel's canvas (at most ${LIVE_CANVAS_BYTES / 1024} KiB).`,
+    `Write a channel's canvas (at most ${LIVE_CANVAS_BYTES / 1024} KiB). To replace one, pass the version from your latest canvas_get or canvas_set of it as expected; without expected it only creates.`,
     {
       channel: str,
       content: str,
       path: str,
+      expected: str,
     },
   ),
   tool(
@@ -776,7 +782,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       );
     const audienceTags = [...audienceOf(args), ...requestOf(args)];
     const thread = reply ? await tools.threadTags(reply, channel) : [];
-    return post(tools, channel, args, thread, audienceTags);
+    // The thread a reply joins: its reply link, which names the task
+    // subthread rather than the physical root.
+    const joined = thread.find(([, , , marker]) => marker === "reply")?.[1];
+    return post(tools, channel, args, thread, audienceTags, joined);
   },
 
   async reply_in_subthread(tools, args) {
@@ -805,6 +814,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             ["e", parent, "", "reply"],
           ],
       audienceTags,
+      // Under the task message, or any message below it, the reply is in
+      // the task's own subthread. Unsure is no.
+      parent === context.root ||
+        (target && (await tools.inTaskSubthread(target, channel)))
+        ? context.root
+        : root,
     );
   },
 
@@ -1730,7 +1745,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? tools.context.channel;
     if (!channel) throw new Error("channel is required here.");
     const head = await canvas(tools, channel);
-    return head?.content || "No canvas.";
+    return head ? `version: ${head.id}\n\n${head.content}` : "No canvas.";
   },
 
   async canvas_set(tools, args) {
@@ -1738,18 +1753,65 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? context.channel;
     if (!channel) throw new Error("channel is required here.");
     const content = (await tools.body(args, true, "content")) as string;
+    const expected = text(args.expected);
+    // A copied canvas_get reply would save its header into the canvas.
+    if (/^version: [0-9a-f]{64}\n/.test(content))
+      throw new Error(
+        "Leave out the version line from canvas_get; pass the version as expected.",
+      );
     if (new TextEncoder().encode(content).length > LIVE_CANVAS_BYTES)
       throw new Error(
         `The canvas is over its limit of ${LIVE_CANVAS_BYTES} bytes.`,
       );
     const head = await canvas(tools, channel);
+    // Others may have saved since this session read the canvas: replacing
+    // needs the version it was shown, so nothing it never saw is lost.
+    const changed = () =>
+      new Error(
+        head
+          ? `The canvas changed since version ${head.id}. Read it again with canvas_get, merge your change into it, and pass the new version as expected.`
+          : "Another canvas was just saved. Read it with canvas_get, merge your change into it, and pass its version as expected.",
+      );
+    if (!head && expected)
+      throw new Error(
+        `No canvas in ${channel} to replace; leave out expected to create it.`,
+      );
+    if (head && !expected)
+      throw new Error(
+        "The channel has a canvas. Read it with canvas_get, keep what still holds, and pass its version as expected.",
+      );
+    if (head && expected !== head.id)
+      throw new Error(
+        `The canvas changed since version ${expected}. Read it again with canvas_get, merge your change into it, and pass the new version as expected.`,
+      );
     // The newest canvas wins, so a write must be dated after the current one.
     const after = head ? (head.created_at + 1) * 1000 : 0;
     if (after - Date.now() > 5000)
       throw new Error("The canvas was just changed; try again.");
     await waitUntil(after);
-    await client.publish({ kind: 40100, content, tags: [["h", channel]] });
-    return "saved";
+    // The relay refuses it if the canvas moved past the head read above.
+    const saved = await client
+      .publish({
+        kind: 40100,
+        content,
+        tags: [
+          ["h", channel],
+          ["expected-revision", head?.id ?? "none"],
+        ],
+      })
+      .catch((error: unknown) => {
+        throw reason(error).includes("conflict:") ? changed() : error;
+      });
+    const selected = await canvas(tools, channel).catch((error: unknown) => {
+      throw new Error(
+        `saved as version ${saved.id}, but the canvas could not be read back to confirm it is current: ${reason(error)}. Read canvas_get before you write again.`,
+      );
+    });
+    if (selected?.id !== saved.id)
+      throw new Error(
+        `conflict: the canvas was saved as version ${saved.id}, but another (${selected?.id ?? "none"}) is now current. Read canvas_get, merge your change into it, and pass its version as expected.`,
+      );
+    return `saved; version ${saved.id}`;
   },
 
   async canvas_history(tools, args) {
@@ -1986,14 +2048,37 @@ function audienceOf(args: Args): string[][] {
   return audience === "everyone" ? [] : [["audience", audience]];
 }
 
+/** Whether a message in `channel`, in the thread `root` or at the top level
+ * when undefined, is in the calling session's own conversation: its channel
+ * when the session is the whole channel, otherwise its thread. Unsure is no. */
+function ownConversation(
+  { client, context }: Tools,
+  channel: string,
+  root: string | undefined,
+) {
+  if (channel !== context.channel) return false;
+  if (context.wholeChannel) return true;
+  if (context.root) return root === context.root;
+  // With no thread, the session is the channel, apart from threads that
+  // the host says have, or may have, sessions of their own.
+  return (
+    root === undefined ||
+    !client.threadsApart ||
+    client.threadsApart(channel) === false
+  );
+}
+
 /** Publishes `args`' text, files and mentions as a message in `channel`,
- * with `thread`'s e-tags and any `extra` tags. */
+ * with `thread`'s e-tags and any `extra` tags. In the thread `root`, or at
+ * the top level when undefined: a message in the session's own conversation
+ * carries its context size, which measures no other. */
 async function post(
   tools: Tools,
   channel: string,
   args: Args,
   thread: readonly string[][],
-  extra: readonly string[][] = [],
+  extra: readonly string[][],
+  root: string | undefined,
 ) {
   const paths = list(args.files);
   const body = (await tools.body(args, !paths.length)) ?? "";
@@ -2020,6 +2105,9 @@ async function post(
       ...files.tags,
       ...(await tools.emoji(content)),
       ...extra,
+      ...(ownConversation(tools, channel, root)
+        ? contextTags(tools.client.contextTokens?.())
+        : []),
     ],
   };
   const event = await (files.managedAttachments.length
@@ -2085,23 +2173,35 @@ class Tools {
           throw new Error("The task thread is in a different channel.");
         return taskTags;
       }
-      if (
-        channel === taskChannel &&
-        tag(target, "h") === channel &&
-        threadReference(target)?.rootId === sourceRoot
-      ) {
-        const branch = await readSubthread(
-          [target],
-          { channel, root: sourceRoot, anchor },
-          THREAD,
-          (filters) => this.client.query(filters),
-        );
-        if (branch.events.length) return taskTags;
-        if (branch.incomplete)
-          throw new Error("Could not verify the task reply's parent thread.");
-      }
+      const inTask = await this.inTaskSubthread(target, channel);
+      if (inTask) return taskTags;
+      if (inTask === undefined)
+        throw new Error("Could not verify the task reply's parent thread.");
     }
     return [["e", target ? rootOf(target) : parent, "", "reply"]];
+  }
+
+  /** Whether `target`, in `channel`, sits in the session's task subthread:
+   * under its anchor message rather than elsewhere in the physical thread.
+   * Undefined when the relay could not show the whole branch. */
+  async inTaskSubthread(target: BuzzEvent, channel: string) {
+    const { channel: taskChannel, root: anchor, sourceRoot } = this.context;
+    if (
+      !anchor ||
+      !sourceRoot ||
+      channel !== taskChannel ||
+      tag(target, "h") !== channel ||
+      threadReference(target)?.rootId !== sourceRoot
+    )
+      return false;
+    const branch = await readSubthread(
+      [target],
+      { channel, root: sourceRoot, anchor },
+      THREAD,
+      (filters) => this.client.query(filters),
+    );
+    if (branch.events.length) return true;
+    return branch.incomplete ? undefined : false;
   }
 
   /** Visit matching events in relay order, retaining only what the caller needs.
@@ -3532,10 +3632,11 @@ async function leads(
 const unread = (error: unknown) =>
   new Error(`its state could not be read back: ${reason(error)}`);
 
-/** The channel's newest canvas, once the channel is known to be visible. */
+/** The channel's newest canvas, once the channel is known to be visible.
+ * Read from the writer, as the app does, so its version is the real head. */
 async function canvas(tools: Tools, channel: string) {
   const [head] = await tools.client.query([
-    { kinds: [40100], "#h": [channel], limit: 1 },
+    { kinds: [40100], "#h": [channel], limit: 1, consistency: "strong" },
   ]);
   if (!head && !(await tools.metadata(channel))) throw unseen(channel);
   return head;

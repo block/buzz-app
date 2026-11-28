@@ -100,6 +100,23 @@ describe("turnContextFor", () => {
     });
   });
 
+  it("names the thread a plugin placed the mention in, keeping its signed message", () => {
+    const mention = { type: "mention", event: event() } as const;
+    expect(
+      turnContextFor(mention, { flat: NOT_FLAT, placement: { root: ROOT } }),
+    ).toEqual({
+      channel_id: CHANNEL,
+      message_id: "c".repeat(64),
+      thread_id: ROOT,
+    });
+    expect(
+      turnContextFor(mention, {
+        flat: NOT_FLAT,
+        placement: { topLevel: true },
+      }).thread_id,
+    ).toBeNull();
+  });
+
   it("gives a turn in a flat channel no thread, whatever root it names", () => {
     const flat = (id: string) => id === CHANNEL;
     expect(turnContextFor(wake, { flat }).thread_id).toBeNull();

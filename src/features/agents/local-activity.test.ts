@@ -311,10 +311,11 @@ it("expires reply correlations after the notification freshness window", () => {
   try {
     const activity = createLocalAgentActivity();
     const work = activity.begin(request());
-    work.reply(reply);
+    work.reply(reply, true);
     expect(activity.reader.work()[0]?.replyMessages).toHaveLength(1);
     vi.advanceTimersByTime(120_001);
     expect(activity.reader.work()[0]).not.toHaveProperty("replyMessages");
+    expect(activity.reader.work()[0]?.hasUserVisibleReply).toBe(true);
   } finally {
     vi.useRealTimers();
   }
@@ -326,10 +327,11 @@ it("keeps fresh reply correlations when retry replaces the failed attempt", () =
   try {
     const activity = createLocalAgentActivity();
     const first = activity.begin(request(), () => {});
-    first.reply(reply);
+    first.reply(reply, true);
     first.finish({ ok: false, error: "Provider unavailable" });
     vi.advanceTimersByTime(1);
     activity.begin(request(), () => {});
+    expect(activity.reader.work()[0]).not.toHaveProperty("hasUserVisibleReply");
     expect(activity.reader.work()[0]?.replyMessages).toEqual([
       expect.objectContaining({ id: reply }),
     ]);
@@ -360,6 +362,12 @@ it("shows the latest live step while working and drops it once settled", () => {
     step: { tool: "Read", target: "notes.txt" },
   });
   expect(localWorkLabel(row())).toBe("Reading notes.txt");
+  // The same name and target is another step when only one is Buzz's.
+  work.step("search", "release notes", "buzz");
+  expect(localWorkLabel(row())).toBe("Search messages · release notes");
+  work.step("search", "release notes");
+  expect(localWorkLabel(row())).toBe("search · release notes");
+  work.step("Read", "notes.txt");
   work.step("   ");
   expect(row()?.step?.tool).toBe("Read");
   work.finish({ ok: true });
@@ -383,6 +391,39 @@ it("words readable steps from the harness's own tool names and targets", () => {
   expect(text("Bash")).toBe("Running a command");
   expect(text("custom_tool", "x")).toBe("custom_tool · x");
   expect(text("custom_tool")).toBe("custom_tool");
+});
+
+it("titles only a step its harness identified as a Buzz tool", () => {
+  const buzz = (tool: string, target?: string) =>
+    stepText({ tool, origin: "buzz", ...(target ? { target } : {}) });
+  const text = (tool: string, target?: string) =>
+    stepText(target ? { tool, target } : { tool });
+  expect(buzz("channel_list")).toBe("List channels");
+  expect(buzz("search", "release notes")).toBe(
+    "Search messages · release notes",
+  );
+  expect(buzz("edit")).toBe("Edit message");
+  // A fixed phrase wins over a title, with or without a target.
+  expect(buzz("send")).toBe("Sending a message");
+  expect(buzz("read", "notes.md")).toBe("Reading the conversation");
+  // Identified as Buzz but not one of its tools: shown as reported.
+  expect(buzz("channel_lists")).toBe("channel_lists");
+  // Without the origin the same name is another server's `search` or the
+  // harness's own file `edit`, and is shown as reported.
+  for (const tool of [
+    "search",
+    "edit",
+    "channel_list",
+    "buzz.channel_list",
+    "mcp__buzz__channel_list",
+    "shell",
+  ]) {
+    expect(text(tool), tool).toBe(tool);
+    expect(text(tool, "x"), tool).toBe(`${tool} · x`);
+  }
+  // A harness's own tool keeps its wording.
+  expect(text("Read", "a.ts")).toBe("Reading a.ts");
+  expect(text("Edit")).toBe("Editing a file");
 });
 
 const request = (messageId = "m") => ({

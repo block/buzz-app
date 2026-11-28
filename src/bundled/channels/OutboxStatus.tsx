@@ -1,6 +1,6 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { isWorkflowOperation } from "../../features/workflows/protocol";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { RelayProfiler } from "../../features/relay/profiling";
 import { RelayTimings } from "./RelayTimings";
 import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
@@ -8,11 +8,6 @@ import { HELD_RETRY_REFUSED, type Outbox } from "../../features/relay/outbox";
 import type { RelaySession } from "../../features/relay/session";
 import { isBatchAddition } from "../../features/channel-members/members";
 import { soloAdminSetup } from "../../features/relay/solo-admins";
-import {
-  AbandonAdminSetupDialog,
-  abandonableSetup,
-  type AbandonableSetup,
-} from "../../features/solo/AdminSetupRecovery";
 import { migrationSource } from "../../features/relay/migration";
 import { refusedPinCommand, type PinSource } from "../../features/relay/pins";
 import { RefusedPin } from "../../features/messages/RefusedPin";
@@ -47,16 +42,12 @@ export function OutboxStatus({
     .map((item) => ({
       ...item,
       setup: soloAdminSetup(item),
-      abandonSetup: abandonableSetup(item),
     }));
   const [error, setError] = useState<string>();
-  const [abandon, setAbandon] = useState<AbandonableSetup>();
-  const summary = useRef<HTMLElement>(null);
-  const abandonButton = useRef<HTMLButtonElement>(null);
 
   return (
     <details>
-      <summary ref={summary}>Outbox · {operations.length} items</summary>
+      <summary>Outbox · {operations.length} items</summary>
       <p>Removing an item from the outbox does not delete a sent message.</p>
       <ul
         style={{
@@ -163,21 +154,12 @@ export function OutboxStatus({
             {refusedPinCommand(item) && (
               <RefusedPin source={pins} item={item} />
             )}{" "}
-            {(!item.setup || item.abandonSetup || item.delivery === "failed") &&
+            {(!item.setup || item.delivery === "failed") &&
               item.delivery !== "sending" && (
                 <Button
                   type="button"
-                  onClick={async (event) => {
+                  onClick={async () => {
                     try {
-                      if (item.abandonSetup) {
-                        abandonButton.current = event.currentTarget;
-                        setError(undefined);
-                        setAbandon({
-                          id: item.event.id,
-                          recovery: item.abandonSetup,
-                        });
-                        return;
-                      }
                       const shareReceipt =
                         item.event.kind === 9 &&
                         // Share receipts, including those of earlier flows.
@@ -194,27 +176,13 @@ export function OutboxStatus({
                     }
                   }}
                 >
-                  {item.abandonSetup
-                    ? "Abandon admin setup"
-                    : "Remove from outbox"}
+                  Remove from outbox
                 </Button>
               )}
           </li>
         ))}
       </ul>
-      {abandon && (
-        <AbandonAdminSetupDialog
-          outbox={outbox}
-          setup={abandon}
-          finalFocus={() =>
-            abandonButton.current?.isConnected
-              ? abandonButton.current
-              : summary.current
-          }
-          onClose={() => setAbandon(undefined)}
-        />
-      )}
-      {!abandon && error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{error}</p>}
       <RelayTimings profiling={profiling} />
     </details>
   );

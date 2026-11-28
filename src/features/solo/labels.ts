@@ -56,6 +56,23 @@ export function soloChatLinkName(channel: { id: string; name: string }) {
   return channel.name.trim() || channel.id.slice(0, 8);
 }
 
+/** The title a link to a Solo chat itself reads by, in its conversation and
+ * in previews of it, in place of a channel's `#name`; empty for any other
+ * link. `channels` is the session's own list: only a chat the relay has
+ * confirmed counts, and a retained copy's `cached` can be out of date. */
+export function linkedSoloChatName(
+  link: { channelId: string; messageId?: string; threadRootId?: string },
+  channels:
+    | readonly Pick<ChannelSummary, "id" | "name" | "channelType" | "cached">[]
+    | undefined,
+) {
+  if (link.messageId || link.threadRootId) return "";
+  const channel = channels?.find((item) => item.id === link.channelId);
+  return channel?.channelType === "solo" && !channel.cached
+    ? soloChatLinkName(channel)
+    : "";
+}
+
 /** The authorized Solo inventory; unknown metadata never implies Solo. */
 export function eligibleSolo(
   channel: ChannelSummary,

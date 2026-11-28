@@ -49,7 +49,7 @@ export type ActivityReceipt = Readonly<{
   accepted?: () => void;
   /** Steps show on the latest acknowledged message of each scope. */
   activityScope?: string;
-  step?: (tool: string, target?: string) => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
   acknowledged?: () => void;
   superseded?: () => void;
 }>;
@@ -61,6 +61,9 @@ export type ToolServer = (
   message: Readonly<{ id: string | number; method: string; params?: unknown }>,
   /** Captured work lifetime; aborted while idle or before the session opens. */
   signal?: AbortSignal,
+  /** The calling session's context size when it called: the tokens of its
+   * last model call, from its `usage_update`; undefined when unknown. */
+  contextTokens?: number,
 ) => Promise<unknown>;
 
 /** The provider, model and thinking level a session's turns run on; empty is

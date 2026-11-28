@@ -104,8 +104,9 @@ test("landed pages keep reading ahead of a reader who stops at the top", async (
 });
 
 test.describe("past the history budget", () => {
-  // More rows than one window keeps (2,400).
-  test.use({ historyCounts: { alpha: 2700, beta: 20 } });
+  // More rows than one window keeps (2,400), short enough to mount around
+  // the reader at the sizes of the rows they replace.
+  test.use({ historyCounts: { alpha: 2700, beta: 20 }, shortMessages: true });
   test("paging older slides the window to the channel start, and Jump to latest returns", async ({
     page,
     app,

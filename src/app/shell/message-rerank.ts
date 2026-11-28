@@ -22,6 +22,9 @@ const MAX_QUESTIONS = 32;
  * word asks once, for the word it stops on. */
 const RERANK_DELAY = 500;
 const RERANK_TIMEOUT = 12_000;
+/** The longest new hits wait for a rerank before they show in the order
+ * they came, so a slow provider doesn't hold the list. */
+export const RERANK_WAIT = RERANK_DELAY + 1000;
 
 export type RerankFacts = {
   /** Where the message is, e.g. `#launch` or `Direct message: Alex`. */
@@ -132,7 +135,8 @@ function rerankOrder(
  * the calls go out only once the provider answers, so one that finishes
  * checking or becomes able to answer starts them. Once `held`, nothing more is
  * sent and an answer that arrives later is dropped, so rows don't move under
- * someone reading them; one already applied stays.
+ * someone reading them; one already applied stays. `pending` holds while an
+ * order for these hits may still come.
  */
 export function useMessageRerank({
   decisions,
@@ -153,7 +157,8 @@ export function useMessageRerank({
 }) {
   const hold = useRef(held);
   hold.current = held;
-  const answering = answers(useStatus(decisions));
+  const status = useStatus(decisions);
+  const answering = answers(status);
   // Facts are read when the calls start, so a profile that loads while the
   // results settle still counts.
   const latestFacts = useRef(facts);
@@ -165,6 +170,8 @@ export function useMessageRerank({
     ids: readonly string[];
     order: string[];
   }>();
+  // The request that answered, failed or was dropped.
+  const [doneKey, setDoneKey] = useState("");
   // biome-ignore lint/correctness/useExhaustiveDependencies: The key names the request; messages are read as it starts.
   useEffect(() => {
     if (!key || !decisions || !answering || ids.length < 2) return;
@@ -172,33 +179,36 @@ export function useMessageRerank({
     const timer = setTimeout(() => {
       // Someone who moved or chose during the settle keeps this order, so
       // their query and hits aren't sent for an answer that would be dropped.
-      if (hold.current) return;
+      if (hold.current) return setDoneKey(key);
       const requests = rerankRequests(
         query,
         messages,
         latestFacts.current,
         community,
       );
-      void Promise.all(
-        requests.map((request) => decisions.decide(request)),
-      ).then((replies) => {
-        if (!live || hold.current) return;
-        const probabilities: number[] = [];
-        for (const [index, reply] of replies.entries()) {
-          if (reply.outcome !== "answered") return;
-          for (const name of Object.keys(requests[index]?.questions ?? {})) {
-            const answer = reply.answers[name];
-            probabilities.push(
-              answer?.type === "yes_no" ? answer.probability : -1,
-            );
+      void Promise.all(requests.map((request) => decisions.decide(request)))
+        .then((replies) => {
+          if (!live || hold.current) return;
+          const probabilities: number[] = [];
+          for (const [index, reply] of replies.entries()) {
+            if (reply.outcome !== "answered") return;
+            for (const name of Object.keys(requests[index]?.questions ?? {})) {
+              const answer = reply.answers[name];
+              probabilities.push(
+                answer?.type === "yes_no" ? answer.probability : -1,
+              );
+            }
           }
-        }
-        setResult({
-          query,
-          ids,
-          order: rerankOrder(messages, probabilities),
+          setResult({
+            query,
+            ids,
+            order: rerankOrder(messages, probabilities),
+          });
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (live) setDoneKey(key);
         });
-      });
     }, RERANK_DELAY);
     return () => {
       live = false;
@@ -223,5 +233,12 @@ export function useMessageRerank({
     const placed = new Set(order);
     return [...head, ...messages.filter(({ id }) => !placed.has(id))];
   }, [messages, order]);
-  return { messages: ordered, reranked: !!order };
+  const pending =
+    !!key &&
+    !!decisions &&
+    canRerank(status) &&
+    ids.length >= 2 &&
+    !held &&
+    doneKey !== key;
+  return { messages: ordered, reranked: !!order, pending };
 }

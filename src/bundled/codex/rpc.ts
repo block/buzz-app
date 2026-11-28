@@ -1,4 +1,5 @@
 import { writeJSON } from "../../features/agent-protection/json-stream";
+import { ContextMeters } from "../../features/agent-harness/context-meter";
 import type { Model } from "./config";
 import type {
   HostProcess,
@@ -32,6 +33,13 @@ export type ToolReply = {
   )[];
 };
 
+/** Answers a Buzz tool call; `contextTokens` is its thread's context size
+ * when it called, undefined when unknown. */
+export type ToolHandler = (
+  call: ToolCall,
+  contextTokens?: number,
+) => Promise<ToolReply>;
+
 /** Codex's answer refusing a request, which it therefore did not carry out. */
 export class Refused extends Error {}
 /** No reply arrived before the RPC deadline. */
@@ -63,10 +71,10 @@ export class AppServer {
   private closing?: Promise<void> | undefined;
   private gone = false;
   private opened?: [Spawn, string | undefined, boolean];
+  /** Each thread's context size, from `thread/tokenUsage/updated`. */
+  private readonly contexts = new ContextMeters();
 
-  constructor(
-    private readonly toolCall?: (call: ToolCall) => Promise<ToolReply>,
-  ) {}
+  constructor(private readonly toolCall?: ToolHandler) {}
 
   /** The credential for only this agent's commands, never app-server's own
    * environment. */
@@ -136,6 +144,7 @@ export class AppServer {
     this.gone = false;
     this.buffer = this.stderr = "";
     this.unconfirmedReleases.clear();
+    this.contexts.clear();
     return this.open(spawn, cwd, protectedRuntime);
   }
   /** Whether the process has exited. */
@@ -148,6 +157,7 @@ export class AppServer {
     this.unconfirmedReleases.add(threadId);
     await this.request("thread/unsubscribe", { threadId });
     this.unconfirmedReleases.delete(threadId);
+    this.contexts.forget(threadId);
   }
   async confirmThreadReleased(threadId: string) {
     if (this.unconfirmedReleases.has(threadId))
@@ -205,7 +215,24 @@ export class AppServer {
                 "Buzz Codex runs with approvalPolicy=never; interactive requests are unsupported",
             },
           }).catch((error) => this.fail(error));
-        } else this.emit(message);
+        } else {
+          const { threadId, tokenUsage } = (message.params ?? {}) as {
+            threadId?: unknown;
+            tokenUsage?: { last?: { totalTokens?: unknown } };
+          };
+          // `last` is the thread's latest model call.
+          if (
+            message.method === "thread/tokenUsage/updated" &&
+            typeof threadId === "string"
+          )
+            this.contexts.report(threadId, tokenUsage?.last?.totalTokens);
+          if (
+            message.method === "thread/closed" &&
+            typeof threadId === "string"
+          )
+            this.contexts.forget(threadId);
+          this.emit(message);
+        }
       }
       if (this.buffer.length > 4 * 1024 * 1024) throw new Oversized();
     } catch (error) {
@@ -213,13 +240,11 @@ export class AppServer {
       void this.close();
     }
   }
-  private async replyTool(
-    message: Wire,
-    handler: (call: ToolCall) => Promise<ToolReply>,
-  ) {
+  private async replyTool(message: Wire, handler: ToolHandler) {
     let reply: ToolReply;
     try {
-      reply = await handler(message.params as ToolCall);
+      const call = message.params as ToolCall;
+      reply = await handler(call, this.contexts.tokens(call?.threadId));
     } catch (error) {
       reply = {
         success: false,

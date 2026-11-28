@@ -57,6 +57,7 @@ export type {
   SidebarSections,
 } from "../features/channel-navigation/sidebar-sections-service";
 export type {
+  PluginInstallationArtifactHash,
   PluginInstallOutcome,
   PluginInstallSource,
   PluginInstaller,
@@ -159,6 +160,7 @@ export type {
 
 export type {
   Decisions,
+  DecisionsAnswerable,
   DecisionProvider,
   DecisionProviderStatus,
   DecisionReply,

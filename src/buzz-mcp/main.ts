@@ -46,6 +46,7 @@ serveStdio(() => {
     server.registerTool(
       tool.name,
       {
+        title: tool.title,
         description: tool.description,
         inputSchema: fromJsonSchema<Record<string, unknown>>(tool.inputSchema),
         ...("annotations" in tool ? { annotations: tool.annotations } : {}),

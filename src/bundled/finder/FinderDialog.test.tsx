@@ -21,7 +21,7 @@ import {
   roster,
 } from "../../features/relay/testing";
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
-import { createCorpus } from "./corpus";
+import { createCorpus } from "../../features/search/fuzzy/corpus";
 import { FinderDialog, type FinderScope } from "./FinderDialog";
 import { startFinderSync } from "./sync";
 
@@ -164,7 +164,18 @@ async function fixture() {
     await vi.advanceTimersByTimeAsync(0);
     await clicked;
   };
-  return { props, Finder, click, reads, control, corpus, events, root };
+  return {
+    props,
+    Finder,
+    click,
+    reads,
+    control,
+    corpus,
+    events,
+    root,
+    relay,
+    viewer,
+  };
 }
 const tick = async (ms: number) => {
   await act(async () => {
@@ -385,3 +396,44 @@ test.each(["close", "scope", "session"])(
     }
   },
 );
+
+test("losing a channel removes its rows from an open Finder at once", async () => {
+  const { Finder, props, corpus, events, relay, viewer } = await fixture();
+  events.push(
+    metadata(relay, "lab", "lab", 1_700_000_000, [["private"]]),
+    roster(relay, "lab", [viewer.pubkey]),
+  );
+  const session = props.session;
+  await session.read([{ kinds: [39000, 39002], "#d": ["lab"], limit: 2 }]);
+  corpus.add([
+    { ...local("kept", "zebra crew notes"), channelId: "crew" },
+    {
+      ...local("gone", "zebra lab notes"),
+      channelId: "lab",
+      createdAt: 1_700_000_200,
+    },
+  ]);
+  render(<Finder />);
+  type("zebra");
+  await tick(SEARCH_DEBOUNCE_MS);
+  expect(options("Matches")).toEqual([
+    expect.stringContaining("zebra lab notes"),
+    expect.stringContaining("zebra crew notes"),
+  ]);
+  // The lab row, first, is the active one when access goes.
+  events.push(roster(relay, "lab", [], 1_700_000_100));
+  await act(async () => {
+    await session.read([{ kinds: [39002], "#d": ["lab"], limit: 1 }]);
+  });
+  expect(options("Matches")).toEqual([
+    expect.stringContaining("zebra crew notes"),
+  ]);
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+  fireEvent.click(screen.getByRole("option", { name: /zebra crew notes/ }));
+  expect(props.openMessage.mock.calls.map(([doc]) => doc.id)).not.toContain(
+    "gone",
+  );
+  expect(props.openMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "kept" }),
+  );
+});

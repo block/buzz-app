@@ -8,7 +8,10 @@ import {
   type ToolServer,
 } from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
-import { createLocalAgentActivity } from "../../features/agents/local-activity";
+import {
+  createLocalAgentActivity,
+  stepText,
+} from "../../features/agents/local-activity";
 
 const ok: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -589,6 +592,8 @@ describe("GooseProcess", () => {
       "channel/root",
       { id: 1, method: "tools/list", params: {} },
       expect.objectContaining({ aborted: true }),
+      // It has made no model call yet.
+      undefined,
     );
     // goose matches the reply to its request by the id it sent.
     expect(response).toEqual({
@@ -1410,8 +1415,8 @@ describe("GooseProcess", () => {
     });
     await flush();
     expect(step.mock.calls).toEqual([
-      ["shell", "ls"],
-      ["Writing reply", undefined],
+      ["shell", "ls", undefined],
+      ["Writing reply", undefined, undefined],
     ]);
     process.turns[0]?.finish();
   });
@@ -1902,7 +1907,34 @@ describe("stepLabel", () => {
         title: "buzz: send",
         rawInput: { text: "hi", path: "/a/b/notes.md" },
       }),
-    ).toEqual({ tool: "send", target: "notes.md" });
+    ).toEqual({ tool: "send", target: "notes.md", origin: "buzz" });
+    // goose spells a Buzz tool's name with spaces in the title and exactly in
+    // `_meta`, with its extension. The step reports the bare name and its
+    // origin, which the step text titles.
+    const buzz = stepLabel({
+      sessionUpdate: "tool_call",
+      title: "buzz: channel list",
+      _meta: {
+        goose: {
+          toolCall: { toolName: "buzz__channel_list", extensionName: "buzz" },
+        },
+      },
+    });
+    expect(buzz).toEqual({ tool: "channel_list", origin: "buzz" });
+    expect(buzz && stepText(buzz)).toBe("List channels");
+    // goose's own `edit` and another extension's `search` are not Buzz's.
+    for (const [toolName, extensionName, tool] of [
+      ["edit", "developer", "edit"],
+      ["docs__search", "docs", "search"],
+    ]) {
+      const other = stepLabel({
+        sessionUpdate: "tool_call",
+        title: tool,
+        _meta: { goose: { toolCall: { toolName, extensionName } } },
+      });
+      expect(other).toEqual({ tool });
+      expect(other && stepText(other)).toBe(tool);
+    }
   });
 });
 

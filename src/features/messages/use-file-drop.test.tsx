@@ -284,6 +284,26 @@ it("a drag crossing into a nested pane leaves the outer pane's hint", () => {
   expect(screen.queryByText("Drop files")).not.toBeInTheDocument();
 });
 
+it("a drop on content that takes its own drops reaches it, not the composer", () => {
+  const attach = vi.fn();
+  const own = vi.fn();
+  render(
+    <Composer enabled attach={attach}>
+      <div data-own-drops="">
+        <button type="button" onDrop={own}>
+          Plugin target
+        </button>
+      </div>
+    </Composer>,
+  );
+  const target = screen.getByRole("button", { name: "Plugin target" });
+  drag(target, "dragEnter");
+  expect(screen.queryByText("Drop files")).not.toBeInTheDocument();
+  drag(target, "drop");
+  expect(attach).not.toHaveBeenCalled();
+  expect(own).toHaveBeenCalledTimes(1);
+});
+
 function ThreadSummary({ open }: { open(): void }) {
   return (
     <button type="button" {...useSpringLoaded(open)}>

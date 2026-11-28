@@ -18,7 +18,7 @@ import {
 import {
   createCorpus,
   type FinderDoc,
-} from "../../src/bundled/finder/corpus.ts";
+} from "../../src/features/search/fuzzy/corpus.ts";
 import {
   FinderDialog,
   type FinderScope,

@@ -74,6 +74,7 @@ Each line is the main call. Read the types for every field.
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, community })`. It never rejects. |
 | `speech` | Speech to text | `ctx.speech.listen({ community, onText, onPause?, onEnd, onError? })` returns `{ stop, cancel }`; failures arrive on `onError`. To be a provider, `ctx.speech.registerProvider(...)`, below. |
 | `browser` | An embedded website (macOS) | `ctx.browser.View` inside a panel |
+| `pluginInstaller` (optional) | Inspect one installed plugin package digest | `ctx.reflect.get("pluginInstaller")?.getInstallationArtifactHash?.(id)` |
 | `notices` (optional) | A notice on any page, with up to three buttons | `await ctx.reflect.get("notices")?.show({ title, description?, actions? }, { signal? })` resolves with the picked action's `id`, or `undefined` if dismissed or aborted. Proceed only on an allow `id`. Pass a tool call's `client.signal` to ask the owner before it runs. |
 | `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`, and `Menu` (newer hosts: check `ui.Menu`). `Menu` takes `items` (`label`, `onSelect`, `tone: "destructive"`, `disabled`), a `label` or `aria-label`, `icon` and `align`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
@@ -105,21 +106,22 @@ props its component renders.
 
 Check `ctx.conversation.workspaceSlots?.trailing === true` in the same way
 before passing `trailing` to `ui.Workspace`. The Channels workspace shows that
-content as a card over the
-bottom of the channel timeline, in its own scroll layer: scrolling over the
-card grows it, then slides it up. Render the whole card at rest too, since
-growing scrolls it into view: let `expanded` change labels, not what the card
-holds. Keep its controls in view with `position: sticky; bottom: 0` and an
+content as a card over the bottom of the main tab's history, in its own scroll
+layer: scrolling over the card grows it, then slides it up. When your `target`
+names a thread, the card sits over that thread's replies, so build it from the
+same `channelId` and `threadId` you passed. Render the whole card at rest too,
+since growing scrolls it into view: let `expanded` change labels, not what the
+card holds. Keep its controls in view with `position: sticky; bottom: 0` and an
 opaque background, and draw its outline with a box shadow rather than a bottom
 border.
 
 Check `ctx.conversation.workspaceSlots?.aside === true` before passing `aside`
 to `ui.Workspace`. The host places it in a box of `asideWidth` (default 320)
-over the history's end edge, left of its scrollbar. Docked, it runs from the
-history's top to the reader's bottom, and the history's rows and the composer
-keep to the width beside it; when the reader would get too narrow, it floats
-over the history instead, above the composer. The box
-draws nothing in either mode: draw your own card, let it size to its content,
+over the history's end edge, left of its scrollbar, from the history's top to
+the reader's bottom. Docked, the history's rows and the composer keep to the
+width beside it; when the reader would get too narrow, it floats over the
+history instead, and over the composer's end while open. The box draws nothing
+in either mode: draw your own card, let it size to its content,
 and scroll inside it when it is taller than the box. Only your content takes
 pointer input, so the wheel beside or below it scrolls the history. A popover
 escapes over the history only from a portal, as `ui.Menu`'s does.
@@ -132,6 +134,22 @@ closed. `onAsideFloatingChange` tells you whether it floats, for example to
 close it after a pick. Messages under the overlay are not marked read.
 
 For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the same across reads. Return a new turn when it changes. Leave previously returned turns and their items untouched.
+
+### Installed plugin artifact hash
+
+The optional `pluginInstaller` service has an optional `getInstallationArtifactHash(id)` capability on newer hosts. It returns only the native SHA-256 recorded for that plugin's catalogued revision. The lookup and subscription read catalog state; neither rehashes the current package file, so an `available` result is not a fresh integrity check. The `PluginInstallationArtifactHash` result type is exported from `@buzz/author`:
+
+```js
+const installer = ctx.reflect.get("pluginInstaller");
+const result = installer?.getInstallationArtifactHash?.("example.helper");
+if (result?.status === "available") {
+  console.log(result.sha256);
+}
+```
+
+`available` includes a 64-character lowercase hexadecimal SHA-256 in `sha256`. `absent` means a ready catalog has no matching ID. `unavailable` means the catalog is not ready, the ID is ambiguous, or Buzz cannot confirm a supported stored artifact digest (for example, an errored entry, a bundled plugin, or invalid digest metadata). A disabled external plugin can still have an available digest. Subscribe with `subscribeInstallationStatus(id, listener)` before reading; its callback is an invalidation signal, so re-read the hash when it fires.
+
+Equal recorded digests mean the catalogued revisions have the same package digest. They do not verify current file bytes or prove a common source, publisher, trust level, or version order.
 
 ## Speech providers
 

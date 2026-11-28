@@ -42,6 +42,10 @@ import {
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
 import {
+  setDeviceSearchPreference,
+  useDeviceSearchPreference,
+} from "../features/search/device-search-preference";
+import {
   setMessageSortPreference,
   useMessageSortPreference,
 } from "../features/search/message-sort-preference";
@@ -88,6 +92,7 @@ export function AppearanceSettings({
   const autocorrect = useMessageAutocorrectPreference();
   const markdownAsTyped = useMarkdownAsTypedPreference();
   const unreadFirst = useUnreadFirstPreference();
+  const deviceSearch = useDeviceSearchPreference();
   const messageSort = useMessageSortPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
@@ -509,6 +514,12 @@ export function AppearanceSettings({
               checked={unreadFirst.enabled}
               onCheckedChange={setUnreadFirstPreference}
             />
+            <SwitchPreferenceRow
+              label="Search this device as you type"
+              description="Search shows matching messages this device already received as you type, before the community’s results arrive."
+              checked={deviceSearch.enabled}
+              onCheckedChange={setDeviceSearchPreference}
+            />
             <PreferenceRow
               title="Sort messages by"
               subtitle="Where the relay supports sorting, new searches of one conversation start in this order. Sort messages in the search field changes only that search."
@@ -618,6 +629,20 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && deviceSearch.unsaved && (
+          <ToastNotice
+            title="Device search preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setDeviceSearchPreference(deviceSearch.enabled)}
+            >
+              Retry saving device search
             </Button>
           </ToastNotice>
         )}

@@ -53,9 +53,12 @@ export function useFileDrop(
     let under: EventTarget | null = null;
     const files = (event: DragEvent) =>
       event.dataTransfer?.types.includes("Files");
+    // Content marked data-own-drops, such as a plugin's card, takes its own
+    // drops, so the pane's composer leaves them alone.
     const owns = (event: DragEvent) =>
       event.target instanceof Element &&
-      (event.target.closest("[data-attachment-drop-zone]") ?? form) === zone;
+      (event.target.closest("[data-attachment-drop-zone], [data-own-drops]") ??
+        form) === zone;
     const reset = () => {
       under = null;
       setDragging(false);

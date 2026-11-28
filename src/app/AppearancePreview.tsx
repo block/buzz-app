@@ -1,7 +1,75 @@
+import { useMemo } from "react";
+import { MessageRow } from "../features/messages/MessageRow";
+import type { ChannelMessage } from "../features/relay/contracts";
 import type { MessageDensity, MessageWidth } from "../shared/theme/service";
+import { useLocalDay } from "../shared/use-local-day";
 import styles from "./AppearancePreview.module.css";
 
-/** Decorative app sketch using the same semantic colors as the live interface. */
+const VIEWER = "preview-viewer";
+const message = (
+  id: string,
+  authorId: string,
+  createdAt: number,
+  content: string,
+): ChannelMessage => ({
+  id,
+  channelId: "appearance-preview",
+  authorId,
+  createdAt,
+  content,
+  mentions: [],
+  participants: [],
+  attachments: [],
+  reactions: [],
+  replyCount: 0,
+});
+/** Dated today at 9:41 local time, so bylines show a clock readable in either
+ * hour cycle rather than a past date. */
+const sampleConversation = (today: Date) => {
+  const at = (minute: number) =>
+    new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      9,
+      minute,
+    ).getTime() / 1000;
+  return [
+    {
+      row: message(
+        "teammate-1",
+        "preview-teammate",
+        at(41),
+        "Morning! The [release notes](https://example.org/release-notes) are ready for a look.",
+      ),
+      profile: { name: "Ari" },
+      stackPrevious: false,
+      stackNext: true,
+    },
+    {
+      row: message(
+        "teammate-2",
+        "preview-teammate",
+        at(42),
+        "Could you skim them before standup?",
+      ),
+      profile: { name: "Ari" },
+      stackPrevious: true,
+      stackNext: false,
+    },
+    {
+      row: message("viewer-1", VIEWER, at(44), "On it. Comments by 10."),
+      profile: { name: "You" },
+      stackPrevious: false,
+      stackNext: false,
+    },
+  ];
+};
+const noMedia = () => undefined;
+const noLink = () => false;
+
+/** A sample conversation drawn by the live message rows, so it follows every
+ * appearance and conversation preference as the timeline does. */
 export function AppearancePreview({
   messageWidth,
   density,
@@ -12,6 +80,9 @@ export function AppearancePreview({
   /** Join the preview to the related preference group. */
   embedded?: boolean;
 }) {
+  const day = useLocalDay();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-date the sample at local midnight and keep its rows memoized between.
+  const sample = useMemo(() => sampleConversation(new Date()), [day]);
   const effectiveWidth = density === "compact" ? "wide" : messageWidth;
   return (
     <figure
@@ -19,57 +90,30 @@ export function AppearancePreview({
       data-embedded={embedded || undefined}
       aria-label="Appearance preview"
     >
-      <div className={styles.scene} inert aria-hidden="true">
-        <div className={styles.sidebar}>
-          <div className={styles.workspace}>
-            <i />
-            <span />
-          </div>
-          <div className={styles.nav}>
-            <span />
-          </div>
-          <div className={styles.nav} data-selected>
-            <span />
-          </div>
-          <div className={styles.nav}>
-            <span />
-          </div>
-        </div>
-        <div className={styles.conversation}>
-          <div className={styles.heading}>
-            <span />
-          </div>
-          <div
-            className={styles.messageColumn}
-            data-message-width={effectiveWidth}
-            data-message-density={density}
-          >
-            <div className={styles.messages}>
-              <div className={styles.received}>
-                <i className={styles.avatar} />
-                <div className={styles.bubble}>
-                  <span />
-                  <span />
-                  <span className={styles.link} />
-                </div>
-              </div>
-              <div className={styles.bubble} data-own>
-                <span />
-                <span />
-              </div>
-            </div>
-            <div className={styles.composer}>
-              <span />
-              <i />
-            </div>
-          </div>
-        </div>
+      <div
+        className={styles.conversation}
+        data-message-width={effectiveWidth}
+        inert
+        aria-hidden="true"
+      >
+        {sample.map(({ row, ...props }) => (
+          <MessageRow
+            key={row.id}
+            row={row}
+            {...props}
+            viewer={VIEWER}
+            media={noMedia}
+            onOpenLink={noLink}
+            day={false}
+            retry={undefined}
+          />
+        ))}
       </div>
       <figcaption className="sr-only">
-        Illustrated preview of your current mode, accent, contrast, and{" "}
+        Sample conversation in{" "}
         {density === "compact"
-          ? "Compact flat-list messages use the full conversation width."
-          : `Default bubble messages at ${messageWidth} width.`}
+          ? "Compact density, as a flat list across the full width."
+          : `Default density, as bubbles at ${messageWidth} width.`}
       </figcaption>
     </figure>
   );

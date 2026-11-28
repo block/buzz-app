@@ -117,6 +117,7 @@ export function MessageReactionControls(props: Props) {
         session={session}
         scope={scope}
         messageId={row.id}
+        channelId={row.channelId}
         disabled={action.disabled}
         select={select}
         reacted={reacted}
@@ -588,6 +589,7 @@ export function MessageReactions(
               session={session}
               scope={scope}
               messageId={row.id}
+              channelId={row.channelId}
               disabled={action.disabled}
               select={select}
               reacted={reacted}

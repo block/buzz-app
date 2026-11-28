@@ -30,6 +30,7 @@ export function ReactionTool({
   session: RelaySession;
   scope: string;
   messageId: string;
+  channelId?: string | undefined;
   disabled: boolean;
   select?: (emoji: string) => boolean;
   reacted?: (emoji: string) => boolean;
@@ -65,6 +66,7 @@ function OwnedReactionTool({
   session,
   scope,
   messageId,
+  channelId,
   disabled,
   select,
   reacted,
@@ -75,6 +77,7 @@ function OwnedReactionTool({
   session: RelaySession;
   scope: string;
   messageId: string;
+  channelId?: string | undefined;
   disabled: boolean;
   select?: (emoji: string) => boolean;
   reacted?: (emoji: string) => boolean;
@@ -98,6 +101,7 @@ function OwnedReactionTool({
       <Picker
         session={session}
         scope={scope}
+        channelId={channelId}
         disabled={disabled}
         {...(reacted ? { reacted } : {})}
         select={(emoji) => {

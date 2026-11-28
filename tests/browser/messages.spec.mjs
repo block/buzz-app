@@ -565,7 +565,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       "overflow-wrap",
       "anywhere",
     );
-    await expect(history.locator("table")).toContainText("wide-column-one-");
+    await expect(history.locator("table")).toContainText("wide_column_one_");
     await expect(history.locator("pre code")).toContainText("wide-content-");
     // Exercise native popup navigation without depending on a public website.
     await page.context().route("https://example.com/**", (route) =>
@@ -969,6 +969,10 @@ test("message tables keep their scrollbar inside the row across resizes and edit
 
     const editor = page.getByRole("textbox", { name: "Table markdown" });
     const short = "| A |\n| --- |\n| B |";
+    // Prose wider than the pane wraps inside its columns instead of scrolling.
+    const prose = "word ".repeat(80).trim();
+    await editor.fill(`| A | B |\n| --- | --- |\n| ${prose} | ${prose} |`);
+    await expect.poll(narrower).toEqual(fitting);
     await editor.fill(short);
     await expect.poll(narrower).toEqual(fitting);
     const table = feed.getByRole("table").nth(1);

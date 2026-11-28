@@ -23,6 +23,7 @@ import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
+import { confirmSoloDeletion } from "../solo/delete-preference";
 
 /** The session owns writes/recovery; each menu owns its focus and read status. */
 export type ChannelMenuSurface = {
@@ -289,6 +290,10 @@ export function ChannelNavigationProvider({
         }));
       },
       openLifecycle(channel, action, trigger, origin, callbacks) {
+        const confirmed =
+          action === "delete" &&
+          channel.channelType === "solo" &&
+          !confirmSoloDeletion();
         update((previous) =>
           origin?.aborted || previous.lifecycleDialog
             ? previous
@@ -298,6 +303,7 @@ export function ChannelNavigationProvider({
                   channel,
                   action,
                   callbacks,
+                  ...(confirmed ? { confirmed } : {}),
                   ...(trigger ? { trigger } : {}),
                   // Settings actions can remount after an archive-state change;
                   // the tab header lives outside the settings aside.

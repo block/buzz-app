@@ -128,6 +128,72 @@ export function App({ services }: { services: AppServices }) {
   );
 }
 
+const ARIA_MODAL_SELECTOR = '[aria-modal="true"]';
+const UNAVAILABLE_SELECTOR = '[hidden], [inert], [aria-hidden="true"]';
+const COMPANION_UNAVAILABLE_SELECTOR =
+  '[hidden], [inert], [aria-hidden="true"], [data-closing]';
+
+function isNativeModalDialog(element: Element): boolean {
+  if (element.tagName !== "DIALOG") return false;
+  try {
+    return element.matches(":modal");
+  } catch {
+    return false;
+  }
+}
+
+function isOpenModal(element: Element): boolean {
+  return (
+    isNativeModalDialog(element) ||
+    (element.matches(ARIA_MODAL_SELECTOR) &&
+      (element.tagName !== "DIALOG" || element.hasAttribute("open")))
+  );
+}
+
+/** True when any open modal (native `:modal` or ARIA, light DOM or open shadow root) covers the page. */
+function hasOpenModal(root: Document | ShadowRoot): boolean {
+  const start = root instanceof Document ? root.body : root;
+  if (!start) return false;
+  const stack: Element[] =
+    start instanceof Element ? [start] : [...start.children];
+  while (stack.length) {
+    const element = stack.pop();
+    if (!element || element.matches(UNAVAILABLE_SELECTOR)) continue;
+    if (isOpenModal(element)) return true;
+    if (element.shadowRoot && hasOpenModal(element.shadowRoot)) return true;
+    for (
+      let child = element.firstElementChild;
+      child;
+      child = child.nextElementSibling
+    )
+      stack.push(child);
+  }
+  return false;
+}
+
+function isOverlayPositioned(element: Element): boolean {
+  const position =
+    element.ownerDocument.defaultView?.getComputedStyle(element).position;
+  return position === "absolute" || position === "fixed";
+}
+
+/** True when an open companion panel has focus or floats over the page. */
+function hasBlockingCompanion(
+  doc: Document,
+  panel: HTMLElement | null,
+): boolean {
+  if (!panel?.isConnected || panel.closest(COMPANION_UNAVAILABLE_SELECTOR))
+    return false;
+  const container = panel.closest<HTMLElement>("[data-panel-dock]") ?? panel;
+  if (container.closest(COMPANION_UNAVAILABLE_SELECTOR)) return false;
+  const active = doc.activeElement;
+  if (active && container.contains(active)) return true;
+  return (
+    isOverlayPositioned(container) ||
+    (container !== panel && isOverlayPositioned(panel))
+  );
+}
+
 /** Settings sections open in the selected community's scope, as the sidebar does. */
 function selectedSettingsScope(services: AppServices) {
   const client = services.communities.snapshot();
@@ -392,6 +458,12 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     return () => services.notifications.setEntered(false);
   }, [entered, services]);
   const select = route.select;
+  const pageVisibleRef = useRef(false);
+  const mountedPagesRef = useRef(0);
+  const companionOpenRef = useRef(false);
+  const onPagePresentedChange = useCallback((presented: boolean) => {
+    mountedPagesRef.current += presented ? 1 : -1;
+  }, []);
   useEffect(
     () =>
       registerAppShortcuts(
@@ -401,10 +473,23 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           void services.navigation.open({ version: 1, kind: "settings" });
         },
         true,
-        () => services.communities.reload(),
+        () => {
+          if (
+            pageVisibleRef.current &&
+            mountedPagesRef.current > 0 &&
+            !hasOpenModal(document) &&
+            !(
+              companionOpenRef.current &&
+              hasBlockingCompanion(document, launcher.panelRef.current)
+            ) &&
+            services.navigationHost.reload()
+          )
+            return;
+          services.communities.reload();
+        },
         services.shortcutBindings,
       ),
-    [services],
+    [services, launcher.panelRef],
   );
   // macOS Buzz → Check for Updates… checks and shows the result in Settings.
   // Behind a modal it does nothing, unless that modal is a navigation visit
@@ -454,6 +539,24 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   // A page that presents its own failure in place stays on screen.
   const failedPage = route.state.status === "failed" && !route.state.presented;
+  // Navigation suspends covered/revoked visits; the shell additionally gates
+  // states navigation cannot see (launch, bootstrap, first-run, recovery,
+  // loading/failure cards, PageBoundary errors, open DOM modals, and focused
+  // or covering companion panels).
+  const pageVisible =
+    !launching &&
+    !restoring &&
+    !firstRun &&
+    !settings &&
+    !joinShown &&
+    startup === "ready" &&
+    !route.waiting &&
+    !((!route.state.ingress && !!route.failure) || failedPage) &&
+    !!workspace.page;
+  useLayoutEffect(() => {
+    pageVisibleRef.current = pageVisible;
+    companionOpenRef.current = !!selectedPanel;
+  }, [pageVisible, selectedPanel]);
   // A kept timeout keeps only a page that is drawn. If the deadline passed
   // while the host drew its loading state instead, report it as the host's own
   // failure, so its card and Retry show. Loading that starts later over a kept
@@ -904,6 +1007,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                   <PageView
                     page={workspace.page}
                     navigation={request}
+                    onPresentedChange={onPagePresentedChange}
                     companion={pageOwnsCompanion ? companion : undefined}
                     companionOpening={
                       pageOwnsCompanion ? launcher.opening : undefined

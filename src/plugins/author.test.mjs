@@ -33,7 +33,7 @@ test("generated author package exposes shared messages, captured-read Undo, host
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, DocumentEditorProps, DocumentEditorHandle, DocumentEditorSelection, ChannelMembersDialogProps, ChannelGeneralAccessProps, GeneralAccessPolicy, MemberChange, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops, PluginUi, OutgoingMessage, SendGate, Seen, Notices } from "@buzz/author";
+import type { Context, DocumentEditorProps, DocumentEditorHandle, DocumentEditorSelection, ChannelMembersDialogProps, ChannelGeneralAccessProps, GeneralAccessPolicy, MemberChange, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PageNavigation, PageReloadHandler, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops, PluginUi, OutgoingMessage, SendGate, Seen, Notices } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -210,7 +210,21 @@ export function apply(ctx: Context) {
   ctx.pages.register({
     id: "main",
     title: "Example",
-    component: () => null,
+    component: ({ navigation }: { navigation?: PageNavigation }) => {
+      const handleReload: PageReloadHandler = () => true;
+      const stop = navigation?.onReload?.(handleReload);
+      stop?.();
+      navigation?.onReload?.(() => false);
+      if (navigation) {
+        // @ts-expect-error onReload is optional on older hosts and must be checked.
+        navigation.onReload(() => true);
+        // @ts-expect-error Page reload disposition must be synchronous.
+        navigation.onReload?.(async () => true);
+        // @ts-expect-error Page reload handlers must return a boolean disposition.
+        navigation.onReload?.(() => {});
+      }
+      return null;
+    },
     icon: "data:image/png;base64,iVBOR",
     primary: true,
     placement: "toolbar",

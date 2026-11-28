@@ -18,6 +18,8 @@ import {
 } from "./targets";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 
+export type PageReloadHandler = () => boolean;
+
 export type PageNavigation = Readonly<{
   entryId: string;
   target: OpenTarget;
@@ -43,6 +45,13 @@ export type PageNavigation = Readonly<{
    * back to; then the next page opened from it takes its place in history.
    * Returns the unregister function. */
   passThrough(passes: () => boolean): () => void;
+  /** Handle an explicit Reload Buzz request while this page is the visible,
+   * uncovered surface. Return `true` synchronously to consume the reload;
+   * returning `false` (or throwing) falls back to ordinary community reload.
+   * Handlers on the active presentation run newest-first until one returns
+   * `true`. Automatically unregistered when this presentation is revoked or
+   * disposed. Returns an idempotent unregister function. */
+  onReload?(handler: PageReloadHandler): () => void;
   complete(
     result: Extract<OpenResult, { status: "opened" | "failed" }>,
   ): boolean;
@@ -61,9 +70,15 @@ export function provideNavigation(
   );
   ctx.provide("navigation", controller.navigation);
   const positions = new Map<string, JsonValue>();
+  type ReloadRegistration = {
+    invoke(): boolean;
+  };
+  const reloadHandlers: ReloadRegistration[] = [];
+  let reloading = false;
   ctx.effect(() => () => {
     controller.dispose();
     positions.clear();
+    reloadHandlers.length = 0;
   });
   const position = (id: string) => positions.get(id);
   function savePosition(id: string, value: JsonValue) {
@@ -78,6 +93,19 @@ export function provideNavigation(
     ...controller,
     position,
     savePosition,
+    /** Host-only: let the currently visible page handle an explicit Reload. */
+    reload() {
+      if (reloading) return false;
+      reloading = true;
+      try {
+        for (const entry of [...reloadHandlers].reverse()) {
+          if (entry.invoke()) return true;
+        }
+        return false;
+      } finally {
+        reloading = false;
+      }
+    },
     request(
       attempt: OpenAttempt,
       owner: PresentationOwner,
@@ -93,6 +121,7 @@ export function provideNavigation(
         ? new AbortController().signal
         : attempt.signal;
       const visit = (key: string) => JSON.stringify([attempt.entry.id, key]);
+      const canReload = withoutJoin(attempt.entry.target).kind !== "settings";
       // Another visit covers this view: Settings or a join dialog over a page,
       // a join dialog over Settings. A join presented with its own view, as
       // after reload, covers nothing.
@@ -126,6 +155,32 @@ export function provideNavigation(
           savePosition: (key, value) => savePosition(visit(key), value),
           passThrough: (passes) =>
             controller.passThrough(attempt.entry.id, passes),
+          ...(canReload
+            ? {
+                onReload(handler: PageReloadHandler) {
+                  if (typeof handler !== "function") return () => {};
+                  let registered = true;
+                  const entry: ReloadRegistration = {
+                    invoke() {
+                      if (!registered || !current()) return false;
+                      try {
+                        return handler() === true;
+                      } catch (error) {
+                        console.error("Page reload handler failed", error);
+                        return false;
+                      }
+                    },
+                  };
+                  reloadHandlers.push(entry);
+                  return () => {
+                    if (!registered) return;
+                    registered = false;
+                    const index = reloadHandlers.indexOf(entry);
+                    if (index !== -1) reloadHandlers.splice(index, 1);
+                  };
+                },
+              }
+            : {}),
           resolve: (target) => {
             if (
               retainWhileCovered &&
@@ -242,6 +297,33 @@ function bindPresentation(
     resolve: (target) => valid() && parent.resolve(target),
     complete: (result) => valid() && parent.complete(result),
     passThrough: (passes) => parent.passThrough(passes),
+    ...(parent.onReload
+      ? {
+          onReload(handler: PageReloadHandler) {
+            if (typeof handler !== "function" || !valid()) return () => {};
+            let registered = true;
+            const stopParent = parent.onReload?.(() => {
+              if (!registered || !valid()) return false;
+              return handler();
+            });
+            if (!stopParent) return () => {};
+            const unregister = () => {
+              if (!registered) return;
+              registered = false;
+              lifetime.signal.removeEventListener("abort", unregister);
+              stopParent();
+            };
+            lifetime.signal.addEventListener("abort", unregister, {
+              once: true,
+            });
+            if (!valid()) {
+              unregister();
+              return () => {};
+            }
+            return unregister;
+          },
+        }
+      : {}),
     forSession(relay, connection) {
       let connections = sessions.get(relay);
       if (!connections) {

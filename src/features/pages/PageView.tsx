@@ -1,4 +1,4 @@
-import { Component, useEffect, type ReactNode } from "react";
+import { Component, useEffect, useLayoutEffect, type ReactNode } from "react";
 import type { PageProps, RegisteredPage } from "./service";
 
 type BoundaryProps = {
@@ -60,7 +60,11 @@ export function PageView({
   companion,
   companionOpening,
   navigation,
-}: { page: RegisteredPage } & PageProps) {
+  onPresentedChange,
+}: {
+  page: RegisteredPage;
+  onPresentedChange?: ((presented: boolean) => void) | undefined;
+} & PageProps) {
   return (
     <PageBoundary
       page={page}
@@ -72,6 +76,7 @@ export function PageView({
         companion={companion}
         companionOpening={companionOpening}
         navigation={navigation}
+        onPresentedChange={onPresentedChange}
       />
     </PageBoundary>
   );
@@ -81,8 +86,16 @@ function PresentedPage({
   companion,
   companionOpening,
   navigation,
-}: { page: RegisteredPage } & PageProps) {
+  onPresentedChange,
+}: {
+  page: RegisteredPage;
+  onPresentedChange?: ((presented: boolean) => void) | undefined;
+} & PageProps) {
   const Page = page.component;
+  useLayoutEffect(() => {
+    onPresentedChange?.(true);
+    return () => onPresentedChange?.(false);
+  }, [onPresentedChange]);
   useEffect(() => {
     // This effect lives INSIDE the boundary: failed rendering never acknowledges mount.
     if (!page.handlesNavigation) navigation?.complete({ status: "opened" });

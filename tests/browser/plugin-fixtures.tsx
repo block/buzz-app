@@ -5,7 +5,13 @@ import { trailingBrief, trailingCard } from "./trailing-fixture";
 import { AsideWidget, type AsideSize } from "./aside-fixture";
 import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { flushSync } from "react-dom";
 import type { BundledPlugin } from "../../src/plugins/manager";
 import type { Navigation } from "../../src/features/navigation/controller";
@@ -802,6 +808,101 @@ export const fixturePlugins: readonly BundledPlugin[] = [
           title: "Tracker previews",
           group: "Plugins",
           component: TrackerSetup,
+        });
+      },
+    },
+  },
+  {
+    manifest: {
+      id: "fixture.surface-reload",
+      name: "Reload fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["pages"],
+      apply(ctx) {
+        let counts = { first: 0, second: 0 };
+        const listeners = new Set<() => void>();
+        const subscribe = (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        };
+        const bump = (which: keyof typeof counts) => {
+          counts = { ...counts, [which]: counts[which] + 1 };
+          for (const listener of [...listeners]) listener();
+        };
+        function ReloadSurface({
+          which,
+          title,
+          navigation,
+        }: {
+          which: keyof typeof counts;
+          title: string;
+          navigation?: PageNavigation;
+        }) {
+          const snapshot = useSyncExternalStore(subscribe, () => counts);
+          const [consume, setConsume] = useState(true);
+          const [draft, setDraft] = useState("");
+          const consumeRef = useRef(consume);
+          consumeRef.current = consume;
+          useEffect(
+            () =>
+              navigation?.onReload?.(() => {
+                if (!consumeRef.current) return false;
+                bump(which);
+                return true;
+              }),
+            [navigation, which],
+          );
+          return (
+            <section>
+              <h1>{title}</h1>
+              <output>
+                {`First reloads: ${snapshot.first}; Second reloads: ${snapshot.second}`}
+              </output>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={consume}
+                  onChange={(event) => setConsume(event.target.checked)}
+                />
+                Handle reload
+              </label>
+              <label>
+                {`${title} draft`}
+                <input
+                  aria-label={`${title} draft`}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                />
+              </label>
+            </section>
+          );
+        }
+        ctx.pages.register({
+          id: "first",
+          title: "Reload surface A",
+          primary: true,
+          component: ({ navigation }) => (
+            <ReloadSurface
+              which="first"
+              title="Reload surface A"
+              navigation={navigation}
+            />
+          ),
+        });
+        ctx.pages.register({
+          id: "second",
+          title: "Reload surface B",
+          primary: true,
+          component: ({ navigation }) => (
+            <ReloadSurface
+              which="second"
+              title="Reload surface B"
+              navigation={navigation}
+            />
+          ),
         });
       },
     },

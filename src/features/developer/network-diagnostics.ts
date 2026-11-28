@@ -201,6 +201,7 @@ export function networkReason(error: unknown): string {
     "relay-forbidden",
     "relay-unavailable",
     "binding-mismatch",
+    "clock-skew",
     "authorization-denied",
     "grant-refused",
     "invalid-proof",

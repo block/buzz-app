@@ -134,9 +134,28 @@ it("keeps safe error causes while redacting unknown text and bounding cyclic cau
     cause: { name: "AbortError", code: "cancelled", messageRedacted: true },
   });
   expect(JSON.stringify(recorder.snapshot())).not.toContain("secret-");
+  recorder.record({
+    level: "warn",
+    event: "socket.auth",
+    reason: "clock-skew",
+  });
+  expect(recorder.snapshot().events.at(-1)).toMatchObject({
+    reason: "clock-skew",
+    error: { code: "clock-skew", message: "clock-skew" },
+  });
+  recorder.record({
+    level: "warn",
+    event: "socket.auth",
+    reason: "clock-skew secret-token",
+  });
+  expect(recorder.snapshot().events.at(-1)).toMatchObject({
+    reason: "unclassified",
+    error: { code: "unclassified", messageRedacted: true },
+  });
+  expect(JSON.stringify(recorder.snapshot())).not.toContain("secret-");
   error.cause = error;
   recorder.record({ level: "warn", event: "read", reason: error });
-  expect(recorder.snapshot().events[1]?.error?.cause).toMatchObject({
+  expect(recorder.snapshot().events.at(-1)?.error?.cause).toMatchObject({
     truncated: true,
   });
 });

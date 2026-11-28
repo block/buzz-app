@@ -327,6 +327,164 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
 }
 
 #[tokio::test]
+async fn dedicated_relay_ipc_correlates_native_http_without_persisting_payloads() {
+    use crate::federated_identity::testing::{community, reply};
+    use crate::network_diagnostics::{
+        network_diagnostics_configure, network_diagnostics_read, Level,
+    };
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let _capture = crate::network_diagnostics::CAPTURE_TEST.lock().await;
+    let community = community(false).await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let lifecycle = community
+        .host
+        .sign(EventTemplate {
+            kind: 9002,
+            created_at: now,
+            content: String::new(),
+            tags: vec![
+                vec!["h".into(), uuid::Uuid::nil().to_string()],
+                vec!["archived".into(), "true".into()],
+            ],
+        })
+        .await
+        .unwrap();
+    let read_state = community
+        .host
+        .sign_read_state(
+            "a".repeat(32),
+            now,
+            serde_json::json!({"v":1,"client_id":"private-client", "contexts":{}}),
+        )
+        .await
+        .unwrap();
+    let follows = community
+        .host
+        .sign_thread_follows(
+            "a".repeat(32),
+            now,
+            serde_json::json!({"v":1,"client_id":"private-client", "threads":{}}),
+        )
+        .await
+        .unwrap();
+    let ciphertexts =
+        [&read_state, &follows].map(|event| event["content"].as_str().unwrap().to_owned());
+    let commands = vec![
+        (
+            "relay_channel_publish",
+            serde_json::json!({"route":"channel-lifecycle", "event":lifecycle}),
+        ),
+        (
+            "relay_workflow_runs",
+            serde_json::json!({"id":uuid::Uuid::nil().to_string()}),
+        ),
+        (
+            "relay_agent_memories_read",
+            serde_json::json!({"agent":"02".repeat(32)}),
+        ),
+        (
+            "relay_publish_read_state",
+            serde_json::json!({"event":read_state}),
+        ),
+        (
+            "relay_publish_thread_follows",
+            serde_json::json!({"event":follows}),
+        ),
+        (
+            "relay_direct_message",
+            serde_json::json!({"pubkeys":["02".repeat(32)]}),
+        ),
+    ];
+    let server = community.serve(
+        commands
+            .iter()
+            .map(|_| reply("403 Forbidden", r#"{"error":"private-refusal"}"#))
+            .collect(),
+    );
+    let origin = community.origin.origin().ascii_serialization();
+    let (host, fi) = (community.host.clone(), community.fi.clone());
+    network_diagnostics_configure(Level::Debug, Some(true), None).unwrap();
+    let ids = tokio::task::spawn_blocking(move || {
+        let app = mock_builder()
+            .manage(host)
+            .manage(fi)
+            .invoke_handler(crate::commands())
+            .build(crate::app_context())
+            .unwrap();
+        let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        let mut ids = Vec::new();
+        for (command, mut body) in commands {
+            let id = format!("request:{}", uuid::Uuid::new_v4());
+            body["community"] = serde_json::json!(origin);
+            body["diagnostic"] = serde_json::json!({"operationId":id});
+            let _result = get_ipc_response(
+                &view,
+                tauri::webview::InvokeRequest {
+                    cmd: command.into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: view.url().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(body),
+                    headers: Default::default(),
+                    invoke_key: INVOKE_KEY.into(),
+                },
+            );
+            ids.push(id);
+        }
+        ids
+    })
+    .await
+    .unwrap();
+    let heads = server.heads().await;
+    assert_eq!(heads.len(), ids.len());
+    let diagnostics = network_diagnostics_read(None);
+    for id in ids {
+        for phase in ["http.authorization", "http.sign"] {
+            assert!(
+                diagnostics["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|event| event["operationId"] == id
+                        && event["phase"] == phase
+                        && event["outcome"] != "started"),
+                "missing {phase} for {id}"
+            );
+        }
+        assert!(diagnostics["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["operationId"] == id
+                && matches!(
+                    event["phase"].as_str(),
+                    Some("http.query" | "http.events" | "http.other")
+                )
+                && event["status"] == 403));
+    }
+    let report = diagnostics.to_string();
+    for secret in ["private-client", "private-refusal"] {
+        assert!(!report.contains(secret));
+    }
+    for ciphertext in ciphertexts {
+        assert!(!report.contains(&ciphertext));
+    }
+    for head in heads {
+        let authorization = head
+            .lines()
+            .find(|line| line.starts_with("authorization:"))
+            .unwrap();
+        assert!(!report.contains(authorization.split_once(": ").unwrap().1));
+    }
+    network_diagnostics_configure(Level::Info, Some(false), None).unwrap();
+}
+
+#[tokio::test]
 async fn memory_response_limit_rejects_before_generic_transport_budget() {
     // The advertised size alone must be rejected. A multi-megabyte server write
     // blocks the fixture thread after the client closes on this header.

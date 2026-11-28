@@ -56,6 +56,20 @@ are upper histogram bucket bounds, not exact sampled percentiles; values above
 | Message throughput | Text frames and UTF-8 bytes in/out per second. Native counts completed sends and received frames; browser sockets count accepted sends and received frames. Native frames are merged once, without renderer double counting. |
 | Error/failure rates | Failed / (successful + failed) completed connection attempts, shared reads, native HTTP requests and tracked socket publications. Deadlines are failures; caller cancellation is reported separately. Partial read-consumer cancellation does not finish shared work. |
 
+Native request aggregates also include the purpose-bound channel/details/member/archive
+publications, workflow-run reads, read-state and thread-follow publications,
+direct-message creation/addition, and agent memory reads. They count one logical
+IPC operation from dispatch until native completion acknowledges, not one HTTP
+exchange per internal page. Memory paging contributes one latency sample for the
+whole command, including decoding; a returned partial listing counts as failed.
+Non-2xx responses delivered to the renderer still contribute response latency;
+a command that rejects in native code (including a refused direct-message
+command) contributes a failure but no completed-response sample. Local library
+reads, signing and decoding commands do not invent HTTP samples. At Debug/Trace,
+all HTTP phases inside these commands share the caller's opaque `operationId`,
+or a fresh request ID when the caller has none. No event IDs, memory slugs or
+plaintext are used as correlation labels.
+
 Browser capture has shared-read and socket metrics, but does not aggregate the
 development broker's HTTP or internal relay traffic. HTTP counters are explicitly
 native-only. These metrics cover the instrumented relay paths, not every app
@@ -110,11 +124,13 @@ JSON contains the same records in `events`. Use these fields to follow an outage
 | `read.attempt`, `read.retry` | One finite retry owner; reader jobs link to it through `parentId`. Roster pages and metadata similarly link to one roster operation. |
 | `read.stage-*`, `read.stage` | Available queue, fetch and verification timings under the opaque reader ID. Generic local projection IDs are excluded. |
 | `admission.*` | HTTP queue admission and wait duration, carrying the reader context when available. |
-| Native `http.authorization`, `http.sign`, `http.query`, `http.body`, `federated.http` | Authorization, signing, request and response processing phases. `operationId` joins the logical read; native `operation` pairs each phase's start/end. |
+| Native `http.authorization`, `http.sign`, `http.query`, `http.events`, `http.other`, `http.body`, `federated.http` | Authorization, signing, request and response processing phases. `operationId` joins the logical read; native `operation` pairs each phase's start/end. |
 | `native.result-discarded` | IPC completed after caller cancellation. This is distinct from native transport failure; the admission lease remains held until native work settles. |
 | Native `socket.enqueue`, `socket.write` | Queue acceptance versus the actual asynchronous socket send. Match `operationId`, connection and outgoing `frameSequence`; `queueMs` measures time to worker dequeue. Write timing excludes assertion re-admission. |
 | Native `socket.receive`, client `socket.delivered`, `ws.frame` | Match connection and incoming `frameSequence` to join native receipt, renderer delivery and protocol handling. Owned `subscriptionId` and operation IDs join REQ/EOSE/CLOSE and route replacement. |
 
+Fixed authentication failures such as `clock-skew` retain their safe code in
+both renderer and native assertion records, without persisting the assertion.
 Errors retain allowlisted original messages, structured error classes, bounded
 causes and available native OS codes. Unrecognized text is marked redacted rather
 than persisted. Frames, headers, credentials and message bodies are excluded;

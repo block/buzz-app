@@ -187,17 +187,21 @@ pub(crate) async fn relay_workflow_runs(
     community: String,
     id: String,
     cursor: Option<WorkflowCursor>,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<RelayResponse> {
-    let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
-    send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        "GET",
-        None,
-        true,
-        1024 * 1024,
-    )
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
+        send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "GET",
+            None,
+            true,
+            1024 * 1024,
+        )
+        .await
+    })
     .await
 }
 
@@ -773,22 +777,26 @@ pub(crate) async fn relay_publish_read_state(
     fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     event: serde_json::Value,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<RelayResponse> {
-    let url = request_url(&community, "/events", "POST")?;
-    let body = serde_json::to_string(&event).map_err(|_| "Invalid read-state event")?;
-    if body.len() > 64 * 1024 {
-        return Err("Invalid read-state event".into());
-    }
-    host.decode_read_state(vec![event]).await?;
-    send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        "POST",
-        Some(body),
-        true,
-        MAX_RESPONSE,
-    )
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = request_url(&community, "/events", "POST")?;
+        let body = serde_json::to_string(&event).map_err(|_| "Invalid read-state event")?;
+        if body.len() > 64 * 1024 {
+            return Err("Invalid read-state event".into());
+        }
+        host.decode_read_state(vec![event]).await?;
+        send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "POST",
+            Some(body),
+            true,
+            MAX_RESPONSE,
+        )
+        .await
+    })
     .await
 }
 
@@ -844,18 +852,22 @@ pub(crate) async fn relay_publish_thread_follows(
     fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     event: serde_json::Value,
+    diagnostic: Option<crate::network_diagnostics::Context>,
 ) -> Result<RelayResponse> {
-    let url = request_url(&community, "/events", "POST")?;
-    let body = readable_own_follows(host.inner(), event).await?;
-    send(
-        host.inner(),
-        Some(fi.inner()),
-        url,
-        "POST",
-        Some(body),
-        true,
-        MAX_RESPONSE,
-    )
+    crate::network_diagnostics::in_context(diagnostic, async {
+        let url = request_url(&community, "/events", "POST")?;
+        let body = readable_own_follows(host.inner(), event).await?;
+        send(
+            host.inner(),
+            Some(fi.inner()),
+            url,
+            "POST",
+            Some(body),
+            true,
+            MAX_RESPONSE,
+        )
+        .await
+    })
     .await
 }
 

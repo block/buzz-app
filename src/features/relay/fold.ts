@@ -5,6 +5,7 @@ import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { messageAudience } from "./audience";
 import { relayedFromClaim, relayNotice } from "./relayed-from";
+import { threadTitleClaim } from "./thread-title";
 import { pluginRequestId } from "./plugin-request";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
@@ -485,6 +486,7 @@ export function foldMessages(
               }),
             }
           : {}),
+        ...(threadTitleClaim(event) ? { threadTitle: true as const } : {}),
         ...(() => {
           // One exact id, or none: conflicting claims bind no request.
           const ids = new Set(

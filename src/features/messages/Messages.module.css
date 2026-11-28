@@ -1114,6 +1114,24 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   margin-top: var(--space-half);
   padding-block: var(--space-half);
 }
+/* The summary is the thread's own control, so it sits above
+   the title line's button. */
+.threadTitleSummary {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  margin-block: calc(-1 * var(--space-half));
+}
+.threadTitleSummary > [data-thread-summary] {
+  min-height: 0;
+  padding: var(--space-half) var(--space-1h) var(--space-half) var(--space-1);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--type-weight-regular);
+  user-select: none;
+}
 .messageBody [data-reply-connector] {
   margin-inline-start: calc(var(--space-4) + var(--space-3));
   max-width: calc(100% - var(--space-4) - var(--space-3));
@@ -3800,18 +3818,30 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
    briefly marks it. A filled bubble takes a see-through layer, chosen like its
    chips, so they stay readable on top. A row without one (membership lines,
    emoji, attachments, tables, diffs) is washed instead; the wash extends into
-   the feed's inset without changing the row's layout box. */
+   the feed's inset without changing the row's layout box. A :has() inside
+   another :has() is invalid and drops the whole rule, so a table's bubble is
+   its own case. */
 .messageHighlight {
   isolation: isolate;
 }
-.messageHighlight:not(
+.messageHighlight:is(
+  :not(
+    :has(
+      > .messageBody
+        > .messageContent
+        .messageBubble:not([data-emoji-only], [data-diff-only])
+    )
+  ),
+  :has(
+    > .messageBody > .messageContent .messageBubble > .text > table:only-child
+  ),
   :has(
     > .messageBody
       > .messageContent
-      .messageBubble:not([data-emoji-only], [data-diff-only]):not(
-        :has(> .text > table:only-child),
-        :has(> .text > table:first-child + .edited:last-child)
-      )
+      .messageBubble
+      > .text
+      > table:first-child
+      + .edited:last-child
   )
 )::after {
   content: "";
@@ -4484,12 +4514,53 @@ html[data-keyboard-navigation]
    as the chat. */
 @container messages (max-width: 30rem) {
   .relayedHeader > [data-relayed-from]:not([data-relayed-from="dm"]),
-  .relayedHeader > .relayedName:not(.relayedRunItems .relayedName) {
+  .relayedHeader
+    > .relayedName:not(.relayedRunItems .relayedName, [data-thread-title] *) {
     display: none;
   }
 }
 .relayedRun > .relayedHeader > .relayedTime {
   margin-inline-start: auto;
+}
+/* A thread title's line: its title gives up room first, so who started it,
+   its summary and the time stay readable. */
+.threadTitleIcon {
+  flex: none;
+  inline-size: var(--space-4);
+  block-size: var(--space-4);
+}
+/* Reactions and the work the title started sit under its text, inside the
+   line's fill: the entry takes the fill from its header and grows to hold
+   them. A jump highlight still shows through. */
+.threadTitleBelow {
+  padding: 0 var(--space-2) var(--space-1) var(--relayed-text-start);
+}
+.relayedRow[data-thread-title]
+  > .relayedEntry:has(> .threadTitleBelow)
+  > .relayedHeader {
+  background: none;
+}
+.relayedRow[data-thread-title]
+  > .relayedEntry:has(> .threadTitleBelow):not(.messageHighlight) {
+  background: var(--affordance-subtle);
+}
+.relayedRow[data-thread-title]
+  > .relayedEntry:has(> .threadTitleBelow):has(> .relayedHeader:hover) {
+  background: var(--affordance-subtle-hover);
+}
+/* The line is one row tall, so its hover toolbar sits above it, as a
+   continuation message's does. */
+@media (hover: hover) and (pointer: fine) {
+  .relayedRow[data-thread-title] .messageActionsSlot {
+    top: 0;
+  }
+}
+.threadTitleText {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-standard);
 }
 /* Points right while closed and down while open, as other disclosures do. */
 .relayedCaret {

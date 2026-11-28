@@ -3,6 +3,126 @@ import { createServer } from "./vite-server.mjs";
 import { activate } from "./navigation.mjs";
 import { clickRow, virtuaIdle } from "./timeline.mjs";
 
+test("a thread title reads as one line that opens its thread", async ({
+  page,
+}, testInfo) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  const fixture = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/activity-groups.html`;
+  try {
+    await page.setViewportSize({ width: 860, height: 700 });
+    await page.goto(`${fixture}?thread-title`);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const line = history.getByRole("button", {
+      name: /^Thread by .*: Thread title fixture/,
+    });
+    // One line, inside the chat, with the thread's summary beside its title.
+    const fits = () =>
+      line.evaluate((button) => {
+        const header = button.parentElement.getBoundingClientRect();
+        const bounds = button
+          .closest('[aria-label="Channel message history"]')
+          .getBoundingClientRect();
+        return (
+          header.height < 40 &&
+          header.left >= bounds.left &&
+          header.right <= bounds.right
+        );
+      });
+    await expect.poll(fits).toBe(true);
+    await expect(
+      history.getByRole("button", { name: "View thread: 4 replies" }),
+    ).toBeVisible();
+    // A title's reactions sit inside its fill, which grows to hold them.
+    const second = history.getByRole("button", {
+      name: /^Thread by .*: Second thread title/,
+    });
+    await expect
+      .poll(() =>
+        second.evaluate((button) => {
+          const entry = button.parentElement.parentElement;
+          const reactions = entry
+            .querySelector("[data-message-reactions]")
+            ?.getBoundingClientRect();
+          const fill = entry.getBoundingClientRect();
+          return (
+            !!reactions &&
+            getComputedStyle(entry).backgroundColor !== "rgba(0, 0, 0, 0)" &&
+            getComputedStyle(button.parentElement).backgroundColor ===
+              "rgba(0, 0, 0, 0)" &&
+            reactions.top > button.getBoundingClientRect().bottom - 1 &&
+            reactions.bottom <= fill.bottom
+          );
+        }),
+      )
+      .toBe(true);
+    // An arrival cue on a line without a bubble washes it and then retires,
+    // so the line's fill comes back.
+    const filled = (button) =>
+      button.evaluate((element) => {
+        const entry = element.parentElement.parentElement;
+        return {
+          cue: /messageHighlight/.test(entry.className),
+          fill: [entry, element.parentElement].some(
+            (part) =>
+              getComputedStyle(part).backgroundColor !== "rgba(0, 0, 0, 0)",
+          ),
+        };
+      });
+    for (const titled of [line, second]) {
+      await titled.evaluate(async (element) => {
+        const { highlightMessage } = await import(
+          "/src/features/messages/message-highlight.ts"
+        );
+        highlightMessage(element.parentElement.parentElement);
+      });
+      await expect
+        .poll(() =>
+          titled.evaluate(
+            (element) =>
+              getComputedStyle(element.parentElement.parentElement, "::after")
+                .animationName,
+          ),
+        )
+        .not.toBe("none");
+      await expect
+        .poll(() => filled(titled), { timeout: 10_000 })
+        .toEqual({ cue: false, fill: true });
+    }
+    // Hovering the line shows its Reply toolbar, as a full message's does.
+    await line.hover();
+    await expect(
+      line.locator("xpath=..").getByRole("button", { name: "Reply" }),
+    ).toBeVisible();
+    await page.mouse.move(0, 0);
+    for (const colorScheme of ["light", "dark"]) {
+      await page.emulateMedia({ colorScheme });
+      await page.screenshot({
+        path: testInfo.outputPath(`thread-title-${colorScheme}.png`),
+      });
+    }
+    await page.setViewportSize({ width: 420, height: 700 });
+    await expect.poll(fits).toBe(true);
+    // A narrow chat still names the title's author.
+    await expect(
+      line.locator("xpath=..").locator("[class*='relayedName']"),
+    ).toBeVisible();
+    await line.press("Enter");
+    await expect(
+      page.getByText(`Opened thread ${"1".repeat(64)}`),
+    ).toBeVisible();
+  } finally {
+    await server.close();
+  }
+});
+
 test("a long relayed message fits the chat before and after opening", async ({
   page,
 }) => {

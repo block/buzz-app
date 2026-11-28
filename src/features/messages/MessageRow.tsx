@@ -96,6 +96,7 @@ import {
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { AgentDeclineNotes } from "./AgentDeclineNotes";
+import { plainText } from "../notifications/content";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
@@ -127,6 +128,7 @@ import {
   FlagIcon,
   ListBulletsIcon,
   PinIcon,
+  ThreadIcon,
 } from "../../shared/design-system/icons";
 import { usePinnedMessages } from "./use-pins";
 import {
@@ -215,10 +217,28 @@ type MessageContentProps = MessageRowProps & {
   shownRow?: ChannelMessage;
   /** Leave out the reactions row and its controls. */
   withoutReactions?: boolean;
+  /** The thread summary's avatars leave out the message's author. */
+  summaryWithoutAuthor?: boolean;
   renderMessage?: (
     message: ReactNode,
     trigger: RefObject<HTMLButtonElement | null>,
+    parts: Readonly<{
+      /** The row's thread summary control, as accessories decorate it, or
+       * null when it has none. */
+      summary: ReactNode;
+      /** Accessories for the work the message started, or null. */
+      response: ReactNode;
+      /** The reactions row, or null when `withoutReactions`. */
+      reactions: ReactNode;
+      /** Reply, reaction and action controls, or null without `withToolbar`.
+       * Mount them inside the element given `rowRef`, which owns hover. */
+      toolbar: ReactNode;
+      rowRef: RefObject<HTMLDivElement | null>;
+    }>,
   ) => ReactElement;
+  /** A rendered message gets the row's toolbar in its parts: Reply,
+   * reactions and actions, as a full message has them. */
+  withToolbar?: boolean;
 };
 
 /** A reply is not completion evidence. Read the exact request's lifecycle. */
@@ -271,6 +291,8 @@ function MessageRowContent({
   fullWidth = false,
   shownRow,
   withoutReactions = false,
+  summaryWithoutAuthor = false,
+  withToolbar = false,
   renderMessage,
   getThreadRoot,
   session,
@@ -1397,6 +1419,9 @@ function MessageRowContent({
   // Accessories may only point at a thread the row could open or start.
   const summaryThread =
     startsThreads || row.replyCount > 0 ? onOpenThread : undefined;
+  const summaryParticipants = summaryWithoutAuthor
+    ? row.participants.filter((id) => id !== row.authorId)
+    : row.participants;
   const renderMessageSummary = (activity?: MessageSummaryActivity) => {
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
@@ -1430,7 +1455,7 @@ function MessageRowContent({
               (!activity && row.replyCount > 0) || undefined
             }
             data-first-participant-shape={
-              agentPubkeys?.has(row.participants[0] ?? "")
+              agentPubkeys?.has(summaryParticipants[0] ?? "")
                 ? "squircle"
                 : "circle"
             }
@@ -1460,7 +1485,7 @@ function MessageRowContent({
               draft={threadDraft}
               replied={row.replyCount > 0}
               count={activity ? 0 : row.replyCount}
-              participants={row.participants}
+              participants={summaryParticipants}
               profiles={participantProfiles}
               agentPubkeys={agentPubkeys}
               resolveName={resolveName}
@@ -1508,6 +1533,57 @@ function MessageRowContent({
       null
     );
   };
+  const openSummaryThread = summaryThread
+    ? () => {
+        summaryThread(row.id, row.threadRootId ?? row.id);
+        return true;
+      }
+    : undefined;
+  // An accessory may decorate the thread summary; without accessories the
+  // summary shows alone.
+  const summaryContent = () =>
+    active && session && scope && extensions?.accessories ? (
+      <ComposerAccessories
+        registry={extensions.accessories}
+        renderMessageSummary={summaryThread ? renderMessageSummary : undefined}
+        session={session}
+        scope={scope}
+        channelId={row.channelId}
+        threadRootId={row.threadRootId}
+        message={row}
+        onFocusedRemoval={() =>
+          menuTrigger.current?.focus({ preventScroll: true })
+        }
+        openThread={openSummaryThread}
+        canOpen={canOpenLink ?? (() => false)}
+        open={openLink}
+      />
+    ) : (
+      renderMessageSummary()
+    );
+  // Work the message started, such as an agent's activity and its controls.
+  const responseContent = () =>
+    active && session && scope && extensions?.accessories ? (
+      <ComposerAccessories
+        registry={extensions.accessories}
+        placement="response"
+        representedAgents={representedAgents}
+        repliedAgents={repliedAgents}
+        stoppedRequest={stoppedRequest}
+        messageLayout={layout}
+        session={session}
+        scope={scope}
+        channelId={row.channelId}
+        threadRootId={row.threadRootId}
+        message={row}
+        onFocusedRemoval={() =>
+          menuTrigger.current?.focus({ preventScroll: true })
+        }
+        openThread={openSummaryThread}
+        canOpen={canOpenLink ?? (() => false)}
+        open={openLink}
+      />
+    ) : null;
   const reactionsInBubble =
     !attachmentOnly && !row.huddle && !shownRow && !emojiOnly && !row.diff;
   // A plugin card keeps reactions in its bubble, so its mark goes above them.
@@ -1853,69 +1929,24 @@ function MessageRowContent({
               messageId={row.id}
             />
           )}
-          {active && session && scope && extensions?.accessories && (
-            <ComposerAccessories
-              registry={extensions.accessories}
-              renderMessageSummary={
-                summaryThread ? renderMessageSummary : undefined
-              }
-              session={session}
-              scope={scope}
-              channelId={row.channelId}
-              threadRootId={row.threadRootId}
-              message={row}
-              onFocusedRemoval={() =>
-                menuTrigger.current?.focus({ preventScroll: true })
-              }
-              openThread={
-                summaryThread
-                  ? () => {
-                      summaryThread(row.id, row.threadRootId ?? row.id);
-                      return true;
-                    }
-                  : undefined
-              }
-              canOpen={canOpenLink ?? (() => false)}
-              open={openLink}
-            />
-          )}
-          {!(active && session && scope && extensions?.accessories) &&
-            renderMessageSummary()}
+          {summaryContent()}
         </div>
       </div>
-      {active && session && scope && extensions?.accessories && (
-        <ComposerAccessories
-          registry={extensions.accessories}
-          placement="response"
-          representedAgents={representedAgents}
-          repliedAgents={repliedAgents}
-          stoppedRequest={stoppedRequest}
-          messageLayout={layout}
-          session={session}
-          scope={scope}
-          channelId={row.channelId}
-          threadRootId={row.threadRootId}
-          message={row}
-          onFocusedRemoval={() =>
-            menuTrigger.current?.focus({ preventScroll: true })
-          }
-          openThread={
-            summaryThread
-              ? () => {
-                  summaryThread(row.id, row.threadRootId ?? row.id);
-                  return true;
-                }
-              : undefined
-          }
-          canOpen={canOpenLink ?? (() => false)}
-          open={openLink}
-        />
-      )}
+      {responseContent()}
     </div>
   );
   return renderMessage ? (
     <>
-      {messageActions(renderMessage(message, menuTrigger))}
+      {messageActions(
+        renderMessage(message, menuTrigger, {
+          summary: summaryThread ? summaryContent() : null,
+          response: responseContent(),
+          reactions: withoutReactions ? null : reactionContent,
+          toolbar: withToolbar ? messageActions() : null,
+          rowRef,
+        }),
+        withToolbar,
+      )}
       {overlays}
     </>
   ) : row.membership || row.huddle ? (
@@ -1934,6 +1965,11 @@ export const MessageRow = memo(function AudienceMessageRow(
   const { onOpenLink, canOpenLink, row } = props;
   const rootId = row.threadRootId ?? row.id;
   const view = useComposerScope();
+  // A message renderer that claims a thread title keeps its card.
+  const titleRenderer = useMessageRenderer(
+    row.threadTitle ? props.extensions?.messages : undefined,
+    row,
+  );
   // Plugin content in this row opens targets as the row's own links do.
   return (
     <TargetOpenerProvider
@@ -1960,6 +1996,8 @@ export const MessageRow = memo(function AudienceMessageRow(
         )
       ) : row.relayedFrom?.verified ? (
         <RelayedMessageRow {...props} />
+      ) : titleLine(props, titleRenderer) ? (
+        <ThreadTitleRow {...props} />
       ) : row.audience === "agents" ? (
         <AgentsMessageRow {...props} />
       ) : (
@@ -2438,6 +2476,171 @@ function RelayedMessageRow(props: MessageRowProps) {
   );
 }
 
+/** A thread title is one line only in the timeline, where it can open its
+ * thread, and only while the title is all there is to show: a failed send
+ * keeps its Retry; a body an edit added, a message renderer's card,
+ * attachments, forwards and agent or workflow rows keep their own
+ * presentation. */
+const titleLine = (
+  {
+    row,
+    layout = "timeline",
+    onOpenThread,
+    startsThreads = true,
+  }: MessageRowProps,
+  renderer: MessageRenderer | undefined,
+) =>
+  !!row.threadTitle &&
+  !renderer &&
+  !/[\r\n]/.test(row.content.trim()) &&
+  !!titleText(row.content) &&
+  !row.threadRootId &&
+  layout === "timeline" &&
+  !!onOpenThread &&
+  (startsThreads || row.replyCount > 0) &&
+  row.delivery !== "failed" &&
+  row.delivery !== "unknown" &&
+  !!row.content.trim() &&
+  !row.attachments.length &&
+  !row.forward &&
+  !row.diff &&
+  !row.agentEnvelope &&
+  !row.pluginRequest &&
+  !row.audience &&
+  !row.workflowOwnerId &&
+  !row.membership &&
+  !row.huddle;
+
+/** A top-level message whose signer marked it as only its thread's title
+ * reads as one line in the timeline: who started it, the title, the thread's
+ * summary and the time. The line opens the thread, where the root is shown in
+ * full; the message menu keeps its usual actions. */
+function ThreadTitleRow(props: MessageRowProps) {
+  const { row, session, media, agentPubkeys, onOpenThread } = props;
+  const references = props.references ?? session;
+  const resolveName = useChannelIdentityNames(references, row.channelId);
+  const showTime = useMessageTimeVisible(references?.channels, row.channelId);
+  // The button's name carries the full date, so it follows time zone changes.
+  useLocalDay();
+  const name = resolveName(
+    row.authorId,
+    props.profile?.name ?? row.authorId.slice(0, 10),
+  );
+  const title = titleText(row.content);
+  return (
+    <FullMessageRow
+      {...props}
+      shownRow={row}
+      withToolbar
+      summaryWithoutAuthor
+      alignViewer={false}
+      day={false}
+      layout="continuation"
+      stackPrevious
+      stackNext
+      renderMessage={(
+        _message,
+        trigger,
+        { summary, response, reactions, toolbar, rowRef },
+      ) => (
+        <div
+          className={styles.relayedRow}
+          data-thread-title=""
+          data-layout="timeline"
+        >
+          {props.day && <DayDivider createdAt={row.createdAt} />}
+          <div
+            ref={rowRef}
+            className={styles.relayedEntry}
+            data-highlight-surface=""
+            data-thread-open={props.threadOpen || undefined}
+            aria-current={props.threadOpen ? true : undefined}
+            data-message-id={row.id}
+          >
+            <div className={styles.relayedHeader} data-message-action-anchor="">
+              <button
+                ref={trigger}
+                type="button"
+                data-buzz-ui=""
+                className={styles.relayedTrigger}
+                aria-label={`Thread by ${name}: ${title}${row.edited ? " (edited)" : ""}, ${formatFullTimestamp(row.createdAt)}`}
+                onClick={(event) => {
+                  event.currentTarget.focus({ preventScroll: true });
+                  onOpenThread?.(row.id, row.id);
+                }}
+              />
+              <span className={styles.relayedAvatar} aria-hidden="true">
+                <AgentAvatar
+                  session={session}
+                  agentPubkey={row.authorId}
+                  channelId={row.channelId}
+                  src={avatarMedia(props.profile?.picture, media)}
+                  alt=""
+                  fallback={name}
+                  size="fill"
+                  shape={
+                    agentPubkeys?.has(row.authorId) || props.profile?.isAgent
+                      ? "squircle"
+                      : "circle"
+                  }
+                />
+              </span>
+              <span className={styles.relayedName} aria-hidden="true">
+                {name}
+              </span>
+              <ThreadIcon
+                className={styles.threadTitleIcon}
+                aria-hidden="true"
+              />
+              <span className={styles.threadTitleText} aria-hidden="true">
+                {props.extensions ? (
+                  <InlineText
+                    registry={props.extensions.inline}
+                    content={{ text: title, message: row }}
+                    media={media}
+                  />
+                ) : (
+                  title
+                )}
+              </span>
+              {row.edited && (
+                <span aria-hidden="true">
+                  <EditedMarker />
+                </span>
+              )}
+              {session?.relayAuthor && (
+                <PinnedLineMark session={session} row={row} />
+              )}
+              {summary && (
+                <span className={styles.threadTitleSummary}>{summary}</span>
+              )}
+              <span className={styles.relayedTime} aria-hidden="true">
+                <MessageTimestamp
+                  createdAt={row.createdAt}
+                  visible={showTime}
+                />
+              </span>
+              {toolbar}
+            </div>
+            {(reactions || response) && (
+              <div className={styles.threadTitleBelow}>
+                {reactions}
+                {response}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    />
+  );
+}
+
+/** A thread title as one line of text, Markdown flattened and spoilers
+ * hidden as notifications show them; empty when nothing would show. */
+function titleText(content: string) {
+  return plainText(content, { limit: 280 });
+}
+
 // Subscribe only for mounted thread buttons. Evidence and reading remain session-owned;
 // rendering a row must not initiate per-thread reads or acknowledge unseen replies.
 function useThreadUnread(
@@ -2538,6 +2741,24 @@ function useThreadAgents(
       library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? [],
     waiting: state === "waiting",
   };
+}
+
+/** A thread title's line has no body for the pinned line, so a pin shows
+ * beside its title. */
+function PinnedLineMark({
+  session,
+  row,
+}: {
+  session: RelaySession;
+  row: ChannelMessage;
+}) {
+  const pins = usePinnedMessages(session, row.channelId);
+  if (!pins.set.has(row.id)) return null;
+  return (
+    <span className={styles.relayedSubtle} role="img" aria-label="Pinned">
+      <PinIcon size={12} aria-hidden="true" />
+    </span>
+  );
 }
 
 /** A quiet line on a message that is pinned in its channel. */

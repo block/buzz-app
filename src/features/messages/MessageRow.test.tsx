@@ -657,6 +657,257 @@ it("renders the signed whole-thread total rather than only direct replies", () =
   expect(html).toContain('aria-label="View thread: 3 replies"');
   expect(html).toContain("3 replies</span>");
 });
+it("draws a thread-title root as one line that opens its thread, and in full in the thread", async () => {
+  const open = vi.fn();
+  const title = {
+    ...row,
+    content: "Fix the login test",
+    threadTitle: true as const,
+  };
+  const props = {
+    profile: { name: "Alex" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    onOpenThread: open,
+  };
+  try {
+    const { rerender } = renderDom(<MessageRow row={title} {...props} />);
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: /^Thread by Alex: Fix the login test, /,
+      }),
+    );
+    expect(open).toHaveBeenCalledWith("root", "root");
+    // The thread's own summary stays its control, with its reply count.
+    expect(
+      screen.getByRole("button", { name: "View thread: 23 replies" }),
+    ).toBeInTheDocument();
+    rerender(<MessageRow row={title} {...props} layout="thread" />);
+    expect(screen.queryByRole("button", { name: /^Thread by/ })).toBeNull();
+    expect(screen.getByText("Fix the login test")).toBeInTheDocument();
+    // A failed send keeps its full row, so its Retry stays in the timeline.
+    rerender(<MessageRow row={{ ...title, delivery: "failed" }} {...props} />);
+    expect(screen.queryByRole("button", { name: /^Thread by/ })).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+it("leaves the title's author out of its line's repliers, but not a message's", () => {
+  const props = {
+    profile: { name: "Alex" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    onOpenThread: () => {},
+  };
+  const repliers = (container: HTMLElement) =>
+    [...container.querySelectorAll("[data-thread-summary] [title]")].map((e) =>
+      e.getAttribute("title"),
+    );
+  const replied = { ...row, participants: ["author", "agent"] };
+  try {
+    const { container, rerender } = renderDom(
+      <MessageRow
+        row={{ ...replied, content: "Fix the login test", threadTitle: true }}
+        {...props}
+      />,
+    );
+    expect(repliers(container)).toEqual(["agent"]);
+    rerender(<MessageRow row={replied} {...props} />);
+    expect(repliers(container)).toEqual(["agent", "author"]);
+  } finally {
+    cleanup();
+  }
+});
+it("draws a thread title's inline content, such as custom emoji, on its line", () => {
+  const empty: never[] = [];
+  const emoji = [
+    {
+      key: "emoji:custom",
+      pluginId: "emoji",
+      revision: "1",
+      id: "custom",
+      title: "Custom emoji",
+      matches: ({ text }: { text: string }) =>
+        [...text.matchAll(/:ship:/g)].map((match) => ({
+          start: match.index,
+          end: match.index + match[0].length,
+        })),
+      component: ({ text }: { text: string }) => (
+        <img alt={text} src="https://relay.test/ship.png" />
+      ),
+    },
+  ];
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, content: ":ship: the fix", threadTitle: true }}
+        profile={{ name: "Alex" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        onOpenThread={() => {}}
+        extensions={{
+          tools: { snapshot: () => empty, subscribe: () => () => {} },
+          inline: { snapshot: () => emoji, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    const line = screen.getByRole("button", {
+      name: /^Thread by Alex: :ship: the fix, /,
+    }).parentElement;
+    expect(line?.querySelector('img[alt=":ship:"]')).not.toBeNull();
+    expect(line?.textContent).toContain(" the fix");
+  } finally {
+    cleanup();
+  }
+});
+it("keeps a thread title's spoilers hidden, and the full row when it holds more than a title", () => {
+  const subscribe = () => () => {};
+  const empty: never[] = [];
+  const title = { ...row, threadTitle: true as const };
+  const props = {
+    profile: { name: "Alex" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    onOpenThread: () => {},
+  };
+  try {
+    const { rerender } = renderDom(
+      <MessageRow
+        row={{ ...title, content: "Release details ||surprise||" }}
+        {...props}
+      />,
+    );
+    const line = screen.getByRole("button", {
+      name: /^Thread by Alex: Release details \[Spoiler\], /,
+    }).parentElement;
+    expect(line?.textContent).toContain("Release details [Spoiler]");
+    expect(line?.textContent).not.toContain("surprise");
+    // An edit that adds a body shows the whole message.
+    rerender(
+      <MessageRow
+        row={{ ...title, content: "Release\n\nThe details", edited: true }}
+        {...props}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^Thread by/ })).toBeNull();
+    expect(screen.getByText("The details")).toBeInTheDocument();
+    // A message renderer that claims the root keeps its card.
+    const cards = [
+      {
+        key: "card:release",
+        pluginId: "card",
+        revision: "1",
+        id: "release",
+        title: "Release card",
+        matches: () => true,
+        component: () => <p>Release card body</p>,
+      },
+    ];
+    rerender(
+      <MessageRow
+        row={{ ...title, content: "Release" }}
+        {...props}
+        extensions={{
+          tools: { snapshot: () => empty, subscribe },
+          inline: { snapshot: () => empty, subscribe },
+          messages: { snapshot: () => cards, subscribe },
+        }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^Thread by/ })).toBeNull();
+    expect(screen.getByText("Release card body")).toBeInTheDocument();
+  } finally {
+    cleanup();
+  }
+});
+it("keeps a thread title's Reply, reactions and accessories on its line", () => {
+  const subscribe = () => () => {};
+  const channels = { channels: [], status: "ready" };
+  const noTyping: never[] = [];
+  const catalog = { entries: [] };
+  const profiles = new Map();
+  const library = { identities: [] };
+  const session = {
+    channels: { list: () => channels, subscribeList: subscribe },
+    messages: {},
+    emoji: { snapshot: () => catalog, subscribe },
+    profiles: { snapshot: () => profiles, subscribe },
+    agentChoices: { snapshot: () => library, subscribe },
+    typing: { snapshot: () => noTyping, subscribe },
+  } as unknown as RelaySession;
+  const noEntries: never[] = [];
+  const empty = { snapshot: () => noEntries, subscribe };
+  const entries = [
+    {
+      id: "summary",
+      key: "test:summary",
+      pluginId: "test",
+      revision: "1",
+      title: "Activity summary",
+      placement: "message" as const,
+      decoratesMessageSummary: true,
+      component: (
+        props: import("../conversation/contracts").ComposerAccessoryProps,
+      ) => <span data-decorated="">{props.renderMessageSummary?.()}</span>,
+    },
+    {
+      id: "activity",
+      key: "test:activity",
+      pluginId: "test",
+      revision: "1",
+      title: "Agent activity",
+      placement: "response" as const,
+      component: () => <button type="button">Stop</button>,
+    },
+  ];
+  const open = vi.fn();
+  const view = renderMessage({
+    row: {
+      ...row,
+      content: "Fix the login test",
+      threadTitle: true,
+      reactions: [{ content: "👍", events: [{ id: "r1", authorId: "juno" }] }],
+    },
+    profile: { name: "Alex" },
+    session,
+    scope: "test",
+    onOpenThread: open,
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => entries, subscribe },
+    },
+  });
+  try {
+    const line = screen.getByRole("button", {
+      name: /^Thread by Alex: Fix the login test, /,
+    });
+    const entry = line.closest<HTMLElement>("[data-message-id]");
+    // Keyboard reply (t, Right Arrow) uses the row's own Reply control.
+    const reply = screen.getByRole("button", { name: "Reply" });
+    expect(reply.closest('[role="group"]')).not.toBeNull();
+    fireEvent.click(reply);
+    expect(open).toHaveBeenCalledWith("root", "root", "reply");
+    // The decorated summary and the message's work stay on the line.
+    expect(
+      entry?.querySelector("[data-decorated] [data-thread-summary]"),
+    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(entry?.querySelector("[data-message-reactions]")).not.toBeNull();
+  } finally {
+    view.unmount();
+  }
+});
 it("selects this thread, adds an accessible unread cue and preserves the total reply count", () => {
   const { html, snapshot } = render({ observedCount: 2 });
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({

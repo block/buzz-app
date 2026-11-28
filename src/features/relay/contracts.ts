@@ -161,6 +161,9 @@ export type ChannelMessage = Readonly<{
     notice?: string;
     verified: boolean;
   }>;
+  /** Signed `thread-title` tag on a top-level message: the signer's claim
+   * that it is only its thread's title. Display metadata, not authority. */
+  threadTitle?: true;
   /** Signed `buzz:request` tag: the agent's claim of the triggering message
    * this update belongs to, separate from its flattened reply link. */
   request?: string;

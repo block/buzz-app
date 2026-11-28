@@ -17,6 +17,9 @@ export function continuesMessageGroup(
     // A relayed line is another agent's, never part of its signer's group.
     !previous.relayedFrom?.verified &&
     !current.relayedFrom?.verified &&
+    // A thread title is its own line, the way its thread is its own topic.
+    !previous.threadTitle &&
+    !current.threadTitle &&
     previous.channelId === current.channelId &&
     previous.authorId === current.authorId &&
     // Agent activity stacks under anything; details are for people too, so

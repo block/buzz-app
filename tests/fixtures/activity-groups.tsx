@@ -9,8 +9,12 @@ import { Button } from "../../src/shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import styles from "../../src/features/messages/Messages.module.css";
 import "../../src/shared/styles/globals.css";
+import { createAppearance } from "../../src/shared/theme/service";
 
 const relayed = new URLSearchParams(location.search).get("relayed");
+const titles = new URLSearchParams(location.search).has("thread-title");
+// Follows the system scheme, so its screenshots can show both themes.
+if (titles) createAppearance();
 const viewer = keypair();
 const relay = keypair();
 const source = "source";
@@ -49,31 +53,59 @@ const update = (index: number, activity = true): ChannelMessage => ({
 const note = "The complete handoff remains readable when this preview opens.";
 function Fixture() {
   useKeyboardFocusVisibility();
+  const [opened, setOpened] = useState<string>();
   const [rows, setRows] = useState<ChannelMessage[]>(
-    relayed !== null
+    titles
       ? [
-          {
-            ...update(0, false),
-            content: "Ordinary chat message",
-          },
+          { ...update(0, false), content: "Ordinary chat message" },
           {
             ...update(1, false),
+            // Thread read state is keyed by event ID.
+            id: "1".repeat(64),
             authorId: owner.session.viewer,
-            content: `Relayed fixture update. ${"A long preview needs to fit the chat. ".repeat(9)}\n\n${note}`,
-            relayedFrom: { agent, channelId: source, verified: true },
+            content: `Thread title fixture. ${"A long title needs to fit the line. ".repeat(6)}`,
+            threadTitle: true,
+            replyCount: 4,
+            participants: [agent, owner.session.viewer],
           },
-          ...(relayed === "group"
-            ? [
-                {
-                  ...update(2, false),
-                  authorId: owner.session.viewer,
-                  content: "Second relayed fixture update.",
-                  relayedFrom: { agent, channelId: source, verified: true },
-                },
-              ]
-            : []),
+          {
+            ...update(2, false),
+            id: "2".repeat(64),
+            authorId: owner.session.viewer,
+            content: "Second thread title",
+            threadTitle: true,
+            reactions: [
+              {
+                content: "🎉",
+                events: [{ id: "3".repeat(64), authorId: agent }],
+              },
+            ],
+          },
         ]
-      : Array.from({ length: 16 }, (_, index) => update(index)),
+      : relayed !== null
+        ? [
+            {
+              ...update(0, false),
+              content: "Ordinary chat message",
+            },
+            {
+              ...update(1, false),
+              authorId: owner.session.viewer,
+              content: `Relayed fixture update. ${"A long preview needs to fit the chat. ".repeat(9)}\n\n${note}`,
+              relayedFrom: { agent, channelId: source, verified: true },
+            },
+            ...(relayed === "group"
+              ? [
+                  {
+                    ...update(2, false),
+                    authorId: owner.session.viewer,
+                    content: "Second relayed fixture update.",
+                    relayedFrom: { agent, channelId: source, verified: true },
+                  },
+                ]
+              : []),
+          ]
+        : Array.from({ length: 16 }, (_, index) => update(index)),
   );
   const [inlineTarget, setTarget] = useState<{
     messageId: string;
@@ -114,6 +146,7 @@ function Fixture() {
           Prepend history
         </Button>
       </nav>
+      {opened && <output>Opened thread {opened}</output>}
       <div className={styles.thread} style={{ flex: 1 }}>
         <ChannelTimeline
           transient
@@ -132,6 +165,12 @@ function Fixture() {
             error: undefined,
           }}
           onOpenLink={() => false}
+          {...(titles
+            ? {
+                onOpenThread: (_id: string, rootId: string) =>
+                  setOpened(rootId),
+              }
+            : {})}
         />
       </div>
     </main>

@@ -1502,6 +1502,31 @@ it("honours a relayed-from claim only while the author owns the named agent", ()
     expect(fold(relayed(tags), alice.pubkey)?.relayedFrom).toBeUndefined();
 });
 
+it("marks only a top-level message with one exact thread-title tag", () => {
+  const root = message(alice, channel, "Fix the login test", 10, [
+    ["thread-title", "1"],
+  ]);
+  const fold = (event: ReturnType<typeof message>) =>
+    foldMessages(channel, relay.pubkey, [event], { includeReplies: true })[0];
+  expect(fold(root)?.threadTitle).toBe(true);
+  for (const tags of [
+    [["thread-title", "0"]],
+    [["thread-title", "1", "extra"]],
+    [
+      ["thread-title", "1"],
+      ["thread-title", "1"],
+    ],
+    [
+      ["thread-title", "1"],
+      ["e", root.id, "", "reply"],
+    ],
+  ])
+    expect(
+      fold(message(alice, channel, "Fix the login test", 11, tags))
+        ?.threadTitle,
+    ).toBeUndefined();
+});
+
 it("replaces a shared row when only its relayed claim's verification changes", () => {
   const event = message(alice, channel, "Notice\n\nText", 10, [
     ["relayed-from", bob.pubkey],

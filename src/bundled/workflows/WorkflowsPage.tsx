@@ -1,15 +1,23 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import { useWorkflowAgentMentions } from "./useWorkflowAgentMentions";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { WorkflowDefinition } from "../../features/workflows/types";
+import { workflowRoute } from "../../features/workflows/route";
+import type { Navigation } from "../../features/navigation/controller";
+import type { PageNavigation } from "../../features/navigation/service";
+import { targetKey, type OpenTarget } from "../../features/navigation/targets";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import { relayPartition } from "../../features/relay/partition";
 import {
   ArrowsClockwiseIcon,
   LightningIcon,
@@ -32,36 +40,90 @@ import {
   WorkflowMentionMembers,
 } from "./WorkflowMessageText";
 import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
-import { WorkflowLanding, workflowOperationLocked } from "./WorkflowLanding";
+import {
+  WorkflowLanding,
+  workflowOperationLocked,
+  WORKFLOW_NOT_FOUND,
+} from "./WorkflowLanding";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import "./workflows.css";
 
-export function WorkflowsPage({ relay }: { relay: RelayData }) {
+type WorkflowsNavigation = {
+  /** This visit; its route may name one workflow to open. */
+  navigation?: PageNavigation | undefined;
+  navigator?: Navigation | undefined;
+};
+/** The visit told its workflow is missing, and whether that notice is still
+ * shown or the reader dismissed it. */
+type MissingNotice = { entryId: string; shown: boolean };
+/** The visit whose workflow opened or was not found, and the one notice a
+ * visit gets, kept by the page: the community below is rebuilt on every
+ * reconnect and must not open that workflow, or report it missing, again. */
+type AnsweredRoute = {
+  revealed?: string | undefined;
+  onRevealed?: ((entryId: string) => void) | undefined;
+  onNotFound?: Dispatch<SetStateAction<MissingNotice | undefined>> | undefined;
+};
+const withoutRoute = (target: Extract<OpenTarget, { kind: "page" }>) => {
+  const { route: _route, ...page } = target;
+  return page;
+};
+
+export function WorkflowsPage({
+  relay,
+  navigation,
+  navigator,
+}: { relay: RelayData } & WorkflowsNavigation) {
   const connection = useRelayConnection(relay);
-  return connection.status === "ready" ? (
-    <WorkflowCommunity
-      key={`${connection.scope}:${connection.generation}`}
-      session={connection.session}
-      viewer={connection.viewer ?? ""}
-    />
-  ) : (
-    <WorkflowsPanel>
-      <WorkflowPageHeader />
-      <div className="workflow-page-state">
-        <p>
-          {connection.status === "connecting"
-            ? "Connecting to your community…"
-            : "Connect to a community to browse workflows."}
-        </p>
-        {connection.status === "error" && (
-          <>
-            <p role="alert">{connection.error}</p>
-            <Button onClick={() => relay.tryAgain()}>Retry connection</Button>
-          </>
-        )}
-      </div>
-    </WorkflowsPanel>
+  const [revealed, setRevealed] = useState<string>();
+  // One notice per visit, whichever of the page and the landing reports the
+  // workflow missing: it stays through later channel lists and reconnects,
+  // and is not raised again once dismissed. Only the workflow opening
+  // removes it.
+  const [notFound, setNotFound] = useState<MissingNotice>();
+  return (
+    <>
+      {connection.status === "ready" ? (
+        <WorkflowCommunity
+          key={`${connection.scope}:${connection.generation}`}
+          session={connection.session}
+          viewer={connection.viewer ?? ""}
+          navigation={navigation}
+          navigator={navigator}
+          revealed={revealed}
+          onRevealed={setRevealed}
+          onNotFound={setNotFound}
+        />
+      ) : (
+        <WorkflowsPanel>
+          <WorkflowPageHeader />
+          <div className="workflow-page-state">
+            <p>
+              {connection.status === "connecting"
+                ? "Connecting to your community…"
+                : "Connect to a community to browse workflows."}
+            </p>
+            {connection.status === "error" && (
+              <>
+                <p role="alert">{connection.error}</p>
+                <Button onClick={() => relay.tryAgain()}>
+                  Retry connection
+                </Button>
+              </>
+            )}
+          </div>
+        </WorkflowsPanel>
+      )}
+      {notFound?.shown && (
+        <ToastNotice
+          title={WORKFLOW_NOT_FOUND}
+          onDismiss={() =>
+            setNotFound((current) => current && { ...current, shown: false })
+          }
+        />
+      )}
+    </>
   );
 }
 
@@ -75,15 +137,31 @@ function WorkflowsPanel({ children }: { children: ReactNode }) {
 export function WorkflowCommunity({
   session,
   viewer,
+  navigation,
+  navigator,
+  revealed,
+  onRevealed,
+  onNotFound,
 }: {
   session: RelaySession;
   viewer: string;
-}) {
+} & WorkflowsNavigation &
+  AnsweredRoute) {
   const capability = session.workflows;
   const channels = useChannelList(session.channels);
+  // A channel restored from the saved list is not read until the roster
+  // confirms it: the session refuses its workflow reads, and one refusal
+  // clears the landing with nothing to start it again.
   const eligible = channels.channels.filter(
-    (item) => !item.huddle && !item.metadataPending,
+    (item) => !item.huddle && !item.metadataPending && !item.cached,
   );
+  // More channels can become eligible while the list is still being read, or
+  // one awaits its roster or the metadata that classifies it.
+  const settled =
+    channels.status === "ready" &&
+    !channels.channels.some(
+      (item) => !item.huddle && (item.metadataPending || item.cached),
+    );
   // Archived channels stay eligible, so their workflows can still be found,
   // turned off and deleted, and an open editor keeps its draft.
   const creatable = eligible.filter((item) => !item.archived);
@@ -102,6 +180,53 @@ export function WorkflowCommunity({
   const [detail, setDetail] = useState<{ key: string; name: string }>();
   const [detailTarget, setDetailTarget] = useState<HTMLElement | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  // A visit opened at one workflow, as from a message it sent. The address
+  // applies only in the community it was opened for, and grants nothing: the
+  // landing selects the workflow only among the definitions it could read.
+  const target = navigation?.target.kind === "page" ? navigation.target : null;
+  const route = workflowRoute(target?.route?.params);
+  const entryId = navigation?.entryId;
+  const inScope =
+    !target?.scope ||
+    relayPartition(target.scope.communityOrigin, target.scope.viewer) ===
+      session.scope;
+  const reveal = useMemo(
+    () =>
+      entryId && inScope && route?.owner && route.id
+        ? { entryId, owner: route.owner, id: route.id }
+        : undefined,
+    [entryId, inScope, route?.owner, route?.id],
+  );
+  // Withdrawn once the page holds its answer.
+  const pending =
+    onRevealed && reveal?.entryId !== revealed ? reveal : undefined;
+  const partial = channels.coverage === "partial";
+  // The landing answers a linked visit, but never mounts without a channel:
+  // a settled list with none answers it here.
+  const unlisted = settled && !eligible.length ? pending?.entryId : undefined;
+  // A visit already told, by this content or the one a reconnect replaced,
+  // keeps the notice it has, shown or dismissed.
+  const reportMissing = useCallback(
+    (entryId: string) =>
+      onNotFound?.((current) =>
+        current?.entryId === entryId ? current : { entryId, shown: true },
+      ),
+    [onNotFound],
+  );
+  const answer = useCallback(
+    (entryId: string, opened: boolean) => {
+      if (opened) onNotFound?.(undefined);
+      onRevealed?.(entryId);
+    },
+    [onRevealed, onNotFound],
+  );
+  useEffect(() => {
+    if (!unlisted) return;
+    reportMissing(unlisted);
+    if (!partial) onRevealed?.(unlisted);
+  }, [unlisted, partial, onRevealed, reportMissing]);
+  const visit = useRef({ navigation, navigator, reveal });
+  visit.current = { navigation, navigator, reveal };
   const selectDetail = useCallback((key: string | undefined, name?: string) => {
     setDetail((current) =>
       !key
@@ -110,6 +235,29 @@ export function WorkflowCommunity({
           ? current
           : { key, name: name ?? (current?.key === key ? current.name : "") },
     );
+    const { navigation, navigator, reveal } = visit.current;
+    if (
+      key ||
+      !reveal ||
+      !navigator ||
+      navigation?.target.kind !== "page" ||
+      navigation.signal.aborted ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    // Closing the detail ends the visits that opened this workflow here: Back
+    // returns to their opener and Forward leaves the detail closed.
+    const page = withoutRoute(navigation.target);
+    const pageKey = targetKey(page);
+    navigator.dismiss((other) => {
+      if (other.kind !== "page") return false;
+      const opened = workflowRoute(other.route?.params);
+      return (
+        opened?.owner === reveal.owner &&
+        opened.id === reveal.id &&
+        targetKey(withoutRoute(other)) === pageKey
+      );
+    }, page);
   }, []);
   // The landing that reconciles the selection unmounts without channels.
   if (detail && !eligible.length) setDetail(undefined);
@@ -246,9 +394,11 @@ export function WorkflowCommunity({
               }
             />
             <div className="workflows-body">
-              {channels.status === "loading" && !eligible.length && (
-                <p role="status">Reading channels…</p>
-              )}
+              {!eligible.length &&
+                (channels.status === "loading" ||
+                  (channels.status === "ready" && !settled)) && (
+                  <p role="status">Reading channels…</p>
+                )}
               {channels.status === "error" && (
                 <div className="workflow-page-state">
                   <p role="alert" className="text-danger">
@@ -259,7 +409,7 @@ export function WorkflowCommunity({
                   </Button>
                 </div>
               )}
-              {channels.status === "ready" && !eligible.length && (
+              {settled && !eligible.length && (
                 <div className="workflow-page-state">
                   <p>No channels are available in this community.</p>
                 </div>
@@ -272,11 +422,16 @@ export function WorkflowCommunity({
                   session={session}
                   capability={capability}
                   channels={eligible}
+                  channelsSettled={settled}
+                  channelsPartial={partial}
                   filter={filter}
                   onFilterChange={setFilter}
                   detailTarget={detailTarget}
                   selected={detail?.key}
                   onSelect={selectDetail}
+                  reveal={pending}
+                  onRevealed={answer}
+                  onRevealMissing={reportMissing}
                   onCreate={beginCreate}
                   onDelete={deleteWorkflow}
                   onOpen={(definition, nextChannel) =>

@@ -25,6 +25,25 @@ export function workflowOwner(
   return hasEventProof(event) ? owner : undefined;
 }
 
+/** The originating workflow's kind 30620 `d` value; with the verified owner it
+ * forms the coordinate `30620:<owner>:<id>`. Older messages and relays omit
+ * the tag, and a duplicate or malformed one names nothing: the owner
+ * attribution stands either way. Identification only, never permission. */
+export function workflowId(
+  event: EventData,
+  authority: string | undefined,
+): string | undefined {
+  if (!workflowOwner(event, authority)) return;
+  const ids = event.tags.filter(([name]) => name === "buzz:workflow-id");
+  const id = ids[0]?.[1];
+  return ids.length === 1 &&
+    ids[0]?.length === 2 &&
+    id &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)
+    ? id
+    : undefined;
+}
+
 /** Compact surfaces still identify automation, never the owner as the sender. */
 export function workflowLabel(ownerName: string): string {
   return `Workflow · owned by ${ownerName}`;

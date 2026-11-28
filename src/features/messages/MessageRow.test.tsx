@@ -21,7 +21,10 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
+import {
+  hoverOpenTiming,
+  PREVIEW_REST_MS,
+} from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
 import {
   SPRING_LOAD_DELAY_MS,
@@ -63,6 +66,10 @@ import { createRelaySession, type RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { attestedOwner } from "../agents/owner-attestation";
+import { createWorkflows } from "../workflows/capability";
+import { workflowLink, workflowLinks } from "../workflows/route";
+import { buzzLinkTarget } from "../navigation/buzz-links";
+import type { RelayEvent } from "../relay/events";
 
 // Real verification, observed so tests can wait for its verdict.
 vi.mock("../agents/owner-attestation", async (original) => {
@@ -2828,6 +2835,320 @@ it("presents automation, links the owner and explains the message without keys",
   }
 });
 
+const WORKFLOW_CARD =
+  "Workflow message" +
+  "Sent automatically by a workflow. Its owner set it up but didn’t send this message personally.";
+const workflowDefinitionId = "11111111-1111-4111-8111-111111111111";
+const workflowChannel = "22222222-2222-4222-8222-222222222222";
+/** A workflow message naming its workflow, over the session's real lookup. */
+function renderIdentifiedWorkflowMessage({
+  canAccess = () => true,
+  open = vi.fn(() => true),
+  named = true,
+  page = true,
+}: {
+  canAccess?: ((channel: string) => boolean) | undefined;
+  open?: (url: string) => boolean;
+  /** Whether the relay named the workflow on this message. */
+  named?: boolean;
+  /** Whether a Workflows page is running, as while its plugin is on. */
+  page?: boolean;
+} = {}) {
+  const withdraw = page ? workflowLinks.provide() : () => {};
+  const owner = keypair();
+  const definition = signed(owner, {
+    kind: 30620,
+    created_at: 1,
+    content: "name: Standup\n",
+    tags: [
+      ["h", workflowChannel],
+      ["d", workflowDefinitionId],
+    ],
+  });
+  const read = vi.fn(
+    async (_filters: unknown, _options?: { signal?: AbortSignal }) =>
+      [] as RelayEvent[],
+  );
+  const workflows = createWorkflows({
+    viewer: "cd".repeat(32),
+    reader: { read },
+    outbox: undefined,
+    local: undefined,
+    host: undefined,
+    canAccess,
+  });
+  const channels = { channels: [], status: "ready" };
+  renderMessage({
+    row: {
+      ...row,
+      authorId: owner.pubkey,
+      signerId: "cd".repeat(32),
+      workflowOwnerId: owner.pubkey,
+      ...(named ? { workflowId: workflowDefinitionId } : {}),
+    },
+    // As read-only surfaces pass it: names and lookups, no message controls.
+    references: {
+      channels: { list: () => channels, subscribeList: () => () => {} },
+      workflows: workflows.capability,
+    } as unknown as RelaySession,
+    profile: { name: "Wes" },
+    participantProfiles: new Map([[owner.pubkey, { name: "Wes" }]]),
+    onOpenLink: open,
+    canOpenLink: () => true,
+  });
+  const trigger = screen.getByRole("button", {
+    name: "Workflow message details",
+  });
+  return {
+    owner: owner.pubkey,
+    definition,
+    read,
+    workflows: {
+      ...workflows,
+      dispose() {
+        withdraw();
+        workflows.dispose();
+      },
+    },
+    trigger,
+    link: workflowLink({ owner: owner.pubkey, id: workflowDefinitionId }),
+    async openCard(user: ReturnType<typeof userEvent.setup>) {
+      trigger.focus();
+      await user.keyboard("{Enter}");
+      return screen.findByRole("dialog", { name: "Workflow message" });
+    },
+  };
+}
+
+it("offers View workflow to a viewer who can read the workflow, and opens that workflow", async () => {
+  const open = vi.fn(() => true);
+  const user = userEvent.setup();
+  const message = renderIdentifiedWorkflowMessage({ open });
+  message.read.mockResolvedValue([message.definition]);
+  try {
+    // Rendering the row reads nothing; the header stays as it was.
+    await act(async () => {});
+    expect(message.read).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "View workflow" })).toBeNull();
+    expect(
+      screen.getByText("Workflow").closest('button, a, [role="button"]'),
+    ).toBeNull();
+
+    const card = await message.openCard(user);
+    const action = await within(card).findByRole("button", {
+      name: "View workflow",
+    });
+    expect(message.read).toHaveBeenCalledTimes(1);
+    expect(message.read).toHaveBeenLastCalledWith(
+      [
+        {
+          kinds: [30620],
+          authors: [message.owner],
+          "#d": [workflowDefinitionId],
+          limit: 1,
+        },
+      ],
+      { signal: expect.any(AbortSignal) },
+    );
+    // The card links the workflow without naming it or its channel.
+    expect(card).toHaveTextContent(`${WORKFLOW_CARD}View workflow`, {
+      normalizeWhitespace: false,
+    });
+    expect(card).not.toHaveTextContent(/Standup|npub1/);
+    // A body-copy link: label type with no inset, in line with the card's text.
+    expect(action).toHaveAttribute("data-size", "text");
+
+    // Reachable and operable from the keyboard.
+    await user.tab();
+    expect(action).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(open).toHaveBeenCalledExactlyOnceWith(message.link, {
+      rootId: "root",
+    });
+    // The link is this workflow's page route, bound to the opener's community.
+    const scope = {
+      viewer: "cd".repeat(32),
+      communityOrigin: "https://a.test",
+    };
+    expect(buzzLinkTarget(message.link, scope)).toEqual({
+      version: 1,
+      kind: "plugin",
+      scope,
+      pluginId: "buzz.workflows",
+      pageId: "workflows",
+      params: { owner: message.owner, id: workflowDefinitionId },
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+
+    // Reopening while that answer is fresh asks the relay nothing more.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const again = await message.openCard(user);
+    await within(again).findByRole("button", { name: "View workflow" });
+    expect(message.read).toHaveBeenCalledTimes(1);
+
+    // Losing access, or a dropped connection, removes the action in place.
+    act(() => message.workflows.interrupt());
+    expect(screen.queryByRole("button", { name: "View workflow" })).toBeNull();
+    expect(again).toHaveTextContent(WORKFLOW_CARD, {
+      normalizeWhitespace: false,
+    });
+  } finally {
+    cleanup();
+    message.workflows.dispose();
+  }
+});
+
+it.each([
+  {
+    state: "the workflow's channel is one the viewer cannot access",
+    canAccess: (channel: string) => channel !== workflowChannel,
+    answer: "found" as const,
+  },
+  { state: "the workflow was deleted", answer: "none" as const },
+  { state: "the lookup failed", answer: "error" as const },
+  { state: "the lookup is still loading", answer: "pending" as const },
+  {
+    state: "the relay answers with another workflow",
+    answer: "other" as const,
+  },
+])("keeps today's workflow card when $state", async ({ canAccess, answer }) => {
+  const open = vi.fn(() => true);
+  const user = userEvent.setup();
+  const message = renderIdentifiedWorkflowMessage({ open, canAccess });
+  let signal: AbortSignal | undefined;
+  let settle: (events: RelayEvent[]) => void = () => {};
+  message.read.mockImplementation(async (_filters, options) => {
+    signal = options?.signal;
+    if (answer === "error") throw new Error("Relay unavailable");
+    if (answer === "pending")
+      return new Promise<RelayEvent[]>((resolve) => {
+        settle = resolve;
+      });
+    if (answer === "other")
+      return [
+        signed(keypair(), {
+          kind: 30620,
+          created_at: 1,
+          content: "name: Other\n",
+          tags: [
+            ["h", workflowChannel],
+            ["d", workflowDefinitionId],
+          ],
+        }),
+      ];
+    return answer === "found" ? [message.definition] : [];
+  });
+  try {
+    const card = await message.openCard(user);
+    await waitFor(() => expect(message.read).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    if (answer === "pending") {
+      // The action's line is held, hidden and unannounced, while its lookup
+      // is out, so the open card does not grow when the action arrives.
+      const held = within(card).getByText("View workflow");
+      expect(held).toHaveAttribute("aria-hidden", "true");
+      expect(held.className).toContain("workflowActionPending");
+      expect(card.textContent).toBe(`${WORKFLOW_CARD}View workflow`);
+    } else {
+      // Exactly the card as it was: no link, disabled link, placeholder or name.
+      expect(card.textContent).toBe(WORKFLOW_CARD);
+    }
+    expect(within(card).queryByRole("button")).toBeNull();
+    expect(within(card).queryByRole("link")).toBeNull();
+    expect(within(card).queryByRole("status")).toBeNull();
+    expect(card.querySelector("[disabled], [aria-disabled], [aria-busy]")).toBe(
+      null,
+    );
+    expect(open).not.toHaveBeenCalled();
+    // Closing the card cancels a lookup still in flight.
+    expect(signal?.aborted).toBe(false);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    if (answer === "pending") {
+      expect(signal?.aborted).toBe(true);
+      // Its late answer shows nothing, here or in a reopened card.
+      await act(async () => settle([message.definition]));
+    }
+    expect(screen.queryByRole("button", { name: "View workflow" })).toBeNull();
+    expect(message.read).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    message.workflows.dispose();
+  }
+});
+
+it("looks nothing up for a workflow message that names no workflow", async () => {
+  const user = userEvent.setup();
+  // Older messages, and any whose ID tag was missing, malformed or duplicated.
+  const message = renderIdentifiedWorkflowMessage({ named: false });
+  message.read.mockResolvedValue([message.definition]);
+  try {
+    const card = await message.openCard(user);
+    await act(async () => {});
+    expect(card.textContent).toBe(WORKFLOW_CARD);
+    expect(within(card).queryByRole("button")).toBeNull();
+    expect(message.read).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    message.workflows.dispose();
+  }
+});
+
+it("reads nothing and offers nothing while no Workflows page is running", async () => {
+  const user = userEvent.setup();
+  // As with the Workflows plugin turned off, the default for a new profile.
+  const message = renderIdentifiedWorkflowMessage({ page: false });
+  message.read.mockResolvedValue([message.definition]);
+  let withdraw = () => {};
+  try {
+    const card = await message.openCard(user);
+    await act(async () => {});
+    expect(card.textContent).toBe(WORKFLOW_CARD);
+    expect(within(card).queryByRole("button")).toBeNull();
+    expect(message.read).not.toHaveBeenCalled();
+    // The page starts, as when the plugin is turned on: the open card looks
+    // the workflow up once and offers it.
+    act(() => {
+      withdraw = workflowLinks.provide();
+    });
+    expect(
+      await within(card).findByRole("button", { name: "View workflow" }),
+    ).toBeVisible();
+    expect(message.read).toHaveBeenCalledTimes(1);
+    // And stops again: the action goes, and its lookup with it.
+    act(() => withdraw());
+    expect(card.textContent).toBe(WORKFLOW_CARD);
+    expect(message.read).toHaveBeenCalledTimes(1);
+  } finally {
+    withdraw();
+    cleanup();
+    message.workflows.dispose();
+  }
+});
+
+it("says so in the card when the surface cannot open the workflow link", async () => {
+  const open = vi.fn(() => false);
+  const user = userEvent.setup();
+  const message = renderIdentifiedWorkflowMessage({ open });
+  message.read.mockResolvedValue([message.definition]);
+  try {
+    const card = await message.openCard(user);
+    await user.click(
+      await within(card).findByRole("button", { name: "View workflow" }),
+    );
+    expect(open).toHaveBeenCalledExactlyOnceWith(message.link, {
+      rootId: "root",
+    });
+    expect(within(card).getByRole("status")).toHaveTextContent(
+      "Couldn’t open this workflow.",
+    );
+  } finally {
+    cleanup();
+    message.workflows.dispose();
+  }
+});
+
 it("opens workflow message details once the pointer rests, without a competing hint", async () => {
   // Base UI's PATIENT_CLICK_THRESHOLD: a click this soon after a hover open
   // keeps the popover open.
@@ -2870,6 +3191,52 @@ it("opens workflow message details once the pointer rests, without a competing h
   } finally {
     cleanup();
     vi.useRealTimers();
+  }
+});
+
+it("reads the workflow only once the pointer has rested on its details, and cancels that read when the pointer leaves", async () => {
+  vi.useFakeTimers();
+  const message = renderIdentifiedWorkflowMessage();
+  // The relay has not answered, so leaving finds the read still in flight.
+  message.read.mockImplementation(
+    (_filters, options) =>
+      new Promise<RelayEvent[]>((_resolve, reject) =>
+        options?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        ),
+      ),
+  );
+  try {
+    fireEvent.mouseEnter(message.trigger);
+    fireEvent.mouseMove(message.trigger);
+    // A pointer crossing the icon opens nothing and asks the relay nothing.
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS - 1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(message.read).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    const card = screen.getByRole("dialog", { name: "Workflow message" });
+    expect(message.read).toHaveBeenCalledTimes(1);
+    const signal = message.read.mock.calls[0]?.[1]?.signal;
+    expect(signal?.aborted).toBe(false);
+    // Unanswered, the card stays as it was.
+    expect(card).toHaveTextContent(WORKFLOW_CARD, {
+      normalizeWhitespace: false,
+    });
+    fireEvent.mouseLeave(message.trigger);
+    await act(() =>
+      vi.advanceTimersByTimeAsync(hoverOpenTiming.preview.closeDelay - 1),
+    );
+    expect(signal?.aborted).toBe(false);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(signal?.aborted).toBe(true);
+    // Nothing retries the cancelled read.
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(message.read).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+    message.workflows.dispose();
   }
 });
 

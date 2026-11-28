@@ -5,7 +5,11 @@ import { foldMessages } from "./fold";
 import { rowProfileIds } from "./membership";
 import { projectEvents } from "./projection";
 import { keypair, signed } from "./testing";
-import { workflowOwner, workflowMentionOwner } from "./workflow-attribution";
+import {
+  workflowId,
+  workflowMentionOwner,
+  workflowOwner,
+} from "./workflow-attribution";
 
 vi.mock("nostr-tools", { spy: true });
 
@@ -201,4 +205,121 @@ it("keeps workflow signer disclosure separate from main's attributed author and 
       signingAuthority: relay.pubkey,
     }),
   ).toEqual([]);
+});
+
+const definitionId = "11111111-1111-4111-8111-111111111111";
+const identified = [...tags, ["buzz:workflow-id", definitionId]];
+
+it("names the workflow only on a verified workflow message, into its folded row", () => {
+  const event = eventDto(sample(identified));
+  expect(workflowId(event, relay.pubkey)).toBe(definitionId);
+  // Channel messages, thread replies and direct messages fold the same way.
+  const reply = eventDto(sample([...identified, ["e", event.id, "", "reply"]]));
+  for (const candidate of [event, reply])
+    expect(
+      foldMessages("room", relay.pubkey, [candidate], {
+        signingAuthority: relay.pubkey,
+        includeReplies: true,
+      })[0],
+    ).toMatchObject({
+      workflowOwnerId: owner.pubkey,
+      workflowId: definitionId,
+    });
+  // Messages sent before the relay named the workflow keep today's row.
+  const [older] = foldMessages("room", relay.pubkey, [eventDto(sample())], {
+    signingAuthority: relay.pubkey,
+  });
+  expect(older).toMatchObject({ workflowOwnerId: owner.pubkey });
+  expect(older?.workflowId).toBeUndefined();
+  expect(workflowId(eventDto(sample()), relay.pubkey)).toBeUndefined();
+});
+it.each(
+  [
+    [["buzz:workflow-id"]],
+    [["buzz:workflow-id", ""]],
+    [["buzz:workflow-id", "not-a-uuid"]],
+    [["buzz:workflow-id", definitionId.toUpperCase().replace("1", "A")]],
+    [["buzz:workflow-id", "aaaaaaaa-AAAA-4aaa-8aaa-aaaaaaaaaaaa"]],
+    [["buzz:workflow-id", definitionId.replaceAll("-", "")]],
+    [["buzz:workflow-id", `{${definitionId}}`]],
+    [["buzz:workflow-id", ` ${definitionId}`]],
+    [["buzz:workflow-id", `${definitionId}\n`]],
+    [["buzz:workflow-id", `30620:${owner.pubkey}:${definitionId}`]],
+    [["buzz:workflow-id", definitionId, "extra"]],
+    [["buzz:workflow-id", definitionId, ""]],
+    [
+      ["buzz:workflow-id", definitionId],
+      ["buzz:workflow-id", definitionId],
+    ],
+    [
+      ["buzz:workflow-id", definitionId],
+      ["buzz:workflow-id", "22222222-2222-4222-8222-222222222222"],
+    ],
+    [["buzz:workflow-id", definitionId], ["buzz:workflow-id"]],
+    [
+      ["buzz:workflow-id", "bad"],
+      ["buzz:workflow-id", definitionId],
+    ],
+  ].map((ids) => ({ ids })),
+)(
+  "names no workflow for a malformed or duplicate ID, and keeps the owner %#",
+  ({ ids }) => {
+    const event = eventDto(sample([...tags, ...ids]));
+    expect(workflowId(event, relay.pubkey)).toBeUndefined();
+    // A bad ID never costs the message its workflow label or owner.
+    expect(workflowOwner(event, relay.pubkey)).toBe(owner.pubkey);
+    const [folded] = foldMessages("room", relay.pubkey, [event], {
+      signingAuthority: relay.pubkey,
+    });
+    expect(folded).toMatchObject({
+      authorId: relay.pubkey,
+      workflowOwnerId: owner.pubkey,
+    });
+    expect(folded?.workflowId).toBeUndefined();
+  },
+);
+it("names no workflow on unverified, non-authority or unattributed events", () => {
+  const raw = sample(identified);
+  const { sig: _sig, ...intent } = raw;
+  for (const event of [
+    // Unsigned intent, a copied record and a tampered one carry no proof.
+    raw,
+    intent,
+    { ...eventDto(raw) },
+    { ...raw, content: "tampered" },
+    // Anyone but the community's relay can write these tags.
+    eventDto(sample(identified, other)),
+    eventDto(sample(identified, owner)),
+    // Only messages are workflow messages.
+    eventDto(sample(identified, relay, 40002)),
+    // The ID never stands in for the marker or the owner.
+    eventDto(
+      sample([
+        ["h", "room"],
+        ["buzz:workflow-id", definitionId],
+      ]),
+    ),
+    eventDto(
+      sample([
+        ["h", "room"],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-id", definitionId],
+      ]),
+    ),
+    eventDto(sample([...identified, ["buzz:workflow-owner", other.pubkey]])),
+  ])
+    expect(workflowId(event, relay.pubkey)).toBeUndefined();
+  const verified = eventDto(raw);
+  // Without the community's explicit signing authority nothing is attributed.
+  for (const authority of [undefined, "", other.pubkey, owner.pubkey])
+    expect(workflowId(verified, authority)).toBeUndefined();
+  const [forged] = foldMessages(
+    "room",
+    relay.pubkey,
+    [eventDto(sample(identified, other))],
+    { signingAuthority: relay.pubkey },
+  );
+  expect(forged).toMatchObject({ authorId: other.pubkey });
+  expect(forged?.workflowOwnerId).toBeUndefined();
+  expect(forged?.workflowId).toBeUndefined();
 });

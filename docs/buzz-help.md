@@ -240,6 +240,13 @@ runs on a message, reaction, schedule or webhook. It starts disabled, and only
 its author can edit, enable or run it. Your agents follow only workflows that
 you or your agents own.
 
+A workflow message shows **Workflow · owned by …**. Open its information
+card for **View workflow**, available only when the **Workflows** plugin is
+on and you can view that workflow. It opens the workflow in **Workflows**;
+**Back** returns to the message. The page waits for your channels to load and
+reports if it cannot find the workflow. Seeing its message does not grant
+access to the workflow.
+
 ## Plugins
 
 **Settings → Plugins → Manage plugins** shows which plugins are on, turns them

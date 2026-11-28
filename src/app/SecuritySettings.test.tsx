@@ -42,7 +42,10 @@ const viewers = [
 beforeEach(() => {
   vi.mocked(listen).mockResolvedValue(() => {});
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 /** Clicks a row's Revoke and returns the confirmation it opens. */
 async function ask(revoke: HTMLElement | undefined, client: string) {
@@ -89,6 +92,23 @@ async function landedOnHeading(viewer: string | undefined) {
   if (viewer) expect(key).toBeInTheDocument();
   else expect(key).toBeNull();
 }
+
+it("lets the viewer turn off Solo chat deletion confirmation on this device", async () => {
+  vi.mocked(invoke).mockResolvedValue([]);
+  const first = render(<SecuritySettings />);
+  const name = "Confirm Solo chat deletion";
+  const control = screen.getByRole("switch", { name });
+  expect(control).toBeChecked();
+  await userEvent.click(control);
+  expect(control).not.toBeChecked();
+  first.unmount();
+
+  render(<SecuritySettings />);
+  const saved = screen.getByRole("switch", { name });
+  expect(saved).not.toBeChecked();
+  await userEvent.click(saved);
+  expect(saved).toBeChecked();
+});
 
 it("keeps the last confirmed Web Inspector state when native rejects a change", async () => {
   let rejectChange!: (reason: Error) => void;

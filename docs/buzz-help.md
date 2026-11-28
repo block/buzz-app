@@ -138,7 +138,9 @@ if that desktop app is up and running.
   has its own download button, which saves another copy each time.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
-  chat. Sharing a chat with a channel shares its whole history.
+  chat. Sharing a chat with a channel shares its whole history. Turn off
+  **Settings → Security → Confirm Solo chat deletion** to make **Delete chat**
+  immediate on this device.
 - **Channels** are open (anyone can find and join them) or private (invite
   only). The member avatars in the header manage members, access and roles.
   Archived channels are read-only, and owners and admins can unarchive them.

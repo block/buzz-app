@@ -32,6 +32,7 @@ import {
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { linkedDraftKey } from "../../features/solo/linked-chat";
+import { setConfirmSoloDeletion } from "../../features/solo/delete-preference";
 import { attachmentDraft } from "../../features/messages/attachment-draft";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import { readView, writeView } from "../../shared/view-state";
@@ -1454,22 +1455,26 @@ it.each([
 );
 
 it.each([
-  ["Chat actions", "archive", "Archive chat", undefined],
-  ["Chat actions", "delete", "Delete chat", "Delete Planning?"],
-  ["Actions for Planning", "archive", "Archive chat", undefined],
+  ["Chat actions", "archive", "Archive chat", undefined, true],
+  ["Chat actions", "delete", "Delete chat", "Delete Planning?", true],
+  ["Actions for Planning", "archive", "Archive chat", undefined, true],
+  ["Chat actions", "delete", "Delete chat", undefined, false],
+  ["Actions for Planning", "delete", "Delete chat", undefined, false],
 ] as const)(
-  "from %s, %s leaves the open chat for its sidebar neighbor",
-  async (trigger, action, label, title) => {
+  "from %s, %s (%s) leaves for its sidebar neighbor with dialog %s",
+  async (trigger, action, label, title, confirmDeletion) => {
+    setConfirmSoloDeletion(confirmDeletion);
     const other = "22222222-2222-4222-8222-222222222222";
     const f = fixture({ others: [other] });
     f.mountWithSidebar();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: trigger }));
     await user.click(await screen.findByRole("menuitem", { name: label }));
-    // Archive is undoable from its result toast, so only Delete confirms.
     if (title) {
       const dialog = await screen.findByRole("dialog", { name: title });
       await user.click(within(dialog).getByRole("button", { name: label }));
+    } else {
+      expect(screen.queryByRole("dialog")).toBeNull();
     }
     await waitFor(() => expect(f.open).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

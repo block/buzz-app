@@ -10,6 +10,10 @@ import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import { LockIcon } from "../shared/design-system/icons";
 import { ExternalIdentityAuthorization } from "./ExternalIdentityAuthorization";
 import {
+  confirmSoloDeletion,
+  setConfirmSoloDeletion,
+} from "../features/solo/delete-preference";
+import {
   listPairedTools,
   onPairingEvents,
   revokePairedTool,
@@ -82,6 +86,40 @@ function WebInspectorSettings() {
       {error && (
         <p role="alert" className="text-body-sm text-danger">
           Buzz couldn’t change Web Inspector access. Try again.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function SoloDeletionSettings() {
+  const [confirm, setConfirm] = useState(confirmSoloDeletion);
+  const [error, setError] = useState(false);
+  return (
+    <section
+      className="mt-section-gap"
+      aria-labelledby="solo-deletion-settings-title"
+    >
+      <InlineHeader id="solo-deletion-settings-title" title="Solo chats" />
+      <SettingsGroup>
+        <SwitchPreferenceRow
+          label="Confirm Solo chat deletion"
+          description="When off, Delete chat permanently deletes the chat for everyone in it in one step. Applies on this device."
+          checked={confirm}
+          onCheckedChange={(checked) => {
+            try {
+              setConfirmSoloDeletion(checked);
+              setConfirm(checked);
+              setError(false);
+            } catch {
+              setError(true);
+            }
+          }}
+        />
+      </SettingsGroup>
+      {error && (
+        <p role="alert" className="text-body-sm text-danger">
+          Buzz couldn’t save the deletion preference. Try again.
         </p>
       )}
     </section>
@@ -170,6 +208,7 @@ export function SecuritySettings({
         title="Security"
         subtitle="Tools paired on this device, and applications you authorize to act as you."
       />
+      <SoloDeletionSettings />
       <InlineHeader
         ref={heading}
         tabIndex={-1}

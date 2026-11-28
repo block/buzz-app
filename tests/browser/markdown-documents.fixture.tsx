@@ -5,6 +5,14 @@ import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { createRoot } from "react-dom/client";
+import { useMemo, useState } from "react";
+import {
+  ActivityPanel,
+  type AgentActivity,
+} from "../../src/bundled/builderlab/adapter-type/Activity";
+import { createMeshTranscriptTab } from "../../src/bundled/mesh-compute/MeshTranscriptTab";
+import type { AgentViewProps } from "../../src/features/agents/service";
+import type { MeshAgentConfig } from "../../src/bundled/mesh-compute/meshAgent";
 import { MessageMarkdown } from "../../src/features/messages/MessageMarkdown";
 import { PluginReadme } from "../../src/app/PluginReadme";
 import { CanvasEditor } from "../../src/bundled/channels/CanvasEditor";
@@ -103,37 +111,63 @@ const reply = (seq: number, text: string, messageId: string) =>
     },
   });
 const working = params.has("working");
-const transcript = activityTranscript(
-  [
-    {
-      id: "1".padStart(64, "0"),
-      agent,
-      receivedAt: at,
-      plaintext: JSON.stringify({
-        kind: "batch",
-        payload: {
-          events: [
-            frame(0, "turn_started"),
-            reply(1, SAMPLE, "m1"),
-            frame(2, "acp_read", {
-              jsonrpc: "2.0",
-              method: "session/update",
-              params: {
-                sessionId: "S",
-                update: { sessionUpdate: "tool_call", toolCallId: "c1" },
+const finding = params.has("find");
+const records = [
+  {
+    id: "1".padStart(64, "0"),
+    agent,
+    receivedAt: at,
+    plaintext: JSON.stringify({
+      kind: "batch",
+      payload: {
+        events: [
+          frame(0, "turn_started"),
+          reply(1, SAMPLE, "m1"),
+          frame(2, "acp_read", {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "S",
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: "c1",
+                ...(finding
+                  ? {
+                      title: "Run command",
+                      kind: "execute",
+                      status: "completed",
+                      rawInput: { command: "printf result" },
+                      content: [
+                        {
+                          type: "content",
+                          content: {
+                            type: "text",
+                            text: [
+                              "first hidden-needle",
+                              ...Array.from(
+                                { length: 100 },
+                                (_, i) => `filler line ${i}`,
+                              ),
+                              "last hidden-needle",
+                            ].join("\n"),
+                          },
+                        },
+                      ],
+                    }
+                  : {}),
               },
-            }),
-            reply(3, LONG_CODE, "m2"),
-            ...(working
-              ? []
-              : [frame(4, "turn_completed", { outcome: "completed" })]),
-          ],
-        },
-      }),
-    },
-  ],
-  { agent },
-);
+            },
+          }),
+          reply(3, LONG_CODE, "m2"),
+          ...(working
+            ? []
+            : [frame(4, "turn_completed", { outcome: "completed" })]),
+        ],
+      },
+    }),
+  },
+];
+const transcript = activityTranscript(records, { agent });
 
 const memories = createAgentMemories(
   async () => ({
@@ -154,6 +188,68 @@ const memoryAgent = {
 } as Agent;
 
 const scope = { viewer: agent, communityOrigin: "https://current.example" };
+
+function LocalTranscript() {
+  const [version, setVersion] = useState(0);
+  const shown = useMemo(
+    () => ({
+      ...transcript,
+      turns: transcript.turns.map((turn) => ({
+        ...turn,
+        items: [
+          ...turn.items,
+          ...Array.from({ length: version * 12 }, (_, i) => ({
+            type: "message" as const,
+            id: `live-${i}`,
+            at: at + 10000 + i,
+            text: `Live update ${i}`,
+          })),
+        ],
+      })),
+    }),
+    [version],
+  );
+  return (
+    <>
+      {finding && (
+        <button type="button" onClick={() => setVersion((n) => n + 1)}>
+          Append activity
+        </button>
+      )}
+      <TranscriptPanel
+        agent={memoryAgent}
+        read={async () => shown}
+        readKey="S"
+        readAgain={String(version)}
+        working
+        refreshWhileWorking={false}
+        reading="Reading transcript…"
+        failed="Could not read transcript"
+        missing={null}
+      />
+    </>
+  );
+}
+const liveSnapshot = { records, turns: [], status: "ready", trimmed: 0 };
+const liveActivity = {
+  subscribe: () => () => {},
+  snapshot: () => liveSnapshot,
+} as unknown as AgentActivity;
+const MeshTranscript = createMeshTranscriptTab({
+  recent: async () => [
+    {
+      sessionId: "S",
+      at,
+      channelId: "fixture-channel",
+      title: "Saved fixture",
+    },
+  ],
+  transcript: async () => ({ ...transcript, more: true }),
+});
+const meshProps = {
+  agent: { ...memoryAgent, config: {} },
+  save: async () => {},
+} as unknown as AgentViewProps<MeshAgentConfig>;
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
@@ -217,18 +313,17 @@ createRoot(root).render(
           agents={{ subscribe: () => () => {}, memberships: () => [] }}
         />
       </section>
-      <section data-screen="transcript">
-        {working ? (
-          <TranscriptPanel
-            agent={memoryAgent}
-            read={async () => transcript}
-            readKey="S"
-            working
-            refreshWhileWorking={false}
-            reading="Reading transcript…"
-            failed="Could not read transcript"
-            missing={null}
-          />
+      {finding && <p>hidden-needle outside the transcript</p>}
+      <section
+        data-screen="transcript"
+        style={finding ? { height: 420, overflowY: "auto" } : undefined}
+      >
+        {params.get("host") === "hosted" ? (
+          <ActivityPanel agent={memoryAgent} activity={liveActivity} />
+        ) : params.get("host") === "mesh" ? (
+          <MeshTranscript {...meshProps} />
+        ) : working ? (
+          <LocalTranscript />
         ) : (
           <ActivityTranscript
             transcript={transcript}

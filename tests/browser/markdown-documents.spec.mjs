@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
 
+test.use({ video: "on" });
+
 const SHOTS = fileURLToPath(
   new URL("../../test-results/markdown-documents/", import.meta.url),
 );
@@ -460,4 +462,379 @@ test("inline snippets keep rounded ends and tall fenced code wraps with a partia
     await page.keyboard.press("Tab");
     await expect(copy).toBeFocused();
   }
+});
+
+test.describe("transcript find", () => {
+  // Native details visibility, highlight geometry and nested scroll containers
+  // need a real engine; content/search-state cases live in the component tests.
+  test("finds collapsed tool output without including the rest of the page", async ({
+    page,
+  }, testInfo) => {
+    const errors = watchPageErrors(page);
+    await page.goto(`${url}?working&find&width=1100`);
+    const transcript = page.getByRole("region", { name: "Agent transcript" });
+    const find = transcript.getByRole("button", {
+      name: "Find in transcript",
+      exact: true,
+    });
+    await find.focus();
+    await page.keyboard.press("Control+f");
+    const field = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await expect(field).toBeFocused();
+    const status = transcript.locator("search [role=status]");
+    await field.fill("Text with code");
+    await expect(status).toHaveText("1 of 1");
+    const formatted = transcript
+      .locator('[data-type="message"] p')
+      .filter({ hasText: "Text with code" });
+    await expect(formatted).toBeVisible();
+    await field.fill("HIDDEN-NEEDLE");
+    await expect(status).toHaveText("1 of 2");
+    const tool = transcript.locator('[data-type="tool"] > details');
+    await expect(tool).toHaveAttribute("open", "");
+    await expect(formatted).toHaveCount(0);
+    await tool.locator(":scope > summary").click();
+    await expect(tool).not.toHaveAttribute("open", "");
+    await expect(status).toHaveText("1 of 2");
+    await field.press("Enter");
+    await expect(tool).toHaveAttribute("open", "");
+    await field.press("Shift+Enter");
+    const activeMatch = () =>
+      page.evaluate(() => {
+        const name = [...CSS.highlights.keys()].find(
+          (key) =>
+            key.startsWith("transcript-find-") && key.endsWith("-active"),
+        );
+        const [range] = CSS.highlights.get(name);
+        const box = range.getBoundingClientRect();
+        const header = document
+          .querySelector("[data-transcript-header]")
+          .getBoundingClientRect();
+        let shown = box.width > 0 && box.top >= header.bottom;
+        for (
+          let node = range.startContainer.parentElement;
+          node;
+          node = node.parentElement
+        ) {
+          const style = getComputedStyle(node);
+          if (
+            /auto|scroll|hidden/.test(`${style.overflowX}${style.overflowY}`)
+          ) {
+            const clip = node.getBoundingClientRect();
+            shown &&=
+              box.top >= clip.top &&
+              box.bottom <= clip.bottom &&
+              box.left >= clip.left &&
+              box.right <= clip.right;
+          }
+        }
+        return { text: range.toString(), shown };
+      });
+    await expect
+      .poll(activeMatch)
+      .toEqual({ text: "hidden-needle", shown: true });
+    await page.locator('[data-screen="transcript"]').evaluate((host) => {
+      host.style.height = "180px";
+    });
+    await field.press("Enter");
+    await expect(status).toHaveText("2 of 2");
+    await expect
+      .poll(activeMatch)
+      .toEqual({ text: "hidden-needle", shown: true });
+    await field.press("Shift+Enter");
+    await expect(status).toHaveText("1 of 2");
+    await expect
+      .poll(activeMatch)
+      .toEqual({ text: "hidden-needle", shown: true });
+    await page.locator('[data-screen="transcript"]').evaluate((host) => {
+      host.style.height = "420px";
+    });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      for (const width of [390, 1200]) {
+        await page.setViewportSize({ width, height: 850 });
+        await transcript
+          .getByRole("button", { name: "Next match", exact: true })
+          .click();
+        await expect
+          .poll(activeMatch)
+          .toEqual({ text: "hidden-needle", shown: true });
+        // Highlight changes paint on the next frame in WebKit.
+        await page.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        );
+        await page.screenshot({
+          path: testInfo.outputPath(`transcript-find-${mode}-${width}.png`),
+        });
+      }
+    }
+    for (const { width, scale } of [
+      { width: 320, scale: "1" },
+      { width: 390, scale: "1.3" },
+    ]) {
+      await page.setViewportSize({ width, height: 850 });
+      await page.evaluate(
+        (scale) =>
+          document.documentElement.style.setProperty(
+            "--buzz-text-scale",
+            scale,
+          ),
+        scale,
+      );
+      await field.fill("no such passage");
+      await expect(status).toHaveText("No results");
+      expect((await field.boundingBox()).width).toBeGreaterThan(100);
+      await field.fill("HIDDEN-NEEDLE");
+      await expect(status).toHaveText("1 of 2");
+    }
+    await field.press("Escape");
+    await expect(field).toHaveCount(0);
+    await expect(tool).toHaveAttribute("open", "");
+    await expect(find).toBeFocused();
+    expect(
+      await page.evaluate(() =>
+        [...CSS.highlights.keys()].filter((name) =>
+          name.startsWith("transcript-find-"),
+        ),
+      ),
+    ).toEqual([]);
+    // A previous retained match must not become an exception on a later close.
+    await tool.locator(":scope > summary").click();
+    await expect(tool).not.toHaveAttribute("open", "");
+    await find.click();
+    const reopened = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await reopened.fill("f");
+    await expect(status).toHaveText(/of/);
+    await reopened.press("Escape");
+    await expect(tool).not.toHaveAttribute("open", "");
+
+    // Escape respects a reader who scrolled away from the active result.
+    await page.setViewportSize({ width: 1200, height: 850 });
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+    );
+    const host = page.locator('[data-screen="transcript"]');
+    await host.evaluate((node) => {
+      node.style.height = "180px";
+    });
+    await find.click();
+    const scrolled = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await scrolled.fill("hidden-needle");
+    await expect(status).toHaveText("1 of 2");
+    await host.evaluate((node) => {
+      node.scrollTop = 0;
+      node.dispatchEvent(new Event("scroll"));
+    });
+    await scrolled.press("Escape");
+    expect(await host.evaluate((node) => node.scrollTop)).toBe(0);
+    expect(
+      await transcript
+        .locator('[data-type="message"]')
+        .first()
+        .evaluate((node) => {
+          const box = node.getBoundingClientRect();
+          const port = node
+            .closest('[data-screen="transcript"]')
+            .getBoundingClientRect();
+          const header = document
+            .querySelector("[data-transcript-header]")
+            .getBoundingClientRect();
+          return box.bottom > header.bottom && box.top < port.bottom;
+        }),
+    ).toBe(true);
+    await expect(tool).not.toHaveAttribute("open", "");
+    await host.evaluate((node) => {
+      node.style.height = "420px";
+    });
+
+    // Native toggle is asynchronous: dismiss in the same task as the reader's click.
+    await tool.locator(":scope > summary").click();
+    await expect(tool).toHaveAttribute("open", "");
+    await find.click();
+    const quick = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await quick.fill("hidden-needle");
+    await expect(status).toHaveText("1 of 2");
+    await quick.evaluate((input) => {
+      document.querySelector('[data-type="tool"] > details > summary').click();
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await expect(quick).toHaveCount(0);
+    await expect(tool).not.toHaveAttribute("open", "");
+    expect(errors.unexplained()).toEqual([]);
+  });
+});
+
+test.describe("transcript find", () => {
+  test("resumes live following only when it will not abandon a found passage", async ({
+    page,
+  }) => {
+    await page.goto(`${url}?working&find&width=1100`);
+    const host = page.locator('[data-screen="transcript"]');
+    const transcript = page.getByRole("region", { name: "Agent transcript" });
+    const find = transcript.getByRole("button", {
+      name: "Find in transcript",
+      exact: true,
+    });
+    const append = () =>
+      page
+        .getByRole("button", { name: "Append activity" })
+        .evaluate((button) => button.click());
+    const atEnd = () =>
+      host.evaluate(
+        (node) => node.scrollHeight - node.clientHeight - node.scrollTop < 32,
+      );
+    await expect.poll(atEnd).toBe(true);
+    await find.click();
+    let field = transcript.getByRole("searchbox", {
+      name: "Find in transcript",
+    });
+    await field.fill("not in this transcript");
+    await expect(transcript.locator("search [role=status]")).toHaveText(
+      "No results",
+    );
+    await append();
+    await expect(
+      transcript.getByText("Live update 11", { exact: true }),
+    ).toBeVisible();
+    await expect.poll(atEnd).toBe(false);
+    await field.press("Escape");
+    await expect.poll(atEnd).toBe(true);
+
+    await find.click();
+    field = transcript.getByRole("searchbox", { name: "Find in transcript" });
+    await field.fill("Live update 11");
+    await expect(transcript.locator("search [role=status]")).toHaveText(
+      "1 of 1",
+    );
+    await field.press("Escape");
+    const nearLatest = transcript.locator('[data-entry="item:live-11"]');
+    const nearTop = await nearLatest.evaluate(
+      (node) => node.getBoundingClientRect().top,
+    );
+    await append();
+    await expect(
+      transcript.getByText("Live update 23", { exact: true }),
+    ).toBeVisible();
+    expect(
+      Math.abs(
+        (await nearLatest.evaluate(
+          (node) => node.getBoundingClientRect().top,
+        )) - nearTop,
+      ),
+    ).toBeLessThan(2);
+
+    await find.click();
+    field = transcript.getByRole("searchbox", { name: "Find in transcript" });
+    await field.fill("hidden-needle");
+    await expect(transcript.locator("search [role=status]")).toHaveText(
+      "1 of 2",
+    );
+    const output = transcript
+      .locator("pre")
+      .filter({ hasText: "first hidden-needle" });
+    await field.press("Escape");
+    const top = await output.evaluate(
+      (node) => node.getBoundingClientRect().top,
+    );
+    await append();
+    await expect(
+      transcript.getByText("Live update 35", { exact: true }),
+    ).toBeVisible();
+    expect(
+      Math.abs(
+        (await output.evaluate((node) => node.getBoundingClientRect().top)) -
+          top,
+      ),
+    ).toBeLessThan(2);
+    await find.click();
+    field = transcript.getByRole("searchbox", { name: "Find in transcript" });
+    await field.fill("not in this transcript");
+    await expect(transcript.locator("search [role=status]")).toHaveText(
+      "No results",
+    );
+    const visibleRow = await host.evaluate((node) => {
+      node.scrollTop = (node.scrollHeight - node.clientHeight) / 2;
+      node.dispatchEvent(new Event("scroll"));
+      const top = node
+        .querySelector("[data-transcript-header]")
+        .getBoundingClientRect().bottom;
+      const bottom = node.getBoundingClientRect().bottom;
+      const row = [...node.querySelectorAll("[data-entry]")].find((row) => {
+        const box = row.getBoundingClientRect();
+        return box.height > 0 && box.top >= top && box.top < bottom;
+      });
+      return { id: row.dataset.entry, top: row.getBoundingClientRect().top };
+    });
+    await field.press("Escape");
+    const heldRow = transcript.locator(`[data-entry="${visibleRow.id}"]`);
+    expect(
+      Math.abs(
+        (await heldRow.evaluate((node) => node.getBoundingClientRect().top)) -
+          visibleRow.top,
+      ),
+    ).toBeLessThan(2);
+    await host.evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+      node.dispatchEvent(new Event("scroll"));
+    });
+    await expect.poll(atEnd).toBe(true);
+    await append();
+    await expect(
+      transcript.getByText("Live update 47", { exact: true }),
+    ).toBeVisible();
+    await expect.poll(atEnd).toBe(true);
+  });
+
+  test("keeps hosted and saved Mesh activity searchable in their real layouts", async ({
+    page,
+  }, testInfo) => {
+    for (const host of ["hosted", "mesh"]) {
+      await page.goto(`${url}?working&find&host=${host}&width=1100`);
+      const transcript = page.getByRole("region", { name: "Agent transcript" });
+      await expect(transcript).toBeVisible();
+      await page.locator('[data-screen="transcript"]').evaluate((node) => {
+        node.scrollTop = 0;
+      });
+      await page.locator('[data-screen="transcript"]').screenshot({
+        path: testInfo.outputPath(`transcript-${host}-before-find.png`),
+      });
+      await transcript
+        .getByRole("button", { name: "Find in transcript", exact: true })
+        .click();
+      await transcript
+        .getByRole("searchbox", { name: "Find in transcript" })
+        .fill("Text with code");
+      await expect(transcript.locator("search [role=status]")).toHaveText(
+        "1 of 1",
+      );
+      await expect(
+        transcript.getByText("Search covers loaded activity only.", {
+          exact: false,
+        }),
+      ).toBeVisible();
+      for (const mode of ["light", "dark"]) {
+        await page.evaluate((mode) => {
+          document.documentElement.dataset.colorMode = mode;
+        }, mode);
+        await page.locator('[data-screen="transcript"]').screenshot({
+          path: testInfo.outputPath(`transcript-find-${host}-${mode}.png`),
+        });
+      }
+    }
+  });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it } from "vitest";
-import { FIND_LIMIT, findRanges } from "./find-in-page";
+import { FIND_LIMIT, findRanges, findTranscriptRanges } from "./find-in-page";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -92,4 +92,16 @@ it("keeps source offsets when lowercasing changes the text's length", () => {
   expect(offsets(x)).toEqual([[1, 2]]);
   // A query that is itself the expanded character selects that one character.
   expect(texts(findRanges(document.body, "İ"))).toEqual(["İ", "İ"]);
+});
+
+it("finds transcript phrases across inline formatting but not across blocks or hidden previews", () => {
+  document.body.innerHTML = `<details><summary>Reply <span data-transcript-preview>Text with code</span></summary><p>Text with <code>code</code> and <strong>formatting</strong>.</p><p>unrelated</p><p>blocks</p></details>`;
+  expect(texts(findTranscriptRanges(document.body, "Text with code"))).toEqual([
+    "Text with code",
+  ]);
+  expect(
+    texts(findTranscriptRanges(document.body, "code and formatting")),
+  ).toEqual(["code and formatting"]);
+  expect(findTranscriptRanges(document.body, "unrelatedblocks")).toEqual([]);
+  expect(findRanges(document.body, "Text with code")).toHaveLength(1);
 });

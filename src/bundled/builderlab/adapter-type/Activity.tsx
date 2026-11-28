@@ -17,6 +17,7 @@ import {
   activityTranscript,
   type TranscriptTurn,
 } from "../../../features/agents/activity-transcript";
+import { TranscriptView } from "../../../features/agents/TranscriptView";
 import { ActivityTranscript } from "../../../features/agents/ActivityTranscript";
 import type {
   Agent,
@@ -194,45 +195,50 @@ function ActivityFeed({
   const linked =
     !rootId && transcript.turns.some((turn) => !!turn.threadRootId);
   return (
-    <ActivityTranscript
-      transcript={transcript}
-      agentName={agent.name}
-      agentKey={agent.key}
-      agentPicture={agent.picture}
-      community={agent.relay}
-      state={(turnId) => state.get(turnId)}
-      follow={false}
-      openConversation={!here || linked ? openConversation : undefined}
-      before={
-        <>
-          <Note>
-            {`Turns from ${here ? "this conversation" : "all of this agent's conversations"}, captured while Buzz has been open. Earlier turns aren't shown.`}
-          </Note>
-          {conversation && (
-            // An inline link wraps in a narrow pane at large text sizes.
-            <p className="text-body-sm text-secondary">
-              <BaseButton
-                data-buzz-ui=""
-                className={inlineStyles.link}
-                onClick={() => setEverywhere(!everywhere)}
-              >
-                {everywhere
-                  ? "Show this conversation"
-                  : "Show all conversations"}
-              </BaseButton>
-            </p>
-          )}
-          {snapshot.status === "interrupted" && (
+    <TranscriptView
+      scope={`${agent.pubkey}:${channelId ?? ""}:${rootId ?? ""}`}
+      history={{ omitted: true }}
+    >
+      <ActivityTranscript
+        transcript={transcript}
+        agentName={agent.name}
+        agentKey={agent.key}
+        agentPicture={agent.picture}
+        community={agent.relay}
+        state={(turnId) => state.get(turnId)}
+        follow={false}
+        openConversation={!here || linked ? openConversation : undefined}
+        before={
+          <>
             <Note>
-              The live feed was interrupted; it reconnects on its own.
+              {`Turns from ${here ? "this conversation" : "all of this agent's conversations"}, captured while Buzz has been open. Earlier turns aren't shown.`}
             </Note>
-          )}
-          {snapshot.trimmed > 0 && (
-            <Note>Older activity was dropped to save memory.</Note>
-          )}
-        </>
-      }
-    />
+            {conversation && (
+              // An inline link wraps in a narrow pane at large text sizes.
+              <p className="text-body-sm text-secondary">
+                <BaseButton
+                  data-buzz-ui=""
+                  className={inlineStyles.link}
+                  onClick={() => setEverywhere(!everywhere)}
+                >
+                  {everywhere
+                    ? "Show this conversation"
+                    : "Show all conversations"}
+                </BaseButton>
+              </p>
+            )}
+            {snapshot.status === "interrupted" && (
+              <Note>
+                The live feed was interrupted; it reconnects on its own.
+              </Note>
+            )}
+            {snapshot.trimmed > 0 && (
+              <Note>Older activity was dropped to save memory.</Note>
+            )}
+          </>
+        }
+      />
+    </TranscriptView>
   );
 }
 

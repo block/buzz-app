@@ -249,7 +249,9 @@ it("shows every conversation's turns when not opened from one", () => {
   expect(
     screen.getByText("In beta", { selector: "summary span" }),
   ).toBeInTheDocument();
-  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Show all conversations" }),
+  ).not.toBeInTheDocument();
 });
 
 const turnText = (text: string) =>

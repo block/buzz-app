@@ -9,7 +9,6 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type ReactNode,
 } from "react";
 import remarkGfm from "remark-gfm";
@@ -65,6 +64,12 @@ import { bundledPoster } from "./avatar-packs";
 import { AgentsContext } from "./react";
 import { useProfileGeneration } from "../relay/react";
 import type { ProfileQueries } from "../relay/profile-directory";
+
+import {
+  TranscriptSearch,
+  itemMatches,
+  useSearchDisclosure,
+} from "./TranscriptFind";
 
 const noSubscribe = () => () => {};
 const none = () => undefined;
@@ -209,12 +214,34 @@ const END_SLACK = 32;
 
 /** Opens at the latest step and keeps it in view as the transcript grows,
  * unless the reader has scrolled up to read earlier turns. */
-function useFollowLatest(content: unknown, enabled: boolean) {
+function useFollowLatest(
+  content: unknown,
+  enabled: boolean,
+  searching = false,
+  active: Range | null = null,
+  paused?: { current: { following: boolean; top: number } | undefined },
+) {
   const timeline = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const restoredTop = useRef<number | undefined>(undefined);
   useLayoutEffect(() => {
     const view = enabled ? scroller(timeline.current) : undefined;
+    if (!view || !paused) return;
+    if (searching && !paused.current) {
+      paused.current = { following: following.current, top: view.scrollTop };
+      following.current = false;
+    } else if (!searching && paused.current) {
+      const prior = paused.current;
+      paused.current = undefined;
+      following.current =
+        prior.following &&
+        !active &&
+        (view.scrollHeight - view.scrollTop - view.clientHeight <= END_SLACK ||
+          Math.abs(view.scrollTop - prior.top) <= END_SLACK);
+    }
+  }, [enabled, searching, active, paused]);
+  useLayoutEffect(() => {
+    const view = enabled && !searching ? scroller(timeline.current) : undefined;
     if (!view) return;
     const read = () => {
       const top = view.scrollTop;
@@ -225,12 +252,13 @@ function useFollowLatest(content: unknown, enabled: boolean) {
     };
     view.addEventListener("scroll", read, { passive: true });
     return () => view.removeEventListener("scroll", read);
-  }, [enabled]);
+  }, [enabled, searching]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: content is the change to follow.
   useLayoutEffect(() => {
-    const view = enabled && following.current && scroller(timeline.current);
+    const view =
+      enabled && !searching && following.current && scroller(timeline.current);
     if (view) view.scrollTop = view.scrollHeight;
-  }, [content, enabled]);
+  }, [content, enabled, searching]);
   return { timeline, following, restoredTop };
 }
 
@@ -403,7 +431,18 @@ export function ActivityTranscript({
   community?: string | undefined;
 }) {
   const partial = transcript.partial === true;
-  const scroll = useFollowLatest(transcript, follow);
+  const search = useContext(TranscriptSearch);
+  const searching = search?.open ?? false;
+  const paused = useRef<{ following: boolean; top: number } | undefined>(
+    undefined,
+  );
+  const scroll = useFollowLatest(
+    transcript,
+    follow,
+    searching,
+    search?.active.current ?? null,
+    paused,
+  );
   const focused = useShowFocused(
     transcript,
     scroll.timeline,
@@ -625,15 +664,17 @@ function Sections({
   title: string;
   sections: readonly PromptSection[];
 }) {
-  const [visited, setVisited] = useState(false);
+  const { ref, mounted, onToggle, onClick } = useSearchDisclosure((query) =>
+    sections.some(
+      (section) =>
+        sectionTitle(section.tag).toLowerCase().includes(query) ||
+        section.body.toLowerCase().includes(query),
+    ),
+  );
   return (
-    <details
-      className={styles.context}
-      onToggle={(event) => {
-        if (event.currentTarget.open) setVisited(true);
-      }}
-    >
-      <summary className="text-body text-subtle">
+    <details ref={ref} className={styles.context} onToggle={onToggle}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary activation includes keyboard clicks. */}
+      <summary className="text-body text-subtle" onClick={onClick}>
         <FileTextIcon size="1rem" aria-hidden="true" />
         <span>
           {title} · {sections.length} sections
@@ -644,7 +685,7 @@ function Sections({
           aria-hidden="true"
         />
       </summary>
-      {visited &&
+      {mounted &&
         sections.map((section, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: sections are a positional, immutable parse of one prompt.
           <section key={index} className={styles.codePanel}>
@@ -679,21 +720,28 @@ function Disclosure({
   children: ReactNode;
 }) {
   const focused = useContext(RowContext).focused === `item:${item.id}`;
-  const [visited, setVisited] = useState(focused);
-  if (focused && !visited) setVisited(true);
+  const { ref, mounted, onToggle, onClick } = useSearchDisclosure(
+    (query) => itemMatches(item, query),
+    focused,
+  );
   return (
     <details
+      ref={ref}
       className={styles.tool}
-      onToggle={(event) => {
-        if (event.currentTarget.open) setVisited(true);
-      }}
+      onToggle={onToggle}
       data-status={item.type === "tool" ? item.status : undefined}
     >
-      <summary className={styles.row}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary activation includes keyboard clicks. */}
+      <summary className={styles.row} onClick={onClick}>
         {icon}
         <span className={styles.summary}>
           {label}
-          {preview && <span className={styles.preview}> {preview}</span>}
+          {preview && (
+            <span className={styles.preview} data-transcript-preview>
+              {" "}
+              {preview}
+            </span>
+          )}
         </span>
         {metadata}
         <CaretRightIcon
@@ -703,8 +751,8 @@ function Disclosure({
         />
         <Stamp item={item} />
       </summary>
-      {visited && children && <div className={styles.toolBody}>{children}</div>}
-      {visited && footer}
+      {mounted && children && <div className={styles.toolBody}>{children}</div>}
+      {mounted && footer}
     </details>
   );
 }

@@ -7,10 +7,9 @@ import {
   useState,
 } from "react";
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import activityStyles from "./ActivityLayout.module.css";
+import { TranscriptView } from "./TranscriptView";
 import { ActivityTranscript } from "./ActivityTranscript";
 import type { Transcript, TranscriptTurn } from "./activity-transcript";
 import { AgentsContext } from "./react";
@@ -355,6 +354,8 @@ export function TranscriptPanel<T extends Transcript>({
   missing,
   failed,
   notes,
+  loadEarlier,
+  loadingEarlier,
 }: {
   agent: AgentViewProps["agent"];
   /** The agent type's read; resolves undefined when it has no transcript. */
@@ -383,6 +384,9 @@ export function TranscriptPanel<T extends Transcript>({
   failed: string;
   /** Shown above the oldest loaded turn. */
   notes?: (transcript: T) => ReactNode;
+  /** Expands the adapter's bounded preview, never an unbounded history scan. */
+  loadEarlier?: (() => void) | undefined;
+  loadingEarlier?: boolean | undefined;
 }) {
   const { shown, loading, refresh } = useLiveTranscript({
     read,
@@ -404,22 +408,28 @@ export function TranscriptPanel<T extends Transcript>({
   }, [holding]);
   const isWorking = shown.working && (working || !holdExpired);
   const { transcript, error } = shown;
+  const bounds = transcript as
+    | (T & { partial?: boolean; more?: boolean; incomplete?: string })
+    | null
+    | undefined;
   return (
-    <div className={activityStyles.transcript} data-transcript>
-      <div className={activityStyles.transcriptHeader} data-transcript-header>
-        <InlineHeader
-          title="Transcript"
-          actions={
-            <IconButton
-              hint="familiar"
-              aria-label="Refresh transcript"
-              title="Refresh transcript"
-              onClick={refresh}
-              icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
-            />
-          }
+    <TranscriptView
+      scope={readKey}
+      history={{
+        omitted: !!(bounds?.partial || bounds?.more || bounds?.incomplete),
+        loadEarlier: bounds?.partial ? loadEarlier : undefined,
+        loading: loadingEarlier,
+      }}
+      actions={
+        <IconButton
+          hint="familiar"
+          aria-label="Refresh transcript"
+          title="Refresh transcript"
+          onClick={refresh}
+          icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
         />
-      </div>
+      }
+    >
       <LoadingRegion
         pending={loading}
         label={transcript === undefined ? reading : "Refreshing transcript…"}
@@ -448,6 +458,6 @@ export function TranscriptPanel<T extends Transcript>({
           transcript === null && missing
         )}
       </LoadingRegion>
-    </div>
+    </TranscriptView>
   );
 }

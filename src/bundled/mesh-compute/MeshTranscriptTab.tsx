@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AgentViewProps } from "../../features/agents/service";
+import { TranscriptView } from "../../features/agents/TranscriptView";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -124,17 +125,22 @@ export function createMeshTranscriptTab(
           </p>
         ) : (
           transcript && (
-            <ActivityTranscript
-              transcript={transcript}
-              agentName={agent.name}
-              state={() => "unknown"}
-              before={
-                <p className="m-0 text-body-sm text-subtle">
-                  Saved snapshot; Refresh to see newer activity.
-                  {transcript.more ? " Showing the latest 50 turns." : ""}
-                </p>
-              }
-            />
+            <TranscriptView
+              scope={`${agent.key}:${workspace}:${selected}`}
+              history={{ omitted: transcript.more }}
+            >
+              <ActivityTranscript
+                transcript={transcript}
+                agentName={agent.name}
+                state={() => "unknown"}
+                before={
+                  <p className="m-0 text-body-sm text-subtle">
+                    Saved snapshot; Refresh to see newer activity.
+                    {transcript.more ? " Showing the latest 50 turns." : ""}
+                  </p>
+                }
+              />
+            </TranscriptView>
           )
         )}
       </div>

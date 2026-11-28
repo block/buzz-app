@@ -5,7 +5,7 @@ type Opened = {
   id: string;
   panel: RegisteredPanel;
   target: string;
-  trigger: HTMLButtonElement;
+  trigger?: HTMLElement | undefined;
 };
 export function usePanelLauncher(panels: Panels, ready: boolean) {
   const available = useSyncExternalStore(
@@ -21,6 +21,26 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
   useEffect(() => {
     if (opened && !selected) setOpened(undefined);
   }, [opened, selected]);
+  // Shell-level panel requests (channelId === "") open in the companion slot
+  // beside whatever page is currently active.
+  useEffect(() => {
+    if (!ready) return;
+    return panels.handleOpenRequests(({ target, channelId }) => {
+      if (channelId !== "") return false;
+      const panel = panels.resolve(target);
+      if (!panel) return false;
+      setOpened((current) => ({
+        id:
+          current?.panel === panel && current.target === target
+            ? current.id
+            : crypto.randomUUID(),
+        panel,
+        target,
+        trigger: undefined,
+      }));
+      return true;
+    });
+  }, [panels, ready]);
   const previous = useRef<Opened>(undefined);
   useEffect(() => {
     const before = previous.current;
@@ -39,7 +59,7 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
       before &&
       !opened &&
       panels.snapshot().includes(before.panel) &&
-      before.trigger.isConnected
+      before.trigger?.isConnected
     )
       before.trigger.focus();
   }, [opened, panels]);
@@ -68,7 +88,7 @@ export function usePanelLauncher(panels: Panels, ready: boolean) {
       return ready && !!panels.resolve(target);
     },
     /** Show whichever registered panel claims this target; reopening keeps it. */
-    open(target: string, trigger: HTMLButtonElement) {
+    open(target: string, trigger?: HTMLElement) {
       const panel = ready ? panels.resolve(target) : undefined;
       if (panel)
         setOpened((current) => ({

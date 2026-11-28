@@ -50,6 +50,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           {...props}
           relay={ctx.relay}
           navigator={ctx.navigation}
+          panels={ctx.panels}
           agents={ctx.agents}
           federatedIdentity={ctx.reflect.get("federatedIdentity")}
           memberships={client.memberships}

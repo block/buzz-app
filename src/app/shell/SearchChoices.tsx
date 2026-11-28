@@ -81,6 +81,15 @@ export type SearchDestination = {
   /** What choosing the row does, said in a preview that has nothing else to
    * show, e.g. "Open Activity". */
   action?: string | undefined;
+  /** Secondary action for the row (e.g. viewing a person's profile from
+   * Search via the preview button or Shift+Enter). */
+  secondaryAction?:
+    | {
+        label: string;
+        ariaLabel?: string | undefined;
+        run: () => void;
+      }
+    | undefined;
   /** Stays with the row above it: a group cut short in Top results keeps
    * the two together, one row past its usual limit if need be. A cut that
    * hides the row above still shows this one, after the rows shown. */
@@ -854,6 +863,9 @@ export function SearchChoices({
         </div>
       </div>
     );
+  const highlightedRow =
+    destinations.find(({ key }) => key === selected) ??
+    (selected ? undefined : destinations.find(({ key }) => !isAction?.(key)));
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: Hears Escape from the controls inside; the palette takes no input of its own.
     <div
@@ -1062,6 +1074,25 @@ export function SearchChoices({
               if (tabs.length ? stepScope(!event.shiftKey) : peek.busy)
                 event.preventDefault();
               return;
+            }
+            // Shift+Enter triggers the highlighted row's secondary action (e.g. View profile).
+            if (
+              event.key === "Enter" &&
+              event.shiftKey &&
+              !event.ctrlKey &&
+              !event.metaKey &&
+              !event.altKey &&
+              !event.nativeEvent.isComposing &&
+              event.nativeEvent.keyCode !== 229
+            ) {
+              const destination = destinations.find(
+                ({ key }) => key === selected,
+              );
+              if (destination?.secondaryAction) {
+                event.preventDefault();
+                if (!event.repeat) destination.secondaryAction.run();
+                return;
+              }
             }
             // Escape from one group returns to Top results, or the first
             // group, not out of search.
@@ -1355,22 +1386,17 @@ export function SearchChoices({
             {/* Not live: the highlighted row is already announced, and the
               preview changes with every keystroke. */}
             <div className="search-peek-preview">
-              {(() => {
-                const row =
-                  destinations.find(({ key }) => key === selected) ??
-                  (selected
-                    ? undefined
-                    : destinations.find(({ key }) => !isAction?.(key)));
-                return preview(
-                  row,
-                  row &&
-                    (row.kind ??
-                      merged.find((group) =>
-                        group.destinations.some(({ key }) => key === row.key),
-                      )?.tone),
-                  moved ? undefined : { text: query, busy: !!peek.busy },
-                );
-              })()}
+              {preview(
+                highlightedRow,
+                highlightedRow &&
+                  (highlightedRow.kind ??
+                    merged.find((group) =>
+                      group.destinations.some(
+                        ({ key }) => key === highlightedRow.key,
+                      ),
+                    )?.tone),
+                moved ? undefined : { text: query, busy: !!peek.busy },
+              )}
             </div>
           </aside>
         )}
@@ -1399,6 +1425,12 @@ export function SearchChoices({
           <span>
             <kbd>↵</kbd> {onBack ? "Add" : "Open"}
           </span>
+          {highlightedRow?.secondaryAction && (
+            <span>
+              <kbd>⇧</kbd>
+              <kbd>↵</kbd> {highlightedRow.secondaryAction.label}
+            </span>
+          )}
           {conversationShortcut && (
             <span>
               <kbd>{formatBinding(conversationShortcut, apple).text}</kbd> This

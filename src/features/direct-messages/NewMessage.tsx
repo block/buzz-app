@@ -35,7 +35,9 @@ import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
 import type { MessageIntent } from "../channel-navigation/routes";
+import { UserIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
+import { profileTarget } from "../profiles/target";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -192,6 +194,11 @@ export function NewMessage({
   // Recipients keep the facts they were chosen with; their labels follow the
   // current verification and otherwise the current profile name, falling back
   // to those facts.
+  useSyncExternalStore(
+    host.panels.subscribe,
+    host.panels.snapshot,
+    host.panels.snapshot,
+  );
   const verified = useVerifiedNames(session, recipients);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -591,17 +598,40 @@ export function NewMessage({
           />
         ) : recipients.length > 0 ? (
           <div className={styles.introduction}>
-            <AvatarStack
-              animateEntrance
-              size="hero-large"
-              max={5}
-              items={named.map((person) => ({
-                id: person.pubkey,
-                name: person.name,
-                src: avatarMedia(person.picture, session.media),
-                shape: person.isAgent ? "squircle" : "circle",
-              }))}
-            />
+            <div className={styles.introductionContent}>
+              <AvatarStack
+                animateEntrance
+                size="hero-large"
+                max={5}
+                items={named.map((person) => ({
+                  id: person.pubkey,
+                  name: person.name,
+                  src: avatarMedia(person.picture, session.media),
+                  shape: person.isAgent ? "squircle" : "circle",
+                }))}
+              />
+              {(() => {
+                const single = named.length === 1 ? named[0] : undefined;
+                const target = single
+                  ? profileTarget(single.pubkey, { agent: !!single.isAgent })
+                  : undefined;
+                if (!single || !target || !host.panels.resolve(target))
+                  return null;
+                return (
+                  <Button
+                    size="sm"
+                    variant="subtle"
+                    aria-label={`View profile for ${single.name}`}
+                    onClick={() =>
+                      host.panels.requestOpen({ target, channelId: "" })
+                    }
+                  >
+                    <UserIcon size={16} aria-hidden="true" />
+                    View profile
+                  </Button>
+                );
+              })()}
+            </div>
           </div>
         ) : null}
       </div>

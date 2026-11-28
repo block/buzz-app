@@ -2550,7 +2550,7 @@ function ChannelWorkspace({
   useEffect(
     () =>
       panels.handleOpenRequests(({ target, channelId, rootId }) =>
-        channelId === linkContext.current.channelId
+        channelId !== "" && channelId === linkContext.current.channelId
           ? openLink(target, rootId ? { rootId, fromThread: true } : {})
           : false,
       ),

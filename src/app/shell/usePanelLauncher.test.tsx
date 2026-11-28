@@ -7,10 +7,16 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { Context } from "@deepseek-ai/cordis";
+import { afterEach, expect, it, test, vi } from "vitest";
+import { bundledOwner } from "../../plugins/provenance";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelCard } from "../../features/panels/PanelCard";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import {
+  PanelsService,
+  type Panels,
+  type RegisteredPanel,
+} from "../../features/panels/service";
 import { usePanelLauncher } from "./usePanelLauncher";
 
 afterEach(cleanup);
@@ -100,4 +106,60 @@ test("a fresh opening retires a closed plugin draft even before its exit finishe
     if (original) HTMLElement.prototype.getAnimations = original;
     else Reflect.deleteProperty(HTMLElement.prototype, "getAnimations");
   }
+});
+
+it("opens a companion panel on shell-level requestOpen calls and ignores channel-scoped ones", () => {
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const panels = new PanelsService(ctx);
+  const plugin = ctx.extend({
+    pluginOwner: bundledOwner({ id: "buzz.profiles", revision: "bundled" }),
+  });
+  plugin.panels.register({
+    id: "profile",
+    title: "Profile",
+    matches: (target) => target.startsWith("profile:"),
+    component: ({ target }) => <div data-testid="profile-body">{target}</div>,
+  });
+
+  function Host() {
+    const launcher = usePanelLauncher(panels, true);
+    return (
+      <PanelDock open={!!launcher.selected} className="">
+        {launcher.selected && launcher.target && (
+          <PanelCard
+            key={launcher.openingId}
+            ref={launcher.panelRef}
+            panel={launcher.selected}
+            target={launcher.target}
+            close={launcher.close}
+          />
+        )}
+      </PanelDock>
+    );
+  }
+
+  render(<Host />);
+  // Channel-scoped requests are ignored by the shell companion handler.
+  act(() => {
+    expect(
+      panels.requestOpen({ target: "profile:abc", channelId: "chan-1" }),
+    ).toBe(false);
+  });
+  expect(screen.queryByTestId("profile-body")).toBeNull();
+
+  // Shell-level requests (channelId === "") open in the companion slot.
+  act(() => {
+    expect(panels.requestOpen({ target: "profile:abc", channelId: "" })).toBe(
+      true,
+    );
+  });
+  expect(screen.getByTestId("profile-body")).toHaveTextContent("profile:abc");
+
+  // Closing a trigger-less companion succeeds cleanly.
+  fireEvent.click(screen.getByRole("button", { name: "Close Profile panel" }));
+  expect(screen.queryByTestId("profile-body")).toBeNull();
 });

@@ -16,7 +16,9 @@ import {
 import { termMatches } from "../../features/search/snippet";
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { UserIcon } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { Button } from "../../shared/design-system/ui/Button";
 import { MessageRow } from "../../features/messages/MessageRow";
 import type { SearchDestination, SearchTone } from "./SearchChoices";
 import { SEARCH_KINDS, eventMentions, searchText } from "./useSearchMessages";
@@ -382,6 +384,19 @@ export function SearchPreview({
         </div>
         {target?.kind === "channel" && target.about && (
           <p className="search-peek-about text-body-sm">{target.about}</p>
+        )}
+        {row.secondaryAction && (
+          <div className="search-peek-actions">
+            <Button
+              size="sm"
+              variant="subtle"
+              aria-label={row.secondaryAction.ariaLabel}
+              onClick={() => row.secondaryAction?.run()}
+            >
+              <UserIcon size={16} aria-hidden="true" />
+              {row.secondaryAction.label}
+            </Button>
+          </div>
         )}
       </div>
       {!target && row.action && (

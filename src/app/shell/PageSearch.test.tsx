@@ -13,6 +13,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PageSearch, type SearchServices } from "./PageSearch";
+import { profilePanelKey, profileTarget } from "../../features/profiles/target";
 import { BestieConversationContext } from "./bestie-context";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
@@ -1764,5 +1765,111 @@ it("goes back to Top results on Escape from a clicked group filter, and closes o
     await t.closed();
   } finally {
     await t.dispose();
+  }
+});
+
+it("opens a searched person's profile from the preview button or Shift+Enter without affecting Enter", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const viewer = keypair();
+  const relay = keypair();
+  const ryan = keypair();
+  const requestOpen = vi.fn(() => true);
+  const navigate = vi.fn(async () => {});
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query: async (filters) =>
+      filters.flatMap((filter) =>
+        filter.kinds?.includes(0) &&
+        (!filter.search || "ryan smith".includes(filter.search.toLowerCase()))
+          ? [profile(ryan, { display_name: "Ryan Smith" })]
+          : [],
+      ),
+  });
+  const connection = {
+    status: "ready",
+    generation: 1,
+    session: owner.session,
+    scope: "s",
+  };
+  const navSnapshot = { entry: { target: null } };
+  const community = {
+    selected: "wss://relay.example",
+    viewer: viewer.pubkey,
+  };
+  const services = {
+    shortcuts,
+    shortcutBindings: bindings,
+    panels: {
+      resolve: (target: string) =>
+        profilePanelKey(target) ? { id: "profile" } : undefined,
+      requestOpen,
+    },
+    navigation: {
+      subscribe: () => () => {},
+      snapshot: () => navSnapshot,
+      open: navigate,
+    },
+    communities: {
+      subscribe: () => () => {},
+      snapshot: () => community,
+      relay: { subscribe: () => () => {}, snapshot: () => connection },
+    },
+  } as unknown as SearchServices;
+  try {
+    render(
+      <PageSearch
+        pages={[
+          {
+            key: "buzz.channels/channels",
+            pluginId: "buzz.channels",
+            id: "channels",
+            title: "Channels",
+            revision: "bundled",
+            component: () => null,
+          },
+        ]}
+        onSelect={vi.fn()}
+        services={services}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
+    const field = screen.getByRole("combobox", { name: "Search Buzz" });
+    await userEvent.type(field, "ryan");
+    await screen.findByRole("option", { name: /Ryan Smith/ });
+
+    // Click View profile in the preview pane -> opens profile companion, closes search.
+    const viewProfile = await screen.findByRole("button", {
+      name: "View profile for Ryan Smith",
+    });
+    await userEvent.click(viewProfile);
+    expect(requestOpen).toHaveBeenCalledWith({
+      target: profileTarget(ryan.pubkey, { agent: false }),
+      channelId: "",
+    });
+    expect(navigate).not.toHaveBeenCalled();
+
+    // Reopen search (retains "ryan") and use Shift+Enter -> also opens profile companion.
+    await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
+    await screen.findByRole("option", { name: /Ryan Smith/ });
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(requestOpen).toHaveBeenCalledTimes(2);
+    expect(navigate).not.toHaveBeenCalled();
+
+    // Reopen search and press plain Enter -> opens New message draft as before.
+    await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
+    await screen.findByRole("option", { name: /Ryan Smith/ });
+    await userEvent.keyboard("{Enter}");
+    expect(navigate).toHaveBeenCalledTimes(1);
+  } finally {
+    cleanup();
+    owner.dispose();
+    bindings.dispose();
+    await root.fiber.dispose();
   }
 });

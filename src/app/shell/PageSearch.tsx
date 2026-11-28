@@ -42,6 +42,7 @@ import {
   newMessageTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
+import { profileTarget } from "../../features/profiles/target";
 import { readView, writeView } from "../../shared/view-state";
 import {
   hasDraftContent,
@@ -70,6 +71,7 @@ export type SearchServices = Pick<
       | "adminAccess"
       | "settingsCards"
       | "decisions"
+      | "panels"
     >
   >;
 const SEARCH_ID = "global-search";
@@ -646,6 +648,17 @@ function CommunitySearch({
           close();
           void services.navigation.open(newMessageTarget(scope, pubkey));
         }}
+        openProfile={
+          services.panels
+            ? (pubkey, agent) => {
+                if (!current()) return;
+                const target = profileTarget(pubkey, { agent });
+                if (!target || !services.panels?.resolve(target)) return;
+                close();
+                services.panels.requestOpen({ target, channelId: "" });
+              }
+            : undefined
+        }
         openAsk={(question, agent) => {
           const current = services.communities.snapshot();
           const relay = services.communities.relay.snapshot();

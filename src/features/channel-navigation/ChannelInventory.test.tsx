@@ -79,6 +79,8 @@ import { createAgentLibrary } from "../agents/library";
 import { localAgentsFixture } from "../agents/local-testing";
 import { forgetDefaultAgent, setDefaultAgent } from "../solo/default-agent";
 import type { RegisteredPage } from "../pages/service";
+import type { Panels } from "../panels/service";
+import { profilePanelKey, profileTarget } from "../profiles/target";
 
 beforeEach(() => {
   // jsdom has no layout; browser journeys own geometry. Only supply the API.
@@ -118,6 +120,7 @@ function fixture(
   ],
   sidebarSections?: SidebarSections,
   sidebarRows?: SidebarRows,
+  panels?: Panels,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -219,6 +222,7 @@ function fixture(
           <PrimarySidebar
             relay={relay}
             navigator={navigator}
+            panels={panels}
             target={{
               version: 1,
               kind: "conversation",
@@ -5315,4 +5319,79 @@ it("gives a Solo row's plugin menu items the same section key as its render", as
   ).toBeVisible();
   expect(keys).toHaveBeenCalledWith("chat-0", "");
   expect(keys).not.toHaveBeenCalledWith("chat-0", "solo");
+});
+
+it("offers View profile in a 1:1 DM menu and omits it for channels and group DMs", async () => {
+  const peer = "b".repeat(64);
+  const peer2 = "c".repeat(64);
+  const requestOpen = vi.fn(
+    ({ channelId }: { channelId: string }) => channelId === "",
+  );
+  const noPanels: readonly unknown[] = [];
+  const panels = {
+    subscribe: () => () => {},
+    snapshot: () => noPanels,
+    resolve: (target: string) =>
+      profilePanelKey(target) ? { id: "profile" } : undefined,
+    requestOpen,
+  } as unknown as Panels;
+  const h = fixture(
+    undefined,
+    "ready",
+    [
+      { id: "chan", name: "general", channelType: "stream" },
+      {
+        id: "dm1",
+        name: "Ryan Smith",
+        channelType: "dm",
+        participants: [peer],
+      },
+      {
+        id: "dm2",
+        name: "Ryan, Alex",
+        channelType: "dm",
+        participants: [peer, peer2],
+      },
+    ],
+    undefined,
+    undefined,
+    panels,
+  );
+  render(h.view("chan"));
+
+  const rowButton = async (channelId: string) => {
+    let el: HTMLElement | null = null;
+    await waitFor(() => {
+      el = document.querySelector<HTMLElement>(
+        `[data-channel-id="${channelId}"]`,
+      );
+      expect(el).not.toBeNull();
+    });
+    return el as unknown as HTMLElement;
+  };
+
+  // 1:1 DM menu includes View profile and falls back to companion when another channel is open.
+  fireEvent.contextMenu(await rowButton("dm1"));
+  const viewProfile = await screen.findByRole("menuitem", {
+    name: "View profile",
+  });
+  fireEvent.click(viewProfile);
+  expect(requestOpen).toHaveBeenNthCalledWith(1, {
+    target: profileTarget(peer, { agent: false }),
+    channelId: "dm1",
+  });
+  expect(requestOpen).toHaveBeenNthCalledWith(2, {
+    target: profileTarget(peer, { agent: false }),
+    channelId: "",
+  });
+
+  // Group DM omits View profile.
+  fireEvent.contextMenu(await rowButton("dm2"));
+  await screen.findByRole("menuitem", { name: "Copy link" });
+  expect(screen.queryByRole("menuitem", { name: "View profile" })).toBeNull();
+
+  // Regular channel omits View profile.
+  fireEvent.contextMenu(await rowButton("chan"));
+  await screen.findByRole("menuitem", { name: "Copy link" });
+  expect(screen.queryByRole("menuitem", { name: "View profile" })).toBeNull();
 });

@@ -4,7 +4,7 @@ use std::{
     io::{BufRead, BufReader},
     net::{TcpListener, TcpStream},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -380,11 +380,56 @@ fn a_blob_read_fetches_only_the_files_that_are_listed() {
         b""
     )));
     assert!(!probe(&big), "files outside the folder were downloaded");
+
+    // Multiple plugins and files across a repository must be prefetched in one batch,
+    // not fetched one blob per round-trip.
+    let mut multi = Hosted::new("sha1");
+    let mut many = vec![];
+    for name in ["one", "two", "three"] {
+        many.extend(plugin_files(
+            &format!("plugins/{name}"),
+            &format!("example.{name}"),
+            name,
+        ));
+        many.push((format!("plugins/{name}/README.md"), format!("# {name}")));
+    }
+    let multi_commit = multi.commit("main", &many);
+    let smart = serve(multi.dir.path().into(), false);
+    let url = format!("{}/server.git", smart.base);
+
+    let mut unpinned = Git::new().unwrap();
+    unpinned.config.push(("protocol.http.allow", "always"));
+    let prepared = acquire(&mut unpinned, "fixture", &url, "main", None, None).unwrap();
+    assert_eq!(prepared.preview.candidates.len(), 3);
+    let unpinned_fetches = smart.fetches.swap(0, Ordering::SeqCst);
+    assert!(
+        unpinned_fetches <= 2,
+        "expected clone + one batched blob prefetch, got {unpinned_fetches} fetch requests"
+    );
+
+    let mut pinned = Git::new().unwrap();
+    pinned.config.push(("protocol.http.allow", "always"));
+    let prepared = acquire(
+        &mut pinned,
+        "fixture",
+        &url,
+        "main",
+        None,
+        pin(&multi_commit),
+    )
+    .unwrap();
+    assert_eq!(prepared.preview.candidates.len(), 3);
+    let pinned_fetches = smart.fetches.load(Ordering::SeqCst);
+    assert!(
+        pinned_fetches <= 3,
+        "expected commit + reachability + one batched blob prefetch, got {pinned_fetches} fetch requests"
+    );
 }
 
 struct Smart {
     base: String,
     seen: Arc<Mutex<Vec<Vec<String>>>>,
+    fetches: Arc<AtomicUsize>,
     refuse_first_fetch: Arc<AtomicBool>,
 }
 
@@ -394,12 +439,17 @@ fn serve(root: PathBuf, refuse_first_fetch: bool) -> Smart {
     let smart = Smart {
         base: format!("http://{}", listener.local_addr().unwrap()),
         seen: Arc::default(),
+        fetches: Arc::new(AtomicUsize::new(0)),
         refuse_first_fetch: Arc::new(AtomicBool::new(refuse_first_fetch)),
     };
-    let (seen, refuse) = (smart.seen.clone(), smart.refuse_first_fetch.clone());
+    let (seen, fetches, refuse) = (
+        smart.seen.clone(),
+        smart.fetches.clone(),
+        smart.refuse_first_fetch.clone(),
+    );
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            respond(stream, &root, &seen, &refuse);
+            respond(stream, &root, &seen, &fetches, &refuse);
         }
     });
     smart
@@ -409,6 +459,7 @@ fn respond(
     stream: TcpStream,
     root: &Path,
     seen: &Mutex<Vec<Vec<String>>>,
+    fetches: &AtomicUsize,
     refuse_first_fetch: &AtomicBool,
 ) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -437,10 +488,11 @@ fn respond(
     std::io::Read::read_exact(&mut reader, &mut body).unwrap();
     seen.lock().unwrap().push(headers.clone());
     let mut stream = stream;
-    if method == "POST"
-        && String::from_utf8_lossy(&body).contains("command=fetch")
-        && refuse_first_fetch.swap(false, Ordering::SeqCst)
-    {
+    let is_fetch = method == "POST" && String::from_utf8_lossy(&body).contains("command=fetch");
+    if is_fetch {
+        fetches.fetch_add(1, Ordering::SeqCst);
+    }
+    if is_fetch && refuse_first_fetch.swap(false, Ordering::SeqCst) {
         write!(
             stream,
             "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"

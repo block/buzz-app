@@ -868,6 +868,7 @@ impl Git {
         let mut child = command
             .spawn()
             .map_err(|e| format!("Could not start Git: {e}. Install Git to load repositories."))?;
+        let mut poll = Duration::from_millis(5);
         let result = (|| loop {
             if self.retired.as_ref().is_some_and(|retired| retired()) {
                 return Err("Repository authorization retired".into());
@@ -896,7 +897,8 @@ impl Git {
                 }
                 return read_output(output, limit).map(|output| (true, output));
             }
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(poll);
+            poll = (poll * 2).min(Duration::from_millis(50));
         })();
         if result.is_err() {
             // Stop the complete Git/SSH transport group, not just its parent, before cleanup.
@@ -1054,6 +1056,8 @@ impl Git {
         let mut args = vec![
             "-C",
             "repository",
+            "-c",
+            "fetch.negotiationAlgorithm=noop",
             "fetch",
             "--no-tags",
             "--no-write-fetch-head",
@@ -1063,8 +1067,9 @@ impl Git {
             "origin",
         ];
         args.extend(oids);
-        // One request instead of one per file. Reading falls back to fetching each blob on
-        // demand, so only the reads themselves report a refusal.
+        // One request instead of one per file. Skip negotiation so Git does not advertise
+        // the already-cloned commit as `have`, which causes remotes to omit its missing
+        // blobs and fail connectivity checks. Reading still falls back to on-demand fetches.
         self.run(&args, LIMIT).is_ok()
     }
     fn read_plugins(

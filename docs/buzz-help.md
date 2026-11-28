@@ -240,6 +240,21 @@ runs on a message, reaction, schedule or webhook. It starts disabled, and only
 its author can edit, enable or run it. Your agents follow only workflows that
 you or your agents own.
 
+### Webhook workflows
+
+When you save a workflow with the **Webhook** trigger for the first time,
+**Webhook ready** shows its URL and secret once. Senders post to the URL with
+the secret in the `X-Webhook-Secret` header. To find the URL later, open the
+workflow and select the **Webhook** trigger. If the workflow opens on the YAML
+tab because the form can’t show it, the URL is below the YAML. Anyone in the
+channel can copy it. Buzz can’t show the secret again. If it’s lost, the
+workflow’s author closes the trigger’s settings, turns off **Enabled in
+configuration**, changes the trigger and saves, which stops the old secret
+working. On the YAML tab, the switch is above the URL. Then they change the
+trigger back to **Webhook** and save again, with the switch still off, and
+**Webhook ready** shows a new secret. The new secret does not depend on the
+workflow being enabled, so turning it on again is a separate choice.
+
 ## Plugins
 
 **Settings → Plugins → Manage plugins** shows which plugins are on, turns them

@@ -2,7 +2,6 @@ import {
   type CollisionDetection,
   DndContext,
   DragOverlay,
-  PointerSensor,
   pointerWithin,
   useSensor,
   useSensors,
@@ -18,6 +17,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
+import { PressAwarePointerSensor } from "../../shared/lib/press-aware-pointer-sensor";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -187,7 +187,9 @@ export function CommunityPicker({
     if (onSelect) onSelect(id);
     else communities.select(id);
   };
-  const sensors = useSensors(useSensor(PointerSensor, pointerSensorOptions));
+  const sensors = useSensors(
+    useSensor(PressAwarePointerSensor, pointerSensorOptions),
+  );
   const popupRef = useRef<HTMLDivElement>(null);
   // A row scrolled out of the switcher keeps its bounds past the edge. Only a
   // pointer inside the switcher is over a row that shows.

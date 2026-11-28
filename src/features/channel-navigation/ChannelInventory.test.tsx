@@ -4640,6 +4640,7 @@ it("keeps active Team drags out of the Solo row context", async () => {
   const down = new MouseEvent("pointerdown", {
     bubbles: true,
     button: 0,
+    buttons: 1,
     clientX: 10,
     clientY: 10,
   });

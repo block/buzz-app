@@ -467,6 +467,8 @@ export function fakeSpawn(
             providerId: params.providerId,
             models: options.supported ?? [],
           });
+        case "_goose/unstable/providers/inventory/refresh":
+          return reply(id, { refreshed: params.providerIds, skipped: [] });
         case "session/list": {
           const tags = (params._meta as { tags?: Record<string, string> })
             ?.tags;

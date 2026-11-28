@@ -18,7 +18,7 @@ import type {
   RegisteredAgentType,
 } from "../../features/agents/service";
 import type { Agent } from "../../features/agents/service";
-import { fakeSpawn } from "./goose-testing";
+import { fakeSpawn, gated } from "./goose-testing";
 import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
@@ -1581,6 +1581,48 @@ it("retries Goose default model discovery", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("offline");
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("keeps the default model picker usable while loading refreshed models", async () => {
+  const lmstudio = {
+    providerId: "lmstudio",
+    providerName: "LM Studio",
+    configured: true,
+    visibleInSetup: true,
+    models: [{ id: "model-a" }],
+  };
+  const fake = fakeSpawn({
+    providers: [lmstudio],
+    defaults: { providerId: "lmstudio", modelId: "model-a" },
+  });
+  const listing = gated("_goose/unstable/providers/list");
+  const refresh = gated("_goose/unstable/providers/inventory/refresh");
+  const setup = new GooseSetup({
+    ...fake,
+    spawn: listing.wrap(refresh.wrap(fake.spawn)),
+  });
+  const { DefaultControl } = createTabs({ setup, ...unused });
+  render(<DefaultControl onConfigure={vi.fn()} />);
+  await waitFor(() => expect(listing.waiting()).toHaveLength(1));
+  listing.release();
+  await waitFor(() => expect(refresh.waiting()).toHaveLength(1));
+  const trigger = await screen.findByRole("button", {
+    name: /^Goose default model:/,
+  });
+  await waitFor(() =>
+    expect(trigger).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  lmstudio.models.push({ id: "model-b" });
+  refresh.release();
+  await waitFor(() => expect(listing.waiting()).toHaveLength(1));
+  const user = userEvent.setup();
+  await user.click(trigger);
+  listing.release();
+  (await screen.findByRole("menuitem", { name: "Other" })).focus();
+  await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("menuitemradio", { name: "model-b" }),
+  ).toBeInTheDocument();
 });
 
 it("pins the named Goose model when choosing its thinking level", async () => {

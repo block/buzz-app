@@ -454,8 +454,7 @@ export class GooseSetup {
     if (listed?.needs) throw new Error(listed.needs);
     const prefixes = PREFIXES[id];
     const models =
-      listed?.configured &&
-      (prefixes || id === "databricks_v2" || !listed.models.length)
+      listed?.configured && listsLive(listed)
         ? await this.supported(id)
         : (listed?.models ?? []);
     return prefixes
@@ -641,6 +640,22 @@ export class GooseSetup {
     this.thinking.clear();
   }
 
+  async refreshModels(id: string) {
+    const listed = (await this.providers()).providers.find(
+      (item) => item.id === id,
+    );
+    if (!listed?.configured || listsLive(listed)) return false;
+    await this.with((goose) =>
+      goose.request(
+        "_goose/unstable/providers/inventory/refresh",
+        { providerIds: [id] },
+        REQUEST_TIMEOUT_MS,
+      ),
+    );
+    this.listing = undefined;
+    return true;
+  }
+
   /** Asks the provider for one short reply, without tools. goose reports a
    * failed call as its reply, so only the expected answer passes. */
   test(choice: Choice): Promise<Tested> {
@@ -775,6 +790,14 @@ function provider(entry: Entry): Provider {
     models: models.map((model) => ({ id: model.id, label: model.id })),
   };
   return { ...listed, needs: needs(listed) };
+}
+
+function listsLive(provider: Provider) {
+  return (
+    provider.id in PREFIXES ||
+    provider.id === "databricks_v2" ||
+    !provider.models.length
+  );
 }
 
 /** What `provider` still needs before it runs, or "" for nothing: a required

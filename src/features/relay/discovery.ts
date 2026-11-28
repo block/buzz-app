@@ -100,6 +100,11 @@ class CountedMap<K, V> extends Map<K, V> {
   }
 }
 
+export type RosterRemoval = Pick<RelayEvent, "id" | "created_at"> & {
+  omitted: boolean;
+  signed: boolean;
+};
+
 /** NIP-29 discovery: relay-authored replaceable metadata (39000) and rosters (39002). */
 export class DiscoveryState {
   /** Counts changes to the state `get` reads, so `readable` can reuse its
@@ -130,9 +135,12 @@ export class DiscoveryState {
   }
   private cached = new CountedSet<string>(this.changed);
   accessRevision = 0;
+  rosterRemovalRevision = 0;
   /** A scan that drops evidence cannot certify completeness. */
   overflowRevision = 0;
   private rosters = new CountedMap<string, RelayEvent>(this.changed);
+  private readonly pendingRemovals = new Map<string, RosterRemoval>();
+  private readonly pendingGrants = new Map<string, RelayEvent>();
   private metadata = new CountedMap<string, RelayEvent>(this.changed);
   private creations = new CountedMap<string, RelayEvent>(this.changed);
   /** Solo chats this device started whose signed metadata and roster have not
@@ -200,6 +208,11 @@ export class DiscoveryState {
     if (this.olderThanRejected(event, id)) return false;
     const next = newer(previous, event);
     const accessible = this.canAccess(id);
+    const previouslyGranted =
+      next !== previous &&
+      event.kind === 39002 &&
+      previous &&
+      hasTag(previous, "p", this.viewer);
     if (next !== previous && !this.store(map, id, next)) {
       // Keep the version when its full body cannot fit. Older evidence cannot regrant access.
       if (previous)
@@ -228,16 +241,20 @@ export class DiscoveryState {
     if (event.kind === 39002) {
       this.absent.delete(id);
       if (cached) this.cached.add(id);
-      if (
-        previous &&
-        hasTag(previous, "p", this.viewer) &&
-        !hasTag(event, "p", this.viewer)
-      ) {
-        this.denied.add(id);
-        this.revokedIds.add(id);
-      } else if (hasTag(event, "p", this.viewer)) this.regrant(id);
-      // A signed roster without the viewer ends the start it stood in for.
-      if (!hasTag(event, "p", this.viewer)) this.starting.delete(id);
+      if (hasTag(event, "p", this.viewer)) {
+        const newlyGranted = !previouslyGranted || this.denied.has(id);
+        this.regrant(id);
+        if (!cached && (newlyGranted || this.pendingGrants.has(id)))
+          this.pendingGrants.set(id, event);
+      } else {
+        if (previouslyGranted || this.revoked(id)) {
+          this.denied.add(id);
+          this.revokedIds.add(id);
+          if (!cached) this.recordRosterRemoval(id, event, false);
+        }
+        // A signed roster without the viewer ends the start it stood in for.
+        this.starting.delete(id);
+      }
     } else if (previous && !this.rosters.has(id) && this.open(id))
       this.regrant(id);
     if (this.authorized(id) || (event.kind === 39000 && this.open(id)))
@@ -277,12 +294,18 @@ export class DiscoveryState {
   private regrant(id: string) {
     this.denied.delete(id);
     this.revokedIds.delete(id);
+    this.pendingRemovals.delete(id);
   }
   /** `deny`, on the relay's answer for this channel itself: a denied read of
    * it, or a removal. */
   revoke(id: string) {
+    const revoked = this.revoked(id);
     this.deny(id);
-    if (this.denied.has(id)) this.revokedIds.add(id);
+    if (this.denied.has(id)) {
+      this.revokedIds.add(id);
+      const roster = this.rosters.get(id);
+      if (!revoked && roster) this.recordRosterRemoval(id, roster, false);
+    }
   }
   /** The relay ended the viewer's access to this channel itself: it denied a
    * read of the channel, or its roster dropped the viewer. That settles the
@@ -322,6 +345,69 @@ export class DiscoveryState {
   rosterVersions(): ReadonlyMap<string, RelayEvent> {
     return new Map(this.rosters);
   }
+  rosterVersion(id: string): RelayEvent | undefined {
+    return this.rosters.get(id);
+  }
+  private recordRosterRemoval(
+    channel: string,
+    event: RelayEvent,
+    omitted: boolean,
+  ) {
+    this.pendingGrants.delete(channel);
+    this.pendingRemovals.set(channel, {
+      id: event.id,
+      created_at: event.created_at,
+      omitted,
+      signed: !hasTag(event, "p", this.viewer),
+    });
+    this.rosterRemovalRevision++;
+  }
+  beginRosterSave() {
+    if (!this.pendingRemovals.size && !this.pendingGrants.size) return;
+    const removals = new Map(this.pendingRemovals);
+    const grants = new Map(this.pendingGrants);
+    // A queued write may run after another write settles a removal or new
+    // relay evidence restores membership. Recheck before editing a peer row.
+    const removalFor = (channel: string) => {
+      const removal = removals.get(channel);
+      if (this.pendingRemovals.get(channel) === removal) return removal;
+    };
+    const includesGrant = (channel: string) => {
+      const grant = grants.get(channel);
+      return (
+        !!grant &&
+        this.pendingGrants.get(channel) === grant &&
+        this.authorized(channel)
+      );
+    };
+    return {
+      removalFor: removals.size ? removalFor : undefined,
+      signedRemovals: removals.size
+        ? function* () {
+            for (const channel of removals.keys()) {
+              const removal = removalFor(channel);
+              if (removal?.signed)
+                yield {
+                  channel,
+                  id: removal.id,
+                  created_at: removal.created_at,
+                };
+            }
+          }
+        : undefined,
+      includesGrant: grants.size ? includesGrant : undefined,
+      settle: ({ removalsOnly = false } = {}) => {
+        for (const channel of removals.keys()) {
+          if (removalFor(channel)) this.pendingRemovals.delete(channel);
+        }
+        if (removalsOnly) return;
+        for (const [channel, grant] of grants) {
+          if (this.pendingGrants.get(channel) === grant)
+            this.pendingGrants.delete(channel);
+        }
+      },
+    };
+  }
   /** Channels whose signed metadata is retained, joined or not. */
   metadataIds(): string[] {
     return [...this.metadata.keys()];
@@ -330,7 +416,8 @@ export class DiscoveryState {
     ids: ReadonlySet<string>,
     started: ReadonlyMap<string, RelayEvent>,
   ): boolean {
-    let changed = !this.complete;
+    const wasComplete = this.complete;
+    let removed = false;
     this.complete = true;
     // Keep the last signed version: an old replay cannot undo authoritative loss.
     // A NIP-CL pass reads system channels through their own opt-in filter
@@ -341,17 +428,20 @@ export class DiscoveryState {
       // A lagging read replica can omit a roster; a later complete read that
       // lists the same version again restores what omission alone revoked.
       if (ids.has(id)) {
-        if (this.absent.delete(id)) this.denied.delete(id);
+        if (this.absent.delete(id)) this.regrant(id);
       } else if (!this.denied.has(id)) {
         this.denied.add(id);
         this.absent.add(id);
-        changed = true;
+        this.recordRosterRemoval(id, roster, true);
+        removed = true;
       }
     }
-    if (changed) this.accessRevision++;
-    return changed;
+    if (!wasComplete || removed) this.accessRevision++;
+    return removed;
   }
   denyAll() {
+    this.pendingRemovals.clear();
+    this.pendingGrants.clear();
     this.accessRevision++;
     this.complete = true;
     this.starting.clear();
@@ -441,6 +531,9 @@ export class DiscoveryState {
   }
   metadataVersion(id: string): RelayEvent | undefined {
     return this.metadata.get(id);
+  }
+  isCached(id: string): boolean {
+    return this.cached.has(id);
   }
   named(id: string): boolean {
     return this.metadata.has(id);
@@ -564,6 +657,8 @@ export class DiscoveryState {
     };
   }
   clearCached() {
+    this.pendingRemovals.clear();
+    this.pendingGrants.clear();
     for (const id of this.cached) {
       this.deny(id);
       // Clearing must allow a fresh identical signed roster to regrant access.

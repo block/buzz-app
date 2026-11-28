@@ -4,7 +4,11 @@ import { ReadError } from "./errors";
 import { listByteSize } from "./budget";
 import { createRelaySession } from "./session";
 import type { LiveCallbacks } from "./live";
-import type { HeadPersistence, SavedStartup } from "./persistence";
+import {
+  StartupCacheOverBudget,
+  type HeadPersistence,
+  type SavedStartup,
+} from "./persistence";
 import type { RelayEvent } from "./events";
 import {
   bounds,
@@ -2123,10 +2127,12 @@ it("writes one startup snapshot with the final content after a burst of discover
     owner.dispose();
   }
 });
-it("rewrites the startup snapshot only when its roster changes or ages", () => {
+it("retries temporary startup write failures sooner than unchanged snapshots", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const writeStartup = vi.fn(async (_patch: SavedStartup) => {});
+  const writeStartup = vi
+    .fn(async (_patch: SavedStartup) => {})
+    .mockRejectedValueOnce(new Error("Cache write failed"));
   let live!: LiveCallbacks;
   const owner = createRelaySession(
     {
@@ -2155,32 +2161,113 @@ it("rewrites the startup snapshot only when its roster changes or ages", () => {
   try {
     const first = roster(relay, "a", [viewer.pubkey]);
     live.receive([first]);
-    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(500);
     expect(discoveryWrites()).toBe(1);
-    // Catch-up delivers the same version again.
+    // An immediate repeat still respects the write cooldown.
     live.receive([first]);
-    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(500);
     expect(discoveryWrites()).toBe(1);
+    await vi.advanceTimersByTimeAsync(29_500);
+    live.receive([first]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(discoveryWrites()).toBe(2);
+    live.receive([first]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(discoveryWrites()).toBe(2);
     live.receive([roster(relay, "b", [viewer.pubkey])]);
     vi.advanceTimersByTime(500);
-    expect(discoveryWrites()).toBe(2);
+    expect(discoveryWrites()).toBe(3);
     // An unchanged roster is written again after ten minutes, and after the
     // clock moves back, so restore never meets a stale or future copy.
     vi.advanceTimersByTime(599_000);
     live.receive([first]);
     vi.advanceTimersByTime(500);
-    expect(discoveryWrites()).toBe(2);
-    vi.advanceTimersByTime(500);
-    live.receive([first]);
-    vi.advanceTimersByTime(500);
     expect(discoveryWrites()).toBe(3);
-    vi.setSystemTime(Date.now() - 60_000);
+    vi.advanceTimersByTime(500);
     live.receive([first]);
     vi.advanceTimersByTime(500);
     expect(discoveryWrites()).toBe(4);
+    vi.setSystemTime(Date.now() - 60_000);
+    live.receive([first]);
+    vi.advanceTimersByTime(500);
+    expect(discoveryWrites()).toBe(5);
+
+    writeStartup.mockRejectedValueOnce(new StartupCacheOverBudget());
+    const oversized = roster(relay, "c", [viewer.pubkey]);
+    live.receive([oversized]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(discoveryWrites()).toBe(6);
+    await vi.advanceTimersByTimeAsync(30_000);
+    live.receive([oversized]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(discoveryWrites()).toBe(6);
+    await vi.advanceTimersByTimeAsync(570_000);
+    live.receive([oversized]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(discoveryWrites()).toBe(7);
   } finally {
     vi.useRealTimers();
     owner.dispose();
+  }
+});
+it("removes saved membership immediately while a public preview stays readable", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  let saved: SavedStartup["discovery"];
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    {
+      persistence: {
+        read: async () => [],
+        writeStartup: async ({ discovery }) => {
+          if (discovery) saved = discovery;
+        },
+        write: async () => {},
+        remove: async () => {},
+        retain: async () => {},
+        clear: async () => {},
+        close: () => {},
+      },
+      prepared: true,
+    },
+  );
+  const channels = owner.session.channels;
+  const publicChannel = "public-room";
+  const name = metadata(relay, publicChannel, "Public", undefined, [
+    ["public"],
+  ]);
+  const membership = (version: number, joined: boolean) =>
+    roster(
+      relay,
+      publicChannel,
+      joined ? [viewer.pubkey, alice.pubkey] : [alice.pubkey],
+      1_700_000_000 + version,
+    );
+  try {
+    live.receive([name, membership(0, true)]);
+    live.receive([membership(1, false)]);
+    const preview = channels.resolve?.([publicChannel]);
+    wire.next().respond([name]);
+    await preview;
+    const rejoined = membership(2, true);
+    live.receive([rejoined]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(saved?.events).toContainEqual(rejoined);
+
+    live.receive([membership(3, false)]);
+    expect(channels.get?.(publicChannel)).toMatchObject({ readOnly: true });
+    expect(channels.list().channels).toEqual([]);
+    expect(saved?.events).toEqual([]);
+  } finally {
+    owner.dispose();
+    vi.useRealTimers();
   }
 });
 it.each([

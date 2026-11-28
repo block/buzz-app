@@ -1,11 +1,19 @@
 import { byteSize } from "./budget";
+import type { RosterRemoval } from "./discovery";
+import { newer, type EventData } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
+
+type RosterVersion = Pick<EventData, "id" | "created_at">;
+type SignedRemovalVersion = RosterVersion & { channel: string };
+
 /** Device-local resume data, never proof of current access or permission to write. */
 export type SavedStartup = {
   discovery?: {
     savedAt: number;
     relayAuthor: string;
     events: unknown[];
+    /** Versions of signed exclusions, with no roster payload or member list. */
+    removals?: SignedRemovalVersion[];
   };
   /** The verified-profile authority last observed, `null` once disabled, so
    * a cached session can show saved verified names before discovery. */
@@ -22,10 +30,35 @@ export type SavedHead = {
   notices?: unknown[];
   profiles: unknown[];
 };
+export class StartupRosterSuperseded extends Error {
+  constructor(readonly observePeer?: () => void) {
+    super("Startup roster changed");
+  }
+}
+
+export class StartupCacheOverBudget extends Error {
+  constructor(readonly removalsSettled = false) {
+    super("Startup cache is over its byte budget");
+  }
+}
+
+type RosterChanges = {
+  removalFor: ((channel: string) => RosterRemoval | undefined) | undefined;
+  signedRemovals: (() => Iterable<SignedRemovalVersion>) | undefined;
+  includesGrant: ((channel: string) => boolean) | undefined;
+};
+
 export interface HeadPersistence {
   read(): Promise<SavedHead[]>;
-  readStartup?(): Promise<SavedStartup | undefined>;
-  writeStartup?(patch: SavedStartup): Promise<void>;
+  readStartup?(options?: {
+    observeDiscovery?: boolean;
+  }): Promise<SavedStartup | undefined>;
+  writeStartup?(
+    patch: SavedStartup,
+    revoked?: boolean,
+    ifUnchanged?: boolean,
+    changes?: RosterChanges,
+  ): Promise<void>;
   /** Signed kind 0 and verified-profile (30382) events mirrored from the profile directory. */
   readProfiles?(): Promise<unknown[]>;
   /** Saves `events`, then the `optional` events that fit in the room the
@@ -46,15 +79,14 @@ const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
 const MIRROR = ":profiles";
-type StartupRow = { key: string; bytes: number; savedAt: number };
-/** Optional profile mirrors give way before any saved roster. */
-const mirror = (row: { key: string }) => Number(row.key.endsWith(MIRROR));
+const STARTUP_BUDGET = `!budget${MIRROR}`;
 /** The largest row saved; a larger one is not written at all. */
 export const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
-type HeadMeta = { key: string; bytes: number; savedAt: number };
-type Record = SavedHead & HeadMeta & { scope: string };
+type RowBudget = { key: string; bytes: number; savedAt: number };
+const isMirror = (row: RowBudget) => row.key.endsWith(MIRROR);
+type Record = SavedHead & RowBudget & { scope: string };
 type ScopedRow = Pick<Record, "scope" | "channelId"> & { key: IDBValidKey };
 
 // History keys are strings. Array keys let us load the metadata on its own
@@ -74,13 +106,154 @@ function putHeadMeta(
     // metadata row, so an older same-key write also invalidates the budget.
     savedAt: Number.NEGATIVE_INFINITY,
     bytes: 0,
-    head: { key, bytes, savedAt } satisfies HeadMeta,
+    head: { key, bytes, savedAt } satisfies RowBudget,
   });
 }
 
 function deleteHead(store: IDBObjectStore, key: string) {
   store.delete(key);
   store.delete([key]);
+}
+
+function discoveryVersion(discovery: SavedStartup["discovery"]): string | null {
+  if (!discovery) return null;
+  return JSON.stringify([
+    discovery.savedAt,
+    discovery.relayAuthor,
+    Array.isArray(discovery.events)
+      ? (discovery.events as ({ id?: unknown } | null)[]).map((event) =>
+          typeof event?.id === "string" ? event.id : null,
+        )
+      : null,
+    discovery.removals,
+  ]);
+}
+
+function channelOf(event: Partial<EventData> | null | undefined) {
+  if (!Array.isArray(event?.tags)) return undefined;
+  if (event.kind !== 39000 && event.kind !== 39002 && event.kind !== 9007)
+    return undefined;
+  const name = event.kind === 9007 ? "h" : "d";
+  return event.tags.find(
+    (entry) => Array.isArray(entry) && entry[0] === name,
+  )?.[1];
+}
+
+function pruneRevokedRosters(
+  discovery: NonNullable<SavedStartup["discovery"]>,
+  removalFor: (
+    channel: string,
+  ) => (RosterVersion & { omitted?: boolean }) | undefined,
+) {
+  const peerVersions = new Map<string, Pick<EventData, "id" | "created_at">>();
+  for (const value of discovery.events) {
+    const event = value as Partial<EventData> | null;
+    if (event?.kind !== 39002 || event.pubkey !== discovery.relayAuthor)
+      continue;
+    const channel = channelOf(event);
+    if (
+      channel &&
+      removalFor(channel) &&
+      typeof event.id === "string" &&
+      typeof event.created_at === "number"
+    )
+      peerVersions.set(
+        channel,
+        newer(peerVersions.get(channel), {
+          id: event.id,
+          created_at: event.created_at,
+        }),
+      );
+  }
+  const removed = new Set<string>();
+  for (const [channel, peer] of peerVersions) {
+    const removal = removalFor(channel);
+    // A complete read can omit a roster that the peer later confirms.
+    if (removal?.omitted && removal.id === peer.id) continue;
+    if (removal && newer(removal, peer) === removal) removed.add(channel);
+  }
+  if (!removed.size) return;
+  const events = discovery.events.filter((value) => {
+    const channel = channelOf(value as Partial<EventData> | null);
+    return !channel || !removed.has(channel);
+  });
+  return { events, removed };
+}
+
+function signedRemovalVersions(
+  stored: SignedRemovalVersion[] | undefined,
+  incoming: Iterable<SignedRemovalVersion>,
+) {
+  const versions = new Map<string, SignedRemovalVersion>();
+  if (Array.isArray(stored))
+    for (const removal of stored)
+      if (
+        typeof removal?.channel === "string" &&
+        typeof removal.id === "string" &&
+        Number.isFinite(removal.created_at)
+      )
+        versions.set(removal.channel, removal);
+  let changed = false;
+  for (const removal of incoming) {
+    const previous = versions.get(removal.channel);
+    if (newer(previous, removal) === previous) continue;
+    versions.set(removal.channel, removal);
+    changed = true;
+  }
+  return { versions, changed };
+}
+
+function mergeRosterUpdates(
+  peer: unknown[],
+  local: unknown[],
+  includesGrant: NonNullable<RosterChanges["includesGrant"]>,
+) {
+  const updates = new Map<string, EventData>();
+  for (const value of local) {
+    const event = value as EventData;
+    const channel = channelOf(event);
+    if (channel && includesGrant(channel))
+      updates.set(`${event.kind}:${channel}`, event);
+  }
+  if (!updates.size) return;
+  for (const value of peer) {
+    const event = value as Partial<EventData> | null;
+    const channel = channelOf(event);
+    if (
+      !channel ||
+      typeof event?.id !== "string" ||
+      typeof event.created_at !== "number"
+    )
+      continue;
+    const key = `${event.kind}:${channel}`;
+    const update = updates.get(key);
+    if (
+      update &&
+      (event.id === update.id ||
+        newer<Pick<EventData, "id" | "created_at">>(update, {
+          id: event.id,
+          created_at: event.created_at,
+        }) !== update)
+    )
+      updates.delete(key);
+  }
+  if (!updates.size) return;
+  // Keep replacement metadata ahead of its retained creation receipt.
+  const events: unknown[] = [];
+  const replaced = new Set<string>();
+  for (const value of peer) {
+    const event = value as Partial<EventData> | null;
+    const channel = channelOf(event);
+    const key = `${event?.kind}:${channel}`;
+    if (!channel || !updates.has(key)) events.push(value);
+    else if (!replaced.has(key)) {
+      events.push(updates.get(key));
+      replaced.add(key);
+    }
+  }
+  for (const [key, event] of updates)
+    if (!replaced.has(key)) events.push(event);
+  return events;
 }
 
 export function createHeadPersistence(
@@ -91,6 +264,8 @@ export function createHeadPersistence(
   const profiles = `${scope}${MIRROR}`;
   let closed = false;
   let opening: Promise<IDBDatabase> | undefined;
+  let observedDiscovery: string | null | undefined;
+  let observedPeer = false;
   function database() {
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
@@ -130,19 +305,67 @@ export function createHeadPersistence(
   }
   /** `handler` must issue follow-up requests synchronously (IDB auto-commits). */
   type Then = <R>(request: IDBRequest<R>, handler: (result: R) => void) => void;
-  /** Keep the startup store, across identities, within its byte budget.
-   * Optional profile mirrors give way before any saved roster. */
-  function prune(store: IDBObjectStore, then: Then) {
-    then(store.getAll(), (rows: StartupRow[]) => evict(store, rows));
+  function writeStartupBudget(store: IDBObjectStore, rows: RowBudget[]) {
+    if (!rows.length) {
+      store.delete(STARTUP_BUDGET);
+      return;
+    }
+    // Older builds still open this version. Their prune puts this marker last
+    // and evicts it, so their writes cannot leave a stale budget behind.
+    store.put({
+      key: STARTUP_BUDGET,
+      bytes: MAX_BYTES + 1,
+      savedAt: Number.NEGATIVE_INFINITY,
+      data: {},
+      rows,
+    });
   }
-  function evict(store: IDBObjectStore, rows: StartupRow[]) {
+  function readStartupBudget(
+    store: IDBObjectStore,
+    then: Then,
+    ready: (rows: RowBudget[]) => void,
+    updated?: RowBudget,
+  ) {
+    then(
+      store.get(STARTUP_BUDGET),
+      (budget: { rows: RowBudget[] } | undefined) => {
+        const known = new Map(budget?.rows.map((row) => [row.key, row]));
+        if (updated) known.set(updated.key, updated);
+        then(store.getAllKeys(), (keys) => {
+          const rows: RowBudget[] = [];
+          const missing: string[] = [];
+          for (const key of keys) {
+            if (typeof key !== "string" || key === STARTUP_BUDGET) continue;
+            const row = known.get(key);
+            if (row) rows.push(row);
+            else missing.push(key);
+          }
+          // Import sizes once for rows written before the budget was present.
+          let pending = missing.length;
+          if (pending === 0) ready(rows);
+          for (const key of missing)
+            then(store.get(key), ({ bytes, savedAt }: RowBudget) => {
+              rows.push({ key, bytes, savedAt });
+              if (--pending === 0) ready(rows);
+            });
+        });
+      },
+    );
+  }
+  /** Enforce the shared startup budget, keeping rosters ahead of mirrors. */
+  function pruneStartupBudget(store: IDBObjectStore, rows: RowBudget[]) {
     let total = 0;
+    const kept: RowBudget[] = [];
     for (const row of rows.sort(
-      (a, b) => mirror(a) - mirror(b) || b.savedAt - a.savedAt,
+      (a, b) =>
+        Number(isMirror(a)) - Number(isMirror(b)) || b.savedAt - a.savedAt,
     )) {
       total += row.bytes;
       if (total > MAX_BYTES) store.delete(row.key);
+      else kept.push(row);
     }
+    writeStartupBudget(store, kept);
+    return kept;
   }
   async function transact<T>(
     mode: IDBTransactionMode,
@@ -207,27 +430,255 @@ export function createHeadPersistence(
     });
   }
   return {
-    readStartup: () =>
+    readStartup: ({ observeDiscovery } = {}) =>
       transact(
         "readonly",
-        (store, done, then) => then(store.get(scope), (row) => done(row?.data)),
-        STARTUP,
-      ),
-    writeStartup: (patch) =>
-      transact(
-        "readwrite",
         (store, done, then) =>
           then(store.get(scope), (row) => {
-            const data = { ...row?.data, ...patch };
-            const bytes = byteSize(data);
-            if (bytes <= MAX_BYTES) {
-              store.put({ key: scope, data, bytes, savedAt: Date.now() });
-              prune(store, then);
+            const data = row?.data as SavedStartup | undefined;
+            if (observeDiscovery) {
+              observedDiscovery = discoveryVersion(data?.discovery);
+              observedPeer = false;
             }
-            done(undefined);
+            done(data);
           }),
         STARTUP,
       ),
+    async writeStartup(patch, revoked = false, ifUnchanged = false, changes) {
+      const removalFor = changes?.removalFor;
+      let version: string | null | undefined;
+      const saved = await transact<
+        boolean | "oversized" | "oversized-with-clean-roster" | undefined
+      >(
+        "readwrite",
+        (store, done, then) =>
+          then(store.get(scope), (row) => {
+            const stored = row?.data as SavedStartup | undefined;
+            let data: SavedStartup = { ...stored, ...patch };
+            let local = patch.discovery;
+            const peer = stored?.discovery;
+            const sameRelay = peer && peer.relayAuthor === local?.relayAuthor;
+            const removals = local
+              ? signedRemovalVersions(
+                  sameRelay ? peer.removals : undefined,
+                  changes?.signedRemovals?.() ?? [],
+                )
+              : undefined;
+            const filteredEvents =
+              local && removals?.versions.size
+                ? pruneRevokedRosters(local, (channel) =>
+                    removals.versions.get(channel),
+                  )
+                : undefined;
+            if (local && removals?.versions.size) {
+              // Keep the signed exclusion even when a later save omits the
+              // channel. A stale grant may arrive from another tab's read.
+              local = {
+                ...local,
+                events: filteredEvents?.events ?? local.events,
+                removals: [...removals.versions.values()],
+              };
+              data.discovery = local;
+            }
+            let withRemovals: SavedStartup | undefined;
+            let mergedUpdates = false;
+            let superseded = false;
+            let prunedPeer: ReturnType<typeof pruneRevokedRosters>;
+            // A filtered grant can have a newer replacement in the peer row.
+            const preservePeer = sameRelay && !!filteredEvents;
+            if (
+              local &&
+              (ifUnchanged || preservePeer || observedDiscovery === undefined)
+            ) {
+              const current = discoveryVersion(stored?.discovery);
+              // Compare inside the write transaction. Settings-only changes
+              // preserve the signed snapshot, but a peer can replace or clear it.
+              // Observing a conflict does not load the peer's channels into
+              // discovery. Later removals still have to patch the peer row.
+              const conflict =
+                ifUnchanged &&
+                (current !== observedDiscovery || (removalFor && observedPeer));
+              if (preservePeer || conflict) {
+                version = current;
+                if (!peer || !sameRelay || !Array.isArray(peer.events))
+                  return done(undefined);
+                prunedPeer =
+                  removalFor && pruneRevokedRosters(peer, removalFor);
+                const peerEvents = prunedPeer?.events ?? peer.events;
+                const peerChannels = new Set<string>();
+                // The rejected channel is already absent from local.events.
+                // Other signed updates can still advance memberships on disk.
+                if (preservePeer)
+                  for (const value of peerEvents) {
+                    const event = value as Partial<EventData> | null;
+                    const channel = channelOf(event);
+                    if (
+                      event?.kind === 39002 &&
+                      channel &&
+                      event.pubkey === peer.relayAuthor &&
+                      event.tags?.some(
+                        (tag) =>
+                          Array.isArray(tag) &&
+                          tag[0] === "p" &&
+                          tag[1] === viewer,
+                      )
+                    )
+                      peerChannels.add(channel);
+                  }
+                const merged = mergeRosterUpdates(
+                  peerEvents,
+                  local.events,
+                  (channel) =>
+                    peerChannels.has(channel) ||
+                    !!changes?.includesGrant?.(channel),
+                );
+                if (!merged && !prunedPeer && !removals?.changed)
+                  return done(undefined);
+                const peerDiscovery = {
+                  ...peer,
+                  ...(local.removals && { removals: local.removals }),
+                };
+                // Apply the eligible evidence to the peer's row. A local
+                // snapshot can be missing channels that the peer confirmed.
+                superseded = true;
+                data = {
+                  ...stored,
+                  discovery: {
+                    ...peerDiscovery,
+                    events: merged ?? peerEvents,
+                  },
+                };
+                if (merged && (prunedPeer || removals?.changed))
+                  withRemovals = {
+                    ...stored,
+                    discovery: {
+                      ...peerDiscovery,
+                      events: peerEvents,
+                    },
+                  };
+                mergedUpdates = !!merged;
+              }
+              if (observedDiscovery === undefined) observedDiscovery = current;
+            }
+            const meta = {
+              key: scope,
+              bytes: byteSize(data),
+              savedAt: superseded ? row.savedAt : Date.now(),
+            };
+            const put = () => {
+              if (meta.bytes > MAX_BYTES && revoked) {
+                // An oversized replacement must still remove the revoked roster.
+                delete data.discovery;
+                meta.bytes = byteSize(data);
+              }
+              if (meta.bytes > MAX_BYTES) {
+                done("oversized");
+                return false;
+              }
+              if (patch.discovery) version = discoveryVersion(data.discovery);
+              store.put({ ...meta, data });
+              return true;
+            };
+            const prune = (rows: RowBudget[], oversized = false) => {
+              const kept = pruneStartupBudget(store, rows).includes(meta);
+              if (superseded && !kept) version = null;
+              if (kept && oversized) return done("oversized-with-clean-roster");
+              done(superseded ? undefined : kept);
+            };
+            if (!mergedUpdates && !(sameRelay && removals?.changed)) {
+              if (put()) readStartupBudget(store, then, prune, meta);
+              return;
+            }
+            readStartupBudget(
+              store,
+              then,
+              (rows) => {
+                const room = rows.reduce(
+                  (room, row) =>
+                    row === meta || isMirror(row) ? room : room - row.bytes,
+                  MAX_BYTES,
+                );
+                // Grants and extra removal versions must fit beside existing
+                // rosters. Removing a stale peer grant takes priority.
+                if (meta.bytes > room && withRemovals) {
+                  data = withRemovals;
+                  meta.bytes = byteSize(data);
+                }
+                if (
+                  meta.bytes > room &&
+                  removals?.changed &&
+                  peer &&
+                  data.discovery
+                ) {
+                  prunedPeer ??=
+                    removalFor && pruneRevokedRosters(peer, removalFor);
+                  if (prunedPeer) {
+                    const removed = prunedPeer.removed;
+                    const required = signedRemovalVersions(
+                      peer.removals,
+                      [...removals.versions.values()].filter((removal) =>
+                        removed.has(removal.channel),
+                      ),
+                    );
+                    data.discovery.removals = [...required.versions.values()];
+                  } else {
+                    if (!superseded) {
+                      // The saved roster already excludes these memberships.
+                      // Keep their versions even when the local update cannot fit.
+                      const retained = {
+                        ...data,
+                        discovery: {
+                          ...peer,
+                          removals: [...removals.versions.values()],
+                        },
+                      };
+                      const bytes = byteSize(retained);
+                      if (bytes <= room) {
+                        data = retained;
+                        meta.bytes = bytes;
+                        meta.savedAt = row.savedAt;
+                        if (put()) prune(rows, true);
+                        return;
+                      }
+                    }
+                    delete data.discovery.removals;
+                    if (peer.removals) data.discovery.removals = peer.removals;
+                  }
+                  meta.bytes = byteSize(data);
+                }
+                if (meta.bytes > room && !prunedPeer) {
+                  if (superseded) return done(undefined);
+                  if (meta.bytes > MAX_BYTES)
+                    return done("oversized-with-clean-roster");
+                }
+                if (put()) prune(rows);
+              },
+              meta,
+            );
+          }),
+        STARTUP,
+      );
+      if (saved === undefined) {
+        const peerVersion = version;
+        throw new StartupRosterSuperseded(
+          peerVersion
+            ? () => {
+                observedDiscovery = peerVersion;
+                observedPeer = true;
+              }
+            : undefined,
+        );
+      }
+      if (!saved) throw new Error("Startup cache is over its byte budget");
+      if (version !== undefined) {
+        observedDiscovery = version;
+        observedPeer = false;
+      }
+      if (saved === "oversized" || saved === "oversized-with-clean-roster")
+        throw new StartupCacheOverBudget(
+          saved === "oversized-with-clean-roster",
+        );
+    },
     readProfiles: () =>
       transact(
         "readonly",
@@ -239,13 +690,13 @@ export function createHeadPersistence(
       transact(
         "readwrite",
         (store, done, then) =>
-          then(store.getAll(), (rows: StartupRow[]) => {
-            // Rows outranking this newest mirror in `evict` keep their room.
+          readStartupBudget(store, then, (rows) => {
+            // Rows outranking this newest mirror keep their room.
             const others = rows.filter((row) => row.key !== profiles);
             const room =
               MAX_BYTES -
               others.reduce(
-                (sum, row) => (mirror(row) ? sum : sum + row.bytes),
+                (sum, row) => (isMirror(row) ? sum : sum + row.bytes),
                 0,
               );
             let bytes = byteSize(events);
@@ -260,7 +711,7 @@ export function createHeadPersistence(
             if (bytes <= MAX_BYTES) {
               const row = { key: profiles, bytes, savedAt: Date.now() };
               store.put({ ...row, data: [...events, ...kept.reverse()] });
-              evict(store, [...others, row]);
+              pruneStartupBudget(store, [...others, row]);
             }
             done(undefined);
           }),
@@ -296,7 +747,7 @@ export function createHeadPersistence(
         store.put(row);
         putHeadMeta(store, row);
         const size = store.count();
-        const pruneHeads = (rows: HeadMeta[]) => {
+        const pruneHeads = (rows: RowBudget[]) => {
           // Global disk budget across identities; scope is still required for every read.
           let total = 0,
             count = 0;
@@ -313,7 +764,7 @@ export function createHeadPersistence(
           done(undefined);
         };
         const metadata = metadataKeys();
-        then(store.getAll(metadata), (rows: { head: HeadMeta }[]) => {
+        then(store.getAll(metadata), (rows: { head: RowBudget }[]) => {
           // New writes keep one metadata row per head. An older writer drops
           // all metadata, and an older point delete can leave an extra row.
           if (size.result === 2 * rows.length) {
@@ -345,13 +796,24 @@ export function createHeadPersistence(
     clear: async () => {
       await transact(
         "readwrite",
-        (store, done) => {
+        (store, done, then) => {
           store.delete(scope);
           store.delete(profiles);
+          then(store.get(STARTUP_BUDGET), (budget) => {
+            if (!budget) return;
+            writeStartupBudget(
+              store,
+              (budget.rows as RowBudget[]).filter(
+                ({ key }) => key !== scope && key !== profiles,
+              ),
+            );
+          });
           done(undefined);
         },
         STARTUP,
       );
+      observedDiscovery = null;
+      observedPeer = false;
       await transact("readwrite", (store, done, then) =>
         // Include metadata left by a point delete on an older build.
         then(store.getAll(), (rows: ScopedRow[]) => {
@@ -377,7 +839,7 @@ export function createHeadPersistence(
       const heads = await transact<number>("readonly", (store, done, then) =>
         then(
           store.getAll(metadataKeys()),
-          (rows: { scope: string; head: HeadMeta }[]) =>
+          (rows: { scope: string; head: RowBudget }[]) =>
             done(
               rows.reduce(
                 (total, row) =>

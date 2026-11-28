@@ -125,6 +125,7 @@ export function createSidebarPreferencesStore({
     scheduleReconciliation();
   }
   let confirmed: SidebarPreferences | undefined;
+  let savedPreferences: { value: string; at: number } | undefined;
   let readFailure: string | undefined;
   let readTransient = false;
   // Retain writer routing through failed reads and cache clears until reconciled.
@@ -339,12 +340,21 @@ export function createSidebarPreferencesStore({
   // replaces its own fields; mute stays confirmed-only for notification policy.
   const project = () => {
     if (!confirmed) return;
-    if (!confirmed.workspaceMigrationPending)
-      void persistence
-        ?.writeStartup?.({
-          preferences: { savedAt: Date.now(), data: confirmed },
-        })
-        .catch(() => {});
+    if (persistence?.writeStartup && !confirmed.workspaceMigrationPending) {
+      const at = Date.now();
+      const value = JSON.stringify(confirmed);
+      const age = at - (savedPreferences?.at ?? 0);
+      // Refresh the cache timestamp intermittently even if the settings hold.
+      if (savedPreferences?.value !== value || age < 0 || age >= 600_000) {
+        const saving = { value, at };
+        savedPreferences = saving;
+        void persistence
+          .writeStartup({ preferences: { savedAt: at, data: confirmed } })
+          .catch(() => {
+            if (savedPreferences === saving) savedPreferences = undefined;
+          });
+      }
+    }
     publish({
       // A field-only confirmation cannot recover a failed full read. Any
       // concurrent read made stale by a write must leave recovery available.
@@ -1143,6 +1153,7 @@ export function createSidebarPreferencesStore({
       invalidation = reconciled = 0;
       scheduled = false;
       confirmed = undefined;
+      savedPreferences = undefined;
       pendingSorts.clear();
       latestSort.clear();
       failedSorts.clear();

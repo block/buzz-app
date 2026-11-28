@@ -584,7 +584,9 @@ export type TokenCounts = Readonly<{
   /** Of `cacheWrite`, those cached for an hour rather than five minutes. */
   cacheWrite1h?: number;
 }>;
-/** One model request of a session, as the harness recorded it. */
+/** One model request of a session, as the harness recorded it. A harness
+ * that reports only running totals sends what they grew by instead, with a
+ * `model` that names no model (see `SessionUsage.limits`). */
 export type UsageObservation = Readonly<{
   /** The harness's id for the request, when it records one; unique within
    * the session. */
@@ -603,10 +605,11 @@ export type UsageObservation = Readonly<{
  * child session again. `channelId` and `root` say where in Buzz it started,
  * when the session records it.
  *
- * A snapshot without `gaps` is complete: it replaces whatever a consumer kept
- * for the session. An incomplete one should leave the consumer's previous
- * snapshot in place and report the gap. A session missing from a later read
- * is not deleted: its source may be gone, not its usage.
+ * A snapshot without `gaps` replaces whatever a consumer kept for the
+ * session, even when `limits` leave its usage partial. One with `gaps` should
+ * leave the consumer's previous snapshot in place and report the gaps. A
+ * session missing from a later read is not deleted: its source may be gone,
+ * not its usage.
  */
 export type SessionUsage = Readonly<{
   /** The harness's own session id, opaque to others. */
@@ -616,6 +619,10 @@ export type SessionUsage = Readonly<{
   revision: string;
   /** What the read could not see, e.g. a subagent's vanished file. */
   gaps: readonly string[];
+  /** What the harness never reports for the session, e.g. a per-request
+   * split. Every read has them, so a snapshot without `gaps` still replaces
+   * the earlier one; its usage is partial from `startedAt` through `lastAt`. */
+  limits?: readonly string[];
   channelId?: string;
   root?: string;
   title?: string;

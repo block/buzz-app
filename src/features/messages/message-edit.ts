@@ -27,9 +27,19 @@ export const editMentionText = (
 ) => `${profileMentionLink(`@${name}`, `nostr:${npubEncode(pubkey)}`)}${after}`;
 
 /** Keep attachment Markdown and turn already-bound names into explicit identities.
- * Edited legacy prose remains unbound; the editor never invents recipients. */
+ * Edited legacy prose remains unbound; the editor never invents recipients.
+ * The agent `edit` tool links an agent's new text the same way. */
 export function messageEditText(
-  row: ChannelMessage,
+  row: Pick<
+    ChannelMessage,
+    | "content"
+    | "sourceContent"
+    | "edited"
+    | "attachmentSeams"
+    | "mentions"
+    | "mentionReferences"
+    | "mentionLabels"
+  >,
   profiles: ReadonlyMap<string, Profile>,
   agents: AgentLibrary["identities"] = [],
 ) {

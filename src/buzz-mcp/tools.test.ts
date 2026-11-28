@@ -870,6 +870,46 @@ it("refuses to edit when the host cannot obtain effective attachment state", asy
   expect(published).toEqual([]);
 });
 
+it("keeps an edited message's tags and refuses an @name it can't show as one", async () => {
+  const message = "3".repeat(64);
+  const { client, published } = fake([
+    ...community,
+    event({
+      kind: 0,
+      pubkey: alice,
+      created_at: 101,
+      content: JSON.stringify({ display_name: "Alice Smith", name: "asmith" }),
+    }),
+    event({
+      id: message,
+      pubkey: me,
+      tags: [
+        ["h", "chan"],
+        ["p", alice],
+      ],
+    }),
+  ]);
+  const edit = (text: string) =>
+    callTool(client, { channel: "chan" }, "edit", { id: message, text });
+  await expect(edit("@asmith please re-approve")).rejects.toThrow(
+    "@asmith won't show as a tag. Write @Alice Smith.",
+  );
+  await expect(edit("@Alice Smith and @Bob")).rejects.toThrow(
+    "@Bob wasn't tagged in the original message, and an edit can't tag anyone new.",
+  );
+  expect(published).toEqual([]);
+  await edit("@Alice Smith, see `@Bob` and @types/node");
+  expect(published.map(({ content, tags }) => ({ content, tags }))).toEqual([
+    {
+      content: `[@Alice Smith](nostr:${npubEncode(alice)}), see \`@Bob\` and @types/node`,
+      tags: [
+        ["h", "chan"],
+        ["e", message],
+      ],
+    },
+  ]);
+});
+
 it("tags the community emoji a message or edit uses, as the composer does", async () => {
   const stamp = "https://relay/media/stamp.png";
   const emojiSet = (pubkey: string, created_at: number, entries: string[][]) =>
@@ -1051,7 +1091,7 @@ it("reads the current thread with each message's latest edit", async () => {
     event({
       kind: 40003,
       created_at: 120,
-      content: "edited",
+      content: `[@Bob](nostr:${npubEncode(bob)}) edited`,
       tags: [
         ["h", "chan"],
         ["e", nested],
@@ -1079,7 +1119,7 @@ it("reads the current thread with each message's latest edit", async () => {
   expect(text.split("\n")).toEqual([
     `thread ${root} in chan`,
     `${root} from ${alice} "Alice Smith" at 1970-01-01T00:01Z: `,
-    `${nested} from ${alice} "Alice Smith" at 1970-01-01T00:01Z: edited`,
+    `${nested} from ${alice} "Alice Smith" at 1970-01-01T00:01Z: @Bob edited`,
     "The relay returned no older replies.",
   ]);
 });

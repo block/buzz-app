@@ -108,6 +108,8 @@ if that desktop app is up and running.
   choose **Continue**.
   A community you were invited to stays named while Buzz gets your account
   ready, until you reach **Join Community**.
+  If the sign-in tab stays open afterwards, **Return to Buzz** on it brings
+  Buzz to the front.
 - **Keep a copy of your key.** Your identity is a private key. Buzz shows
   whether it's backed up in **Settings → Buzz → Identity**, and **Copy private key**
   makes a copy for a password manager. Without a copy, a lost key means a lost

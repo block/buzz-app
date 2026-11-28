@@ -133,6 +133,15 @@ it("retry saves the System choice even when its current palette is light", async
   appearance.dispose();
 });
 
+it("describes what the emoji size choice changes", () => {
+  render(<ToastProvider>{preferencesPage()}</ToastProvider>);
+  expect(
+    screen.getByRole("combobox", { name: "Emoji size" }),
+  ).toHaveAccessibleDescription(
+    "Large shows emoji-only messages and reactions bigger.",
+  );
+});
+
 it("shows reset only away from the default size and hides it after reset", () => {
   const appearance = createAppearance();
   render(

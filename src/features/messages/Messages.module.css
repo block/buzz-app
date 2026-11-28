@@ -494,7 +494,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   display: inline-block;
   min-width: 0.75rem;
   max-width: var(--compact-control-size, var(--size-control-sm));
-  font-size: var(--text-caption);
+  font-size: var(--size-emoji-reaction, var(--text-caption));
   line-height: 1;
   text-align: center;
   overflow: hidden;
@@ -508,17 +508,18 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionCustomEmoji {
   display: block;
-  width: 0.75rem;
-  height: 0.75rem;
+  width: var(--size-emoji-reaction, 0.75rem);
+  height: var(--size-emoji-reaction, 0.75rem);
   object-fit: contain;
 }
 /* A shortcode without usable artwork shows this neutral glyph, never its text. */
 .reactionPlaceholder {
   display: block;
-  width: 0.75rem;
-  height: 0.75rem;
+  width: var(--size-emoji-reaction, 0.75rem);
+  height: var(--size-emoji-reaction, 0.75rem);
 }
-/* Paint 12px artwork at 14px (10.5pt), keeping the capsule's layout box. */
+/* Paint artwork at 7/6 of its box (12px at 14px, or 16px at about 19px with
+   Large emoji), keeping the capsule's layout box. */
 .reactionGlyph [data-reaction-artwork],
 .reactionGlyph .reactionCustomEmoji,
 .reactionGlyph .reactionPlaceholder {

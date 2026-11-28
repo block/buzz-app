@@ -5,6 +5,7 @@ import {
   MIN_FONT_SCALE,
   type Appearance,
   type ColorModePreference,
+  type EmojiSize,
   type MessageDensity,
 } from "./service";
 
@@ -59,6 +60,15 @@ export function appearanceSettings(appearance: Appearance): DeviceSetting[] {
       schema: { type: "string", enum: ["default", "compact"] },
       read: () => ({ value: now().density, unsaved: now().densityError }),
       write: (value) => appearance.setDensity(value as MessageDensity),
+      live,
+    },
+    {
+      key: "conversations.emoji_size",
+      description:
+        "Emoji size: large shows emoji-only messages and reactions bigger.",
+      schema: { type: "string", enum: ["default", "large"] },
+      read: () => ({ value: now().emojiSize, unsaved: now().emojiSizeError }),
+      write: (value) => appearance.setEmojiSize(value as EmojiSize),
       live,
     },
   ];

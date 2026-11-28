@@ -127,6 +127,8 @@ export function AppearanceSettings({
     contrastError,
     density,
     densityError,
+    emojiSize,
+    emojiSizeError,
   } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
@@ -377,6 +379,31 @@ export function AppearanceSettings({
               }
             />
           )}
+          <PreferenceRow
+            title="Emoji size"
+            subtitle="Large shows emoji-only messages and reactions bigger."
+            trailing={(control) => (
+              <Select
+                describedBy={control["aria-describedby"]}
+                variant="compact"
+                label="Emoji size"
+                value={emojiSize}
+                groups={[
+                  {
+                    label: "Size",
+                    options: [
+                      { value: "default", label: "Default" },
+                      { value: "large", label: "Large" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "default" || value === "large")
+                    appearance.setEmojiSize(value);
+                }}
+              />
+            )}
+          />
           <AppearancePreview
             messageWidth={messageWidth}
             density={density}
@@ -546,6 +573,19 @@ export function AppearanceSettings({
             />
           </SettingsGroup>
         </div>
+        {active && emojiSizeError && (
+          <ToastNotice
+            title="Emoji size wasn’t saved"
+            description={emojiSizeError}
+          >
+            <Button
+              size="sm"
+              onClick={() => appearance.setEmojiSize(emojiSize)}
+            >
+              Retry saving emoji size
+            </Button>
+          </ToastNotice>
+        )}
         {active && messageWidthError && (
           <ToastNotice
             title="Message width wasn’t saved"

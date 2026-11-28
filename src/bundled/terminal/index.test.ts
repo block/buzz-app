@@ -14,7 +14,10 @@ import { TERMINAL_FONT_KEY } from "./font-preference";
 import { apply } from "./index";
 import { nativeBridge } from "./bridge";
 
-vi.mock("./bridge", () => ({ nativeBridge: { available: false } }));
+vi.mock("./bridge", () => ({
+  nativeBridge: { available: false },
+  listFontFamilies: async () => [],
+}));
 afterEach(() => {
   cleanup();
   localStorage.clear();

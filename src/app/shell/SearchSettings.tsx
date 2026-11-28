@@ -35,9 +35,8 @@ const entries = [
 const noSubscribe = () => () => {};
 const noSnapshot = () => null;
 
-/** A section opens Settings on Enter, so letters merely in order do not match
- * it: "wes" would find Software updates before a person Wes is found. Word
- * runs still do, as in channel completion. */
+/** A section opens Settings on Enter, so typed words in any order (the last
+ * rank) do not match it. Word runs still do, as in channel completion. */
 function matchSection(label: string, needle: string) {
   const found = matchName(label, needle);
   return found && found.rank <= MatchRank.wordRuns ? found : undefined;

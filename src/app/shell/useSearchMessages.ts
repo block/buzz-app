@@ -136,9 +136,10 @@ type Result = {
   moreError?: string;
 };
 
-/** A message event as a search row: one of `SEARCH_KINDS` in exactly one
- * known, non-huddle channel. Relay hits and the device index share it. */
-export function searchMessage(
+/** Converts a message event into a search row (`SearchMessage`): one of
+ * `SEARCH_KINDS` in exactly one known, non-huddle channel, else undefined.
+ * Relay hits and the device index share it. */
+export function searchMessageFromEvent(
   session: RelaySession,
   event: EventData,
 ): SearchMessage | undefined {
@@ -203,7 +204,7 @@ async function readPage(
   );
   signal.throwIfAborted();
   const messages = events.flatMap((event) => {
-    const message = searchMessage(session, event);
+    const message = searchMessageFromEvent(session, event);
     return message && (!channelId || message.channelId === channelId)
       ? [message]
       : [];

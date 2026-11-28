@@ -1,5 +1,6 @@
 import { test, expect } from "./playwright-test.mjs";
 import { readFile } from "node:fs/promises";
+import { crc32, deflateSync } from "node:zlib";
 import react from "@vitejs/plugin-react";
 import { createServer } from "./vite-server.mjs";
 
@@ -16,6 +17,81 @@ async function openPreparationDocument(page, server) {
   );
   await page.goto(url);
 }
+
+test("attachment preparation resizes a still PNG above the relay pixel limit", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    await openPreparationDocument(page, server);
+    const width = 3200;
+    const height = 8500;
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(width);
+    header.writeUInt32BE(height, 4);
+    header[8] = 8; // 8-bit grayscale
+    const chunk = (kind, data) => {
+      const body = Buffer.concat([Buffer.from(kind), data]);
+      const frame = Buffer.alloc(data.length + 12);
+      frame.writeUInt32BE(data.length);
+      body.copy(frame, 4);
+      frame.writeUInt32BE(crc32(body), frame.length - 4);
+      return frame;
+    };
+    const row = Buffer.alloc(width + 1);
+    row.fill(180, 1 + width / 2);
+    const bytes = Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      chunk("IHDR", header),
+      chunk("IDAT", deflateSync(Buffer.concat(Array(height).fill(row)))),
+      chunk("IEND", Buffer.alloc(0)),
+    ]);
+    const prepared = await page.evaluate(async (source) => {
+      const { prepareAttachment } = await import(
+        "/src/features/messages/prepare-attachment.ts"
+      );
+      const file = new File([new Uint8Array(source)], "tall.png", {
+        type: "image/png",
+      });
+      const output = await prepareAttachment(
+        file,
+        new AbortController().signal,
+      );
+      const image = await createImageBitmap(output);
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 1;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, 2, 1);
+        return {
+          name: output.name,
+          type: output.type,
+          width: image.width,
+          height: image.height,
+          contrast:
+            context.getImageData(1, 0, 1, 1).data[0] -
+            context.getImageData(0, 0, 1, 1).data[0],
+        };
+      } finally {
+        image.close();
+      }
+    }, Array.from(bytes));
+    expect(prepared.name).toBe("tall.png");
+    expect(prepared.type).toBe("image/png");
+    expect(prepared.width * prepared.height).toBeLessThanOrEqual(25_000_000);
+    expect(prepared.width / prepared.height).toBeCloseTo(width / height, 3);
+    expect(prepared.contrast).toBeGreaterThan(120);
+  } finally {
+    await server.close();
+  }
+});
 
 // Browser-only boundary: actual File/DataTransfer delivery, editor capture and page wiring.
 test("picker, pane drop and clipboard files use the same attachment draft and existing Send", async ({

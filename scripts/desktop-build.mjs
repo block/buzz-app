@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "vite";
 import {
@@ -48,8 +49,13 @@ const artifactOption = forwarded.find(
     arg === "-c" ||
     /^-c[^-]/.test(arg),
 );
+// An absolute shared target directory still holds the default bundle; a relative
+// one depends on the directory cargo runs from, so it stays unsupported.
+const targetDirectory = process.env.CARGO_TARGET_DIR;
 const artifactEnvironment = [
-  "CARGO_TARGET_DIR",
+  ...(targetDirectory && !path.isAbsolute(targetDirectory)
+    ? ["CARGO_TARGET_DIR"]
+    : []),
   "CARGO_BUILD_TARGET",
   "TAURI_CONFIG",
 ].find((name) => process.env[name]);
@@ -99,8 +105,9 @@ if (launch) {
     console.warn(
       "Warning: this bundle is ad-hoc signed. macOS notifications may reject it; set BUZZ_DEV_SIGNING_IDENTITY to a stable code-signing certificate.",
     );
-  const app = fileURLToPath(
-    new URL("../target/debug/bundle/macos/Buzz.app", import.meta.url),
+  const app = path.join(
+    targetDirectory || path.join(root, "target"),
+    "debug/bundle/macos/Buzz.app",
   );
   const opened = spawnSync("open", [app], { stdio: "inherit" });
   if (opened.error) console.error(opened.error.message);

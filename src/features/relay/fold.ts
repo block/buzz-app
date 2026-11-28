@@ -180,7 +180,7 @@ export function parseAttachments(
 
 function parseSummary(
   event: EventData | undefined,
-): Pick<ChannelMessage, "replyCount" | "participants"> {
+): Pick<ChannelMessage, "replyCount" | "lastReplyAt" | "participants"> {
   if (!event) return { replyCount: 0, participants: Object.freeze([]) };
   try {
     const body = objectBody(event.content);
@@ -201,8 +201,15 @@ function parseSummary(
             typeof value === "string" && HEX64.test(value),
         )
       : [];
+    const lastReplyAt =
+      typeof body.last_reply_at === "number" &&
+      Number.isInteger(body.last_reply_at) &&
+      body.last_reply_at > 0
+        ? body.last_reply_at
+        : undefined;
     return {
       replyCount,
+      lastReplyAt,
       participants: Object.freeze([...new Set(participants)]),
     };
   } catch {
@@ -557,6 +564,10 @@ export function foldMessages(
           deleted,
         ),
         replyCount: summary.replyCount + pending.length,
+        lastReplyAt: pending.reduce<number | undefined>(
+          (newest, reply) => Math.max(newest ?? 0, reply.created_at),
+          summary.lastReplyAt,
+        ),
         // Pending repliers lead, returning ones included, so they stay within
         // the visible avatar stack.
         participants: Object.freeze([

@@ -657,6 +657,69 @@ it("renders the signed whole-thread total rather than only direct replies", () =
   expect(html).toContain('aria-label="View thread: 3 replies"');
   expect(html).toContain("3 replies</span>");
 });
+it("shows the relay's last reply time beside the reply count", () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(1_700_000_600_000);
+    const author = keypair(),
+      relay = keypair();
+    const root = message(author, "channel", "Root", 1);
+    const [folded] = foldMessages("channel", relay.pubkey, [
+      root,
+      summary(relay, "channel", root.id, {
+        reply_count: 2,
+        descendant_count: 2,
+        last_reply_at: 1_700_000_300,
+        participants: [author.pubkey],
+      }),
+    ]);
+    if (!folded) throw new Error("Missing root");
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={folded}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        onOpenThread={() => {}}
+      />,
+    );
+    expect(html).toContain(
+      `aria-label="View thread: 2 replies, last reply ${formatFullTimestamp(1_700_000_300)}"`,
+    );
+    expect(html).toMatch(
+      /data-thread-last-reply=""><span aria-hidden="true">·<\/span>last reply 5 minutes ago<\/span>/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("keeps the last reply time current while the row stays mounted", () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(1_700_000_030_000);
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 2, lastReplyAt: 1_700_000_000 }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        onOpenThread={() => {}}
+      />,
+    );
+    expect(screen.getByText("last reply just now")).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(screen.getByText("last reply 1 minute ago")).toBeInTheDocument();
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
 it("selects this thread, adds an accessible unread cue and preserves the total reply count", () => {
   const { html, snapshot } = render({ observedCount: 2 });
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({

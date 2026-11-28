@@ -1437,7 +1437,7 @@ function MessageRowContent({
             type="button"
             aria-label={
               row.replyCount > 0
-                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}${threadDraft ? ". Draft reply" : ""}`
+                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${!activity && row.lastReplyAt !== undefined ? `, last reply ${formatFullTimestamp(row.lastReplyAt)}` : ""}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}${threadDraft ? ". Draft reply" : ""}`
                 : `View thread: ${[
                     ...(activity
                       ? [remainingWorkingLabel, activity.label]
@@ -1460,6 +1460,7 @@ function MessageRowContent({
               draft={threadDraft}
               replied={row.replyCount > 0}
               count={activity ? 0 : row.replyCount}
+              lastReplyAt={row.lastReplyAt}
               participants={row.participants}
               profiles={participantProfiles}
               agentPubkeys={agentPubkeys}

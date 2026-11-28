@@ -46,6 +46,8 @@ function setup() {
     },
   });
   let frames = 0;
+  // A stale frame is dated before the observer route started.
+  let stale = false;
   const frame = (from: string, value: unknown) =>
     activity.receive(
       {
@@ -55,6 +57,7 @@ function setup() {
         plaintext: JSON.stringify(value),
       },
       generation ?? -1,
+      stale,
     );
   type Type = CancelTurn["type"];
   const result = (status: string, requestId: string, type: Type) => ({
@@ -101,9 +104,11 @@ function setup() {
     signing = new Promise((resolve) => (release = resolve));
     return release;
   };
+  const clockBehind = () => (stale = true);
   return {
     activity,
     control,
+    clockBehind,
     sent,
     publish,
     answer,
@@ -159,6 +164,27 @@ it("sends once the observer listens, and resolves on the agent's own sent answer
   await expect(stop).resolves.toBe("sent");
   // The observer is let go once the stop settles.
   expect(f.observe).toHaveBeenLastCalledWith(null);
+});
+
+it("settles on an answer dated before the observer started, and shows nothing else from it", async () => {
+  const f = setup();
+  f.listen();
+  const stop = f.control.cancelTurn(
+    agent,
+    { channelId: "channel", threadRootId: root },
+    new AbortController().signal,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  const id = f.sent[0]?.requestId ?? "";
+  f.activity.queries.activate();
+  // The agent's clock runs behind: its frame predates the observer route.
+  f.clockBehind();
+  f.batched(agent, "sent", id);
+  await expect(stop).resolves.toBe("sent");
+  expect(f.activity.queries.snapshot()).toMatchObject({
+    records: [],
+    turns: [],
+  });
 });
 
 it("holds a no_active_turn for a sent from another device, then settles on it", async () => {

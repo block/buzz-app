@@ -4078,19 +4078,30 @@ it("observer route is optional, live-only at dispatch/retry, separately fenced a
   await vi.advanceTimersByTimeAsync(250);
   const first = h.first.requests().at(-1);
   assert.exists(first);
+  const since = Math.floor(Date.now() / 1000);
+  // The relay fences live frames by `since` too: ask early enough to hear an
+  // agent whose clock runs behind.
   expect(first[2]).toEqual({
     kinds: [24200],
     "#p": [h.key.pubkey],
-    since: Math.floor(Date.now() / 1000),
+    since: since - 300,
   });
-  const event = signed(h.key, {
-    kind: 24200,
-    content: "opaque",
-    tags: [],
-    created_at: Math.floor(Date.now() / 1000),
-  });
+  const frame = (createdAt: number) =>
+    signed(h.key, {
+      kind: 24200,
+      content: "opaque",
+      tags: [],
+      created_at: createdAt,
+    });
+  const event = frame(since);
   await h.first.receive(["EVENT", first[1], event]);
-  expect(telemetry).toHaveBeenCalledWith(event, 1);
+  expect(telemetry).toHaveBeenCalledWith(event, 1, false);
+  // A frame from before the route started may carry only an answer to a stop.
+  const behind = frame(since - 60);
+  await h.first.receive(["EVENT", first[1], behind]);
+  expect(telemetry).toHaveBeenLastCalledWith(behind, 1, true);
+  await h.first.receive(["EVENT", first[1], frame(since - 301)]);
+  expect(telemetry).toHaveBeenCalledTimes(2);
   expect(h.callbacks.receive).not.toHaveBeenCalled();
   await h.first.receive(["EOSE", first[1]]);
   expect(h.callbacks.established).not.toHaveBeenCalled();
@@ -4104,7 +4115,7 @@ it("observer route is optional, live-only at dispatch/retry, separately fenced a
   await vi.advanceTimersByTimeAsync(250);
   await h.first.receive(["EVENT", first[1], event]);
   await h.first.receive(["EVENT", retried[1], event]);
-  expect(telemetry).toHaveBeenCalledTimes(1);
+  expect(telemetry).toHaveBeenCalledTimes(2);
   h.owner.observe?.(null);
   expect(
     h.first.sent

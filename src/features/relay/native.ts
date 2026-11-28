@@ -806,7 +806,7 @@ export async function connectNativeTransport(
           listening = next;
           callbacks.state(snapshot);
         },
-        telemetry(event, generation) {
+        telemetry(event, generation, stale) {
           if (generation !== observerGeneration || !listening) return;
           const epoch = observerEpoch;
           void invoke("relay_agent_observer", { community: origin, event })
@@ -817,7 +817,7 @@ export async function connectNativeTransport(
                 observerEpoch === epoch &&
                 observerGeneration === generation
               )
-                callbacks.observer?.(observerFrame(value), generation);
+                callbacks.observer?.(observerFrame(value), generation, stale);
             })
             .catch(() => {
               /* Invalid encrypted telemetry is not chat traffic. */

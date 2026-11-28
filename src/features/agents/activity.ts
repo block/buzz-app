@@ -552,7 +552,14 @@ export function createAgentActivity(
       },
     );
   }
-  function admit(input: ObserverFrame, receivedAt: number) {
+  /** An agent may ship its answer inside a batch with other telemetry. */
+  function answer(agent: string, items: readonly unknown[]) {
+    for (const item of items) {
+      const result = controlResult(agent, item);
+      if (result) for (const listener of controlListeners) listener(result);
+    }
+  }
+  function admit(input: ObserverFrame, receivedAt: number, stale: boolean) {
     let frame: ObserverFrame, raw: unknown;
     try {
       frame = observerFrame(input);
@@ -570,17 +577,18 @@ export function createAgentActivity(
     const items = Array.isArray(children) ? children : [raw];
     // A denied child cannot leak through an otherwise visible raw batch.
     if (!channelsAllowed(raw, canAccess)) return;
+    if (stale) {
+      // Dated before the route started: only an answer to a stop is read.
+      answer(frame.agent, items);
+      return;
+    }
     if (records.some((record) => record.id === frame.id)) {
       publish();
       return;
     }
     liveAgents.add(frame.agent);
     for (const item of items) fold(frame.agent, item);
-    // An agent may ship its answer inside a batch with other telemetry.
-    for (const item of items) {
-      const answer = controlResult(frame.agent, item);
-      if (answer) for (const listener of controlListeners) listener(answer);
-    }
+    answer(frame.agent, items);
     const record = Object.freeze({
       id: frame.id,
       agent: frame.agent,
@@ -716,7 +724,7 @@ export function createAgentActivity(
         };
       },
     }),
-    receive(input: ObserverFrame, current: number) {
+    receive(input: ObserverFrame, current: number, stale = false) {
       if (closed || !available || leases === 0 || current !== generation)
         return;
       let frame: ObserverFrame, raw: unknown;
@@ -740,7 +748,7 @@ export function createAgentActivity(
         })
       )
         return;
-      if (leases > 0) admit(frame, Date.now());
+      if (leases > 0) admit(frame, Date.now(), stale);
     },
     /** Trigger messages may arrive after telemetry. Resolve at content admission,
      * not on the freshness timer, without retaining or fetching more messages. */

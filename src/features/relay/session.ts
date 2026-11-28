@@ -4131,7 +4131,8 @@ export function createRelaySession(
     }
   }
   traffic = transport?.subscribe?.({
-    observer: (frame, generation) => activity.receive(frame, generation),
+    observer: (frame, generation, stale) =>
+      activity.receive(frame, generation, stale),
     receive(events, provenance) {
       if (closed) return;
       receiveSidebar(events);

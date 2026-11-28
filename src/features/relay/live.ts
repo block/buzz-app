@@ -81,6 +81,9 @@ export const RELAY_TIMESTAMP_DRIFT_SECS = 900;
  * pod can trail its peers), the client clock's skew from the relay's, and the
  * relay's replica read budget for the unread repair, which uses the same margin. */
 export const LIVE_RESUME_LAG = RELAY_TIMESTAMP_DRIFT_SECS + 60;
+/** An agent's answer to a stop may carry a clock this far behind the viewer's.
+ * Observer frames are not stored, so asking from earlier replays nothing. */
+export const OBSERVER_SKEW_SECS = 300;
 /** A continuous replay starts `LIVE_RESUME_LAG` before the drop, so it closes
  * the gap only back to then. A live frame the relay dropped earlier (a full
  * send buffer drops it without a notice) is not in it; only a read after that
@@ -267,9 +270,11 @@ export type LiveCallbacks = {
   /** Legacy/missing provenance reconciles quietly; it is never implicitly fresh. */
   receive(events: readonly VerifiedEvent[], provenance?: LiveProvenance): void;
   /** Host-only encrypted telemetry route; never ordinary history reconciliation. */
-  telemetry?(event: VerifiedEvent, generation: number): void;
+  /** `stale` marks a frame dated before the route started, inside the skew
+   * allowance: only an answer to a stop may be read from it. */
+  telemetry?(event: VerifiedEvent, generation: number, stale?: boolean): void;
   /** Decoded host DTO on the browser transport. */
-  observer?(frame: ObserverFrame, generation: number): void;
+  observer?(frame: ObserverFrame, generation: number, stale?: boolean): void;
   presence?(event: VerifiedEvent): void;
   state(snapshot: LiveSnapshot): void;
   /** A global route (no channels) also reports whether it stayed continuous.
@@ -1347,7 +1352,10 @@ export function subscribeRelayTraffic(
         ...filters.map((filter) => ({
           ...filter,
           // Survivor filters stay live-only so replay cannot suppress a fresh alert.
-          since: route.since,
+          since:
+            route.id === "observer"
+              ? route.since - OBSERVER_SKEW_SECS
+              : route.since,
           ...(route.page?.until !== undefined
             ? { until: route.page.until }
             : {}),
@@ -2014,9 +2022,13 @@ export function subscribeRelayTraffic(
           if (
             observer !== null &&
             incoming.kind === OBSERVER_KIND &&
-            incoming.created_at >= route.since
+            incoming.created_at >= route.since - OBSERVER_SKEW_SECS
           )
-            callbacks.telemetry?.(incoming, observer);
+            callbacks.telemetry?.(
+              incoming,
+              observer,
+              incoming.created_at < route.since,
+            );
         } else if (incoming.kind !== OBSERVER_KIND) {
           deliverEvent(
             incoming,

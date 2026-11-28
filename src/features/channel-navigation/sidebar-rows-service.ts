@@ -17,6 +17,8 @@ export type SidebarRow = Readonly<{
   sectionKey: string;
   channel: ChannelSummary;
   unread: UnreadSnapshot;
+  /** The conversation the sidebar currently shows as open. */
+  selected: boolean;
 }>;
 export type SidebarRowSortMode = Readonly<{
   id: string;
@@ -26,6 +28,8 @@ export type SidebarRowSortMode = Readonly<{
 export type SidebarRowContribution = Readonly<{
   version: 1;
   id: string;
+  /** Lists the rows this contribution hides in each section's Filter menu. */
+  hiddenLabel?: string;
   render?: (
     row: SidebarRow,
     Default: ReactElement | null,
@@ -35,6 +39,12 @@ export type SidebarRowContribution = Readonly<{
    * header. Asked each time the menu renders. */
   menuItems?: (row: SidebarRow) => readonly SidebarSectionAction[];
 }>;
+/** Reports a row's hidden state and, when hidden, the hiding contribution's label. */
+export type SidebarRowHiddenChange = (
+  id: string,
+  hidden: boolean,
+  label?: string,
+) => () => void;
 export type RegisteredSidebarRows = Contribution<SidebarRowContribution>;
 export type SidebarRows = Readonly<{
   version: 1;
@@ -98,6 +108,10 @@ export class SidebarRowsService extends Service implements SidebarRows {
       (value.render !== undefined && typeof value.render !== "function") ||
       (value.menuItems !== undefined &&
         typeof value.menuItems !== "function") ||
+      (value.hiddenLabel !== undefined &&
+        (typeof value.hiddenLabel !== "string" ||
+          !value.hiddenLabel.trim() ||
+          value.hiddenLabel.length > 64)) ||
       (value.sortModes !== undefined &&
         (!Array.isArray(value.sortModes) ||
           new Set(value.sortModes.map((mode) => mode?.id)).size !==
@@ -129,6 +143,7 @@ export function sidebarRow(
   channel: ChannelSummary,
   sectionKey: string,
   unread: UnreadSnapshot,
+  selected: boolean,
 ): SidebarRow {
   return {
     id: channel.id,
@@ -142,6 +157,7 @@ export function sidebarRow(
     sectionKey,
     channel,
     unread,
+    selected,
   };
 }
 

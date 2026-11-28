@@ -123,6 +123,7 @@ export function SoloWorkspaces({
   navigator: navigationController,
   scope,
   chats,
+  selected,
   dormantAssignments,
   renderChat,
   renderChatMenu,
@@ -145,6 +146,7 @@ export function SoloWorkspaces({
   navigator?: Navigation | undefined;
   scope: string;
   chats: readonly ChatListItem[];
+  selected?: string | undefined;
   /** Existing assignments stay stored but do not place source-managed chats. */
   dormantAssignments?: ReadonlySet<string> | undefined;
   sidebarRows?: readonly RegisteredSidebarRows[] | undefined;
@@ -779,6 +781,7 @@ export function SoloWorkspaces({
                 movable={!dormantAssignments?.has(item.id)}
                 sectionKey={project.id}
                 channel={channel}
+                selected={selected === item.id}
                 renameable={canRename(project.id, channel)}
                 lifecycle={!!handoff}
                 session={session}
@@ -1190,6 +1193,7 @@ const SoloChatEntry = memo(function SoloChatEntry({
   movable,
   sectionKey,
   channel,
+  selected,
   renameable,
   lifecycle,
   session,
@@ -1206,6 +1210,7 @@ const SoloChatEntry = memo(function SoloChatEntry({
   movable: boolean;
   sectionKey: string;
   channel: ChannelSummary | undefined;
+  selected: boolean;
   renameable: boolean;
   lifecycle: boolean;
   session: RelaySession;
@@ -1271,6 +1276,7 @@ const SoloChatEntry = memo(function SoloChatEntry({
       session={session}
       channel={channel}
       sectionKey={sectionKey}
+      selected={selected}
       entries={sidebarRows}
       onHiddenChange={onHiddenChange}
     >
@@ -1285,6 +1291,7 @@ function ContributedSoloRow({
   session,
   channel,
   sectionKey,
+  selected,
   entries,
   children,
   onHiddenChange,
@@ -1292,6 +1299,7 @@ function ContributedSoloRow({
   session: RelaySession;
   channel: ChannelSummary;
   sectionKey: string;
+  selected: boolean;
   entries: readonly RegisteredSidebarRows[];
   children: ReactElement;
   onHiddenChange: (id: string, hidden: boolean) => () => void;
@@ -1310,8 +1318,8 @@ function ContributedSoloRow({
   );
   const unread = useSyncExternalStore(subscribe, snapshot, snapshot);
   const row = useMemo(
-    () => sidebarRow(channel, sectionKey, unread),
-    [channel, sectionKey, unread],
+    () => sidebarRow(channel, sectionKey, unread, selected),
+    [channel, sectionKey, unread, selected],
   );
   return (
     <SidebarRowRenderer

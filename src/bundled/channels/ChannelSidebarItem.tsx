@@ -49,6 +49,7 @@ import {
   pluginRowSectionKey,
   sidebarRow,
   type RegisteredSidebarRows,
+  type SidebarRowHiddenChange,
 } from "../../features/channel-navigation/sidebar-rows-service";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
@@ -60,7 +61,7 @@ import {
 type ItemProps = {
   chatIcon?: ChatIcon["component"] | undefined;
   rowContributions?: readonly RegisteredSidebarRows[] | undefined;
-  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+  onHiddenChange?: SidebarRowHiddenChange | undefined;
   channel: ChannelSummary;
   profile?: Profile | undefined;
   session: RelaySession;
@@ -466,6 +467,7 @@ function ChannelSidebarItemCore({
         <ContributedChannelRow
           channel={channel}
           sectionKey={sectionKey}
+          selected={selected === channel.id}
           session={session}
           entries={rowContributions}
           onHiddenChange={onHiddenChange}
@@ -507,6 +509,7 @@ function ChannelSidebarItemCore({
 function ContributedChannelRow({
   channel,
   sectionKey,
+  selected,
   session,
   entries,
   children,
@@ -514,10 +517,11 @@ function ContributedChannelRow({
 }: {
   channel: ChannelSummary;
   sectionKey: string;
+  selected: boolean;
   session: RelaySession;
   entries: readonly RegisteredSidebarRows[];
   children: ReactElement;
-  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+  onHiddenChange?: SidebarRowHiddenChange | undefined;
 }) {
   const target = useMemo(
     () => ({ kind: "channel" as const, channelId: channel.id }),
@@ -535,8 +539,8 @@ function ContributedChannelRow({
   const live = useLiveChannelSummary(session.channels, channel);
   const pluginSection = pluginRowSectionKey(channel, sectionKey);
   const row = useMemo(
-    () => sidebarRow(live, pluginSection, unread),
-    [live, pluginSection, unread],
+    () => sidebarRow(live, pluginSection, unread, selected),
+    [live, pluginSection, unread, selected],
   );
   return (
     <SidebarRowRenderer

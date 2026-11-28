@@ -168,6 +168,10 @@ if that desktop app is up and running.
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.
   Types are `bar`, `line` and `scatter`.
+- **Files.** With the File viewer plugin on, choosing a shared PDF, Markdown,
+  code, text, CSV or TSV file opens it in a tab beside the conversation. Only
+  files shared in the current community open, text up to 20 MB and PDFs up to
+  100 MB.
 
 ## Agents
 

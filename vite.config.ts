@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import { entityDecoderAlias } from "./scripts/entity-decoder-alias.mjs";
 import { diffHighlighterAliases } from "./scripts/diff-highlighter-aliases.mjs";
 import { worktreePort } from "./scripts/worktree-port.mjs";
 import { captureBuildIdentity } from "./scripts/build-identity.mjs";
@@ -221,7 +222,7 @@ export default defineConfig(async ({ command, mode }) => {
     });
   return {
     plugins,
-    resolve: { alias: diffHighlighterAliases },
+    resolve: { alias: [entityDecoderAlias, ...diffHighlighterAliases] },
     define: {
       "import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_REVISION": JSON.stringify(
         frontendIdentity.revision ?? "",

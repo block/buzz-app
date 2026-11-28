@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  composerGroup,
+  groupKeeping,
+  groupLabelHolds,
+  readerNames,
+  tokenRecipients,
   composerSchema as schema,
   projectComposerDocument,
   readComposerDocument,
@@ -8,12 +13,13 @@ import {
 import { composerMarkdown } from "./composer-markdown";
 import { profileMentionParts } from "./profile-mentions";
 import { profileTarget } from "../profiles/target";
-import { mentionDraft } from "./mention-draft";
+import { mentionDraft, type DraftRecipient } from "./mention-draft";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import type { Nodes, RootContent } from "mdast";
 import type { InlineFormat } from "./composer-dom";
+import type { Profile } from "../relay/contracts";
 
 const paragraph = (...children: ReturnType<typeof schema.text>[]) =>
   schema.nodes.paragraph.create(null, children);
@@ -735,6 +741,14 @@ describe("inline formatting batch", () => {
       ),
     ).toBe("_@Honey_");
   });
+  it("trusts a group chip only with a one-line label", () => {
+    const members = [{ pubkey: "a".repeat(64), name: "Honey" }];
+    const group = (label: string) =>
+      composerGroup({ label, members }, `@${label}`);
+    expect(group("crew")).not.toBeNull();
+    for (const label of ["crew\n\n# Title", "\u202ecrew", "x".repeat(257)])
+      expect(group(label)).toBeNull();
+  });
   it("escapes literal punctuation in each generated format", () => {
     for (const mark of ["bold", "italic", "strike"] as const)
       for (const character of ["*", "_", "~", "!"]) {
@@ -779,3 +793,295 @@ it.each(["chat", "document"] as const)(
     expect(readComposerDocument(draft, []).eq(original)).toBe(true);
   },
 );
+
+it("a group chip's members keep `explicit` through a saved draft, as a person chip does", () => {
+  const ann = { pubkey: "a".repeat(64), name: "Ann", explicit: true as const };
+  const bo = { pubkey: "b".repeat(64), name: "Bo", explicit: true as const };
+  const saved = mentionDraft(
+    projectComposerDocument(
+      doc(
+        paragraph(
+          schema.nodes.token.create({
+            source: "@Crew",
+            group: { label: "Crew", members: [ann, bo] },
+          }),
+          schema.text(" "),
+          schema.nodes.token.create({ source: "@Ann", recipient: ann }),
+        ),
+      ),
+    ).draft,
+  );
+  expect(
+    projectComposerDocument(
+      readComposerDocument(saved, []),
+    ).draft.recipients.map(({ pubkey, label, explicit }) => [
+      pubkey,
+      label,
+      explicit,
+    ]),
+  ).toEqual([
+    [ann.pubkey, "Crew", true],
+    [bo.pubkey, "Crew", true],
+    [ann.pubkey, undefined, true],
+  ]);
+});
+
+it("a person chip keeps `explicit` when it is rebuilt from the draft text", () => {
+  const ann = { pubkey: "a".repeat(64), name: "Ann", explicit: true as const };
+  const draft = mentionDraft({
+    text: "@Ann ",
+    recipients: [{ ...ann, start: 0, end: 4 }],
+  });
+  expect(
+    projectComposerDocument(
+      readComposerDocument(draft, [{ start: 0, end: 4 }]),
+    ).draft.recipients.map(({ pubkey, explicit }) => [pubkey, explicit]),
+  ).toEqual([[ann.pubkey, true]]);
+});
+
+const honeyA = { pubkey: "a".repeat(64), name: "Honey" };
+const honeyB = { pubkey: "b".repeat(64), name: "Honey" };
+const honey = [honeyA, honeyB];
+const maryJaneAndWes = [
+  { pubkey: "a".repeat(64), name: "Mary Jane" },
+  { pubkey: "b".repeat(64), name: "Wes" },
+];
+it.each([
+  ["Team 42", honey, true],
+  ["24-7", honey, true],
+  ["eng-oncall", honey, true],
+  ["a-b-c", honey, true],
+  ["हिंदी टीम", honey, true],
+  ["हिंदी-टीम", honey, true],
+  ["ทีมไทย", honey, true],
+  ["Cafe\u0301 crew", honey, true],
+  ["eng_ios", honey, false],
+  ["-ops", honey, false],
+  ["ops-", honey, false],
+  ["a--b", honey, false],
+  ["a - b", honey, false],
+  ["Honey team", honey, false],
+  ["Honey-crew", honey, false],
+  ["Mary crew", maryJaneAndWes, false],
+  ["mary crew", maryJaneAndWes, false],
+  ["MARY CREW", maryJaneAndWes, false],
+  ["Mary-crew", maryJaneAndWes, false],
+  ["Marys crew", maryJaneAndWes, true],
+  ["Crew Mary", maryJaneAndWes, true],
+  ["Wesley team", maryJaneAndWes, true],
+  ["ÉMILE crew", [{ pubkey: "a".repeat(64), name: "Émile Durand" }], false],
+  ["ſam crew", [{ pubkey: "a".repeat(64), name: "Sam Lee" }], false],
+  ["Ann team", [{ pubkey: "a".repeat(64), name: "Ann\tLee" }], false],
+  ["Ann crew", [{ pubkey: "a".repeat(64), name: " Ann Lee" }], false],
+  ["Ann squad", [{ pubkey: "a".repeat(64), name: "Ann\u0085" }], false],
+  [" ann pals", [{ pubkey: "a".repeat(64), name: " Ann" }], false],
+  ["Rene\u0301 fans", [{ pubkey: "a".repeat(64), name: "Rene" }], false],
+  ["Crew", [{ pubkey: "a".repeat(64), name: "C++" }], true],
+])(
+  "the group label %s holds only when it is plain text and no reader binds a member's name or first word at its start",
+  (label, people, holds) => {
+    expect(groupLabelHolds(label, people)).toBe(holds);
+  },
+);
+
+const crew = { label: "Crew", members: honey };
+it.each<[string, string[], ReturnType<typeof groupKeeping>]>([
+  [
+    "some members left",
+    ["a".repeat(64)],
+    { label: "Crew", members: honey.slice(0, 1) },
+  ],
+  ["none left", [], null],
+  ["nothing removed", ["a".repeat(64), "b".repeat(64)], crew],
+])("a group keeping its members: %s", (_case, keep, expected) => {
+  const kept = groupKeeping(crew, (pubkey) => keep.includes(pubkey));
+  expect(kept).toEqual(expected);
+  expect(kept === crew).toBe(expected === crew);
+});
+
+const onCrew = (person: typeof honeyA, label = "Crew") => ({
+  ...person,
+  label,
+  start: 0,
+  end: label.length + 1,
+});
+it.each<[string, DraftRecipient[], string, ReturnType<typeof tokenRecipients>]>(
+  [
+    [
+      "one recipient",
+      [{ ...honeyA, start: 0, end: 6 }],
+      "@Honey",
+      { recipient: { ...honeyA, start: 0, end: 6 }, group: null },
+    ],
+    [
+      "a labelled group",
+      [onCrew(honeyA), onCrew(honeyB)],
+      "@Crew",
+      { recipient: null, group: { label: "Crew", members: honey } },
+    ],
+    [
+      "the same person twice counts once",
+      [onCrew(honeyA), onCrew(honeyA), onCrew(honeyB)],
+      "@Crew",
+      { recipient: null, group: { label: "Crew", members: honey } },
+    ],
+    [
+      "a label that fails composerGroup gives neither",
+      [onCrew(honeyA, "Crew\u0007"), onCrew(honeyB, "Crew\u0007")],
+      "@Crew\u0007",
+      { recipient: null, group: null },
+    ],
+    [
+      "a recipient with another start or end is not on the range",
+      [
+        { ...honeyA, start: 0, end: 11 },
+        { ...honeyB, start: 1, end: 6 },
+      ],
+      "@Honey",
+      { recipient: null, group: null },
+    ],
+  ],
+)("a source token's recipients: %s", (_case, recipients, source, expected) => {
+  expect(
+    tokenRecipients(recipients, source, { start: 0, end: source.length }),
+  ).toStrictEqual(expected);
+});
+
+const viewer = "c".repeat(64);
+const [mary, ops] = ["a".repeat(64), "b".repeat(64)];
+const verified = {
+  displayName: "MJ",
+  username: "mj",
+  fullName: "Mary Jane Jones",
+  issuerLabel: "Example",
+  verifiedAt: 1,
+  status: "checked" as const,
+  multipleIssuers: false,
+};
+it.each<
+  [
+    string,
+    Record<string, Profile>,
+    object | undefined,
+    { viewer?: string; members?: string[] },
+    string[][],
+  ]
+>([
+  ["the shown name", {}, undefined, {}, [[mary, "Mary"]]],
+  [
+    "both verified names",
+    { [mary]: { name: "Mary", verified } },
+    undefined,
+    {},
+    [
+      [mary, "Mary"],
+      [mary, "MJ"],
+      [mary, "Mary Jane Jones"],
+    ],
+  ],
+  [
+    "the self-set name",
+    {},
+    { name: "Mo Jones" },
+    {},
+    [
+      [mary, "Mary"],
+      [mary, "Mo Jones"],
+    ],
+  ],
+  [
+    "the fallback name",
+    {},
+    { about: "no name" },
+    {},
+    [
+      [mary, "Mary"],
+      [mary, "aaaaaaaaaa"],
+    ],
+  ],
+  [
+    "the raw name mobile reads",
+    {},
+    { display_name: "Ann Lee\u200e", name: "alee" },
+    {},
+    [
+      [mary, "Mary"],
+      [mary, "alee"],
+      [mary, "Ann Lee\u200e"],
+    ],
+  ],
+  [
+    "the raw name mobile reads with no display name",
+    {},
+    { name: "Ann Lee\u200e" },
+    {},
+    [
+      [mary, "Mary"],
+      [mary, "aaaaaaaaaa"],
+      [mary, "Ann Lee\u200e"],
+    ],
+  ],
+  [
+    "each name once",
+    {
+      [mary]: { name: "Mary", verified: { ...verified, displayName: "Mary" } },
+    },
+    { display_name: "Mary" },
+    {},
+    [
+      [mary, "Mary"],
+      [mary, "Mary Jane Jones"],
+    ],
+  ],
+  [
+    "a one-to-one DM's agent partner",
+    { [ops]: { name: "Ops", isAgent: true } },
+    undefined,
+    { viewer, members: [viewer, ops] },
+    [
+      [mary, "Mary"],
+      [ops, "Ops"],
+    ],
+  ],
+  [
+    "no human partner",
+    { [ops]: { name: "Wes" } },
+    undefined,
+    { viewer, members: [viewer, ops] },
+    [[mary, "Mary"]],
+  ],
+  [
+    "no partner in a DM without the viewer",
+    { [ops]: { name: "Ops", isAgent: true } },
+    undefined,
+    { viewer, members: [mary, ops] },
+    [[mary, "Mary"]],
+  ],
+  [
+    "no partner in a group DM",
+    { [ops]: { name: "Ops", isAgent: true } },
+    undefined,
+    { viewer, members: [viewer, ops, "d".repeat(64)] },
+    [[mary, "Mary"]],
+  ],
+])("a reader may bind %s", (_case, profiles, own, dm, entries) => {
+  expect(
+    readerNames(
+      [{ pubkey: mary, name: "Mary" }],
+      new Map(Object.entries(profiles)),
+      (pubkey) =>
+        own && pubkey === mary
+          ? {
+              id: "e".repeat(64),
+              pubkey,
+              created_at: 1,
+              kind: 0,
+              content: JSON.stringify(own),
+              tags: [],
+            }
+          : undefined,
+      dm.viewer,
+      dm.members,
+    ).map(({ pubkey, name }) => [pubkey, name]),
+  ).toEqual(entries);
+});

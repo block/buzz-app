@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { startingChatTitle } from "./chat-title";
+import { isStartingChatTitle, startingChatTitle } from "./chat-title";
 import { mentionDraft } from "../messages/mention-draft";
 import { typedDraft } from "../messages/composer-testing";
 
@@ -73,4 +73,31 @@ it("drops leading namesake tags with their full-key qualifiers", () => {
     mentionDraft({ text: "@Jitter @Jitter fix the build", recipients: [a, b] }),
   );
   expect(startingChatTitle(draft)).toBe("fix the build");
+});
+
+it("keeps a leading group tag, so Solo naming matches the sent text", () => {
+  const member = (pubkey: string, name: string, label: string) => ({
+    pubkey: pubkey.repeat(64),
+    name,
+    label,
+    start: 0,
+    end: label.length + 1,
+  });
+  const title = (text: string, label: string) =>
+    startingChatTitle(
+      typedDraft(
+        mentionDraft({
+          text,
+          recipients: [member("a", "Ann", label), member("b", "Bo", label)],
+        }),
+      ),
+    );
+  expect(title("@crew do X", "crew")).toBe("@crew do X");
+  expect(
+    isStartingChatTitle(title("@crew do X", "crew"), {
+      text: "@crew do X",
+      recipients: [],
+    }),
+  ).toBe(true);
+  expect(title("@Ann's team do X", "Ann's team")).toBe("@Ann's team do X");
 });

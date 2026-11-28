@@ -4876,7 +4876,7 @@ it("keeps retained recipients in place while adding and removing others", () => 
   expect(h.input).toHaveValue("ask @Honey about X");
 });
 
-it("rejects adding a recipient when retained duplicate mentions fill the limit", () => {
+it("counts a person mentioned many times once against the recipient limit", () => {
   const first = { pubkey: "a".repeat(64), name: "Honey" };
   const text = "@Honey ".repeat(32);
   const h = mount({
@@ -4893,9 +4893,9 @@ it("rejects adding a recipient when retained duplicate mentions fill the limit",
         first,
         { pubkey: "b".repeat(64), name: "Mary Jane" },
       ]),
-    ).toBe(false),
+    ).toBe(true),
   );
-  expect(h.input).toHaveValue(text);
+  expect(h.input).toHaveValue(`@Mary Jane ${text}`);
 });
 
 it("toggles inline code, quote and code block with Slack's chords as well as Buzz's", async () => {
@@ -5059,5 +5059,115 @@ describe("quoting timeline content", () => {
     });
     expect(onPasteTooLong).toHaveBeenCalledOnce();
     expect(h.markdown()).toBe("keep");
+  });
+});
+
+describe("group chip", () => {
+  const ann = { pubkey: "1".repeat(64), name: "Ann" };
+  const bo = { pubkey: "2".repeat(64), name: "Bo" };
+  const crew = { label: "crew", members: [ann, bo] };
+  const on = (start: number, ...people: (typeof ann)[]) =>
+    people.map((person) => ({
+      ...person,
+      label: "crew",
+      start,
+      end: start + "@crew".length,
+    }));
+  const add = (h: ReturnType<typeof mount>, group = crew) => {
+    let result: boolean | "typed" = false;
+    act(() => {
+      result = h.input.insertText("", group);
+    });
+    return result;
+  };
+
+  it("inserts one chip, sent as `@label`, whose span names every member", () => {
+    const h = mount();
+    expect(add(h)).toBe(true);
+    expect(h.markdown()).toBe("@crew ");
+    expect(h.input.querySelectorAll("[data-mention]")).toHaveLength(1);
+    expect(h.draft().recipients).toEqual(on(0, ann, bo));
+  });
+
+  it("is only its text in a code block", () => {
+    const h = mount();
+    act(() => h.input.toggleFormat("code_block"));
+    expect(add(h)).toBe(true);
+    expect(h.input).toHaveValue("@crew ");
+    expect(h.draft().recipients).toEqual([]);
+  });
+
+  it("keeps its members through edits and restores, and is text without them", async () => {
+    const h = mount();
+    add(h);
+    await h.user.keyboard("hi");
+    expect(h.markdown()).toBe("@crew hi");
+    expect(h.draft().recipients).toEqual(on(0, ann, bo));
+    const { text, recipients } = h.draft();
+    for (const saved of [h.draft(), mentionDraft({ text, recipients })]) {
+      const restored = mount(saved);
+      expect(restored.draft().recipients).toEqual(on(0, ann, bo));
+      expect(restored.markdown()).toBe("@crew hi");
+      expect(restored.input.querySelectorAll("[data-mention]")).toHaveLength(1);
+      act(() => restored.input.replaceRecipients([]));
+      expect(restored.draft().recipients).toEqual([]);
+      expect(restored.markdown()).toBe("@crew hi");
+      expect(restored.input.querySelector("[data-mention]")).toBeNull();
+    }
+  });
+
+  it("drops a removed member, and is text after the last", () => {
+    const h = mount();
+    add(h);
+    act(() => h.input.removeRecipient(ann.pubkey));
+    expect(h.draft().recipients).toEqual(on(0, bo));
+    act(() => h.input.removeRecipient(bo.pubkey));
+    expect(h.draft().recipients).toEqual([]);
+    expect(h.markdown()).toBe("@crew ");
+    expect(h.input.querySelector("[data-mention]")).toBeNull();
+  });
+
+  it("keeps the requested members when recipients are replaced", () => {
+    const h = mount();
+    add(h);
+    act(() => expect(h.input.replaceRecipients([bo])).toBe(true));
+    expect(h.draft().recipients).toEqual(on(0, bo));
+    act(() => expect(h.input.replaceRecipients([ann])).toBe(true));
+    expect(h.draft().recipients).toEqual([{ ...ann, start: 0, end: 4 }]);
+    expect(h.markdown()).toBe("@Ann @crew ");
+  });
+
+  it("keeps its members inside a new link, as a person's chip does", () => {
+    const url = "https://example.com/notes";
+    const h = mount("Check the ");
+    add(h);
+    act(() => h.input.insertText("notes"));
+    act(() => h.input.setSelectionRange(10, 21));
+    paste(h.input, url);
+    expect(h.markdown()).toBe(`Check the [@crew notes](${url})`);
+    expect(h.draft().recipients).toEqual(on(10, ann, bo));
+  });
+
+  it("notifies no one once a letter joins its label", async () => {
+    const h = mount();
+    add(h);
+    act(() => h.input.setSelectionRange(5, 6));
+    await h.user.keyboard("s");
+    expect(h.markdown()).toBe("@crews");
+    expect(h.draft().recipients).toEqual([]);
+  });
+
+  it("counts distinct people against the 32-recipient cap", () => {
+    const people = Array.from({ length: 32 }, (_, i) => ({
+      pubkey: i.toString(16).padStart(64, "0"),
+      name: `P${i}`,
+    }));
+    const h = mount();
+    expect(add(h, { label: "crew", members: people })).toBe(true);
+    act(() => expect(h.input.insertText("", people[0])).toBe(true));
+    expect(add(h, { label: "crew", members: [people[1] ?? ann] })).toBe(true);
+    act(() => expect(h.input.insertText("", [ann])).toBe(false));
+    expect(add(h, { label: "crew", members: [ann] })).toBe(false);
+    expect(new Set(h.draft().recipients.map((r) => r.pubkey)).size).toBe(32);
   });
 });

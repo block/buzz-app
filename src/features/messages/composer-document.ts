@@ -9,11 +9,17 @@ import { composerLinkUrl } from "./composer-link";
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
 import type {
   MentionDraft,
+  MentionRecipient,
   DraftRecipient,
   PendingMention,
 } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
+import { profileMentionNames, profileMentionParts } from "./profile-mentions";
+import { foldProfiles } from "../relay/profiles";
+import type { Profile } from "../relay/contracts";
+import type { EventData } from "../relay/events";
 import {
+  chipLabel,
   composerToken,
   composerTokenText,
   type ComposerToken,
@@ -153,6 +159,9 @@ export const composerSchema = new Schema<
       attrs: {
         source: {},
         recipient: { default: null },
+        /** `{ label, members }` for one chip that mentions several people:
+         * `source` is `@label`, and `recipient` stays null. */
+        group: { default: null },
         /** Host-owned `{ uri, label }`; valid only while `source` is its link. */
         resource: { default: null },
         /** A `ComposerToken` whose label is `source`; never a recipient. */
@@ -263,6 +272,150 @@ export function markdownRanges(text: string) {
   return { literal };
 }
 
+export type ComposerGroup = Readonly<{
+  label: string;
+  members: readonly MentionRecipient[];
+}>;
+/** A group chip's attribute as the editor may trust it: a label its `source`
+ * is `@label` of, and 1 to 32 distinct, well-formed members. Anything else is
+ * prose. */
+export function composerGroup(value: unknown, source: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const { label, members } = value as Record<string, unknown>;
+  if (
+    !chipLabel(label) ||
+    source !== `@${label}` ||
+    !Array.isArray(members) ||
+    !members.length ||
+    members.length > 32 ||
+    members.some(
+      (member) =>
+        !member ||
+        typeof member.pubkey !== "string" ||
+        !/^[0-9a-f]{64}$/.test(member.pubkey) ||
+        typeof member.name !== "string" ||
+        !member.name.trim(),
+    ) ||
+    new Set(members.map((member) => member.pubkey)).size < members.length
+  )
+    return null;
+  return value as ComposerGroup;
+}
+/** `group` with only the members `keep` admits: itself when it loses none,
+ * `null` when none are left. */
+export function groupKeeping(
+  group: ComposerGroup,
+  keep: (pubkey: string) => boolean,
+) {
+  const members = group.members.filter((member) => keep(member.pubkey));
+  if (members.length === group.members.length) return group;
+  return members.length ? { label: group.label, members } : null;
+}
+/** Whether `@label` reads as one group to whoever gets it: letters, digits
+ * and spaces, a hyphen only between two of them, in which no reader binds
+ * any of `people`. This app's reader matches a whole name; mobile's matches
+ * a name or its first word, as written or trimmed, at the start, in any
+ * case, where a word ends. */
+export function groupLabelHolds(
+  label: string,
+  people: readonly MentionRecipient[],
+) {
+  return (
+    /^(?:[\p{L}\p{M}\p{N} ]|(?<=[\p{L}\p{M}\p{N}])-(?=[\p{L}\p{N}]))+$/u.test(
+      label,
+    ) &&
+    !people.some((person) =>
+      profileMentionParts(
+        {
+          content: `@${label}`,
+          mentions: [person.pubkey],
+          mentionLabels: [{ id: person.pubkey, names: [person.name] }],
+        },
+        undefined,
+      ).some((part) => part.target),
+    ) &&
+    !people.some((person) =>
+      [person.name, person.name.replace(/^[\s\u0085]+|[\s\u0085]+$/g, "")]
+        .flatMap((name) => [name, name.split(/\s+/)[0]])
+        .some(
+          (name) =>
+            !!name &&
+            new RegExp(
+              `^${name.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&")}(?![\\p{L}\\p{M}\\p{N}])`,
+              "iu",
+            ).test(label),
+        ),
+    )
+  );
+}
+function mobileName(content: string) {
+  try {
+    const body = JSON.parse(content) as Record<string, unknown> | null;
+    const name =
+      typeof body?.display_name === "string" ? body.display_name : body?.name;
+    return typeof name === "string" ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** Every name a reader may bind to each of `people`, and to a 1:1 DM's agent
+ * partner, whom the relay tags: the shown name, the verified names, the name
+ * set on their own profile or the key prefix shown when it sets none and, as
+ * mobile reads it, that profile's raw `display_name` or else `name`. */
+export function readerNames(
+  people: readonly MentionRecipient[],
+  profiles: ReadonlyMap<string, Profile>,
+  ownProfile: (pubkey: string) => EventData | undefined,
+  viewer?: string,
+  dmMembers: readonly string[] = [],
+) {
+  const partners =
+    viewer && dmMembers.length === 2 && dmMembers.includes(viewer)
+      ? dmMembers.flatMap((pubkey) => {
+          const profile = profiles.get(pubkey);
+          return pubkey !== viewer && profile?.isAgent
+            ? [{ pubkey, name: profile.name }]
+            : [];
+        })
+      : [];
+  return [...people, ...partners].flatMap(({ pubkey, name }) => {
+    const event = ownProfile(pubkey);
+    const own = event && foldProfiles([event]).get(pubkey);
+    return [
+      ...new Set([
+        name,
+        ...profileMentionNames(profiles.get(pubkey)),
+        own?.name,
+        event && mobileName(event.content),
+      ]),
+    ].flatMap((each) => (each ? [{ pubkey, name: each }] : []));
+  });
+}
+/** A source token's recipient attributes from the draft's recipients on its
+ * range: every labelled one as a group, else the one recipient. */
+export function tokenRecipients(
+  recipients: readonly DraftRecipient[],
+  source: string,
+  range: { start: number; end: number },
+) {
+  const on = recipients.filter(
+    (item) => item.start === range.start && item.end === range.end,
+  );
+  const label = on.find((item) => item.label !== undefined)?.label;
+  if (label === undefined) return { recipient: on[0] ?? null, group: null };
+  const members = new Map(
+    on
+      .filter((item) => item.label === label)
+      .map(({ pubkey, name, explicit }) => [
+        pubkey,
+        { pubkey, name, ...(explicit ? { explicit } : {}) },
+      ]),
+  );
+  return {
+    recipient: null,
+    group: composerGroup({ label, members: [...members.values()] }, source),
+  };
+}
 /** Draft text stays the editing/completion coordinate space. Formatting metadata
  * is local authoring state; message publication serializes it separately. */
 export function readComposerDocument(
@@ -298,6 +451,7 @@ export function readComposerDocument(
           return composerSchema.text(node.attrs.source, marks);
         const resource = composerResource(node.attrs.resource);
         const semantic = composerToken(node.attrs.semantic);
+        const group = composerGroup(node.attrs.group, node.attrs.source);
         return node.type.create(
           {
             ...node.attrs,
@@ -306,9 +460,15 @@ export function readComposerDocument(
                 ? semantic
                 : null,
             recipient:
-              node.attrs.recipient && valid(node.attrs.recipient)
+              !group && node.attrs.recipient && valid(node.attrs.recipient)
                 ? node.attrs.recipient
                 : null,
+            group:
+              group &&
+              tokenRecipients(draft.recipients, node.attrs.source, {
+                start,
+                end,
+              }).group,
             resource:
               resource &&
               resource.source === node.attrs.source &&
@@ -339,14 +499,12 @@ export function readComposerDocument(
   while (offset < draft.text.length) {
     const token = tokens.find((token) => token.start === offset);
     if (token) {
+      const source = draft.text.slice(token.start, token.end);
       nodes.push(
         composerSchema.nodes.token.create({
-          source: draft.text.slice(token.start, token.end),
+          source,
           editAsText: !!token.editAsText,
-          recipient:
-            draft.recipients.find(
-              (item) => item.start === token.start && item.end === token.end,
-            ) ?? null,
+          ...tokenRecipients(draft.recipients, source, token),
         }),
       );
       offset = token.end;
@@ -557,7 +715,18 @@ function project(doc: EditorNode) {
         node,
         editAsText: node.attrs.editAsText,
       });
-      if (node.attrs.recipient)
+      const group = composerGroup(node.attrs.group, node.attrs.source);
+      if (group)
+        for (const { pubkey, name, explicit } of group.members)
+          recipients.push({
+            pubkey,
+            name,
+            label: group.label,
+            ...(explicit ? { explicit } : {}),
+            start,
+            end: text.length,
+          });
+      else if (node.attrs.recipient)
         recipients.push({ ...node.attrs.recipient, start, end: text.length });
       if (node.attrs.pending)
         pending.push({ ...node.attrs.pending, start, end: text.length });
@@ -610,6 +779,7 @@ function project(doc: EditorNode) {
 export function composerMarkdownContext(
   doc: EditorNode,
   source = projectComposerDocument(doc),
+  links = true,
 ) {
   let text = source.draft.text;
   const protectedRanges: SourceRange[] = [];
@@ -622,6 +792,7 @@ export function composerMarkdownContext(
       text.slice(start, end).replace(/[^\r\n]/g, "x") +
       text.slice(end);
   };
+  const { code, link, literal } = composerSchema.marks;
   doc.descendants((node, position) => {
     if (node.type.name === "markdown_table") {
       mask(position, position + node.nodeSize);
@@ -633,9 +804,8 @@ export function composerMarkdownContext(
     }
     if (
       node.isInline &&
-      (["code", "link", "literal"] as const).some((name) =>
-        composerSchema.marks[name].isInSet(node.marks),
-      )
+      (code.isInSet(node.marks) ||
+        (link.isInSet(node.marks) ? links : literal.isInSet(node.marks)))
     )
       mask(position, position + node.nodeSize);
   });
@@ -715,6 +885,7 @@ function read(
           !token ||
           composerTokenText(token) !== node.attrs.source ||
           ("recipient" in node.attrs && node.attrs.recipient) ||
+          ("group" in node.attrs && node.attrs.group) ||
           ("resource" in node.attrs && node.attrs.resource) ||
           ("pending" in node.attrs && node.attrs.pending)
         )

@@ -43,20 +43,19 @@ export function soloRecipients(
 
 /** Solo, alone with agents: who a draft addresses. A draft that opens with a
  * tag is for the agents it tags; a tag further in joins the toolbar's agents.
- * `named` tells a notifying tag from a reference, which never opens one. */
+ * `named` tells a notifying tag from a reference, which never opens one. A
+ * group chip tags each member at one place, so it opens the draft when any
+ * member is named. */
 export function soloAudience<T extends Readonly<{ pubkey: string }>>(
   text: string,
   typed: readonly (T & Readonly<{ start: number }>)[],
   toolbar: readonly T[],
   named: (pubkey: string) => boolean,
 ): { opensWithTag: boolean; recipients: readonly T[] } {
-  const first = typed.reduce<(typeof typed)[number] | undefined>(
-    (earliest, item) =>
-      !earliest || item.start < earliest.start ? item : earliest,
-    undefined,
-  );
+  const start = Math.min(...typed.map((item) => item.start));
   const opensWithTag =
-    !!first && named(first.pubkey) && !text.slice(0, first.start).trim();
+    typed.some((item) => item.start === start && named(item.pubkey)) &&
+    !text.slice(0, start).trim();
   const recipients = opensWithTag ? typed : [...toolbar, ...typed];
   return {
     opensWithTag,

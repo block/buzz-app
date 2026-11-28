@@ -19,6 +19,7 @@ import { useReferenceDirectory } from "./ReferenceText";
 import {
   readComposerSnapshot,
   composerMarkdownContext,
+  tokenRecipients,
 } from "./composer-document";
 import { messageLinkParts } from "./message-link-parts";
 import { parseBuzzLink } from "../navigation/buzz-links";
@@ -101,6 +102,29 @@ const TokenChip = memo(function TokenChip({
             }
           : undefined
       }
+      interactive={false}
+    />
+  );
+});
+
+const GroupChip = memo(function GroupChip({
+  label,
+  names,
+  count,
+}: {
+  label: string;
+  names: string;
+  count: number;
+}) {
+  return (
+    <InlineChip
+      address={{ kind: "person", id: label }}
+      kindName="Group"
+      face={{ label, loading: false, resolved: true }}
+      qualifier={{
+        text: `· ${count}`,
+        accessibleLabel: `${count} ${count === 1 ? "recipient" : "recipients"}: ${names}`,
+      }}
       interactive={false}
     />
   );
@@ -378,6 +402,26 @@ export function RichComposerInput({
         const preview = gifPreviews.get(start);
         if (preview && preview.end === end && !mention)
           return { start, end, editAsText: false, content: preview.content };
+        const { group } = tokenRecipients(
+          draft.recipients,
+          draft.text.slice(start, end),
+          { start, end },
+        );
+        if (group)
+          return {
+            start,
+            end,
+            editAsText: false,
+            content: (
+              <GroupChip
+                label={group.label}
+                names={group.members
+                  .map((item) => labels.get(item.pubkey) ?? item.name)
+                  .join(", ")}
+                count={group.members.length}
+              />
+            ),
+          };
         const profile = mention ? undefined : profileLinks.get(start);
         const identity = mention ?? profile?.pubkey;
         const label = profile?.label ?? draft.text.slice(start + 1, end);

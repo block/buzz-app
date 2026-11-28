@@ -10,6 +10,14 @@ export type ComposerToken = Readonly<
   ) & { readonly [key: string]: JsonValue | undefined }
 >;
 
+/** A chip's label: one line, at most 256 characters, with no control or
+ * bidirectional override characters. */
+export const chipLabel = (label: unknown): label is string =>
+  typeof label === "string" &&
+  !!label.trim() &&
+  label.length <= 256 &&
+  !/[\p{Cc}\u202a-\u202e\u2066-\u2069]/u.test(label);
+
 /** Copy only bounded JSON. A provider cannot retain mutable editor metadata or
  * turn a token into a recipient through a label, prototype or callback. */
 export function composerToken(value: unknown): ComposerToken | undefined {
@@ -25,10 +33,7 @@ export function composerToken(value: unknown): ComposerToken | undefined {
       !token.id ||
       token.id.length > 4096 ||
       /\p{Cc}/u.test(token.id) ||
-      typeof token.label !== "string" ||
-      !token.label.trim() ||
-      token.label.length > 256 ||
-      /[\p{Cc}\u202a-\u202e\u2066-\u2069]/u.test(token.label)
+      !chipLabel(token.label)
     )
       return;
     if (token.kind === "skill") {

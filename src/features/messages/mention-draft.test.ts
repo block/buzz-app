@@ -5,6 +5,7 @@ import {
   legacyFollowupDraft,
   mentionDraft,
   followupDraft,
+  sentDraft,
 } from "./mention-draft";
 import { typedDraft } from "./composer-testing";
 import { composerMarkdown } from "./composer-markdown";
@@ -251,4 +252,116 @@ it("sends chips of different keys sharing a name as `@Name (<hex>)`, others bare
       projectComposerDocument(schema.nodes.doc.create(null, coded)).draft,
     ),
   ).toBe(`@Honey (${"a".repeat(64)}) \`@Honey\``);
+});
+it("keeps a group's members only on the exact text `@label`", () => {
+  const crew = (label: string, text = "@crew hi", end = 5) =>
+    mentionDraft({
+      text,
+      recipients: [
+        { ...first, label, start: 0, end },
+        { ...second, label, start: 0, end },
+      ],
+    });
+  expect(crew("crew").recipients).toEqual([
+    { ...first, label: "crew", start: 0, end: 5 },
+    { ...second, label: "crew", start: 0, end: 5 },
+  ]);
+  expect(crew("team").recipients).toEqual([]);
+  expect(crew("crew", "@crews hi").recipients).toEqual([]);
+  expect(addressingOnly(crew("crew", "@crew "))).toBe(true);
+  expect(addressingOnly(crew("crew"))).toBe(false);
+});
+it("the recipient cap counts distinct people, keeping each one's spans", () => {
+  const people = Array.from({ length: 33 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: "x",
+  }));
+  const restored = mentionDraft({
+    text: "@all @x",
+    recipients: [
+      ...people.map((person) => ({
+        ...person,
+        label: "all",
+        start: 0,
+        end: 4,
+      })),
+      { ...people[0], start: 5, end: 7 },
+    ],
+  }).recipients;
+  expect(new Set(restored.map((item) => item.pubkey)).size).toBe(32);
+  expect(
+    restored.filter((item) => item.pubkey === people[0]?.pubkey),
+  ).toHaveLength(2);
+});
+it("a sent group whose label no longer holds is one chip per member, each keeping its explicit pick", () => {
+  const mary = {
+    pubkey: "5".repeat(64),
+    name: "Mary",
+    explicit: true as const,
+  };
+  const wes = { pubkey: "6".repeat(64), name: "Wes" };
+  const saved = typedDraft({
+    text: "@*ops* hi",
+    recipients: [mary, wes].map((person) => ({
+      ...person,
+      label: "*ops*",
+      start: 0,
+      end: 6,
+    })),
+  });
+  expect(sentDraft(saved, saved.recipients).recipients).toEqual([
+    { ...mary, start: 0, end: 5 },
+    { ...wes, start: 6, end: 10 },
+  ]);
+});
+const crewMary = { pubkey: "5".repeat(64), name: "Mary" };
+const crewWes = { pubkey: "6".repeat(64), name: "Wes" };
+it.each([
+  [
+    false,
+    "@crew hi",
+    [crewMary, crewWes].map((person) => ({
+      ...person,
+      label: "crew",
+      start: 0,
+      end: 5,
+    })),
+  ],
+  [
+    true,
+    "@Mary @Wes hi",
+    [
+      { ...crewMary, start: 0, end: 5 },
+      { ...crewWes, start: 6, end: 10 },
+    ],
+  ],
+])(
+  "a sent group whose label holds is one chip, or one chip per member when every group is split (every: %s)",
+  (every, text, recipients) => {
+    const saved = typedDraft({
+      text: "@crew hi",
+      recipients: [crewMary, crewWes].map((person) => ({
+        ...person,
+        label: "crew",
+        start: 0,
+        end: 5,
+      })),
+    });
+    const sent = sentDraft(saved, saved.recipients, every);
+    expect([sent.text, sent.recipients]).toEqual([text, recipients]);
+  },
+);
+it("a saved group whose label has a control character, which no chip holds, is sent as text that tags nobody", () => {
+  const text = "@crew\u0007 hi";
+  const saved = mentionDraft({
+    text,
+    recipients: [first, second].map((person) => ({
+      ...person,
+      label: "crew\u0007",
+      start: 0,
+      end: 6,
+    })),
+  });
+  const sent = sentDraft(saved, saved.recipients);
+  expect([sent.text, sent.recipients]).toEqual([text, []]);
 });

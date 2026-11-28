@@ -137,4 +137,15 @@ it("a draft that opens with a tag is for its tags; a later tag joins the toolbar
   });
   // No tags: the toolbar's agents.
   expect(soloAudience("hi", [], [ada], named).recipients).toEqual([ada]);
+  expect(
+    soloAudience(
+      "@Crew hi",
+      [{ ...reference, end: 5 }, tag(bea, 0)],
+      [ada],
+      named,
+    ),
+  ).toEqual({
+    opensWithTag: true,
+    recipients: [{ ...reference, end: 5 }, tag(bea, 0)],
+  });
 });

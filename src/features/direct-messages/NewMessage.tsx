@@ -32,7 +32,11 @@ import {
   type AttachmentDraft,
 } from "../messages/attachment-draft";
 import { MessageComposer } from "../messages/MessageComposer";
-import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
+import {
+  distinctRecipients,
+  mentionDraft,
+  type MentionDraft,
+} from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
 import type { MessageIntent } from "../channel-navigation/routes";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -453,7 +457,9 @@ export function NewMessage({
             session.messages.send(
               id,
               content,
-              draft.recipients.map((person) => person.pubkey),
+              distinctRecipients(draft.recipients).map(
+                (person) => person.pubkey,
+              ),
               uploaded,
               {
                 key: recoveryKey,

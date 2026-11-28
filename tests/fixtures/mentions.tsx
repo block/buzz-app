@@ -376,6 +376,9 @@ const plugins = createPluginManager(context, {
                                   { pubkey: first.pubkey, name: "Honey" },
                                   { pubkey: second.pubkey, name: "Honey" },
                                 ],
+                                ...(supplement === "group"
+                                  ? { label: "Crew" }
+                                  : {}),
                               },
                             },
                           ],

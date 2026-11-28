@@ -439,6 +439,12 @@ export type CompletionEdit =
     }>
   | Readonly<{
       mentions: readonly Readonly<{ pubkey: string; name: string }>[];
+      /** One chip `@label` that notifies each of `mentions`, sent as the text
+       * `@label`. Kept only when it is letters, digits and spaces (a hyphen may
+       * sit between two letters or digits) and no name in the draft reads as a
+       * mention inside it; otherwise each of `mentions` is its own chip. In
+       * code only the text goes in, and a message edit adds no recipients. */
+      label?: string;
       text?: never;
       mention?: never;
       pending?: never;

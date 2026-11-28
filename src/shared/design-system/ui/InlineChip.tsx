@@ -36,6 +36,7 @@ export function InlineChip({
   qualifier,
   interactive = true,
   onActivate,
+  kindName,
 }: {
   address: ChipAddress;
   /** Scoped display data supplied by a host that already owns identity lookup. */
@@ -51,11 +52,13 @@ export function InlineChip({
   interactive?: boolean;
   /** An explicit owner-provided action; previews never imply a deep-open. */
   onActivate?: (address: ChipAddress) => void;
+  /** The kind it is announced as, when its address kind's name doesn't fit. */
+  kindName?: string;
 }) {
   const face = useChipFace(address, suppliedFace);
   const Icon = KIND_ICON[address.kind];
   const trigger = CHIP_KIND_TRIGGER[address.kind];
-  const kind = accessibleKind(address.kind);
+  const kind = kindName ?? accessibleKind(address.kind);
 
   const content = (
     <>

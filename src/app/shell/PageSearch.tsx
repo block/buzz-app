@@ -83,7 +83,7 @@ const NEXT_RESULT_ID = "search-next-result";
 const NO_OVERRIDES: ShortcutBindingsSnapshot = { overrides: {}, error: null };
 const noSubscribe = () => () => {};
 const noOverrides = () => NO_OVERRIDES;
-/** How long a closed search keeps its place for the next opening. */
+/** How long a closed empty search keeps its place for the next opening. */
 const SEARCH_MEMORY = 5 * 60_000;
 
 export function PageSearch({
@@ -105,19 +105,14 @@ export function PageSearch({
   const [contentPresent, setContentPresent] = useState(false);
   const [query, setQuery] = useState("");
   const [scopedChannelId, setScopedChannelId] = useState<string>();
-  // Search reopens where it was left, so someone checking channels one by
-  // one returns to the same list. Escape, or a while away, starts fresh, as
-  // does an empty All view while it leads with unread: it shows what is
-  // unread now.
+  // Search always reopens with no text, so the next jump starts from the
+  // full list. An empty search reopens where it was left, so someone checking
+  // channels one by one returns to the same row. Escape, or a while away,
+  // starts fresh, as does the All view while it leads with unread: it shows
+  // what is unread now.
   const place = useRef<SearchPlace>({ top: 0, key: "" });
   const escaped = useRef(false);
-  const remembered = useRef<{
-    query: string;
-    place: SearchPlace;
-    at: number;
-  }>(undefined);
-  // Kept text opens selected, so typing something new replaces it.
-  const selectKept = useRef(false);
+  const remembered = useRef<{ place: SearchPlace; at: number }>(undefined);
   const latest = useRef({ query, scopedChannelId });
   latest.current = { query, scopedChannelId };
   const currentTarget = useSyncExternalStore(
@@ -145,9 +140,9 @@ export function PageSearch({
     if (!next && openRef.current) {
       const { query, scopedChannelId } = latest.current;
       remembered.current =
-        escaped.current || scopedChannelId
+        escaped.current || scopedChannelId || query.trim()
           ? undefined
-          : { query, place: { ...place.current }, at: Date.now() };
+          : { place: { ...place.current }, at: Date.now() };
       escaped.current = false;
     }
     openRef.current = next;
@@ -164,29 +159,12 @@ export function PageSearch({
     const kept =
       memory &&
       Date.now() - memory.at < SEARCH_MEMORY &&
-      (memory.query.trim() || !unreadFirstPreference());
-    setQuery(kept ? memory.query : "");
-    selectKept.current = !!kept && !!memory.query;
+      !unreadFirstPreference();
+    setQuery("");
     place.current = kept ? { ...memory.place } : { top: 0, key: "" };
     setScopedChannelId(undefined);
     setSearchOpen(true);
   }, [setSearchOpen]);
-  useEffect(() => {
-    if (!open || !selectKept.current) return;
-    selectKept.current = false;
-    const field = input.current;
-    if (field instanceof HTMLInputElement && document.activeElement === field)
-      return void field.select();
-    // The field usually mounts and takes focus after the dialog opens.
-    const focused = ({ target }: FocusEvent) => {
-      if (target !== input.current || !(target instanceof HTMLInputElement))
-        return;
-      target.select();
-      document.removeEventListener("focusin", focused);
-    };
-    document.addEventListener("focusin", focused);
-    return () => document.removeEventListener("focusin", focused);
-  }, [open]);
   const beginScoped = useCallback(() => {
     if (!currentChannelId) return;
     // From an open search it narrows what is typed, where it is.

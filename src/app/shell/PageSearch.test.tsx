@@ -1004,7 +1004,6 @@ it("opens a Settings section from overall search, never from a conversation's", 
     // A community section names only its section; select() adds the
     // selected community's scope.
     await user.click(screen.getByRole("button", { name: "Search Buzz" }));
-    // Search reopens on the kept text, selected, so typing replaces it.
     const field = await screen.findByRole("combobox", { name: "Search Buzz" });
     await vi.waitFor(() => expect(field).toHaveFocus());
     await user.keyboard("local settings");
@@ -1552,25 +1551,18 @@ function memorySearch() {
   };
 }
 
-it("reopens with the text it was left on after opening a channel, and fresh after Escape", async () => {
+it("reopens with no text after opening a channel or pressing Escape", async () => {
   const t = memorySearch();
   try {
     await t.open();
     await t.openMatch("crit", /design-crit/);
-    // Back within a few minutes: same text, same rows.
+    // The next jump starts from the full list, not the last search.
     await t.open();
-    expect(t.field()).toHaveValue("crit");
+    expect(t.field()).toHaveValue("");
     expect(
-      await screen.findByRole("option", { name: /design-crit/ }),
+      await screen.findByRole("option", { name: /release-notes/ }),
     ).toBeVisible();
-    expect(screen.queryByRole("option", { name: /release-notes/ })).toBeNull();
-    // The kept text is selected, so new typing replaces it.
-    await waitFor(() => expect(t.field()).toHaveFocus());
-    expect(t.field()).toHaveProperty("selectionStart", 0);
-    expect(t.field()).toHaveProperty("selectionEnd", 4);
-    await userEvent.keyboard("release");
-    expect(t.field()).toHaveValue("release");
-    // Escape means done: the next opening starts fresh.
+    await userEvent.type(t.field(), "release");
     await userEvent.keyboard("{Escape}");
     await t.closed();
     await t.open();
@@ -1580,27 +1572,32 @@ it("reopens with the text it was left on after opening a channel, and fresh afte
   }
 });
 
-it("keeps its place for under five minutes away, and starts fresh from five", async () => {
+it("keeps an empty search's place for under five minutes away, and starts fresh from five", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const t = memorySearch();
   try {
+    setUnreadFirstPreference(false);
     await t.open();
-    await t.openMatch("crit", /design-crit/);
+    await t.recentRows();
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.keyboard("{Enter}");
+    await t.closed();
     // One tick inside the memory: still kept, and this opening is the new
     // one the time away is counted from.
     vi.setSystemTime(Date.now() + 5 * 60_000 - 1);
     await t.open();
-    expect(t.field()).toHaveValue("crit");
-    await userEvent.click(
-      await screen.findByRole("option", { name: /design-crit/ }),
-    );
+    const kept = (await t.recentRows())[0];
+    expect(t.field()).toHaveAttribute("aria-activedescendant", kept?.id);
+    await userEvent.keyboard("{Enter}");
     await t.closed();
     // Exactly five minutes away: the kept place has expired.
     vi.setSystemTime(Date.now() + 5 * 60_000);
     await t.open();
-    expect(t.field()).toHaveValue("");
+    await t.recentRows();
+    expect(t.field()).not.toHaveAttribute("aria-activedescendant");
   } finally {
     vi.useRealTimers();
+    setUnreadFirstPreference(true);
     await t.dispose();
   }
 });

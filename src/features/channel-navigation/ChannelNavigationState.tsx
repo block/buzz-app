@@ -1,5 +1,6 @@
 import {
   ChannelLifecycleDialog,
+  lifecycleFocusFallback,
   lifecycleNoun,
 } from "../../bundled/channels/ChannelLifecycleDialog";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
@@ -70,6 +71,18 @@ type LifecycleCallbacks = {
    * current destination, including a reopened visit to the deleted chat. */
   depart(visit: "origin" | "current"): void;
 };
+
+type FocusOrigin = {
+  trigger?: HTMLElement | undefined;
+  focusFallback?: HTMLElement | undefined;
+};
+/** The action's trigger, or the pane's fallback once the trigger is retired. */
+const focusOrigin = (origin: FocusOrigin | undefined) =>
+  origin?.trigger?.isConnected
+    ? origin.trigger
+    : origin?.focusFallback?.isConnected
+      ? origin.focusFallback
+      : undefined;
 
 type PreparingDm = { existing: Set<string>; members: Set<string | undefined> };
 type State = {
@@ -177,6 +190,9 @@ export function ChannelNavigationProvider({
     session: RelaySession;
     title: string;
     message: string;
+    refresh: boolean;
+    action: ChannelLifecycleAction | undefined;
+    origin: FocusOrigin | undefined;
   }>();
   const activityThread = useRef<ActivityThread | undefined>(undefined);
   const activityAgent = useRef<ActivityAgent | undefined>(undefined);
@@ -299,18 +315,7 @@ export function ChannelNavigationProvider({
                   action,
                   callbacks,
                   ...(trigger ? { trigger } : {}),
-                  // Settings actions can remount after an archive-state change;
-                  // the tab header lives outside the settings aside.
-                  focusFallback:
-                    trigger
-                      ?.closest("[data-panel-workspace]")
-                      ?.querySelector<HTMLElement>(
-                        'button[aria-label="Close Channel settings tab"]',
-                      ) ??
-                    trigger
-                      ?.closest("aside")
-                      ?.querySelector<HTMLElement>("button") ??
-                    undefined,
+                  focusFallback: trigger && lifecycleFocusFallback(trigger),
                   ...(origin ? { origin } : {}),
                 },
               },
@@ -456,14 +461,7 @@ export function ChannelNavigationProvider({
             onSubmit={value.beginLifecycle}
             // Submission closes asynchronously; use the same captured origin
             // as cancellation instead of Base UI's older focus-history entry.
-            finalFocus={() => {
-              const { trigger, focusFallback } = state.lifecycleDialog ?? {};
-              return trigger?.isConnected
-                ? trigger
-                : focusFallback?.isConnected
-                  ? focusFallback
-                  : true;
-            }}
+            finalFocus={() => focusOrigin(state.lifecycleDialog) ?? true}
             close={() => {
               (
                 state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current
@@ -476,13 +474,16 @@ export function ChannelNavigationProvider({
               )?.depart(departOnSubmit ? "current" : "origin");
               endLifecycle(state.lifecycleDialog, true);
             }}
-            failed={(title, message, unconfirmed) => {
+            failed={(title, message, unconfirmed, refresh) => {
               setFailure({
                 session: connection.session,
                 title,
                 message: departOnSubmit
                   ? `${state.lifecycleDialog?.channel.name}: ${message}`
                   : message,
+                refresh,
+                action: state.lifecycleDialog?.action,
+                origin: state.lifecycleDialog,
               });
               endLifecycle(state.lifecycleDialog, unconfirmed);
             }}
@@ -493,7 +494,35 @@ export function ChannelNavigationProvider({
           title={failure.title}
           description={failure.message}
           onDismiss={() => setFailure(undefined)}
-        />
+        >
+          {failure.refresh && (
+            <Button
+              type="button"
+              size="sm"
+              onClick={(event) => {
+                // Read the writer, not a replica that may predate the change.
+                connection.session.channels.refreshList?.({
+                  consistency: "strong",
+                });
+                // Hide's effect is DM visibility, which the list does not read.
+                if (failure.action === "hide")
+                  void connection.session.channelLifecycle.refreshVisibility(
+                    undefined,
+                    { consistency: "strong" },
+                  );
+                // Removing the toast drops its focus. Return it to the failed
+                // action unless the person is already elsewhere; Settings
+                // hands it on if the refresh retires that action.
+                const active = document.activeElement;
+                if (active === event.currentTarget || active === document.body)
+                  focusOrigin(failure.origin)?.focus({ preventScroll: true });
+                setFailure(undefined);
+              }}
+            >
+              Refresh channels
+            </Button>
+          )}
+        </ToastNotice>
       )}
     </ChannelNavigationContext>
   );

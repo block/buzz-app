@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  ChannelLifecycleStale,
   ChannelLifecycleUnconfirmed,
   type ChannelLifecycleCapability,
 } from "../../features/relay/channel-lifecycle";
@@ -174,10 +175,17 @@ it.each([
   [
     "a pause after a possible send",
     new ChannelLifecycleUnconfirmed(new ApiPaused(1000)),
+    { unconfirmed: true, refresh: true },
+  ],
+  [
+    "a permission that changed before sending",
+    new ChannelLifecycleStale("This action is no longer permitted."),
+    { unconfirmed: false, refresh: true },
   ],
   [
     "an unsent publication",
     new PublishNotSent("Relay requests paused; retry in 1s"),
+    { unconfirmed: false, refresh: false },
   ],
   [
     "an untyped error with pause text",
@@ -187,21 +195,32 @@ it.each([
       429,
       1000,
     ),
+    { unconfirmed: false, refresh: false },
   ],
-  ["any other failure", new Error("Relay rejected the request.")],
-])("delete keeps the existing failure report for %s", async (_, error) => {
-  const lifecycle = capability();
-  lifecycle.run.mockRejectedValueOnce(error);
-  const { failed } = mount(lifecycle);
-  fireEvent.click(screen.getByRole("button", { name: "Delete channel" }));
-  await flush();
-  expect(failed).toHaveBeenCalledExactlyOnceWith(
-    "Delete channel failed",
-    error.message,
-    error instanceof ChannelLifecycleUnconfirmed,
-  );
-  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-});
+  [
+    "any other failure",
+    new Error("Relay rejected the request."),
+    { unconfirmed: false, refresh: false },
+  ],
+])(
+  "delete keeps the existing failure report for %s",
+  async (_, error, flags) => {
+    const lifecycle = capability();
+    lifecycle.run.mockRejectedValueOnce(error);
+    const { failed } = mount(lifecycle);
+    fireEvent.click(screen.getByRole("button", { name: "Delete channel" }));
+    await flush();
+    expect(failed).toHaveBeenCalledExactlyOnceWith(
+      "Delete channel failed",
+      error.message,
+      // Only an unconfirmed failure may have been applied; refreshing channels
+      // recovers any stale one, sent or not.
+      flags.unconfirmed,
+      flags.refresh,
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  },
+);
 
 it.each([
   ["leave", "Leave channel"],

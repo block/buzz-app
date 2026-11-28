@@ -21,6 +21,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  dependency_policy:
+    if: github.event_name != 'workflow_dispatch'
+    name: Dependency policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # Metadata and license checks need the pinned tools and crate sources,
+      # but no pnpm install, Tauri system libraries or compiled Rust cache.
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+      - name: Dependency policy
+        run: ./bin/cargo-deny --locked check
+
   javascript_checks:
     if: github.event_name != 'workflow_dispatch'
     name: JavaScript checks
@@ -38,6 +53,7 @@ jobs:
         run: ./bin/pnpm exec vite build
 
   javascript:
+    needs: [dependency_policy]
     if: github.event_name != 'workflow_dispatch'
     name: JavaScript (${{ matrix.shard }}/8)
     runs-on: ubuntu-24.04
@@ -69,6 +85,7 @@ jobs:
           retention-days: 7
 
   agent_protection:
+    needs: [dependency_policy]
     if: github.event_name != 'workflow_dispatch'
     name: Protected agents (macOS)
     runs-on: macos-15
@@ -113,6 +130,7 @@ jobs:
           retention-days: 7
 
   native:
+    needs: [dependency_policy]
     if: github.event_name != 'workflow_dispatch'
     name: Rust and tool integration
     # Select one runner class, shared by native and browser jobs below.
@@ -160,8 +178,6 @@ jobs:
         with:
           key: native
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Dependency policy
-        run: ./bin/cargo-deny --locked check
       - name: Rust formatting
         run: ./bin/cargo fmt --all --check
       - name: Rust lint
@@ -226,6 +242,7 @@ jobs:
         run: cargo test -p Buzz -p buzz-agent-controller -p buzz-credential-store -p buzz-mesh-compute --locked --no-fail-fast
 
   measurements:
+    needs: [dependency_policy]
     if: github.event_name != 'workflow_dispatch'
     name: Browser measurements
     runs-on: ubuntu-24.04
@@ -287,6 +304,7 @@ jobs:
           retention-days: 7
 
   perf_smoke:
+    needs: [dependency_policy]
     if: github.event_name != 'workflow_dispatch'
     name: Perf suite smoke check
     runs-on: ubuntu-24.04
@@ -369,9 +387,9 @@ jobs:
   browser:
     if: github.event_name != 'workflow_dispatch'
     name: Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})
-    # Measurements stay isolated on their own runner, not on our critical path.
-    # CI required still requires their success independently of these jobs.
-    needs: [browser_fixture]
+    # Run policy in parallel with the fixture, before starting paid fanout.
+    # A rejected dependency skips these jobs; CI required still fails closed.
+    needs: [browser_fixture, dependency_policy]
     runs-on: *linux_8core_or_standard
     # Match package.json's Playwright version and pin immutable browser/OS layers.
     container:
@@ -462,6 +480,7 @@ jobs:
           retention-days: 7
 
   media_recorder:
+    needs: [dependency_policy]
     if: github.event_name != 'workflow_dispatch'
     name: WebKit recording (macOS)
     # Playwright disables ENABLE_MEDIA_RECORDER in its GTK/WPE builds.
@@ -514,7 +533,7 @@ jobs:
 
   flake_vitest:
     name: Flake check (Vitest, ${{ matrix.batch }}/2)
-    needs: [flake_select]
+    needs: [flake_select, dependency_policy]
     if: needs.flake_select.outputs.vitest != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -545,7 +564,7 @@ jobs:
 
   flake_browser:
     name: Flake check (${{ matrix.engine }}, ${{ matrix.shard }}/${{ needs.flake_select.outputs.browser_shard_total }})
-    needs: [flake_select, browser_fixture]
+    needs: [flake_select, browser_fixture, dependency_policy]
     if: needs.flake_select.outputs.browser != ''
     runs-on: ubuntu-24.04
     # Match package.json's Playwright version and pin immutable browser/OS layers.
@@ -615,12 +634,13 @@ jobs:
   required:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}
     if: always() && github.event_name != 'workflow_dispatch'
-    needs: [javascript_checks, javascript, native, measurements, perf_smoke, browser_fixture, browser, media_recorder, agent_protection]
+    needs: [dependency_policy, javascript_checks, javascript, native, measurements, perf_smoke, browser_fixture, browser, media_recorder, agent_protection]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every lane and every shard
         env:
+          DEPENDENCY_POLICY: ${{ needs.dependency_policy.result }}
           JAVASCRIPT_CHECKS: ${{ needs.javascript_checks.result }}
           JAVASCRIPT: ${{ needs.javascript.result }}
           NATIVE: ${{ needs.native.result }}
@@ -631,6 +651,6 @@ jobs:
           MEDIA_RECORDER: ${{ needs.media_recorder.result }}
           AGENT_PROTECTION: ${{ needs.agent_protection.result }}
         run: |
-          for result in "$JAVASCRIPT_CHECKS" "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$PERF_SMOKE" "$FIXTURE" "$BROWSER" "$MEDIA_RECORDER" "$AGENT_PROTECTION"; do
+          for result in "$DEPENDENCY_POLICY" "$JAVASCRIPT_CHECKS" "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$PERF_SMOKE" "$FIXTURE" "$BROWSER" "$MEDIA_RECORDER" "$AGENT_PROTECTION"; do
             test "$result" = success || exit 1
           done

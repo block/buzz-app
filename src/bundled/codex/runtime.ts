@@ -4360,7 +4360,7 @@ export class CodexRuntime {
     lane.active = active;
     next?.begin(active);
     const { settings, agent } = request;
-    // A community wake can report its deadline before Codex has stopped.
+    // A community wake can report that it was stopped before Codex has stopped.
     const waitForNative = request.unaddressed !== undefined;
     const followed = follow(
       server.rpc,

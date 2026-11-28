@@ -137,7 +137,7 @@ export async function communityTurn<T>(
   };
   policies.set(COMMUNITY_SESSION, policy);
   // Keep the ordering barrier until prior work drains, even when this caller
-  // has already left because its deadline expired.
+  // has already left because its turn was stopped.
   void policy.settled.then(() => {
     if (policies.get(COMMUNITY_SESSION) !== policy) return;
     policies.delete(COMMUNITY_SESSION);

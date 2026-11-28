@@ -60,7 +60,6 @@ import {
   wakeAnchor,
   wakeLands,
 } from "../agent-harness/plugin-wake";
-import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { CHANNEL_KINDS, LIVE_REPLAY_LIMIT } from "../relay/live";
@@ -3956,11 +3955,10 @@ export class AgentRunners {
           handle,
           trigger,
           delivery.current,
-          (key, prompt) =>
-            standalone(lifetime, (signal) => {
-              woke();
-              return runOnce({ delivery, key, signal, prompt });
-            }),
+          (key, prompt) => {
+            woke();
+            return runOnce({ delivery, key, signal: lifetime, prompt });
+          },
           type.title,
         ),
       );
@@ -4893,30 +4891,6 @@ function guarded<T extends object>(target: T, live: () => void): T {
       ]),
     ),
   ) as T;
-}
-
-/** Runs a standalone turn with a signal that also aborts
- * STANDALONE_DEADLINE_MS after it starts, so the deadline covers the
- * harness's readiness wait as well as the turn. */
-async function standalone<T>(
-  lifetime: AbortSignal,
-  turn: (signal: AbortSignal) => Promise<T>,
-) {
-  const deadline = new AbortController();
-  const timer = setTimeout(
-    () =>
-      deadline.abort(
-        new Error(
-          `The turn ran past its ${STANDALONE_DEADLINE_MS / 1000}s deadline and was stopped`,
-        ),
-      ),
-    STANDALONE_DEADLINE_MS,
-  );
-  try {
-    return await turn(AbortSignal.any([lifetime, deadline.signal]));
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /** Resolves once the selected provider's status is not `checking`. */

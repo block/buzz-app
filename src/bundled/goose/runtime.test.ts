@@ -5045,7 +5045,7 @@ it.each([
   },
 );
 
-it("interrupts an executing community wake when its deadline expires", async () => {
+it("interrupts an executing community wake when it is stopped", async () => {
   const f = setup({ hold: true, scope: "community" });
   const abort = new AbortController();
   const done = f.runtime.runOnce({
@@ -5220,7 +5220,7 @@ it("keeps the active Solo Canvas when a speculative community request is stopped
   }
 });
 
-it("retains a community wake deadline after final publication until native idle", async () => {
+it("retains a stopped community wake after final publication until native idle", async () => {
   const f = setup({ hold: true, scope: "community" });
   f.agent.query.mockResolvedValue([message("1", "origin")]);
   const abort = new AbortController();
@@ -5615,7 +5615,7 @@ it.each(["updated", "cleared"])(
   },
 );
 
-it("reaps an unresponsive Goose community wake after its deadline", async () => {
+it("reaps an unresponsive Goose community wake after it is stopped", async () => {
   const f = setup({ hold: true, scope: "community" });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };
   const abort = new AbortController();

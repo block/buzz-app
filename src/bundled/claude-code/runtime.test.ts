@@ -3165,11 +3165,11 @@ it("stops a one-off turn when its turn signal aborts", async () => {
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
   expect(claude?.killed).toBe(false);
-  // The runner's deadline, as `standalone()` aborts it.
-  turn.abort(new Error("The turn ran past its deadline"));
+  // The agent's removal, as the runner aborts it.
+  turn.abort(new Error("The agent was removed"));
   await expect(workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
     ok: false,
-    error: "The turn ran past its deadline",
+    error: "The agent was removed",
   });
   expect(claude?.killed).toBe(true);
 });
@@ -5507,7 +5507,7 @@ it("retains the Solo Canvas when a stopped source finishes preparation", async (
   }
 });
 
-it("kills community wake execution if its deadline interrupt is refused", async () => {
+it("kills community wake execution if its stop interrupt is refused", async () => {
   const f = setup([], { hold: true });
   const abort = new AbortController();
   const done = f.runtime.runOnce({
@@ -6255,7 +6255,7 @@ it("retains the Solo Canvas after a community turn fails effort admission", asyn
   }
 });
 
-it("reaps an unresponsive Claude community wake after its deadline", async () => {
+it("reaps an unresponsive Claude community wake after it is stopped", async () => {
   const f = setup([], { hold: true });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };
   const abort = new AbortController();

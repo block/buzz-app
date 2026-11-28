@@ -11484,7 +11484,7 @@ it.each(["interrupt", "deadline", "delegated deadline"])(
   },
 );
 
-it("waits for native completion after a community wake deadline", async () => {
+it("waits for native completion after a community wake is stopped", async () => {
   const late: unknown[] = [];
   const terminating = deferred<void>();
   const f = fixture(late, terminating.promise);

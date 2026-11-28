@@ -103,7 +103,8 @@ if that desktop app is up and running.
   identity. Never paste a private key into a chat.
 - **More communities.** Use **Join a community** in the community picker with an
   invite link or address. To bring people in, use **Invite to community** there
-  or in **Membership**.
+  or in **Membership**. An invite's expiry can be **Never expires** on relays
+  that support it.
 - **Phone.** **Settings → Mobile app** signs the phone in with the same account,
   or pairs it with a QR code.
 

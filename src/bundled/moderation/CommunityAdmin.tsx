@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -70,10 +71,14 @@ import { canShareInvite, shareInvite } from "./shareInvite";
 import { InviteLinks } from "./InviteLinks";
 
 const DAY = 24 * 60 * 60;
-const EXPIRY = [1, 3, 7, 30].map((days) => ({
-  value: String(days * DAY),
-  label: days === 1 ? "1 day" : `${days} days`,
-}));
+const NEVER = "never";
+const EXPIRY = [
+  ...[1, 3, 7, 30].map((days) => ({
+    value: String(days * DAY),
+    label: days === 1 ? "1 day" : `${days} days`,
+  })),
+  { value: NEVER, label: "Never expires" },
+];
 const USES = [
   { value: "", label: "No limit" },
   ...[1, 5, 10, 25].map((uses) => ({
@@ -572,18 +577,64 @@ function MembershipContent({
     variant: QrVariant;
     svg?: string;
   } | null>(null);
-  // One minted link per settings; a missing entry for these settings mints.
+  // One minted link per settings. A missing entry mints automatically for an
+  // expiring link; a permanent link waits for the admin to create it.
   const settings = `${ttl}:${uses}`;
+  const never = ttl === NEVER;
   const [link, setLink] = useState<{
     settings: string;
     url?: string;
     failed?: boolean;
+    unsupported?: boolean;
   } | null>(null);
+  // Generation counter: a completion from an older request is ignored.
   const minting = useRef(0);
   // StrictMode replays effects; never mint twice for the same settings.
   const requested = useRef("");
   const current = link?.settings === settings ? link : null;
   const locked = stale || refreshing;
+  const pending = current
+    ? !current.url && !current.failed && !current.unsupported
+    : !locked && !never;
+  const mint = useCallback(() => {
+    if (!active() || locked) return;
+    requested.current = settings;
+    const request = ++minting.current;
+    setLink({ settings });
+    setCopied(false);
+    setError("");
+    mintInvite(
+      community,
+      never ? null : Number(ttl),
+      uses ? Number(uses) : null,
+    ).then(
+      (invite) => {
+        if (minting.current !== request) return;
+        // An older relay ignores never_expires and returns a finite link.
+        setLink(
+          never && invite.expires_at !== null
+            ? { settings, unsupported: true }
+            : { settings, url: invite.url },
+        );
+      },
+      (reason) => {
+        if (minting.current !== request) return;
+        requested.current = "";
+        setLink({ settings, failed: true });
+        setError(message(reason));
+      },
+    );
+  }, [active, locked, community, settings, never, ttl, uses]);
+  // New settings discard the previous link and any request still in flight.
+  function choose(set: (value: string) => void) {
+    return (value: string) => {
+      ++minting.current;
+      requested.current = "";
+      setLink(null);
+      setCopied(false);
+      set(value);
+    };
+  }
   useEffect(() => {
     if (open) return;
     // A new visit needs a fresh link: the previous one may be exhausted.
@@ -595,35 +646,20 @@ function MembershipContent({
     setError("");
   }, [open]);
   useEffect(() => {
-    // Visiting a sharing tab, or changing its settings, creates the link to share.
-    if (!open || locked || current || requested.current === settings) return;
-    if (!active()) return;
-    requested.current = settings;
-    const request = ++minting.current;
-    setLink({ settings });
-    setCopied(false);
-    setError("");
-    mintInvite(community, Number(ttl), uses ? Number(uses) : null).then(
-      (invite) => {
-        if (minting.current === request) setLink({ settings, url: invite.url });
-      },
-      (reason) => {
-        if (minting.current !== request) return;
-        requested.current = "";
-        setLink({ settings, failed: true });
-        setError(message(reason));
-      },
-    );
-  }, [open, locked, current, active, community, settings, ttl, uses]);
+    // Visiting a sharing tab, or changing its settings, creates the link to
+    // share, unless it would never expire.
+    if (!open || never || current || requested.current === settings) return;
+    mint();
+  }, [open, never, current, settings, mint]);
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 2000);
     return () => clearTimeout(timer);
   }, [copied]);
   const url = current?.url;
-  // New settings have no link until the effect mints one; count them as
-  // pending so the code's place never collapses, which scrolled the dialog.
-  const pending = current ? !url && !current.failed : !locked;
+  // New expiring settings have no link until the effect mints one; pending
+  // holds the code's place so it never collapses, which scrolled the dialog.
+  const idle = never && !current;
   const variant = useQrVariant();
   const drawn = url && qr?.url === url && qr.variant === variant ? qr : null;
   const showQr =
@@ -727,6 +763,13 @@ function MembershipContent({
           aria-labelledby="invite-share-panel-tab"
         >
           <div className={styles.inviteQr}>
+            {idle && (
+              <div className="flex justify-center">
+                <Button variant="subtle" disabled={locked} onClick={mint}>
+                  Create link
+                </Button>
+              </div>
+            )}
             {showQr && (
               <div className="flex justify-center">
                 {drawn?.svg ? (
@@ -785,7 +828,7 @@ function MembershipContent({
                   }}
                   onClick={() => {
                     if (current?.failed) {
-                      setLink(null);
+                      mint();
                       return;
                     }
                     if (!url) return;
@@ -805,12 +848,22 @@ function MembershipContent({
                 readOnly
                 value={url ?? ""}
                 placeholder={
-                  current?.failed
-                    ? "Couldn’t create invite link"
-                    : "Creating invite link…"
+                  current?.unsupported
+                    ? "No link created"
+                    : current?.failed
+                      ? "Couldn’t create invite link"
+                      : idle
+                        ? "Create a link that never expires"
+                        : "Creating invite link…"
                 }
               />
             </InputGroup>
+            {current?.unsupported && (
+              <p role="status" className="m-0 text-body-sm">
+                This relay can’t make permanent links yet. Choose an expiry
+                instead.
+              </p>
+            )}
             <SettingsGroup>
               <div className="flex items-center justify-between gap-4 py-3">
                 <span className="text-body-sm">Expires after</span>
@@ -818,7 +871,7 @@ function MembershipContent({
                   label="Choose invite expiry"
                   value={ttl}
                   options={EXPIRY}
-                  onChange={setTtl}
+                  onChange={choose(setTtl)}
                   // Stays usable while a link is made, so the closing menu can
                   // return focus to it; the newest choice's link wins.
                   disabled={locked}
@@ -830,7 +883,7 @@ function MembershipContent({
                   label="Choose maximum invite uses"
                   value={uses}
                   options={USES}
-                  onChange={setUses}
+                  onChange={choose(setUses)}
                   disabled={locked}
                 />
               </div>

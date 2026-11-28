@@ -1,7 +1,30 @@
 import { expect, it } from "vitest";
-import { adminReason, inviteListPath, revokeRequest } from "./admin-protocol";
+import {
+  adminReason,
+  inviteListPath,
+  inviteRequest,
+  revokeRequest,
+} from "./admin-protocol";
 
 const id = "0b9c8f7e-1d2a-4b3c-9e8f-7a6b5c4d3e2f";
+
+it("mints either a bounded expiry or one that never expires", () => {
+  expect(inviteRequest({ ttl_secs: 60, max_uses: 2, extra: 1 })).toEqual({
+    ttl_secs: 60,
+    max_uses: 2,
+  });
+  expect(inviteRequest({ never_expires: true })).toEqual({
+    never_expires: true,
+    max_uses: null,
+  });
+  for (const body of [
+    { never_expires: true, ttl_secs: 60 },
+    { never_expires: false, ttl_secs: 60 },
+    { never_expires: "true" },
+    {},
+  ])
+    expect(() => inviteRequest(body)).toThrow("Invalid invite expiry");
+});
 
 it("pages the invite list only by the relay's cursor", () => {
   expect(inviteListPath({})).toBe("/api/invites");

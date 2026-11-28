@@ -903,6 +903,15 @@ html[data-keyboard-navigation]
   margin-left: auto;
   gap: var(--space-1h);
 }
+/* Installed plugins draw their own launcher icons; the host's stroke keeps the row a set. */
+.pluginLauncher {
+  display: contents;
+}
+.pluginLauncher svg,
+.pluginLauncher svg * {
+  /* biome-ignore lint/complexity/noImportantStyles: Plugin icons may set an inline stroke-width. */
+  stroke-width: 2 !important;
+}
 .channelDrawer {
   --panel-motion-exit-duration: 0ms;
   --panel-motion-offset: translateY(var(--space-3));

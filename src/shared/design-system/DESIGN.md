@@ -141,6 +141,9 @@ Tabler is the only icon family. Import named icons from `icons/index.ts`. If
 one is missing, add a named `defineIcon("tabler", …)` export there from its
 single Tabler module; no approval is needed. Other icon libraries, and Tabler
 imports anywhere else, fail the checks.
+Plugin icons take their host surface's stroke so each set reads as one: a
+one-colour or `currentColor` SVG page image draws as a text-colour mask at the
+page navigation's 2.5, and inline SVG icons in installed plugins' channel launchers use 2.
 
 ## Checks
 

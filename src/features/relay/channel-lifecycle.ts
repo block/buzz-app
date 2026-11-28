@@ -1,5 +1,5 @@
 import { getEventHash } from "nostr-tools";
-import { attestedOwner } from "../agents/owner-attestation";
+import { ownsChannelOwnerAgent } from "./channel-owner-agent";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 import { PublishRejected } from "./outbox";
@@ -221,65 +221,18 @@ export function createChannelLifecycle({
     )
       return settings;
     // lifecycleSettings validated every owner against the signed member roster.
-    const owners =
-      lifecycleRecord(events, 39001, id, relayAuthor)?.tags.flatMap(
-        ([name, pubkey, role]) =>
-          name === "p" && role === "owner" && pubkey ? [pubkey] : [],
-      ) ?? [];
-    if (!owners.length) return settings;
-    // Bound the whole optional lookup, not each batch: it must not consume the
-    // lifecycle deadline and erase independently established Archive/Leave.
-    const profileSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
-    try {
-      for (let start = 0; start < owners.length; start += 4) {
-        const batch = owners.slice(start, start + 4);
-        const profiles = await retryRead(
-          (signal) =>
-            reader.read(
-              batch.map((pubkey) => ({
-                kinds: [0],
-                authors: [pubkey],
-                limit: 1,
-              })),
-              { signal, fresh: true, priority: "foreground" },
-            ),
-          profileSignal,
-        );
-        profileSignal.throwIfAborted();
-        assertAccess(id);
-        if (
-          profiles.some(
-            (event) => event.kind !== 0 || !batch.includes(event.pubkey),
-          )
-        )
-          throw new Error("Unexpected channel owner profile response");
-        for (const pubkey of batch) {
-          const profile = profiles
-            .filter((event) => event.pubkey === pubkey)
-            .reduce<RelayEvent | undefined>(newer, undefined);
-          // This verifies profile provenance, NOT the relay's persisted ownership
-          // mapping. The viewer signs; the relay still authorizes every Delete.
-          const owner = profile && (await attestedOwner(profile));
-          profileSignal.throwIfAborted();
-          assertAccess(id);
-          if (owner === viewer) return ownerAgentGrant(settings, archived);
-        }
-      }
-      return settings;
-    } catch (error) {
-      // Optional read failures affect only owner-agent actions. Cancellation and
-      // access loss still invalidate the whole result, including late replies
-      // from an old session. An archived channel has no Delete to retry.
-      signal.throwIfAborted();
-      assertAccess(id);
-      // A read the session retired, unlike the profile deadline, says nothing
-      // about ownership; surface it so the caller reads again.
-      if (!profileSignal.aborted && readErrorKind(error) === "cancelled")
-        throw error;
-      return archived
-        ? settings
-        : Object.freeze({ ...settings, deleteUnavailable: true });
-    }
+    const ownsAgent = await ownsChannelOwnerAgent(
+      reader,
+      lifecycleRecord(events, 39001, id, relayAuthor),
+      viewer,
+      signal,
+      () => assertAccess(id),
+    );
+    if (ownsAgent) return ownerAgentGrant(settings, archived);
+    // An archived channel has no Delete to retry.
+    if (ownsAgent === undefined && !archived)
+      return Object.freeze({ ...settings, deleteUnavailable: true });
+    return settings;
   }
   async function readVisibility(signal: AbortSignal, strong = false) {
     const events = await read(

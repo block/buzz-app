@@ -2,11 +2,18 @@ import { regionLabels } from "../solo/region-labels";
 import { getEventHash, verifyEvent } from "nostr-tools";
 import type { RelayReader } from "./reader";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
-import { retryRead } from "./read-retry";
+import { readErrorKind } from "./errors";
+import { isRetryableRead, retryRead } from "./read-retry";
 import type { RelayWriter } from "./transport";
 import type { RelayEvent } from "./events";
 import { PublishRejected } from "./outbox";
-import { lifecycleChannelId } from "./channel-lifecycle-protocol";
+import {
+  channelTypeTag,
+  exactLifecycleTag,
+  lifecycleChannelId,
+  lifecycleRecord,
+} from "./channel-lifecycle-protocol";
+import { ownsChannelOwnerAgent } from "./channel-owner-agent";
 import {
   detailsSettings,
   detailsTemplate,
@@ -29,8 +36,8 @@ type ChannelNames = Pick<ChannelQueries, "get" | "subscribeList">;
 export interface ChannelDetailsCapability {
   readonly available: boolean;
   load(id: string, signal?: AbortSignal): Promise<ChannelDetails>;
-  /** Present when this capability's edit rule matches the summary's, so access
-   * can show without a read. Absent, callers read details. */
+  /** Direct-role access from the signed summary. Agent ownership requires
+   * a fresh details read. */
   summaryAccess?(channel: ChannelSummary): ChannelAccess | undefined;
   save(
     base: ChannelDetails,
@@ -131,7 +138,11 @@ export function createChannelDetails({
       controllers.delete(controller);
     }
   }
-  async function read(id: string, signal: AbortSignal) {
+  async function read(
+    id: string,
+    signal: AbortSignal,
+    intent?: "edit" | "authorize",
+  ) {
     if (!reader)
       throw new Error("Channel editing is unavailable on this connection.");
     assertAccess(id);
@@ -149,7 +160,50 @@ export function createChannelDetails({
     assertAccess(id);
     if (events.some((event) => ![39000, 39001, 39002].includes(event.kind)))
       throw new Error("Unexpected channel details response.");
-    return detailsSettings(events, id, viewer, relayAuthor);
+    const result = detailsSettings(events, id, viewer, relayAuthor);
+    const type = channelTypeTag(result.metadata);
+    if (
+      !intent ||
+      result.details.canEdit ||
+      (type !== "stream" && type !== "forum") ||
+      soloLabels(result.details.labels) ||
+      exactLifecycleTag(result.metadata, "archived") === "true"
+    )
+      return result;
+    // The roster has been validated by detailsSettings. Only owner-role
+    // agents can confer the edit authority that the relay also checks.
+    const ownsAgent = await ownsChannelOwnerAgent(
+      reader,
+      lifecycleRecord(events, 39001, id, relayAuthor),
+      viewer,
+      signal,
+      () => assertAccess(id),
+    );
+    if (ownsAgent)
+      return {
+        ...result,
+        details: Object.freeze({ ...result.details, canEdit: true }),
+      };
+    if (ownsAgent === undefined && intent === "authorize")
+      throw new Error(
+        "Could not verify ownership of the channel's owner agent.",
+      );
+    return result;
+  }
+  function readForEdit(
+    id: string,
+    signal: AbortSignal,
+    intent: "edit" | "authorize",
+  ) {
+    // A retired profile read also retires the signed roster it was read for.
+    // Repeat only the read, and only while the edit still owns its lifetime.
+    return retryRead(
+      (attempt) => read(id, attempt, intent),
+      signal,
+      (error) =>
+        readErrorKind(error) === "cancelled" ||
+        (intent === "edit" && isRetryableRead(error)),
+    );
   }
   async function confirm(
     id: string,
@@ -192,10 +246,7 @@ export function createChannelDetails({
       return owned(
         id,
         async (signal) => {
-          const { details, metadata } = await retryRead(
-            () => read(id, signal),
-            signal,
-          );
+          const { details, metadata } = await readForEdit(id, signal, "edit");
           acceptDiscovery([metadata]);
           signal.throwIfAborted();
           return details;
@@ -271,7 +322,7 @@ export function createChannelDetails({
           id,
           async (signal) => {
             const authorize = async () => {
-              const { details } = await read(id, signal);
+              const { details } = await readForEdit(id, signal, "authorize");
               if (!details.canEdit)
                 throw new Error(
                   "You no longer have permission to edit this channel.",

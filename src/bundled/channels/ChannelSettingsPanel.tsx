@@ -250,7 +250,10 @@ export function ChannelSettingsPanel({
                         visibility: channel.visibility,
                         joinRole: channel.joinRole,
                       })}
-                      canChange={!!edit}
+                      canChange={
+                        !!edit &&
+                        (details?.summaryAccess?.(channel)?.canEdit ?? true)
+                      }
                       onOpen={openMembers}
                     />
                   )}

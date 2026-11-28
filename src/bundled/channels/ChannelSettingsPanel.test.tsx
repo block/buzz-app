@@ -22,6 +22,7 @@ import { PublishNotSent, PublishRejected } from "../../features/relay/outbox";
 import type { Role } from "../../features/communities/roster";
 import type { CommunityMembership } from "../moderation/membership";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
+import { summaryAccess } from "../../features/relay/channel-details-protocol";
 
 afterEach(() => {
   cleanup();
@@ -194,39 +195,50 @@ it.each([
   },
 );
 
-it("opens Members to change access for someone who can edit the channel", async () => {
-  const openMembers = vi.fn();
-  const user = userEvent.setup();
-  const details = detailsCapability();
-  details.load = vi.fn(async () => ({
-    channelId: "alpha",
-    version: "v1",
-    name: "Alpha",
-    description: "",
-    visibility: "public" as const,
-    canEdit: true,
-  }));
-  render(
-    <ChannelSettingsPanel
-      scope="community:viewer"
-      channel={{
-        id: "alpha",
-        name: "Alpha",
-        channelType: "stream",
-        visibility: "public",
-      }}
-      details={details}
-      openMembers={openMembers}
-      close={() => {}}
-    >
-      Diagnostics
-    </ChannelSettingsPanel>,
-  );
-  const access = await screen.findByRole("button", { name: "Change access" });
-  expect(access).toHaveAccessibleDescription("Public");
-  await user.click(access);
-  expect(openMembers).toHaveBeenCalledWith(access);
-});
+it.each(["direct", "delegated"])(
+  "offers a change-access action for direct edit authority only (%s)",
+  async (authority) => {
+    const openMembers = vi.fn();
+    const user = userEvent.setup();
+    const details = detailsCapability();
+    details.load = vi.fn(async () => ({
+      channelId: "alpha",
+      version: "v1",
+      name: "Alpha",
+      description: "",
+      visibility: "public" as const,
+      canEdit: true,
+    }));
+    details.summaryAccess = summaryAccess;
+    render(
+      <ChannelSettingsPanel
+        scope="community:viewer"
+        channel={{
+          id: "alpha",
+          name: "Alpha",
+          channelType: "stream",
+          visibility: "public",
+          viewerRole: authority === "direct" ? "owner" : "member",
+        }}
+        details={details}
+        openMembers={openMembers}
+        close={() => {}}
+      >
+        Diagnostics
+      </ChannelSettingsPanel>,
+    );
+    await screen.findByRole("button", { name: "Edit channel name" });
+    const access = screen.queryByRole("button", { name: "Change access" });
+    if (authority === "delegated") {
+      expect(access).not.toBeInTheDocument();
+      return;
+    }
+    assert(access);
+    expect(access).toHaveAccessibleDescription("Public");
+    await user.click(access);
+    expect(openMembers).toHaveBeenCalledWith(access);
+  },
+);
 
 it("leaves access out of an archived channel", () => {
   render(

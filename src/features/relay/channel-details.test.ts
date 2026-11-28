@@ -10,6 +10,8 @@ import {
   validateDetailsTemplate,
 } from "./channel-details-protocol";
 import { PublishRejected } from "./outbox";
+import { ReadError } from "./errors";
+import { keypair, ownedProfile, signed } from "./testing";
 import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
@@ -286,6 +288,70 @@ it.each(["owner", "admin", "member"])(
     }
   },
 );
+it("rechecks the member's owner-agent authority before publishing and retries retired evidence reads", async () => {
+  const h = harness("member");
+  const agent = keypair();
+  const attested = await ownedProfile(agent, { pubkey: viewer, secret: key });
+  const unattested = signed(agent, { kind: 0, tags: [], content: "{}" });
+  h.set([
+    h.entry(0),
+    h.record(39001, [["p", agent.pubkey, "owner"]]),
+    h.record(39002, [
+      ["p", viewer, "", "member"],
+      ["p", agent.pubkey, "", "owner"],
+    ]),
+  ]);
+  let verifiedProfile: RelayEvent | undefined = unattested;
+  let profileReadRetired = false;
+  h.read.mockImplementation(async (filters) => {
+    if (!filters.some((filter) => filter.kinds?.includes(0))) return h.events();
+    if (profileReadRetired) {
+      profileReadRetired = false;
+      throw new ReadError("cancelled", "Profile read retired");
+    }
+    if (!verifiedProfile) throw new Error("Profiles are unavailable");
+    return [verifiedProfile];
+  });
+  const unowned = await h.owner.capability.load(id);
+  expect(unowned.canEdit).toBe(false);
+  verifiedProfile = undefined;
+  await expect(h.owner.capability.load(id)).resolves.toMatchObject(unowned);
+  verifiedProfile = attested;
+  const base = await h.owner.capability.load(id);
+  expect(base.canEdit).toBe(true);
+  const renamed = { ...base, name: draft.name };
+
+  h.sign.mockImplementationOnce(async (event) => {
+    verifiedProfile = unattested;
+    return finalizeEvent(event, key);
+  });
+  await expect(h.owner.capability.save(base, renamed)).rejects.toThrow(
+    "permission",
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+
+  verifiedProfile = attested;
+  const caller = new AbortController();
+  h.sign.mockImplementationOnce(async (event) => {
+    caller.abort();
+    return finalizeEvent(event, key);
+  });
+  await expect(
+    h.owner.capability.save(base, renamed, caller.signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(h.publish).not.toHaveBeenCalled();
+
+  h.sign.mockImplementationOnce(async (event) => {
+    profileReadRetired = true;
+    return finalizeEvent(event, key);
+  });
+  h.publish.mockImplementationOnce(async () => {
+    h.set([h.metadata(renamed.name), ...h.events().slice(1)]);
+    verifiedProfile = undefined;
+  });
+  await h.owner.capability.save(base, renamed);
+  expect(h.acceptDiscovery).toHaveBeenLastCalledWith([h.entry(0)]);
+});
 it("revoked authority while signing prevents publication", async () => {
   const h = harness();
   const base = await h.owner.capability.load(id);

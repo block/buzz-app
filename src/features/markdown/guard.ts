@@ -8,7 +8,10 @@ type Node = { type: string; children?: Node[] };
 /** Parse as remark-parse does under the profile's syntax plugins, without its
  * transforms, so every node the renderer will build is seen before any HAST
  * or React conversion. */
-export function parseForGuard(content: string, profile: MarkdownProfile): Root {
+export function parseForGuard(
+  content: string,
+  profile: Pick<MarkdownProfile, "syntax">,
+): Root {
   const data: {
     micromarkExtensions?: NonNullable<Options["extensions"]>;
     fromMarkdownExtensions?: NonNullable<Options["mdastExtensions"]>;
@@ -42,6 +45,14 @@ function tableCells(tree: Root) {
   return cells;
 }
 
+/** Whether a document's tables, as the profile's syntax parses them, stay
+ * within a cell budget once every row is padded to its header's width. */
+export const fitsTableCells = (
+  content: string,
+  profile: Pick<MarkdownProfile, "syntax">,
+  cells: number,
+) => tableCells(parseForGuard(content, profile)) <= cells;
+
 /** Whether a document is within a screen's rendering budget: its size, then
  * its depth (before anything recursive), then limits that need the profile's
  * syntax. */
@@ -53,7 +64,6 @@ export function guardDocument(
   if (content.length > limits.chars || scanMarkdown(content).tooDeep)
     return false;
   return (
-    limits.cells === undefined ||
-    tableCells(parseForGuard(content, profile)) <= limits.cells
+    limits.cells === undefined || fitsTableCells(content, profile, limits.cells)
   );
 }

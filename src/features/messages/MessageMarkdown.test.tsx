@@ -347,6 +347,25 @@ second
     expect(html).toContain("**not parsed**");
     expect(html).not.toContain("<strong>");
   });
+
+  it("falls back to literal text before sparse tables expand past the cell budget", () => {
+    const table = (columns: number, rows: number) =>
+      `|${"h|".repeat(columns)}\n|${"-|".repeat(columns)}\n${"|x|\n".repeat(rows)}`;
+    // 9,604 bytes that GFM pads to 1,441,200 cells.
+    const sparse = render(table(1_200, 1_200));
+    expect(sparse).toContain(`|${"h|".repeat(1_200)}\n|${"-|".repeat(1_200)}`);
+    expect(sparse).not.toContain("<table");
+    expect(render(table(16, 16))).toContain("<table");
+    // The budget is for the whole body: 6,000 cells twice, or in a footnote.
+    for (const content of [
+      `${table(100, 59)}\n${table(100, 59)}`,
+      `a[^1]\n\n[^1]: ${table(200, 60).replaceAll("\n", "\n    ")}`,
+      // Spoiler pipes become placeholders before the parse, which leaves a
+      // 200-column header that the signed text does not have.
+      `|x||x|${"h|".repeat(199)}\n|${"-|".repeat(200)}\n${"|x|\n".repeat(60)}`,
+    ])
+      expect(render(content)).not.toContain("<table");
+  });
 });
 
 describe("mounted Markdown preparation", () => {

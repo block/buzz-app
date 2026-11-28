@@ -23,11 +23,8 @@ import remarkBreaks from "remark-breaks";
 import type { PhrasingContent, Root, RootContent } from "mdast";
 import { MediaAttachment } from "../../features/messages/MediaAttachment";
 import { AudioAttachment } from "../../features/messages/AudioAttachment";
-import {
-  MAX_MARKDOWN_LENGTH,
-  MAX_MARKDOWN_DEPTH,
-  scanMarkdown,
-} from "../../features/relay/message-content";
+import { fitsDocumentRenderBudget } from "../../features/markdown/document-profile";
+import { MAX_MARKDOWN_DEPTH } from "../../features/relay/message-content";
 import {
   attachmentFor,
   attachmentMetadata,
@@ -378,7 +375,7 @@ export const GitHubBody = memo(function GitHubBody({
   refresh?: (() => Promise<unknown>) | undefined;
 }) {
   const bounded = useMemo(
-    () => body.length <= MAX_MARKDOWN_LENGTH && !scanMarkdown(body).tooDeep,
+    () => fitsDocumentRenderBudget(body, PROFILE),
     [body],
   );
   const metadata = useMemo(

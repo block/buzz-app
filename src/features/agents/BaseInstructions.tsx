@@ -36,7 +36,8 @@ import {
 } from "../markdown/MarkdownDocument";
 import type { MarkdownProfile } from "../markdown/profiles";
 import { DocumentEditor } from "../messages/DocumentEditor";
-import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
+import { fitsDocumentRenderBudget } from "../markdown/document-profile";
+import { MAX_MARKDOWN_LENGTH } from "../relay/message-content";
 import {
   committedOwnerSections,
   defaultHash,
@@ -74,7 +75,7 @@ const InstructionText = memo(function InstructionText({
   text: string;
 }) {
   const className = "min-w-0 select-text break-words text-message text-subtle";
-  if (text.length > MAX_MARKDOWN_LENGTH || scanMarkdown(text).tooDeep)
+  if (!fitsDocumentRenderBudget(text, PROFILE))
     return <MarkdownSource content={text} className={className} />;
   return (
     <MarkdownDocument

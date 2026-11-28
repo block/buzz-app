@@ -672,6 +672,12 @@ for (const type of ["repo", "issue"] as const) {
       text: `${"> ".repeat(MAX_MARKDOWN_DEPTH - 1)}bounded\n<img src=x>`,
       plain: true,
     },
+    {
+      boundary: "over the table cell limit",
+      // GFM pads the 60 one-cell rows to the header's 200 columns.
+      text: `|${"h|".repeat(200)}\n|${"-|".repeat(200)}\n${"|x|\n".repeat(60)}`,
+      plain: true,
+    },
   ])(
     `renders ${type} content $boundary with the shared bounds`,
     async ({ text, plain }) => {

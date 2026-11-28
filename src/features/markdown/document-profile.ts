@@ -17,9 +17,13 @@ export const DOCUMENT_PROFILE: MarkdownProfile = {
  * can still expand to many cells. */
 export const DOCUMENT_RENDER_CELLS = 10_000;
 
-/** Shared bounds for viewing document Markdown and rendering its editor grids. */
-export function fitsDocumentRenderBudget(markdown: string) {
-  return guardDocument(markdown, DOCUMENT_PROFILE, {
+/** Shared bounds for viewing document Markdown and rendering its editor grids.
+ * A screen with its own profile passes it, so the guard parses its syntax. */
+export function fitsDocumentRenderBudget(
+  markdown: string,
+  profile: MarkdownProfile = DOCUMENT_PROFILE,
+) {
+  return guardDocument(markdown, profile, {
     chars: MAX_MARKDOWN_LENGTH,
     cells: DOCUMENT_RENDER_CELLS,
   });

@@ -31,6 +31,9 @@ import remarkGfm from "remark-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { CodeFence, observeTableOverflow } from "../markdown/code-blocks";
+import { DOCUMENT_RENDER_CELLS } from "../markdown/document-profile";
+import { fitsTableCells } from "../markdown/guard";
+import type { MarkdownProfile } from "../markdown/profiles";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import {
@@ -533,12 +536,7 @@ export function MessageMarkdown({
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const prepared = useMemo(() => preparedMarkdown(row.content), [row.content]);
   if (prepared.kind === "plain")
-    return (
-      <div className={styles.plainText}>
-        {prepared.content}
-        {edited && <EditedMarker />}
-      </div>
-    );
+    return <PlainMessageText content={prepared.content} edited={edited} />;
   return (
     <PreparedMessageMarkdown
       row={row}
@@ -562,6 +560,22 @@ export function MessageMarkdown({
 /** Metadata, not prose: selection copy omits it like the byline's clock. */
 export function EditedMarker() {
   return <span className={`${styles.edited} select-none`}> (edited)</span>;
+}
+
+/** A signed body too costly to render, shown as its exact text. */
+function PlainMessageText({
+  content,
+  edited,
+}: {
+  content: string;
+  edited: boolean;
+}) {
+  return (
+    <div className={styles.plainText}>
+      {content}
+      {edited && <EditedMarker />}
+    </div>
+  );
 }
 
 function PreparedMessageMarkdown({
@@ -671,6 +685,8 @@ function PreparedMessageMarkdown({
       protectionKey,
     ],
   );
+  if (!fitsTableBudget(protectedContent.content))
+    return <PlainMessageText content={sourceRow.content} edited={edited} />;
   // Explicit profile links are identity locators, not signed notification intent.
   // Reuse the same control and availability gate as bound prose mentions.
   const renderProfile = (text: unknown, target: unknown) => {
@@ -793,6 +809,24 @@ function remarkPlainProse(this: { parser?: unknown }) {
   this.parser = plainProseTree;
 }
 
+/** The body's syntax plugins, shared by its parse and its table budget. */
+const MESSAGE_SYNTAX: Pick<MarkdownProfile, "syntax"> = { syntax: [remarkGfm] };
+// A result keeps its key, the protected body: ~1M characters (~2 MB) in all,
+// enough for the largest body that protection can make.
+const tableBudgets = recentResults<boolean>(
+  1_000_000,
+  (content) => 100 + content.length,
+);
+/** GFM pads every table row to its header's width, so a short sparse table can
+ * expand to millions of cells. Check the exact text that `MarkdownBody` parses:
+ * protection replaces spoiler pipes and names, which can form a table that the
+ * signed text does not have. Plain prose has no table syntax. */
+const fitsTableBudget = (content: string) =>
+  isPlainProse(content) ||
+  tableBudgets(content, () =>
+    fitsTableCells(content, MESSAGE_SYNTAX, DOCUMENT_RENDER_CELLS),
+  );
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
@@ -811,7 +845,7 @@ const MarkdownBody = memo(function MarkdownBody({
           // Protection only inserts placeholders isPlainProse rejects, so this
           // agrees with prepareMarkdown's check on the raw content.
           ...(isPlainProse(protectedContent.content) ? [remarkPlainProse] : []),
-          remarkGfm,
+          ...MESSAGE_SYNTAX.syntax,
           [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,
           [

@@ -25,7 +25,7 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "./activity-transcript";
-import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
+import { fitsDocumentRenderBudget } from "../markdown/document-profile";
 import {
   MarkdownDocument,
   sharedComponents,
@@ -862,7 +862,7 @@ const CAPABILITIES = { copy: true };
 /** Agent replies are Markdown; remote images stay unloaded. */
 function Reply({ text }: { text: string }) {
   const bounded = useMemo(
-    () => text.length <= MAX_MARKDOWN_LENGTH && !scanMarkdown(text).tooDeep,
+    () => fitsDocumentRenderBudget(text, PROFILE),
     [text],
   );
   if (!bounded) return <div className={styles.plain}>{text}</div>;

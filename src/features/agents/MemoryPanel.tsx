@@ -10,6 +10,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -34,7 +35,7 @@ import {
   ThinkingHighIcon,
   CircleNotchIcon,
 } from "../../shared/design-system/icons/index";
-import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
+import { fitsDocumentRenderBudget } from "../markdown/document-profile";
 import type { RelaySession } from "../relay/session";
 import type { MemoryEntry, MemorySnapshot } from "./memory";
 import type { Agent } from "./service";
@@ -451,8 +452,9 @@ function MemoryBody({
   body: string;
   links?: MemoryLinks | undefined;
 }) {
-  if (body.length > MAX_MARKDOWN_LENGTH || scanMarkdown(body).tooDeep)
-    return <div className={styles.plain}>{body}</div>;
+  // Streamed pages render open bodies again; check each body once.
+  const fits = useMemo(() => fitsDocumentRenderBudget(body, PROFILE), [body]);
+  if (!fits) return <div className={styles.plain}>{body}</div>;
   return (
     <MemoryLinksContext value={links}>
       <MarkdownDocument

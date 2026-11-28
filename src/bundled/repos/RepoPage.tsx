@@ -27,10 +27,7 @@ import {
 } from "../../features/relay/recovery";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  MAX_MARKDOWN_LENGTH,
-  scanMarkdown,
-} from "../../features/relay/message-content";
+import { fitsDocumentRenderBudget } from "../../features/markdown/document-profile";
 import {
   EntityFailure,
   entityFailure,
@@ -693,10 +690,7 @@ export function Body({
   scope: NavigationScope;
 }) {
   const codeBlocks = useContext(RepoCodeBlocks);
-  const plain = useMemo(
-    () => text.length > MAX_MARKDOWN_LENGTH || scanMarkdown(text).tooDeep,
-    [text],
-  );
+  const plain = useMemo(() => !fitsDocumentRenderBudget(text, PROFILE), [text]);
   const links = useMemo(() => ({ open, scope }), [open, scope]);
   if (plain) return <div className="repo-markdown repo-plain">{text}</div>;
   return (

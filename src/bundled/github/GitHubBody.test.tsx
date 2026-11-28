@@ -1037,12 +1037,14 @@ it("preserves deeply nested HTML as literal text beyond the parsing budget", () 
 it.each([
   "x".repeat(MAX_MARKDOWN_LENGTH + 1),
   `${"> ".repeat(MAX_MARKDOWN_DEPTH + 1)}deep`,
+  // GFM pads the 60 one-cell rows to the header's 200 columns.
+  `|${"h|".repeat(200)}\n|${"-|".repeat(200)}\n${"|x|\n".repeat(60)}`,
 ])("uses a literal fallback for over-budget Markdown", (body) => {
   const { container } = render(
     <GitHubBody url={url} body={body} bodyHtml={metadata} />,
   );
   expect(container.textContent).toBe(body);
-  expect(container.querySelector("blockquote, video")).toBeNull();
+  expect(container.querySelector("blockquote, table, video")).toBeNull();
 });
 
 function deferred<T>() {

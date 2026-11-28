@@ -41,6 +41,10 @@ import { keypair, signed } from "../relay/testing";
 import { ownedSoloAgents } from "../relay/solo-admins";
 import { SOLO_LABEL } from "./labels";
 import { attachmentDraft } from "../messages/attachment-draft";
+import { attachmentMessage } from "../relay/attachments";
+import type { RelayData } from "../relay/service";
+import type { RelayEvent } from "../relay/events";
+import { nameSoloChat } from "../agents/solo-chat-name";
 import type {
   ComposerToolProps,
   ConversationExtensions,
@@ -2526,6 +2530,113 @@ it("uploads files as soon as they are attached to a new chat, then sends them", 
   expect(
     attachmentDraft(test.session, `test:draft:${id}`, id).snapshot(),
   ).toEqual([]);
+});
+
+it("names a new chat that says nothing but its source link after the file it attaches", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(async () => notes);
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  writeView(
+    "test",
+    "solo:new-draft",
+    taggedDraft(`buzz://message?channel=design&id=${"c".repeat(64)}`),
+  );
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.channelWrites.create.mock.calls[0]?.[1]).toBe("Attachment");
+});
+
+it("names a new chat after a voice note as the attachment its message carries, so its agent can name it", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  // A recording is prepared and uploaded as an MP4 file.
+  const voice = {
+    name: "voice-note-7.mp4",
+    url: `https://relay.test/media/${"e".repeat(64)}.mp4`,
+    type: "video/mp4",
+    size: 5,
+    sha256: "e".repeat(64),
+  };
+  const uploadForNewChat = vi.fn(async () => voice);
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  // A source link is context, not a title, so the recording titles the chat.
+  writeView(
+    "test",
+    "solo:new-draft",
+    taggedDraft(`buzz://message?channel=design&id=${"c".repeat(64)}`),
+  );
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["voice"], "voice-note-7.wav", { type: "audio/wav" }),
+  );
+  // The upload is ready before Send.
+  await waitFor(() =>
+    expect(
+      attachmentDraft(test.session, "test:solo:new-draft", "").snapshot()[0]
+        ?.uploaded,
+    ).toEqual(voice),
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  const [id, stored] = test.channelWrites.create.mock.calls[0] ?? [];
+  expect(stored).toBe("Attachment");
+  const viewer = test.session.viewer ?? "";
+  // The message as published, and the rename its agent's harness then offers.
+  const [, text, recipients, uploaded] = test.messages.send.mock.calls[0] ?? [];
+  const { content, tags } = attachmentMessage(
+    text ?? "",
+    uploaded ?? [],
+    "https://relay.test",
+  );
+  const message = {
+    id: "1".repeat(64),
+    pubkey: viewer,
+    kind: 9,
+    created_at: 100,
+    content,
+    tags: [["h", id], ...(recipients ?? []).map((key) => ["p", key]), ...tags],
+  } as unknown as RelayEvent;
+  const save = vi.fn();
+  await nameSoloChat(
+    {
+      snapshot: () => ({
+        status: "ready",
+        viewer,
+        session: Object.assign(test.session, {
+          // Without a create event, the name must be one the message derives.
+          read: async ([filter]: readonly { kinds: readonly number[] }[]) =>
+            filter?.kinds.includes(9007) ? [] : [message],
+          channelDetails: {
+            available: true,
+            load: async () => ({ name: stored, canEdit: true }),
+            save,
+          },
+        }),
+      }),
+    } as unknown as RelayData,
+    viewer,
+    "a".repeat(64),
+    message,
+    "Review the recording",
+  );
+  expect(save).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ name: "Review the recording" }),
+  );
 });
 
 it("a file dropped anywhere on the new chat page attaches to its composer", async () => {

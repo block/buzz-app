@@ -6,6 +6,7 @@ import {
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
 import { startingChatTitle } from "./chat-title";
+import { attachmentKind } from "../relay/fold";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
@@ -393,13 +394,13 @@ export function SoloDraft({
         ),
       ),
     ];
-    const named =
-      typeof draftSettings.name === "string" &&
-      !!canonicalDetailsName(draftSettings.name);
-    const name =
+    // A name typed in the draft's settings. Without one the chat is titled
+    // from its first message, once its uploads are ready.
+    const chosen =
       typeof draftSettings.name === "string"
-        ? canonicalDetailsName(draftSettings.name) || startingChatTitle(draft)
+        ? canonicalDetailsName(draftSettings.name)
         : draftSettings.name;
+    const named = typeof chosen === "string" && !!chosen;
     const ttlSeconds = draftLifetime(scope, draftSettings);
     const project = selectedProject;
     const canvas = draftCanvas;
@@ -414,15 +415,16 @@ export function SoloDraft({
       null,
     );
     try {
-      if (typeof name !== "string")
+      if (typeof chosen !== "string")
         throw new Error("The chat name could not be verified.");
       const errors = detailsDraftErrors({
-        name,
+        name: chosen,
         description: "",
         visibility: "private",
         ttlSeconds,
       });
-      if (errors.name) throw new Error(errors.name);
+      // A starting title always fits; only a typed name can be refused.
+      if (chosen && errors.name) throw new Error(errors.name);
       if (errors.lifetime) throw new Error(errors.lifetime);
       const loaded =
         workspace.current?.id === project
@@ -512,6 +514,17 @@ export function SoloDraft({
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
       regionOwner();
+      // Titled from the uploads as the message will describe them, so the
+      // stored name is one the published message derives: a voice note is
+      // prepared as an MP4 file and is still an attachment, not a video.
+      const name =
+        chosen ||
+        startingChatTitle(
+          draft,
+          uploaded.map((item) => ({
+            kind: attachmentKind({ m: item.type }, item.url, item.name),
+          })),
+        );
       // The region's source finds how its chat started, even after a restart.
       const startKey = region ? regionStartKey(channelId) : undefined;
       const startRecord = {

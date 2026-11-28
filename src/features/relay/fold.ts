@@ -8,6 +8,7 @@ import { relayedFromClaim, relayNotice } from "./relayed-from";
 import { pluginRequestId } from "./plugin-request";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
+import { markdownImageKind } from "./attachment-summary";
 import { huddleRoom } from "../huddle/lifecycle";
 import { newer } from "./events";
 import type { EventData } from "./events";
@@ -44,7 +45,8 @@ function isLegacyVoiceNote(mime: string | undefined, name: string | undefined) {
   );
 }
 
-function attachmentKind(
+/** What an attachment is, from its claimed media type, else its address. */
+export function attachmentKind(
   fields: Record<string, string>,
   url: string,
   detectionName: string | undefined,
@@ -172,8 +174,7 @@ export function parseAttachments(
   for (const url of markdownImages) {
     if (seen.has(url)) continue;
     seen.add(url);
-    if (/\.(mp4|webm)(?:\?|$)/i.test(url)) result.push({ url, kind: "video" });
-    else result.push({ url, kind: "image" });
+    result.push({ url, kind: markdownImageKind(url) });
   }
   return result;
 }

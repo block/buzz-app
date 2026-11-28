@@ -81,8 +81,11 @@ export type SoloDraftStart = Readonly<{
 }>;
 export type SoloChatInput = Readonly<{
   channelId: string;
+  /** The chat's name. Without `named` it is a starting title: it lasts only
+   * until the chat's agent names the chat, which replaces it. */
   title: string;
   members: readonly string[];
+  /** Set to keep a title that was chosen. The agent never renames the chat. */
   named?: boolean;
   ttlSeconds?: number;
 }>;

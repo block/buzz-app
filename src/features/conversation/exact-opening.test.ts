@@ -34,6 +34,13 @@ it("keeps a top-level message without replies in the timeline", () => {
   });
 });
 
+it("opens a top-level message without replies in its thread for a reply draft", () => {
+  expect(placeExactOpening(window([row({ id: root })]), root, true)).toEqual({
+    inTimeline: false,
+    rootId: root,
+  });
+});
+
 it("leaves replies, absent messages and unverified windows to the thread reader", () => {
   expect(
     placeExactOpening(window([row({ id: reply, threadRootId: root })]), reply),

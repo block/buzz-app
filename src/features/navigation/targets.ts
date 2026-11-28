@@ -101,6 +101,9 @@ export type OpenTarget = Readonly<{ join?: JoinPresentation }> &
         forward?: string;
         /** Read-only content selected beside this conversation; never an action. */
         detail?: Readonly<{ target: string; rootId?: string }>;
+        /** A link's plain text for the opened composer, used only while that
+         * composer holds no draft and never sent. The page retires it. */
+        draft?: string;
         /** The thread read inline over this conversation's composer: its
          * root. Presentation only; at most one per conversation. */
         inline?: string;
@@ -129,6 +132,19 @@ const gitCommit = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const MAX_PARAMS = 16;
 const MAX_PARAM_LENGTH = 1024;
 const invalid = () => new Error("Invalid or unsupported navigation target");
+const MAX_LINK_DRAFT = 2000;
+/** A link draft: plain text of 1-2,000 UTF-16 code units. Tabs and line breaks
+ * are allowed; other C0 and C1 controls and bidirectional overrides are not. */
+export function isLinkDraft(value: string) {
+  return (
+    value.length <= MAX_LINK_DRAFT &&
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: Rejecting them is the point.
+    /^[^\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+$/u.test(
+      value,
+    ) &&
+    value.trim() !== ""
+  );
+}
 function record(value: unknown): Record<string, unknown> {
   if (
     !value ||
@@ -481,10 +497,19 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "panel",
           "forward",
           "detail",
+          "draft",
           "inline",
           "inlineMessage",
           "layer",
         ]);
+        // A draft belongs to the thread of the message the link names.
+        if (
+          value.draft !== undefined &&
+          (typeof value.draft !== "string" ||
+            !isLinkDraft(value.draft) ||
+            value.messageId === undefined)
+        )
+          throw invalid();
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
         if (
@@ -564,6 +589,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { forward: text(value.forward, hex).toLowerCase() }
             : {}),
           ...(detail ? { detail } : {}),
+          ...(value.draft !== undefined ? { draft: value.draft } : {}),
           ...(value.inline !== undefined
             ? { inline: text(value.inline, hex).toLowerCase() }
             : {}),

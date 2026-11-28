@@ -82,6 +82,7 @@ import {
   useReplyTarget,
 } from "./reply-target";
 import type { PageNavigation } from "../navigation/service";
+import { applyLinkDraft } from "./link-draft";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
@@ -2368,6 +2369,13 @@ function ThreadMessages({
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
       : undefined;
+  // A link's draft fills this reply composer once its root is known.
+  // Subthreads open from panel tabs, never from a link.
+  const composerRootId = subthreadId ? undefined : composerRoot?.id;
+  useLayoutEffect(() => {
+    if (navigation && composerRootId)
+      applyLinkDraft(navigation, scope, channelId, messageId, composerRootId);
+  }, [navigation, scope, channelId, messageId, composerRootId]);
   // Layers over this thread wait for its reply box only while one is coming:
   // it shows, or may once the thread's read settles. A preview, a Solo
   // thread, a settled read without a root, or a connection that can only

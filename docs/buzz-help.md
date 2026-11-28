@@ -115,6 +115,10 @@ if that desktop app is up and running.
 - **Messages.** Hover or right-click a message to react, **Reply**, copy a link,
   forward it, or start a chat about it. On an agent's reply, **View activity**
   shows what it did.
+- **Draft links.** A message link can carry a `draft`, as in
+  `buzz://message?channel=<id>&id=<event>&draft=Ship%20it%3F`. It opens the
+  message's thread with that text in the reply box, only when the thread has no
+  draft of yours, and never sends it.
 - **Pins.** **Pin to channel** (**Pin to DM** in a DM) in a message's More
   menu adds it to the pin list, up to 250; the pin button in the header lists
   them. Solo chats have no pins.

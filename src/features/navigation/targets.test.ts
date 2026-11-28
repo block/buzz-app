@@ -140,6 +140,25 @@ describe("open target boundary", () => {
     ])
       expect(() => parseOpenTarget({ ...conversation, detail })).toThrow();
   });
+  it("bounds a link draft to plain text and keeps it in the visit's identity", () => {
+    const target = parseOpenTarget({ ...conversation, draft: "Hi\n\tthere" });
+    expect(target.kind === "conversation" && target.draft).toBe("Hi\n\tthere");
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+    for (const draft of [
+      null,
+      1,
+      "",
+      " \n",
+      "x".repeat(2001),
+      "a\u0000b",
+      "a\u0085b",
+      "a\u202eb",
+    ])
+      expect(() => parseOpenTarget({ ...conversation, draft })).toThrow();
+    // A draft belongs to the thread of a named message.
+    const { messageId: _messageId, ...channel } = conversation;
+    expect(() => parseOpenTarget({ ...channel, draft: "Hi" })).toThrow();
+  });
   it("addresses an inline thread and the layer over a view as their own visits", () => {
     const inline = parseOpenTarget({ ...conversation, inline: "A".repeat(64) });
     expect(inline.kind === "conversation" && inline.inline).toBe(

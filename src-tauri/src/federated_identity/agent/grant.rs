@@ -86,11 +86,7 @@ pub(crate) struct SecureGrantStore(pub(crate) String);
 
 impl SecureGrantStore {
     fn store(&self) -> Result<store::SecureStore, &'static str> {
-        Ok(store::SecureStore {
-            account: self.0.clone(),
-            root: store::root().map_err(|_| "Secure storage is unavailable")?,
-            bundled: store::BUNDLED,
-        })
+        store::SecureStore::open(self.0.clone()).map_err(|_| "Secure storage is unavailable")
     }
     fn raw(&self, key: &str) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
         self.store()?

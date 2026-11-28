@@ -10,6 +10,8 @@ pub(super) struct Memory {
     refusal: Mutex<Option<String>>,
     pub(super) denied: AtomicBool,
     reads: AtomicUsize,
+    /// `Store::release_holds`, for every revision.
+    borrowed: AtomicBool,
 }
 impl Store for Memory {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
@@ -56,6 +58,9 @@ impl Store for Memory {
         *raw = None;
         *self.refusal.lock().unwrap() = None;
         Ok(())
+    }
+    fn release_holds(&self, _: &str) -> bool {
+        self.borrowed.load(Ordering::SeqCst)
     }
 }
 pub(super) fn host(store: Arc<Memory>) -> FederatedIdentity {
@@ -881,6 +886,16 @@ async fn sign_out_of_buzz_revokes_nothing() {
     // Sign out of Buzz closes every server and removes their records itself.
     host.close();
     assert!(host.snapshot().status == Status::SignedOut);
+    assert_eq!(revoked(&host).await, 0);
+}
+
+#[tokio::test]
+async fn signing_out_of_a_session_borrowed_from_buzz_app_leaves_it_signed_in_there() {
+    let store = Arc::new(Memory::default());
+    store.borrowed.store(true, Ordering::SeqCst);
+    let (host, _) = signed_in_at(store.clone(), UNREACHABLE.into(), "a@example.com");
+    assert!(host.sign_out(None).await.status == Status::SignedOut);
+    assert!(store.raw.lock().unwrap().is_none());
     assert_eq!(revoked(&host).await, 0);
 }
 

@@ -31,6 +31,15 @@ item; choose **Always Allow** each time. Plain `just desktop` never uses the
 helper. Don't use `me` on a shared macOS account: any program running as you
 can get through the helper's check.
 
+`me` also starts with your installed Buzz's sign-ins. It only reads them and
+saves its own changes separately, so signing out in `me` leaves Buzz signed in;
+**Sign out of Buzz** in `me` makes the next launch read Buzz's sign-ins again.
+If your installed build was made with other build inputs, such as extra sign-in
+servers, put them in `~/.buzz-foundation/desktop-me.env` so `me` finds the same
+sign-ins. It is read like `.env.local`, beats it and loses to the shell; a file
+that adds sign-in servers must also set `BUZZ_BUILDERLAB_URL=`. It stays outside
+the repository so worktrees and agents never get it.
+
 To use your real account in `just web`, sign in to Buzz on this computer, then
 put that account's **public** key in `.env.local` at the repository root. Never
 put a private key there.

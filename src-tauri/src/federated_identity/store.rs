@@ -1,6 +1,11 @@
 //! Secure records plus durable, nonsensitive refusal markers outside wiped app data.
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::PathBuf, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 /// Not keyed by app identifier: like the human key, every Buzz copy of this
@@ -9,8 +14,10 @@ use zeroize::{Zeroize, Zeroizing};
 pub(crate) const SERVICE: &str = if cfg!(debug_assertions) {
     "xyz.block.buzz.desktop.federated-session.debug"
 } else {
-    "xyz.block.buzz.desktop.federated-session"
+    RELEASE_SERVICE
 };
+/// Buzz.app's, which `just desktop me` reads but never writes (`SecureStore::release`).
+const RELEASE_SERVICE: &str = "xyz.block.buzz.desktop.federated-session";
 const MAX_BUNDLE: usize = 1024 * 1024;
 
 pub(crate) type LoadedRecord = (Option<Zeroizing<Vec<u8>>>, Option<String>);
@@ -26,6 +33,11 @@ pub(crate) trait Store: Send + Sync {
     ) -> Result<(), &'static str>;
     fn load(&self) -> Result<LoadedRecord, &'static str>;
     fn remove(&self, expected: &[u8], revision: &str) -> Result<(), &'static str>;
+    /// Whether Buzz.app may still hold the session at `revision`, which
+    /// `just desktop me` borrowed: signing out here must not end it there.
+    fn release_holds(&self, _revision: &str) -> bool {
+        false
+    }
 }
 
 pub(crate) struct SecureStore {
@@ -34,6 +46,11 @@ pub(crate) struct SecureStore {
     /// Whether grants share the session's item; otherwise each record is an
     /// item of its own, as before bundles.
     pub(super) bundled: bool,
+    /// In `just desktop me`, Buzz.app's records folder. Each item reads from
+    /// there, read only, until this store first saves it: every save writes
+    /// the item's index here first, so from then on this store's copy is the
+    /// only one read, even once it is empty.
+    pub(super) release: Option<PathBuf>,
 }
 /// Only macOS prompts once per item, and a Windows credential holds at most
 /// 2,560 bytes, so only macOS bundles (as the native agent key bundle does).
@@ -119,7 +136,17 @@ mod items {
         _: &Path,
         account: &str,
     ) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
-        match buzz_credential_store::read_session(SERVICE, account) {
+        read_in(SERVICE, account)
+    }
+    /// Buzz.app's item, for `just desktop me`.
+    pub(super) fn read_release(
+        _: &Path,
+        account: &str,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
+        read_in(super::RELEASE_SERVICE, account)
+    }
+    fn read_in(service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
+        match buzz_credential_store::read_session(service, account) {
             Ok(value) => Ok(Some(value)),
             Err(buzz_credential_store::Error::Absent) => Ok(None),
             Err(value) => Err(error(value)),
@@ -154,14 +181,34 @@ pub(crate) mod items {
     use zeroize::Zeroizing;
     type Items = HashMap<PathBuf, HashMap<String, Vec<u8>>>;
     static ITEMS: Mutex<Option<Items>> = Mutex::new(None);
-    static UNCERTAIN: Mutex<Option<PathBuf>> = Mutex::new(None);
-    static HELPER_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+    // Each test arms its own roots, so parallel tests never take another's.
+    static UNCERTAIN: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    static LOST: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    static HELPER_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     pub(crate) fn uncertain_write(root: &Path) {
-        *HELPER_ROOT.lock().unwrap() = Some(root.into());
-        *UNCERTAIN.lock().unwrap() = Some(root.into());
+        HELPER_ROOTS.lock().unwrap().push(root.into());
+        failed_write(root);
+    }
+    /// The next write at `root` lands but reports storage-unavailable.
+    pub(crate) fn failed_write(root: &Path) {
+        UNCERTAIN.lock().unwrap().push(root.into());
+    }
+    /// The next write at `root` reports storage-unavailable and lands nothing.
+    pub(crate) fn lost_write(root: &Path) {
+        LOST.lock().unwrap().push(root.into());
+    }
+    /// Whether `root` was armed in `hook`, disarming it.
+    fn take(hook: &Mutex<Vec<PathBuf>>, root: &Path) -> bool {
+        let mut roots = hook.lock().unwrap();
+        let armed = roots.iter().position(|armed| armed == root);
+        armed.map(|index| roots.swap_remove(index)).is_some()
     }
     pub(super) fn helper_selected(root: &Path) -> bool {
-        HELPER_ROOT.lock().unwrap().as_deref() == Some(root)
+        HELPER_ROOTS
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|armed| armed == root)
     }
     pub(crate) fn enable(root: &Path) {
         ITEMS
@@ -187,12 +234,21 @@ pub(crate) mod items {
             items.get(account).cloned().map(Zeroizing::new)
         })
     }
+    pub(crate) fn read_release(
+        root: &Path,
+        account: &str,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
+        read(root, account)
+    }
     pub(crate) fn compare(
         root: &Path,
         account: &str,
         expected: Option<&[u8]>,
         replacement: Option<&[u8]>,
     ) -> Result<(), &'static str> {
+        if take(&LOST, root) {
+            return Err("storage-unavailable");
+        }
         with(root, |items| {
             if items.get(account).map(Vec::as_slice) != expected {
                 return Err("session-changed");
@@ -203,9 +259,7 @@ pub(crate) mod items {
             };
             Ok(())
         })??;
-        let mut uncertain = UNCERTAIN.lock().unwrap();
-        if uncertain.as_deref() == Some(root) {
-            uncertain.take();
+        if take(&UNCERTAIN, root) {
             return Err("storage-unavailable");
         }
         Ok(())
@@ -218,11 +272,40 @@ pub(crate) mod items {
 }
 
 impl SecureStore {
-    fn marker(&self, revision: &str) -> Result<PathBuf, &'static str> {
+    /// This build's store for `account`, reading through to Buzz.app's in
+    /// `just desktop me`, as that build reads Buzz.app's key.
+    pub(crate) fn open(account: String) -> Result<Self, &'static str> {
+        Self::open_as(account, buzz_credential_store::reads_release_human())
+    }
+    fn open_as(account: String, me: bool) -> Result<Self, &'static str> {
+        let release = me
+            .then(|| {
+                dirs::data_dir()
+                    .map(|path| path.join(format!(".{RELEASE_SERVICE}")))
+                    .ok_or("storage-unavailable")
+            })
+            .transpose()?;
+        Ok(Self {
+            account,
+            root: root()?,
+            bundled: BUNDLED,
+            release,
+        })
+    }
+    /// Buzz.app's folder, while this store's item still reads from there.
+    fn borrowed(&self) -> Option<&Path> {
+        self.release.as_deref().filter(|_| !self.index().exists())
+    }
+    /// The item at `account` as this store reads it (see `release`).
+    fn seen(&self, account: &str) -> Result<Item, &'static str> {
+        match self.borrowed() {
+            Some(release) => items::read_release(release, account),
+            None => items::read(&self.root, account),
+        }
+    }
+    fn marker(&self, root: &Path, revision: &str) -> Result<PathBuf, &'static str> {
         let revision = uuid::Uuid::parse_str(revision).map_err(|_| "storage-corrupt")?;
-        Ok(self
-            .root
-            .join(format!("{}.{revision}.refused", self.account)))
+        Ok(root.join(format!("{}.{revision}.refused", self.account)))
     }
     fn index(&self) -> PathBuf {
         self.root.join(format!("{}.record", self.account))
@@ -250,7 +333,10 @@ impl SecureStore {
         Ok(Transaction(file, process))
     }
     fn refused(&self, revision: &str) -> Result<Option<String>, &'static str> {
-        match fs::read_to_string(self.marker(revision)?) {
+        self.refused_in(&self.root, revision)
+    }
+    fn refused_in(&self, root: &Path, revision: &str) -> Result<Option<String>, &'static str> {
+        match fs::read_to_string(self.marker(root, revision)?) {
             Ok(contents) if contents == revision => Ok(Some(contents)),
             Ok(_) => Err("storage-corrupt"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -263,7 +349,7 @@ impl SecureStore {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(self.marker(revision)?)
+            .open(self.marker(&self.root, revision)?)
             .map_err(|_| "storage-unavailable")?;
         use std::io::Write;
         file.write_all(revision.as_bytes())
@@ -271,16 +357,21 @@ impl SecureStore {
             .map_err(|_| "storage-unavailable")
     }
     fn clear_refusal(&self, revision: &str) -> Result<(), &'static str> {
-        match fs::remove_file(self.marker(revision)?) {
+        match fs::remove_file(self.marker(&self.root, revision)?) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(_) => Err("storage-unavailable"),
         }
     }
-    /// The item as read, and the bundle it holds.
+    /// This store's item as read, and the bundle it reads (which, borrowed,
+    /// is Buzz.app's: the first save copies it here).
     fn bundle(&self) -> Result<(Item, Bundle), &'static str> {
         let raw = items::read(&self.root, &self.account)?;
-        let bundle = match raw.as_deref() {
+        let seen = match self.borrowed() {
+            Some(_) => self.seen(&self.account)?,
+            None => raw.clone(),
+        };
+        let bundle = match seen.as_deref() {
             Some(raw) => decode(raw)?,
             None => Bundle::default(),
         };
@@ -290,10 +381,33 @@ impl SecureStore {
     /// empty, and returns what it wrote. Session replacements through a helper
     /// remain refused until their write succeeds.
     fn save(&self, current: Option<&[u8]>, bundle: &mut Bundle) -> Result<Item, &'static str> {
+        let next = self.encode(bundle)?;
+        if let Some(release) = self.borrowed() {
+            self.copy_refusal(release, bundle)?;
+        }
+        self.commit(current, next.as_deref().map(Vec::as_slice))?;
+        Ok(next)
+    }
+    /// Replaces this store's item read as `current`, indexing it first.
+    fn commit(&self, current: Option<&[u8]>, next: Option<&[u8]>) -> Result<(), &'static str> {
+        let borrowed = self.borrowed().is_some();
         // Register before writing any secret. Buzz identity deletion walks these
         // public account keys even after configuration or profile changes.
         fs::create_dir_all(&self.root).map_err(|_| "storage-unavailable")?;
         fs::write(self.index(), b"1").map_err(|_| "storage-unavailable")?;
+        let written = items::compare(&self.root, &self.account, current, next);
+        // A first write in `me` that left the item as it was keeps reading Buzz.app's.
+        if borrowed
+            && written.is_err()
+            && items::read(&self.root, &self.account)
+                .is_ok_and(|item| item.as_deref().map(Vec::as_slice) == current)
+        {
+            let _ = fs::remove_file(self.index());
+        }
+        written
+    }
+    /// What `save` writes for `bundle`: nothing once it is empty.
+    fn encode(&self, bundle: &mut Bundle) -> Result<Item, &'static str> {
         bundle.bundle = 1;
         let next = if bundle.session.is_none() && bundle.grants.is_empty() {
             None
@@ -313,13 +427,19 @@ impl SecureStore {
         if next.as_ref().is_some_and(|next| next.len() > MAX_BUNDLE) {
             return Err("storage-unavailable");
         }
-        items::compare(
-            &self.root,
-            &self.account,
-            current,
-            next.as_deref().map(Vec::as_slice),
-        )?;
         Ok(next)
+    }
+    /// Before the first save in `me` stops `load` reading Buzz.app's refusal
+    /// markers: refuse here a session it copies that Buzz.app refused.
+    fn copy_refusal(&self, release: &Path, bundle: &Bundle) -> Result<(), &'static str> {
+        let Some(session) = bundle.session.as_deref() else {
+            return Ok(());
+        };
+        let record: super::Record = serde_json::from_str(session).map_err(|_| "storage-corrupt")?;
+        match self.refused_in(release, &record.revision)? {
+            Some(_) => self.refuse(&record.revision),
+            None => Ok(()),
+        }
     }
     /// Compare-and-swap the session slot, keeping every grant.
     fn swap(
@@ -358,6 +478,7 @@ impl SecureStore {
             account: key.into(),
             root: self.root.clone(),
             bundled: false,
+            release: self.release.clone(),
         }
     }
     /// The grant (or retirement) record at `key`. Only absence from a
@@ -367,14 +488,14 @@ impl SecureStore {
     pub(crate) fn grant(&self, key: &str) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
         if !self.bundled {
             let _transaction = self.item(key).lock()?;
-            return items::read(&self.root, key);
+            return self.item(key).seen(key);
         }
         let _transaction = self.lock()?;
         let (raw, mut bundle) = self.bundle()?;
         if let Some(value) = bundle.grants.get(key) {
             return Ok(Some(Zeroizing::new(value.as_bytes().to_vec())));
         }
-        let Some(value) = items::read(&self.root, key)? else {
+        let Some(value) = self.seen(key)? else {
             return Ok(None);
         };
         bundle.grants.insert(key.into(), text(&value)?);
@@ -395,15 +516,9 @@ impl SecureStore {
             let Some(value) = value else {
                 return self.forget_item(key);
             };
-            // Registered before the write, so a full Buzz sign-out erases it.
-            fs::write(item.index(), b"1").map_err(|_| "storage-unavailable")?;
+            // Indexed before the write, so a full Buzz sign-out erases it.
             let current = items::read(&self.root, key)?;
-            return items::compare(
-                &self.root,
-                key,
-                current.as_deref().map(Vec::as_slice),
-                Some(value),
-            );
+            return item.commit(current.as_deref().map(Vec::as_slice), Some(value));
         }
         let _transaction = self.lock()?;
         let (raw, mut bundle) = self.bundle()?;
@@ -424,6 +539,8 @@ impl SecureStore {
                         old.zeroize();
                         self.save(raw, &mut bundle).map(drop)
                     }
+                    // Saved anyway in `me`, so Buzz.app's is not read again.
+                    None if self.borrowed().is_some() => self.save(raw, &mut bundle).map(drop),
                     None => Ok(()),
                 }
             }
@@ -440,7 +557,12 @@ impl SecureStore {
     /// deletion keeps the entry for the boot erase owner.
     fn forget_item(&self, key: &str) -> Result<(), &'static str> {
         items::delete(&self.root, key)?;
-        match fs::remove_file(self.root.join(format!("{key}.record"))) {
+        let index = self.root.join(format!("{key}.record"));
+        // In `me`, indexed, so Buzz.app's item is not read again.
+        if self.release.is_some() {
+            return fs::write(index, b"1").map_err(|_| "storage-unavailable");
+        }
+        match fs::remove_file(index) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(_) => Err("storage-unavailable"),
@@ -471,7 +593,11 @@ impl Store for SecureStore {
             Some(raw) if raw.len() <= 64 * 1024 => {
                 let record: super::Record =
                     serde_json::from_slice(raw).map_err(|_| "storage-corrupt")?;
-                self.refused(&record.revision)?
+                // Borrowed, either copy's refusal holds.
+                match (self.refused(&record.revision)?, self.borrowed()) {
+                    (None, Some(release)) => self.refused_in(release, &record.revision)?,
+                    (refusal, _) => refusal,
+                }
             }
             Some(_) => return Err("storage-corrupt"),
             None => None,
@@ -485,6 +611,22 @@ impl Store for SecureStore {
         let _transaction = self.lock()?;
         self.swap(Some(expected), None)?;
         self.clear_refusal(revision)
+    }
+    fn release_holds(&self, revision: &str) -> bool {
+        let Some(release) = &self.release else {
+            return false;
+        };
+        let read = items::read_release(release, &self.account)
+            .and_then(|raw| raw.map(|raw| decode(&raw)).transpose());
+        match read {
+            Ok(Some(bundle)) => bundle.session.as_deref().is_some_and(|session| {
+                serde_json::from_str::<super::Record>(session)
+                    .map_or(true, |record| record.revision == revision)
+            }),
+            Ok(None) => false,
+            // What can't be read may still be Buzz.app's.
+            Err(_) => true,
+        }
     }
 }
 
@@ -536,6 +678,7 @@ pub(crate) fn remove_all(root: PathBuf) -> Result<(), String> {
             account: account.to_owned(),
             root: root.clone(),
             bundled: BUNDLED,
+            release: None,
         };
         let _transaction = store.lock()?;
         // The boot owner's durable pending sign-out fences all app activity.
@@ -564,6 +707,7 @@ mod tests {
             account: "ab".repeat(32),
             root: root.path().into(),
             bundled: true,
+            release: None,
         }
     }
     fn item(store: &SecureStore, account: &str) -> Option<Vec<u8>> {
@@ -584,6 +728,7 @@ mod tests {
             account,
             root: root.path().into(),
             bundled: true,
+            release: None,
         };
         let held = elsewhere(&store);
         assert_eq!(remove_all(root.path().into()), Err("storage-busy".into()));
@@ -873,6 +1018,7 @@ mod tests {
             account: "fixture".into(),
             root: root.path().into(),
             bundled: true,
+            release: None,
         };
         let old = uuid::Uuid::new_v4().to_string();
         let newer = uuid::Uuid::new_v4().to_string();
@@ -910,5 +1056,176 @@ mod tests {
             Some(newer.as_str())
         );
         drop(inherited);
+    }
+
+    #[test]
+    fn only_me_reads_buzz_apps_records_and_both_keep_their_own() {
+        let account = "ab".repeat(32);
+        for me in [false, true] {
+            let store = SecureStore::open_as(account.clone(), me).unwrap();
+            assert_eq!(store.root, root().unwrap());
+            assert!(store.root.ends_with(format!(".{SERVICE}")));
+            assert_eq!(
+                store.release,
+                me.then(|| dirs::data_dir()
+                    .unwrap()
+                    .join(".xyz.block.buzz.desktop.federated-session"))
+            );
+        }
+        assert_ne!(SERVICE, RELEASE_SERVICE);
+    }
+
+    #[test]
+    fn me_copies_buzz_apps_record_on_first_write_and_never_changes_it() {
+        for bundled in [true, false] {
+            me_reads_through(bundled);
+        }
+    }
+    fn me_reads_through(bundled: bool) {
+        let release = tempfile::tempdir().unwrap();
+        let app = SecureStore {
+            bundled,
+            ..secure(&release)
+        };
+        let session = super::super::tests::record();
+        let revision = session.record.revision.clone();
+        let session = session.raw.to_vec();
+        app.compare(None, Some(&session)).unwrap();
+        app.set_grant("cd", Some(b"app-grant")).unwrap();
+        let saved = item(&app, &app.account);
+        let debug = tempfile::tempdir().unwrap();
+        let me = SecureStore {
+            bundled,
+            release: Some(release.path().into()),
+            ..secure(&debug)
+        };
+
+        // Reads come from Buzz.app's record until the first write.
+        assert_eq!(
+            me.load().unwrap().0.map(|raw| raw.to_vec()),
+            Some(session.clone())
+        );
+        assert_eq!(
+            me.grant("cd").unwrap().map(|raw| raw.to_vec()),
+            Some(b"app-grant".to_vec())
+        );
+        assert_eq!(item(&me, &me.account), None);
+        assert!(me.release_holds(&revision));
+
+        // A first write that lands nothing keeps reading Buzz.app's.
+        items::lost_write(debug.path());
+        assert_eq!(
+            me.set_grant("cd", Some(b"lost")),
+            Err("storage-unavailable")
+        );
+        assert_eq!(
+            me.grant("cd").unwrap().map(|raw| raw.to_vec()),
+            Some(b"app-grant".to_vec())
+        );
+        assert_eq!(
+            me.load().unwrap().0.map(|raw| raw.to_vec()),
+            Some(session.clone())
+        );
+        // One that may have landed makes this copy its own.
+        let landed = tempfile::tempdir().unwrap();
+        let other = SecureStore {
+            bundled,
+            release: Some(release.path().into()),
+            ..secure(&landed)
+        };
+        items::failed_write(landed.path());
+        assert_eq!(
+            other.set_grant("cd", Some(b"landed")),
+            Err("storage-unavailable")
+        );
+        assert_eq!(
+            other.grant("cd").unwrap().map(|raw| raw.to_vec()),
+            Some(b"landed".to_vec())
+        );
+
+        // The first write copies the whole bundle here, without mixing.
+        me.set_grant("ef", Some(b"me-grant")).unwrap();
+        assert_eq!(item(&app, &app.account), saved);
+        assert_eq!(
+            me.read().unwrap().map(|raw| raw.to_vec()),
+            Some(session.clone())
+        );
+        assert_eq!(
+            me.grant("cd").unwrap().map(|raw| raw.to_vec()),
+            Some(b"app-grant".to_vec())
+        );
+        assert_eq!(app.grant("ef").unwrap(), None);
+
+        // Signing out empties this copy and never falls back to Buzz.app's.
+        me.remove(&session, &revision).unwrap();
+        me.set_grant("cd", None).unwrap();
+        me.set_grant("ef", None).unwrap();
+        assert_eq!(item(&me, &me.account), None);
+        assert_eq!(me.load().unwrap().0, None);
+        assert_eq!(me.grant("cd").unwrap(), None);
+        assert_eq!(item(&app, "cd").is_some(), !bundled);
+        assert!(me.release_holds(&revision));
+        assert!(!me.release_holds(&uuid::Uuid::new_v4().to_string()));
+
+        // Sign out of Buzz erases only this copy, and reads Buzz.app's again.
+        remove_all(debug.path().into()).unwrap();
+        assert_eq!(item(&app, &app.account), saved);
+        assert!(release
+            .path()
+            .join(format!("{}.record", app.account))
+            .exists());
+        assert_eq!(
+            me.load().unwrap().0.map(|raw| raw.to_vec()),
+            Some(session.clone())
+        );
+    }
+
+    #[test]
+    fn me_keeps_reading_buzz_apps_record_until_a_save_and_honors_both_refusals() {
+        let release = tempfile::tempdir().unwrap();
+        let app = secure(&release);
+        let session = super::super::tests::record();
+        let revision = session.record.revision.clone();
+        app.compare(None, Some(&session.raw)).unwrap();
+        app.set_grant("cd", Some(b"app-grant")).unwrap();
+        items::compare(release.path(), "gh", None, Some(b"old-grant")).unwrap();
+        let debug = tempfile::tempdir().unwrap();
+        let me = SecureStore {
+            release: Some(release.path().into()),
+            ..secure(&debug)
+        };
+
+        // A save that surely wrote nothing (here, a bundle the per-item
+        // layout refuses) leaves Buzz.app's record the one read.
+        let unbundled = SecureStore {
+            bundled: false,
+            ..me.item(&me.account)
+        };
+        assert_eq!(
+            unbundled.compare(Some(&session.raw), None),
+            Err("storage-corrupt")
+        );
+        let big = "a".repeat(MAX_BUNDLE);
+        assert_eq!(
+            me.set_grant("ij", Some(big.as_bytes())),
+            Err("storage-unavailable")
+        );
+        assert!(me.borrowed().is_some());
+
+        // A sign-out refused here before its save still holds.
+        me.refuse(&revision).unwrap();
+        assert_eq!(me.load().unwrap().1, Some(revision.clone()));
+        me.clear_refusal(&revision).unwrap();
+        assert_eq!(me.load().unwrap().1, None);
+
+        // So does Buzz.app's refusal, and the first save keeps it.
+        app.refuse(&revision).unwrap();
+        assert_eq!(me.load().unwrap().1, Some(revision.clone()));
+        // Deleting a grant Buzz.app keeps from before bundles saves this copy.
+        me.set_grant("gh", None).unwrap();
+        assert!(me.borrowed().is_none());
+        assert_eq!(me.load().unwrap().1, Some(revision.clone()));
+        assert_eq!(me.grant("gh").unwrap(), None);
+        assert_eq!(item(&app, "gh"), Some(b"old-grant".to_vec()));
     }
 }

@@ -267,11 +267,7 @@ impl FederatedIdentity {
             record: Some(root.join(format!("{account}.customers"))),
         });
         let signed_out = Some(root.join(format!("{account}.signed-out")));
-        let store = Arc::new(store::SecureStore {
-            account: account.clone(),
-            root,
-            bundled: store::BUNDLED,
-        });
+        let store = Arc::new(store::SecureStore::open(account.clone())?);
         Ok(Self::build(
             config,
             fingerprint,
@@ -1444,7 +1440,12 @@ impl FederatedIdentity {
             self.remove_retired(session.clone(), &revision).await;
             // Whatever the removal found: this copy's token only, never a
             // record read back from the item, which may be another copy's.
-            self.revoke(&session);
+            // One `just desktop me` borrowed stays Buzz.app's to end.
+            let held = session.record.revision.clone();
+            let borrowed = self.storage(move |store| Ok(store.release_holds(&held)));
+            if !matches!(borrowed.await, Ok(true)) {
+                self.revoke(&session);
+            }
             Ok(())
         } else {
             // Also retries an incomplete deletion or sign-out during restore.

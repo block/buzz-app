@@ -634,7 +634,7 @@ async fn a_bundled_harness_child_sees_its_list() {
     )
     .await
     .unwrap();
-    let mut command = tokio::process::Command::new("/usr/bin/printenv");
+    let mut command = tokio::process::Command::new("printenv");
     command.arg("TEST_AGENT_ENV");
     spawn_env(&mut command, &list);
     let output = command.output().await.unwrap();

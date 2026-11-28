@@ -36,6 +36,8 @@ type Attempt = {
   heartbeat?: ReturnType<typeof setInterval>;
   stopAccess?: () => void;
   stopAudioSettings?: () => void;
+  /** Resolves to this call's hold on the OS input mute, if it got one. */
+  inputMute?: Promise<number | null> | undefined;
   sender: ReturnType<typeof createPcmSender>;
 };
 const idle: HuddleSnapshot = { phase: "idle", muted: false, participants: [] };
@@ -128,6 +130,15 @@ export function createHuddles(
   };
   const valid = (attempt: Attempt) =>
     !disposed && current === attempt && !attempt.abort.signal.aborted;
+  const setMuted = (muted: boolean) => {
+    if (!current || snapshot.phase !== "connected" || snapshot.muted === muted)
+      return;
+    if (muted) current.sender.clear();
+    current.audio?.mute(muted);
+    if (muted && snapshot.destination)
+      speakers.delete(snapshot.destination.viewer);
+    update({ ...snapshot, muted, ...activitySnapshot() });
+  };
   async function leave(error?: string, remote = false) {
     if (closing) return closing;
     if (snapshot.phase === "incoming" && snapshot.room) {
@@ -146,6 +157,9 @@ export function createHuddles(
     resetActivity();
     previous?.abort.abort();
     previous?.stopAudioSettings?.();
+    void previous?.inputMute?.then((token) => {
+      if (token !== null) void bridge.inputMute?.stop(token);
+    });
     previous?.audio?.close();
     clearInterval(previous?.heartbeat);
     previous?.stopAccess?.();
@@ -402,7 +416,20 @@ export function createHuddles(
           ? { phase: "connected", room: event.room }
           : {}),
       });
-      if (event.type === "connected") void inviteAgent(event.room);
+      if (event.type === "connected") {
+        void inviteAgent(event.room);
+        attempt.inputMute ??= bridge.inputMute
+          ?.start((muted) => {
+            if (valid(attempt)) setMuted(muted);
+          })
+          .then((token) => {
+            // The OS mute starts unmuted; carry over a mute made meanwhile.
+            if (token !== null && valid(attempt) && snapshot.muted)
+              void bridge.inputMute?.set(true);
+            return token;
+          })
+          .catch(() => null);
+      }
     };
     try {
       if (discover) {
@@ -526,13 +553,14 @@ export function createHuddles(
     start: (destination: HuddleDestination) =>
       join(destination, undefined, true),
     mute() {
-      if (!current || snapshot.phase !== "connected") return;
+      const attempt = current;
+      if (!attempt || snapshot.phase !== "connected") return;
       const muted = !snapshot.muted;
-      if (muted) current.sender.clear();
-      current.audio?.mute(muted);
-      if (muted && snapshot.destination)
-        speakers.delete(snapshot.destination.viewer);
-      update({ ...snapshot, muted, ...activitySnapshot() });
+      setMuted(muted);
+      void attempt.inputMute?.then((token) => {
+        if (token !== null && valid(attempt))
+          void bridge.inputMute?.set(muted).catch(() => {});
+      });
     },
     refreshAudioSettings() {
       if (snapshot.phase === "connected")

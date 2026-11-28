@@ -25,6 +25,13 @@ export type HuddleBridge = {
   close(id: string): Promise<void>;
   touch(id: string): Promise<void>;
   send(id: string, samples: number[]): Promise<void>;
+  /** The OS input mute, where the host has one, so headset mute gestures and
+   * the Huddle button stay in step. `start` resolves to a token, or null. */
+  inputMute?: {
+    start(change: (muted: boolean) => void): Promise<number | null>;
+    set(muted: boolean): Promise<void>;
+    stop(token: number): Promise<void>;
+  };
 };
 export const nativeHuddles: HuddleBridge = {
   available: isTauri(),
@@ -46,4 +53,13 @@ export const nativeHuddles: HuddleBridge = {
   close: (id) => invoke("huddle_close", { id }),
   touch: (id) => invoke("huddle_touch", { id }),
   send: (id, samples) => invoke("huddle_pcm", { id, samples }),
+  inputMute: {
+    start(change) {
+      const changes = new Channel<boolean>();
+      changes.onmessage = change;
+      return invoke("input_mute_start", { changes });
+    },
+    set: (muted) => invoke("input_mute_set", { muted }),
+    stop: (token) => invoke("input_mute_stop", { token }),
+  },
 };

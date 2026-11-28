@@ -124,8 +124,17 @@ function harness(
   };
   let receive = (_: HuddleUpdate) => {};
   let send = (_: number[]) => {};
+  let headset = (_: boolean) => {};
   const bridge: HuddleBridge = {
     available: true,
+    inputMute: {
+      start: vi.fn(async (fn: (muted: boolean) => void) => {
+        headset = fn;
+        return 7;
+      }),
+      set: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+    },
     open: vi.fn(async (_id, _context, _room, fn) => {
       receive = fn;
     }),
@@ -149,6 +158,7 @@ function harness(
     openAudio,
     receive: (e: HuddleUpdate) => receive(e),
     send: (pcm: number[]) => send(pcm),
+    headset: (muted: boolean) => headset(muted),
     access(next: ChannelSummary[], incomplete = false) {
       channels = next;
       partial = incomplete;
@@ -229,6 +239,34 @@ describe("Huddle lifetime", () => {
     expect(h.service.snapshot().phase).toBe("idle");
     h.receive({ type: "connected", room: "late", participants: [] });
     expect(h.service.snapshot().phase).toBe("idle");
+    await h.dispose();
+  });
+  it("keeps the Huddle mute and the system input mute in step", async () => {
+    const h = harness();
+    await h.service.join(destination);
+    expect(h.bridge.inputMute?.start).not.toHaveBeenCalled();
+    h.receive({ type: "connected", room: "room", participants: [] });
+    await vi.waitFor(() =>
+      expect(h.bridge.inputMute?.start).toHaveBeenCalledTimes(1),
+    );
+    // A headset gesture mutes the call and its button.
+    h.headset(true);
+    expect(h.service.snapshot().muted).toBe(true);
+    expect(h.audio.mute).toHaveBeenLastCalledWith(true);
+    h.send([1]);
+    expect(h.bridge.send).not.toHaveBeenCalled();
+    // The button drives the system mute, and its echo changes nothing.
+    h.service.mute();
+    await vi.waitFor(() =>
+      expect(h.bridge.inputMute?.set).toHaveBeenLastCalledWith(false),
+    );
+    h.headset(false);
+    expect(h.service.snapshot().muted).toBe(false);
+    expect(h.audio.mute).toHaveBeenCalledTimes(2);
+    await h.service.leave();
+    expect(h.bridge.inputMute?.stop).toHaveBeenCalledWith(7);
+    h.headset(true);
+    expect(h.service.snapshot().muted).toBe(false);
     await h.dispose();
   });
   it("cancels an outstanding permission prompt and allows another attempt", async () => {

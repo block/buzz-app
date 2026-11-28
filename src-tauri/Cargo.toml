@@ -103,7 +103,8 @@ libc = "0.2"
 tauri-plugin-mcp-bridge = { git = "https://github.com/hypothesi/mcp-server-tauri", rev = "1d5105e72835b28ca05a75bcd612b9127c12fe94", optional = true }
 security-framework = "3.7"
 block2 = "=0.6.2"
-objc2 = "=0.6.4"
+objc2 = { version = "=0.6.4", features = ["exception"] }
+objc2-avf-audio = { version = "=0.3.2", default-features = false, features = ["std", "block2", "AVAudioApplication", "AVAudioBuffer", "AVAudioEngine", "AVAudioFormat", "AVAudioIONode", "AVAudioNode", "AVAudioTime", "AVAudioTypes"] }
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSSharingService", "NSImage", "NSView", "NSApplication", "NSResponder", "NSScreen", "NSWindow", "NSEvent", "NSWorkspace", "NSRunningApplication", "NSMenu", "NSMenuItem", "NSUserInterfaceItemIdentification", "NSAppearance", "NSColor", "NSColorList", "objc2-core-foundation", "block2"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSThread", "NSBundle", "NSString", "NSURL", "NSError", "NSUserDefaults", "NSValue", "NSFormatter", "NSDateFormatter", "NSLocale", "NSProcessInfo", "NSData", "NSProgress", "NSURLRequest", "NSURLResponse", "NSURLError", "NSNotification", "NSOperation", "NSDate", "NSTimer", "block2", "NSArray", "NSDictionary", "NSIndexSet"] }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGColorSpace"] }

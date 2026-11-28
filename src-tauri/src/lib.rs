@@ -65,6 +65,7 @@ mod claude_key;
 #[cfg(unix)]
 mod cli_link;
 mod clipboard;
+mod input_mute;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
@@ -769,6 +770,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         huddle_close,
         huddle_pcm,
         huddle_touch,
+        input_mute::input_mute_start,
+        input_mute::input_mute_set,
+        input_mute::input_mute_stop,
         pairing::pairing_account,
         pairing::pairing_start,
         pairing::pairing_status,
@@ -1375,6 +1379,7 @@ pub fn run() {
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
                 // Processes belong to the page that started them.
                 webview.state::<Huddles>().stop_all();
+                input_mute::release();
                 webview.state::<federated_identity::access::Registrations>().clear();
                 webview.state::<federated_identity::socket::Sockets>().clear();
                 webview.state::<federated_identity::FederatedIdentity>().clear_discoveries();

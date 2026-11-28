@@ -831,6 +831,8 @@
   /* A reaction strip sits between a bubble and its chips, and a whole bubble
      under the pointer takes the quietest overlay of all. */
   --shade-soft-fill: rgb(0 0 0 / 6%);
+  /* Sinks a dark mode reaction pill below its bubble. */
+  --shade-deep-fill: rgb(0 0 0 / 12%);
   --tint-soft-fill: rgb(255 255 255 / 10%);
   --shade-quiet-fill: rgb(0 0 0 / 4%);
   --tint-quiet-fill: rgb(255 255 255 / 8%);
@@ -1143,6 +1145,7 @@
   --affordance-message-own-highlight: var(--affordance-message-highlight);
   --affordance-reaction: var(--shade-soft-fill);
   --affordance-reaction-own: var(--affordance-reaction);
+  --affordance-agent-preview: var(--shade-soft-fill);
   /* Mentions are people, not links. Ordinary mentions stay neutral; a mention
      of you joins the strong group, because it asks for your attention. Own
      bubbles may override the -own trio to stay distinct from their fill. */
@@ -1311,8 +1314,10 @@
   --affordance-message-own-hover: var(--tint-quiet-fill);
   --affordance-message-highlight: var(--tint-fill);
   --affordance-message-own-highlight: var(--affordance-message-highlight);
-  --affordance-reaction: var(--tint-soft-fill);
+  /* Grey symbol emoji such as ➕ vanish on a lightened fill. */
+  --affordance-reaction: var(--shade-deep-fill);
   --affordance-reaction-own: var(--affordance-reaction);
+  --affordance-agent-preview: var(--tint-soft-fill);
   /* Ordinary mentions tint the dark fill they sit on. A mention of you takes
      the strong fill in both modes, because it asks for your attention. */
   --affordance-mention: var(--tint-fill);
@@ -1813,7 +1818,7 @@
   --accent-link-hover-dark: var(--magenta-link-hover-dark);
   --accent-overlay-dark: var(--shade-strong-fill);
   --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
-  --accent-overlay-soft-dark: var(--shade-soft-fill);
+  --accent-overlay-soft-dark: var(--shade-deep-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
   --accent-overlay-highlight-dark: var(--shade-fill);
 }
@@ -1860,7 +1865,7 @@
   --accent-link-hover-dark: var(--iris-link-hover-dark);
   --accent-overlay-dark: var(--shade-strong-fill);
   --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
-  --accent-overlay-soft-dark: var(--shade-soft-fill);
+  --accent-overlay-soft-dark: var(--shade-deep-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
   --accent-overlay-highlight-dark: var(--shade-fill);
 }
@@ -1907,7 +1912,7 @@
   --accent-link-hover-dark: var(--cobalt-link-hover-dark);
   --accent-overlay-dark: var(--shade-strong-fill);
   --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
-  --accent-overlay-soft-dark: var(--shade-soft-fill);
+  --accent-overlay-soft-dark: var(--shade-deep-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
   --accent-overlay-highlight-dark: var(--shade-fill);
 }
@@ -1954,7 +1959,7 @@
   --accent-link-hover-dark: var(--bee-link-hover-dark);
   --accent-overlay-dark: var(--shade-fill);
   --accent-overlay-hover-dark: var(--shade-hover-fill);
-  --accent-overlay-soft-dark: var(--shade-soft-fill);
+  --accent-overlay-soft-dark: var(--shade-deep-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
   --accent-overlay-highlight-dark: var(--shade-fill);
 }
@@ -2002,7 +2007,7 @@
   --accent-link-hover-dark: var(--citrus-link-hover-dark);
   --accent-overlay-dark: var(--shade-fill);
   --accent-overlay-hover-dark: var(--shade-hover-fill);
-  --accent-overlay-soft-dark: var(--shade-soft-fill);
+  --accent-overlay-soft-dark: var(--shade-deep-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
   --accent-overlay-highlight-dark: var(--shade-fill);
 }
@@ -2049,7 +2054,7 @@
   --accent-link-hover-dark: var(--mono-link-hover-dark);
   --accent-overlay-dark: var(--shade-fill);
   --accent-overlay-hover-dark: var(--shade-hover-fill);
-  --accent-overlay-soft-dark: var(--shade-soft-fill);
+  --accent-overlay-soft-dark: var(--shade-deep-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
   --accent-overlay-highlight-dark: var(--shade-fill);
 }

@@ -3426,7 +3426,61 @@ function Composer({
         throw new Error(
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
+      // An agent only an earlier Buzz runs would not answer; offer it here
+      // first. In Solo, a name outside the chat that isn't one of your agents
+      // is only a reference, so it is never offered.
+      const chat = solo ? mentionChannel(session, channelId) : undefined;
+      const yours = pickedAgents(session.agentChoices);
+      const lookup = oldAgents.find(
+        solo
+          ? capturedRecipients.filter(
+              (person) =>
+                chat?.members?.includes(person.pubkey) ||
+                yours?.some((agent) => agent.pubkey === person.pubkey),
+            )
+          : capturedRecipients,
+      );
+      let old = lookup instanceof Promise ? await lookup : lookup;
+      const notYours = (key: string) =>
+        !yours?.some((agent) => agent.pubkey === key);
+      if (solo && !submission && old.some((agent) => notYours(agent.pubkey))) {
+        // Only the cached roster made these candidates; a fresh one decides.
+        const fresh = await session.channelWrites.refreshMembership(channelId);
+        attempt.signal.throwIfAborted();
+        old = old.filter(
+          (agent) =>
+            !notYours(agent.pubkey) || fresh.members?.includes(agent.pubkey),
+        );
+      }
+      let declinedImports: readonly string[] = [];
+      if (old.length) {
+        setSending(true);
+        setError(undefined);
+        const decision = await oldAgents.ask(
+          old,
+          attempt.signal,
+          () =>
+            valueRef.current === captured &&
+            sameAttachmentSelection(
+              attachments.store.snapshot(),
+              capturedAttachments,
+            ) &&
+            permitted.current,
+        );
+        if (decision === null) return;
+        declinedImports = decision;
+      }
       if (submission) {
+        // The lookup yielded; an edited or stopped draft is not this send.
+        attempt.signal.throwIfAborted();
+        if (
+          valueRef.current !== captured ||
+          !sameAttachmentSelection(
+            attachments.store.snapshot(),
+            capturedAttachments,
+          )
+        )
+          return;
         // SoloDraft filters the captured choices against its final recipient set.
         submission.submit(
           captured,
@@ -3441,7 +3495,6 @@ function Composer({
       }
       let references: readonly string[] = [];
       let recipients = capturedRecipients.map((item) => item.pubkey);
-      let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
@@ -3450,26 +3503,6 @@ function Composer({
           fromPill,
         ));
       } else if (recipients.length) {
-        // An agent only an earlier Buzz runs would not answer; offer it here first.
-        const lookup = oldAgents.find(captured.recipients);
-        const old = lookup instanceof Promise ? await lookup : lookup;
-        if (old.length) {
-          setSending(true);
-          setError(undefined);
-          const decision = await oldAgents.ask(
-            old,
-            attempt.signal,
-            () =>
-              valueRef.current === captured &&
-              sameAttachmentSelection(
-                attachments.store.snapshot(),
-                capturedAttachments,
-              ) &&
-              permitted.current,
-          );
-          if (decision === null) return;
-          declinedImports = decision;
-        }
         const channel = session.channels
           .list()
           .channels.find((item) => item.id === channelId);

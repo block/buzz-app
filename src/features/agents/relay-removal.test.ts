@@ -8,6 +8,7 @@ import { createRelaySession } from "../relay/session";
 import { archiveRelay, keypair, signed, type Key } from "../relay/testing";
 import {
   type OwnerConsent,
+  archiveAgent,
   publishAgentRecord,
   removeAgentFromChannels,
   removeRelayAgent,
@@ -376,6 +377,147 @@ it("a cancelled removal signs and publishes nothing", async () => {
   await expect(remove(controller.signal)).rejects.toBeDefined();
   expect(fixture.published).toEqual([]);
   expect(fixture.signedBy).toEqual([]);
+});
+
+it("uses agent self-removal for channels the owner cannot remove from and clears stale failed outbox entries", async () => {
+  const publicChannel = `${"c".repeat(8)}-channel`;
+  const { fixture, instance } = setup(viewer, {
+    // Viewer is not a member of this channel, so owner-signed 9001 would be refused.
+    [publicChannel]: [agent.pubkey, stranger.pubkey],
+  });
+  const outbox = instance.session.outbox;
+  if (!outbox) throw new Error("fixture outbox missing");
+  // Seed a prior failed owner-signed 9001 from an earlier attempt.
+  fixture.removal.fail = new PublishRejected("Actor not authorized");
+  fixture.removal.failKind = 9001;
+  await expect(
+    removeAgentFromChannels(
+      instance.session,
+      agent.pubkey,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("Actor not authorized");
+  expect(outbox.snapshot().some(({ event }) => event.kind === 9001)).toBe(true);
+  delete fixture.removal.fail;
+
+  const selfRemoved: string[] = [];
+  await removeAgentFromChannels(
+    instance.session,
+    agent.pubkey,
+    new AbortController().signal,
+    async (channelId) => {
+      selfRemoved.push(channelId);
+      fixture.channels[channelId] = (fixture.channels[channelId] ?? []).filter(
+        (key) => key !== agent.pubkey,
+      );
+    },
+  );
+  expect(selfRemoved).toEqual([publicChannel]);
+  expect(fixture.published).toEqual([]);
+  expect(fixture.channels[publicChannel]).toEqual([stranger.pubkey]);
+  expect(outbox.snapshot()).toEqual([]);
+});
+
+it("falls back to owner-signed 9001 when self-removal is refused and confirms all channels in one batched roster read", async () => {
+  const first = `${"d".repeat(8)}-channel`,
+    second = `${"e".repeat(8)}-channel`;
+  let rosterReads = 0;
+  const { fixture, instance } = setup(
+    viewer,
+    {
+      [first]: [agent.pubkey, viewer.pubkey],
+      [second]: [agent.pubkey, viewer.pubkey],
+    },
+    ({ transport }) => {
+      const query = transport.query.bind(transport);
+      transport.query = (filters, signal) => {
+        if (
+          filters.some(
+            (filter) =>
+              filter.kinds?.includes(39002) && Array.isArray(filter["#d"]),
+          )
+        )
+          rosterReads++;
+        return query(filters, signal);
+      };
+    },
+  );
+  await removeAgentFromChannels(
+    instance.session,
+    agent.pubkey,
+    new AbortController().signal,
+    async (channelId) => {
+      if (channelId === first)
+        throw new Error("cannot leave channel as the last owner");
+      fixture.channels[channelId] = (fixture.channels[channelId] ?? []).filter(
+        (key) => key !== agent.pubkey,
+      );
+    },
+  );
+  expect(fixture.published.map((event) => event.tags[0])).toEqual([
+    ["h", first],
+  ]);
+  expect(fixture.channels[first]).toEqual([viewer.pubkey]);
+  expect(fixture.channels[second]).toEqual([viewer.pubkey]);
+  expect(rosterReads).toBe(1);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("signs a fresh 9001 on retry after an explicit relay refusal and removes across waves", async () => {
+  const channels = Object.fromEntries(
+    ["1", "2", "3", "4", "5"].map((n) => [
+      `${n.repeat(8)}-channel`,
+      [agent.pubkey, viewer.pubkey],
+    ]),
+  );
+  const { fixture, instance } = setup(viewer, channels);
+  fixture.removal.fail = new PublishRejected(
+    "DM members change only through kind:41011",
+  );
+  fixture.removal.failKind = 9001;
+  await expect(
+    removeAgentFromChannels(
+      instance.session,
+      agent.pubkey,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("DM members change only through kind:41011");
+  const refusedIds = new Set(
+    (instance.session.outbox?.snapshot() ?? []).map(({ event }) => event.id),
+  );
+  expect(refusedIds.size).toBe(3);
+  delete fixture.removal.fail;
+
+  await removeAgentFromChannels(
+    instance.session,
+    agent.pubkey,
+    new AbortController().signal,
+  );
+  expect(fixture.published).toHaveLength(5);
+  for (const event of fixture.published)
+    expect(refusedIds.has(event.id)).toBe(false);
+  expect(Object.values(fixture.channels).flat()).not.toContain(agent.pubkey);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("archiveAgent fetches the archive snapshot once instead of twice from idle", async () => {
+  let snapshotReads = 0;
+  const { instance } = setup(viewer, {}, ({ transport }) => {
+    const query = transport.query.bind(transport);
+    transport.query = (filters, signal) => {
+      if (filters.some((filter) => filter.kinds?.includes(13535)))
+        snapshotReads++;
+      return query(filters, signal);
+    };
+  });
+  expect(instance.session.archives.snapshot().status).toBe("idle");
+  await archiveAgent(
+    instance.session,
+    agent.pubkey,
+    new AbortController().signal,
+  );
+  // One read before 9035 (from idle) and one read after 9035 to confirm.
+  expect(snapshotReads).toBe(2);
 });
 
 it("publishes the owner's record of an agent with its runtime", async () => {

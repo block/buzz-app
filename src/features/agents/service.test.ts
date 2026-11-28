@@ -9913,6 +9913,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
     expect.objectContaining({ archives }),
     bot,
     expect.any(AbortSignal),
+    expect.any(Function),
   );
   expect(archives.request).toHaveBeenCalledWith(
     "archive",
@@ -9922,6 +9923,50 @@ it("stops it first, and deletes its key only after it left its channels and was 
     expect.any(Function),
   );
   expect(await native.list()).toEqual([]);
+});
+
+it("marks an agent removing immediately, surfaces the real failure reason, and clears it on retry", async () => {
+  const { service, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let release: () => void = () => {};
+  let rejectRemoval: (error: Error) => void = () => {};
+  let capturedSelfRemove:
+    | ((channelId: string, signal: AbortSignal) => Promise<void>)
+    | undefined;
+  leaveChannels.mockImplementationOnce(
+    (_session, _pubkey, _signal, selfRemove) => {
+      capturedSelfRemove = selfRemove;
+      return new Promise<void>((resolve, reject) => {
+        release = resolve;
+        rejectRemoval = reject;
+      });
+    },
+  );
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const pending = service.remove(bot);
+  // Immediately marked removing before the first relay round-trip settles.
+  expect(service.find(bot)?.removing).toBe(true);
+  await vi.waitFor(() => expect(capturedSelfRemove).toBeDefined());
+  await capturedSelfRemove?.("ch-1", new AbortController().signal);
+  expect(native.publish).toHaveBeenCalledWith(member(bot), {
+    kind: 9001,
+    content: "",
+    tags: [
+      ["h", "ch-1"],
+      ["p", bot],
+    ],
+  });
+  rejectRemoval(new Error("Actor not authorized"));
+  await expect(pending).rejects.toThrow(`${UNFINISHED} (Actor not authorized)`);
+  warn.mockRestore();
+  expect(service.find(bot)).toMatchObject({
+    deleting: true,
+    removeError: `${UNFINISHED} (Actor not authorized)`,
+  });
+  expect(service.find(bot)?.removing).toBeUndefined();
+  release();
+  await service.remove(bot);
+  expect(service.find(bot)).toBeUndefined();
 });
 
 it("joins a Delete already running instead of starting another", async () => {

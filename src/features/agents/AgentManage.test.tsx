@@ -29,11 +29,17 @@ const agent = {
   attentionEnabled: true,
 } satisfies Agent;
 
-it("deletes after confirming, and keeps the dialog open with the error when Delete fails", async () => {
+it("closes the dialog immediately on confirm, shows deleting progress, surfaces errors inline, and lets retry finish", async () => {
   const user = userEvent.setup();
+  let failFirst!: (error: Error) => void;
   const remove = vi
     .fn<Agents["remove"]>()
-    .mockRejectedValueOnce(new Error("Credential store refused"))
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          failFirst = reject;
+        }),
+    )
     .mockResolvedValueOnce(undefined);
   const onRemoved = vi.fn();
   render(
@@ -45,11 +51,20 @@ it("deletes after confirming, and keeps the dialog open with the error when Dele
   );
   await user.click(screen.getByRole("button", { name: "Delete agent" }));
   await user.click(screen.getByRole("button", { name: "Delete" }));
+  // Dialog closes right away instead of blocking the UI while delete runs.
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("button", { name: "Deleting…" })).toBeDisabled();
+  failFirst(new Error("Credential store refused"));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Credential store refused",
   );
   expect(onRemoved).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Delete" }));
+  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Credential store refused",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
   await vi.waitFor(() => expect(onRemoved).toHaveBeenCalledOnce());
   expect(remove).toHaveBeenCalledWith(agent.key);
 });

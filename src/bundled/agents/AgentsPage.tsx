@@ -1462,7 +1462,15 @@ function InventoryCard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [sharing, setSharing] = useState(false);
-  const editable = agent.place !== "elsewhere" && !agent.unfinished;
+  const removing = Boolean(agent.removing);
+  const leavingHere = inSeveral(service, agent);
+  const removeFailed =
+    !removing && (Boolean(agent.removeError) || Boolean(agent.deleting));
+  const editable =
+    agent.place !== "elsewhere" &&
+    !agent.unfinished &&
+    !removing &&
+    !removeFailed;
   const Model = editable ? type?.CreateModel : undefined;
   const automatic =
     !!type && !type.remote && onAutomatic(agent.config, type.id);
@@ -1521,12 +1529,12 @@ function InventoryCard({
         Copy public key
       </MenuItem>
       {leave && (
-        <MenuItem tone="danger" onClick={leave}>
+        <MenuItem tone="danger" disabled={removing} onClick={leave}>
           Remove from this community
         </MenuItem>
       )}
       {remove && (
-        <MenuItem tone="danger" onClick={remove}>
+        <MenuItem tone="danger" disabled={removing} onClick={remove}>
           Delete agent
         </MenuItem>
       )}
@@ -1539,7 +1547,7 @@ function InventoryCard({
         <AgentCard
           {...props}
           icon={
-            automatic ? (
+            removing || removeFailed ? undefined : automatic ? (
               <span className="inline-flex text-primary">
                 <AISettingsIcon automatic harnessIcon={type?.icon} compact />
               </span>
@@ -1548,7 +1556,11 @@ function InventoryCard({
             )
           }
           detail={
-            automatic ? (
+            removing ? (
+              <span role="status" className="text-secondary">
+                {leavingHere ? "Removing…" : "Deleting…"}
+              </span>
+            ) : removeFailed ? undefined : automatic ? (
               <span className="text-primary">{modelLabel} (Automatic)</span>
             ) : Model ? undefined : (
               props.detail
@@ -1562,6 +1574,7 @@ function InventoryCard({
                     aria-label={`Actions for ${agent.name}`}
                     variant="glass-ghost"
                     size="sm"
+                    disabled={removing}
                     icon={<DotsThreeIcon size={16} />}
                   />
                 }
@@ -1570,7 +1583,7 @@ function InventoryCard({
             </MenuRoot>
           }
         >
-          {((Model && !automatic) || error) && (
+          {((Model && !automatic) || error || removeFailed) && (
             <div
               data-card-control=""
               className="flex min-w-0 max-w-full flex-col items-center gap-2"
@@ -1584,6 +1597,25 @@ function InventoryCard({
                   disabled={saving}
                   onChange={(config) => void save(config)}
                 />
+              )}
+              {removeFailed && (
+                <>
+                  <span role="alert" className="text-body-sm text-danger">
+                    {agent.removeError ??
+                      (leavingHere
+                        ? "Remove didn't finish."
+                        : "Delete didn't finish.")}
+                  </span>
+                  {(leavingHere ? leave : remove) && (
+                    <Button
+                      size="compact"
+                      variant="destructive"
+                      onClick={leavingHere ? leave : remove}
+                    >
+                      {leavingHere ? "Retry remove" : "Retry delete"}
+                    </Button>
+                  )}
+                </>
               )}
               {error && (
                 <span role="alert" className="text-body-sm text-danger">

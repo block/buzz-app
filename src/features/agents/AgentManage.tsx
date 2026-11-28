@@ -32,9 +32,10 @@ export const sameAgent = (many = false) =>
     ? `${sharedAgentSettings} A change to them applies in every community. Their pictures and what they pay attention to are their own in each. Memory is kept per community, so anything they saved here before comes back, and so do their conversations here.`
     : `${sharedAgentSettings} A change to them applies in every community. Its picture and what it pays attention to are its own in each. Memory is kept per community, so anything it saved here before comes back, and so do its conversations here.`;
 
-/** Delete, after a confirmation that says what it does. One that cannot
- * finish keeps the dialog open with what is left; the agent stays listed.
- * A community Delete cannot reach can then be given up on. */
+/** Delete, after a confirmation that says what it does. Confirming closes the
+ * dialog immediately so the UI stays responsive while cleanup runs; if it
+ * fails, the error surfaces inline and in the dialog, where any unreachable
+ * community can be given up on. */
 export function AgentDelete({
   agents,
   agent,
@@ -48,10 +49,13 @@ export function AgentDelete({
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
   const [confirming, setConfirming] = useState(false);
-  const [removing, setRemoving] = useState(false);
+  const [localRemoving, setLocalRemoving] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
   const [error, setError] = useState("");
   // Forgot where it couldn't reach, so Delete is what is left to press.
   const [forgot, setForgot] = useState(false);
+  const removing = Boolean(agent.removing) || localRemoving;
+  const visibleError = removing ? "" : error || agent.removeError || "";
   const memberships =
     agent.place === "here" ? agents.memberships(agent.pubkey) : [];
   const several = memberships.length > 1;
@@ -59,34 +63,38 @@ export function AgentDelete({
   const unreachable = memberships.filter(
     (membership) => membership.deleting && !membership.connected,
   );
-  const remove = async () => {
-    setRemoving(true);
+  const remove = () => {
     setError("");
     setForgot(false);
-    try {
-      await agents.remove(agent.key);
-      setConfirming(false);
-      onRemoved();
-    } catch (reason) {
-      setError(message(reason));
-      setRemoving(false);
-    }
+    setConfirming(false);
+    setLocalRemoving(true);
+    void Promise.resolve(agents.remove(agent.key)).then(
+      () => {
+        setLocalRemoving(false);
+        onRemoved();
+      },
+      (reason) => {
+        setLocalRemoving(false);
+        setError(message(reason));
+      },
+    );
   };
   const forget = async (key: string) => {
-    setRemoving(true);
+    setForgetting(true);
     setError("");
     try {
       await agents.forget(key);
       if (agents.memberships(agent.pubkey).length) {
         setForgot(true);
-        setRemoving(false);
+        setForgetting(false);
       } else {
         setConfirming(false);
+        setForgetting(false);
         onRemoved();
       }
     } catch (reason) {
       setError(message(reason));
-      setRemoving(false);
+      setForgetting(false);
     }
   };
   return (
@@ -94,13 +102,23 @@ export function AgentDelete({
       {trigger ? (
         trigger(() => setConfirming(true))
       ) : (
-        <Button
-          size="compact"
-          variant="ghost"
-          onClick={() => setConfirming(true)}
-        >
-          <TrashIcon size={14} aria-hidden="true" /> Delete agent
-        </Button>
+        <div className="flex flex-col items-start gap-2">
+          <Button
+            size="compact"
+            variant="ghost"
+            loading={removing}
+            disabled={removing}
+            onClick={() => setConfirming(true)}
+          >
+            <TrashIcon size={14} aria-hidden="true" />{" "}
+            {removing ? "Deleting…" : "Delete agent"}
+          </Button>
+          {visibleError ? (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {visibleError}
+            </p>
+          ) : null}
+        </div>
       )}
       <Dialog
         size="compact"
@@ -115,27 +133,27 @@ export function AgentDelete({
               ? "It stops in every community it's in. In each one it leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
               : "It stops, leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
         }
-        preventClose={removing}
+        preventClose={forgetting}
         actions={
           <>
             <Button
               ref={cancel}
               onClick={() => setConfirming(false)}
-              disabled={removing}
+              disabled={forgetting}
             >
               Cancel
             </Button>
             <Button
               variant="destructive"
-              loading={removing}
-              onClick={() => void remove()}
+              disabled={forgetting || removing}
+              onClick={remove}
             >
               Delete
             </Button>
           </>
         }
       >
-        {several || error || unreachable.length || forgot ? (
+        {several || visibleError || unreachable.length || forgot ? (
           <div className="flex flex-col gap-3">
             {several && (
               <ul
@@ -158,7 +176,7 @@ export function AgentDelete({
                         size="compact"
                         variant="outline"
                         aria-label={`Forget it in ${hostOf(membership.origin)}`}
-                        disabled={removing}
+                        disabled={forgetting}
                         onClick={() => void forget(membership.key)}
                       >
                         Forget
@@ -168,9 +186,9 @@ export function AgentDelete({
                 ))}
               </ul>
             )}
-            {error ? (
+            {visibleError ? (
               <p role="alert" className="m-0 text-body-sm text-danger">
-                {error}
+                {visibleError}
               </p>
             ) : null}
             {unreachable.length > 0 && (
@@ -193,7 +211,7 @@ export function AgentDelete({
                   size="compact"
                   // Its last key goes with it.
                   variant="destructive"
-                  disabled={removing}
+                  disabled={forgetting}
                   onClick={() => void forget(unreachable[0]?.key ?? "")}
                 >
                   Forget it
@@ -223,20 +241,25 @@ export function AgentRemoveHere({
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
   const [confirming, setConfirming] = useState(false);
-  const [removing, setRemoving] = useState(false);
+  const [localRemoving, setLocalRemoving] = useState(false);
   const [error, setError] = useState("");
+  const removing = Boolean(agent.removing) || localRemoving;
+  const visibleError = removing ? "" : error || agent.removeError || "";
   const place = agent.relay.replace(/^wss:\/\//, "");
-  const leave = async () => {
-    setRemoving(true);
+  const leave = () => {
     setError("");
-    try {
-      await agents.leave(agent.key);
-      setConfirming(false);
-      onRemoved();
-    } catch (reason) {
-      setError(message(reason));
-      setRemoving(false);
-    }
+    setConfirming(false);
+    setLocalRemoving(true);
+    void Promise.resolve(agents.leave(agent.key)).then(
+      () => {
+        setLocalRemoving(false);
+        onRemoved();
+      },
+      (reason) => {
+        setLocalRemoving(false);
+        setError(message(reason));
+      },
+    );
   };
   return (
     <>
@@ -248,29 +271,20 @@ export function AgentRemoveHere({
         onOpenChange={setConfirming}
         title={`Remove ${agent.name} from ${place}?`}
         description="It stops here, leaves this community's channels and is archived here. It stays in your other communities with the same name, type and settings. Add it here again and its memory and conversations here come back, but what it paid attention to here doesn't."
-        preventClose={removing}
         actions={
           <>
-            <Button
-              ref={cancel}
-              onClick={() => setConfirming(false)}
-              disabled={removing}
-            >
+            <Button ref={cancel} onClick={() => setConfirming(false)}>
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              loading={removing}
-              onClick={() => void leave()}
-            >
+            <Button variant="destructive" disabled={removing} onClick={leave}>
               Remove
             </Button>
           </>
         }
       >
-        {error ? (
+        {visibleError ? (
           <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
+            {visibleError}
           </p>
         ) : null}
       </Dialog>

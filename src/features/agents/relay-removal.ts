@@ -33,8 +33,9 @@ export async function archiveAgent(
   if (!archives.supported) return "skipped";
   if (!archives.writable)
     throw new Error("Archive is unavailable on this connection");
-  // The archive cache is not live; this needs a read started now.
-  await archives.ensure();
+  // The archive cache is not live; wait for any in-flight read so `refresh()`
+  // starts a fresh one now, without kicking off two back-to-back reads from idle.
+  if (archives.snapshot().status === "loading") await archives.ensure();
   await archives.refresh();
   signal.throwIfAborted();
   const state = archives.state(pubkey);
@@ -185,14 +186,25 @@ export async function deleteAgentRecord(
   await outbox.dismiss(id);
 }
 
+/** Bounded concurrency for agent-signed self-removals. */
+const SELF_REMOVE_CONCURRENCY = 4;
+/** Matches the outbox's 3-slot in-flight cap so queued 9001s don't expire
+ * waiting for a slot when an agent is in many channels. */
+const OWNER_REMOVE_WAVE = 3;
+
 /** Base Buzz `removeAgentFromAllChannels` over the relay's rosters for this
- * agent plus the viewer's loaded channels, skipping archived ones. Resolves
- * only once a fresh relay read lists the agent in none of them; any refusal or
- * unknown outcome throws after every channel operation has settled. */
+ * agent plus the viewer's loaded channels, skipping archived ones. When
+ * `selfRemove` is given (a local agent whose key is here), the agent removes
+ * itself first — which works on channels the owner isn't in and on DMs even
+ * before the agent's profile is attested — falling back to owner-signed 9001
+ * for any channel self-removal refuses (e.g. sole owner). Resolves only once a
+ * fresh relay read lists the agent in none of them; any refusal or unknown
+ * outcome throws after every started channel operation has settled. */
 export async function removeAgentFromChannels(
   session: Pick<RelaySession, "outbox" | "channels" | "channelWrites">,
   pubkey: string,
   signal: AbortSignal,
+  selfRemove?: (channelId: string, signal: AbortSignal) => Promise<void>,
 ) {
   const pending = await session.channelWrites.memberChannels(
     pubkey,
@@ -204,70 +216,149 @@ export async function removeAgentFromChannels(
   );
   if (!pending.length) return;
   const outbox = session.outbox;
-  if (!outbox?.supports(9001))
+  const confirmRemoved = async () => {
+    // Confirm every channel against its own fresh roster: a cached loaded
+    // roster may still list the agent after the relay removed it.
+    const remaining = session.channelWrites.listedChannels
+      ? await session.channelWrites.listedChannels(pending, pubkey, signal)
+      : (
+          await Promise.all(
+            pending.map(async (id) =>
+              (await session.channelWrites.listsMember(id, pubkey, signal))
+                ? id
+                : undefined,
+            ),
+          )
+        ).filter((id): id is string => id !== undefined);
+    if (remaining.length)
+      throw new Error(
+        `The relay did not confirm removal from ${remaining.length} channel${remaining.length === 1 ? "" : "s"}. Retry.`,
+      );
+  };
+  const dismissStaleOutbox = async (ids: readonly string[]) => {
+    if (!outbox) return;
+    const targets = new Set(ids);
+    await Promise.all(
+      outbox
+        .snapshot()
+        .filter(
+          ({ event, delivery }) =>
+            delivery !== "sending" &&
+            event.kind === 9001 &&
+            event.tags.some(
+              ([name, value]) => name === "h" && value && targets.has(value),
+            ) &&
+            event.tags.some(
+              ([name, value]) => name === "p" && value === pubkey,
+            ),
+        )
+        .map(({ event }) => outbox.dismiss(event.id)),
+    );
+  };
+
+  let ownerPending: readonly string[] = pending;
+  let firstSelfError: unknown;
+  if (selfRemove) {
+    const failed: string[] = [];
+    let cursor = 0;
+    const worker = async () => {
+      while (!signal.aborted) {
+        const id = pending[cursor++];
+        if (!id) return;
+        try {
+          await selfRemove(id, signal);
+        } catch (error) {
+          if (firstSelfError === undefined) firstSelfError = error;
+          failed.push(id);
+        }
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(SELF_REMOVE_CONCURRENCY, pending.length) },
+        worker,
+      ),
+    );
+    signal.throwIfAborted();
+    if (!failed.length) {
+      await confirmRemoved();
+      await dismissStaleOutbox(pending);
+      return;
+    }
+    ownerPending = failed;
+  }
+
+  if (!outbox?.supports(9001)) {
+    if (firstSelfError !== undefined) throw firstSelfError;
     throw new Error("This community cannot remove agents from channels.");
+  }
   await outbox.ready();
   signal.throwIfAborted();
   // Nothing new is signed or published for a cancelled Delete.
   const active = () => !signal.aborted;
-  // Keep each operation as it is enqueued: a later enqueue can still throw,
-  // for example when the outbox is full.
-  const operations: string[] = [];
-  let enqueueFailure: unknown;
-  try {
-    for (const id of pending) {
-      const previous = await resumable(
-        outbox,
-        (event) =>
-          event.kind === 9001 &&
-          event.tags.some(([name, value]) => name === "h" && value === id) &&
-          event.tags.some(([name, value]) => name === "p" && value === pubkey),
-      );
-      // Retry reuses the outbox's own operation, including an unknown result.
-      if (previous) {
-        outbox.retry(previous.event.id, active);
-        operations.push(previous.event.id);
-      } else
-        operations.push(
-          outbox.send(
-            {
-              kind: 9001,
-              content: "",
-              tags: [
-                ["h", id],
-                ["p", pubkey],
-              ],
-            },
-            undefined,
-            active,
-          ),
+  const completed: string[] = [];
+  for (let start = 0; start < ownerPending.length; start += OWNER_REMOVE_WAVE) {
+    signal.throwIfAborted();
+    const wave = ownerPending.slice(start, start + OWNER_REMOVE_WAVE);
+    // Keep each operation as it is enqueued: a later enqueue can still throw,
+    // for example when the outbox is full.
+    const operations: string[] = [];
+    let enqueueFailure: unknown;
+    try {
+      for (const id of wave) {
+        const previous = await resumable(
+          outbox,
+          (event) =>
+            event.kind === 9001 &&
+            event.tags.some(([name, value]) => name === "h" && value === id) &&
+            event.tags.some(
+              ([name, value]) => name === "p" && value === pubkey,
+            ),
         );
+        // Retry reuses the outbox's own operation, including an unknown result.
+        if (previous) {
+          outbox.retry(previous.event.id, active);
+          operations.push(previous.event.id);
+        } else
+          operations.push(
+            outbox.send(
+              {
+                kind: 9001,
+                content: "",
+                tags: [
+                  ["h", id],
+                  ["p", pubkey],
+                ],
+              },
+              undefined,
+              active,
+            ),
+          );
+      }
+    } catch (error) {
+      enqueueFailure = error;
     }
-  } catch (error) {
-    enqueueFailure = error;
-  }
-  // Settle every enqueued operation before reporting a failure, so no channel
-  // removal is still sending when the caller cleans up or its view goes away.
-  const outcomes = await Promise.allSettled(
-    operations.map((id) =>
-      delivered(outbox, id, signal, "Channel removal is not confirmed. Retry."),
-    ),
-  );
-  if (enqueueFailure !== undefined) throw enqueueFailure;
-  const failure = outcomes.find((outcome) => outcome.status === "rejected");
-  if (failure) throw failure.reason;
-  // Confirm each channel against its own fresh roster: a cached loaded roster
-  // may still list the agent after the relay removed it.
-  const listed = await Promise.all(
-    pending.map((id) => session.channelWrites.listsMember(id, pubkey, signal)),
-  );
-  const remaining = listed.filter(Boolean);
-  if (remaining.length)
-    throw new Error(
-      `The relay did not confirm removal from ${remaining.length} channel${remaining.length === 1 ? "" : "s"}. Retry.`,
+    // Settle every enqueued operation before reporting a failure, so no channel
+    // removal is still sending when the caller cleans up or its view goes away.
+    const outcomes = await Promise.allSettled(
+      operations.map((id) =>
+        delivered(
+          outbox,
+          id,
+          signal,
+          "Channel removal is not confirmed. Retry.",
+        ),
+      ),
     );
+    if (enqueueFailure !== undefined) throw enqueueFailure;
+    const failure = outcomes.find((outcome) => outcome.status === "rejected");
+    if (failure) throw failure.reason;
+    completed.push(...operations);
+  }
+  await confirmRemoved();
   // The rosters confirm the outcome; nothing is left for the outbox to retry.
-  await Promise.all(operations.map((id) => outbox.dismiss(id)));
+  await Promise.all(completed.map((id) => outbox.dismiss(id)));
+  await dismissStaleOutbox(pending);
 }
 
 /** `fence` keeps anything new from being admitted, while a publish already
@@ -293,7 +384,8 @@ async function resumable(
   if (
     !previous ||
     previous.delivery === "sending" ||
-    Date.now() - previous.event.created_at * 1000 < RESUMABLE_ATTEMPT_MS
+    (!previous.refused &&
+      Date.now() - previous.event.created_at * 1000 < RESUMABLE_ATTEMPT_MS)
   )
     return previous;
   await outbox.dismiss(previous.event.id);

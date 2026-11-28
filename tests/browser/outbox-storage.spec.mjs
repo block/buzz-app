@@ -549,3 +549,263 @@ for (const order of ["replaced-first", "publishing-first"])
           },
     );
   });
+
+async function openWithSignedMessages(page, sourceOrigin, count) {
+  await page
+    .context()
+    .route(`${sourceOrigin}/outbox-storage-test`, (route) =>
+      route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
+    );
+  await page.goto(`${sourceOrigin}/outbox-storage-test`);
+  const { finalizeEvent } = await import("nostr-tools");
+  return Array.from({ length: count }, (_, index) =>
+    finalizeEvent(
+      { kind: 9, created_at: 1, content: `Saved ${index}`, tags: [["h", "c"]] },
+      new Uint8Array(32).fill(7),
+    ),
+  );
+}
+
+test("a stale window's save is checked against the row as stored", async ({
+  page,
+  sourceOrigin,
+}) => {
+  await openWithSignedMessages(page, sourceOrigin, 0);
+  const result = await page.evaluate(async () => {
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
+      "/src/features/relay/outbox-storage.ts"
+    );
+    const scope = `stale-${crypto.randomUUID()}`;
+    const a = browserOutboxStorage(scope);
+    const b = browserOutboxStorage(scope);
+    const pending = (item) => item.delivery !== "seen";
+    const budget = {
+      fits: (rows) => rows.filter(pending).length <= 2,
+      grows: (stored, next) => pending(next) && (!stored || !pending(stored)),
+    };
+    const row = (id, delivery) => ({ event: { id }, delivery });
+    const error = (work) =>
+      work.then(
+        () => "",
+        (reason) => reason.message,
+      );
+    try {
+      await a.load();
+      await a.save([row("pin", "failed"), row("q", "failed")]);
+      await b.load();
+      // A delivers the pin and uses the freed slot.
+      await a.save([
+        row("pin", "seen"),
+        row("q", "failed"),
+        row("n", "failed"),
+      ]);
+      // B still holds the pin as failed and retries it.
+      const stale = await error(
+        b.save([row("pin", "sending"), row("q", "failed")], { budget }),
+      );
+      const added = await error(
+        b.save([row("pin", "failed"), row("q", "failed"), row("r", "failed")], {
+          budget,
+        }),
+      );
+      await a.save([row("pin", "seen"), row("q", "failed")]);
+      // The refused row was never saved, so replacing it needs no second try.
+      const replaced = await error(
+        b.save(
+          [row("pin", "failed"), row("q", "failed"), row("r2", "failed")],
+          { budget, retired: ["r"] },
+        ),
+      );
+      const stored = await a.load({ readOnly: true });
+      return {
+        stale,
+        added,
+        replaced,
+        pending: stored.filter(pending).length,
+      };
+    } finally {
+      a.close();
+      b.close();
+      await purgeOutboxStorage(scope);
+    }
+  });
+  expect(result).toEqual({
+    stale: "Outbox storage is full",
+    added: "Outbox storage is full",
+    replaced: "",
+    pending: 2,
+  });
+});
+
+test("two windows sending at the limit never leave a journal neither can load", async ({
+  page,
+  sourceOrigin,
+}) => {
+  const events = await openWithSignedMessages(page, sourceOrigin, 255);
+  const result = await page.evaluate(async (events) => {
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
+      "/src/features/relay/outbox-storage.ts"
+    );
+    const { createOutbox } = await import("/src/features/relay/outbox.ts");
+    const scope = `overfill-${crypto.randomUUID()}`;
+    const seed = browserOutboxStorage(scope);
+    await seed.load();
+    await seed.save(
+      events.map((event) => ({ event, signed: event, delivery: "failed" })),
+    );
+    seed.close();
+    const writer = {
+      sign: () => new Promise(() => {}),
+      publish: () => new Promise(() => {}),
+    };
+    const open = () =>
+      createOutbox(events[0].pubkey, writer, browserOutboxStorage(scope));
+    const a = open();
+    const b = open();
+    const reader = browserOutboxStorage(scope);
+    const send = (session, content) =>
+      session.outbox.send({ kind: 9, content, tags: [["h", "c"]] });
+    const settled = async (session, id) => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const item = session.outbox.snapshot().find((i) => i.event.id === id);
+        if (item?.error) return item.error;
+        const stored = await reader.load({ readOnly: true });
+        if (stored.some((row) => row.event.id === id)) return "";
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Send ${id} was neither saved nor refused`);
+    };
+    try {
+      await Promise.all([a.ready, b.ready]);
+      const first = await settled(a, send(a, "From A"));
+      const fromB = send(b, "From B");
+      const second = await settled(b, fromB);
+      const unsaved = await b.outbox.saved(fromB).then(
+        () => "",
+        (error) => error.message,
+      );
+      let next = "";
+      try {
+        send(b, "From B again");
+      } catch (error) {
+        next = error.message;
+      }
+      const c = open();
+      await c.ready;
+      const loaded = c.outbox.snapshot().length;
+      c.dispose();
+      const stored = (await reader.load({ readOnly: true })).length;
+      return { first, second, unsaved, next, stored, loaded };
+    } finally {
+      a.dispose();
+      b.dispose();
+      reader.close();
+      await purgeOutboxStorage(scope);
+    }
+  }, events);
+  const full = "Too many outstanding operations; resolve a pending operation";
+  expect(result).toEqual({
+    first: "",
+    second: full,
+    unsaved: full,
+    next: full,
+    stored: 256,
+    loaded: 256,
+  });
+});
+
+for (const journal of ["indexeddb", "legacy"])
+  test(`an already overfilled journal loads, and sends wait until it is back under the limit (${journal})`, async ({
+    page,
+    sourceOrigin,
+  }) => {
+    const events = await openWithSignedMessages(page, sourceOrigin, 257);
+    const result = await page.evaluate(
+      async ({ events, journal }) => {
+        const { browserOutboxStorage, purgeOutboxStorage } = await import(
+          "/src/features/relay/outbox-storage.ts"
+        );
+        const { createOutbox } = await import("/src/features/relay/outbox.ts");
+        const scope = `overfilled-${crypto.randomUUID()}`;
+        const rows = events.map((event) => ({
+          event,
+          signed: event,
+          delivery: "failed",
+        }));
+        if (journal === "legacy")
+          localStorage.setItem(`buzz-outbox-v1:${scope}`, JSON.stringify(rows));
+        else {
+          const seed = browserOutboxStorage(scope);
+          await seed.load();
+          await seed.save(rows);
+          seed.close();
+        }
+        const writer = {
+          sign: () => new Promise(() => {}),
+          publish: () => new Promise(() => {}),
+        };
+        const open = () =>
+          createOutbox(events[0].pubkey, writer, browserOutboxStorage(scope));
+        const session = open();
+        const sendError = () => {
+          try {
+            session.outbox.send({
+              kind: 9,
+              content: "New",
+              tags: [["h", "c"]],
+            });
+            return "";
+          } catch (error) {
+            return error.message;
+          }
+        };
+        try {
+          await session.ready;
+          const loaded = session.outbox.snapshot().length;
+          const blocked = sendError();
+          // Recovery adds bytes, so it cannot grow an overfilled journal.
+          const recovered = await session.outbox
+            .recover(events[2].id, { key: "test:recovery", value: "v" })
+            .then(
+              () => "",
+              (error) => error.message,
+            );
+          await session.outbox.dismiss(events[0].id);
+          const stillBlocked = sendError();
+          // The refused entry is still saved, as it was before recovery.
+          const reopened = open();
+          await reopened.ready;
+          const saved = reopened.outbox.snapshot();
+          reopened.dispose();
+          await session.outbox.dismiss(events[1].id);
+          const allowed = sendError();
+          return {
+            loaded,
+            blocked,
+            recovered,
+            stillBlocked,
+            reopened: saved.length,
+            kept: saved.some(
+              (item) => item.event.id === events[2].id && !item.recovery,
+            ),
+            allowed,
+          };
+        } finally {
+          session.dispose();
+          await purgeOutboxStorage(scope);
+        }
+      },
+      { events, journal },
+    );
+    const full = "Too many outstanding operations; resolve a pending operation";
+    expect(result).toEqual({
+      loaded: 257,
+      blocked: full,
+      recovered: full,
+      stillBlocked: full,
+      reopened: 256,
+      kept: true,
+      allowed: "",
+    });
+  });

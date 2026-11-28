@@ -1015,9 +1015,10 @@ it("retains an uncertain Canvas after lost ACK and CAS-refused exact retry until
       original,
       original,
     ]);
-    expect(storage.save).toHaveBeenLastCalledWith([
-      expect.objectContaining({ signed: original, delivery: "unknown" }),
-    ]);
+    expect(storage.save).toHaveBeenLastCalledWith(
+      [expect.objectContaining({ signed: original, delivery: "unknown" })],
+      expect.anything(),
+    );
     expect(head).toBe(winner);
     // A save reviewed against the current head replaces the stale one.
     const saved = await kit.canvas.save(channel, "Reviewed draft", winner.id);

@@ -68,10 +68,11 @@ export type ComposerSession = Pick<
     "refreshMembership" | "addAgents"
   >;
   outbox:
-    | Pick<
+    | (Pick<
         NonNullable<RelaySession["outbox"]>,
         "supports" | "snapshot" | "subscribe" | "retry"
-      >
+      > &
+        Partial<Pick<NonNullable<RelaySession["outbox"]>, "saved">>)
     | undefined;
   attachments:
     | (NonNullable<RelaySession["attachments"]> & {

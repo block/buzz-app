@@ -268,6 +268,7 @@ it("post-subscribe demand supersedes a pre-stream head and prioritizes the curre
     const current = wire.next();
     expect(current.filters[0]?.["#h"]).toEqual(["z"]);
     expect(oldZ.signal?.aborted).toBe(true);
+    expect(owner.session.channels.window("z").status).toBe("loading");
     expect(priority.mock.lastCall?.[0][0]).toBe("z");
     current.respond([
       bounds(relay, "z", "head", { has_more: false, next_cursor: null }),
@@ -598,6 +599,36 @@ function reconnectHarness(
   };
 }
 type ReconnectHarness = ReturnType<typeof reconnectHarness>;
+
+it("loads history on reopening after a stream drop cancels its first read", async () => {
+  const h = reconnectHarness();
+  const channels = h.owner.session.channels;
+  try {
+    await h.list();
+    // The socket is connected but the channel route has yet to establish.
+    h.live.state({ status: "connected", routes: [] });
+    const leave = channels.subscribeWindow("c", () => {});
+    channels.ensure("c");
+    const initial = h.read();
+    leave();
+    await h.drop();
+    expect(initial.signal?.aborted).toBe(true);
+    expect(h.window().status).toBe("idle");
+
+    const leaveReopened = channels.subscribeWindow("c", () => {});
+    try {
+      channels.ensure("c");
+      const seen = message(h.alice, "c", "history after reopening", 10);
+      h.read().respond(h.page("head", [seen], null));
+      await flush();
+      expect(h.rows()).toEqual([seen.id]);
+    } finally {
+      leaveReopened();
+    }
+  } finally {
+    h.owner.dispose();
+  }
+});
 
 it("a reconnect catch-up head newer than every loaded row pages back until it reaches one", async () => {
   // Live replay covers minutes. The head alone would leave the loaded rows on

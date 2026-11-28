@@ -345,6 +345,8 @@ export function createChannelStore(
         verifyStored?: ReadTransport["verifyStored"];
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
+        /** Whether a queued or running catch-up already owns the next head. */
+        catchUpPending?(channelId: string): boolean;
         rosterChanged?(strong?: boolean): void;
         /** The relay advertises NIP-CL; label lookups are refused without it. */
         channelIdentity?: true | undefined;
@@ -1635,6 +1637,17 @@ export function createChannelStore(
         // A read cancelled under the window (a stream drop) ends its page.
         if (cursor && !controller.signal.aborted)
           setWindow(state, { loadingOlder: false });
+        else if (
+          !cursor &&
+          state.controller === controller &&
+          state.snapshot.status === "loading" &&
+          !state.snapshot.rows.length &&
+          !transport.catchUpPending?.(state.channelId)
+        ) {
+          // A listener can ensure the idle window as soon as we publish it.
+          state.controller = undefined;
+          setWindow(state, { status: "idle" });
+        }
         return;
       }
       // A denied revalidation must not keep exposing a cached head.

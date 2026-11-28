@@ -662,6 +662,8 @@ export function ComposerSheet({
   finalFocus,
   children,
   containsComposer = false,
+  readerKey,
+  openingTrigger,
   readerOnly = false,
   tall = false,
   onClosed,
@@ -688,6 +690,10 @@ export function ComposerSheet({
   children: ReactNode;
   /** A thread supplies its own reply box in place of the view's composer. */
   containsComposer?: boolean;
+  /** Replaces the panel reader while keeping the sheet in place. */
+  readerKey?: string | undefined;
+  /** The control that opened this reader, if it still holds focus. */
+  openingTrigger?: HTMLElement | null | undefined;
   /** A panel: it takes the full height and covers the composer, which it
    * leaves untouched underneath. */
   readerOnly?: boolean;
@@ -725,6 +731,17 @@ export function ComposerSheet({
   const popup = useRef<HTMLDivElement | null>(null);
   const grown = useRef<HTMLDivElement | null>(null);
   const focus = useFinalFocusUnlessMoved(finalFocus, undefined);
+  const previousReaderKey = useRef(readerKey);
+  useLayoutEffect(() => {
+    if (previousReaderKey.current === readerKey) return;
+    previousReaderKey.current = readerKey;
+    const element = popup.current;
+    if (!element) return;
+    element.removeAttribute("data-scrolled");
+    const { activeElement, body } = element.ownerDocument;
+    if (activeElement === body || activeElement === openingTrigger)
+      element.focus({ preventScroll: true });
+  }, [readerKey, openingTrigger]);
   const grow = useGrowth();
   // Later changes reverse whatever motion is running.
   useLayoutEffect(() => {
@@ -821,7 +838,7 @@ export function ComposerSheet({
                 className={`buzz-dialog-body ${styles.body}`}
                 data-sheet-body=""
               >
-                <div className={styles.reader}>
+                <div className={styles.reader} key={readerKey}>
                   <SheetRevealContext.Provider
                     value={quick ? handoff.reveal : undefined}
                   >

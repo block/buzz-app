@@ -13,6 +13,7 @@ import type { PageProps } from "../../src/features/pages/service";
 import type { PageNavigation } from "../../src/features/navigation/service";
 import type { PageTabTarget } from "../../src/features/conversation/contracts";
 import type { RelayData } from "../../src/features/relay/service";
+import { ModelPicker } from "../../src/features/agents/ModelPicker";
 import { PanelSubview } from "../../src/features/panels/PanelSubview";
 import { FolderOpenIcon } from "../../src/shared/design-system/icons";
 import type { PanelProps } from "../../src/features/panels/service";
@@ -20,9 +21,26 @@ import type { NotificationInput } from "../../src/features/notifications/service
 
 function DrillInFixture({ target, context }: PanelProps) {
   const [log, setLog] = useState(false);
+  const [model, setModel] = useState("");
   return (
     <>
       <p>Wrong match</p>
+      {target.endsWith("/model-settings") && (
+        <div style={{ padding: "14rem 0 20rem" }}>
+          <ModelPicker
+            models={Array.from({ length: 9 }, (_, i) => ({
+              id: `gpt-6.${i}`,
+              label: `GPT-6.${i} Codex`,
+              description:
+                "Fast, go-to model for coding and everyday work, with extra context.",
+            }))}
+            value={model}
+            defaultModel="gpt-6.2"
+            defaultLabel="Codex default"
+            onChange={setModel}
+          />
+        </div>
+      )}
       <input aria-label="Panel draft" defaultValue="" />
       <button
         type="button"

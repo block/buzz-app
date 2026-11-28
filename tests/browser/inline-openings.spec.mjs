@@ -570,22 +570,24 @@ test.describe("Inline", () => {
       }),
     ).toBeFocused();
     const threadVisit = await address(page);
-    // The profile reads over the thread's reply box; the thread grows tall
-    // beneath it.
-    await avatar(thread(page)).click();
-    await expect(profile(page)).toBeVisible();
+    // The profile reads over the thread's reply box without exposing the
+    // channel and replaying the thread's opening.
+    const visibleThread = await thread(page).elementHandle();
+    try {
+      await avatar(thread(page)).click();
+      await expect(profile(page)).toBeVisible();
+      expect(
+        await visibleThread.evaluate((element) => element.isConnected),
+      ).toBe(true);
+    } finally {
+      await visibleThread.dispose();
+    }
     expect((await address(page)).layer).toMatchObject({ rootId: root.id });
     await expect(thread(page)).toHaveAttribute("data-tall", "true");
-    // Opening the profile draws the thread again; it takes input once drawn.
-    await expect(thread(page)).toHaveAttribute("data-revealed", "");
-    // From the thread, the pull request replaces the profile. The thread may
-    // still be redrawing from the profile's remount, inert until it shows.
-    await expect(async () => {
-      await pullLink(thread(page)).focus();
-      await expect(pullLink(thread(page))).toBeFocused({ timeout: 500 });
-    }).toPass();
-    await pullLink(thread(page)).press("Enter");
+    // From the mounted thread, the pull request replaces the profile.
+    await activate(pullLink(thread(page)));
     await expect(pullHeading(github(page))).toBeVisible();
+    await expect(github(page)).toBeFocused();
     await expect(profile(page)).toHaveCount(0);
     await expect(thread(page)).toBeVisible();
     await page.reload();
@@ -605,8 +607,10 @@ test.describe("Inline", () => {
     await page.goForward();
     await page.goForward();
     await expect(pullHeading(github(page))).toBeVisible();
-    // X closes only the top layer; the thread stays.
-    await close(github(page)).click();
+    // The restored thread takes focus when it finishes revealing. Let it
+    // settle before activating the top sheet's Close control.
+    await expect(thread(page)).toHaveAttribute("data-revealed", "");
+    await activate(close(github(page)));
     await expect(github(page)).toHaveCount(0);
     await expect(thread(page)).toBeVisible();
     expect((await address(page)).layer).toBeUndefined();
@@ -615,14 +619,8 @@ test.describe("Inline", () => {
     await expect(profile(page)).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(profile(page)).toHaveCount(0);
-    // Closing the profile draws the thread again, inert until it shows; its
-    // reply box takes focus as it does.
-    await expect(
-      thread(page).getByRole("textbox", {
-        name: "Reply to thread",
-        exact: true,
-      }),
-    ).toBeFocused();
+    await expect(thread(page)).toBeVisible();
+    expect((await address(page)).layer).toBeUndefined();
     // A press in the top sheet closes nothing; each press on the conversation
     // around the sheets closes the top one. The sheet is still moving when its
     // heading shows, so the click waits for it to come to rest.
@@ -636,6 +634,41 @@ test.describe("Inline", () => {
     await page.mouse.click(...(await background(page)));
     await expect(thread(page)).toHaveCount(0);
     await expect(side(page).getByRole("tab")).toHaveCount(0);
+  });
+
+  test("opening a profile keeps the thread mounted in a joined hidden channel", async ({
+    page,
+    app,
+  }) => {
+    app.hideChannel("alpha");
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    await page.locator('button[data-channel-id="beta"]').click();
+    const link = app.append(
+      "primary",
+      "beta",
+      "[Hidden Alpha](buzz://channel/alpha)",
+    );
+    await activate(
+      page.locator(`[data-message-id="${link.id}"]`).getByRole("link"),
+    );
+    await expect(composer(page)).toBeVisible();
+    await expect(page.locator('button[data-channel-id="alpha"]')).toHaveCount(
+      0,
+    );
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    await expect(thread(page)).toBeVisible();
+    const visibleThread = await thread(page).elementHandle();
+    try {
+      await clickRow(page, avatar(thread(page)));
+      await expect(profile(page)).toBeVisible();
+      expect(
+        await visibleThread.evaluate((element) => element.isConnected),
+      ).toBe(true);
+    } finally {
+      await visibleThread.dispose();
+    }
   });
 });
 

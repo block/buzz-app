@@ -26,6 +26,8 @@
   background: var(--surface-panel);
 }
 .embeddedThread {
+  /* The history scrolls; focusing a popup in the dock must not scroll this. */
+  overflow: clip;
   flex: 1;
   border: 0;
   border-radius: 0;

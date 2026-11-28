@@ -23,8 +23,9 @@ export function LayerReader({ channelId }: { channelId: string }) {
   const open = address?.open;
   if (!address || !view || !open || !layerInView(open, channelId, view))
     return null;
-  // Each layer is its own reader: a replacement mounts fresh.
-  return <Layer key={open.messageId ?? open.target} open={open} />;
+  // Details keep their own readers. Panels in the same dock share the sheet
+  // while replacing its contents.
+  return <Layer key={open.messageId} open={open} />;
 }
 
 function Layer({ open }: { open: OpenLayer }) {
@@ -92,6 +93,8 @@ function Layer({ open }: { open: OpenLayer }) {
       onOpenChange={onOpenChange}
       host={host}
       title={drawn.title}
+      readerKey={open.target}
+      openingTrigger={drawn.openingTrigger}
       readerOnly
       onOpenAsTab={drawn.openAsTab}
     >
@@ -99,6 +102,7 @@ function Layer({ open }: { open: OpenLayer }) {
     </ComposerSheet>
   ) : (
     <Dialog
+      key={open.target}
       open
       onOpenChange={onOpenChange}
       title={drawn.title}

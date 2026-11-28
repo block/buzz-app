@@ -3263,6 +3263,7 @@ function ChannelWorkspace({
                           session={queries}
                           channelId={current.id}
                           name={current.name}
+                          private={current.private}
                           access={memberAccess(current)}
                           ref={membersHeaderTrigger}
                           aria-expanded={membersOpen}

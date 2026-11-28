@@ -517,7 +517,9 @@ pub(crate) fn remove_all(root: PathBuf) -> Result<(), String> {
         let extension = path.extension().and_then(|value| value.to_str());
         // Builderlab customers' servers, listed so each launch adds them
         // (`Customers`): with their sessions and grants gone, so is the list.
-        if extension == Some("customers") {
+        // So are the times sign-ins ended (`endings`), with or without a
+        // session still saved, and a list one was writing.
+        if matches!(extension, Some("customers" | "endings" | "endings-new")) {
             match fs::remove_file(&path) {
                 Ok(()) => continue,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,

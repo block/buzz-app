@@ -349,6 +349,10 @@ mentions still work.
   stay readable meanwhile.
 - **Refused by a community**: the notice says what to do, such as sign in,
   switch accounts, or ask an admin for access.
+- **Asked to sign in again often**: **Settings → Identity** lists why recent
+  sign-ins ended, such as expired, ended by the sign-in server, or signed out,
+  and when Buzz couldn't check a saved sign-in. It holds times and reasons
+  only, and erasing everything Buzz stores clears it.
 
 ### A conversation change didn't send
 

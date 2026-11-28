@@ -831,7 +831,7 @@ async fn corrupt_storage_is_unavailable_and_public_snapshots_have_no_secret() {
         state.snapshot.status = Status::SignedIn;
     }
     let public = serde_json::to_value(host.snapshot()).unwrap();
-    assert_eq!(public.as_object().unwrap().len(), 10);
+    assert_eq!(public.as_object().unwrap().len(), 11);
     assert!(!public.to_string().contains("fixture-session-token"));
 }
 
@@ -1961,4 +1961,130 @@ fn speech_signs_in_at_the_server_of_the_community_it_bills() {
     assert!(other.is(&build));
     // Not a relay URL: no server.
     assert!(server("not a relay").is_none());
+}
+
+/// Endings are kept beside the sign-out mark, so a restart still shows why
+/// the last sign-ins ended; they hold codes and times, never the session.
+/// Erasing everything Buzz stores removes them, saved session or not.
+#[tokio::test]
+async fn each_sign_out_is_remembered_across_a_restart_until_erased() {
+    let dir = tempfile::tempdir().unwrap();
+    // Endings sit beside the sign-out mark (`FederatedIdentity::build`).
+    let path = dir.path().join("account.signed-out");
+    let open = |store: Arc<Memory>| {
+        FederatedIdentity::build(
+            host(Arc::new(Memory::default())).0.config.clone(),
+            "fingerprint".into(),
+            "account".into(),
+            store,
+            Vec::new(),
+            None,
+            Some(path.clone()),
+        )
+    };
+    let store = Arc::new(Memory::default());
+    let first = open(store.clone());
+    // Signed in and out twice: two endings, not one.
+    for _ in 0..2 {
+        {
+            let mut state = first.state();
+            state.restored = true;
+            first.install_session(&mut state, record());
+        }
+        first.sign_out(None).await;
+    }
+    let endings = first.snapshot().endings;
+    let reasons: Vec<_> = endings.iter().map(|ending| ending.reason).collect();
+    assert_eq!(reasons, [endings::Reason::SignedOut; 2]);
+    // Signing out again with no session is not another ending.
+    first.sign_out(None).await;
+    assert_eq!(first.snapshot().endings.len(), 2);
+    let saved = dir.path().join("account.endings");
+    assert!(!std::fs::read_to_string(&saved)
+        .unwrap()
+        .contains("fixture-session-token"));
+    assert_eq!(open(store.clone()).snapshot().endings, endings);
+    drop(first);
+    // No session is saved now; erasing still removes the list.
+    store::remove_all(dir.path().into()).unwrap();
+    assert!(!saved.exists());
+    assert!(open(store).snapshot().endings.is_empty());
+}
+
+/// An ending says what is known about it: a session past its lifetime has
+/// expired even when the server was never asked, and a record found
+/// already marked for removal ended some way this copy didn't see.
+#[tokio::test]
+async fn each_ending_says_only_what_is_known_about_it() {
+    let reasons = |host: &FederatedIdentity| {
+        host.snapshot()
+            .endings
+            .iter()
+            .map(|ending| ending.reason)
+            .collect::<Vec<_>>()
+    };
+    let mut expired = record();
+    let session = Arc::get_mut(&mut expired).unwrap();
+    session.record.expires_at = "2000-01-01T00:00:00Z".into();
+    session.raw = Zeroizing::new(serde_json::to_vec(&session.record).unwrap());
+    let owner = host(Arc::new(Memory::default()));
+    let revision = {
+        let mut state = owner.state();
+        state.restored = true;
+        state.session = Some(expired);
+        state.snapshot.status = Status::SignedIn;
+        state.snapshot.revision.clone()
+    };
+    // A granted call got 401; the check finds the lifetime over locally.
+    owner.recheck(&revision).await;
+    assert_eq!(reasons(&owner), [endings::Reason::Expired]);
+    // Another copy (or this one, before a restart) began removing it.
+    let store = Arc::new(Memory::default());
+    let marked = record();
+    *store.raw.lock().unwrap() = Some(marked.raw.clone());
+    *store.refusal.lock().unwrap() = Some(marked.record.revision.clone());
+    let restarted = host(store);
+    assert!(restarted.restore().await.status == Status::SignedOut);
+    assert_eq!(reasons(&restarted), [endings::Reason::AlreadyEnded]);
+}
+
+/// A saved sign-in that still can't be checked, for the same reason, is
+/// one entry, however often it is checked again; once it is restored, the
+/// next time it can't be checked is a new entry.
+#[tokio::test]
+async fn a_saved_sign_in_that_still_cant_be_checked_is_one_entry() {
+    let store = Arc::new(Memory::default());
+    let session = record();
+    *store.raw.lock().unwrap() = Some(session.raw.clone());
+    // The check asks three times before it reports the network unavailable.
+    let unavailable = || vec![(503, serde_json::json!({"error": "unavailable"})); 3];
+    let restored = (
+        200,
+        serde_json::json!({"expires_at": "2099-01-01T00:00:00Z", "email": null}),
+    );
+    let (base, server) =
+        adapter_with_status([unavailable(), unavailable(), vec![restored], unavailable()].concat())
+            .await;
+    let owner = at_adapter(store, base);
+    let restore = || async {
+        owner.state().restore_retry_at = None;
+        owner.restore().await
+    };
+    restore().await;
+    restore().await;
+    assert_eq!(owner.snapshot().endings.len(), 1);
+    assert!(restore().await.status == Status::SignedIn);
+    {
+        let mut state = owner.state();
+        state.restored = false;
+    }
+    restore().await;
+    let reasons: Vec<_> = owner
+        .snapshot()
+        .endings
+        .iter()
+        .map(|ending| ending.reason)
+        .collect();
+    assert_eq!(reasons, [endings::Reason::NotConfirmed; 2]);
+    server.await.unwrap();
 }

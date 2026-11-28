@@ -371,6 +371,33 @@ impl AppAgentHost {
         })
         .await
     }
+    /// Whether this copy of the app holds the agent's custody, so it is the
+    /// one that runs it.
+    fn custodian(&self, pubkey: &str) -> Result<(), String> {
+        if self.hosting.held().contains_key(pubkey) {
+            Ok(())
+        } else {
+            Err("This copy does not run the agent".into())
+        }
+    }
+    /// As [`Self::caller_key`], only in the copy of the app that runs the agent.
+    pub(crate) async fn custodian_key(
+        &self,
+        pubkey: String,
+        relay: String,
+    ) -> Result<(AppAgent, Arc<Secret>), String> {
+        self.custodian(&pubkey)?;
+        self.key(self.agent(pubkey, relay).await?).await
+    }
+    /// As [`Self::signer`], only in the copy of the app that runs the agent.
+    pub(crate) async fn custodian_signer(
+        &self,
+        pubkey: String,
+        relay: String,
+    ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
+        self.custodian(&pubkey)?;
+        self.signer(pubkey, relay).await
+    }
     /// The agent in the community at `relay`, if it still has its key there.
     /// One deleted elsewhere loses its cached key.
     async fn agent(&self, pubkey: String, relay: String) -> Result<AppAgent, String> {
@@ -417,6 +444,10 @@ impl AppAgentHost {
     }
     pub(crate) fn reopen_row_for_test(&self, pubkey: &str, relay: &str) {
         self.tokens.reopen_row(pubkey, relay).unwrap();
+    }
+    /// Takes the agent's custody, as running it does.
+    pub(crate) fn claim_for_test(&self, pubkey: &str) {
+        assert!(self.hosting.claim(pubkey).unwrap());
     }
     /// Holds every key read until dropped, pausing work that needs a key.
     pub(crate) fn hold_keys_for_test(
@@ -1050,15 +1081,7 @@ async fn confirmed_post(
     root: Option<PathBuf>,
     managed_attachments: Option<Value>,
 ) -> Result<Value, String> {
-    let event_id = signed
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or("Invalid agent event")?
-        .to_owned();
-    let confirmed = evidence
-        .run(true, post(agent, key, evidence.header(), signed))
-        .await
-        .map_err(|error| publish_error(&event_id, error))?;
+    let confirmed = post_signed(agent, key, evidence, signed).await?;
     if let (Some(root), Some(hints)) = (root, managed_attachments) {
         // App-runtime-owned, not runner-owned: confirmation never waits for byte
         // admission or cleanup. The future captures its deadline before spawning.
@@ -1072,6 +1095,24 @@ async fn confirmed_post(
         ));
     }
     Ok(confirmed)
+}
+
+/// Sends one event the agent signed to its community, as publishing does.
+pub(crate) async fn post_signed(
+    agent: &AppAgent,
+    key: &Secret,
+    evidence: Admission,
+    signed: Value,
+) -> Result<Value, String> {
+    let event_id = signed
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("Invalid agent event")?
+        .to_owned();
+    evidence
+        .run(true, post(agent, key, evidence.header(), signed))
+        .await
+        .map_err(|error| publish_error(&event_id, error))
 }
 
 fn publish_error(event_id: &str, error: String) -> String {

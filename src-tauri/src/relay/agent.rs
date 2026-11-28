@@ -119,7 +119,7 @@ pub(crate) struct AgentEvent {
     pub(crate) tags: Vec<Vec<String>>,
     pub(crate) content: String,
 }
-fn verified(event: &AgentEvent) -> Result<()> {
+pub(crate) fn verified(event: &AgentEvent) -> Result<()> {
     if !key(&event.id)
         || !key(&event.pubkey)
         || event.sig.len() != 128
@@ -160,7 +160,7 @@ fn verified(event: &AgentEvent) -> Result<()> {
 fn hex_digest(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-fn exact(event: &AgentEvent, name: &str, value: &str) -> bool {
+pub(crate) fn exact(event: &AgentEvent, name: &str, value: &str) -> bool {
     let tags: Vec<_> = event
         .tags
         .iter()

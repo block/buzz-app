@@ -21,6 +21,7 @@ use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_set_media_suspended, browser_status,
 };
+mod agent_control;
 mod agent_state;
 mod app_agents;
 mod build_identity;
@@ -933,6 +934,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_join,
         app_agents::app_agent_forget,
         app_agents::app_agent_publish,
+        agent_control::app_agent_control_decode,
+        agent_control::app_agent_control_answer,
         app_agents::app_agent_publish_profile,
         app_agents::app_agent_query,
         app_agents::app_agent_search_profiles,
@@ -1328,6 +1331,7 @@ pub fn run() {
         .manage(HostCalls::default())
         .manage(HostProcesses::default())
         .manage(host_files::ManagedFiles::default())
+        .manage(agent_control::ControlFrames::default())
         .manage(HostMcpServers::default())
         .manage(HostForward::default())
         .manage(OAuthCallbackHost::default())

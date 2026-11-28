@@ -209,6 +209,11 @@ if that desktop app is up and running.
   model, and a model chosen beside Send still wins.
 - **While it works**, the agent shows typing dots, and you can stop it. If it
   can't finish, it says why and offers **Retry**.
+- **Stop from another device.** Stop also works for your agent running on
+  another of your devices, while that device's desktop app is open. When only
+  its typing dots reach this device, Stop shows in threads, not in Solo chats
+  or DMs. If it doesn't answer within a few seconds, Buzz says so; the device
+  may be offline, or it or the community may need an update.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents

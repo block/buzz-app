@@ -81,8 +81,9 @@ export const RELAY_TIMESTAMP_DRIFT_SECS = 900;
  * pod can trail its peers), the client clock's skew from the relay's, and the
  * relay's replica read budget for the unread repair, which uses the same margin. */
 export const LIVE_RESUME_LAG = RELAY_TIMESTAMP_DRIFT_SECS + 60;
-/** An agent's answer to a stop may carry a clock this far behind the viewer's.
- * Observer frames are not stored, so asking from earlier replays nothing. */
+/** An agent's answer to a stop, or an owner's stop, may carry a clock this far
+ * behind the listener's. Kind 24200 frames are not stored, so asking from
+ * earlier replays nothing. */
 export const OBSERVER_SKEW_SECS = 300;
 /** A continuous replay starts `LIVE_RESUME_LAG` before the drop, so it closes
  * the gap only back to then. A live frame the relay dropped earlier (a full
@@ -275,6 +276,9 @@ export type LiveCallbacks = {
   telemetry?(event: VerifiedEvent, generation: number, stale?: boolean): void;
   /** Decoded host DTO on the browser transport. */
   observer?(frame: ObserverFrame, generation: number, stale?: boolean): void;
+  /** A live NIP-AO control frame addressed to one of `controlAgents`, still
+   * encrypted to it; the agent's custodian decodes and checks it. */
+  control?(event: VerifiedEvent): void;
   presence?(event: VerifiedEvent): void;
   state(snapshot: LiveSnapshot): void;
   /** A global route (no channels) also reports whether it stayed continuous.
@@ -300,6 +304,9 @@ export type LiveSubscription = {
   /** Host demand only: reorder existing pending routes, never grant new interests. */
   prioritize?(channels: readonly string[]): void;
   observe?(generation: number | null): void;
+  /** Agents whose control frames this connection listens for, live only:
+   * those whose turns this copy of the app runs. Empty stops listening. */
+  controlAgents?(agents: readonly string[]): void;
   /** Ephemeral status: true = accepted, false = unconfirmed/refused, null = unsent.
    * Admission skips report their remaining delay; no durable queue is created. */
   publishPresence?(
@@ -335,6 +342,22 @@ export function livePresenceAuthors(input: unknown): string[] {
     throw new Error("Invalid live presence authors");
   return [...new Set(input as string[])].sort();
 }
+/** Agents a connection listens for control frames to; never truncated. */
+export function liveControlAgents(input: unknown): string[] {
+  if (
+    !Array.isArray(input) ||
+    input.length > 256 ||
+    input.some((key) => typeof key !== "string" || !/^[0-9a-f]{64}$/.test(key))
+  )
+    throw new Error("Invalid live control agents");
+  return [...new Set(input as string[])].sort();
+}
+/** The relay admits at most this many agents in one control filter. */
+const CONTROL_FILTER_AGENTS = 64;
+/** First wait before asking again for agents the relay refused while it
+ * admitted others; it doubles each time, up to `CONTROL_RETRY_MAX_MS`. */
+const CONTROL_RETRY_MS = 30_000;
+const CONTROL_RETRY_MAX_MS = 15 * 60_000;
 /** IDs, not names/previews, define interest identity. Never silently truncate. */
 export function liveChannels(input: unknown): string[] {
   if (
@@ -504,6 +527,27 @@ export function subscribeRelayTraffic(
   let priorityRanks = new WeakMap<Route, number>();
   let observer: number | null = null;
   let presenceAuthors: readonly string[] = [];
+  let controlAgents: readonly string[] = [];
+  // The relay refuses a whole control REQ (`restricted:`) when it doesn't
+  // know one of its agents as the owner's yet, or doesn't offer owner control
+  // subscriptions at all. Agents it admitted on this connection keep
+  // listening without the refused ones, which are asked for again later. When
+  // it admitted none, they wait for the next connection or another set of
+  // agents. Nothing else depends on this route.
+  const controlAdmitted = new Set<string>();
+  const controlHeld = new Set<string>();
+  let controlSent: readonly string[] = [];
+  let controlRetry: ReturnType<typeof setTimeout> | undefined;
+  let controlRetryMs = CONTROL_RETRY_MS;
+  const listening = () => controlAgents.filter((key) => !controlHeld.has(key));
+  const controlling = () => listening().length > 0;
+  const resetControl = () => {
+    clearTimeout(controlRetry);
+    controlRetry = undefined;
+    controlRetryMs = CONTROL_RETRY_MS;
+    controlAdmitted.clear();
+    controlHeld.clear();
+  };
   let presenceReceipt:
     | { id: string; finish(accepted: boolean): void }
     | undefined;
@@ -890,6 +934,7 @@ export function subscribeRelayTraffic(
         1 - // Keep one wire for the silence probe.
         (joined.length ? setupConcurrency + replaySlots : 0) -
         (observer !== null ? 1 : 0) -
+        (controlling() ? 1 : 0) -
         (presenceAuthors.length ? 1 : 0),
     );
     const joinedSlots = Math.max(
@@ -899,6 +944,7 @@ export function subscribeRelayTraffic(
         1 -
         (setupConcurrency + replaySlots) -
         (observer !== null ? 1 : 0) -
+        (controlling() ? 1 : 0) -
         (presenceAuthors.length ? 1 : 0),
     );
     const admitted = new Set([
@@ -910,6 +956,7 @@ export function subscribeRelayTraffic(
       "profiles",
       "membership",
       ...(observer !== null ? ["observer"] : []),
+      ...(controlling() ? ["control"] : []),
       ...(presenceAuthors.length ? ["presence"] : []),
     ]);
     // Scope is immutable for a wire. Retirement rebuilds only the affected batch;
@@ -978,6 +1025,7 @@ export function subscribeRelayTraffic(
         carrying &&
         id !== "presence" &&
         id !== "observer" &&
+        id !== "control" &&
         cursorKeys(route).every((key) => carrying?.has(key))
       )
         route.carried = true;
@@ -1146,7 +1194,11 @@ export function subscribeRelayTraffic(
             !route.repairs,
         }),
       );
-    else if (route.id !== "observer" && route.id !== "presence") {
+    else if (
+      route.id !== "observer" &&
+      route.id !== "presence" &&
+      route.id !== "control"
+    ) {
       // A live-only route sends no replay, so it closes no gap; nor does a
       // channel outside a re-sent route's replay subset.
       const continuous = route.liveOnly
@@ -1328,7 +1380,9 @@ export function subscribeRelayTraffic(
           );
       }, setupTimeoutMs);
       active++;
-      if (route.id === "observer") route.since = Math.floor(Date.now() / 1000);
+      if (route.id === "observer" || route.id === "control")
+        route.since = Math.floor(Date.now() / 1000);
+      if (route.id === "control") controlSent = listening();
       const filters = scope(route).length
         ? (route.liveOnly || route.page
             ? [scope(route)]
@@ -1340,12 +1394,27 @@ export function subscribeRelayTraffic(
             ? [{ kinds: [0, 10100, 30177] }]
             : route.id === "observer"
               ? [{ kinds: [OBSERVER_KIND], "#p": [viewer] }]
-              : [
-                  { kinds: [44100, 44101], "#p": [viewer] },
-                  // NIP-CL: the relay sends a system channel's notices only
-                  // to a filter that asks for them with #t.
-                  { kinds: [44100, 44101], "#p": [viewer], "#t": ["system"] },
-                ];
+              : route.id === "control"
+                ? Array.from(
+                    {
+                      length: Math.ceil(
+                        controlSent.length / CONTROL_FILTER_AGENTS,
+                      ),
+                    },
+                    (_, index) => ({
+                      kinds: [OBSERVER_KIND],
+                      "#p": controlSent.slice(
+                        index * CONTROL_FILTER_AGENTS,
+                        (index + 1) * CONTROL_FILTER_AGENTS,
+                      ),
+                    }),
+                  )
+                : [
+                    { kinds: [44100, 44101], "#p": [viewer] },
+                    // NIP-CL: the relay sends a system channel's notices only
+                    // to a filter that asks for them with #t.
+                    { kinds: [44100, 44101], "#p": [viewer], "#t": ["system"] },
+                  ];
       send([
         "REQ",
         wire,
@@ -1353,13 +1422,13 @@ export function subscribeRelayTraffic(
           ...filter,
           // Survivor filters stay live-only so replay cannot suppress a fresh alert.
           since:
-            route.id === "observer"
+            route.id === "observer" || route.id === "control"
               ? route.since - OBSERVER_SKEW_SECS
               : route.since,
           ...(route.page?.until !== undefined
             ? { until: route.page.until }
             : {}),
-          ...(route.id === "observer"
+          ...(route.id === "observer" || route.id === "control"
             ? {}
             : {
                 limit:
@@ -1528,6 +1597,7 @@ export function subscribeRelayTraffic(
       : undefined;
     clearSocket();
     routes.clear();
+    resetControl();
     renewing = renewal;
     connection = "connecting";
     connectionError = undefined;
@@ -2029,6 +2099,10 @@ export function subscribeRelayTraffic(
               observer,
               incoming.created_at < route.since,
             );
+        } else if (route.id === "control") {
+          // Not fenced by `since`: the sender's clock is another device's.
+          // The custodian checks freshness and replay when it decodes.
+          if (incoming.kind === OBSERVER_KIND) callbacks.control?.(incoming);
         } else if (incoming.kind !== OBSERVER_KIND) {
           deliverEvent(
             incoming,
@@ -2050,6 +2124,8 @@ export function subscribeRelayTraffic(
             grant(destination);
         }
       } else if (data[0] === "EOSE" && route.status === "pending") {
+        if (route.id === "control")
+          for (const key of controlSent) controlAdmitted.add(key);
         if (route.history) {
           const { page } = route;
           let rest: string[] = [];
@@ -2182,6 +2258,28 @@ export function subscribeRelayTraffic(
           typeof data[2] === "string"
             ? data[2].slice(0, 512)
             : "Relay closed live subscription";
+        if (route.id === "control" && reason.startsWith("restricted:")) {
+          log.info(`${peer} agent control unavailable: ${reason}`);
+          const added = controlSent.filter((key) => !controlAdmitted.has(key));
+          for (const key of added.length ? added : controlSent)
+            controlHeld.add(key);
+          if (added.length && controlAdmitted.size && !controlRetry) {
+            // Jittered, so clients refused together don't ask together.
+            const wait = controlRetryMs * (0.5 + Math.random() / 2);
+            controlRetryMs = Math.min(controlRetryMs * 2, CONTROL_RETRY_MAX_MS);
+            controlRetry = setTimeout(() => {
+              controlRetry = undefined;
+              controlHeld.clear();
+              const current = routes.get("control");
+              if (current) replace(current);
+              syncInterests();
+            }, wait);
+          }
+          remove(route);
+          syncInterests();
+          notify();
+          return;
+        }
         fail(
           route,
           reason,
@@ -2372,6 +2470,20 @@ export function subscribeRelayTraffic(
         );
       return requests.publish(event, signal);
     },
+    controlAgents(input) {
+      const next = liveControlAgents(input);
+      if (closed || JSON.stringify(next) === JSON.stringify(controlAgents))
+        return;
+      controlAgents = next;
+      // Another set of agents is asked for whole, refused ones included.
+      controlHeld.clear();
+      const route = routes.get("control");
+      if (route) {
+        if (next.length) replace(route);
+        else remove(route);
+      }
+      syncInterests();
+    },
     observe(value) {
       const next = observerGeneration(value);
       if (closed || observer === next) return;
@@ -2441,6 +2553,7 @@ export function subscribeRelayTraffic(
       if (closed) return;
       closed = true;
       clearTimeout(retryTimer);
+      resetControl();
       const ending = [...syncs];
       syncs.clear();
       profileSyncs.clear();

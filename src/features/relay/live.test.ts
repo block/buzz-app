@@ -4127,6 +4127,85 @@ it("observer route is optional, live-only at dispatch/retry, separately fenced a
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("control route listens live with room for clock skew, and keeps admitted agents when the relay refuses an added one", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1800000000000);
+  const h = setup([]);
+  const control = vi.fn();
+  Object.assign(h.callbacks, { control });
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(500);
+  const agents = Array.from({ length: 65 }, (_, index) =>
+    index.toString(16).padStart(64, "0"),
+  );
+  h.owner.controlAgents?.([...agents].reverse());
+  await vi.advanceTimersByTimeAsync(250);
+  const first = h.first.requests().at(-1);
+  assert.exists(first);
+  // The relay takes at most 64 agents in one filter. A frame from a device
+  // whose clock is behind, within the relay's freshness window, still matches.
+  const since = Math.floor(Date.now() / 1000) - 300;
+  expect(first.slice(2)).toEqual([
+    { kinds: [24200], "#p": agents.slice(0, 64), since },
+    { kinds: [24200], "#p": agents.slice(64), since },
+  ]);
+  const event = signed(h.key, {
+    kind: 24200,
+    content: "opaque",
+    tags: [["p", agents[0] as string]],
+    created_at: Math.floor(Date.now() / 1000) - 60,
+  });
+  await h.first.receive(["EVENT", first[1], event]);
+  expect(control).toHaveBeenCalledWith(event);
+  expect(h.callbacks.receive).not.toHaveBeenCalled();
+  await h.first.receive(["EOSE", first[1]]);
+  // An agent the relay doesn't know as the owner's yet: the others keep
+  // listening without it, and it is asked for again later.
+  const added = "f".repeat(64);
+  const agentsOf = (request: unknown[] | undefined) =>
+    request?.slice(2).flatMap((filter) => (filter as { "#p": string[] })["#p"]);
+  h.owner.controlAgents?.([...agents, added]);
+  await vi.advanceTimersByTimeAsync(250);
+  const second = h.first.requests().at(-1);
+  expect(agentsOf(second)).toEqual([...agents, added]);
+  await h.first.receive(["CLOSED", second?.[1], "restricted: not owner"]);
+  await vi.advanceTimersByTimeAsync(250);
+  expect(agentsOf(h.first.requests().at(-1))).toEqual(agents);
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(agentsOf(h.first.requests().at(-1))).toEqual([...agents, added]);
+  expect(h.sockets).toHaveLength(1);
+  h.owner.dispose();
+});
+
+it("control route is not asked again until reconnect when the relay admits none of its agents", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(500);
+  h.owner.controlAgents?.(["a".repeat(64)]);
+  await vi.advanceTimersByTimeAsync(250);
+  const controls = () =>
+    h.first
+      .requests()
+      .filter((request) =>
+        request
+          .slice(2)
+          .some(
+            (filter) =>
+              typeof filter !== "string" && filter.kinds?.includes(24200),
+          ),
+      );
+  const [first] = controls();
+  assert.exists(first);
+  await h.first.receive(["CLOSED", first[1], "restricted: not owner"]);
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  h.owner.retry();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(controls()).toHaveLength(1);
+  expect(h.sockets).toHaveLength(1);
+  h.owner.dispose();
+});
+
 it("presence holds its receipt without delaying ordinary setup and shares correlated cooldown", async () => {
   vi.useFakeTimers();
   const h = setup([]);

@@ -244,3 +244,42 @@ it("identifies each hosted thread and stops only the selected work", async () =>
     );
   }
 });
+
+it("stops an agent typing in a thread when it can be stopped from here, without its telemetry", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  const interrupt = vi.fn(async () => true);
+  let interruptible = false;
+  const roster = { agents: [{ pubkey: agent, place: "elsewhere" }] };
+  const elsewhere = {
+    subscribe: () => () => {},
+    snapshot: () => roster,
+    interruptible: () => interruptible,
+    interrupt,
+  } as unknown as Agents;
+  f.update([entry(agent, root)]);
+  const view = (
+    <AgentsContext.Provider value={elsewhere}>
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        threadRootId={root}
+      />
+    </AgentsContext.Provider>
+  );
+  const { rerender } = render(view);
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  // Typing alone is no proof the viewer may stop it.
+  expect(screen.queryByRole("button", { name: /^Stop Agent/ })).toBeNull();
+  interruptible = true;
+  rerender(view);
+  f.update([entry(agent, root)]);
+  await user.click(screen.getByRole("button", { name: /^Stop Agent/ }));
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(
+    agent,
+    { channelId: "channel", threadRootId: root },
+    expect.anything(),
+  );
+});

@@ -4,8 +4,10 @@ import type { RequestWork } from "./request-work";
 import type { LocalWork } from "./local-activity";
 import { localWorkRoot } from "./local-activity";
 import { activityTranscript } from "./activity-transcript";
+import type { TypingEntry } from "../relay/typing";
 
-export type WorkStopAgents = Pick<Agents, "interruptible" | "interrupt">;
+export type WorkStopAgents = Pick<Agents, "interruptible" | "interrupt"> &
+  Partial<Pick<Agents, "snapshot">>;
 export type WorkStop = {
   key: string;
   lifecycle: boolean;
@@ -65,6 +67,9 @@ export function conversationWorkStops(
   threadRootId: string | undefined,
   activity: Activity | undefined,
   agents: WorkStopAgents | undefined,
+  /** Who is typing now; an agent the owner runs on another device can be
+   * stopped where it types, even when its telemetry doesn't reach here. */
+  typing: readonly TypingEntry[] = [],
 ): {
   control: WorkStop;
   work?: LocalWork;
@@ -89,11 +94,11 @@ export function conversationWorkStops(
       : [];
   });
   // Local lifecycle evidence owns this agent's state, including settled work.
-  if (local.length || snapshot.status !== "listening") return result;
-  const turns = activityTranscript(snapshot.records, {
-    agent,
-    channelId,
-  }).turns;
+  if (local.length) return result;
+  const turns =
+    snapshot.status === "listening"
+      ? activityTranscript(snapshot.records, { agent, channelId }).turns
+      : [];
   const roots = new Set(
     turns.flatMap((turn) =>
       !turn.endedAt &&
@@ -110,6 +115,23 @@ export function conversationWorkStops(
         : [],
     ),
   );
+  // An owner's agent on another device: the thread it types in is one it
+  // works in, even when its telemetry doesn't reach here. Typing outside a
+  // thread names no thread to stop. Hosted agents stop by their telemetry.
+  const elsewhere = agents
+    ?.snapshot?.()
+    ?.agents.some(
+      (entry) => entry.pubkey === agent && entry.place === "elsewhere",
+    );
+  if (elsewhere)
+    for (const entry of typing)
+      if (
+        entry.pubkey === agent &&
+        entry.channelId === channelId &&
+        entry.threadRootId &&
+        (!threadRootId || entry.threadRootId === threadRootId)
+      )
+        roots.add(entry.threadRootId);
   return [...roots].flatMap((root) => {
     const control = workStop(
       { agent, lifecycle: false, working: true, state: "working" },

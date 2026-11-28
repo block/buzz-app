@@ -1495,6 +1495,17 @@ export function createRelaySession(
     notify,
   });
   let traffic: LiveSubscription | undefined;
+  /** Who listens for control frames to which agents (see `controlAgents`). */
+  const controlListeners = new Set<
+    Readonly<{
+      agents: ReadonlySet<string>;
+      listener: (event: RelayEvent) => void;
+    }>
+  >();
+  const listenForControl = () =>
+    traffic?.controlAgents?.([
+      ...new Set([...controlListeners].flatMap(({ agents }) => [...agents])),
+    ]);
   const artifactSyncs = new Set<ArtifactSyncOwner>();
   /** Channels `artifacts.follow` keeps live, each follow's own list. */
   const followed = new Set<readonly string[]>();
@@ -2889,6 +2900,22 @@ export function createRelaySession(
         if (attended.delete(ids)) updateInterests();
       };
     },
+    /** Listens, live only, for NIP-AO control frames sent to `agents`, the
+     * agents whose turns this copy of the app runs here, and hands each to
+     * `listener` as it arrives, still encrypted to its agent. A relay that
+     * does not let the owner listen for them sends none. */
+    controlAgents(
+      agents: readonly string[],
+      listener: (event: RelayEvent) => void,
+    ): () => void {
+      if (closed) return () => {};
+      const entry = Object.freeze({ agents: new Set(agents), listener });
+      controlListeners.add(entry);
+      listenForControl();
+      return () => {
+        if (controlListeners.delete(entry)) listenForControl();
+      };
+    },
     /** Whether the session does not know `channelId`: a read of the channel
      * returns none of its events. True of a channel not attended yet, so a
      * read that runs before its `attend` waits for it as well, and of one
@@ -4133,6 +4160,13 @@ export function createRelaySession(
   traffic = transport?.subscribe?.({
     observer: (frame, generation, stale) =>
       activity.receive(frame, generation, stale),
+    control(event) {
+      if (closed) return;
+      const to = event.tags.filter(([name]) => name === "p");
+      const agent = to.length === 1 ? to[0]?.[1] : undefined;
+      for (const { agents, listener } of [...controlListeners])
+        if (agent && agents.has(agent)) listener(event);
+    },
     receive(events, provenance) {
       if (closed) return;
       receiveSidebar(events);
@@ -4445,6 +4479,7 @@ export function createRelaySession(
       if (!closed) channels.denyChannel(channelId, new Error(reason));
     },
   });
+  listenForControl();
   let activityRosterKey: string | undefined;
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;

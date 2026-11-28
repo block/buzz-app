@@ -234,17 +234,21 @@ voice. An agent hears whatever your microphone picks up, including people near
 you, and audio sent just before someone leaves can be credited to whoever takes
 their place.
 
-Goose voice is optional and off by default on each device. In agent settings,
-open **Voice settings** beside **Goose default model**, then expand **Voice**.
-Choose OpenAI or a Custom GPT-Live-compatible sessions URL. Custom requires its
-own key; changing the URL requires entering a key again. Provider, endpoint,
-model, voice and key are shared with the goose CLI and desktop app on this Mac;
-the huddle on/off switch belongs only to Buzz. Failed saves turn that switch off.
-A goose-acp build with live-voice support is required; the card reports availability.
-Existing calls keep their settings until rejoin. Turning voice off ends them.
-Typed messages in the same conversation wait until Goose leaves voice.
-Goose transcript chunks appear when the next transcript message starts, so the
-last utterance may be absent when leaving.
+Goose voice is optional and off by default on each device. In a huddle, Goose
+sends the voice provider your audio, the conversation's recent messages, and the
+agent's instructions, team and memory; this provider can differ from the one the
+agent uses for typed work. In agent settings, open **Voice settings** beside
+**Goose default model**, then expand **Voice**. Choose OpenAI or a Custom
+GPT-Live-compatible sessions URL. Custom requires its own key; changing the URL
+requires entering a key again. A plain `http` URL is allowed, with a warning
+that the key, audio and text travel unencrypted. Provider, endpoint, model,
+voice and key are shared with the goose CLI and desktop app on this Mac; the
+huddle on/off switch belongs only to Buzz. Failed saves turn that switch off. A
+goose-acp build with live-voice support is required; the card reports
+availability. Existing calls keep their settings until rejoin. Turning voice off
+ends them. Starting a huddle in a Goose agent's DM adds it only while the switch
+is on. Typed messages in the same conversation wait until Goose leaves voice.
+Each spoken line posts to the transcript after a second of quiet.
 
 ## Workflows
 

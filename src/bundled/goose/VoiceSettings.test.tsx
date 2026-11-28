@@ -38,6 +38,7 @@ it("shows shared config, clears Saved on endpoint edits, and requires a new key"
   expect(screen.getByLabelText("API key")).toHaveValue("");
   expect(screen.getByText("Saved. Leave blank to keep it.")).toBeVisible();
   expect(screen.getByText(/Not encrypted/)).toBeVisible();
+  expect(screen.getByText(/sends the voice provider your audio/)).toBeVisible();
   expect(screen.getByRole("switch")).not.toBeChecked();
   fireEvent.change(field, { target: { value: "http://b.example.org/live" } });
   expect(

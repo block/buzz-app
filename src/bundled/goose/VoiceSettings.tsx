@@ -65,6 +65,12 @@ export function VoiceSettings({ settings }: { settings: GooseVoiceSettings }) {
                 />
               </SettingsGroup>
               <p className="m-0 text-body-sm text-subtle">
+                In a huddle, Goose sends the voice provider your audio, the
+                conversation's recent messages, and the agent's instructions,
+                team and memory. This provider can differ from the one the agent
+                uses for typed work.
+              </p>
+              <p className="m-0 text-body-sm text-subtle">
                 Shared with goose on this Mac. Existing calls use their current
                 settings until you rejoin.
               </p>
@@ -102,7 +108,7 @@ export function VoiceSettings({ settings }: { settings: GooseVoiceSettings }) {
                             .trim()
                             .toLowerCase()
                             .startsWith("http:")
-                            ? "Not encrypted. Your key and conversation text travel over the network in plain text. Use a network you trust."
+                            ? "Not encrypted. Your key, audio and conversation text travel over the network in plain text. Use a network you trust."
                             : "The full sessions URL."
                         }
                       >

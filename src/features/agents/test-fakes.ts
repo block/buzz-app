@@ -60,10 +60,12 @@ export function readyAgentChoices(
     status: "ready",
     identities,
     selectable: identities,
+    admissible: identities,
     archives: { status: "ready", archived: [] },
     templates: { status: "ready", identities, complete: true, pending: false },
     definitions: [],
     complete: true,
     pending: false,
+    managedPending: false,
   };
 }

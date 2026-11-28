@@ -110,6 +110,7 @@ function setup({ archived = [] as string[] } = {}) {
   const profiles = new Map();
   const channels: { channels: ChannelSummary[] } = { channels: [] };
   const agents = { status: "ready", identities: empty };
+  const libraryRefresh = vi.fn(async () => {});
   const directMessages = {
     available: true,
     people: vi.fn<RelaySession["directMessages"]["people"]>(async () => ({
@@ -184,7 +185,7 @@ function setup({ archived = [] as string[] } = {}) {
     agentLibrary: {
       snapshot: () => agents,
       subscribe: () => () => {},
-      refresh: async () => {},
+      refresh: libraryRefresh,
     },
     emoji: {
       snapshot: () => emoji,
@@ -195,6 +196,7 @@ function setup({ archived = [] as string[] } = {}) {
   } as unknown as RelaySession;
   const onOpenThread = vi.fn();
   const onStarted = vi.fn();
+  const onPreparing = vi.fn();
   let controlState: LocalAgentsSnapshot = {
     status: "ready",
     agents: [
@@ -266,6 +268,7 @@ function setup({ archived = [] as string[] } = {}) {
       visit={visit}
       onOpenThread={onOpenThread}
       onStarted={onStarted}
+      onPreparing={onPreparing}
     />
   );
   const mount = (visit?: PageNavigation, to?: string, at?: number) => {
@@ -285,6 +288,7 @@ function setup({ archived = [] as string[] } = {}) {
     outbox,
     onOpenThread,
     onStarted,
+    onPreparing,
     mount,
     control,
     setArchived(keys: readonly string[]) {
@@ -296,6 +300,7 @@ function setup({ archived = [] as string[] } = {}) {
         for (const listener of archiveListeners) listener();
       });
     },
+    libraryRefresh,
     updateControl(next: LocalAgentsSnapshot) {
       controlState = next;
       act(() => {
@@ -1535,6 +1540,75 @@ it("filters the completed directory immediately without loading or searching aga
   expect(t.directMessages.people).toHaveBeenCalledTimes(requests);
 });
 
+it("lists only controlled agents and shows loading, not an empty result, while local agents load", async () => {
+  const t = setup();
+  const agent = people[1];
+  if (!agent) throw new Error("Missing fixture agent");
+  const human = { pubkey: "a".repeat(64), name: agent.name };
+  const foreign = {
+    pubkey: "b".repeat(64),
+    name: "Other agent",
+    isAgent: true as const,
+  };
+  t.directMessages.people.mockResolvedValue({
+    people: [human, agent, foreign],
+    hasMore: false,
+  });
+  const ready = t.control.snapshot();
+  // As at launch, before agent controls first list this community's agents.
+  t.updateControl({ status: "loading", agents: [] });
+  t.mount();
+  await screen.findByRole("option", { name: "Person 2" });
+  // No agent is offered until the list shows the viewer controls it.
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  expect(screen.getByRole("status", { name: "Loading people" })).toBeVisible();
+  // The agent that loads could be a namesake, so Space waits.
+  await t.user.type(recipient(), "person 2");
+  await t.user.keyboard(" ");
+  expect(recipient()).toHaveValue("person 2 ");
+  expect(
+    screen.queryByRole("button", { name: /^Remove / }),
+  ).not.toBeInTheDocument();
+  fireEvent.change(recipient(), { target: { value: "Nobody" } });
+  expect(screen.getByRole("status", { name: "Loading people" })).toBeVisible();
+  expect(screen.queryByText("No matching people.")).not.toBeInTheDocument();
+  t.updateControl(ready);
+  expect(screen.getByText("No matching people.")).toBeVisible();
+  expect(
+    screen.queryByRole("status", { name: "Loading people" }),
+  ).not.toBeInTheDocument();
+  fireEvent.change(recipient(), { target: { value: "" } });
+  await waitFor(() =>
+    expect(screen.getAllByRole("option", { name: /Person 2/ })).toHaveLength(2),
+  );
+  expect(
+    screen.queryByRole("option", { name: /Other agent/ }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps uncontrolled agents hidden while only the agent library loads", async () => {
+  const t = setup();
+  const foreign = {
+    pubkey: "a".repeat(64),
+    name: "Other agent",
+    isAgent: true as const,
+  };
+  t.directMessages.people.mockResolvedValue({
+    people: [...people, foreign],
+    hasMore: false,
+  });
+  // A library read cannot make an agent controlled, so it holds nothing back.
+  const loading = { status: "loading", identities: [], definitions: [] };
+  Object.assign(t.session.agentLibrary, { snapshot: () => loading });
+  t.mount();
+  await screen.findByRole("option", { name: "Person 2, Agent" });
+  expect(
+    screen.queryByRole("option", { name: "Other agent, Agent" }),
+  ).not.toBeInTheDocument();
+  await t.user.type(recipient(), "Other agent");
+  expect(await screen.findByText("No matching people.")).toBeVisible();
+});
+
 it("searches again for people added after a completed directory when New message reopens", async () => {
   const t = setup();
   const view = t.mount();
@@ -1926,6 +2000,66 @@ it("checks local agents again after opening and leaves queued retries alone", as
   // The queued message keeps its exact event: Retry send opened nothing.
   expect(t.directMessages.open).toHaveBeenCalledTimes(2);
   expect(t.onStarted).toHaveBeenCalledWith(moved, expect.any(String));
+});
+
+it.each([true, false])(
+  "waits for agents still loading before refusing an agent recipient: managed=%s",
+  async (managed) => {
+    const t = setup();
+    t.mount();
+    await t.user.click(
+      await screen.findByRole("option", { name: "Person 2, Agent" }),
+    );
+    await t.user.type(screen.getByRole("textbox"), "Hello");
+    const ready = t.control.snapshot();
+    // As at launch, before agent controls first list this community's agents.
+    t.updateControl({ status: "loading", agents: [] });
+    let finish!: () => void;
+    const refresh = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    t.control.refresh = refresh;
+    await t.user.click(send());
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(t.libraryRefresh).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(t.directMessages.open).not.toHaveBeenCalled();
+    t.updateControl(managed ? ready : { ...ready, agents: [] });
+    await act(async () => finish());
+    if (managed)
+      await waitFor(() => expect(t.messages.send).toHaveBeenCalledOnce());
+    else {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "no longer available",
+      );
+      expect(t.directMessages.open).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it("does not open the DM when the page exits while agents are still loading", async () => {
+  const t = setup();
+  const view = t.mount();
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  await t.user.type(screen.getByRole("textbox"), "Hello");
+  const ready = t.control.snapshot();
+  t.updateControl({ status: "loading", agents: [] });
+  let finish!: () => void;
+  const refresh = vi.fn(
+    () => new Promise<void>((resolve) => (finish = resolve)),
+  );
+  t.control.refresh = refresh;
+  await t.user.click(send());
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  view.unmount();
+  // The list arrives with the agent controlled: only the exit stops the send.
+  t.updateControl(ready);
+  await act(async () => finish());
+  expect(t.onPreparing).not.toHaveBeenCalled();
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.messages.send).not.toHaveBeenCalled();
 });
 
 it("distinguishes namesake options and chips without pictures", async () => {

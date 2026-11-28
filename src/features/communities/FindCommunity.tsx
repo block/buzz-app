@@ -1,6 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { CircleNotchIcon } from "../../shared/design-system/icons/index";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
@@ -15,7 +14,7 @@ import {
 
 import { ACCOUNT_CONSENT } from "./account-consent";
 import { consentAsked } from "./join-policy";
-import { communityName } from "./community-name";
+import { FoundCommunityRow } from "./FoundCommunityRow";
 
 type State =
   | { status: "finding" }
@@ -206,7 +205,6 @@ export function FindCommunity({
     );
   }
   const { found, consentGiven: given } = state;
-  const name = communityName(found.name, found.host);
   const policy = found.policy;
   const { age: needsAge, agreement: needsAgreement } = consentAsked(
     policy,
@@ -216,20 +214,7 @@ export function FindCommunity({
   return (
     <>
       {heading("Join Community")}
-      <div className="flex items-center gap-3 rounded-[var(--radius-row)] bg-surface-inset p-4">
-        <Avatar
-          alt=""
-          fallback={name}
-          fallbackSurface="panel"
-          src={found.icon}
-          shape="squircle"
-          size="large"
-        />
-        <div className="min-w-0 flex-1">
-          <p className="m-0 break-words text-body text-standard">{name}</p>
-          <p className="m-0 break-all text-body text-subtle">{found.url}</p>
-        </div>
-      </div>
+      <FoundCommunityRow found={found} address={found.url} />
       {(needsAge || needsAgreement) && (
         <div className="flex flex-col gap-3">
           {needsAge && (

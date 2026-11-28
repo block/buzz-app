@@ -4,7 +4,8 @@ import { Button } from "../../shared/design-system/ui/Button";
 
 /**
  * Pause on a found community that this build's Builderlab does not host (one
- * it hosts signs in at once), before any sign-in: the relay cannot sign the
+ * it hosts signs in at once for a typed address, or asks on the invited page
+ * for a link), before any sign-in: the relay cannot sign the
  * user in, but Buzz still needs a key. Connect runs the build portal's sign-in
  * exactly as the landing's button does (the key it creates is linked to that
  * account, with automatic backup); the import brings a key with no account to

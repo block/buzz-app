@@ -97,6 +97,10 @@ if that desktop app is up and running.
 - **First launch.** Sign in with an account, or use **Other options** to join
   a community by its address or an invite link, or to bring an existing key.
   Someone who used an older Buzz on this computer can bring that identity over.
+- **Invited before signing in.** An invite link opened before you have signed
+  in opens Buzz on that community: it names the community and offers **Create
+  account**, **Sign in** and **Not now**. The link never joins by itself; you
+  join after signing in.
 - **Keep a copy of your key.** Your identity is a private key. Buzz shows
   whether it's backed up in **Settings → Buzz → Identity**, and **Copy private key**
   makes a copy for a password manager. Without a copy, a lost key means a lost

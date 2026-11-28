@@ -233,6 +233,7 @@ export function createServices() {
   };
   const invites = {
     subscribe: inviteIntent.subscribe,
+    firstRun: inviteIntent.firstRun,
     /** In-memory state of the join visit `target`, for its viewer only. */
     state(target: OpenTarget, viewer: string | undefined) {
       const state = target.join && inviteIntent.get(target.join.visit);
@@ -384,6 +385,7 @@ export function createServices() {
   const deepLinks = {
     ...navigationHost,
     invite: invites.open,
+    firstRun: invites.firstRun,
     authorize: externalApps.open,
     rejected: rejectedLinks.reject,
     accepted: () => rejectedLinks.clear(),

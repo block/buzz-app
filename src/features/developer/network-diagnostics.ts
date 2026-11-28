@@ -28,6 +28,7 @@ export const captureExpiry = (
 const HISTORY_LIMIT = 500;
 const TRAFFIC_LIMIT = 1500;
 export type NetworkSource =
+  | "archives"
   | "live"
   | "catalog"
   | "threads"

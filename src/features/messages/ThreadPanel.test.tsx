@@ -108,6 +108,7 @@ vi.mock("./MessageComposer", () => ({
     placeholder,
     focusRequest,
     threadSeed,
+    shown,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -119,6 +120,7 @@ vi.mock("./MessageComposer", () => ({
       data-disabled={disabled}
       data-placeholder={placeholder}
       data-focus-request={focusRequest}
+      data-shown={shown}
     >
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
@@ -475,7 +477,7 @@ it("keeps initial rows pending until positioned, exposes errors, and lets readin
   h.render();
   expect(h.element.scrollTop).toBe(500);
 });
-it("starts a single older page after scrolling through 80% of loaded history", () => {
+it("starts a single older page after scrolling through 80% of loaded history, capped at 2400px on tall threads", () => {
   const h = messagesHarness();
   h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
@@ -491,13 +493,173 @@ it("starts a single older page after scrolling through 80% of loaded history", (
   h.render();
   h.scroll(0);
   expect(h.view.loadMore).toHaveBeenCalledOnce();
+
+  // Tall scroll ranges cap the trigger distance at 2400px instead of 20%.
+  h.snapshot.status = "ready";
+  h.render();
+  h.resize(50_600); // scrollable range 50,000px; 20% would be 10,000px.
+  h.scroll(4000);
+  fireEvent.wheel(section, { deltaY: -1 });
+  h.scroll(2401);
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  h.scroll(2400);
+  expect(h.view.loadMore).toHaveBeenCalledTimes(2);
+});
+it("counts live arrivals on Jump to latest for strict threads while older pages remain unloaded, after resumed rows settle", () => {
+  const h = messagesHarness();
+  const initial = {
+    ...row,
+    id: "reply-initial",
+    content: "initial reply",
+    createdAt: 10,
+    createdAtMs: 10_000,
+    threadRootId: row.id,
+    replyParentId: row.id,
+  };
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  h.snapshot.resumed = true;
+  h.snapshot.replies = [initial];
+  const section = h.render();
+
+  // Scroll away from latest so Jump to latest is visible.
+  fireEvent.wheel(section, { deltaY: -1 });
+  h.scroll(1000);
+  expect(
+    within(section).getByRole("button", { name: "Jump to latest" }),
+  ).toBeVisible();
+
+  // Resumed rows do not establish an arrival baseline before the first refresh settles.
+  const whileResumed = {
+    ...initial,
+    id: "reply-while-resumed",
+    content: "arrived while resumed",
+    createdAt: 20,
+    createdAtMs: 20_000,
+  };
+  h.snapshot.replies = [initial, whileResumed];
+  h.render();
+  expect(
+    within(section).getByRole("button", { name: "Jump to latest" }),
+  ).toBeVisible();
+
+  // Once the non-resumed strict window settles, even with canLoadMore still
+  // true, subsequent live arrivals increment the new-message count.
+  h.snapshot.resumed = undefined;
+  h.render();
+  const liveArrival = {
+    ...initial,
+    id: "reply-live",
+    content: "live reply",
+    createdAt: 30,
+    createdAtMs: 30_000,
+  };
+  h.snapshot.replies = [initial, whileResumed, liveArrival];
+  h.render();
+  expect(
+    within(section).getByRole("button", { name: "1 new message" }),
+  ).toBeVisible();
+
+  // Prepending an older page does not count as a new arrival.
+  const olderReply = {
+    ...initial,
+    id: "reply-older",
+    content: "older reply",
+    createdAt: 5,
+    createdAtMs: 5_000,
+  };
+  h.snapshot.replies = [olderReply, initial, whileResumed, liveArrival];
+  h.render();
+  expect(
+    within(section).getByRole("button", { name: "1 new message" }),
+  ).toBeVisible();
+
+  // Live arrivals keep counting while an older page request is in flight.
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  const duringOlderLoad = {
+    ...initial,
+    id: "reply-during-older-load",
+    content: "arrived while loading older",
+    createdAt: 40,
+    createdAtMs: 40_000,
+  };
+  h.snapshot.replies = [
+    olderReply,
+    initial,
+    whileResumed,
+    liveArrival,
+    duringOlderLoad,
+  ];
+  h.render();
+  expect(
+    within(section).getByRole("button", { name: "2 new messages" }),
+  ).toBeVisible();
+
+  // Live arrivals keep counting after an older page request fails.
+  h.snapshot.status = "error";
+  h.snapshot.error = "Network error";
+  const afterOlderError = {
+    ...initial,
+    id: "reply-after-older-error",
+    content: "arrived after older error",
+    createdAt: 50,
+    createdAtMs: 50_000,
+  };
+  h.snapshot.replies = [
+    olderReply,
+    initial,
+    whileResumed,
+    liveArrival,
+    duringOlderLoad,
+    afterOlderError,
+  ];
+  h.render();
+  expect(
+    within(section).getByRole("button", { name: "3 new messages" }),
+  ).toBeVisible();
+
+  // A memory-limit error drops replies without wiping the arrival baseline,
+  // so a subsequent refresh does not recount already-seen newest replies.
+  h.snapshot.limited = true;
+  h.snapshot.canLoadMore = false;
+  h.snapshot.root = undefined;
+  h.snapshot.replies = [];
+  h.render();
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.error = undefined;
+  h.snapshot.limited = false;
+  h.snapshot.canLoadMore = true;
+  h.snapshot.root = row;
+  h.snapshot.replies = [
+    olderReply,
+    initial,
+    whileResumed,
+    liveArrival,
+    duringOlderLoad,
+    afterOlderError,
+  ];
+  h.render();
+  expect(
+    within(section).getByRole("button", { name: "3 new messages" }),
+  ).toBeVisible();
 });
 it("keeps initial thread loading until available content has been positioned", () => {
+  vi.useFakeTimers();
   const h = messagesHarness();
   h.snapshot.status = "loading";
   h.snapshot.root = undefined;
   const section = h.render();
-  expect(within(section).getByText("Loading thread…")).toBeVisible();
+  // No placeholders flash while a thread opens; the label is announced to
+  // screen readers after a delay.
+  expect(section.querySelector("[data-message-waiting]")).not.toBeNull();
+  expect(section.querySelector("[data-message-loading]")).toBeNull();
+  expect(within(section).queryByRole("status")).toBeNull();
+  act(() => vi.advanceTimersByTime(1000));
+  expect(within(section).getByRole("status")).toHaveTextContent(
+    "Loading thread…",
+  );
   expect(
     within(section).queryByText("Original message unavailable."),
   ).toBeNull();
@@ -1777,6 +1939,29 @@ it("routes media in replies through the resolved root review workspace", () => {
     undefined,
   );
 });
+
+it.each([false, true])(
+  "tells its composer whether its tab shows it, apart from whether it reads (retained=%s)",
+  (retainThread) => {
+    const h = messagesHarness();
+    const props = h.props as ThreadPanelProps;
+    Object.assign(props, { retainThread });
+    h.render();
+    const composer = () => screen.getByRole("region", { name: "Composer" });
+    // Hosts that retain nothing leave it to the composer's default, shown.
+    expect(composer()).not.toHaveAttribute("data-shown");
+    // A preview does not read, but its composer is on screen.
+    Object.assign(props, { active: false });
+    h.rerenderProps();
+    expect(composer()).not.toHaveAttribute("data-shown");
+    Object.assign(props, { active: true, shown: false });
+    h.rerenderProps();
+    expect(composer()).toHaveAttribute("data-shown", "false");
+    Object.assign(props, { shown: true });
+    h.rerenderProps();
+    expect(composer()).toHaveAttribute("data-shown", "true");
+  },
+);
 
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {
   const h = messagesHarness();

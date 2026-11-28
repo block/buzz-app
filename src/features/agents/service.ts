@@ -12,6 +12,12 @@ import {
   type AgentSessionSource,
   type RoutedInvocation,
 } from "./session-admission";
+import {
+  createMentionPlacements,
+  PLACEMENT_NOTE_LIMIT,
+  type MentionPlacement,
+  type MentionPlacer,
+} from "./mention-placement";
 import type {} from "../navigation/service";
 import {
   createAgentExecutions,
@@ -38,13 +44,18 @@ import type {
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
-import { interestPaused, sourceCompleted, sourceSignature } from "./attention";
+import {
+  CHAT_KINDS,
+  interestPaused,
+  sourceCompleted,
+  sourceSignature,
+} from "./attention";
 import {
   AgentProtectionService,
   type AgentProtection,
   type ProtectionBinding,
 } from "../agent-protection/service";
-import { createLocalAgentActivity } from "./local-activity";
+import { createLocalAgentActivity, type StepOrigin } from "./local-activity";
 import { bindKeepAwake } from "./keep-awake";
 import {
   AgentConfigStore,
@@ -80,6 +91,7 @@ import {
   awaitRecommendation,
   candidatesFor,
   offRecommended,
+  onAutomatic,
   onRecommended,
   pickRecommendedSurely,
   recommendationFinal,
@@ -115,7 +127,13 @@ import {
   type AgentHookContext,
   type AgentHookDispatchOptions,
 } from "./hooks";
-import { ownerReads, readyOwnerReads } from "./reads";
+import {
+  ownerReads,
+  readyOwnerReads,
+  workflowMarked,
+  type AgentReads,
+} from "./reads";
+import { AgentInbox } from "./inbox";
 import { createToolOperation, type AgentToolProvider } from "./tool-operation";
 import {
   assignConversationFolder as assignFolder,
@@ -190,6 +208,7 @@ import {
 import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import {
+  eventDto,
   hasEventProof,
   newer,
   type EventData,
@@ -197,6 +216,25 @@ import {
 } from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
+import { compareMessages, eventMs } from "../relay/message-order";
+import {
+  type ModelRouteContext,
+  type ModelRouter,
+  noteConversationTurn,
+  previousRoutedTurn,
+  type RouteAttachment,
+  type RoutedPick,
+  type RouteMessage,
+  routeOf,
+  routesFor,
+  routeTurn,
+  noteRoutedTurn,
+  setModelRouters,
+  type TurnPick,
+  turnRoute,
+  withRoutes,
+} from "./model-routes";
+import { fromOwner as ownerSent, workflowOf } from "./owner-attestation";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
@@ -267,6 +305,8 @@ import {
 } from "./store";
 import { isHuddleRoom } from "../huddle/lifecycle";
 import { soloChat } from "./solo-chat";
+import { localSkills } from "./local-skills";
+import { COMMUNITY_SESSION } from "../agent-harness/session-scope";
 import {
   readCheckpoints,
   splitLegacyCheckpoints,
@@ -819,6 +859,11 @@ export type AgentAttention = Readonly<{
   ): Promise<Shown>;
 }>;
 export type { ClassifierOutcome } from "./classifier";
+export type {
+  MentionPlacement,
+  MentionPlacer,
+  MentionPlacerAnswer,
+} from "./mention-placement";
 export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
@@ -911,10 +956,26 @@ export type StandaloneTurn<Config = unknown> = Readonly<{
 }>;
 /** How a standalone turn ended. */
 export type TurnResult = Readonly<{ ok: boolean; error?: string }>;
+/** Where a turn lives: its channel, at the top level or in the thread of
+ * the message `root`. */
+export type TurnPlace = Readonly<
+  { channel: string } & ({ topLevel: true } | { root: string })
+>;
+
 export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
   session?: AgentSessionAssociation;
   sessionContext?: string;
+  /** Where this turn lives, decided once by the host for mentions, placed
+   * mentions and wakes alike: its channel, at the top level or in a
+   * message's thread. A harness takes its session, its prompt's context and
+   * the default `send` target from it (`turnOf`), and needs no rules of its
+   * own. Absent when the host could not tell, or the turn has no
+   * conversation; `turnOf` then works it out the same way. */
+  place?: TurnPlace;
+  /** What a plugin's placement hook answered for this mention, which
+   * `place` already follows. For hosts and tests that send no `place`. */
+  placement?: MentionPlacement;
   /** Resolve an opt-in task subthread after authority and chat-scope checks. */
   routeConversation?(
     placement: Readonly<{
@@ -949,6 +1010,14 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The effort level the owner asked for in the triggering message: one of
    * that model's `efforts`. Absent means the agent's own default. */
   effort?: string;
+  /** Set when the agent runs on a model route, which chooses the model and
+   * effort of a turn this delivery starts; `model` and `effort` are then
+   * absent. Call it where the delivery starts a turn, including one put off
+   * while the session compacts, never where it steers a running turn, which
+   * keeps its own picks. It answers once, the same on every call; undefined
+   * means the owner stopped the request while it chose, so nothing runs.
+   * Without a call the turn runs on the agent's own default. */
+  route?: () => Promise<TurnPick | undefined>;
   /** A section for each team the agent is on, with the team's name, roster and
    * instructions, to follow the agent's own instructions. Absent without one. */
   team?: string;
@@ -961,7 +1030,12 @@ export type Delivery<Config = unknown> = Readonly<{
    * stopped: true }` says the owner's Stop ended its turn. */
   workingUntil(done: PromiseLike<unknown>): void;
   /** Optional presentation evidence supplied by the harness, not inferred by the UI. */
-  step?(tool: string, target?: string): void;
+  /** `origin` is "buzz" only for a call the harness knows is a Buzz tool. */
+  step?(tool: string, target?: string, origin?: StepOrigin): void;
+  /** An identified real harness action on this request, not a replay or heartbeat.
+   * Keep the same opaque ID on replay; do not include arguments or results.
+   * A buffered action may retain its host-observed time, never a provider time. */
+  action?(eventId: string, observedAt?: number): void;
   /** The plugin declined this request; no work or successful outcome is implied.
    * A `refusal` shows its owner, on this device, why the agent didn't act. */
   ignored?(refusal?: MentionRefusal): void;
@@ -1122,6 +1196,10 @@ export type AgentType<Config = unknown> = {
   /** Huddles supplies a running agent owned by the current viewer.
    * Full-duplex voice on the existing room conversation; abort closes the pipe. */
   voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;
+  /** Whether saved local conversations may restart when base instructions are customized. */
+  mayRestartForBaseInstructions?(
+    agent: Pick<Agent, "key" | "owner" | "relay">,
+  ): boolean;
   /** Native callback events this harness exposes to plugins. */
   hooks?: Readonly<{ events: readonly string[] }>;
   id: string;
@@ -1268,6 +1346,13 @@ export type AgentType<Config = unknown> = {
    * follows Recommended (`recommended.ts`): an agent whose config is on it
    * runs on the current candidate for its type. */
   recommends?(candidate: RecommendedCandidate): Promise<boolean>;
+  /** Whether a new agent of this type may be created now. `check` answers
+   * why not, or undefined when it may; a rejection is an unknown answer, which
+   * holds creation too. `subscribe` says when to ask again. */
+  admitsCreation?: Readonly<{
+    check(): Promise<string | undefined>;
+    subscribe(listener: () => void): () => void;
+  }>;
   /** Runtime routes its supported security boundaries through AgentHandle.protection. */
   protection?: true;
   /** Uses the agent's saved execution target for native process and file I/O. */
@@ -1661,11 +1746,80 @@ export type ModelSettings = Readonly<{
  * it, and leaving it out keeps it. */
 export type NoteChange = Readonly<{ note?: PluginNote | null }>;
 const MODEL_FIELDS = ["model", "provider", "effort"] as const;
+/** Earlier thread messages a model router may read. */
+const ROUTE_HISTORY = 20;
+/** The most prompt text a model router is given. */
+const ROUTE_PROMPT_CHARS = 16_000;
+/** Where a routed turn runs, as its router reads it. */
+type RoutePlace = Readonly<{
+  /** The conversation as its harness keys the session. */
+  key?: string;
+  conversation?: ModelRouteContext["conversation"];
+  thread: boolean;
+  /** Its history is the channel's: a top-level message in a DM, a Solo chat
+   * or a channel session. */
+  channelHistory: boolean;
+}>;
+/** The files a message attaches, from its `imeta` tags. */
+function attachmentsOf(event: RelayEvent): RouteAttachment[] {
+  return event.tags.flatMap((tag) => {
+    if (tag[0] !== "imeta") return [];
+    const fields = new Map(
+      tag.slice(1).flatMap((entry) => {
+        const space = entry.indexOf(" ");
+        return space > 0
+          ? [[entry.slice(0, space), entry.slice(space + 1).trim()] as const]
+          : [];
+      }),
+    );
+    const name = fields.get("filename") || fields.get("alt");
+    const type = fields.get("m");
+    const size = Number(fields.get("size"));
+    return [
+      {
+        ...(name && { name }),
+        ...(type && { type }),
+        ...(Number.isSafeInteger(size) && size >= 0 && { size }),
+      },
+    ];
+  });
+}
+/** What started a turn, as a model router reads it. */
+function routeTrigger(trigger: Trigger): ModelRouteContext["trigger"] {
+  if (trigger.type === "plugin")
+    return "from" in trigger ? "handoff" : "plugin";
+  return trigger.type;
+}
+/** What a turn asks, as a model router reads it. */
+function promptOf(trigger: Trigger) {
+  const text =
+    trigger.type === "mention" || trigger.type === "watch"
+      ? trigger.event.content
+      : trigger.type === "catch-up"
+        ? trigger.events.map(({ event }) => event.content).join("\n\n")
+        : trigger.type === "timer"
+          ? trigger.timer.prompt
+          : trigger.text;
+  return text.slice(-ROUTE_PROMPT_CHARS);
+}
 export type Agents = {
   readonly invocationSubthreads?: true;
   readonly invocationIntentVersion?: 1;
   readonly invocationTurnContext?: true;
   registerSessionRouter(router: AgentSessionRouter): void;
+  /** Decides where the owner's top-level mentions of local agents are
+   * answered: the top level, or the thread of a message such as an earlier
+   * one the mention follows up on, plus an optional private note for that
+   * turn. Asked when the mention is delivered, for at most a second; no
+   * answer keeps a thread on the message. A `root` must be a message the
+   * agent can read in the mention's channel; a reply stands for its
+   * thread's root. A mention inside a thread stays there, a Solo chat's are
+   * at its top level and aren't asked about, and with two plugins
+   * registered neither decides. Every harness answers a placed mention as
+   * it would a wake with that `topLevel` or `root` (`deliveryPlace`). A
+   * reload that stops the turn resumes it in the same place, with the same
+   * notes. Feature-detect. */
+  registerMentionPlacement?(placer: MentionPlacer): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
   bindExecution(
@@ -1674,6 +1828,9 @@ export type Agents = {
   ): Promise<void>;
   executionBinding(agent: AgentKey): AgentExecutionBinding | undefined;
   inspectExecution(agent: AgentKey): Promise<AgentExecutionBinding | undefined>;
+  /** Whether a new agent made here now starts protected: its owner's
+   * protection defaults, which native creation applies. */
+  startsProtected(): Promise<boolean>;
   /** Only the agent's native harness can open its bound target. */
   execution(
     agent: AgentKey,
@@ -1753,8 +1910,14 @@ export type Agents = {
    * a launch is asked; later calls are ignored. With no plugin calling it
    * once bundled plugins have started, the access check's list stands. */
   gatewayHarnesses(source: GatewayHarnessSource): void;
+  /** Bundled plugins only: adds model routes, such as "Auto Balanced", to
+   * harnesses' Model menus, and chooses the model and effort of each turn an
+   * agent on one starts while idle in its conversation (model-routes.ts).
+   * Its `select` is given the turn's prompt, so only the build's own plugins
+   * may route. It lasts while the plugin is on. */
+  registerModelRouter(router: ModelRouter): void;
   // Bundled plugins only, like `recommend`: the building blocks for a plugin
-  // that moves agents onto Automatic (plugin-architecture.md).
+  // that moves agents onto Automatic.
   /** Whether plugin start-up is over (each plugin started, or failed), the
    * agent list is loaded and the recommended setup is final for the launch.
    * `subscribe` hears when it changes. */
@@ -1780,6 +1943,15 @@ export type Agents = {
     agent: Agent,
     options?: NoteChange,
   ): Promise<Readonly<{ previous: ModelSettings }>>;
+  /** Bundled plugins only: stops a local agent's processes in every
+   * community it is in, with each type's `retire`, so its next turn starts
+   * them again. Refused while it answers or is in a call, and for protected,
+   * hosted and execution-target agents. */
+  restartAgent(pubkey: string): Promise<void>;
+  /** Counts a Huddle seat from before its call opens, so Restart agent
+   * refuses it (bundled only). Throws while the agent restarts; returns the
+   * seat's end. */
+  reserveVoice(key: AgentKey): () => void;
   /** Undoes a switch: off Automatic, with `previous` back, saved the same
    * way. */
   restoreSettings(
@@ -1836,6 +2008,23 @@ export type Agents = {
         }
     >
   >;
+  /** Delivers one of the owner's own signed messages to a local agent as if
+   * the owner had tagged it in that message: nothing is edited or
+   * published, and from then on it is an ordinary mention, placed like any
+   * other. The agent sees the owner's request, not a plugin's data; `note`
+   * is private text a plugin adds to that turn, such as why it delivered it.
+   * Only for an agent this copy runs, from a plugin while it is enabled. It
+   * does nothing for an agent the message tags, one it was already
+   * delivered to, or one a watch turn was already queued for (`watched`),
+   * which then answers it; one
+   * refused as `busy` can be tried again. The event needs the owner's valid
+   * signature, not a relay record: a plugin can publish as the owner
+   * anyway. Feature-detect. */
+  deliverMention?(
+    agent: AgentKey,
+    event: RelayEvent,
+    options?: Readonly<{ note?: string }>,
+  ): Promise<import("./runner").MentionDelivery>;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** Calls `listener` when a turn this copy of the app runs for the agent
@@ -1876,6 +2065,8 @@ export type Agents = {
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(agent: AgentKey): RelayData | undefined;
+  /** Conversation reads may use the agent’s identity for channels its owner cannot read. */
+  conversationReads?(agent: AgentKey): AgentReads | undefined;
   /** The agent's `core` memory, as this device keeps it current: its text,
    * `null` when it has none, or undefined when it could not be read. A start
    * reads it here, which needs no relay request once this device has read it
@@ -2410,6 +2601,10 @@ const proposedPicture = (value: string | undefined) => {
   if (!picture) throw new Error("Propose an HTTPS image URL as the picture");
   return picture;
 };
+/** Whether an agent's turns can run on a model route: hosted, or on another
+ * execution target, it runs on that one's models. */
+const routable = (agent: Pick<Agent, "place" | "executionBinding">) =>
+  agent.place !== "hosted" && !agent.executionBinding;
 /** The `wss://` URL of a community, as agents and their providers know it. */
 const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
@@ -2421,6 +2616,10 @@ export class AgentsService extends Service implements Agents {
   readonly invocationIntentVersion = INVOCATION_INTENT_VERSION;
   registerSessionRouter(router: AgentSessionRouter) {
     this.sessionAdmissions.register(this.ctx, router);
+  }
+  private readonly mentionPlacements;
+  registerMentionPlacement(placer: MentionPlacer) {
+    this.mentionPlacements.register(this.ctx, placer);
   }
   private readonly executions;
   private async checkExecution(key: AgentKey, type: string) {
@@ -2465,6 +2664,9 @@ export class AgentsService extends Service implements Agents {
   executionBinding(key: AgentKey) {
     if (!this.liveMember(key)) throw new Error("No such agent on this device");
     return this.executions.read(key);
+  }
+  async startsProtected() {
+    return (await this.protection.snapshot()).defaults !== null;
   }
   async inspectExecution(key: AgentKey) {
     if (!this.liveMember(key)) throw new Error("No such agent on this device");
@@ -2511,6 +2713,12 @@ export class AgentsService extends Service implements Agents {
   }
   private readonly contributions;
   private readonly tabContributions;
+  private readonly modelRouters;
+  /** Each registered type's own `models`, before routes are added, by key. */
+  private readonly ownModels = new Map<
+    string,
+    (agent: Agent) => Promise<Models>
+  >();
   private readonly attentionControls;
   private readonly addedTools;
   private readonly operationNames = new Set<string>();
@@ -2676,6 +2884,7 @@ export class AgentsService extends Service implements Agents {
       executionStorage(storage),
     );
     this.executions = createAgentExecutions(ctx, executionStorage(storage));
+    this.mentionPlacements = createMentionPlacements(ctx);
     this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
@@ -2683,6 +2892,16 @@ export class AgentsService extends Service implements Agents {
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
+    this.modelRouters = createContributions<ModelRouter>(ctx);
+    ctx.effect(() => {
+      const publish = () => setModelRouters(this.modelRouters.snapshot());
+      const stop = this.modelRouters.subscribe(publish);
+      publish();
+      return () => {
+        stop();
+        setModelRouters([]);
+      };
+    });
     // Agents on Automatic follow this launch's setup once it is final.
     void awaitRecommendation((signal) => this.recommendedAnswer(signal)).then(
       () => {
@@ -2791,6 +3010,8 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
+      placeMention: (agent, channel, event, signal) =>
+        this.mentionPlacements.place(agent.key, channel, event, signal),
       routeConversation: (
         agent,
         type,
@@ -2816,6 +3037,8 @@ export class AgentsService extends Service implements Agents {
           nativePlacement,
           pinNativePlacement,
         ),
+      route: (agent, type, trigger, place, pick, signal) =>
+        this.modelRoute(agent, type, trigger, place, pick, signal),
       prepareSession: async (agent, type, trigger, placement, signal) => {
         if (
           !type.sessionAdmission ||
@@ -2878,6 +3101,26 @@ export class AgentsService extends Service implements Agents {
       savedAttention: (key) => this.records[key]?.attention ?? EMPTY,
       member: (agent, event) => this.member(agent, event),
       reads: (agent, event) => this.reads(agent, event),
+      privateMentionsDue: (agent) => this.inbox(agent.key)?.due(),
+      readPrivateMentions: (agent, filter, signal) => {
+        const inbox = this.inbox(agent.key);
+        if (!inbox) throw new Error("The agent has no reads of its own here");
+        return inbox.mentions(filter, signal);
+      },
+      ownerHidden: (agent, event) => {
+        const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
+        const channels = this.bindingOf(agent)?.session.channels;
+        return (
+          !!channel &&
+          !!this.inbox(agent.key)?.channel(channel) &&
+          !(
+            channels?.list().channels.some((item) => item.id === channel) ||
+            channels?.get?.(channel)
+          )
+        );
+      },
+      readAsAgent: (agent, filter, signal) =>
+        this.inbox(agent.key)?.readAsAgent(filter, signal),
       resolveChannels: async (agent, ids, signal) => {
         const channels = this.bindingOf(agent)?.session.channels;
         const unknown = ids.filter(
@@ -2890,7 +3133,15 @@ export class AgentsService extends Service implements Agents {
       unattended: (agent, event, live) => {
         const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
         const session = this.bindingOf(agent)?.session;
-        return !channel || !session || session.unattended(channel, live);
+        const inbox = this.inbox(agent.key);
+        if (!live && inbox && channel && !this.channelOf(agent, event))
+          return false;
+        return (
+          !channel ||
+          !session ||
+          !!inbox?.channel(channel) ||
+          session.unattended(channel, live)
+        );
       },
       flat: (agent, channelId) => {
         const { channelType } =
@@ -3503,6 +3754,24 @@ export class AgentsService extends Service implements Agents {
       channel: (agent, event) => this.channelOf(agent, event),
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
+      flatChannel: (agent, channel) => {
+        // Only a community that knows the channel's kind now: one
+        // reconnecting, or still listing its channels, leaves the turn's
+        // place to the harness, which waits for it.
+        const snapshot = this.relay(agent.key)?.snapshot();
+        if (
+          snapshot?.status !== "ready" ||
+          snapshot.cached ||
+          snapshot.viewer !== agent.owner
+        )
+          return undefined;
+        const { channels } = snapshot.session;
+        const kind = (
+          channels.get?.(channel) ??
+          channels.list().channels.find(({ id }) => id === channel)
+        )?.channelType;
+        return kind ? kind === "solo" : undefined;
+      },
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
       woke: (key, object, events) => {
         const at = Math.floor(Date.now() / 1000);
@@ -3698,13 +3967,28 @@ export class AgentsService extends Service implements Agents {
     const voice = (type as unknown as AgentType).voice;
     const models = type.models;
     const pluginId = this.ctx.pluginOwner?.id;
+    const own =
+      models &&
+      (async (agent: Agent<Config>) => {
+        await this.checkExecution(agent.key, agent.type);
+        return models(agent);
+      });
+    if (own && pluginId) {
+      const key = `${pluginId}/${type.id}`;
+      this.ownModels.set(key, own as (agent: Agent) => Promise<Models>);
+      this.ctx.effect(() => () => {
+        if (this.ownModels.get(key) === (own as unknown))
+          this.ownModels.delete(key);
+      });
+    }
     this.contributions.register(this.ctx, {
       ...type,
       ...(skillFolders && { skillFolders }),
-      ...(models && {
+      ...(own && {
         models: async (agent: Agent<Config>) => {
-          await this.checkExecution(agent.key, agent.type);
-          return models(agent);
+          const listed = await own(agent);
+          // Only where a turn can run on one: see `modelRoute`.
+          return routable(agent) ? withRoutes(type.id, listed) : listed;
         },
       }),
       ...(voice
@@ -3865,6 +4149,266 @@ export class AgentsService extends Service implements Agents {
       ended.abort();
     }
   }
+  registerModelRouter(router: ModelRouter) {
+    this.bundledCaller("registerModelRouter");
+    if (
+      !router ||
+      typeof router.id !== "string" ||
+      typeof router.routes !== "function" ||
+      typeof router.select !== "function" ||
+      (router.subscribe !== undefined && typeof router.subscribe !== "function")
+    )
+      throw new Error("A model router needs an id, routes and select");
+    this.modelRouters.register(this.ctx, router);
+  }
+  /** How a turn's model is chosen when the agent runs on a model route:
+   * undefined when `pick` holds (no route, an explicit model pick, an agent
+   * that runs elsewhere, or a mention its owner didn't send). */
+  private async modelRoute(
+    agent: Agent,
+    type: RegisteredAgentType,
+    trigger: Trigger,
+    place: SessionPlace | undefined,
+    pick: TurnPick,
+    signal: AbortSignal,
+  ): Promise<((signal: AbortSignal) => Promise<RoutedPick>) | undefined> {
+    const models = this.ownModels.get(type.key) ?? type.models;
+    if (!routable(agent)) return undefined;
+    if (!routesFor(type.id).routes.length || !models) return undefined;
+    if (pick.model && !routeOf(pick.model)) return undefined;
+    // The router reads the prompt and the thread: only for a mention the
+    // harness will act on.
+    if (
+      trigger.type === "mention" &&
+      !(await this.ownerMention(agent, trigger.event, place?.channelId, signal))
+    )
+      return undefined;
+    let offered: Models;
+    try {
+      offered = await models(agent);
+    } catch (error) {
+      console.warn(`Agent type ${type.key} could not list its models`, error);
+      return undefined;
+    }
+    const automatic = onAutomatic(agent.config, type.id);
+    if (
+      !turnRoute({
+        harness: type.id,
+        pick,
+        current: offered.current,
+        automatic,
+      })
+    )
+      return undefined;
+    // Where it runs, for its history, its context and its turn.
+    const where = this.routePlace(agent, type, trigger, place);
+    return async (selection) => {
+      const chosen = await routeTurn({
+        harness: type.id,
+        pick,
+        current: offered.current,
+        automatic,
+        models: offered.models,
+        request: {
+          agent: { pubkey: agent.pubkey, name: agent.name },
+          prompt: promptOf(trigger),
+          history: (read) =>
+            this.routeHistory(agent, trigger, place, where, read),
+          context: () => this.routeContext(agent, type, trigger, place, where),
+        },
+        signal: selection,
+      });
+      if (!chosen.routed) return chosen;
+      const channelId = place?.channelId;
+      noteRoutedTurn(agent.pubkey, chosen.routed, {
+        ...(channelId && { channelId }),
+        // As every owner-facing view of an agent's conversations checks.
+        ownerReadable: () =>
+          !!channelId &&
+          ownerReads(this.relay(agent.key), agent.pubkey)?.ownerReadable(
+            channelId,
+          ) === true,
+      });
+      const { key } = where;
+      return key
+        ? {
+            ...chosen,
+            ended: noteConversationTurn(
+              agent.pubkey,
+              key,
+              chosen.routed.route.id,
+              chosen,
+            ),
+          }
+        : chosen;
+    };
+  }
+  /** Whether `event` directs the agent as its owner's, as every harness
+   * checks before it acts on a mention. */
+  private async ownerMention(
+    agent: Agent,
+    event: RelayEvent,
+    channelId: string | undefined,
+    signal: AbortSignal,
+  ) {
+    const relay = this.relay(agent.key);
+    try {
+      // A workflow's mention waits out a reconnect, as the harness's does.
+      const reads = workflowMarked(event, agent.owner)
+        ? await readyOwnerReads(relay, agent, signal, channelId)
+        : ownerReads(relay, agent.pubkey);
+      return await ownerSent(
+        event,
+        agent.owner,
+        workflowOf(reads, agent.pubkey),
+      );
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn(
+        "A mention's owner could not be checked for its route",
+        error,
+      );
+      return false;
+    }
+  }
+  /** Where a routed turn runs: its conversation's kind, and the key its
+   * harness keys the session by (`sessionPlace`). */
+  private routePlace(
+    agent: Agent,
+    type: RegisteredAgentType,
+    trigger: Trigger,
+    place: SessionPlace | undefined,
+  ): RoutePlace {
+    if (!place) return { thread: false, channelHistory: false };
+    const summary = this.channelOf(agent, { tags: [["h", place.channelId]] });
+    const session = this.sessionPlace(agent, type, place);
+    const current = trigger.type === "mention" ? trigger.event.id : undefined;
+    const thread = !!place.root && place.root !== current;
+    return {
+      key: session.community
+        ? COMMUNITY_SESSION
+        : conversationKey(session.channelId, session.root),
+      ...(summary && {
+        conversation:
+          summary.channelType === "dm"
+            ? "dm"
+            : summary.channelType === "solo"
+              ? "solo"
+              : "channel",
+      }),
+      thread,
+      // The session is the whole channel's, or the community's.
+      channelHistory: !thread && !session.root,
+    };
+  }
+  /** What the host holds about a routed turn beyond its prompt and thread,
+   * read only if its router asks. Nothing here asks another service. */
+  private async routeContext(
+    agent: Agent,
+    type: RegisteredAgentType,
+    trigger: Trigger,
+    place: SessionPlace | undefined,
+    where: RoutePlace,
+  ): Promise<ModelRouteContext> {
+    const config = agent.config as {
+      instructions?: unknown;
+      workspace?: unknown;
+    };
+    const text = (value: unknown) =>
+      typeof value === "string" && value.trim() ? value : undefined;
+    const instructions = text(config.instructions);
+    const workspace = text(config.workspace)?.trim();
+    const folder = place && this.conversationFolder(agent.key, place);
+    const skills = await localSkills(type.skillFolders ?? []).catch(
+      (error: unknown) => {
+        console.warn("A model route could not list the agent's skills", error);
+        return [];
+      },
+    );
+    const events =
+      trigger.type === "mention" || trigger.type === "watch"
+        ? [trigger.event]
+        : trigger.type === "catch-up"
+          ? trigger.events.map(({ event }) => event)
+          : [];
+    const previous = where.key && previousRoutedTurn(agent.pubkey, where.key);
+    return {
+      trigger: routeTrigger(trigger),
+      ...(where.conversation && { conversation: where.conversation }),
+      ...(where.thread && { thread: true as const }),
+      ...(where.channelHistory && { channelHistory: true as const }),
+      ...(instructions && { instructions }),
+      skills: skills.map(({ name, description }) => ({ name, description })),
+      ...(workspace && { workspace }),
+      ...(folder && { folder }),
+      attachments: events.flatMap(attachmentsOf),
+      ...(previous && { previous }),
+    };
+  }
+  /** The conversation before a routed turn's message, oldest first: at
+   * most ROUTE_HISTORY messages of its thread, or of its channel when that
+   * is the conversation (`RoutePlace.channelHistory`). Read once and only
+   * if its router asks. */
+  private async routeHistory(
+    agent: Agent,
+    trigger: Trigger,
+    place: SessionPlace | undefined,
+    where: RoutePlace,
+    signal: AbortSignal,
+  ): Promise<readonly RouteMessage[]> {
+    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
+    const root = place?.root;
+    if (!reads || !place || (!root && !where.channelHistory)) return [];
+    // Only what came before the turn's message: a reply since, say while
+    // the turn queued, is not the conversation it was asked in.
+    const anchor =
+      trigger.type === "mention" || trigger.type === "watch"
+        ? trigger.event
+        : undefined;
+    const until = anchor && { until: anchor.created_at };
+    const events = await reads.read(
+      where.channelHistory || !root
+        ? [
+            {
+              kinds: [9, 40002],
+              "#h": [place.channelId],
+              // The current message and the ones before it.
+              ...until,
+              limit: ROUTE_HISTORY + 1,
+            },
+          ]
+        : [
+            { ids: [root], "#h": [place.channelId], limit: 1 },
+            {
+              kinds: [9, 40002],
+              "#h": [place.channelId],
+              "#e": [root],
+              ...until,
+              limit: ROUTE_HISTORY + 1,
+            },
+          ],
+      signal,
+    );
+    const order = (event: Pick<RelayEvent, "id" | "created_at" | "tags">) => ({
+      id: event.id,
+      createdAt: event.created_at,
+      createdAtMs: eventMs(event),
+    });
+    const cutoff = anchor && order(anchor);
+    return [...new Map(events.map((event) => [event.id, event])).values()]
+      .filter(
+        (event) =>
+          event.id !== anchor?.id &&
+          (!cutoff || compareMessages(order(event), cutoff) < 0),
+      )
+      .sort((a, b) => compareMessages(order(a), order(b)))
+      .slice(-ROUTE_HISTORY)
+      .map((event) => ({
+        pubkey: event.pubkey,
+        content: event.content,
+        createdAt: event.created_at,
+      }));
+  }
   /** The calling plugin's id; throws unless it is bundled. */
   private bundledCaller(what: string) {
     const owner = this.ctx.pluginOwner;
@@ -3961,6 +4505,33 @@ export class AgentsService extends Service implements Agents {
       config: note === undefined ? config : withNote(config, plugin, note),
       // Only the settings change, so only they are saved and checked.
       base: { settings: agent.configBase.settings },
+    });
+  }
+  reserveVoice(key: AgentKey) {
+    this.bundledCaller("reserveVoice");
+    return this.runners.reserveVoice(key);
+  }
+  async restartAgent(pubkey: string) {
+    this.bundledCaller("restartAgent");
+    const members = this.identities.filter(
+      (agent) => agent.pubkey === pubkey && !agent.deleted,
+    );
+    const agent = members[0];
+    if (!this.native || !agent) throw new Error("No such agent on this device");
+    if (agent.protection)
+      throw new Error("A protected agent can't be restarted here");
+    const type = this.types().find((type) => type.key === agent.type);
+    if (!type || type.remote)
+      throw new Error("A hosted agent can't be restarted here");
+    if (!type.retire)
+      throw new Error("This agent's provider can't restart one agent");
+    for (const member of members)
+      if (await this.executions.inspect(member.key))
+        throw new Error(
+          "An agent on another execution target can't be restarted here",
+        );
+    await this.runners.restart(agent.key, agent.name, async () => {
+      for (const member of members) await type.retire?.(member.key);
     });
   }
   async switchToAutomatic(agent: Agent, options: NoteChange = {}) {
@@ -4497,6 +5068,7 @@ export class AgentsService extends Service implements Agents {
   tools = () => this.addedTools.snapshot();
   readonly harness = harnessKit({
     relay: (key) => this.relay(key),
+    reads: (key) => this.conversationReads(key),
     core: (key) => this.core(key),
     added: () => this.tools(),
     repositories: repositoriesContext,
@@ -4505,6 +5077,37 @@ export class AgentsService extends Service implements Agents {
     Transcript: TranscriptPanel,
   });
   readonly supportsGuardedWake = true as const;
+  async deliverMention(
+    key: AgentKey,
+    event: RelayEvent,
+    options: Readonly<{ note?: string }> = {},
+  ): Promise<import("./runner").MentionDelivery> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !this.ctx.pluginStatus.isActive(owner.id, owner.revision))
+      throw new Error("Only an enabled plugin delivers a mention");
+    let signed: RelayEvent;
+    try {
+      signed = hasEventProof(event) ? event : eventDto(event);
+    } catch {
+      return { status: "dropped", reason: "not-owner" };
+    }
+    const agent = this.ready(key);
+    if (!agent) return { status: "dropped", reason: "unavailable" };
+    const channel = signed.tags.find(([name]) => name === "h")?.[1];
+    if (
+      signed.pubkey !== agent.owner ||
+      !CHAT_KINDS.includes(signed.kind) ||
+      !channel
+    )
+      return { status: "dropped", reason: "not-owner" };
+    if (this.member(agent, signed) !== true)
+      return { status: "dropped", reason: "unavailable" };
+    const note =
+      typeof options.note === "string" && options.note.trim()
+        ? options.note.trim().slice(0, PLACEMENT_NOTE_LIMIT)
+        : undefined;
+    return this.runners.deliverMention(key, signed, channel, note);
+  }
   wake(key: AgentKey, wake: AgentWake): void;
   wake(
     key: AgentKey,
@@ -4647,13 +5250,19 @@ export class AgentsService extends Service implements Agents {
     this.runners.dismissInterrupted(this.interruptedKeys());
     this.update();
   };
+  // Shown to the owner, so only what the owner's own session knows.
   interruptedTurns = (agent: Agent) =>
     Object.entries(this.runners.interruptedTurns(agent.key)).map(
-      ([id, channelId]) => ({
-        id,
-        channelId,
-        channel: this.channelOf(agent, { tags: [["h", channelId]] }),
-      }),
+      ([id, channelId]) => {
+        const channels = this.bindingOf(agent)?.session.channels;
+        return {
+          id,
+          channelId,
+          channel:
+            channels?.list().channels.find((item) => item.id === channelId) ??
+            channels?.get?.(channelId),
+        };
+      },
     );
   readInterrupted = async (agent: Agent, signal: AbortSignal) => {
     const session = this.bindingOf(agent)?.session;
@@ -4851,6 +5460,47 @@ export class AgentsService extends Service implements Agents {
     const origin = originOf(this.agent(key)?.relay ?? "");
     return origin ? this.bound.get(origin)?.relay : undefined;
   };
+  private readonly inboxes = new WeakMap<Binding, Map<AgentKey, AgentInbox>>();
+  private inbox(key: AgentKey) {
+    const agent = this.agent(key);
+    const binding = agent && this.bindingOf(agent);
+    const owner = ownerReads(this.relay(key), pubkeyOf(key));
+    const native = this.native;
+    if (!agent || !binding?.session.relayAuthor || !owner || !native)
+      return undefined;
+    let inboxes = this.inboxes.get(binding);
+    if (!inboxes) {
+      inboxes = new Map();
+      this.inboxes.set(binding, inboxes);
+    }
+    let inbox = inboxes.get(key);
+    if (!inbox) {
+      inbox = new AgentInbox(
+        owner,
+        agent.pubkey,
+        binding.session.relayAuthor,
+        async (filters) => {
+          const current = () => {
+            if (
+              !this.runners.runs(key) ||
+              this.bindingOf(agent) !== binding ||
+              !this.liveMember(key)
+            )
+              throw new Error("The agent is no longer running here");
+          };
+          current();
+          const events = await native.query(agent, filters);
+          current();
+          return events;
+        },
+        binding.controller.signal,
+      );
+      inboxes.set(key, inbox);
+    }
+    return inbox;
+  }
+  conversationReads = (key: AgentKey): AgentReads | undefined =>
+    this.inbox(key)?.reads ?? ownerReads(this.relay(key), pubkeyOf(key));
   core = (key: AgentKey, signal?: AbortSignal) =>
     this.coreMemory.core(key, signal);
   private localCache:
@@ -9279,7 +9929,8 @@ export class AgentsService extends Service implements Agents {
     if (!channel || !channels) return undefined;
     return (
       channels.list().channels.find((item) => item.id === channel) ??
-      channels.get?.(channel)
+      channels.get?.(channel) ??
+      this.inbox(agent.key)?.channel(channel)
     );
   }
   /** Whether the agent is in the event's channel, by its relay-signed roster.

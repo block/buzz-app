@@ -178,3 +178,43 @@ it("indexes triggers so unrelated messages skip replay and trimmed starts still 
     requestActivity(records, "e".repeat(64), "c", trigger, turns).turnIds.size,
   ).toBe(0);
 });
+
+it("reads no records for a request that cannot match a trigger", () => {
+  const records = [
+    record(1, [
+      event("turn_started", "t", 1, { triggeringEventIds: [trigger] }),
+    ]),
+  ];
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    expect(
+      requestActivity(records, agent, "c", "not a trigger").turnIds.size,
+    ).toBe(0);
+    expect(requestActivity(records, agent, "c", []).turnIds.size).toBe(0);
+    expect(parse).not.toHaveBeenCalled();
+  } finally {
+    parse.mockRestore();
+  }
+});
+
+it("answers each request, agent and channel of a shared records array on its own", () => {
+  const other = "c".repeat(64);
+  const unrelated = "d".repeat(64);
+  const records = [
+    record(1, [
+      event("turn_started", "t", 1, { triggeringEventIds: [trigger] }),
+      event("step", "t", 2),
+    ]),
+  ];
+  const turnIds = (...args: [string, string, string | string[]]) => [
+    ...requestActivity(records, ...args).turnIds,
+  ];
+  expect(turnIds(agent, "c", trigger)).toEqual(["t"]);
+  expect(turnIds(agent, "c", unrelated)).toEqual([]);
+  expect(turnIds(agent, "c", [unrelated, trigger])).toEqual(["t"]);
+  expect(turnIds(agent, "c", trigger)).toEqual(["t"]);
+  expect(turnIds(agent, "c", "not a trigger")).toEqual([]);
+  expect(turnIds(other, "c", trigger)).toEqual([]);
+  expect(turnIds(agent, "elsewhere", trigger)).toEqual([]);
+  expect(turnIds(agent, "c", [trigger])).toEqual(["t"]);
+});

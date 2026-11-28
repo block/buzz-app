@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callSessionTool, type AddedTool } from "../../buzz-mcp/session-tools";
+import {
+  createLocalAgentActivity,
+  stepText,
+} from "../../features/agents/local-activity";
 import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeProcess, stepLabel } from "./claude";
 import {
   backgroundTasks,
+  type FakeClaude,
   fakeSpawn,
   flush,
   sessionState,
@@ -286,7 +291,7 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   const b = fake.received.filter((m) => m.type === "user").at(-1);
   if (!b) throw new Error("Expected follow-up");
   emit(tool("Read"));
-  expect(first.step).toHaveBeenLastCalledWith("Read", undefined);
+  expect(first.step).toHaveBeenLastCalledWith("Read", undefined, undefined);
   expect(second.step).not.toHaveBeenCalled();
   // Neither a tool result nor a same-text echo with an unknown id admits work.
   emit({ type: "user", uuid: b.uuid, message: { content: "tool result" } });
@@ -301,8 +306,8 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   const watch = fake.received.filter((m) => m.type === "user").at(-1);
   emit({ ...watch, isReplay: true });
   emit(tool("Bash"));
-  expect(first.step).not.toHaveBeenCalledWith("Bash", undefined);
-  expect(second.step).toHaveBeenLastCalledWith("Bash", undefined);
+  expect(first.step).not.toHaveBeenCalledWith("Bash", undefined, undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Bash", undefined, undefined);
   expect(first.superseded).toHaveBeenCalledOnce();
   const other = {
     step: vi.fn(),
@@ -314,8 +319,8 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   emit({ ...third, isReplay: true });
   emit(tool("Grep"));
   expect(second.superseded).not.toHaveBeenCalled();
-  expect(second.step).toHaveBeenLastCalledWith("Grep", undefined);
-  expect(other.step).toHaveBeenLastCalledWith("Grep", undefined);
+  expect(second.step).toHaveBeenLastCalledWith("Grep", undefined, undefined);
+  expect(other.step).toHaveBeenLastCalledWith("Grep", undefined, undefined);
   expect(claude.busy).toBe(true);
   fake.finish();
   await watched;
@@ -323,7 +328,7 @@ it("moves activity only when the exact follow-up is acknowledged, without ending
   await expect(sent).resolves.toEqual({ ok: true });
   await expect(steered).resolves.toEqual({ ok: true });
   emit(tool("Edit"));
-  expect(second.step).not.toHaveBeenCalledWith("Edit", undefined);
+  expect(second.step).not.toHaveBeenCalledWith("Edit", undefined, undefined);
 });
 
 it("settles on each result when Claude does not report idle", async () => {
@@ -897,6 +902,186 @@ it("allows tool use and acknowledges hooks it is asked about", async () => {
   ]);
 });
 
+it("cancels a Buzz tool still running when its turn settles, failed or not, and serves the next turn's", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const signals: AbortSignal[] = [];
+  let called = () => {};
+  const tools = vi.fn(
+    (_conversation: unknown, _message: unknown, signal: AbortSignal) => {
+      signals.push(signal);
+      called();
+      return new Promise<never>(() => {});
+    },
+  );
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+    tools,
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  const call = (id: string) => {
+    const reached = new Promise<void>((resolve) => {
+      called = resolve;
+    });
+    fake.emit({
+      type: "control_request",
+      request_id: id,
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: { jsonrpc: "2.0", id: 3, method: "tools/call" },
+      },
+    });
+    return reached;
+  };
+  const taken = (text: string) => {
+    let submitted = () => {};
+    const written = new Promise<void>((resolve) => {
+      submitted = resolve;
+    });
+    return { settled: claude.send(text, { submitted }), written };
+  };
+  const failed = taken("first");
+  await failed.written;
+  await call("r1");
+  expect(signals).toHaveLength(1);
+  expect(signals[0]?.aborted).toBe(false);
+  fake.finish({ error: "Credit balance is too low" });
+  await expect(failed.settled).resolves.toMatchObject({ ok: false });
+  expect(signals[0]?.aborted).toBe(true);
+  const ok = taken("second");
+  await ok.written;
+  await call("r2");
+  expect(signals).toHaveLength(2);
+  expect(signals[1]?.aborted).toBe(false);
+  fake.finish();
+  await expect(ok.settled).resolves.toEqual({ ok: true });
+  expect(signals[1]?.aborted).toBe(true);
+});
+
+it("gives each Buzz tool call its session's context size, from its last model call", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const sizes: unknown[] = [];
+  const tools = vi.fn(
+    async (
+      _conversation: unknown,
+      message: unknown,
+      _signal: AbortSignal,
+      _check?: () => void,
+      tokens?: number,
+    ) => {
+      sizes.push(tokens);
+      return { jsonrpc: "2.0", id: (message as { id: number }).id, result: {} };
+    },
+  );
+  await ClaudeProcess.start(spawn, { ...launch, sessionId: "s1", tools });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  let id = 0;
+  const call = async () => {
+    const before = sizes.length;
+    fake.emit({
+      type: "control_request",
+      request_id: `r${++id}`,
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: { jsonrpc: "2.0", id, method: "tools/call" },
+      },
+    });
+    await vi.waitFor(() => expect(sizes).toHaveLength(before + 1));
+  };
+  const assistant = (
+    usage: Record<string, number>,
+    more: Record<string, unknown> = {},
+  ) =>
+    fake.emit({
+      type: "assistant",
+      session_id: "s1",
+      parent_tool_use_id: null,
+      message: { role: "assistant", content: [], usage },
+      ...more,
+    });
+  // No model call yet.
+  await call();
+  assistant({
+    input_tokens: 3,
+    cache_creation_input_tokens: 120,
+    cache_read_input_tokens: 435_000,
+    output_tokens: 200,
+  });
+  // A subagent's call has its own context, and a synthetic one no usage.
+  assistant({ input_tokens: 9_000 }, { parent_tool_use_id: "toolu_1" });
+  assistant({ input_tokens: 0, output_tokens: 0 });
+  await call();
+  // Another session says nothing of this one's size.
+  fake.emit({ type: "system", subtype: "status", session_id: "s2" });
+  await call();
+  expect(sizes).toEqual([undefined, 435_323, undefined]);
+});
+
+it.each([
+  [
+    "reports its state",
+    (fake: FakeClaude) => sessionState(fake, "running"),
+    (fake: FakeClaude) => sessionState(fake, "idle"),
+  ],
+  [
+    "is too old to report its state",
+    () => {},
+    (fake: FakeClaude) =>
+      fake.emit({ type: "result", subtype: "success", is_error: false }),
+  ],
+])(
+  "cancels a Buzz tool called in a turn of its own when that turn ends, on a claude that %s",
+  async (_, start, end) => {
+    const { spawn, processes } = fakeSpawn();
+    const signals: AbortSignal[] = [];
+    let called = () => {};
+    const tools = vi.fn(
+      (_conversation: unknown, _message: unknown, signal: AbortSignal) => {
+        signals.push(signal);
+        called();
+        return new Promise<never>(() => {});
+      },
+    );
+    await ClaudeProcess.start(spawn, {
+      ...launch,
+      sessionId: "s1",
+      tools,
+    });
+    const fake = processes[0];
+    if (!fake) throw new Error("no process");
+    const call = (id: string) => {
+      const reached = new Promise<void>((resolve) => {
+        called = resolve;
+      });
+      fake.emit({
+        type: "control_request",
+        request_id: id,
+        request: {
+          subtype: "mcp_message",
+          server_name: "buzz",
+          message: { jsonrpc: "2.0", id: 3, method: "tools/call" },
+        },
+      });
+      return reached;
+    };
+    start(fake);
+    await call("r1");
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
+    end(fake);
+    expect(signals[0]?.aborted).toBe(true);
+    start(fake);
+    await call("r2");
+    expect(signals).toHaveLength(2);
+    expect(signals[1]?.aborted).toBe(false);
+  },
+);
+
 it("cancels a Buzz tool that is still running when its process stops", async () => {
   const { spawn, processes } = fakeSpawn();
   const signals: AbortSignal[] = [];
@@ -989,6 +1174,8 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send or subth
     call,
     expect.any(AbortSignal),
     expect.any(Function),
+    // It has made no model call yet.
+    undefined,
   );
   const responses = fake.received
     .filter((message) => message.type === "control_response")
@@ -1071,7 +1258,26 @@ describe("stepLabel", () => {
     ).toEqual({ tool: "Bash", target: "List files" });
     expect(
       stepLabel(msg([{ type: "tool_use", name: "mcp__buzz__send_message" }])),
-    ).toEqual({ tool: "send_message" });
+    ).toEqual({ tool: "send_message", origin: "buzz" });
+    // A Buzz tool is reported by its bare name and its origin, which the
+    // step text titles.
+    const buzz = stepLabel(
+      msg([{ type: "tool_use", name: "mcp__buzz__search" }]),
+    );
+    expect(buzz).toEqual({ tool: "search", origin: "buzz" });
+    expect(buzz && stepText(buzz)).toBe("Search messages");
+    // Another server's tool of the same name is not Buzz's.
+    const docs = stepLabel(
+      msg([
+        {
+          type: "tool_use",
+          name: "mcp__docs__search",
+          input: { query: "release notes" },
+        },
+      ]),
+    );
+    expect(docs).toEqual({ tool: "search", target: "release notes" });
+    expect(docs && stepText(docs)).toBe("search · release notes");
     expect(stepLabel(msg([{ type: "thinking" }]))).toEqual({
       tool: "Thinking",
     });
@@ -1257,6 +1463,103 @@ it("releases result-only background continuations and their idle waiters", async
     expect(claude.active).toBe(false);
     await expect(claude.send("next request")).resolves.toEqual({ ok: true });
   } finally {
+    await claude.kill();
+  }
+});
+
+it("reports identified assistant actions only once to the acknowledged request", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "actions",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("Expected process");
+  fake.hold = true;
+  const local = createLocalAgentActivity();
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const send = (messageId: string) => {
+    const work = local.begin({
+      scope: "s",
+      agent: "a",
+      channelId: "c",
+      messageId,
+      threadRootId: messageId,
+    });
+    const done = claude.send(messageId, {
+      step: work.step,
+      action: work.action,
+      acknowledged: work.started,
+      superseded: work.supersede,
+    });
+    void done.then(work.finish);
+    return done;
+  };
+  const row = (id: string) =>
+    local.reader.work().find((work) => work.messageId === id);
+  const tool = (
+    id: string,
+    isReplay = false,
+    parentToolUseId: string | null = null,
+  ) =>
+    fake.emit({
+      type: "assistant",
+      uuid: `message-${id}`,
+      isReplay,
+      parent_tool_use_id: parentToolUseId,
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name: "Read",
+            input: { file_path: "private.txt" },
+          },
+        ],
+      },
+    });
+  try {
+    const first = send("first");
+    await flush();
+    tool("one");
+    expect(row("first")?.lastAction?.sequence).toBe(1);
+    now.mockReturnValue(1_001_000);
+    tool("two");
+    const action = row("first")?.lastAction;
+    expect(action).toEqual({
+      turnId: expect.any(String),
+      sequence: 2,
+      occurredAt: 1_001_000,
+    });
+    now.mockReturnValue(4_661_000);
+    tool("two");
+    tool("history", true);
+    fake.emit({ type: "keep_alive" });
+    expect(row("first")?.lastAction).toBe(action);
+    fake.finish();
+    await first;
+    expect(row("first")?.state).toBe("done");
+    const second = send("second");
+    await flush();
+    tool("two");
+    tool("late-child", false, "one");
+    expect(row("second")?.lastAction).toBeUndefined();
+    now.mockReturnValue(4_662_000);
+    tool("three");
+    expect(row("second")?.lastAction).toEqual({
+      turnId: expect.any(String),
+      sequence: 1,
+      occurredAt: 4_662_000,
+    });
+    expect(row("first")?.lastAction).toBe(action);
+    fake.finish();
+    await second;
+    const settled = row("second")?.lastAction;
+    tool("late");
+    expect(row("second")?.state).toBe("done");
+    expect(row("second")?.lastAction).toBe(settled);
+  } finally {
+    now.mockRestore();
     await claude.kill();
   }
 });

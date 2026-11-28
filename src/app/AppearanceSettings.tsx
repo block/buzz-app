@@ -34,9 +34,17 @@ import {
   useMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
 import {
+  setMarkdownAsTypedPreference,
+  useMarkdownAsTypedPreference,
+} from "../features/messages/markdown-input-preference";
+import {
   setUnreadFirstPreference,
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
+import {
+  setDeviceSearchPreference,
+  useDeviceSearchPreference,
+} from "../features/search/device-search-preference";
 import {
   setMessageSortPreference,
   useMessageSortPreference,
@@ -82,7 +90,9 @@ export function AppearanceSettings({
 }) {
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
+  const markdownAsTyped = useMarkdownAsTypedPreference();
   const unreadFirst = useUnreadFirstPreference();
+  const deviceSearch = useDeviceSearchPreference();
   const messageSort = useMessageSortPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
@@ -457,7 +467,7 @@ export function AppearanceSettings({
 
             <PreferenceRow
               title="Open threads in"
-              subtitle="New threads open here. Already-open threads stay where you placed them."
+              subtitle="New threads open here. Inline opens threads, profiles and links over the conversation instead of in tabs; calls, canvases and apps still open as tabs. Already-open threads stay where you placed them."
               trailing={
                 <Select
                   variant="compact"
@@ -465,15 +475,20 @@ export function AppearanceSettings({
                   value={placement}
                   groups={[
                     {
-                      label: "Pane",
+                      label: "Open in",
                       options: [
+                        { value: "inline", label: "Inline" },
                         { value: "side", label: "Side pane" },
                         { value: "main", label: "Main pane" },
                       ],
                     },
                   ]}
                   onValueChange={(value) => {
-                    if (value === "main" || value === "side")
+                    if (
+                      value === "inline" ||
+                      value === "main" ||
+                      value === "side"
+                    )
                       setThreadPlacementPreference(value);
                   }}
                 />
@@ -488,10 +503,22 @@ export function AppearanceSettings({
               />
             )}
             <SwitchPreferenceRow
+              label="Disable formatting while typing"
+              description="Bold, code, lists and other Markdown stay as plain characters until you send, and the formatting toolbar and shortcuts are turned off."
+              checked={markdownAsTyped.enabled}
+              onCheckedChange={setMarkdownAsTypedPreference}
+            />
+            <SwitchPreferenceRow
               label="Show unread first in search"
               description="With nothing typed, search leads with unread channels and DMs and selects the newest."
               checked={unreadFirst.enabled}
               onCheckedChange={setUnreadFirstPreference}
+            />
+            <SwitchPreferenceRow
+              label="Search this device as you type"
+              description="Search shows matching messages this device already received as you type, before the community’s results arrive."
+              checked={deviceSearch.enabled}
+              onCheckedChange={setDeviceSearchPreference}
             />
             <PreferenceRow
               title="Sort messages by"
@@ -575,6 +602,22 @@ export function AppearanceSettings({
             </Button>
           </ToastNotice>
         )}
+        {active && markdownAsTyped.unsaved && (
+          <ToastNotice
+            title="Formatting preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() =>
+                setMarkdownAsTypedPreference(markdownAsTyped.enabled)
+              }
+            >
+              Retry saving formatting preference
+            </Button>
+          </ToastNotice>
+        )}
         {active && unreadFirst.unsaved && (
           <ToastNotice
             title="Search preference wasn’t saved"
@@ -586,6 +629,20 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && deviceSearch.unsaved && (
+          <ToastNotice
+            title="Device search preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setDeviceSearchPreference(deviceSearch.enabled)}
+            >
+              Retry saving device search
             </Button>
           </ToastNotice>
         )}

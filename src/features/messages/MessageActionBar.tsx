@@ -13,6 +13,7 @@ import {
   type RefObject,
 } from "react";
 import {
+  CheckIcon,
   HashArrowInIcon,
   ThreadIcon,
   CopyIcon,
@@ -44,6 +45,7 @@ import {
   writeClipboardRichText,
   writeClipboardText,
 } from "../../shared/clipboard";
+import { useCopyFeedback } from "../../shared/CopyFeedback";
 import { captureSelectedQuote, quoteSelection } from "./selection-quote";
 
 const AfterMenuClose = createContext<
@@ -219,11 +221,16 @@ function MessageActionBarControls({
   if (open && (!active || (host && !messageId))) setOpen(false);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
+  const toolbarLink = useCopyFeedback();
   const floating = useFloatingActionBar(
     children ? undefined : rowRef,
     barRef,
     slotRef,
-    open,
+    // The bar's own Copy link holds it open as its menu does, from the press
+    // until the check reverts, so a slow write's result lands in an open bar
+    // and is seen out wherever the pointer or focus goes meanwhile. A refused
+    // write releases it: the toast reports that. A menu copy never holds it.
+    open || toolbarLink.pending || toolbarLink.copied,
   );
   const [copying, setCopying] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
@@ -268,25 +275,36 @@ function MessageActionBarControls({
     useRef<ReturnType<typeof captureSelectedQuote>>(undefined);
   const ownTrigger = useRef<HTMLButtonElement>(null);
   const trigger = menuTriggerRef ?? ownTrigger;
-  const copy = async (text: () => string, label: string, html?: string) => {
+  /** A menu item closes, so a toast naming `label` confirms its copy. The
+   * toolbar's Copy link stays in view and passes no label: its own icon shows
+   * the copy. A refusal raises a toast either way. */
+  const copy = async (text: () => string, label?: string, html?: string) => {
     if (busy.current) return;
     busy.current = true;
     setCopying(true);
     setNotice(undefined);
-    try {
-      await (html === undefined
-        ? writeClipboardText(text())
-        : writeClipboardRichText(text(), html, { fallbackToPlainText: true }));
-      setNotice({ text: `${label} copied`, error: false });
-    } catch {
+    const refused = () =>
       setNotice({
         text: "Couldn’t copy. Try again from the message menu.",
         error: true,
       });
-    } finally {
-      busy.current = false;
-      setCopying(false);
-    }
+    if (label)
+      try {
+        await (html === undefined
+          ? writeClipboardText(text())
+          : writeClipboardRichText(text(), html, {
+              fallbackToPlainText: true,
+            }));
+        setNotice({ text: `${label} copied`, error: false });
+      } catch {
+        refused();
+      }
+    else if (
+      (await toolbarLink.copy(() => writeClipboardText(text()))) === "failed"
+    )
+      refused();
+    busy.current = false;
+    setCopying(false);
   };
   const popup = (
     <MenuPopup
@@ -630,11 +648,15 @@ function MessageActionBarControls({
               title="Copy link"
               size="sm"
               disabled={!link || copying}
-              icon={<LinkIcon />}
+              // Disabling it natively mid-copy would drop keyboard focus to
+              // the page and close the bar before its check shows.
+              focusableWhenDisabled={!!link}
+              icon={toolbarLink.copied ? <CheckIcon /> : <LinkIcon />}
               onClick={() => {
-                if (link) void copy(() => link, "Link");
+                if (link) void copy(() => link);
               }}
             />
+            {toolbarLink.status}
             <MenuRoot
               open={open}
               onOpenChange={(next, details) => {

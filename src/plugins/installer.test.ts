@@ -270,16 +270,18 @@ function setup({
   imports = {} as object | null,
   open = vi.fn(async () => ({ status: "opened" })),
   plugins = [info("example.market", "Market")],
+  hostOwned = [],
 }: {
   imports?: object | null;
   open?: () => Promise<{ status: string }>;
   plugins?: PluginInfo[];
+  hostOwned?: PluginInfo["manifest"][];
 } = {}) {
   let configuration: ConfigurationState = ready(plugins);
   const managerListeners = new Set<() => void>();
   const manager = {
     imports: imports ?? undefined,
-    snapshot: () => ({ configuration, activation: {} }),
+    snapshot: () => ({ configuration, hostOwned, activation: {} }),
     subscribe(listener: () => void) {
       managerListeners.add(listener);
       return () => managerListeners.delete(listener);
@@ -344,6 +346,61 @@ it("checks installed ids even when disabled, source-backed, or contribution-free
   );
   expect(installer.getInstallationStatus("example.missing")).toBe("absent");
 });
+
+it("lets independent callers read one known plugin's catalog-recorded artifact hash", async () => {
+  const digest = "a".repeat(64);
+  const target = info("example.target");
+  target.revision = digest;
+  const { as, fibers } = setup({ plugins: [target] });
+  const first = await as("example.first-caller");
+  const second = await as("example.second-caller");
+  const expected = { status: "available", sha256: digest };
+
+  expect(first.getInstallationArtifactHash?.("example.target")).toEqual(
+    expected,
+  );
+  expect(second.getInstallationArtifactHash?.("example.target")).toEqual(
+    expected,
+  );
+  await fibers[0]?.dispose();
+  expect(second.getInstallationArtifactHash?.("example.target")).toEqual(
+    expected,
+  );
+});
+
+it.each([
+  {
+    kind: "folder",
+    source: { root: "/plugins/example-target", path: "." },
+  },
+  {
+    kind: "Git",
+    source: { ...base, path: "example-target", commit: "b".repeat(40) },
+  },
+  {
+    kind: "URL",
+    source: {
+      url: "https://artifacts.example.com/plugins/example-target.zip",
+      sha256: "c".repeat(64),
+    },
+  },
+])(
+  "returns the catalog-recorded artifact hash for a disabled external $kind install",
+  async ({ source }) => {
+    const digest = "d".repeat(64);
+    const installed = info("example.target");
+    installed.enabled = false;
+    installed.revision = digest;
+    installed.updateSource = source;
+    const { as } = setup({ plugins: [installed] });
+    const installer = await as("example.caller");
+
+    expect(installer.getInstallationArtifactHash?.("example.target")).toEqual({
+      status: "available",
+      sha256: digest,
+    });
+  },
+);
 
 it.each([
   {
@@ -1198,8 +1255,10 @@ it("keeps unknown or malformed source metadata unavailable without side effects"
 
 it("returns unavailable when a ready catalog has duplicate manifest IDs", async () => {
   const first = info("example.duplicate");
+  first.revision = "a".repeat(64);
   first.updateSource = { ...base, path: "." };
   const second = info("example.duplicate");
+  second.revision = "b".repeat(64);
   second.updateSource = { root: "/plugins/duplicate", path: "." };
   const { as, core } = setup({ plugins: [first, second] });
   const installer = await as("example.market");
@@ -1208,6 +1267,37 @@ it("returns unavailable when a ready catalog has duplicate manifest IDs", async 
     "unavailable",
   );
   expect(core.getInstallationSource("example.duplicate")).toBe("unavailable");
+  expect(installer.getInstallationArtifactHash?.("example.duplicate")).toEqual({
+    status: "unavailable",
+  });
+});
+
+it("does not invent hashes for bundled, unsupported, or invalid entries", async () => {
+  const bundled = info("example.bundled");
+  bundled.source = "bundled";
+  bundled.revision = "bundled";
+  const unsupported = info("example.unsupported");
+  unsupported.source = "future" as never;
+  unsupported.revision = "a".repeat(64);
+  const malformed = info("example.invalid-revision");
+  malformed.revision = "not-a-sha256";
+  const errored = info("example.unavailable-artifact");
+  errored.revision = "c".repeat(64);
+  errored.error = "Artifact unavailable";
+  const { as } = setup({
+    plugins: [bundled, unsupported, malformed, errored],
+  });
+  const installer = await as("example.market");
+
+  for (const id of [
+    "example.bundled",
+    "example.unsupported",
+    "example.invalid-revision",
+    "example.unavailable-artifact",
+  ])
+    expect(installer.getInstallationArtifactHash?.(id)).toEqual({
+      status: "unavailable",
+    });
 });
 
 it("keeps unavailable configuration distinct from absence and emits presence changes", async () => {
@@ -1222,23 +1312,67 @@ it("keeps unavailable configuration distinct from absence and emits presence cha
   );
 
   expect(installer.getInstallationStatus("example.plugin")).toBe("absent");
+  expect(installer.getInstallationArtifactHash?.("example.plugin")).toEqual({
+    status: "absent",
+  });
   set({ status: "loading" });
   expect(installer.getInstallationStatus("example.plugin")).toBe("unavailable");
+  expect(installer.getInstallationArtifactHash?.("example.plugin")).toEqual({
+    status: "unavailable",
+  });
   set({
     status: "recovery",
     reason: "settings need recovery",
     canReset: false,
   });
   expect(installer.getInstallationStatus("example.plugin")).toBe("unavailable");
+  expect(installer.getInstallationArtifactHash?.("example.plugin")).toEqual({
+    status: "unavailable",
+  });
 
   const installed = info("example.plugin");
   installed.enabled = false;
+  installed.revision = "a".repeat(64);
   set(ready([installed]));
   expect(installer.getInstallationStatus("example.plugin")).toBe("installed");
+  expect(installer.getInstallationArtifactHash?.("example.plugin")).toEqual({
+    status: "available",
+    sha256: installed.revision,
+  });
   set(ready([]));
   expect(installer.getInstallationStatus("example.plugin")).toBe("absent");
+  expect(installer.getInstallationArtifactHash?.("example.plugin")).toEqual({
+    status: "absent",
+  });
   expect(changes).toEqual(["unavailable", "installed", "absent"]);
   stop();
+});
+
+it("invalidates the installed hash after a same-ID replacement", async () => {
+  const id = "example.plugin";
+  const original = info(id);
+  original.revision = "a".repeat(64);
+  const { as, set, managerListenerCount } = setup({ plugins: [original] });
+  const installer = await as("example.caller");
+  const listener = vi.fn();
+  const stop = installer.subscribeInstallationStatus(id, listener);
+
+  expect(installer.getInstallationArtifactHash?.(id)).toEqual({
+    status: "available",
+    sha256: original.revision,
+  });
+
+  const replacement = { ...original, revision: "b".repeat(64) };
+  set(ready([replacement]));
+  expect(listener).toHaveBeenCalledOnce();
+  expect(listener).toHaveBeenCalledWith("installed");
+  expect(installer.getInstallationArtifactHash?.(id)).toEqual({
+    status: "available",
+    sha256: replacement.revision,
+  });
+
+  stop();
+  expect(managerListenerCount()).toBe(0);
 });
 
 it("stops notifying when a status subscription is explicitly removed", async () => {
@@ -1333,6 +1467,36 @@ it("falls back to the plugin id for a blank name and rejects an unattributed cal
   await expect(service.requestInstall(base)).rejects.toThrow(
     /installed plugin/,
   );
+});
+
+it("names the request after a host-owned feature's manifest, and an unlisted caller by its id", async () => {
+  const emoji = info("buzz.emoji", "Emoji").manifest;
+  const { requests, as } = setup({ hostOwned: [emoji] });
+  const hostOwned = (await as("buzz.emoji")).requestInstall(base);
+  expect(requests.snapshot()?.origin).toEqual({
+    id: "buzz.emoji",
+    name: "Emoji",
+  });
+  settleRequest(requests, "cancelled");
+  await expect(hostOwned).resolves.toBe("cancelled");
+
+  const unlisted = (await as("example.unlisted")).requestInstall(base);
+  expect(requests.snapshot()?.origin).toEqual({
+    id: "example.unlisted",
+    name: "example.unlisted",
+  });
+  settleRequest(requests, "cancelled");
+  await expect(unlisted).resolves.toBe("cancelled");
+
+  // The manager never activates a catalog entry under a host-owned id.
+  const shadowed = setup({
+    hostOwned: [emoji],
+    plugins: [info("buzz.emoji", "Shadowed emoji")],
+  });
+  const outcome = (await shadowed.as("buzz.emoji")).requestInstall(base);
+  expect(shadowed.requests.snapshot()?.origin.name).toBe("Emoji");
+  settleRequest(shadowed.requests, "cancelled");
+  await expect(outcome).resolves.toBe("cancelled");
 });
 
 it("is unavailable from a plugin that has already been disposed, without opening a review", async () => {

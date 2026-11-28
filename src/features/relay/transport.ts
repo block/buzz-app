@@ -12,6 +12,7 @@ import {
   type MemoryListing,
 } from "../agents/memory";
 import { publicationRefusal } from "../developer/traffic";
+import { migrationSource } from "./migration";
 import { avatarSource } from "../../shared/avatar-source";
 import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
@@ -1674,6 +1675,8 @@ export async function connectSignedTransport(
             event.kind === ARTIFACT_KIND ? "artifact" : "foreground",
             false,
             refusalText,
+            (event.kind === 9000 || event.kind === 9007) &&
+              migrationSource(event.tags) !== undefined,
           ).catch((error) => {
             if (error instanceof ApiPaused || error instanceof ApiNotSent)
               throw new PublishNotSent(error.message);
@@ -1752,11 +1755,19 @@ async function signedPost(
   priority: Parameters<typeof admittedApiRequest>[3] = "foreground",
   optionalPresence = false,
   reason?: (body: unknown, status: number) => string | undefined,
+  migrationWrite = false,
 ) {
   const dispatch = (request: () => Promise<Response>) =>
     optionalPresence
       ? admission.prepare(request)
-      : admittedApiRequest(admission, request, signal, priority, reason);
+      : admittedApiRequest(
+          admission,
+          request,
+          signal,
+          priority,
+          reason,
+          migrationWrite,
+        );
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
@@ -1803,10 +1814,16 @@ const KEPT_PREFIXES = new Set(["rate-limited", "conflict", "auth-required"]);
  * can answer the same statuses with JSON `{error}`, so only relay-shaped
  * text (a NIP-01 prefix) is kept. The prefix is a shape, not proof of origin. */
 const refusalText = (body: unknown, status: number) => {
-  const error = (body as { error?: unknown } | null)?.error;
-  return REFUSAL_STATUSES.includes(status) &&
-    typeof error === "string" &&
-    NIP01_PREFIX.test(error)
+  const { error, sent } =
+    (body as { error?: unknown; sent?: unknown } | null) ?? {};
+  if (typeof error !== "string") return;
+  if (
+    (status === 429 || status === 503) &&
+    sent === false &&
+    error.startsWith("rate-limited:")
+  )
+    return publicationRefusal(error);
+  return REFUSAL_STATUSES.includes(status) && NIP01_PREFIX.test(error)
     ? error
     : undefined;
 };

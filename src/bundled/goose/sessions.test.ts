@@ -227,6 +227,8 @@ describe("AgentSessions", () => {
       "chan/root",
       { id: expect.anything(), method: "tools/list", params: {} },
       expect.objectContaining({ aborted: true }),
+      // It has made no model call yet.
+      undefined,
     );
     await goose?.mcp("session-1", "tools/list");
     expect(ada).toHaveBeenCalledOnce();
@@ -1900,4 +1902,20 @@ describe("AgentSessions held work", () => {
     ).rejects.toThrow("Too many");
     expect(pool.size).toBe(0);
   });
+});
+
+it("asks for the variables of the local agent it runs, and none for no agent", async () => {
+  const agent = { pubkey: "a".repeat(64), relay: "wss://relay.test" };
+  const fake = fakeSpawn();
+  const own = new AgentProcess(fake, fake.serve, undefined, () => agent);
+  const none = new AgentProcess(fake, fake.serve);
+  await own.get();
+  await none.get();
+  expect(fake.geese.map((goose) => goose.options.secrets)).toEqual([
+    ["agent-env"],
+    undefined,
+  ]);
+  expect(fake.geese[0]?.options.envAgent).toBe(agent.pubkey);
+  await own.shutdown();
+  await none.shutdown();
 });

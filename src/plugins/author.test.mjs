@@ -33,7 +33,7 @@ test("generated author package exposes shared messages, captured-read Undo, host
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, DocumentEditorProps, DocumentEditorHandle, DocumentEditorSelection, ChannelMembersDialogProps, ChannelGeneralAccessProps, GeneralAccessPolicy, MemberChange, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, NetworkDiagnostics, NetworkDiagnosticsSnapshot, NetworkCaptureReset, NetworkLogLevel, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops, PluginUi, OutgoingMessage, SendGate, Seen } from "@buzz/author";
+import type { Context, DocumentEditorProps, DocumentEditorHandle, DocumentEditorSelection, ChannelMembersDialogProps, ChannelGeneralAccessProps, GeneralAccessPolicy, MemberChange, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, NetworkDiagnostics, NetworkDiagnosticsSnapshot, NetworkCaptureReset, NetworkLogLevel, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops, PluginUi, OutgoingMessage, SendGate, Seen, Notices } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -72,6 +72,11 @@ export function apply(ctx: Context) {
   const seen: Seen | undefined = ctx.reflect.get("seen");
   const key = "example.plugin/welcome";
   if (seen?.has(key) === false) seen.mark(key);
+  const relaySession = ctx.relay.snapshot().session;
+  if (relaySession.supportsMigrationWrites === true) {
+    void relaySession.channelCreation.create({ name: "Imported", visibility: "private", migration: "example-import" });
+    void relaySession.memberAdditions.add("channel", "person", { migration: "example-import" });
+  }
   const sharingPolicy: GeneralAccessPolicy = { subject: "record", allowPublic: false, visibilityDescription: () => "Record access changes." };
   const general: ChannelGeneralAccessProps = { capability: ctx.relay.snapshot().session.channelDetails, channelId: "record", policy: sharingPolicy };
   const picker: ChannelMembersDialogProps = { session: ctx.relay.snapshot().session, channelId: "record", trigger: { current: null }, close() {},
@@ -105,6 +110,11 @@ export function apply(ctx: Context) {
     void createElement(ui.Switch, { label: "Alerts", onCheckedChange: (checked: boolean) => void checked });
     // @ts-expect-error Internal and legacy variants are not part of the plugin contract.
     void createElement(ui.Button, { variant: "glass", children: "Glass" });
+    // @ts-expect-error Menu is missing on hosts from before it was added and must be checked.
+    void createElement(ui.Menu, { "aria-label": "More", items: [] });
+    if (ui.Menu)
+      void createElement(ui.Menu, { "aria-label": "More", align: "end",
+        items: [{ label: "Dismiss", tone: "destructive", onSelect: () => {} }] });
   }
   const unread: UnreadCapability = ctx.relay.snapshot().session.unread;
   const conversations: ReturnType<UnreadCapability["inbox"]> = unread.inbox();
@@ -144,6 +154,8 @@ export function apply(ctx: Context) {
   const host: Host = ctx.host;
   const upload: HostByteUpload = { url: "https://api.example.com/upload", field: "image", name: "image.png", contentType: "image/png" };
   void host.uploadBytesOnce?.(new Uint8Array([1]), upload, { callId: crypto.randomUUID() });
+  const copied: Promise<void> | undefined = host.writeClipboardText?.("copied");
+  void copied;
   const tool: AddedTool = { name: "example_image", description: "Read an image", inputSchema: {},
     async call(client: BuzzClient, context: AddedToolContext): Promise<AddedToolReply> {
       void [context.channel, context.root, context.topLevel, context.wholeChannel];
@@ -252,6 +264,11 @@ export function apply(ctx: Context) {
   backdrops?.register({ id: "glow", component: () => null });
   // @ts-expect-error A backdrop must be a React component.
   backdrops?.register({ id: "bad-glow", component: "div" });
+  const notices: Notices | undefined = ctx.reflect.get("notices");
+  const picked: Promise<string | undefined> | undefined = notices?.show({ title: "Allow?", actions: [{ id: "yes", label: "Allow", prominent: true }] }, { signal: new AbortController().signal });
+  void picked;
+  // @ts-expect-error A notice needs a title.
+  void notices?.show({ description: "No title" });
   const sidebar: SidebarSections | undefined = ctx.reflect.get("sidebarSections");
   sidebar?.register(section);
   // @ts-expect-error Sidebar contribution versions are explicit.
@@ -320,7 +337,7 @@ import type { createServices } from "@buzz/author";
       join(dir, "document-consumer.ts"),
       `
 import type { ComponentProps } from "react";
-import type { Agents, Context, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
+import type { Agents, Context, ImageViewerProps, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
 export const inject = ["react", "agents", "conversation", "panels"];
 export function apply(ctx: Context) {
   const React = ctx.react;
@@ -387,15 +404,42 @@ export function apply(ctx: Context) {
   const badScale: MarkdownProps = { content: "", scale: "custom" };
   // @ts-expect-error Tab content is required.
   const missing: PanelWorkspaceItem = { id: "page", label: "Page" };
-  void [bad, missing];
+  const picture: ImageViewerProps = { src: "https://example.test/a.png", name: "A", onClose: () => {} };
+  React.createElement(ctx.conversation.ui.ImageViewer, picture);
+  // @ts-expect-error The caller owns closing.
+  const unclosable: ImageViewerProps = { src: "https://example.test/a.png" };
+  void [bad, missing, unclosable];
 }
 `,
     );
     await writeFile(
       join(dir, "plugin-status-consumer.ts"),
       `
-import type { Context } from "@buzz/author";
+import type {
+  Context,
+  PluginInstallationArtifactHash,
+  PluginInstaller,
+} from "@buzz/author";
+type OptionalArtifactHash = {} extends Pick<
+  PluginInstaller,
+  "getInstallationArtifactHash"
+>
+  ? true
+  : false;
+const artifactHashRemainsOptional: OptionalArtifactHash = true;
+const availableHash: PluginInstallationArtifactHash = {
+  status: "available",
+  sha256: "a".repeat(64),
+};
+const absentHash: PluginInstallationArtifactHash = { status: "absent" };
+const unavailableHash: PluginInstallationArtifactHash = { status: "unavailable" };
 export function observePlugin(ctx: Context) {
+  const installer = ctx.reflect.get("pluginInstaller");
+  const hash = installer?.getInstallationArtifactHash?.("example.plugin");
+  if (hash?.status === "available") {
+    const sha256: string = hash.sha256;
+    void sha256;
+  }
   const owner = ctx.pluginOwner;
   if (!owner) return;
   const id: string = owner.id;
@@ -411,7 +455,15 @@ export function observePlugin(ctx: Context) {
     isActive: () => true,
     subscribe: () => () => {},
   };
-  void [active, settled, withoutReadiness];
+  void [
+    active,
+    settled,
+    withoutReadiness,
+    artifactHashRemainsOptional,
+    availableHash,
+    absentHash,
+    unavailableHash,
+  ];
   // @ts-expect-error A revision is a string, not a generation number.
   ctx.pluginStatus.isActive(id, 1);
   // @ts-expect-error Subscription requires a callback.

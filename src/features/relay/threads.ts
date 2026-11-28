@@ -24,9 +24,9 @@ import { RESUME_READ_AGE } from "./live";
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
 const INITIAL_WINDOW_SIZE = 10;
-const MAX_PAGES = 10;
-const MAX_EVENTS = 2000;
-const MAX_BYTES = 4 * 1024 * 1024;
+const MAX_PAGES = 50;
+const MAX_EVENTS = 25_000;
+const MAX_BYTES = 32 * 1024 * 1024;
 /** The relay's `thread_window` row allowlist excludes legacy diffs (kind 40008). */
 const STRICT_WINDOW_KINDS = [9, 40002];
 const inChannel = (event: EventData, channelId: string) =>
@@ -149,6 +149,7 @@ export function createThreadView({
   dropped: openedDropped = false,
   now = Date.now,
   recover,
+  maxEvents = MAX_EVENTS,
 }: {
   channelId: string;
   messageId: string;
@@ -191,6 +192,7 @@ export function createThreadView({
    * retry, and older pages are read for a loaded reply's missing parent.
    * Called when `recovery()` may have changed. */
   recover?: (() => void) | undefined;
+  maxEvents?: number | undefined;
 }) {
   // Only a view with `recover` is a session recovery source. The existing
   // selection/page controllers still own cancellation and stale-result fencing.
@@ -515,7 +517,7 @@ export function createThreadView({
     });
   }
   function retain(events: readonly RelayEvent[], commit = true) {
-    if (events.length > MAX_EVENTS || listByteSize(events) > MAX_BYTES) {
+    if (events.length > maxEvents || listByteSize(events) > MAX_BYTES) {
       // Never silently evict a deletion/ancestor then display resurrected content.
       controller?.abort();
       selectionController?.abort();
@@ -1093,7 +1095,7 @@ export function createThreadView({
           : (replies.at(-1) ?? nextCursor);
         nextPages++;
         fetched = union(fetched, related(events));
-        if (fetched.length > MAX_EVENTS || listByteSize(fetched) > MAX_BYTES) {
+        if (fetched.length > maxEvents || listByteSize(fetched) > MAX_BYTES) {
           retain(fetched);
           return;
         }

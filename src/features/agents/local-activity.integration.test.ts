@@ -197,6 +197,33 @@ it("carries a verified mention through host handover into all three scopes witho
     expect(stopSecond).not.toHaveBeenCalled();
     expect(stoppable(followup.id)).toBe(true);
     second.acknowledged();
+    const occurredAt = Date.now();
+    const now = vi.spyOn(Date, "now").mockReturnValue(occurredAt);
+    try {
+      // The producer buffered it while its native start was being confirmed.
+      now.mockReturnValue(occurredAt + 1_000);
+      second.action("native-call", occurredAt);
+      const action = snapshot().local?.find(
+        (row) => row.messageId === followup.id,
+      )?.lastAction;
+      expect(action).toEqual({
+        turnId: expect.any(String),
+        sequence: 1,
+        occurredAt,
+      });
+      now.mockReturnValue(occurredAt + 3_600_000);
+      second.action("native-call");
+      first.action("late-call");
+      expect(
+        snapshot().local?.find((row) => row.messageId === followup.id)
+          ?.lastAction,
+      ).toBe(action);
+      expect(
+        snapshot().local?.find((row) => row.messageId === root.id)?.lastAction,
+      ).toBeUndefined();
+    } finally {
+      now.mockRestore();
+    }
     second.step("Read", "notes.txt");
     expect(messageActivity(snapshot(), channel, root.id)).toEqual([]);
     expect(messageActivity(snapshot(), channel, followup.id)[0]?.step).toEqual({

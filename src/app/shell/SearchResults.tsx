@@ -4,6 +4,7 @@ import {
   useNamesRevision,
 } from "../../features/identity-names/react";
 import { npubEncode } from "nostr-tools/nip19";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import {
   type ReactNode,
   useEffect,
@@ -63,6 +64,7 @@ import {
 } from "../../features/search/recent-searches";
 import { type PreviewCache, SearchPreview } from "./SearchPreview";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { Badge } from "../../shared/design-system/ui/Badge";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Calendar } from "../../shared/design-system/ui/Calendar";
@@ -103,11 +105,26 @@ import {
   channelIconLabel,
 } from "../../features/channels/channel-icon";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
+import {
+  type DeviceIndex,
+  useDeviceMessages,
+} from "../../features/search/device-index";
+import {
+  type DeviceMerge,
+  mergedMessages,
+  nextDeviceMerge,
+} from "../../features/search/device-merge";
 import type { Decisions } from "../../features/decisions/service";
-import { RERANK_PAGES, useCanRerank, useMessageRerank } from "./message-rerank";
+import {
+  RERANK_PAGES,
+  RERANK_WAIT,
+  useCanRerank,
+  useMessageRerank,
+} from "./message-rerank";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
   SEARCH_MIN_CHARS,
+  messageSearchable,
   searchDebounce,
   searchable,
 } from "../../shared/search-debounce";
@@ -129,6 +146,7 @@ import {
   normalizeInChannel,
   operatorMatches,
   parseSearchOperators,
+  searchTextSyntax,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
@@ -144,7 +162,10 @@ import {
   useNamePreference,
   verifiedLabel,
 } from "../../features/profiles/name-preference";
-import { sortParticipantNames } from "../../features/identity-names/participant-order";
+import {
+  dmNamedParticipants,
+  sortParticipantNames,
+} from "../../features/identity-names/participant-order";
 import {
   directMessageWith,
   messagePerson,
@@ -159,7 +180,7 @@ function conversationName(
     return channel.name;
   return (
     sortParticipantNames(
-      channel.participants.map((id) =>
+      dmNamedParticipants(channel.participants, profiles).map((id) =>
         resolveName(
           id,
           profiles.get(id)?.name ?? id.slice(0, 10),
@@ -255,8 +276,12 @@ export function SearchResults({
   openAsk,
   decisions,
   community,
+  deviceIndex,
 }: {
   session: RelaySession;
+  /** Messages this device already received, matched on every key above
+   * the relay's hits. */
+  deviceIndex?: DeviceIndex | undefined;
   /** Reranks message hits by how well each answers the query. */
   decisions?: Decisions | undefined;
   /** The community (its relay URL) a decision call bills. */
@@ -775,6 +800,71 @@ export function SearchResults({
     session.searchSort &&
     !!parsed.text;
   const order = search.newestFirst ? "Most recent" : "Most relevant";
+  // The search whose results the person has started moving through: a
+  // rerank that lands after that is dropped. Moving through one
+  // conversation's hits doesn't hold the next search's.
+  const [movedFor, setMovedFor] = useState<string>();
+  if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
+  // The search whose relay hits stopped waiting for a rerank.
+  const [releasedFor, setReleasedFor] = useState<string>();
+  // Where device rows first placed Messages among the sections, by search.
+  const [messageStrengthFor, setMessageStrengthFor] = useState<{
+    key: string;
+    strength: number;
+  }>();
+  // This device's matches show on every key, and the relay's join below them
+  // (device-merge.ts). An author or date filter, an `in:` that names no
+  // single conversation, or quotes and `-` exclusions, which the fuzzy match
+  // doesn't read, leave messages to the relay. Most recent is the relay's
+  // order alone: fuzzy-ranked device rows would sit above newer hits.
+  const deviceFirst = !!deviceIndex && !search.newestFirst;
+  const deviceText =
+    deviceFirst &&
+    !offline &&
+    !asking &&
+    parsed.from === null &&
+    parsed.since === null &&
+    parsed.until === null &&
+    (parsed.in === null || !!effectiveChannelId) &&
+    messageSearchable(parsed.text) &&
+    !searchTextSyntax(parsed.text).fullText
+      ? parsed.text
+      : "";
+  const deviceMessages = useDeviceMessages(
+    deviceIndex,
+    deviceText,
+    effectiveChannelId,
+  );
+  // The relay is asked after the same pause in typing as useSearchMessages.
+  const [askedFor, setAskedFor] = useState<string>();
+  useEffect(
+    () =>
+      deviceIndex ? searchDebounce(() => setAskedFor(searchKey)) : undefined,
+    [deviceIndex, searchKey],
+  );
+  const [merge, setMerge] = useState<DeviceMerge>();
+  // With the setting off there is no merge, and the relay's hits show as on main.
+  const nextMerge =
+    deviceFirst &&
+    nextDeviceMerge(merge, {
+      key: searchKey,
+      device: deviceMessages,
+      asked: askedFor === searchKey || !search.loading,
+      moved: movedFor === searchKey,
+    });
+  if (nextMerge && nextMerge !== merge) setMerge(nextMerge);
+  const messageHits = nextMerge
+    ? mergedMessages(nextMerge, search.messages, (message) => {
+        if (offline) return false;
+        const channel = session.channels.get?.(message.channelId);
+        return (
+          !!deviceIndex?.has(message.id) &&
+          !!channel &&
+          !channel.huddle &&
+          !channel.metadataPending
+        );
+      })
+    : search.messages;
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -1018,22 +1108,39 @@ export function SearchResults({
               Number(members.includes(right)) - Number(members.includes(left)),
           )
           .slice(0, 12)
-          .map(({ pubkey, profile, label, verified }) => {
+          .map(({ pubkey, profile, label, verified }) => ({
+            pubkey,
+            profile,
+            label,
+            // The name the label is not: a verified person's other verified
+            // name, else a handle that differs from the label.
+            name: verified
+              ? otherVerifiedName(verifiedLabel(verified, preference), verified)
+              : profile.username && profile.username !== label
+                ? `@${profile.username}`
+                : undefined,
+          }))
+          .map(({ pubkey, profile, label, name }, _, rows) => {
             const agent = selectableAgents.get(pubkey);
             const isAgent = !!agent || !!profile.isAgent;
+            // Rows that read alike name different people: a key label tells
+            // them apart, as in the recipient picker.
+            const alike = rows.filter(
+              (row) => row.label === label && row.name === name,
+            );
+            const detail = [
+              name,
+              alike.length > 1 &&
+                publicKeyLabels(alike.map((row) => row.pubkey)).get(
+                  pubkey.toLowerCase(),
+                ),
+            ]
+              .filter(Boolean)
+              .join(" · ");
             return {
               key: `author:${pubkey}`,
               label,
-              detail: [
-                verified &&
-                  otherVerifiedName(
-                    verifiedLabel(verified, preference),
-                    verified,
-                  ),
-                pubkey.slice(0, 12),
-              ]
-                .filter(Boolean)
-                .join(" · "),
+              ...(detail ? { detail } : {}),
               icon: ChatCircleIcon,
               avatar: {
                 src: avatarMedia(
@@ -1077,7 +1184,7 @@ export function SearchResults({
       ...channels.flatMap((channel) =>
         channel.channelType === "dm" ? (channel.participants ?? []) : [],
       ),
-      ...search.messages.flatMap((message) => [
+      ...messageHits.flatMap((message) => [
         message.authorId,
         ...(message.workflowOwnerId ? [message.workflowOwnerId] : []),
       ]),
@@ -1085,7 +1192,7 @@ export function SearchResults({
         person.ownerPubkey ? [person.ownerPubkey] : [],
       ),
     ],
-    search.messages.map((message) => message.mentioned),
+    messageHits.map((message) => message.mentioned),
   )
     .sort()
     .slice(0, 1024)
@@ -1302,9 +1409,7 @@ export function SearchResults({
   );
   // One of the viewer's own agents leads with its "New chat" row. Its
   // existing chats follow that row, and its DM comes after them: chats, not
-  // DMs, are where the viewer works with their agents. Removing DM-listed
-  // people below only lifts the rest, so a row shown here still shows in the
-  // Agents group.
+  // DMs, are where the viewer works with their agents.
   const bestieDmId = useBestieConversation(session);
   const newChats = new Map(
     rankPeople(
@@ -1336,24 +1441,44 @@ export function SearchResults({
       agent ? agent.score + 0.5 : -Infinity,
     );
   };
-  const directMessageResults = byMatch(
-    matchingAll.filter((channel) => channel.channelType === "dm"),
-    dmRank,
-  ).slice(0, 8);
-  // A person whose DM row already shows needs no second row to the same
-  // place. An agent's "New chat" row goes somewhere else, so it stays.
-  const listedDms = new Set(
-    directMessageResults.flatMap((channel) =>
-      channel.participants?.length === 1 && !dmAgent(channel)
-        ? channel.participants
-        : [],
-    ),
+  // A DM chosen before for this text is now reached through its person's
+  // row, which keeps the choice. An agent's DM keeps its own row and choice.
+  const pickedDm = channels.find(
+    (channel) =>
+      `channel:${channel.id}` === picked &&
+      channel.channelType === "dm" &&
+      channel.participants?.length === 1 &&
+      !dmAgent(channel),
   );
-  const rankedPeople = rankPeople(
-    people.filter(({ pubkey }) => !listedDms.has(pubkey)),
-    peopleNeedle,
-    usage,
-    picked,
+  const pickedPerson = pickedDm?.participants?.[0]
+    ? personKey(pickedDm.participants[0])
+    : picked;
+  const rankedPeople = rankPeople(people, peopleNeedle, usage, pickedPerson);
+  // Each person's live one-to-one DM, the one their row opens.
+  const liveDms = new Map<string, ChannelSummary>();
+  for (const channel of list.channels) {
+    const [only] = channel.participants ?? [];
+    if (
+      channel.channelType === "dm" &&
+      !channel.archived &&
+      channel.participants?.length === 1 &&
+      only &&
+      !liveDms.has(only)
+    )
+      liveDms.set(only, channel);
+  }
+  // A person's row opens your live DM with them, so that DM needs no row of
+  // its own. An agent's "New chat" row goes somewhere else, so its DM stays.
+  const listedPeople = new Set(rankedPeople.map(({ person }) => person.pubkey));
+  const directMessageResults = byMatch(
+    matchingAll.filter(
+      (channel) =>
+        channel.channelType === "dm" &&
+        (dmAgent(channel) ||
+          channel.participants?.length !== 1 ||
+          !listedPeople.has(channel.participants[0] ?? "")),
+    ),
+    dmRank,
   );
   // Solo chats, by name or by a shown agent among their members. A chat whose
   // name is the exact text comes first. Chats with that agent come next, in
@@ -1421,6 +1546,101 @@ export function SearchResults({
       ? `Chat with ${agent.label}`
       : "Chat";
   };
+  // A DM's or chat's own newest unread message, as the Inbox shows it.
+  const inbox = useSyncExternalStore(
+    session.unread.subscribeInbox,
+    session.unread.inbox,
+    session.unread.inbox,
+  );
+  const muted = useSyncExternalStore(
+    session.sidebarPreferences.subscribe,
+    () => confirmedMutes(session.sidebarPreferences.snapshot()),
+    () => confirmedMutes(session.sidebarPreferences.snapshot()),
+  );
+  const latestUnread = new Map<string, InboxItem>();
+  for (const item of inbox.items) {
+    const kept = latestUnread.get(item.channelId);
+    if (
+      item.id === `${item.channelId}:${item.channelId}` &&
+      (!kept || item.createdAt > kept.createdAt)
+    )
+      latestUnread.set(item.channelId, item);
+  }
+  const authorName = (
+    {
+      authorId,
+      workflowOwnerId,
+    }: { authorId: string; workflowOwnerId?: string | undefined },
+    channel: ChannelSummary,
+  ) => {
+    const displayId = workflowOwnerId ?? authorId;
+    const resolved = resolveName(
+      displayId,
+      profiles.get(displayId)?.name ?? displayId.slice(0, 10),
+      channel.members ?? noMembers,
+    );
+    return workflowOwnerId ? workflowLabel(resolved) : resolved;
+  };
+  // A DM you haven't read shows its newest message and says it is unread,
+  // wherever its row is. Muted DMs stay quiet, as in the sidebar.
+  const unreadDms = useUnreadChannelIds(
+    session.unread,
+    JSON.stringify(
+      list.channels.flatMap(({ id, channelType }) =>
+        channelType === "dm" && id !== currentChannelId ? [id] : [],
+      ),
+    ),
+  );
+  const unreadDm = (channel: ChannelSummary) =>
+    channel.channelType === "dm" &&
+    !channel.archived &&
+    unreadDms.has(channel.id) &&
+    !muted.includes(channel.id);
+  const unreadBadge = (channel: ChannelSummary | undefined) =>
+    channel && unreadDm(channel)
+      ? { trailing: <Badge size="xs">Unread</Badge> }
+      : {};
+  // A conversation with someone says when it was last active, or its newest
+  // message while unread; only a group conversation names who wrote it.
+  const lastMessage = (channel: ChannelSummary) => {
+    const latest = unreadDm(channel) ? latestUnread.get(channel.id) : undefined;
+    if (latest?.preview.trim())
+      return (channel.members?.length ?? 0) > 2
+        ? `${authorName(latest, channel)}: ${latest.preview}`
+        : latest.preview;
+    return channel.lastActivityAt
+      ? `Last message ${relativeTimestamp(channel.lastActivityAt)}`
+      : "Direct message";
+  };
+  // A DM shows who it is with, as person rows do: their avatar for one
+  // person (squircle for an agent), the people icon for a group.
+  const dmFace = (
+    channel: ChannelSummary,
+  ): Pick<SearchDestination, "icon" | "avatar"> => {
+    const others = channel.participants ?? [];
+    if (channel.channelType !== "dm" || !others.length)
+      return { icon: channelIcon(channel) };
+    if (others.length > 1) return { icon: UsersIcon };
+    const pubkey = others[0] ?? "";
+    const profile = profiles.get(pubkey);
+    const agent =
+      !!profile?.isAgent ||
+      knownAgents.has(pubkey) ||
+      messageableAgents.has(pubkey) ||
+      sessionAgents.has(pubkey);
+    return {
+      icon: ChatCircleIcon,
+      avatar: {
+        src: avatarMedia(
+          profile?.picture ??
+            messageableAgents.get(pubkey)?.avatar ??
+            sessionAgents.get(pubkey)?.avatar,
+          session.media,
+        ),
+        shape: agent ? "squircle" : "circle",
+      },
+    };
+  };
   const conversationDestination = (
     channel: ChannelSummary,
   ): SearchDestination => {
@@ -1442,11 +1662,11 @@ export function SearchResults({
               : "Public chat · not joined"
             : "Public channel · not joined"
           : channel.channelType === "dm"
-            ? "Direct message"
+            ? lastMessage(channel)
             : channel.channelType === "solo"
               ? soloDetail(channel)
               : "Conversation",
-      icon: channelIcon(channel),
+      ...dmFace(channel),
       kind:
         channel.channelType === "dm"
           ? "person"
@@ -1459,6 +1679,7 @@ export function SearchResults({
         about: channel.description,
       },
       run: choose(key, () => openConversation(channel.id)),
+      ...unreadBadge(channel),
     };
   };
   // Channel rows add how many members they have, when the roster is known.
@@ -1570,29 +1791,36 @@ export function SearchResults({
     const matches = matchPerson(person.label, peopleNeedle)?.positions;
     const key = personKey(person.pubkey);
     const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
-    const dm = !!directMessageWith(list.channels, person.pubkey);
+    const dm = liveDms.get(person.pubkey);
+    const status = newSession
+      ? "New chat"
+      : dm
+        ? lastMessage(dm)
+        : "Start a direct message";
     return {
       key,
       label: person.label,
       ...(matches?.length ? { matches } : {}),
-      detail: [
-        person.fullName,
-        person.username && `@${person.username}`,
-        newSession
-          ? "New chat"
-          : dm
-            ? "Direct message"
-            : "Start a direct message",
-      ]
-        .filter(Boolean)
-        .join(" · "),
+      // An unread DM shows its newest message alone, as Unread rows do, so
+      // names don't truncate it.
+      detail:
+        !newSession && dm && unreadDm(dm)
+          ? status
+          : [person.fullName, person.username && `@${person.username}`, status]
+              .filter(Boolean)
+              .join(" · "),
       icon: ChatCircleIcon,
       avatar: {
         src: avatarMedia(person.picture, session.media),
         shape: person.agent ? "squircle" : "circle",
       },
       score,
-      peek: { kind: "person", pubkey: person.pubkey },
+      ...(!newSession && unreadBadge(dm)),
+      // A row that opens your DM previews that conversation.
+      peek:
+        dm && !newSession
+          ? { kind: "channel", channelId: dm.id, about: dm.description }
+          : { kind: "person", pubkey: person.pubkey },
       run: choose(key, () =>
         newSession
           ? openAgentSession(person.pubkey)
@@ -1600,15 +1828,11 @@ export function SearchResults({
       ),
     };
   };
-  const personResults = rankedPeople
-    .filter(({ person }) => !person.agent)
-    .slice(0, PERSON_ROWS)
-    .map(personDestination);
   // The viewer's Bestie is reached through its DM, so that DM follows its
   // "New chat" row directly rather than its chats; other agents keep #1471's
   // order. The row finds Bestie by any of its names (with or without "@"), so
   // its DM comes from the eligible channels, after the hidden-DM rule but
-  // before the label match and the Direct messages cap, and shows only beside
+  // before the label match and the People cap, and shows only beside
   // Bestie's shown "New chat" row. Top results keeps the two together where
   // it cuts the Agents group short.
   const bestieDm = channels.find(
@@ -1643,6 +1867,46 @@ export function SearchResults({
   const dmResults = directMessageResults.filter(
     (channel) => !bestieShown || channel.id !== bestieDm?.id,
   );
+  // People and the conversations you have with them are one list, in the
+  // People order: a one-to-one DM is the closest relationship (band 0) and a
+  // group DM the next (band 1), as the exact name and the earlier pick lead
+  // either way. A DM found only by a looser match than any person can have
+  // (inside a word, initials, words in any order) follows every person.
+  // Equal places put the most recent conversation first.
+  const recency = (channel: ChannelSummary | undefined) =>
+    channel ? (channel.lastActivityAt ?? channel.updatedAt ?? 0) : 0;
+  const dmOrder = (channel: ChannelSummary) => {
+    const rank = rankName(names.get(channel.id) ?? channel.name);
+    const band =
+      rank === MatchRank.exact || `channel:${channel.id}` === picked
+        ? 0
+        : rank === undefined || rank > MatchRank.wordStart
+          ? 5
+          : (channel.participants?.length ?? 0) > 1
+            ? 1
+            : 0;
+    return band * 10 + dmRank(channel);
+  };
+  const personResults = [
+    ...rankedPeople
+      .filter(({ person }) => !person.agent)
+      .map((row) => ({
+        order: row.order,
+        recent: recency(liveDms.get(row.person.pubkey)),
+        row: () => personDestination(row),
+      })),
+    ...dmResults.map((channel) => ({
+      order: dmOrder(channel),
+      recent: recency(channel),
+      row: () => ({
+        ...conversationDestination(channel),
+        score: dmRank(channel),
+      }),
+    })),
+  ]
+    .sort((a, b) => a.order - b.order || b.recent - a.recent)
+    .slice(0, PERSON_ROWS)
+    .map(({ row }) => row());
   const suggestions = channels
     .filter(
       (channel) =>
@@ -1670,17 +1934,6 @@ export function SearchResults({
       ),
     ),
   );
-  // A DM's or chat's own newest unread message, as the Inbox shows it.
-  const inbox = useSyncExternalStore(
-    session.unread.subscribeInbox,
-    session.unread.inbox,
-    session.unread.inbox,
-  );
-  const muted = useSyncExternalStore(
-    session.sidebarPreferences.subscribe,
-    () => confirmedMutes(session.sidebarPreferences.snapshot()),
-    () => confirmedMutes(session.sidebarPreferences.snapshot()),
-  );
   const isUnread = ({ id }: ChannelSummary) =>
     unreadFirst &&
     id !== currentChannelId &&
@@ -1705,15 +1958,6 @@ export function SearchResults({
       unreadChannels.map(({ id, channelType }) => [id, channelType === "dm"]),
     ),
   );
-  const latestUnread = new Map<string, InboxItem>();
-  for (const item of inbox.items) {
-    const kept = latestUnread.get(item.channelId);
-    if (
-      item.id === `${item.channelId}:${item.channelId}` &&
-      (!kept || item.createdAt > kept.createdAt)
-    )
-      latestUnread.set(item.channelId, item);
-  }
   const threadAuthors = [
     ...new Set(
       [
@@ -1735,21 +1979,6 @@ export function SearchResults({
         .ensure(threadAuthors.split(":"), "background")
         .catch(() => {});
   }, [session, threadAuthors, profileGeneration]);
-  const authorName = (
-    {
-      authorId,
-      workflowOwnerId,
-    }: { authorId: string; workflowOwnerId?: string | undefined },
-    channel: ChannelSummary,
-  ) => {
-    const displayId = workflowOwnerId ?? authorId;
-    const resolved = resolveName(
-      displayId,
-      profiles.get(displayId)?.name ?? displayId.slice(0, 10),
-      channel.members ?? noMembers,
-    );
-    return workflowOwnerId ? workflowLabel(resolved) : resolved;
-  };
   // The preview beside the row shows its latest messages, so the row names
   // its kind, as a search result does.
   const suggestion = (channel: ChannelSummary): SearchDestination => {
@@ -1840,16 +2069,11 @@ export function SearchResults({
       : name;
   };
   const terms = useMemo(() => searchTerms(parsed.text), [parsed.text]);
-  // The search whose results the person has started moving through: a
-  // rerank that lands after that is dropped. Moving through one
-  // conversation's hits doesn't hold the next search's.
-  const [movedFor, setMovedFor] = useState<string>();
-  if (movedFor !== undefined && movedFor !== searchKey) setMovedFor(undefined);
   const rerank = useMessageRerank({
     decisions,
     community,
     query: parsed.text,
-    messages: search.messages,
+    messages: messageHits,
     enabled:
       rerankable && !!parsed.text && !search.newestFirst && !search.loading,
     facts: (message) => {
@@ -1875,9 +2099,29 @@ export function SearchResults({
         member: !!channel && joined(channel),
       };
     },
-    held: movedFor === searchKey,
+    held: movedFor === searchKey || releasedFor === searchKey,
   });
-  const messages: SearchDestination[] = rerank.messages.map((message) => {
+  // Under device rows, the relay's join once, already reranked. A rerank
+  // that runs past RERANK_WAIT lets them in as they came and is dropped.
+  // Once they join, the search is released: a later rerank, for hits that
+  // changed, can't take them away again.
+  const deviceIds = new Set(
+    nextMerge ? nextMerge.device.map(({ id }) => id) : [],
+  );
+  const deviceShown = rerank.messages.filter(({ id }) => deviceIds.has(id));
+  const joining =
+    releasedFor !== searchKey &&
+    deviceShown.length > 0 &&
+    deviceShown.length < rerank.messages.length;
+  const waiting = joining && rerank.pending;
+  if (joining && !waiting) setReleasedFor(searchKey);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => setReleasedFor(searchKey), RERANK_WAIT);
+    return () => clearTimeout(timer);
+  }, [waiting, searchKey]);
+  const shownHits = waiting ? deviceShown : rerank.messages;
+  const messages: SearchDestination[] = shownHits.map((message) => {
     // Every listed hit's channel is readable here, with settled metadata.
     const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;
@@ -1925,7 +2169,9 @@ export function SearchResults({
       run: () => {
         cancelPersonOpen();
         remember();
-        openConversation(message.channelId, message.id);
+        if (message.threadRootId)
+          openConversation(message.channelId, message.id, message.threadRootId);
+        else openConversation(message.channelId, message.id);
       },
     };
   });
@@ -2163,13 +2409,14 @@ export function SearchResults({
       destinations: personResults,
       headingStatus: slowPeople ? "Searching…" : undefined,
       best: Math.min(...personResults.map(({ score }) => score)),
-    },
-    {
-      label: "Direct messages",
-      tone: "person" as const,
-      icon: UsersIcon,
-      destinations: dmResults.map(conversationDestination),
-      best: Math.min(...dmResults.map(dmRank)),
+      // A closer person can lead with a weaker match; the heading and the
+      // group's strength describe the best match.
+      bestLabel: personResults.reduce<
+        (typeof personResults)[number] | undefined
+      >(
+        (best, row) => (!best || row.score < best.score ? row : best),
+        undefined,
+      )?.label,
     },
     {
       label: "Pages",
@@ -2204,10 +2451,12 @@ export function SearchResults({
         Number(b.lead) - Number(a.lead) ||
         (a.lead ? 0 : a.best - b.best),
     )
-    .map(({ best, lead, named, ...group }) => {
+    .map(({ best, lead, named, bestLabel, ...group }) => {
       const top = group.destinations[0];
-      const tier = top ? rankName(top.label) : undefined;
-      const remembered = !!top && top.key === picked;
+      const label = bestLabel ?? top?.label;
+      const tier = label !== undefined ? rankName(label) : undefined;
+      const remembered =
+        !!top && (top.key === picked || top.key === pickedPerson);
       const why = named
         ? "Exact name"
         : lead
@@ -2235,11 +2484,20 @@ export function SearchResults({
   // Messages stay below a name that starts with the text (85): a page of 20
   // tops out near 84, and later pages don't count. A topic of three or more
   // words takes that top score.
-  const messageStrength = !hits
+  const liveMessageStrength = !hits
     ? -1
     : words >= 3
       ? 84
       : 40 + 10 * Math.log2(1 + Math.min(hits, 20)) - (search.hasMore ? 0 : 5);
+  // Once device rows show, Messages keeps the place they gave it for this
+  // search: the relay's hits joining don't move it above a name someone is
+  // about to press Enter on.
+  if (deviceShown.length > 0 && messageStrengthFor?.key !== searchKey)
+    setMessageStrengthFor({ key: searchKey, strength: liveMessageStrength });
+  const messageStrength =
+    messageStrengthFor?.key === searchKey
+      ? messageStrengthFor.strength
+      : liveMessageStrength;
   const messageCount = search.hasMore ? `${hits}+` : undefined;
   const messageLead = namedGroups.findIndex(
     (group) => group.destinations.length && group.strength < messageStrength,

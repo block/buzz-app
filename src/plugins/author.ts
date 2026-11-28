@@ -32,12 +32,15 @@ export type {
 } from "../features/pages/service";
 export type { Seen } from "../features/seen/service";
 export type { Backdrop, Backdrops } from "../features/backdrops/service";
+export type { Notices } from "../features/notices/service";
 export type { SubjectLift } from "../features/messages/subject-lift";
 export type {
   PluginButtonProps,
   PluginDialogProps,
   PluginFieldProps,
   PluginInputProps,
+  PluginMenuItem,
+  PluginMenuProps,
   PluginSwitchProps,
   PluginUi,
 } from "../features/plugin-ui/contract";
@@ -54,6 +57,7 @@ export type {
   SidebarSections,
 } from "../features/channel-navigation/sidebar-sections-service";
 export type {
+  PluginInstallationArtifactHash,
   PluginInstallOutcome,
   PluginInstallSource,
   PluginInstaller,
@@ -74,6 +78,7 @@ export type {
 } from "../features/panels/service";
 export type { PanelSplit } from "../features/panels/usePanelSplit";
 export type { MarkdownProps } from "../features/messages/PluginMarkdown";
+export type { ImageViewerProps } from "../features/messages/ImageViewer";
 export type { Conversation } from "../features/conversation/service";
 export type { ChannelMembersDialogProps } from "../bundled/channels/ChannelMembersDialog";
 export type {
@@ -88,6 +93,8 @@ export type {
 } from "../features/messages/DocumentEditor";
 export type {
   ConversationWorkspaceProps,
+  WorkspaceSlots,
+  WorkspaceAsideWidth,
   PageTabTarget,
   PageTabOptions,
   PageTabsProps,
@@ -153,6 +160,7 @@ export type {
 
 export type {
   Decisions,
+  DecisionsAnswerable,
   DecisionProvider,
   DecisionProviderStatus,
   DecisionReply,
@@ -162,6 +170,18 @@ export type {
   DecisionFailure,
   DecisionResult,
 } from "../features/decisions/service";
+
+export type {
+  Speech,
+  SpeechProvider,
+  SpeechProviderStatus,
+  SpeechConnectRequest,
+  SpeechConnectReply,
+  SpeechFailure,
+  ListenOptions,
+  Listening,
+  ListenState,
+} from "../features/speech/service";
 
 export type {
   Navigation,
@@ -240,6 +260,7 @@ export type {
   SoloWorkspaceSnapshot,
   SoloWorkspaceProps,
   SoloChannelGroupProps,
+  SoloHeaderMenuAction,
   SoloRegionBinding,
   SoloRegionSnapshot,
   SoloRegionAction,

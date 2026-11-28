@@ -21,7 +21,7 @@ const nonIconDependencies = new Set([
   "@emoji-mart/data",
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
-  "@hypothesi/tauri-mcp-server", // Native MCP client (docs/native-mcp.md).
+  "@hypothesi/tauri-mcp-server", // Native MCP client.
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
@@ -59,9 +59,11 @@ const nonIconDependencies = new Set([
   "jsdom",
   "mdast", // Type-only module supplied by @types/mdast.
   "mdast-util-from-markdown",
+  "mdast-util-gfm",
   "mdast-util-gfm-strikethrough",
   "mdast-util-gfm-table",
   "mdast-util-to-markdown",
+  "micromark-extension-gfm",
   "micromark-extension-gfm-strikethrough",
   "micromark-extension-gfm-table",
   "motion",

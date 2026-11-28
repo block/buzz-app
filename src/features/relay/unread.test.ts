@@ -310,8 +310,11 @@ it("unread repair observes history without seeding the channel window or consumi
   expect(h.session.channels.window("room").rows.map(({ id }) => id)).toEqual(
     rows.slice(20).map(({ id }) => id),
   );
+  // The page's aux closure follows its rows by the same cursor.
   const cursorReads = h.query.mock.calls.flatMap(([filters]) =>
-    filters.filter((filter) => filter.until !== undefined),
+    filters.filter(
+      (filter) => filter.until !== undefined && !filter.include_aux,
+    ),
   );
   expect(cursorReads).toHaveLength(1);
   expect(cursorReads[0]).toMatchObject({
@@ -1826,6 +1829,41 @@ it("lists unread top-level mentions apart from thread activity, never for a DM o
   expect(h.session.unread.activity("room").mentions).toEqual([
     expect.objectContaining({ messageId: older.id }),
   ]);
+});
+
+it("previews a details message by its brief in activity and the Inbox", () => {
+  const h = setup();
+  h.grant("room");
+  const body = "Brief.\n\nAppendix marker.";
+  const details = [["audience", "details"]];
+  const root = message(h.viewer, "room", "My thread", 20);
+  const reply = message(h.alice, "room", body, 22, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+    ...details,
+  ]);
+  const ask = message(h.alice, "room", body, 24, [
+    ["p", h.viewer.pubkey],
+    ...details,
+  ]);
+  h.emit([root, reply, ask]);
+
+  const activity = h.session.unread.activity("room");
+  expect(activity.items?.[0]).toMatchObject({
+    latestMessageId: reply.id,
+    preview: "Brief.",
+    mention: { messageId: reply.id, preview: "Brief." },
+  });
+  expect(activity.mentions?.[0]).toMatchObject({
+    messageId: ask.id,
+    preview: "Brief.",
+  });
+  const previews = h.session.unread
+    .inbox()
+    .items.filter((item) => [reply.id, ask.id].includes(item.latestMessageId))
+    .map((item) => item.preview);
+  expect(previews).toContain("Brief.");
+  expect(previews.join()).not.toContain("Appendix marker.");
 });
 
 it("lists a top-level mention that cites or quotes a message, and keeps the snapshot through an unrelated publish", () => {
@@ -8985,4 +9023,62 @@ it("an advance's projected clear keeps a reminder another window marked again me
   } finally {
     a.unread.dispose();
   }
+});
+
+it("a channel read prunes the row receipts of the messages it reads", async () => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+  );
+  await h.session.unread.markChannelRead("room");
+  await vi.waitFor(() =>
+    expect(
+      h.journal()?.state.frontiers[`seen:msg:${mention.id}`],
+    ).toBeUndefined(),
+  );
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+});
+
+it.each([
+  ["while its save is in flight", "held"],
+  ["after its save failed", "failed"],
+] as const)("background re-entry keeps the row quiet %s", async (_, mode) => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room");
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+  const held = mode === "held" ? h.holdSaveStarted() : undefined;
+  if (mode === "failed") h.failNextSave();
+  try {
+    h.session.unread.leaveChannel("room");
+    if (held) await held.started;
+    else await flush();
+    expect(
+      h.journal()?.state.frontiers[`seen:msg:${mention.id}`],
+    ).toBeUndefined();
+    // Navigation lands before the window takes focus.
+    await h.session.unread.enterChannel("room", false);
+    expect(h.snapshot().row?.attentionCount).toBe(0);
+    // What arrives in the background still lights it.
+    h.emit([message(h.alice, "room", "away", 200, [["p", h.viewer.pubkey]])]);
+    expect(h.snapshot().row?.attentionCount).toBe(1);
+  } finally {
+    held?.release();
+  }
+  // The held save lands once released.
+  if (held)
+    await vi.waitFor(() =>
+      expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+    );
 });

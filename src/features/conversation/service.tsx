@@ -31,6 +31,7 @@ import type {
   InlineRenderer,
   LinkRenderer,
   LinkPreviewRenderer,
+  LinkPreviewSettings,
   MessageRenderer,
   IdentityMark,
   MessageAction,
@@ -38,12 +39,17 @@ import type {
   PageTabsProps,
   ConversationWorkspaceProps,
   SendGate,
+  WorkspaceSlots,
 } from "./contracts";
 import { PluginMarkdown, type MarkdownProps } from "../messages/PluginMarkdown";
 import {
   publishOutgoing,
   type OutgoingMessage,
 } from "../messages/outgoing-message";
+import {
+  RelayImageViewer,
+  type ImageViewerProps,
+} from "../messages/ImageViewer";
 import type { RelaySession } from "../relay/session";
 import {
   ChannelMembersDialog,
@@ -126,6 +132,8 @@ export type Conversation = {
     DocumentEditor: ComponentType<DocumentEditorProps>;
     /** Bounded document Markdown with host-owned link and image trust rules. */
     Markdown: (props: MarkdownProps) => ReactNode;
+    /** Controlled fullscreen viewer for an https image that is not a message attachment. */
+    ImageViewer: (props: ImageViewerProps) => ReactNode;
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
      * own `Message` rows and `Composer`, without visiting the channel. */
@@ -146,8 +154,16 @@ export type Conversation = {
   };
   /** Provides `ui.Tabs` while the providing plugin runs; the first one wins. */
   registerTabs(component: ComponentType<PageTabsProps>): void;
-  /** Provides `ui.Workspace` while the plugin runs; the first one wins. */
-  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>): void;
+  /** Provides `ui.Workspace` while the plugin runs; the first one wins.
+   * `slots` names the optional props the component renders. */
+  registerWorkspace(
+    component: ComponentType<ConversationWorkspaceProps>,
+    options?: Readonly<{ slots?: WorkspaceSlots }>,
+  ): void;
+  /** The optional props the active `ui.Workspace` provider renders. Absent
+   * when the provider declares none or the host predates slots; a caller
+   * then keeps the controls in its own page. */
+  readonly workspaceSlots?: WorkspaceSlots | undefined;
   /** Solo chat icons; the sidebar shows the first one. */
   chatIcons: ContributionReader<ChatIcon>;
   /** Shows `component` as each Solo chat's sidebar icon while the providing
@@ -198,6 +214,9 @@ function validate(
       "A conversation contribution needs an id, title and component",
     );
 }
+// The navigation target grammar for the card half of a `plugin/card` section.
+const settingsCardId = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+
 export class ConversationService extends Service implements Conversation {
   readonly attachments;
   private readonly attachmentEntries;
@@ -308,6 +327,7 @@ export class ConversationService extends Service implements Conversation {
     const workspaces = createContributions<{
       id: string;
       component: ComponentType<ConversationWorkspaceProps>;
+      slots?: WorkspaceSlots | undefined;
     }>(ctx);
     this.workspaceEntries = workspaces;
     const chatMenus = createContributions<ChatMenu>(ctx);
@@ -334,6 +354,9 @@ export class ConversationService extends Service implements Conversation {
       MembersDialog: ChannelMembersDialog,
       GeneralAccess: ChannelGeneralAccess,
       DocumentEditor,
+      ImageViewer: (props: ImageViewerProps) => (
+        <RelayImageViewer {...props} relay={this.ctx.reflect.get("relay")} />
+      ),
       Markdown: (props: MarkdownProps) => (
         <PluginMarkdown
           {...props}
@@ -367,10 +390,21 @@ export class ConversationService extends Service implements Conversation {
       throw new Error("Page tabs need a component");
     this.tabEntries.register(this.ctx, { id: "tabs", component });
   }
-  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>) {
+  registerWorkspace(
+    component: ComponentType<ConversationWorkspaceProps>,
+    options?: Readonly<{ slots?: WorkspaceSlots }>,
+  ) {
     if (typeof component !== "function")
       throw new Error("A conversation workspace needs a component");
-    this.workspaceEntries.register(this.ctx, { id: "workspace", component });
+    const slots = options?.slots && Object.freeze({ ...options.slots });
+    this.workspaceEntries.register(this.ctx, {
+      id: "workspace",
+      component,
+      slots,
+    });
+  }
+  get workspaceSlots() {
+    return this.workspaceEntries.snapshot()[0]?.slots;
   }
   registerChatMenu(component: ComponentType<ChatMenuProps>) {
     if (typeof component !== "function")
@@ -501,8 +535,40 @@ export class ConversationService extends Service implements Conversation {
       throw new Error(
         "A link preview renderer order must be a number or function",
       );
+    if (value.status !== undefined || value.subscribe !== undefined) {
+      if (
+        typeof value.status !== "function" ||
+        typeof value.subscribe !== "function"
+      )
+        throw new Error(
+          "A link preview renderer status needs both status and subscribe functions",
+        );
+      if (value.settings === undefined)
+        throw new Error(
+          "A link preview renderer status needs a settings card id",
+        );
+    }
+    if (
+      value.settings !== undefined &&
+      (typeof value.settings !== "string" ||
+        !settingsCardId.test(value.settings))
+    )
+      throw new Error(
+        "A link preview renderer settings card id must be a Settings card id",
+      );
     this.linkPreviewEntries.register(this.ctx, value);
   }
+  readonly settings: LinkPreviewSettings = Object.freeze({
+    has: (section: string) =>
+      this.ctx.reflect.get("settingsCards")?.visibility(section) === true,
+    subscribe: (listener: () => void) =>
+      this.ctx.reflect.get("settingsCards")?.subscribe(listener) ?? (() => {}),
+    open: (section: string) => {
+      void this.ctx.reflect
+        .get("navigation")
+        ?.open({ version: 1, kind: "settings", section });
+    },
+  });
   registerCodeBlock(value: CodeBlockRenderer) {
     validate(value);
     if (typeof value.matches !== "function")

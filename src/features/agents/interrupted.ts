@@ -3,19 +3,50 @@
 // resumes or forgets them. The event is read again from the relay. Each agent
 // membership has its own key, so a program writes only the agents it changed.
 import { AGENT_KEY, type AgentKey } from "./membership";
+import type { MentionPlacement } from "./mention-placement";
 import type { AgentStore } from "./store";
 
 export const INTERRUPTED_PREFIX = "buzz.agents.interrupted.v1:";
 
-/** A channel string, including legacy records, keeps native placement.
- * Pending work can still route; any accepted task has its own saved route. */
+/** Where a plugin placed the mention, and the notes its turn was given
+ * (`Agents.registerMentionPlacement`, `Agents.deliverMention`), so it
+ * resumes in the same conversation with them. */
+export type InterruptedMention = Readonly<{
+  placement?: MentionPlacement;
+  notes?: readonly string[];
+}>;
+/** A channel string, including legacy records, keeps native placement, as
+ * does a record without `placement`. Pending work can still route; any
+ * accepted task has its own saved route. */
 type InterruptedEntry =
   | string
-  | Readonly<{ channel: string; placement: "pending" }>;
+  | Readonly<{
+      channel: string;
+      placement?: "pending";
+      mention?: InterruptedMention;
+    }>;
 export type InterruptedTurns = Readonly<Record<string, InterruptedEntry>>;
 export type Interrupted = Readonly<Record<string, InterruptedTurns>>;
 
 const ID = /^[0-9a-f]{64}$/;
+
+function interruptedMention(value: unknown): value is InterruptedMention {
+  if (!value || typeof value !== "object") return false;
+  const { placement, notes } = value as Record<string, unknown>;
+  const placed =
+    placement === undefined ||
+    (!!placement &&
+      typeof placement === "object" &&
+      (("topLevel" in placement && placement.topLevel === true) ||
+        ("root" in placement &&
+          typeof placement.root === "string" &&
+          ID.test(placement.root))));
+  return (
+    placed &&
+    (notes === undefined ||
+      (Array.isArray(notes) && notes.every((note) => typeof note === "string")))
+  );
+}
 
 function interruptedEntry(value: unknown): value is InterruptedEntry {
   return (
@@ -24,10 +55,17 @@ function interruptedEntry(value: unknown): value is InterruptedEntry {
       typeof value === "object" &&
       "channel" in value &&
       typeof value.channel === "string" &&
-      "placement" in value &&
-      value.placement === "pending")
+      (!("placement" in value) || value.placement === "pending") &&
+      (!("mention" in value) || interruptedMention(value.mention)))
   );
 }
+
+/** Whether the turn kept its native placement. */
+export const interruptedNative = (entry: InterruptedEntry | undefined) =>
+  typeof entry === "string" || (!!entry && entry.placement !== "pending");
+/** What a plugin gave the mention's turn, when anything. */
+export const interruptedMentionOf = (entry: InterruptedEntry | undefined) =>
+  typeof entry === "object" ? entry.mention : undefined;
 
 export function interruptedChannels(turns: InterruptedTurns = {}) {
   return Object.fromEntries(

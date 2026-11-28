@@ -24,6 +24,7 @@ import {
 // same pipe, as the SDK serves an in-process MCP server, so the process holds
 // no Buzz key.
 import { MESSAGE_TOOLS } from "../../buzz-mcp/session-tools";
+import { ContextMeter } from "../../features/agent-harness/context-meter";
 import { limited } from "../../features/agents/session-usage";
 import type {
   HostProcess,
@@ -42,7 +43,8 @@ export type ActivityReceipt = Readonly<{
   delivered?: () => void;
   /** Presentation destination; channel-shared sessions may handle several threads. */
   activityScope?: string;
-  step?: (tool: string, target?: string) => void;
+  step?: (tool: string, target?: string, origin?: "buzz") => void;
+  action?: (eventId: string) => void;
   acknowledged?: (input?: Readonly<{ steering?: true }>) => void;
   accepted?: () => void;
   superseded?: () => void;
@@ -103,6 +105,9 @@ export type ToolServer = (
   signal: AbortSignal,
   /** Checks the exact active work that issued a native tool request. */
   check?: () => void,
+  /** The session's context size when it called: the tokens of its last
+   * model call; undefined when unknown. */
+  contextTokens?: number,
 ) => Promise<unknown>;
 /** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
@@ -240,6 +245,7 @@ export class ClaudeProcess {
    * starts anew, so a stopped turn's tool calls stay stopped. */
   private workLifetime = new AbortController();
   private callEpoch = 0;
+  private turnLifetime = new AbortController();
   /** The owner's Stop awaiting Claude's answer, for the work it stopped;
    * another Stop of that work shares it. */
   private stopRequest:
@@ -933,7 +939,6 @@ export class ClaudeProcess {
     return this.readingEffort;
   }
   private settle(settled: Settled) {
-    this.callEpoch++;
     this.pending = 0;
     this.receipts.clear();
     this.activeReceipts.clear();
@@ -941,8 +946,14 @@ export class ClaudeProcess {
     this.stopping = false;
     this.stopped = false;
     this.compacting = false;
+    this.endTurn();
     for (const resolve of this.waiters.splice(0)) resolve(settled);
     if (!this.alive) this.releaseIdle();
+  }
+  private endTurn() {
+    this.callEpoch++;
+    this.turnLifetime.abort(new Error("The Claude turn has ended"));
+    this.turnLifetime = new AbortController();
   }
 
   private readError(data: string) {
@@ -969,7 +980,10 @@ export class ClaudeProcess {
   // prompt text or tool-result user messages. Only the latest acknowledged
   // request gets steps; settling ends all requests, not just the latest one.
   private readonly receipts = new Map<string, ActivityReceipt>();
+  /** The session's context size, from its model calls' usage. */
+  private context = new ContextMeter();
   private readonly activeReceipts = new Map<string, ActivityReceipt>();
+  private readonly actions = new Set<string>();
   private handle(message: Message) {
     // The CLI may emit a tool callback before its asynchronous transcript write.
     // Keep native protocol evidence alongside persisted history, without replacing it.
@@ -979,8 +993,12 @@ export class ClaudeProcess {
       this.reviewOutput = message.structured_output;
       if (typeof message.result === "string") this.reviewText = message.result;
     }
-    if (typeof message.session_id === "string" && message.session_id)
+    if (typeof message.session_id === "string" && message.session_id) {
+      // Another session's calls say nothing of this one's size.
+      if (this.sessionId && message.session_id !== this.sessionId)
+        this.context = new ContextMeter();
       this.sessionId = message.session_id;
+    }
     if (message.type === "system" && message.subtype === "init") {
       this.began = true;
       // A picked model is not the session's own.
@@ -1010,10 +1028,9 @@ export class ClaudeProcess {
         this.continuation = "running";
       if (!this.working && (this.continuation === "running" || this.stopping))
         this.continuation = undefined;
-      if (!this.working) this.callEpoch++;
       // A turn of its own, such as a background task's, is new work.
       if (starts) this.renew();
-      if (!this.working && this.pending) this.done();
+      if (!this.working) this.done();
       this.edge(active);
       return;
     }
@@ -1080,10 +1097,35 @@ export class ClaudeProcess {
       return;
     }
     if (message.type === "assistant") {
+      // Each model call's usage, repeated on each of its content blocks. A
+      // subagent's calls have their own context.
+      if (!message.parent_tool_use_id) this.context.report(callSize(message));
+      const content = (message.message as { content?: unknown } | undefined)
+        ?.content;
+      // Child events can outlive the request that started them.
+      if (
+        !message.parent_tool_use_id &&
+        message.isReplay !== true &&
+        Array.isArray(content)
+      ) {
+        for (const block of content) {
+          const id =
+            block?.type === "tool_use" && typeof block.id === "string"
+              ? `tool:${block.id}`
+              : (block?.type === "text" || block?.type === "thinking") &&
+                  typeof message.uuid === "string"
+                ? `message:${message.uuid}`
+                : undefined;
+          if (typeof id !== "string" || !id || this.actions.has(id)) continue;
+          this.actions.add(id);
+          if (this.activeReceipts.size === 1 && !this.stopping)
+            this.activeReceipts.values().next().value?.action?.(id);
+        }
+      }
       const step = stepLabel(message);
       if (step)
         for (const receipt of this.activeReceipts.values())
-          receipt.step?.(step.tool, step.target);
+          receipt.step?.(step.tool, step.target, step.origin);
       return;
     }
     if (message.type !== "result") return;
@@ -1109,12 +1151,12 @@ export class ClaudeProcess {
     if (!this.reportsState) {
       const active = this.active;
       this.continuation = undefined;
-      this.callEpoch++;
-      if (this.pending) this.done();
+      this.done();
       this.edge(active);
     }
   }
   private done() {
+    if (!this.pending) return this.endTurn();
     const error = this.lastError;
     this.settle(
       error
@@ -1143,7 +1185,11 @@ export class ClaudeProcess {
         mcp_response: await this.tools(
           this.conversation,
           request.message,
-          AbortSignal.any([this.protectionLifetime.signal, work.signal]),
+          AbortSignal.any([
+            this.protectionLifetime.signal,
+            work.signal,
+            this.turnLifetime.signal,
+          ]),
           () => {
             work.signal.throwIfAborted();
             if (
@@ -1154,6 +1200,7 @@ export class ClaudeProcess {
             )
               throw new Error("The Claude turn has ended");
           },
+          this.context.tokens,
         ).catch((error) => ({
           jsonrpc: "2.0",
           id: (request.message as Message | undefined)?.id ?? 0,
@@ -1378,10 +1425,31 @@ export class ClaudeProcess {
   }
 }
 
-/** The last content block of an assistant message as the tool it names and its target. */
+/** A model call's size, from an assistant message's usage: everything it
+ * read, cached or not, and what it wrote. */
+export function callSize(message: Message) {
+  const usage = (message.message as { usage?: Record<string, unknown> })?.usage;
+  if (!usage) return undefined;
+  let total = 0;
+  for (const field of [
+    "input_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "output_tokens",
+  ]) {
+    const value = usage[field];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+      total += value;
+  }
+  return total;
+}
+
+/** The last content block of an assistant message as the tool it names and
+ * its target. `origin` marks a call to the `buzz` MCP server, the only place
+ * the server in `mcp__<server>__<tool>` survives. */
 export function stepLabel(
   message: Message,
-): { tool: string; target?: string } | undefined {
+): { tool: string; target?: string; origin?: "buzz" } | undefined {
   const content = (message.message as { content?: unknown } | undefined)
     ?.content;
   if (!Array.isArray(content)) return undefined;
@@ -1393,6 +1461,9 @@ export function stepLabel(
   if (block?.type === "tool_use" && typeof block.name === "string") {
     const tool = block.name.split("__").at(-1);
     if (!tool) return undefined;
+    const origin = block.name.startsWith("mcp__buzz__")
+      ? { origin: "buzz" as const }
+      : {};
     const input = block.input ?? {};
     const target = [
       "description",
@@ -1405,7 +1476,9 @@ export function stepLabel(
     ]
       .map((key) => input[key])
       .find((value): value is string => typeof value === "string" && !!value);
-    return target ? { tool, target: shortTarget(target) } : { tool };
+    return target
+      ? { tool, target: shortTarget(target), ...origin }
+      : { tool, ...origin };
   }
   if (block?.type === "thinking") return { tool: "Thinking" };
   if (block?.type === "text") return { tool: "Writing reply" };

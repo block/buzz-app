@@ -237,6 +237,36 @@ it("offers a plugin agent's skills once its type registers, ignoring blank folde
   });
 });
 
+it("offers a partial slash match as a targeted chip for a plugin harness", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  const fixture = {
+    name: "pr-r-fixture",
+    description: "Harmless fixture skill",
+    path: "/home/test/.agents/skills/pr-r-fixture/SKILL.md",
+    displayPath: "~/.agents/skills/pr-r-fixture/SKILL.md",
+  };
+  vi.mocked(invoke).mockReset().mockResolvedValue([fixture]);
+  types = [
+    ...registered,
+    {
+      key: "com.example.harness/harness",
+      skillFolders: ["~/.agents/skills"],
+    },
+  ];
+  const shown = showSkills("plugin-partial", [plugin], "pr-r");
+  await waitFor(() => expect(shown.labels()).toEqual(["pr-r-fixture"]));
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("local_skills_list", {
+    roots: ["~/.agents/skills"],
+  });
+  expect(shown.last()?.items[0]?.edit).toMatchObject({
+    token: {
+      kind: "skill",
+      id: fixture.path,
+      target: plugin,
+    },
+  });
+});
+
 it("lists nothing unless one addressed agent is the viewer's own local agent whose type lists skill folders", async () => {
   vi.mocked(isTauri).mockReturnValue(true);
   vi.mocked(invoke).mockReset().mockResolvedValue(rows);

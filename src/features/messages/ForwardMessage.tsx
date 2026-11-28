@@ -1,6 +1,7 @@
 import { isPrivateForwardSource } from "./is-private-forward-source";
 import { snapshotAttachments } from "../relay/forwarded-message";
 import { copyAsForward } from "./forward-clipboard";
+import { CopyLabel, useCopyFeedback } from "../../shared/CopyFeedback";
 import { snapshotMessage } from "../relay/forwarded-message";
 import { writeClipboardText } from "../../shared/clipboard";
 import { ForwardDisclosure } from "./ForwardDisclosure";
@@ -33,7 +34,7 @@ import {
   RecipientPicker,
   type RecipientChannel,
 } from "../direct-messages/RecipientPicker";
-import type { Recipient } from "../direct-messages/usePeople";
+import { recipientView, type Recipient } from "../direct-messages/usePeople";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -369,6 +370,7 @@ function ForwardMessageDialog({
     [people, verified, profiles],
   );
   const privacyId = useId();
+  const pasteHintId = useId();
   const sourceRead = useForwardSource(
     session,
     source.channelId,
@@ -414,15 +416,16 @@ function ForwardMessageDialog({
           note,
         )
       : undefined;
+  // Whether there is a message Copy as forward can copy. Its paste hint shows
+  // only then, so it never points at a button that cannot be pressed.
+  const copyable = !!forwardRow && !forwardProblem;
+  // Each copy button shows its own copy.
+  const forwardCopy = useCopyFeedback();
+  const linkCopy = useCopyFeedback();
   const copyLink = async () => {
-    try {
-      await writeClipboardText(
-        `buzz://message?${new URLSearchParams({ channel: source.channelId, id: source.forward })}`,
-      );
-      setNotice({ text: "Message link copied", error: false });
-    } catch {
+    const link = `buzz://message?${new URLSearchParams({ channel: source.channelId, id: source.forward })}`;
+    if ((await linkCopy.copy(() => writeClipboardText(link))) === "failed")
       setError("Couldn’t copy the link. Try again.");
-    }
   };
 
   const locked = pending || !!recovered;
@@ -512,8 +515,14 @@ function ForwardMessageDialog({
                   channelId: source.channelId,
                   forward: source.forward,
                 },
-                people,
-                channel,
+                people: people.map(recipientView),
+                // The picker's summary carries the roster, which can exceed
+                // the outbox's recovery budget in large channels.
+                channel: channel && {
+                  id: channel.id,
+                  name: channel.name,
+                  private: channel.private,
+                },
                 note,
               }),
             },
@@ -522,6 +531,8 @@ function ForwardMessageDialog({
           people,
           channel,
         };
+        // This dialog's own send keeps its selection, avatars included.
+        if (!saved) restored.current = sent.id;
       }
       await session.directMessages.delivered(
         sent.id,
@@ -600,27 +611,38 @@ function ForwardMessageDialog({
         actions={
           <>
             <Button
-              disabled={pending || !forwardRow || !!forwardProblem}
+              aria-label="Copy as forward"
+              aria-describedby={copyable ? pasteHintId : undefined}
+              disabled={pending || !copyable}
               onClick={() => {
                 if (!forwardRow) return;
-                void copyAsForward(session, forwardRow, authorName, note).then(
-                  () =>
-                    setNotice({
-                      text: "Copied. Paste it in any message box to forward it.",
-                      error: false,
-                    }),
-                  () =>
-                    setNotice({
-                      text: "Couldn't copy. Try again, or use Forward.",
-                      error: true,
-                    }),
-                );
+                void forwardCopy
+                  .copy(() =>
+                    copyAsForward(session, forwardRow, authorName, note),
+                  )
+                  .then((result) => {
+                    if (result)
+                      setNotice(
+                        result === "failed"
+                          ? {
+                              text: "Couldn't copy. Try again, or use Forward.",
+                              error: true,
+                            }
+                          : undefined,
+                      );
+                  });
               }}
             >
-              Copy as forward
+              <CopyLabel label="Copy as forward" copied={forwardCopy.copied} />
             </Button>
+            {forwardCopy.status}
             {forwardProblem && (
-              <Button onClick={() => void copyLink()}>Copy link</Button>
+              <>
+                <Button aria-label="Copy link" onClick={() => void copyLink()}>
+                  <CopyLabel label="Copy link" copied={linkCopy.copied} />
+                </Button>
+                {linkCopy.status}
+              </>
             )}
             <Button disabled={pending} onClick={close}>
               Cancel
@@ -743,6 +765,16 @@ function ForwardMessageDialog({
           {error && (
             <p role="alert" className="text-body-sm text-subtle">
               {error}
+            </p>
+          )}
+
+          {/* Shown before and after a copy, so a copy adds no line that would
+              move its button. It stays while a forward is sent: the button is
+              disabled for that moment, and a line removed would resize the
+              dialog under the pointer. */}
+          {copyable && (
+            <p id={pasteHintId} className="text-body-sm text-subtle">
+              Paste the copy in any message box to forward it.
             </p>
           )}
         </div>

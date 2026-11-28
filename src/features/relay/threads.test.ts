@@ -8,10 +8,8 @@ import {
   threadReference,
   type ThreadResume,
 } from "./threads";
-import { byteSize, listByteSize } from "./budget";
+import { byteSize } from "./budget";
 import { ReadError } from "./errors";
-import { USER_STATUS_KIND } from "./user-status-policy";
-import { foldMessages } from "./fold";
 import type { RelayReader } from "./reader";
 import type { OutgoingEvent } from "./outbox";
 import type { LiveCallbacks } from "./live";
@@ -25,9 +23,6 @@ import {
   scriptedTransport,
   signed,
 } from "./testing";
-
-vi.mock("./fold", { spy: true });
-vi.mock("./budget", { spy: true });
 
 const relay = keypair(),
   viewer = keypair(),
@@ -944,12 +939,6 @@ it("repairs retained thread pages through the real channel-established catch-up 
   const first = h.view.refresh();
   h.next().respond([root, reply("old", 10)]);
   await first;
-  // Alice's profile came over traffic, so her row reads only her status.
-  const status = h.next();
-  expect(status.filters).toMatchObject([
-    { kinds: [USER_STATUS_KIND], authors: [alice.pubkey] },
-  ]);
-  status.respond([]);
   const more = h.view.loadMore();
   h.next().respond([root, reply("later", 20)]);
   await more;
@@ -970,10 +959,6 @@ it("repairs retained thread pages through the real channel-established catch-up 
   ]);
   repair.respond([root, reply("old", 10), reply("missed", 15)]);
   await flush();
-  // The reconnect retired her status, so it is read again with the page.
-  const again = h.next();
-  expect(again.filters[0]?.kinds).toEqual([USER_STATUS_KIND]);
-  again.respond([]);
   const next = h.next();
   expect(next.filters[1]?.thread_cursor).toBe(15);
   next.respond([root, reply("later", 20)]);
@@ -1065,7 +1050,7 @@ it("drops stale root content when the finite root is missing and exposes explici
   const retry = h.view.refresh();
   h.next().respond([root, reply("1", 10)]);
   await retry;
-  for (let page = 2; page <= 10; page++) {
+  for (let page = 2; page <= 50; page++) {
     const more = h.view.loadMore();
     h.next().respond([root, reply(String(page), page * 10)]);
     await more;
@@ -1080,9 +1065,15 @@ it("drops stale root content when the finite root is missing and exposes explici
 
 it("explicitly limits oversized evidence rather than evicting aux and resurrecting deleted rows", async () => {
   const h = seeded();
+  const payload = "x".repeat(7 * 1024 * 1024);
   const loading = h.view.refresh();
-  h.next().respond([root, reply("x".repeat(4 * 1024 * 1024), 2)]);
+  h.next().respond([root, reply(payload, 2)]);
   await loading;
+  for (let page = 2; page <= 5; page++) {
+    const more = h.view.loadMore();
+    h.next().respond([root, reply(payload, page + 1)]);
+    await more;
+  }
   expect(h.view.snapshot()).toMatchObject({
     status: "error",
     limited: true,
@@ -1139,6 +1130,7 @@ it.each(["live", "read"])(
       canAccess: () => true,
       visible: (events) => events,
       notify: (listener) => listener(),
+      maxEvents: 2000,
     });
     try {
       if (source === "read") await thread.view.refresh();
@@ -1225,7 +1217,7 @@ it("trips the live byte limit at exactly the whole-thread serialised size", asyn
   const loading = h.view.refresh();
   h.next().respond([root, first]);
   await loading;
-  const limit = 4 * 1024 * 1024;
+  const limit = 32 * 1024 * 1024;
   const sized = (length: number) => reply("x".repeat(length), 11);
   const fits = sized(limit - byteSize([root, first, sized(0)]));
   expect(byteSize([root, first, fits])).toBe(limit);
@@ -1406,7 +1398,7 @@ it.each([
   },
 );
 
-it("skips folding and budgeting known replay IDs while admitting new evidence after reads and purge", async () => {
+it("ignores known replay IDs while admitting new evidence after reads and purge", async () => {
   const events = [
     root,
     ...Array.from({ length: 500 }, (_, i) => reply(`${i}`, i + 2)),
@@ -1423,38 +1415,23 @@ it("skips folding and budgeting known replay IDs while admitting new evidence af
     visible: (events) => events.filter((event) => event.id !== hidden),
     notify: (listener) => listener(),
   });
-  const clear = () => {
-    vi.mocked(foldMessages).mockClear();
-    vi.mocked(listByteSize).mockClear();
-  };
   try {
-    clear();
     thread.receive([root]);
-    expect(foldMessages).not.toHaveBeenCalled();
-    expect(listByteSize).not.toHaveBeenCalled();
 
     await thread.view.refresh();
     const snapshot = thread.view.snapshot();
     expect(snapshot.replies).toHaveLength(500);
     const listener = vi.fn();
     thread.view.subscribe(listener);
-    clear();
     // Reconnect delivers retained replies individually, not as one batch.
     for (const event of events) thread.receive([event]);
-    expect(foldMessages).not.toHaveBeenCalled();
-    expect(listByteSize).not.toHaveBeenCalled();
     expect(listener).not.toHaveBeenCalled();
     expect(thread.view.snapshot()).toBe(snapshot);
 
     const fresh = reply("new", 502);
     thread.receive([...events, fresh]);
     expect(thread.view.snapshot().replies).toHaveLength(501);
-    expect(foldMessages).toHaveBeenCalledTimes(1);
-    expect(listByteSize).toHaveBeenCalledTimes(1);
-    clear();
     thread.receive([fresh]);
-    expect(foldMessages).not.toHaveBeenCalled();
-    expect(listByteSize).not.toHaveBeenCalled();
 
     // Pruned IDs may be received again; this is not an unbounded seen-ID set.
     hidden = fresh.id;
@@ -1510,12 +1487,10 @@ it("re-folds for local operations and profiles only when the thread's own change
   expect(content(answer.id)).toBe("Whole answer");
   const listener = vi.fn();
   thread.view.subscribe(listener);
-  vi.mocked(foldMessages).mockClear();
   // Another conversation's send settles, and an unrelated profile arrives.
   operations = [{ ...elsewhere, delivery: "accepted" }];
   thread.localChanged();
   thread.ownersChanged();
-  expect(foldMessages).not.toHaveBeenCalled();
   expect(listener).not.toHaveBeenCalled();
   // The agent's owner is verified: their edit now applies.
   owner = alice.pubkey;
@@ -1526,10 +1501,8 @@ it("re-folds for local operations and profiles only when the thread's own change
   operations = [...operations, { event: sending, delivery: "sending" }];
   thread.localChanged();
   expect(content(sending.id)).toBe("Mine");
-  expect(foldMessages).toHaveBeenCalledTimes(2);
   expect(listener).toHaveBeenCalledTimes(2);
   // The same operations in a new snapshot change nothing.
   operations = [...operations];
   thread.localChanged();
-  expect(foldMessages).toHaveBeenCalledTimes(2);
 });

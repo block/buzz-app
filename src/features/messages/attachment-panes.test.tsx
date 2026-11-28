@@ -330,9 +330,12 @@ it.each([false, true])(
       expect(pane.querySelector("form")).toBeNull();
       expect(h.upload).not.toHaveBeenCalled();
     } else {
+      // The comments' rows hold statuses of their own; the composer's is in
+      // its form.
+      const form = within(pane).getByRole("form");
       await waitFor(() =>
         expect(
-          within(pane).getByRole("status", { name: "" }),
+          within(form).getByRole("status", { name: "" }),
         ).toHaveTextContent("notes.txt: 1 KB · Ready"),
       );
       expect(h.upload).toHaveBeenCalledTimes(1);

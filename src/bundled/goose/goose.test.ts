@@ -1,3 +1,4 @@
+import { createAgentActivity } from "../../features/agents/activity";
 import { sessionTools } from "../../buzz-mcp/session-tools";
 import { steerPrompt } from "../claude-code/prompt";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,10 @@ import {
   type ToolServer,
 } from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
-import { createLocalAgentActivity } from "../../features/agents/local-activity";
+import {
+  createLocalAgentActivity,
+  stepText,
+} from "../../features/agents/local-activity";
 
 const ok: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -130,6 +134,11 @@ describe("GooseProcess", () => {
     });
   });
 
+  it("asks for no secrets unless its caller does, as Mesh Agent mode's goose", async () => {
+    const { process } = await start();
+    expect(process.options.secrets).toBeUndefined();
+  });
+
   it("points goose's Databricks provider at a packaged workspace", async () => {
     expect((await start()).process.options.env).not.toHaveProperty(
       "DATABRICKS_HOST",
@@ -200,6 +209,7 @@ describe("GooseProcess", () => {
       env: { BUZZ_SECURITY_URL: "http://127.0.0.1:1/" },
     });
     expect(fake.geese[0]?.killed).toBe(false);
+    expect(fake.geese[0]?.options.secrets).toBeUndefined();
   });
 
   it("still fails a protected start at its time limit when a goose without the security hooks never exits", async () => {
@@ -348,6 +358,8 @@ describe("GooseProcess", () => {
       "channel/root",
       { id: 1, method: "tools/list", params: {} },
       expect.objectContaining({ aborted: true }),
+      // It has made no model call yet.
+      undefined,
     );
     // goose matches the reply to its request by the id it sent.
     expect(response).toEqual({
@@ -1169,8 +1181,8 @@ describe("GooseProcess", () => {
     });
     await flush();
     expect(step.mock.calls).toEqual([
-      ["shell", "ls"],
-      ["Writing reply", undefined],
+      ["shell", "ls", undefined],
+      ["Writing reply", undefined, undefined],
     ]);
     process.turns[0]?.finish();
   });
@@ -1661,7 +1673,34 @@ describe("stepLabel", () => {
         title: "buzz: send",
         rawInput: { text: "hi", path: "/a/b/notes.md" },
       }),
-    ).toEqual({ tool: "send", target: "notes.md" });
+    ).toEqual({ tool: "send", target: "notes.md", origin: "buzz" });
+    // goose spells a Buzz tool's name with spaces in the title and exactly in
+    // `_meta`, with its extension. The step reports the bare name and its
+    // origin, which the step text titles.
+    const buzz = stepLabel({
+      sessionUpdate: "tool_call",
+      title: "buzz: channel list",
+      _meta: {
+        goose: {
+          toolCall: { toolName: "buzz__channel_list", extensionName: "buzz" },
+        },
+      },
+    });
+    expect(buzz).toEqual({ tool: "channel_list", origin: "buzz" });
+    expect(buzz && stepText(buzz)).toBe("List channels");
+    // goose's own `edit` and another extension's `search` are not Buzz's.
+    for (const [toolName, extensionName, tool] of [
+      ["edit", "developer", "edit"],
+      ["docs__search", "docs", "search"],
+    ]) {
+      const other = stepLabel({
+        sessionUpdate: "tool_call",
+        title: tool,
+        _meta: { goose: { toolCall: { toolName, extensionName } } },
+      });
+      expect(other).toEqual({ tool });
+      expect(other && stepText(other)).toBe(tool);
+    }
   });
 });
 
@@ -1964,4 +2003,151 @@ it("keeps a failed close failed for a strict one while goose runs, and counts it
   process.exit(null);
   await goose.exited;
   await expect(goose.close(session, true)).resolves.toBeUndefined();
+});
+
+it("exposes identified ACP actions without refreshing queued work, replays or silent turns", async () => {
+  const { goose, open, process } = await start();
+  process.hold = true;
+  const session = await open();
+  const local = createLocalAgentActivity();
+  const activity = createAgentActivity(
+    false,
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    { scope: "s", source: local.reader },
+  );
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const request = (messageId: string, activityScope = messageId) => {
+    const work = local.begin({
+      scope: "s",
+      agent: "a",
+      channelId: "c",
+      messageId,
+      threadRootId: messageId,
+      thread: true,
+    });
+    const done = session.send(
+      messageId,
+      {
+        activityScope,
+        step: work.step,
+        action: work.action,
+        acknowledged: work.started,
+        superseded: work.supersede,
+      },
+      messageId === "second" ? "other-model" : undefined,
+    );
+    void done.then(work.finish);
+    return { work, done };
+  };
+  const row = (messageId: string) =>
+    activity.queries
+      .snapshot("c")
+      .local?.find((row) => row.messageId === messageId);
+  const call = (toolCallId: string) =>
+    process.update(session.id, {
+      sessionUpdate: "tool_call",
+      toolCallId,
+      title: "Read",
+      rawInput: { path: "private.txt" },
+    });
+  try {
+    const first = request("first");
+    await flush();
+    expect(row("first")?.lastAction).toBeUndefined();
+    call("call-1");
+    await flush();
+    const action = row("first")?.lastAction;
+    expect(action).toEqual({
+      turnId: expect.any(String),
+      sequence: 1,
+      occurredAt: 1_000_000,
+    });
+    now.mockReturnValue(1_001_000);
+    call("call-2");
+    await flush();
+    expect(row("first")?.lastAction).toEqual({
+      ...action,
+      sequence: 2,
+      occurredAt: 1_001_000,
+    });
+    const latest = row("first")?.lastAction;
+    // Same native event, changing display labels, typing and host liveness are not actions.
+    now.mockReturnValue(4_661_000);
+    call("call-1");
+    process.update(session.id, {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "thinking" },
+    });
+    process.update(session.id, {
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text: "ping" },
+    });
+    process.update(session.id, { sessionUpdate: "usage_update", used: 100 });
+    process.update(session.id, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: process.turns[0]?.runId } },
+    });
+    await flush();
+    expect(row("first")?.lastAction).toBe(latest);
+    expect(row("first")?.state).toBe("working");
+    expect(activity.queries.snapshot("other").local ?? []).toEqual([]);
+    const second = request("second");
+    await flush();
+    expect(row("second")?.lastAction).toBeUndefined();
+    call("call-2");
+    await flush();
+    expect(row("second")?.lastAction).toBeUndefined();
+    call("call-queued");
+    await flush();
+    expect(row("first")?.lastAction).toEqual({
+      ...action,
+      sequence: 3,
+      occurredAt: 4_661_000,
+    });
+    expect(row("second")?.lastAction).toBeUndefined();
+    process.turns[0]?.finish();
+    await flush();
+    call("call-queued");
+    await flush();
+    expect(row("second")?.lastAction).toBeUndefined();
+    call("call-3");
+    await flush();
+    expect(row("second")?.lastAction).toEqual({
+      turnId: expect.any(String),
+      sequence: 1,
+      occurredAt: 4_661_000,
+    });
+    expect(row("second")?.lastAction?.turnId).not.toBe(action?.turnId);
+    process.turns[1]?.finish();
+    await Promise.all([first.done, second.done]);
+    const settled = row("second")?.lastAction;
+    call("late-call");
+    await flush();
+    expect(row("second")?.state).toBe("done");
+    expect(row("second")?.lastAction).toBe(settled);
+
+    const third = request("third");
+    await flush();
+    call("call-4");
+    await flush();
+    const beforeSteer = row("third")?.lastAction;
+    expect(beforeSteer?.sequence).toBe(1);
+    const fourth = request("fourth", "third");
+    await flush();
+    expect(process.turns[2]?.steered).toEqual(["fourth"]);
+    // Queue acknowledgement is not proof the in-flight response consumed it.
+    call("before-consumption");
+    await flush();
+    expect(row("third")?.lastAction).toBe(beforeSteer);
+    expect(row("fourth")?.lastAction).toBeUndefined();
+    process.turns[2]?.finish();
+    await Promise.all([third.done, fourth.done]);
+  } finally {
+    now.mockRestore();
+    activity.dispose();
+    await goose.stop();
+  }
 });

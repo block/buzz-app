@@ -1,6 +1,7 @@
 import { steerPrompt } from "../../../bundled/claude-code/prompt";
 import { unsupportedSynced } from "../../agents/agent-config";
 import type { HostMcpServer } from "../../host/service";
+import { ContextMeter } from "../context-meter";
 import type { AcpProcess } from "./process";
 import { codeOf, errorMessage, stepLabel } from "./steps";
 import type { ActivityReceipt, Choice, Settled } from "./types";
@@ -12,6 +13,11 @@ type Waiter = (settled: Settled) => void;
 
 /** A session's settings, as `session/new` and `session/set_config_option`
  * return them. */
+/** Chooses a turn's model and effort as it starts (`Delivery.route`);
+ * undefined sends nothing. */
+export type TurnRoute = () => Promise<
+  Readonly<{ model?: string; effort?: string }> | undefined
+>;
 export type ConfigOptions = {
   configOptions?: {
     category?: string | null;
@@ -70,6 +76,7 @@ export class AcpSession {
     waiter?: Waiter;
     delivered?: () => void;
     accepted?: () => void;
+    route?: TurnRoute;
   }[] = [];
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
@@ -85,6 +92,8 @@ export class AcpSession {
   private owner: Waiter | undefined;
   private readonly active = new Map<string, ActivityReceipt>();
   private lastStep = "";
+  private actionReceipt: ActivityReceipt | undefined;
+  private readonly actions = new Set<string>();
   /** The receipt each queued request displaced in its scope, superseded only
    * once that request is sent, so a request refused before then gives the
    * scope back, Stop included. */
@@ -102,6 +111,8 @@ export class AcpSession {
    * provider failure comes back as text, and text is never posted. */
   private acted = false;
   private written = "";
+  /** The session's context size, from the harness's `usage_update`. */
+  private readonly context = new ContextMeter();
   private closed = false;
   /** A final message ended the work: the id of its tool call, whose result
    * cancels the running turn once the harness reports it, then `true` until
@@ -136,6 +147,11 @@ export class AcpSession {
   get busy() {
     return this.pending > 0;
   }
+  /** The session's context size now: the tokens of its last model call, as
+   * the harness last reported them; undefined when unknown. */
+  get contextTokens() {
+    return this.context.tokens;
+  }
   get working() {
     return !this.quiet();
   }
@@ -163,6 +179,8 @@ export class AcpSession {
     effort?: string,
     /** A synced level the turn must run on, or it fails before its prompt. */
     kept?: string,
+    /** Chooses `model` and `effort` as a turn for this message starts. */
+    route?: TurnRoute,
   ): Promise<Settled> {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
@@ -184,7 +202,7 @@ export class AcpSession {
       (!model || model === this.model) &&
       (!effort || effort === this.level)
     )
-      void this.steer(text, activity, waiter, model, effort, kept);
+      void this.steer(text, activity, waiter, model, effort, kept, route);
     else {
       this.queue.push({
         text,
@@ -196,6 +214,7 @@ export class AcpSession {
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         ...(kept ? { kept } : {}),
+        ...(route ? { route } : {}),
       });
       this.acknowledge(activity, waiter, true);
       void this.pump();
@@ -276,6 +295,8 @@ export class AcpSession {
       this.ending = true;
       this.acp.notify("session/cancel", { sessionId: this.id });
     }
+    // ACP's `used` is the tokens of the session's last model call.
+    if (kind === "usage_update") this.context.report(update.used);
     if (kind === "agent_message_chunk" && !this.acted) {
       const content = update.content as { text?: unknown } | undefined;
       if (typeof content?.text === "string")
@@ -300,13 +321,22 @@ export class AcpSession {
       }
     }
     if (kind === "session_info_update" || runId !== null) return;
+    const actionId =
+      kind === "tool_call" && typeof update.toolCallId === "string"
+        ? update.toolCallId
+        : undefined;
+    if (actionId && !this.actions.has(actionId)) {
+      this.actions.add(actionId);
+      if (this.prompting && !this.stopped)
+        this.actionReceipt?.action?.(actionId);
+    }
     const step = stepLabel(update);
     if (!step) return;
-    const label = `${step.tool}\u0000${step.target ?? ""}`;
+    const label = `${step.tool}\u0000${step.target ?? ""}\u0000${step.origin ?? ""}`;
     if (label === this.lastStep) return;
     this.lastStep = label;
     for (const receipt of this.active.values())
-      receipt.step?.(step.tool, step.target);
+      receipt.step?.(step.tool, step.target, step.origin);
   }
 
   /** Ends the session's work with `error`; nothing more is sent to it. */
@@ -323,6 +353,7 @@ export class AcpSession {
     model?: string,
     effort?: string,
     kept?: string,
+    route?: TurnRoute,
   ) {
     this.steering.add(waiter);
     const prior = this.steered;
@@ -355,6 +386,9 @@ export class AcpSession {
       if (runId && steering) {
         try {
           activity.accepted?.();
+          // A steer reply acknowledges queueing, not model consumption. Until
+          // the next native prompt, either request may own a fresh action.
+          this.actionReceipt = undefined;
           await steering.steer(this.acp, this.id, runId, said);
           if (live()) {
             activity.delivered?.();
@@ -380,8 +414,9 @@ export class AcpSession {
           waiter,
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
-          // As a turn of its own, it is checked like any other.
+          // As a turn of its own, it is checked and routed like any other.
           ...(kept ? { kept } : {}),
+          ...(route ? { route } : {}),
         });
         this.acknowledge(activity, waiter, true);
       }
@@ -439,13 +474,25 @@ export class AcpSession {
           waiter,
           delivered,
           accepted,
+          route,
         } = this.queue.shift() ?? {
           text: "",
         };
         let sent = false;
         try {
           await this.beforeTurn?.();
-          await this.select(model, effort);
+          // A model route chooses as its turn starts.
+          const chosen = route ? await route() : { model, effort };
+          if (!chosen) {
+            if (waiter) this.discard(waiter);
+            continue;
+          }
+          // A level can't be cleared in place, so a routed turn that names
+          // none runs on, and records, the one the session has.
+          await this.select(
+            chosen.model,
+            chosen.effort || (route ? this.level || undefined : undefined),
+          );
           // A harness may ignore a level its model lacks, and keep one across
           // a model switch without its being set again.
           if (kept && !this.levels.includes(kept))
@@ -503,6 +550,7 @@ export class AcpSession {
           };
         } finally {
           this.confirmPrompt = undefined;
+          this.actionReceipt = undefined;
         }
       }
     } finally {
@@ -562,6 +610,7 @@ export class AcpSession {
   /** A queued request reached the harness: the receipt it displaced is
    * superseded. */
   private sent(waiter: Waiter) {
+    this.actionReceipt = this.displaced.get(waiter)?.activity;
     this.displaced.get(waiter)?.prior?.superseded?.();
     this.displaced.delete(waiter);
   }
@@ -630,6 +679,7 @@ export class AcpSession {
     this.abortWork();
     this.pending = 0;
     this.active.clear();
+    this.actionReceipt = undefined;
     this.displaced.clear();
     this.lastFailure = undefined;
     this.acted = false;

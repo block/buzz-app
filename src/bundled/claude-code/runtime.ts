@@ -16,6 +16,7 @@ import {
 } from "../../features/agent-harness/session-scope";
 import { protectionTranscript } from "./protection-transcript";
 import { compactAt } from "../../features/agents/compact-at";
+import { launchModel, routeOf } from "../../features/agents/model-routes";
 import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
@@ -51,6 +52,11 @@ import {
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
+import {
+  ownerLabel,
+  ownerRows,
+  ownerTurns,
+} from "../../features/agents/owner-view";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import {
   agentFolders,
@@ -70,14 +76,12 @@ import type {
   TurnResult,
 } from "../../features/agents/service";
 import { pubkeyOf, type AgentKey } from "../../features/agents/membership";
+import { hasOwnEnv } from "../agents/agent-env";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { threadReference } from "../../features/relay/thread-reference";
-import {
-  wakeAnchor,
-  wakeLands,
-} from "../../features/agent-harness/plugin-wake";
+import { turnChannel, turnOf } from "../../features/agent-harness/plugin-wake";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
 import {
@@ -133,7 +137,10 @@ import {
   readLatestTurns,
   readSessionTitle,
   readTranscript,
+  readTranscriptPreview,
   withNotices,
+  type ClaudeTranscript,
+  type WorkingPoll,
   type Conversation,
   type SessionsPlace,
 } from "./transcript";
@@ -196,6 +203,22 @@ export type SavedConversation = Conversation &
 /** A little over the host's grace (`STOP_GRACE`) before it kills a stopped
  * process. */
 const STOP_WAIT_MS = 5_000;
+/** An agent's own `claude`, and the check of which custom headers it starts
+ * with, ask for the device's environment variables and that agent's; its
+ * pinned protected copy and other setup steps never do. A spare, started for
+ * no agent yet, asks with none named and gets the device's alone. */
+const agentEnv = (
+  id: string,
+  options: Parameters<Spawn>[1],
+  agent?: AgentKey,
+) =>
+  id === "claude" || id === "inherited-headers"
+    ? {
+        ...options,
+        secrets: [...(options?.secrets ?? []), "agent-env" as const],
+        ...(agent && { envAgent: pubkeyOf(agent) }),
+      }
+    : options;
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
 
@@ -246,9 +269,11 @@ type Entry = {
  * compaction. */
 const where = ({ workspace, model, effort, ...config }: Config) => {
   const tokens = compactAt(config.compactAt);
+  // A saved model route picks per turn; the process starts on the default.
+  const launch = launchModel(model.trim());
   return {
     cwd: workspace,
-    ...(model.trim() ? { model: model.trim() } : {}),
+    ...(launch ? { model: launch } : {}),
     ...(effort ? { effort } : {}),
     ...(tokens ? { compactAt: tokens } : {}),
   };
@@ -323,7 +348,7 @@ export class ClaudeRuntime {
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     // Started ahead of need, it never stops a conversation to make room.
-    (id, options) => this.spawn(id, options),
+    (id, options) => this.spawn(id, agentEnv(id, options)),
     (_conversation, message) =>
       respond(undefined, {}, message, this.added(), listing(this.added())),
     undefined,
@@ -736,7 +761,8 @@ export class ClaudeRuntime {
   /** `models`, saying whether Claude itself lists the current model. */
   private async catalog(agent: AgentKey) {
     const entry = this.agents.get(agent);
-    const configured = entry?.config.model.trim();
+    const saved = entry?.config.model.trim();
+    const configured = saved && launchModel(saved);
     const {
       models: listed,
       model: reported,
@@ -756,6 +782,9 @@ export class ClaudeRuntime {
         ...resting(offeredEfforts),
       };
     });
+    // A saved route is the current choice; the agents service lists it.
+    if (saved && routeOf(saved))
+      return { current: saved, models, listed: true };
     const current =
       offered.find(
         (model) => own === model.value || own === model.resolvedModel,
@@ -794,7 +823,12 @@ export class ClaudeRuntime {
     }
     return view;
   }
-  /** The agent's saved sessions, most recently used first. */
+  /** The agent's saved sessions its owner may see, for display. */
+  ownerConversations(agent: AgentKey): SavedConversation[] {
+    return ownerRows(this.conversations(agent), this.reads(agent));
+  }
+  /** The agent's saved sessions, most recently used first, including those in
+   * channels only the agent can read; show them through `ownerConversations`. */
   conversations(agent: AgentKey): SavedConversation[] {
     const reads = this.reads(agent);
     const saved =
@@ -830,7 +864,7 @@ export class ClaudeRuntime {
         ...location,
         channelId,
         ...(root ? { root } : {}),
-        ...reads?.channelLabel(channelId),
+        ...ownerLabel(reads, channelId),
         at: saved.at,
       };
     });
@@ -841,6 +875,7 @@ export class ClaudeRuntime {
     workspace: string,
     working: boolean,
     signal: AbortSignal,
+    poll?: WorkingPoll,
   ) {
     if (await this.inspect?.(conversation.agent))
       // Where the gateway would attribute it, also say that it isn't.
@@ -849,26 +884,82 @@ export class ClaudeRuntime {
           ? `${REMOTE_TRANSCRIPTS}. They aren't attributed in the agent gateway yet.`
           : `${REMOTE_TRANSCRIPTS}.`,
       );
+    return this.readActivity(
+      readTranscript,
+      conversation,
+      workspace,
+      working,
+      signal,
+      undefined,
+      poll,
+    );
+  }
+
+  async transcriptPreview(
+    conversation: Conversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+  ) {
+    const { agent, sessionId } = conversation;
+    const key = conversation.community
+      ? COMMUNITY_SESSION
+      : conversationKey(conversation.channelId, conversation.root);
+    const saved = () => this.savedSessions(agent).get(key)?.id;
+    if (
+      !sessionId ||
+      saved() !== sessionId ||
+      !this.host.spawn ||
+      this.target ||
+      this.bound(agent) ||
+      (await this.inspect?.(agent))
+    )
+      return undefined;
+    signal.throwIfAborted();
+    const preview: ClaudeTranscript | undefined = await this.readActivity(
+      readTranscriptPreview,
+      conversation,
+      workspace,
+      working,
+      signal,
+      key,
+    );
+    signal.throwIfAborted();
+    return saved() === sessionId && !this.bound(agent) ? preview : undefined;
+  }
+
+  private readActivity(
+    read: typeof readTranscript,
+    conversation: Conversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+    key = conversation.community
+      ? COMMUNITY_SESSION
+      : conversationKey(conversation.channelId, conversation.root),
+    poll?: WorkingPoll,
+  ) {
     const prompts = this.prompts(conversation.agent);
-    return readTranscript(
+    return read(
       this.spawn,
-      this.place(
-        conversation.agent,
-        conversation.community
-          ? COMMUNITY_SESSION
-          : conversationKey(conversation.channelId, conversation.root),
-        workspace,
-      ),
+      this.place(conversation.agent, key, workspace),
       conversation,
       working,
       signal,
       (pubkey) => this.reads(conversation.agent)?.name(pubkey),
+      poll,
     ).then(
       (transcript) =>
         transcript && {
           ...transcript,
           turns: withNotices(
-            prompts.shown(transcript.turns),
+            prompts.shown(
+              ownerTurns(
+                transcript.turns,
+                this.reads(conversation.agent),
+                conversation,
+              ),
+            ),
             this.notices.get(conversation.agent) ?? new Map(),
           ),
         },
@@ -896,6 +987,7 @@ export class ClaudeRuntime {
     working: boolean,
     signal: AbortSignal,
     held: readonly TranscriptTurn[],
+    poll?: WorkingPoll,
   ) {
     if (await this.inspect?.(conversation.agent)) return undefined;
     const read = await readLatestTurns(
@@ -911,13 +1003,19 @@ export class ClaudeRuntime {
       working,
       signal,
       (pubkey) => this.reads(conversation.agent)?.name(pubkey),
+      poll,
     );
     if (!read) return undefined;
+    const readable = ownerTurns(
+      read,
+      this.reads(conversation.agent),
+      conversation,
+    );
     // Turns older than all `held` keeps are left.
     const ids = new Set(held.map((turn) => turn.turnId));
-    const turns = read.slice(
+    const turns = readable.slice(
       Math.max(
-        read.findIndex((turn) => ids.has(turn.turnId)),
+        readable.findIndex((turn) => ids.has(turn.turnId)),
         0,
       ),
     );
@@ -988,7 +1086,7 @@ export class ClaudeRuntime {
   /** The community's current name and kind for a channel, if it lists it;
    * `useOpenedSession` gives them to a session `find` returned. */
   channelLabel(agent: AgentKey, channelId: string) {
-    return this.reads(agent)?.channelLabel(channelId);
+    return ownerLabel(this.reads(agent), channelId);
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -1183,6 +1281,7 @@ export class ClaudeRuntime {
       channelId,
       model,
       effort,
+      route: chooseModel,
       synced,
       team,
       workingUntil,
@@ -1191,6 +1290,7 @@ export class ClaudeRuntime {
       ignored,
       signal,
       step,
+      action,
       acknowledged,
       accepted,
       superseded,
@@ -1260,16 +1360,15 @@ export class ClaudeRuntime {
       const refused = kept && (await this.refusal(agent.key, kept));
       if (refused) throw new Error(refused);
     };
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
-    const channel =
-      channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
+    const channel = turnChannel(trigger, delivery);
     if (!channel) return;
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
-    const topLevel = solo || wake?.topLevel === true;
-    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // Where the host placed it; this harness has no rules of its own.
+    const turn = turnOf(trigger, delivery, channel, solo);
+    if (!turn) return ignored?.();
+    const { event, topLevel } = turn;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const native = await this.key(
@@ -1527,6 +1626,7 @@ export class ClaudeRuntime {
           ...(contextRoot ? { contextRoot } : {}),
           activityScope: topLevel ? channel : replyRoot,
           ...(step ? { step } : {}),
+          ...(action ? { action } : {}),
           delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
           accepted: () => {
@@ -1538,6 +1638,7 @@ export class ClaudeRuntime {
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
           },
+          ...(chooseModel ? { route: chooseModel } : {}),
           admit,
           // Mentions already show the host's fallback under the request.
           ...this.turnAttribution(
@@ -1892,6 +1993,8 @@ export class ClaudeRuntime {
   private async refusal(agent: AgentKey, kept: string | undefined) {
     if (!kept) return undefined;
     const { current, models, listed } = await this.catalog(agent);
+    // A route picks its own effort each turn.
+    if (routeOf(current)) return undefined;
     const own = models.find((model) => model.id === current);
     // A model Claude doesn't list has no levels to check the effort against.
     if (!listed || !own)
@@ -2183,11 +2286,13 @@ export class ClaudeRuntime {
     // it was given, until it is replaced.
     const tools =
       (cwd: string): ToolServer =>
-      async (conversation, message, signal, check) => {
+      async (conversation, message, signal, check, contextTokens) => {
         const handle = entry.handle;
         const client = () =>
           handle &&
           appClient(handle, {
+            // Each message it posts carries its session's context size.
+            contextTokens: () => contextTokens,
             // Its PreToolUse hook reviews every tool, Buzz's included.
             ...(!this.target && check ? { nativeCall: check } : {}),
             nativeToolGate: true,
@@ -2247,9 +2352,20 @@ export class ClaudeRuntime {
       };
     const saved = this.savedSessions(agent);
     entry.sessions = new AgentSessions({
-      spawn: (id, options) => this.spawn(id, options),
+      spawn: (id, options) => this.spawn(id, agentEnv(id, options, agent)),
       room: () => this.room(),
-      ...(!this.target ? { spare: this.spare } : {}),
+      // The spare has no agent's own variables: an agent with its own, or
+      // whose list can't be read, starts fresh. Checked at each handover.
+      ...(!this.target
+        ? {
+            spare: {
+              take: async (where: Parameters<Spare["take"]>[0]) =>
+                (await hasOwnEnv(agent)) === false
+                  ? this.spare.take(where)
+                  : undefined,
+            },
+          }
+        : {}),
       strictResume: !!this.target,
       store: {
         get: (key) => {

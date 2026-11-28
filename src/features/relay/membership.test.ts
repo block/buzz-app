@@ -16,7 +16,7 @@ import {
 import type { LiveCallbacks } from "./live";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { HeadPersistence, SavedHead } from "./persistence";
-import { diffPreview, rowProfileIds } from "./membership";
+import { diffPreview, rowProfileIds, viewerMember } from "./membership";
 
 const relay = keypair(),
   viewer = keypair(),
@@ -33,6 +33,15 @@ const addition = (target = pinky.pubkey, time = 20) =>
   activity({ type: "member_joined", actor: viewer.pubkey, target }, time);
 const end = () =>
   bounds(relay, "a", "head", { has_more: false, next_cursor: null });
+
+it("shows no row for a relay-signed pin notice", () => {
+  const pin = activity({
+    type: "message_pinned",
+    actor: viewer.pubkey,
+    target_event_id: "d".repeat(64),
+  });
+  expect(foldMessages("a", relay.pubkey, [pin])).toEqual([]);
+});
 
 it("admits only recognized, channel-scoped relay-authored membership payloads", () => {
   const joined = addition();
@@ -355,8 +364,10 @@ it("live activity obeys the same retained row budget as messages", async () => {
       addition(pinky.pubkey, 2),
       addition(brain.pubkey, 3),
     ]);
+    // The oldest goes, and an older page can read it again.
     expect(owner.session.channels.window("a")).toMatchObject({
-      historyLimited: true,
+      historyLimited: false,
+      hasMore: true,
     });
     expect(
       owner.session.channels.window("a").rows.map((r) => r.createdAt),
@@ -812,4 +823,30 @@ it("a catch-up head rereads the newest notices, and restarts the descent only wh
   } finally {
     owner.dispose();
   }
+});
+
+it("uses viewer membership without a peer roster and rejects stale or foreign viewer evidence", () => {
+  const membership = { pubkey: viewer.pubkey, joined: true };
+  expect(viewerMember({ viewerMembership: membership }, viewer.pubkey)).toBe(
+    true,
+  );
+  expect(viewerMember({ viewerMembership: membership }, pinky.pubkey)).toBe(
+    false,
+  );
+  expect(viewerMember({ viewerMembership: membership }, undefined)).toBe(false);
+  expect(viewerMember(undefined, viewer.pubkey)).toBe(false);
+  const retained = { members: [viewer.pubkey] };
+  expect(viewerMember(retained, viewer.pubkey)).toBe(true);
+  expect(
+    viewerMember(
+      { ...retained, viewerMembership: { ...membership, joined: false } },
+      viewer.pubkey,
+    ),
+  ).toBe(false);
+  expect(
+    viewerMember(
+      { ...retained, viewerMembership: { pubkey: pinky.pubkey, joined: true } },
+      viewer.pubkey,
+    ),
+  ).toBe(false);
 });

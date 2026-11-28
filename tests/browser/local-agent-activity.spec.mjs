@@ -306,8 +306,8 @@ test("Stop in a message's activity ends its local work quietly", async ({
   ).toHaveCount(0);
 });
 
-// The channel's thread summary is host-owned; its activity popup offers Stop.
-test("Stop in a channel response activity stops its work", async ({
+// A top-level mention's work is in its thread, where its activity offers Stop.
+test("Stop in a top-level mention's thread activity stops its work", async ({
   page,
   app,
 }) => {
@@ -324,6 +324,7 @@ test("Stop in a channel response activity stops its work", async ({
       ["p", localAgentKey],
     ],
   });
+  app.histories.get("primary/alpha").push(request);
   app.relay.publish("primary", request);
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
@@ -332,9 +333,15 @@ test("Stop in a channel response activity stops its work", async ({
     (id) => window.localAgentFixture.handover(id),
     request.id,
   );
-  const row = page.locator(
-    `[data-channel-timeline] [data-message-id="${request.id}"]`,
-  );
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${request.id}"]`)
+    .getByRole("button", { name: /^View thread:.*Local tester/ })
+    .click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = thread.locator(`[data-message-id="${request.id}"]`);
   const summary = row.getByRole("button", { name: /^View agent activity:/ });
   await expect(summary).toBeVisible();
   await expect(
@@ -356,6 +363,8 @@ test("Stop in a channel response activity stops its work", async ({
           created_at: request.created_at + index + 1,
           tags: [
             ["h", "alpha"],
+            ["e", request.id, "", "root"],
+            ["e", request.id, "", "reply"],
             ["audience", "agents"],
           ],
         },
@@ -386,15 +395,17 @@ test("Stop in a channel response activity stops its work", async ({
       kind: 9,
       content: "Keep going while I check the result",
       created_at: request.created_at + 3,
-      tags: [["h", "alpha"]],
+      tags: [
+        ["h", "alpha"],
+        ["e", request.id, "", "root"],
+        ["e", request.id, "", "reply"],
+      ],
     }),
   );
   await expect(
     page.getByText("Keep going while I check the result", { exact: true }),
   ).toBeVisible();
-  const live = page.locator(
-    "[data-channel-timeline] [data-conversation-activity]",
-  );
+  const live = thread.locator("[data-conversation-activity]");
   await expect(live.getByText("Local tester", { exact: true })).toBeVisible();
   await stop.click();
   await expect
@@ -407,14 +418,14 @@ test("Stop in a channel response activity stops its work", async ({
   await expect(
     page.getByRole("button", { name: /^Collapse activity history:/ }),
   ).toBeFocused();
-  // These legacy updates have no explicit reply IDs, so they cannot claim
-  // this request's terminal outcome. It stays on the request itself.
-  const note = row.getByRole("button", {
-    name: /activity history: Local tester, Stopped/,
+  // The agent replied in the thread, so the outcome follows its replies.
+  const note = thread.getByRole("button", {
+    name: /activity history: Local tester: Stopped/,
   });
-  await expect(note).toContainText("Stopped");
+  await expect(note).toBeVisible();
+  await expect(thread.getByText("Stopped", { exact: true })).toBeVisible();
   const [bounds, noted] = await Promise.all([
-    row.boundingBox(),
+    thread.boundingBox(),
     note.boundingBox(),
   ]);
   expect(noted.x).toBeGreaterThanOrEqual(bounds.x);
@@ -447,7 +458,11 @@ test("one thread summary retains reply navigation and work on another reply", as
   );
   const summary = row.getByRole("button", { name: /^View thread:/ });
   const activity = row.getByRole("button", { name: /^View agent activity:/ });
-  await expect(activity).toBeVisible();
+  // The turn is in the mention's thread, so its work is there from the start.
+  await expect(summary).toHaveAccessibleName(
+    /Local tester is (working|waiting)/,
+  );
+  await expect(activity).toHaveCount(0);
   app.threadSummary(request.id, [agent], 1);
   await expect(summary).toContainText("1 reply");
   await expect(row.locator("[data-thread-summary]")).toHaveCount(1);
@@ -521,18 +536,21 @@ test("opens an active message's empty thread without losing its activity preview
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
   const trigger = row.getByRole("button", { name: "Reply", exact: true });
-  const response = row.getByRole("button", { name: /^View agent activity:/ });
-  await row.hover();
-  await expect(trigger).toBeVisible();
-  await response.locator("..").hover();
   const preview = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,
   });
-  await expect(preview).toHaveCount(0);
+  // The work is in the thread before its first reply: the channel row shows
+  // the thread summary, and no bubble or Stop of its own.
   await expect(
-    row.getByRole("button", { name: "Stop Local tester" }).locator(".."),
-  ).toHaveCSS("opacity", "1");
+    row.getByRole("button", { name: /^View thread:.*Local tester/ }),
+  ).toBeVisible();
+  await expect(
+    row.getByRole("button", { name: /^View agent activity:/ }),
+  ).toHaveCount(0);
+  await expect(
+    row.getByRole("button", { name: "Stop Local tester" }),
+  ).toHaveCount(0);
   await hoverMessage(row);
   await trigger.click();
   const thread = page.getByRole("complementary", {
@@ -675,8 +693,9 @@ for (const focusOn of ["bubble", "stop", "composer"]) {
   });
 }
 
-// Real browser focus must survive removal of the decorated host button/portal.
-test("finishing a channel response hands focus back only when it owns focus", async ({
+// Real browser focus must survive removal of the host's thread summary when
+// a top-level mention's work ends before anyone replied.
+test("finishing a zero-reply mention hands focus back only when it owns focus", async ({
   page,
   app,
 }) => {
@@ -688,11 +707,7 @@ test("finishing a channel response hands focus back only when it owns focus", as
     name: "Message #Alpha",
     exact: true,
   });
-  for (const focusOn of ["summary", "stop", "composer"]) {
-    // Exercise immediate popup removal without depending on an exit animation.
-    await page.emulateMedia({
-      reducedMotion: focusOn === "stop" ? "reduce" : "no-preference",
-    });
+  for (const focusOn of ["summary", "composer"]) {
     const request = app.sign({
       kind: 9,
       content: `Finish zero-reply activity: ${focusOn}`,
@@ -706,22 +721,17 @@ test("finishing a channel response hands focus back only when it owns focus", as
     const row = page.locator(
       `[data-channel-timeline] [data-message-id="${request.id}"]`,
     );
-    const summary = row.getByRole("button", { name: /^View agent activity:/ });
-    const popup = page.getByRole("dialog", {
-      name: "Agent activity",
-      exact: true,
+    const summary = row.getByRole("button", {
+      name: /^View thread:.*Local tester/,
     });
     await expect(summary).toBeVisible();
-    if (focusOn === "stop") {
-      await row.getByRole("button", { name: "Stop Local tester" }).focus();
-    } else if (focusOn === "summary") await summary.focus();
+    if (focusOn === "summary") await summary.focus();
     else await composer.focus();
     await page.evaluate(
       (id) => window.localAgentFixture.finish(id, true),
       request.id,
     );
     await expect(summary).toHaveCount(0);
-    await expect(popup).toHaveCount(0);
     await expect(
       focusOn === "composer"
         ? composer
@@ -769,7 +779,12 @@ test("the published-activity tab shows turns its agent published", async ({
     key,
   );
   await page
-    .getByRole("form", { name: "Send a message to Alpha", exact: true })
+    .locator("[data-composer-dock]", {
+      has: page.getByRole("form", {
+        name: "Send a message to Alpha",
+        exact: true,
+      }),
+    })
     .locator("..")
     .getByRole("button", { name: /^Activity: .+ working$/ })
     .hover();
@@ -861,4 +876,77 @@ test("the published-activity tab shows turns its agent published", async ({
       .getByRole("complementary", { name: "Thread", exact: true })
       .getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeVisible();
+});
+
+test.describe("Inline threads", () => {
+  test.use({ threadPlacement: "inline" });
+
+  // Only the tab workspace beside a real conversation shows where it opens.
+  test("a turn's thread label in an agent's activity in the side pane opens the thread as a tab", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await expect
+      .poll(() => page.evaluate(() => !!window.localAgentFixture))
+      .toBe(true);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    // The fixture agent's key is the curve generator: secret key 1.
+    const key = new Uint8Array(32);
+    key[31] = 1;
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content.startsWith("Thread root"));
+    const turn = (turnId, payload) =>
+      app.observer(
+        {
+          kind: "turn_started",
+          seq: 1,
+          timestamp: new Date().toISOString(),
+          channelId: "alpha",
+          sessionId: turnId,
+          turnId,
+          payload,
+        },
+        key,
+      );
+    // Working in the channel, so its row there opens its activity.
+    turn("channel", {});
+    await page
+      .locator("[data-composer-dock]", {
+        has: page.getByRole("form", {
+          name: "Send a message to Alpha",
+          exact: true,
+        }),
+      })
+      .locator("..")
+      .getByRole("button", { name: /^Activity: .+ working$/ })
+      .hover();
+    await page
+      .getByRole("dialog", { name: "Working now", exact: true })
+      .getByRole("button", { name: /^View .*Local tester.* activity$/ })
+      .click();
+    // The activity is a profile tab in the side pane.
+    const side = page.locator("[data-panel-workspace]");
+    await expect(
+      side.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    turn("threaded", { threadRootEventId: root.id });
+    await side
+      .getByRole("button", {
+        name: `Thread ${root.id.slice(0, 8)}`,
+        exact: true,
+      })
+      .click();
+    // Chosen in the side pane, the thread opens there, not over the composer.
+    await expect(
+      side.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      side.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("[data-details-sheet-surface]")).toHaveCount(0);
+  });
 });

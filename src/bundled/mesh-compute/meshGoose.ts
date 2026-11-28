@@ -122,7 +122,11 @@ export class MeshGoose {
         return delivery.agent.remember(slug, body, after);
       },
     };
+    // The turn's one session, as its latest tool call reported it.
+    let contextTokens: number | undefined;
     const client = appClient(guarded, {
+      // Each message it posts carries its session's context size.
+      contextTokens: () => contextTokens,
       read: (path) => readFile(this.deps.spawn, cwd, path, signal),
       signal,
       check: () => {
@@ -134,8 +138,10 @@ export class MeshGoose {
         Promise.resolve({ entries: [], partial: false }),
       remembered: () => this.deps.remembered?.(delivery.agent.key),
     });
-    const tools: ToolServer = (_conversation, message) =>
-      respond(client, context, message);
+    const tools: ToolServer = (_conversation, message, _signal, tokens) => {
+      contextTokens = tokens;
+      return respond(client, context, message);
+    };
 
     const id = crypto.randomUUID();
     const saved: Saved = {

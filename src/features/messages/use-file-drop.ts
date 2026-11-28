@@ -28,16 +28,19 @@ export function useRejectUnclaimedDrops() {
   }, []);
 }
 
-/** Route a file drop to this pane's composer, never another open conversation. */
+/** Route a file drop to this pane's composer, never another open conversation.
+ * `folders` are the dropped files that are folders. */
 export function useFileDrop(
   composer: RefObject<HTMLFormElement | null>,
   enabled: boolean,
-  attach: (files: readonly File[]) => void,
+  attach: (files: readonly File[], folders: ReadonlySet<File>) => void,
 ) {
   const [dragging, setDragging] = useState(false);
-  const accept = useEffectEvent((files: readonly File[]) => {
-    if (enabled) attach(files);
-  });
+  const accept = useEffectEvent(
+    (files: readonly File[], folders: ReadonlySet<File>) => {
+      if (enabled) attach(files, folders);
+    },
+  );
   useEffect(() => {
     setDragging(false);
     const form = composer.current;
@@ -50,9 +53,12 @@ export function useFileDrop(
     let under: EventTarget | null = null;
     const files = (event: DragEvent) =>
       event.dataTransfer?.types.includes("Files");
+    // Content marked data-own-drops, such as a plugin's card, takes its own
+    // drops, so the pane's composer leaves them alone.
     const owns = (event: DragEvent) =>
       event.target instanceof Element &&
-      (event.target.closest("[data-attachment-drop-zone]") ?? form) === zone;
+      (event.target.closest("[data-attachment-drop-zone], [data-own-drops]") ??
+        form) === zone;
     const reset = () => {
       under = null;
       setDragging(false);
@@ -88,7 +94,21 @@ export function useFileDrop(
       event.preventDefault();
       event.stopPropagation();
       reset();
-      accept(Array.from(event.dataTransfer?.files ?? []));
+      const dropped = Array.from(event.dataTransfer?.files ?? []);
+      // A folder is listed among the files, as a zero-byte one in WebKit. Only
+      // its entry, readable during the drop alone, tells it from an empty file.
+      const entries = Array.from(event.dataTransfer?.items ?? [])
+        .filter((item) => item.kind === "file")
+        .map((item) => item.webkitGetAsEntry?.());
+      // Entries pair with the files by position alone. Lists that do not line
+      // up name no folders, rather than call a real file one.
+      const paired = entries.length === dropped.length;
+      accept(
+        dropped,
+        new Set(
+          dropped.filter((_, index) => paired && entries[index]?.isDirectory),
+        ),
+      );
     };
     zone.addEventListener("dragenter", enter);
     zone.addEventListener("dragleave", leave);

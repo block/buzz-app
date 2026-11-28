@@ -57,6 +57,7 @@ function sessions(
     /** The host refuses every process, as at its process limit. */
     full: boolean;
     room: () => Promise<boolean>;
+    nativeMcp: (cwd: string) => Promise<string | undefined>;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known, options.env);
@@ -95,6 +96,7 @@ function sessions(
         model: current,
         ...(options.tools ? { tools: options.tools } : {}),
         ...(options.agent ? { agent: options.agent } : {}),
+        ...(options.nativeMcp ? { nativeMcp: options.nativeMcp } : {}),
       };
     },
     fingerprint: () => model,
@@ -159,6 +161,33 @@ const answered = (
       message.type === "control_response" &&
       (message.response as { request_id?: string }).request_id === id,
   )?.response;
+
+it("keeps the MCP config a process read at spawn, a spare's too, and lists only running ones", async () => {
+  let config = "spare-time";
+  const nativeMcp = async () => config;
+  const { pool, spare, live } = withSpare({ nativeMcp });
+  spare.warm({ cwd: "/work", model: "opus", nativeMcp });
+  await flush();
+  config = "turn-time";
+  await pool.deliver("c/root", "hello", 10);
+  await pool.deliver("d/root", "hi", 10);
+  await flush();
+  const prints = async () =>
+    Promise.all(
+      pool
+        .processes()
+        .map(async (p) => [p.nativeMcp?.folder, await p.nativeMcp?.print]),
+    );
+  // The first adopted the spare, read before the change; the next one the
+  // spare warmed again.
+  expect(await prints()).toEqual([
+    ["/work", "spare-time"],
+    ["/work", "turn-time"],
+  ]);
+  live()[0]?.exit(0);
+  await flush();
+  expect(pool.processes()).toHaveLength(1);
+});
 
 it("starts a new conversation on the shared spare and warms another", async () => {
   const { pool, spare, store, claudes } = withSpare();

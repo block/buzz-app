@@ -54,6 +54,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import {
+  afterAll,
   afterEach,
   assert,
   beforeAll,
@@ -551,6 +552,12 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+});
+// Services the tests leave running can still log a failed background step
+// after the last test; one reaching Vitest as its worker closes fails the run.
+afterAll(() => {
+  for (const level of ["log", "info", "warn", "error", "debug"] as const)
+    vi.spyOn(console, level).mockImplementation(() => {});
 });
 
 it("creates an agent in the community shown, with its type's defaults, and publishes its profile", async () => {

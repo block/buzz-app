@@ -23,7 +23,7 @@ import {
   recommendedRun,
 } from "../../features/agents/recommended";
 import { activeRoute, routeLabel } from "../../features/agents/model-routes";
-import { REQUEST_TIMEOUT_MS } from "./goose";
+import { GOOSE_RESERVED, REQUEST_TIMEOUT_MS } from "./goose";
 import { gooseRun } from "./run";
 import { readModelSettings } from "../../features/agents/model-settings";
 import { explainTurn, GooseSetup, readNoProxy, REVIEW_REFUSED } from "./setup";
@@ -282,5 +282,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
     models: (agent) => setup.picks(config(agent.config)),
     recommends: offered,
     ...gooseRun(runtime),
+    mcpServers: {
+      transports: ["stdio", "http"],
+      reserved: GOOSE_RESERVED,
+      label: "goose",
+      inherited: async (agent) => {
+        if (agent.protection) return { servers: [] };
+        const [{ servers, print }, started] = await Promise.all([
+          setup.inheritedMcp(),
+          Promise.all(runtime.nativeMcp(agent.key)),
+        ]);
+        // A process whose start couldn't be listed counts as unchanged.
+        return {
+          servers,
+          changed: started.some((then) => then !== undefined && then !== print),
+        };
+      },
+    },
   });
 };

@@ -1,13 +1,16 @@
 //! Environment variables local agents start with: one list for every agent on
 //! this device, and one for each agent. Native code owns them: each list is
 //! kept in the OS credential store under Buzz's own item, never synced, and no
-//! command returns a value. They are added to the processes of Buzz's harnesses
+//! command returns a value but an agent's MCP values (below). They are added to the processes of Buzz's harnesses
 //! that ask for them and run a local, unprotected agent (a bundled plugin's
 //! process declared `agentEnv`, `for_spawn`): the device list, then the named
 //! agent's own, so its variable wins, after the login shell's and before the
 //! harness's own, so a harness's variable wins. A saved list reaches processes
 //! started after the save; running ones keep the list they started with until
 //! the agent restarts.
+//!
+//! An agent's MCP server values are a third list (`MCP_SERVICE`), added to
+//! its own for the same processes under Buzz-chosen names.
 //!
 //! Like the Claude key (`claude_key.rs`), a value reaches every command the
 //! agent runs, and this trusts installed plugin code.
@@ -36,6 +39,97 @@ const AGENT_SERVICE: &str = if cfg!(debug_assertions) {
 } else {
     "xyz.block.buzz.desktop.agent-env.agent"
 };
+/// Each agent's MCP server values, under its pubkey as the account. Kept
+/// apart from its own list: they reach a process under Buzz's own names
+/// (`MCP_PREFIX`), and a harness that sends them in its protocol reads them
+/// with `agent_mcp_env_values`, the one command that returns values.
+#[cfg_attr(test, allow(dead_code))]
+const MCP_SERVICE: &str = if cfg!(debug_assertions) {
+    "xyz.block.buzz.desktop.agent-env.mcp.debug"
+} else {
+    "xyz.block.buzz.desktop.agent-env.mcp"
+};
+/// The key of an agent's MCP slot index among the lists: the ids of its
+/// slots, no values. Each slot's values are their own item, `slot_key`, so
+/// each fits the store's per-item limit and a save staging a new slot never
+/// shares an item with the one in use.
+fn mcp_key(pubkey: &str) -> String {
+    format!("mcp:{pubkey}")
+}
+/// The item of one slot's values.
+fn slot_key(pubkey: &str, slot: &str) -> String {
+    format!("mcp:{pubkey}:{slot}")
+}
+/// The slot of an MCP value's name, `BUZZMCP_<16 hex>_<name>`.
+fn slot_of(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix(MCP_PREFIX)?;
+    let slot = rest.get(..16)?;
+    (rest.get(16..17) == Some("_") && rest.len() > 17 && is_slot(slot)).then_some(slot)
+}
+/// A slot id as Buzz writes it in value names: 16 upper-case hex digits.
+fn is_slot(slot: &str) -> bool {
+    slot.len() == 16
+        && slot
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+}
+
+/// The index item's format. Anything else, an older layout included, is
+/// damaged, never an empty index.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Index {
+    #[serde(rename = "buzzMcpSlots")]
+    version: u8,
+    slots: std::collections::BTreeSet<String>,
+}
+fn read_index(store: &dyn KeyStore) -> Result<std::collections::BTreeSet<String>, String> {
+    let damaged = || "The saved MCP server values are damaged".to_string();
+    match store.read()? {
+        None => Ok(Default::default()),
+        Some(text) => {
+            let index: Index = serde_json::from_str(&text).map_err(|_| damaged())?;
+            if index.version != 1 || !index.slots.iter().all(|slot| is_slot(slot)) {
+                return Err(damaged());
+            }
+            Ok(index.slots)
+        }
+    }
+}
+fn write_index(
+    store: &dyn KeyStore,
+    slots: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    if slots.is_empty() {
+        return store.delete();
+    }
+    let text = serde_json::to_string(&Index {
+        version: 1,
+        slots: slots.clone(),
+    })
+    .map_err(|e| e.to_string())?;
+    // The index is one item too, under the same limit.
+    if text.encode_utf16().count() * 2 > SIZE_LIMIT {
+        return Err("This agent has too many MCP servers to save. Remove some.".into());
+    }
+    store.replace(&text)
+}
+/// Erases every slot item the index lists, each id leaving the index only
+/// once its item is gone, then the index. A failure keeps what's left, so
+/// a retry finishes it.
+fn erase_mcp(open: &dyn Fn(&str) -> Box<dyn KeyStore>, pubkey: &str) -> Result<(), String> {
+    let index = open(&mcp_key(pubkey));
+    let mut slots = read_index(&*index)?;
+    for slot in slots.clone() {
+        open(&slot_key(pubkey, &slot)).delete()?;
+        slots.remove(&slot);
+        write_index(&*index, &slots)?;
+    }
+    index.delete()
+}
+/// Every MCP value's name starts with it, so none is a variable the agent
+/// or its harness reads for itself.
+const MCP_PREFIX: &str = "BUZZMCP_";
 /// The Windows Credential Manager's limit on a stored password: its UTF-16
 /// bytes. Applied everywhere, so a list saved on one platform fits on all.
 const SIZE_LIMIT: usize = 2560;
@@ -452,9 +546,18 @@ pub(crate) fn eligible(agents: &[buzz_agent_controller::AppAgent], pubkey: &str)
 
 type Open = dyn Fn(&str) -> Box<dyn KeyStore> + Send + Sync;
 
+/// Runs a store call off the async runtime.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|_| "Secure storage is unavailable".to_string())?
+}
+
 /// The device list and every agent's own, each read once.
 pub(crate) struct AgentEnvs {
-    open: Box<Open>,
+    open: Arc<Open>,
     lists: std::sync::Mutex<std::collections::HashMap<String, Arc<AgentEnv>>>,
     /// Held across a save's eligibility check and write and across a delete,
     /// so neither lands inside the other.
@@ -467,7 +570,7 @@ impl AgentEnvs {
     }
     pub(crate) fn with(open: Box<Open>) -> Self {
         Self {
-            open,
+            open: Arc::from(open),
             lists: Default::default(),
             turn: Mutex::new(()),
         }
@@ -485,7 +588,20 @@ impl AgentEnvs {
     pub(crate) async fn for_process(&self, agent: Option<&str>) -> Lists {
         let device = self.list(DEVICE).for_process().await;
         let own = match agent.filter(|pubkey| agent_key(pubkey).is_ok()) {
-            Some(pubkey) => self.list(pubkey).for_process().await,
+            Some(pubkey) => {
+                let mut own = self.list(pubkey).for_process().await;
+                match self.mcp_slots(pubkey).await {
+                    Ok(slots) => {
+                        for slot in slots {
+                            own.extend(self.list(&slot_key(pubkey, &slot)).for_process().await);
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("Agents start without their MCP server values: {error}");
+                    }
+                }
+                own
+            }
             None => Vec::new(),
         };
         Lists { device, own }
@@ -532,25 +648,134 @@ impl AgentEnvs {
         }
         self.list(pubkey).set(rows).await
     }
-    /// Deletes the agent's list, which is done when there is none. Its read
-    /// copy goes only once the store item has.
+    /// `agent`'s MCP slots, from its index.
+    async fn mcp_slots(&self, pubkey: &str) -> Result<Vec<String>, String> {
+        let index = Arc::new((self.open)(&mcp_key(pubkey)));
+        Ok(blocking(move || read_index(&**index))
+            .await?
+            .into_iter()
+            .collect())
+    }
+    /// `agent`'s MCP server value names.
+    pub(crate) async fn mcp_status(&self, pubkey: &str) -> Result<Status, String> {
+        Ok(Status {
+            names: self.mcp_values(pubkey).await?.into_keys().collect(),
+            saved: false,
+        })
+    }
+    /// `agent`'s MCP server values, for a harness that sends them in its
+    /// protocol rather than its process environment.
+    pub(crate) async fn mcp_values(&self, pubkey: &str) -> Result<List, String> {
+        agent_key(pubkey)?;
+        let mut values = List::new();
+        for slot in self.mcp_slots(pubkey).await? {
+            values.extend(self.list(&slot_key(pubkey, &slot)).load().await?);
+        }
+        Ok(values)
+    }
+    /// Adds `rows` to the agent's MCP values and deletes `remove`, keeping
+    /// every other saved value: a save stages new values beside the ones a
+    /// published list still uses. A slot joins the index before its item is
+    /// written, and leaves it only once its item is deleted, so the index
+    /// always finds every item. Nothing changes when one is invalid.
+    pub(crate) async fn mcp_set(
+        &self,
+        pubkey: &str,
+        rows: Vec<Row>,
+        remove: Vec<String>,
+        eligible: impl FnOnce() -> Result<bool, String>,
+    ) -> Result<(), String> {
+        agent_key(pubkey)?;
+        let mut by_slot: BTreeMap<String, (Vec<Row>, Vec<String>)> = BTreeMap::new();
+        for row in rows {
+            let slot = slot_of(&row.name)
+                .ok_or_else(|| format!("{} isn't an MCP server value", row.name))?
+                .to_owned();
+            if row.value.is_none() {
+                return Err(format!("Enter a value for {}", row.name));
+            }
+            by_slot.entry(slot).or_default().0.push(row);
+        }
+        for name in remove {
+            let slot = slot_of(&name)
+                .ok_or_else(|| format!("{name} isn't an MCP server value"))?
+                .to_owned();
+            by_slot.entry(slot).or_default().1.push(name);
+        }
+        let _turn = self.turn.lock().await;
+        if !eligible()? {
+            return Err("This agent can't have MCP servers of its own".into());
+        }
+        let index = Arc::new((self.open)(&mcp_key(pubkey)));
+        let mut slots = {
+            let index = index.clone();
+            blocking(move || read_index(&**index)).await?
+        };
+        // Every item this save writes is in the index first.
+        let added: Vec<_> = by_slot
+            .iter()
+            .filter(|(slot, (rows, _))| !rows.is_empty() && !slots.contains(*slot))
+            .map(|(slot, _)| slot.clone())
+            .collect();
+        if !added.is_empty() {
+            slots.extend(added);
+            let (index, slots) = (index.clone(), slots.clone());
+            blocking(move || write_index(&**index, &slots)).await?;
+        }
+        for (slot, (rows, remove)) in by_slot {
+            if !slots.contains(&slot) {
+                continue;
+            }
+            let list = self.list(&slot_key(pubkey, &slot));
+            let mut next: Vec<Row> = list
+                .load()
+                .await?
+                .into_keys()
+                .filter(|name| !remove.contains(name) && !rows.iter().any(|row| &row.name == name))
+                .map(|name| Row { name, value: None })
+                .collect();
+            next.extend(rows);
+            if next.is_empty() {
+                let store = list.store.clone();
+                blocking(move || store.delete()).await?;
+                *list.list.lock().await = Some(List::new());
+                slots.remove(&slot);
+                let (index, slots) = (index.clone(), slots.clone());
+                blocking(move || write_index(&**index, &slots)).await?;
+            } else {
+                list.set(next).await.map_err(|error| {
+                    if error.contains("too long") {
+                        "This server's values are too long to save. Shorten them.".into()
+                    } else {
+                        error
+                    }
+                })?;
+            }
+        }
+        Ok(())
+    }
+    /// Deletes the agent's lists, which is done when there are none. Their
+    /// read copies go only once the store items have.
     pub(crate) async fn forget(&self, pubkey: &str) -> Result<(), String> {
         agent_key(pubkey)?;
         let _turn = self.turn.lock().await;
         let store = Arc::new((self.open)(pubkey));
-        tokio::task::spawn_blocking(move || store.delete())
-            .await
-            .map_err(|_| "Secure storage is unavailable".to_string())??;
+        blocking(move || store.delete()).await?;
+        let open = self.open.clone();
+        let agent = pubkey.to_owned();
+        let erased = blocking(move || erase_mcp(&*open, &agent)).await;
+        let own = mcp_key(pubkey);
         self.lists
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(pubkey);
-        Ok(())
+            .retain(|key, _| key != pubkey && !(erased.is_ok() && key.starts_with(&own)));
+        erased
     }
 }
 
-/// Deletes the own list of every agent the registry names, for Sign out's
-/// removal of agents: run before their rows go, so a failure is retried.
+/// Deletes the own list and MCP values of every agent the registry names,
+/// for Sign out's removal of agents: run before their rows go, so a failure
+/// is retried.
 pub(crate) fn forget_registry(
     agents: &buzz_agent_controller::AppAgents,
     open: &dyn Fn(&str) -> Box<dyn KeyStore>,
@@ -558,22 +783,25 @@ pub(crate) fn forget_registry(
     for agent in agents.list().map_err(|error| error.to_string())? {
         if agent_key(&agent.pubkey).is_ok() {
             open(&agent.pubkey).delete()?;
+            erase_mcp(open, &agent.pubkey)?;
         }
     }
     Ok(())
 }
 
-/// The OS credential store item for `key`: the device list's, or an agent's
-/// under its pubkey.
+/// The OS credential store item for `key`: the device list's, an agent's
+/// MCP slot index (`mcp_key`) or one slot's values (`slot_key`), under
+/// `<pubkey>` or `<pubkey>:<slot>`, or an agent's own under its pubkey.
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn os_store(key: &str) -> Box<dyn KeyStore> {
+    let (service, account) = match key.strip_prefix("mcp:") {
+        Some(pubkey) => (MCP_SERVICE, pubkey),
+        None if key == DEVICE => (DEVICE_SERVICE, key),
+        None => (AGENT_SERVICE, key),
+    };
     Box::new(OsStore {
-        service: if key == DEVICE {
-            DEVICE_SERVICE
-        } else {
-            AGENT_SERVICE
-        },
-        account: key.to_owned(),
+        service,
+        account: account.to_owned(),
     })
 }
 
@@ -650,6 +878,49 @@ pub(crate) async fn agent_env_set(
     let agents = agents.agents()?;
     let pubkey = agent.clone();
     envs.set(&agent, rows, move || {
+        agents
+            .list()
+            .map(|rows| eligible(&rows, &pubkey))
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn agent_mcp_env_status(
+    envs: tauri::State<'_, AgentEnvs>,
+    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
+    agent: String,
+) -> Result<Status, String> {
+    if !eligible_here(&agents, &agent).await? {
+        return Err("This agent can't have MCP servers of its own".into());
+    }
+    envs.mcp_status(&agent).await
+}
+
+#[tauri::command]
+pub(crate) async fn agent_mcp_env_values(
+    envs: tauri::State<'_, AgentEnvs>,
+    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
+    agent: String,
+) -> Result<List, String> {
+    if !eligible_here(&agents, &agent).await? {
+        return Err("This agent can't have MCP servers of its own".into());
+    }
+    envs.mcp_values(&agent).await
+}
+
+#[tauri::command]
+pub(crate) async fn agent_mcp_env_set(
+    envs: tauri::State<'_, AgentEnvs>,
+    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
+    agent: String,
+    rows: Vec<Row>,
+    remove: Vec<String>,
+) -> Result<(), String> {
+    let agents = agents.agents()?;
+    let pubkey = agent.clone();
+    envs.mcp_set(&agent, rows, remove, move || {
         agents
             .list()
             .map(|rows| eligible(&rows, &pubkey))

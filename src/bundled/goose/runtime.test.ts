@@ -3,7 +3,15 @@ import { messageTokenTags } from "../../features/messages/message-tokens";
 import { memoryStorage } from "../../features/agents/test-fakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { SectionChoices } from "../../features/agent-harness/sections/choices";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import {
   type RecommendedRun,
@@ -61,6 +69,7 @@ import {
   standalonePrompt,
 } from "./runtime";
 import { explainTurn } from "./setup";
+import { approvalTemplate } from "../../features/agents/mcp-servers";
 
 describe("sessionTitle", () => {
   it("names the agent, the channel and a thread's root", () => {
@@ -78,7 +87,8 @@ describe("sessionTitle", () => {
 });
 
 const self = "c".repeat(64);
-const alice = "a".repeat(64);
+const aliceKey = keypair();
+const alice = aliceKey.pubkey;
 const bob = "b".repeat(64);
 const channel = "chan-1";
 const message = (
@@ -136,9 +146,14 @@ function setup(
     defaultProvider?: () => Promise<string | undefined>;
     /** What agents on Recommended run on. */
     recommended?: RecommendedRun;
+    /** Extension keys goose's own config lists. */
+    extensions?: readonly string[];
+    /** The agent config's signed `mcpServers`. */
+    mcpServers?: unknown;
   }> = {},
 ) {
   const fake = fakeSpawn({
+    ...(options.extensions && { extensions: options.extensions }),
     hold: options.hold ?? false,
     load: true,
     // As goose lists it: a resumed session is put back on its default.
@@ -305,6 +320,9 @@ function setup(
         ...DEFAULT_CONFIG,
         scope: options.scope ?? "thread",
         ...(options.provider ? { provider: options.provider } : {}),
+        ...(options.mcpServers !== undefined && {
+          mcpServers: options.mcpServers,
+        }),
       },
       signal: new AbortController().signal,
       workingUntil: () => undefined,
@@ -1323,6 +1341,45 @@ describe("GooseRuntime", () => {
       stop.abort();
       await done;
     }
+  });
+
+  it("removes an inherited extension the owner turned off, and only one goose has", async () => {
+    // Where the device records the approval it used.
+    vi.stubGlobal("localStorage", memoryStorage());
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const mcpServers = signed(
+      aliceKey,
+      approvalTemplate(self, 1, {
+        servers: [],
+        disabledInherited: ["nativeprobe", "elsewhere"],
+      }),
+    );
+    const { deliver, goose } = setup({
+      mcpServers,
+      extensions: ["nativeprobe", "kept"],
+    });
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    expect(goose()?.removed).toEqual(["session-1 nativeprobe"]);
+  });
+
+  it("keeps the extensions a goose listed at its start, however many sessions open in it", async () => {
+    const extensions = ["nativeprobe"];
+    const { deliver, goose, runtime } = setup({ extensions });
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    extensions.push("added");
+    await deliver(message("2", "@Gander again"));
+    await flush(100);
+    const prints = await Promise.all(runtime.nativeMcp(self));
+    expect(prints).toHaveLength(1);
+    expect(prints[0]).toContain("nativeprobe");
+    expect(prints[0]).not.toContain("added");
+    goose()?.exit(0);
+    await flush(100);
+    expect(runtime.nativeMcp(self)).toEqual([]);
   });
 
   it("posts nothing goose wrote without `send`", async () => {

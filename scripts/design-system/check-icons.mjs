@@ -23,6 +23,7 @@ const nonIconDependencies = new Set([
   "@fontsource/jetbrains-mono",
   "@hypothesi/tauri-mcp-server", // Native MCP client.
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
+  "@modelcontextprotocol/client", // The Pi host's client for agents' MCP servers.
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@noble/hashes",

@@ -1,4 +1,11 @@
 import { readSubthread } from "../../features/relay/subthread";
+import {
+  approvalId,
+  mcpGeneration,
+  startList,
+} from "../../features/agents/mcp-servers";
+import { type ClaudeReads, claudeChanged, claudeSnapshot } from "./inherited";
+
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
@@ -147,6 +154,13 @@ import {
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { withWakes } from "../../features/agents/session-usage";
+
+/** The signed MCP list in a config, as it changes. */
+/** The approval the agent's sessions start on now, for fingerprints. */
+const mcpOf = (
+  config: unknown,
+  handle: Readonly<{ pubkey: string; owner: string }> | undefined,
+) => (handle ? approvalId(config, handle) : null);
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -345,6 +359,31 @@ export class ClaudeRuntime {
   private readonly notices = new Map<AgentKey, Map<string, string>>();
   /** Counts changes of credentials, which start processes again. */
   private credentials = 0;
+  /** How a local process reads Claude Code's own MCP servers when it
+   * starts; a remote target's are its own. */
+  private nativeMcp() {
+    const readFile = this.host.readFile?.bind(this.host);
+    if (this.target || !readFile) return {};
+    const resolve = this.host.resolveDirectory?.bind(this.host);
+    return {
+      nativeMcp: async (cwd: string) =>
+        (await claudeSnapshot(readFile, cwd, resolve)).print,
+    };
+  }
+  /** Whether any of this agent's running processes started with other MCP
+   * servers of Claude Code's own than its config has now: each folder they
+   * started in is read once, sharing one read of `~/.claude.json`. A folder
+   * that can't be read counts as unchanged. */
+  nativeMcpChanged(agent: AgentKey, reads?: ClaudeReads): Promise<boolean> {
+    return claudeChanged(
+      this.host.readFile?.bind(this.host),
+      (this.agents.get(agent)?.sessions.processes() ?? []).flatMap((process) =>
+        process.nativeMcp ? [process.nativeMcp] : [],
+      ),
+      this.host.resolveDirectory?.bind(this.host),
+      reads,
+    );
+  }
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     // Started ahead of need, it never stops a conversation to make room.
@@ -357,7 +396,10 @@ export class ClaudeRuntime {
   );
 
   constructor(
-    private readonly host: Pick<Host, "spawn" | "resolveDirectory">,
+    private readonly host: Pick<
+      Host,
+      "spawn" | "resolveDirectory" | "readFile"
+    >,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (key: AgentKey) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
@@ -715,7 +757,10 @@ export class ClaudeRuntime {
             !this.target &&
             !(this.bound(agent.key) || this.confirmedRemote.has(agent.key)),
         )
-        .map((agent) => where(this.resolveConfig(agent.config))),
+        .map((agent) => ({
+          ...where(this.resolveConfig(agent.config)),
+          ...this.nativeMcp(),
+        })),
     );
     this.notify();
   }
@@ -2358,7 +2403,8 @@ export class ClaudeRuntime {
         ? {
             spare: {
               take: async (where: Parameters<Spare["take"]>[0]) =>
-                (await hasOwnEnv(agent)) === false
+                (await hasOwnEnv(agent)) === false &&
+                !mcpOf(entry.config, entry.handle)
                   ? this.spare.take(where)
                   : undefined,
             },
@@ -2426,6 +2472,8 @@ export class ClaudeRuntime {
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,
+          mcpOf(entry.config, entry.handle),
+          mcpGeneration(pubkeyOf(agent)),
           entry.team,
           entry.name,
           entry.memory,
@@ -2462,6 +2510,7 @@ export class ClaudeRuntime {
         const sections = sectionsOf(handle, key);
         return {
           ...where(entry.config),
+          ...this.nativeMcp(),
           cwd,
           ...(gate
             ? {
@@ -2481,6 +2530,21 @@ export class ClaudeRuntime {
           ...(!this.target && directories ? { directories } : {}),
           ...(handle
             ? { agent: { pubkey: handle.pubkey, relay: handle.relay } }
+            : {}),
+          ...(handle && !gate
+            ? {
+                mcp: startList(
+                  entry.config,
+                  handle,
+                  (
+                    await claudeSnapshot(
+                      this.host.readFile?.bind(this.host),
+                      cwd,
+                      resolve,
+                    )
+                  ).servers.map((i) => i.name),
+                ),
+              }
             : {}),
           hook: (session, event, input) =>
             this.hook(agent, session, event, input),

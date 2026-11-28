@@ -3,6 +3,7 @@ import {
   snapshotJSON,
   writeJSON,
 } from "../../features/agent-protection/json-stream";
+import { claudeServers, type McpList } from "../../features/agents/mcp-servers";
 import { CLAUDE_HOOK_EVENTS, type ClaudeHook } from "./hooks";
 import {
   type Attribution,
@@ -62,6 +63,9 @@ export type ClaudeLaunch = Readonly<{
   cwd: string;
   /** Folders besides `cwd` that the session may work in and stay in. */
   directories?: readonly string[];
+  /** Reads Claude Code's own MCP servers for a folder, as a print without
+   * secrets; undefined when they can't be read. */
+  nativeMcp?: (cwd: string) => Promise<string | undefined>;
   /** Read-only catalog probe, without workspace customizations or tools. */
   discovery?: boolean;
   /** Runs the protected release, as the host verified it, without protection
@@ -93,6 +97,9 @@ export type ClaudeLaunch = Readonly<{
   hook?: ClaudeHook;
   /** The agent it works for: the `buzz` it runs acts as that agent. */
   agent?: Readonly<{ pubkey: string; relay: string }>;
+  /** The agent's own MCP servers, and the names of servers from Claude's own
+   * config whose tools it is denied. A security review takes neither. */
+  mcp?: McpList;
 }>;
 
 /** Answers the in-process server's JSON-RPC for the conversation a process
@@ -192,6 +199,11 @@ async function setsInheritedHeaders(spawn: Spawn) {
 }
 
 export class ClaudeProcess {
+  /** Claude Code's own MCP servers as this process loaded them, at spawn,
+   * with the folder it read them for. Never replaced. */
+  nativeMcp:
+    | Readonly<{ folder: string; print: Promise<string | undefined> }>
+    | undefined;
   private protection: ClaudeProtection | undefined;
   private protectionLifetime = new AbortController();
   private protectedInstructions = "";
@@ -336,6 +348,12 @@ export class ClaudeProcess {
     let claude: ClaudeProcess | undefined;
     const early: string[] = [];
     const earlyErrors: string[] = [];
+    const mcp = security || launch.discovery ? undefined : launch.mcp;
+    // Read as Claude Code loads its config: when it starts.
+    const native =
+      security || launch.discovery || launch.pinned
+        ? undefined
+        : launch.nativeMcp?.(launch.cwd).catch(() => undefined);
     const process = await spawn(pinned ?? "claude", {
       args: [
         "--output-format",
@@ -391,11 +409,19 @@ export class ClaudeProcess {
               "--mcp-config",
               JSON.stringify({
                 mcpServers: {
+                  ...(mcp && claudeServers(mcp)),
                   // Its tools load on search, but for those it marks with
                   // `_meta["anthropic/alwaysLoad"]`.
                   [TOOL_SERVER]: { type: "sdk", name: TOOL_SERVER },
                 },
               }),
+            ]
+          : []),
+        // An inherited server turned off still starts, without its tools.
+        ...(mcp?.disabledInherited.length
+          ? [
+              "--disallowedTools",
+              mcp.disabledInherited.map((n) => `mcp__${n}`).join(","),
             ]
           : []),
       ],
@@ -487,6 +513,7 @@ export class ClaudeProcess {
       launch.hook,
     );
     claude.protection = launch.protection;
+    if (native) claude.nativeMcp = { folder: launch.cwd, print: native };
     // Checked once, only when Buzz first attributes this process.
     let inherited: Promise<boolean | undefined> | undefined;
     claude.inherited = () => (inherited ??= setsInheritedHeaders(spawn));

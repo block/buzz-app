@@ -61,6 +61,7 @@ import { wake } from "../../features/agent-harness/wakes";
 import { composeBase } from "../../features/agent-harness/sections/compose";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { Wire } from "./rpc";
+import { approvalTemplate } from "../../features/agents/mcp-servers";
 import { ELSEWHERE, REMOTE_UNATTRIBUTED, type ProviderConfig } from "./gateway";
 import {
   unattributedNotice,
@@ -78,6 +79,13 @@ vi.mock("./voice", () => ({
 
 // The plugin registers only in the Mac/Linux desktop app.
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
+vi.mock("../../features/agents/mcp-servers", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../features/agents/mcp-servers")
+  >()),
+  // The value of `docs`'s TOKEN, in slot 00…01.
+  mcpValues: async () => ({ BUZZMCP_0000000000000001_544F4B454E: "t0ken" }),
+}));
 /** What the gateway's own route module reports, where a test sets it. */
 const liveRoutes = vi.hoisted(() => ({
   route: undefined as unknown,
@@ -113,7 +121,8 @@ vi.mock("../agents/agent-env", () => ({
   },
 }));
 
-const owner = "a".repeat(64);
+const ownerKey = keypair();
+const owner = ownerKey.pubkey;
 const pubkey = "b".repeat(64);
 /** A 1x1 two-colour GIF without metadata, so attaching it uploads it unchanged. */
 const GIF =
@@ -1049,11 +1058,12 @@ it("hands over promptly and runs conversations independently on one server", asy
     },
   });
   expect((started.config as Record<string, unknown>).mcp_servers).toEqual({
-    "company.tools": { enabled: false, command: "secret-tool" },
+    // An ordinary agent runs the owner's own servers as configured.
+    "company.tools": { enabled: true, command: "secret-tool" },
   });
   expect(started.config).toMatchObject({
     web_search: "disabled",
-    mcp_servers: { "company.tools": { enabled: false } },
+    mcp_servers: { "company.tools": { enabled: true } },
     "features.apps": false,
     "features.plugins": false,
   });
@@ -1097,10 +1107,10 @@ it("leaves Codex's Apps and plugins to its configuration only for an agent that 
   const { config } = started;
   expect(config).not.toHaveProperty("features.apps");
   expect(config).not.toHaveProperty("features.plugins");
-  // Everything else inherited stays off.
+  // Web search stays off; the owner's own servers run.
   expect(config).toMatchObject({
     web_search: "disabled",
-    mcp_servers: { "company.tools": { enabled: false } },
+    mcp_servers: { "company.tools": { enabled: true } },
   });
   f.complete(0, "DONE");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
@@ -2189,6 +2199,49 @@ function protectedPreview(
   };
 }
 
+it("gives a protected agent none of the user's servers and none of its own, on start and resume", async () => {
+  const f = protectedPreview();
+  const handle = f.handle;
+  if (!handle) throw new Error("Missing protected handle");
+  const mcpServers = signed(
+    ownerKey,
+    approvalTemplate(pubkey, 1, {
+      servers: [
+        {
+          name: "docs",
+          enabled: true,
+          slot: "0000000000000001",
+          transport: "http",
+          url: "https://docs.test/mcp",
+          headers: [],
+        },
+      ],
+      disabledInherited: [],
+    }),
+  );
+  const turn = (text: string) => ({
+    ...f.delivery(text),
+    agent: handle,
+    config: { ...(f.agent.config as object), mcpServers },
+  });
+  const only = { "company.tools": { command: "secret-tool", enabled: false } };
+  const servers = (method: string) =>
+    (
+      f.worker.sent.filter((wire) => wire.method === method).at(-1)?.params as
+        | { config: { mcp_servers: Record<string, unknown> } }
+        | undefined
+    )?.config.mcp_servers;
+  await f.runtime.run(turn("@Codex first"));
+  await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+  expect(servers("thread/start")).toMatchObject(only);
+  expect(servers("thread/start")).not.toHaveProperty("docs");
+  await f.worker.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(turn("@Codex second"));
+  await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(2));
+  expect(servers("thread/resume")).toMatchObject(only);
+  expect(servers("thread/resume")).not.toHaveProperty("docs");
+});
 it("contains Codex file-tool reads with its captured policy and reviews the captured text", async () => {
   const f = protectedPreview();
   const handle = f.handle;
@@ -3108,6 +3161,57 @@ it.each([
     expect(params?.summary).toBe(expected);
   },
 );
+it("starts and resumes a thread with the owner's signed MCP servers through the saved settings", async () => {
+  // Where a device records the lists it accepted.
+  vi.stubGlobal("localStorage", memoryStorage());
+  const f = fixture();
+  const mcpServers = signed(
+    ownerKey,
+    approvalTemplate(pubkey, 1, {
+      servers: [
+        {
+          name: "docs",
+          enabled: true,
+          slot: "0000000000000001",
+          transport: "http",
+          url: "https://docs.test/mcp",
+          headers: ["TOKEN"],
+        },
+        {
+          name: "idle",
+          enabled: false,
+          slot: "0000000000000002",
+          transport: "stdio",
+          command: "idle",
+          args: [],
+          env: [],
+        },
+      ],
+      disabledInherited: ["company.tools"],
+    }),
+  );
+  const turn = (text: string) => {
+    const d = f.delivery(text);
+    return { ...d, config: { ...(d.config as object), mcpServers } };
+  };
+  const expected = {
+    "company.tools": { command: "secret-tool", enabled: false },
+    docs: { url: "https://docs.test/mcp", http_headers: { TOKEN: "t0ken" } },
+  };
+  await f.runtime.run(turn("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const start = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as { config: { mcp_servers: unknown } };
+  expect(start.config.mcp_servers).toMatchObject(expected);
+  expect(start.config.mcp_servers).not.toHaveProperty("idle");
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(turn("@Codex second"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const resume = f.sent.find((wire) => wire.method === "thread/resume")
+    ?.params as { config: { mcp_servers: unknown } };
+  expect(resume.config.mcp_servers).toMatchObject(expected);
+});
 it("asks for reasoning summaries on a resumed turn", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("@Codex first"));

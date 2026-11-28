@@ -82,6 +82,7 @@ import type { HistoryPresentation } from "../../features/agents/history-presenta
 import { AgentConfigHistoryRow } from "../../features/agents/AgentConfigHistoryRow";
 import { useAgentSettingsHost } from "./AgentSettingsHost";
 import { AgentEnvironment } from "./AgentEnvironment";
+import { AgentMcpServers } from "./AgentMcpServers";
 
 /** The bundled harnesses that start an agent with its own variables. */
 const OWN_ENV_TYPES = new Set([
@@ -661,6 +662,16 @@ export function AgentDetails({
                         agent={agent.pubkey}
                         restartAgent={() => agents.restartAgent(agent.pubkey)}
                         openSettings={openSettings}
+                      />
+                    )}
+                  {agent.place === "here" &&
+                    !agent.protection &&
+                    type?.mcpServers && (
+                      <AgentMcpServers
+                        agents={agents}
+                        agent={agent}
+                        capability={type.mcpServers}
+                        restartAgent={() => agents.restartAgent(agent.pubkey)}
                       />
                     )}
                 </div>

@@ -155,6 +155,51 @@ Unset, the create form has no Automatic option.
   `settings` in the agent's settings revision (kind 45010), with a matching
   `["preset", "recommended"]` tag. Older versions keep it when they edit.
 
+### MCP server approvals (kind 45015)
+
+An agent's own MCP servers sync as `mcpServers` in its settings revision
+(kind 45010). The value is a whole Nostr event of kind 45015, signed by the
+agent's owner, and never published on its own:
+
+```json
+{
+  "kind": 45015,
+  "pubkey": "<owner>",
+  "tags": [["agent", "<agent pubkey>"], ["seq", "3"]],
+  "content": "{\"version\":1,\"servers\":[...],\"disabledInherited\":[\"<name>\"]}"
+}
+```
+
+Each server is `{ "name", "enabled", "slot", "transport": "stdio", "command",
+"args", "env" }` or `{ "name", "enabled", "slot", "transport": "http", "url",
+"headers" }`, where `env` and `headers` list variable names only. `slot` is 16
+hex digits; a device keeps the values under
+`BUZZMCP_<SLOT>_<hex of the name>` in its credential store, and they never
+sync. Each slot's values are their own credential store item, and a small
+index item lists the agent's slots, so sign-out can find and erase them all.
+`disabledInherited` names the servers from the harness's own config that the
+owner turned off.
+
+Which event a device uses:
+- It uses an event only when the owner signed it for that agent, and its `seq`
+  is not lower than the one this device last used. At an equal `seq`, the
+  event with the lower id wins, so two devices that saved at once settle on
+  the same list. An older or invalid event is refused, and the agent doesn't
+  start.
+- Each saved list has a `seq` one higher than any this device used or the
+  settings carry.
+- **Never configured:** there is no `mcpServers` and this device has never
+  used one for the agent. The agent has no servers of its own and turns off
+  none of the harness's.
+- **Left out:** a settings revision without `mcpServers` after this device
+  used one. That happens when an older version saves the settings. The
+  device keeps using the event it last used, which it keeps whole and checks
+  again. If it can't recover or read that event, the agent doesn't start
+  until the owner resets its servers.
+- **Cleared:** a signed event whose `servers` and `disabledInherited` are
+  empty. That is how a reset and removing every server are stored. It is not
+  the same as never configured, because it is newer than every list before it.
+
 A bundled plugin can replace the setup per launch with
 `ctx.agents.recommend(source)`, for example per team. Buzz waits up to five
 seconds for it, then falls back to `BUZZ_RECOMMENDED_AGENT`, so set both.

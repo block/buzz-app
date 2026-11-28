@@ -334,6 +334,8 @@ export function syncedSettings(
       settings: Record<string, string>;
       recommended?: true;
       pluginNotes?: PluginNotes;
+      /** The owner-signed MCP server list, unchecked: a launch checks it. */
+      mcpServers?: unknown;
     }>
   | Readonly<{ problem: string; typeMismatch?: true }> {
   const body = JSON.parse(content) as {
@@ -341,6 +343,7 @@ export function syncedSettings(
     settings?: unknown;
     preset?: unknown;
     modelRoute?: unknown;
+    mcpServers?: unknown;
   };
   if (body.agentType !== undefined && body.agentType !== agentType)
     return {
@@ -361,6 +364,9 @@ export function syncedSettings(
         ...(body.preset === PRESET ? { recommended: true as const } : {}),
         // Plugin notes are kept the same way.
         ...(pluginNotes ? { pluginNotes } : {}),
+        ...(body.mcpServers !== undefined
+          ? { mcpServers: body.mcpServers }
+          : {}),
       };
 }
 

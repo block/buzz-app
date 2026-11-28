@@ -8,6 +8,7 @@ import {
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
 import { GooseProcess, type GooseHost, type ServeMcp } from "./goose";
+import { nativePrint } from "./mcp-print";
 import type {
   SavedConversation,
   SessionStore,
@@ -127,6 +128,8 @@ export class AgentProcess {
     void start.ready.then(
       (goose) => {
         delete start.previous;
+        // Listed as it starts, before any session opens in it.
+        if (!this.protection) start.native = nativePrint(goose);
         return goose.exited.then(forget);
       },
       () => (start.process ? start.process.exited.then(forget) : forget()),
@@ -134,6 +137,12 @@ export class AgentProcess {
     this.starts.add(start);
     this.current = start;
     return start.ready;
+  }
+  /** What each running process loaded of goose's own extensions. */
+  natives(): readonly Promise<string | undefined>[] {
+    return [...this.starts].flatMap((start) =>
+      start.native && start.process?.running ? [start.native] : [],
+    );
   }
   /** Stops it, failing every session in it. */
   stop() {
@@ -160,6 +169,9 @@ type Start = {
   limit: number | undefined;
   previous?: Start | undefined;
   process?: GooseProcess;
+  /** goose's own extensions as it loaded them when it started; never
+   * replaced, however many sessions open in it. */
+  native?: Promise<string | undefined>;
 };
 
 export type SessionsOptions = Omit<AcpSessionsOptions, "label">;

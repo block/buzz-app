@@ -82,6 +82,15 @@ export type McpServer = Readonly<{
   headers: HostMcpServer["headers"];
 }>;
 
+/** An agent's own MCP servers for a session, values included, and the
+ * names of servers from the harness's own config to turn off. `strict`
+ * runs only Buzz's tools: none of either, and none of the harness's own. */
+export type AcpMcp = Readonly<{
+  servers: readonly Readonly<Record<string, unknown> & { name: string }>[];
+  disabledInherited: readonly string[];
+  strict?: boolean;
+}>;
+
 /** What a harness adds to, or does in place of, plain ACP. Each hook is
  * optional: without it the client uses plain ACP's way, or none. */
 export type AcpHooks = Readonly<{
@@ -109,8 +118,19 @@ export type AcpHooks = Readonly<{
       provider: string;
       platform?: PlatformTools;
       tags?: Readonly<Record<string, string>>;
+      /** Only the Buzz tools: the harness loads none of its own. */
+      strict?: boolean;
     }>,
   ): Record<string, unknown>;
+  /** The names of the servers the harness's own config has, which win over
+   * an agent's server of the same name. */
+  inheritedServers?(process: AcpProcess): Promise<readonly string[]>;
+  /** Turns off servers from the harness's own config in a new session. */
+  disableInherited?(
+    process: AcpProcess,
+    sessionId: string,
+    names: readonly string[],
+  ): Promise<void>;
   /** Appends `text` to a new session's system prompt; a throw closes it.
    * Without it, ACP's `systemPrompt` carries it when advertised, else it
    * leads the session's first prompt. */

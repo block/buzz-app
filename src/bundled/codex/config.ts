@@ -23,6 +23,8 @@ export type Config = {
   compactAt?: string;
   /** On Recommended, whose model and thinking level runs replace these. */
   preset?: typeof PRESET;
+  /** The owner-signed MCP server list, as signed; a launch checks it. */
+  mcpServers?: unknown;
 };
 export type Model = {
   model: string;
@@ -82,6 +84,8 @@ export function config(raw: unknown): Config {
       ? { compactAt: value.compactAt as string }
       : {}),
     ...(value.preset === PRESET ? { preset: PRESET } : {}),
+    // The owner-signed list, as signed: a launch checks it.
+    ...(value.mcpServers !== undefined ? { mcpServers: value.mcpServers } : {}),
   };
 }
 export const effortName = (effort: string) =>

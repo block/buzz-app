@@ -7,7 +7,7 @@
 // are installed in.
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
@@ -623,6 +623,181 @@ const PAGE = 200;
  * answer that asked for it, whose usage is the conversation's context size. */
 const SIZE_PAGE = 32;
 const SIZE_PAGES = 4;
+/** MCP tools are `mcp__<server>__<tool>`, as in Claude Code. */
+const MCP_PREFIX = "mcp__";
+/** The longest tool name model providers take. */
+const TOOL_NAME_MAX = 64;
+/** How long one server has to start and list its tools. */
+const MCP_CONNECT_MS = 10_000;
+/** How long closing every server has when the host stops, which is killed
+ * soon after. */
+const MCP_CLOSE_MS = 1_000;
+/** No call limit of the client's own: a call ends when its turn does, as in
+ * the other harnesses. The client takes a timer's largest delay. */
+const MCP_CALL_MS = 2_147_483_647;
+
+/** A Pi tool name for `tool` of `server`: as it is when providers take it,
+ * otherwise shortened and made unique with a hash of the real name. */
+export function mcpToolName(server, tool, taken) {
+  const real = `${MCP_PREFIX}${server}__${tool}`;
+  let name = real;
+  if (
+    !/^[A-Za-z0-9_-]+$/.test(real) ||
+    real.length > TOOL_NAME_MAX ||
+    taken.has(real)
+  ) {
+    const hash = createHash("sha256").update(real).digest("hex").slice(0, 8);
+    name = `${real.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, TOOL_NAME_MAX - 9)}_${hash}`;
+  }
+  if (taken.has(name)) return undefined;
+  taken.add(name);
+  return name;
+}
+
+/** The environment a local server starts with: the one the agent launched
+ * with, which this host has, without any MCP server's values, then its own.
+ * The client's default would pass only a few names. */
+export function mcpEnv(env, own) {
+  const base = Object.fromEntries(
+    Object.entries(env).filter(
+      ([name, value]) => value !== undefined && !name.startsWith("BUZZMCP_"),
+    ),
+  );
+  return { ...base, ...own };
+}
+
+/** Connects to `server` and lists its tools, within one limit for both,
+ * since a list can take several pages. Its error output is dropped, so it
+ * never shows in the reason Pi stopped. */
+async function connectMcp(server, cwd) {
+  const { Client, StreamableHTTPClientTransport } = await import(
+    "@modelcontextprotocol/client"
+  );
+  const transport =
+    server.transport === "stdio"
+      ? new (
+          await import("@modelcontextprotocol/client/stdio")
+        ).StdioClientTransport({
+          command: server.command,
+          args: [...server.args],
+          env: mcpEnv(process.env, server.env),
+          ...(cwd && { cwd: cwd.replace(/^~(?=$|[\\/])/, homedir()) }),
+          stderr: "ignore",
+        })
+      : new StreamableHTTPClientTransport(new URL(server.url), {
+          requestInit: { headers: { ...server.headers } },
+        });
+  // Legacy pinned: a future default could start a local server twice.
+  const client = new Client(
+    { name: "buzz-pi", version: "1" },
+    { versionNegotiation: { mode: "legacy" } },
+  );
+  const limit = {
+    signal: AbortSignal.timeout(MCP_CONNECT_MS),
+    timeout: MCP_CONNECT_MS,
+  };
+  try {
+    await client.connect(transport, limit);
+    const tools = [];
+    let cursor;
+    do {
+      const page = await client.listTools(
+        cursor ? { cursor } : undefined,
+        limit,
+      );
+      tools.push(...page.tools);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return { client, tools };
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Closes every client at once, for at most `ms`. */
+export async function closeMcp(clients, ms) {
+  let timer;
+  await Promise.race([
+    Promise.allSettled(clients.map((client) => client.close())),
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** The `mcp` extension for the agent's servers: each tool of each one that
+ * started, found with `tool_search`. A server that fails to start is left
+ * out and named in a section, with only its error's type, since a message
+ * can carry what the server was given. One that stops later fails its
+ * calls; nothing starts it again until its list changes. */
+export async function mcpExtension(servers, cwd, connect = connectMcp) {
+  const results = await Promise.allSettled(servers.map((s) => connect(s, cwd)));
+  const taken = new Set();
+  const clients = [];
+  const tools = [];
+  const skipped = [];
+  results.forEach((result, at) => {
+    const server = servers[at];
+    if (result.status === "rejected") {
+      skipped.push(`${server.name} (${result.reason?.name ?? "Error"})`);
+      return;
+    }
+    const { client, tools: listed } = result.value;
+    clients.push(client);
+    let stopped = false;
+    client.onclose = () => {
+      stopped = true;
+    };
+    for (const tool of listed) {
+      const name = mcpToolName(server.name, tool.name, taken);
+      if (!name) continue;
+      tools.push(
+        defineTool({
+          name,
+          description: tool.description ?? "",
+          parameters: tool.inputSchema?.type
+            ? tool.inputSchema
+            : { type: "object", ...tool.inputSchema },
+          deferred: true,
+          async execute(args, _api, signalled) {
+            if (stopped)
+              throw new Error(`The MCP server ${server.name} stopped`);
+            const result = await client.callTool(
+              { name: tool.name, arguments: args ?? {} },
+              { signal: signalled.abortSignal, timeout: MCP_CALL_MS },
+            );
+            const output = (result.content ?? []).map((part) =>
+              part.type === "image" || part.type === "text"
+                ? part
+                : { type: "text", text: JSON.stringify(part) },
+            );
+            if (!output.length && result.structuredContent !== undefined)
+              output.push({
+                type: "text",
+                text: JSON.stringify(result.structuredContent),
+              });
+            return { output, ...(result.isError ? { isError: true } : {}) };
+          },
+        }),
+      );
+    }
+  });
+  const text = `MCP server tools are named \`${MCP_PREFIX}<server>__<tool>\`; find them with \`tool_search\`.${
+    skipped.length
+      ? ` These MCP servers couldn't start, so their tools are missing: ${skipped.join(", ")}.`
+      : ""
+  }`;
+  return {
+    clients,
+    extension: defineExtension({
+      name: "mcp",
+      sections: [section("mcp-servers", () => text)],
+      tools,
+    }),
+  };
+}
+
 /** Buzz tools are `buzz_<name>`, apart from Pi's own `read` and `edit`. */
 const PREFIX = "buzz_";
 /** The prompt section of the agent's `core` memory. */
@@ -813,6 +988,7 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
           throw new Error("An extension it returns has no name");
         if (
           extension.name === "buzz" ||
+          extension.name === "mcp" ||
           registry.snapshot().extension(extension.name)
         )
           throw new Error(`Another extension is named ${extension.name}`);
@@ -1470,6 +1646,37 @@ export function serve({
       if (!cursor) break;
     }
     return undefined;
+  }
+
+  /** Starts the agent's MCP servers when their approval or values changed
+   * since the last open, one change at a time. The old ones close first,
+   * which ends their calls still running in the agent's other
+   * conversations. Servers that finish connecting after the agent began
+   * closing are closed at once, never installed. */
+  function startMcp(opened, { key, cwd, servers }) {
+    opened.mcpUse = (opened.mcpUse ?? Promise.resolve()).then(async () => {
+      if (opened.closing || (opened.mcp?.key ?? "") === key) return;
+      if (servers.length && protectedAgent)
+        throw new Error("Protected Pi does not run MCP servers");
+      const old = opened.mcp;
+      opened.mcp = undefined;
+      if (old) {
+        opened.registry.uninstall(old.extension);
+        await closeMcp(old.clients, MCP_CLOSE_MS);
+      }
+      if (opened.closing || !servers.length) return;
+      const { clients, extension } = await mcpExtension(servers, cwd);
+      if (opened.closing) {
+        await closeMcp(clients, MCP_CLOSE_MS);
+        return;
+      }
+      opened.install(extension);
+      opened.mcp = { key, clients, extension };
+    });
+    // A failed change is tried again at the next open.
+    const done = opened.mcpUse;
+    opened.mcpUse = done.catch(() => undefined);
+    return done;
   }
 
   /** The agent's Buzz tools, served by the plugin. Those it lists to load on
@@ -2254,7 +2461,7 @@ export function serve({
         : { ok: true, message: `Connected to ${model.modelId}` };
     },
     /** Opens the agent's storage, once, with its Buzz tools as they are now. */
-    async open({ agent, tools, hint, credential, compactAt }) {
+    async open({ agent, tools, hint, credential, compactAt, mcp }) {
       if (credential) credentials.set(agent, credential);
       const opened = await opening(agent);
       // Before anything resumes a run left unfinished.
@@ -2264,6 +2471,7 @@ export function serve({
         opened.install(buzz(opened, tools, hint));
         opened.tools = listed;
       }
+      if (mcp) await startMcp(opened, mcp);
     },
     /** The agent's Buzz conversations: each key's Pi conversation, and the
      * newest message it has been shown. Storage opened only to be read runs
@@ -2809,9 +3017,15 @@ export function serve({
     if (!opened) return;
     if (!opened.closing)
       opened.closing = (async () => {
+        // At once, with the storage's close, inside the host's last moments;
+        // a change still connecting closes its own servers when it ends.
+        const servers = Promise.resolve(opened.mcpUse)
+          .catch(() => undefined)
+          .then(() => closeMcp(opened.mcp?.clients ?? [], MCP_CLOSE_MS));
         for (const watched of opened.watched.values())
           (await watched.catch(() => undefined))?.observation.detach();
         await opened.harness.close(context);
+        await servers;
         // A compromised lock may already be released. Native execution has
         // ended above; releasing ownership is cleanup, not its acknowledgement.
         await opened.release().catch(() => undefined);
@@ -2866,6 +3080,10 @@ export function serve({
 }
 
 if (process.env.BUZZ_PI_HOST === "1") {
+  // MCP server values reach each server under their real names, from
+  // `open`; none stays where the agent's own commands would see it.
+  for (const name of Object.keys(process.env))
+    if (name.startsWith("BUZZMCP_")) delete process.env[name];
   const dir = piDir();
   const models = builtinModels({
     credentials: new AuthFile(join(dir, "auth.json")),

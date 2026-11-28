@@ -210,6 +210,12 @@ export class AgentSessions {
     if (live) this.drop(key, live);
     this.options.onChange?.();
   }
+  /** The processes running now, one-off turns' too. */
+  processes(): readonly ClaudeProcess[] {
+    return [...this.live.values(), ...this.once.values()].flatMap((live) =>
+      live?.process.running ? [live.process] : [],
+    );
+  }
   /** Conversations with a running process, and whether each is working. */
   snapshot() {
     return [
@@ -933,7 +939,7 @@ const message = (error: unknown) =>
  * started with. */
 type Where = Pick<
   ClaudeLaunch,
-  "cwd" | "directories" | "model" | "effort" | "compactAt"
+  "cwd" | "directories" | "model" | "effort" | "compactAt" | "nativeMcp"
 >;
 const place = ({ cwd, directories = [], model, effort, compactAt }: Where) =>
   JSON.stringify([cwd, directories, model ?? "", effort ?? "", compactAt ?? 0]);

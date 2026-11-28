@@ -199,6 +199,34 @@ if that desktop app is up and running.
   progress, so every local agent's next message starts it with the saved list.
   A device-list `ANTHROPIC_API_KEY` doesn't replace your own Claude setup.
   On Windows, the Anthropic key is saved only as `ANTHROPIC_API_KEY`.
+- **Settings → Agent details → MCP servers** gives a local Claude Code, Codex
+  or Goose agent its own MCP servers: a command it runs, or an HTTP URL. The
+  list syncs with the agent's settings to your other devices; the values of
+  its environment variables and headers stay in this computer's credential
+  store, and a server whose value isn't saved here says so. Each change is
+  signed by you, the agent's owner, and a device starts only a list you
+  signed, so another member of the agent's config channel can't add a
+  command to it. **Approved** shows when you signed the list in use.
+  Protected agents and security reviews run no MCP servers but Buzz's own.
+- The servers in a harness's own config, such as `~/.codex/config.toml`,
+  Claude Code's `~/.claude.json` (its own servers and those it keeps for a
+  folder) and a project's `.mcp.json`, or goose's extensions, run for its
+  agents too and are listed with a switch. Turning one off keeps the agent
+  from using it: Claude Code denies its tools, Codex doesn't load it, and
+  goose starts it with the session and then removes it. On goose, the agent
+  can turn it back on with goose's Extension Manager. If a server you add has
+  the same name as one in the harness's config, the harness's wins and Buzz
+  asks you to rename yours.
+- Claude Code and goose read their own config when a process starts. If you
+  change it while an agent is running, the MCP servers section says so when
+  you open it and offers **Restart agent**. Codex picks up changes to its own
+  config on its next message.
+- Editing a server keeps its switch as it was. A blank value keeps the saved
+  one. If a list can't be used, **Reset MCP servers** signs an empty one.
+- A goose agent starts a new session when its MCP servers, their values or
+  goose's own extensions change, since goose keeps a session's servers as it
+  started them. A change to only a goose extension's working folder doesn't
+  start a new session.
 - Each harness reads its own variable names: Codex uses its own sign-in, not
   `OPENAI_API_KEY`, and a credential under a different name can still outrank
   the one an agent's list sets.

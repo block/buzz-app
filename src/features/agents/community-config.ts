@@ -2,7 +2,9 @@
 // then for each agent its config channel, live sync, and online saves.
 import { notesOf } from "./plugin-notes";
 import { onRecommended, PRESET } from "./recommended";
+import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "../relay/events";
+import type { RelayWriter } from "../relay/transport";
 import type { RelaySession } from "../relay/session";
 import {
   type AgentConfigStore,
@@ -106,6 +108,11 @@ export function fields(
     ...(pluginNotes && {
       pluginNotes: Object.keys(pluginNotes).length ? pluginNotes : undefined,
     }),
+    // The owner-signed MCP server list, kept as signed; left out, the
+    // head's stays.
+    ...("mcpServers" in config && {
+      mcpServers: (config as { mcpServers?: unknown }).mcpServers,
+    }),
   };
 }
 
@@ -170,7 +177,7 @@ export function sessionFeed(
 export async function communityConfig(
   input: CommunityConfigInput,
   signal: AbortSignal,
-) {
+): Promise<CommunityConfig | null> {
   const { session, owner, community, store } = input;
   const writer = session.configArtifactWriter;
   const read = session.snapshotRead;
@@ -212,7 +219,10 @@ export async function communityConfig(
     historyChanged: input.historyChanged,
     dispose: stopReconnected,
   });
-  return configs;
+  return Object.assign(configs, {
+    sign: (template: EventTemplate, signal: AbortSignal) =>
+      writer.sign(template, signal),
+  });
 }
 
 /** Per-agent config channels over one community's sync and writer. */
@@ -723,4 +733,7 @@ export function agentConfigs(
   };
 }
 
-export type CommunityConfig = ReturnType<typeof agentConfigs>;
+export type CommunityConfig = ReturnType<typeof agentConfigs> & {
+  /** Signs as the owner: an agent's MCP server approval. */
+  sign?: RelayWriter["sign"];
+};

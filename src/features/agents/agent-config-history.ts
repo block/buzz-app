@@ -256,10 +256,10 @@ export function settingsDiff(before: string, after: string): FieldChange[] {
   // A route shows as the model it is in a config.
   const fields = (content: string) => {
     const body = parse(content) ?? {};
-    return routedSettings(
-      body,
-      (body.settings ?? {}) as Record<string, string>,
-    ) as Record<string, unknown>;
+    return {
+      ...routedSettings(body, (body.settings ?? {}) as Record<string, string>),
+      ...mcpFields(body.mcpServers),
+    } as Record<string, unknown>;
   };
   const a = fields(before);
   const b = fields(after);
@@ -267,6 +267,46 @@ export function settingsDiff(before: string, after: string): FieldChange[] {
     .sort()
     .filter((field) => JSON.stringify(a[field]) !== JSON.stringify(b[field]))
     .map((field) => ({ field, before: a[field], after: b[field] }));
+}
+
+/** Each signed MCP server as what it runs and the names of its values,
+ * argv kept whole, and the harness's own servers turned off, so any change
+ * to the list shows. A value never does: none is in the list. A new values
+ * slot shows as its values being replaced. */
+function mcpFields(approval: unknown): Record<string, string> {
+  const content = (approval as { content?: unknown } | undefined)?.content;
+  const list = typeof content === "string" ? parse(content) : undefined;
+  const servers = list?.servers;
+  if (!Array.isArray(servers)) return {};
+  const strings = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  const off = strings(list?.disabledInherited);
+  return Object.fromEntries([
+    ...servers.flatMap((s: Record<string, unknown>) =>
+      typeof s?.name === "string"
+        ? [
+            [
+              `MCP server ${s.name}`,
+              [
+                s.enabled === false ? "(off)" : "",
+                s.transport === "http"
+                  ? String(s.url)
+                  : JSON.stringify([s.command, ...strings(s.args)]),
+                ...strings(s.transport === "http" ? s.headers : s.env).map(
+                  (n) => `${s.transport === "http" ? "header" : "env"} ${n}`,
+                ),
+                typeof s.slot === "string" ? `values ${s.slot}` : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
+            ],
+          ]
+        : [],
+    ),
+    ...(off.length
+      ? [["Harness MCP servers turned off", [...off].sort().join(", ")]]
+      : []),
+  ]);
 }
 
 const parse = (content: string) => {

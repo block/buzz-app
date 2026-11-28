@@ -168,6 +168,12 @@ import {
   type CodexRoutes,
   type ProviderConfig,
 } from "./gateway";
+import {
+  type McpInherited,
+  mcpValues,
+  startList,
+  valuesOf,
+} from "../../features/agents/mcp-servers";
 
 const scopedKey = (scope: Config["scope"], channel: string, root?: string) =>
   JSON.stringify([
@@ -1610,6 +1616,21 @@ export class CodexRuntime {
         if (!signal.aborted) throw error;
       })
     );
+  }
+  /** The servers in the owner's Codex config, which its agents run too. */
+  async inheritedMcp(
+    agent: Readonly<{ protection?: unknown }>,
+  ): Promise<readonly McpInherited[]> {
+    if (agent.protection || this.target) return [];
+    const server = this.shared();
+    await server.opening;
+    const { config } = await server.rpc.request<{
+      config: { mcp_servers?: Record<string, unknown> };
+    }>("config/read", {});
+    return Object.keys(config.mcp_servers ?? {}).map((name) => ({
+      name,
+      source: "From your Codex config",
+    }));
   }
   /** Whether `rpc` is an unprotected server's, shared or an agent's own. */
   private ordinary(rpc: AppServer) {
@@ -3930,7 +3951,7 @@ export class CodexRuntime {
     // Protected when it has a policy, bound or not yet.
     agent: Pick<
       AgentHandle,
-      "key" | "name" | "pubkey" | "relay" | "promptSections"
+      "key" | "name" | "pubkey" | "relay" | "owner" | "promptSections"
     > & {
       protection?: unknown;
     },
@@ -3951,20 +3972,42 @@ export class CodexRuntime {
       };
     }>("config/read", { cwd: workspace });
     const { model, effort } = await this.turnModel(rpc, settings, pick, synced);
-    const mcp = Object.fromEntries(
-      Object.entries(normalized.config.mcp_servers ?? {}).map(
-        ([name, server]) => [
+    const own = normalized.config.mcp_servers ?? {};
+    // A protected agent runs none of the user's servers and none of its own.
+    // CLI overrides replace this table, so the user's servers go back in as
+    // read; disabled ones still need a transport.
+    const list = agent.protection
+      ? undefined
+      : startList(settings, agent, Object.keys(own));
+    const off = new Set(list?.disabledInherited);
+    const values = list?.servers.length ? await mcpValues(agent.pubkey) : {};
+    const mcp = {
+      ...Object.fromEntries(
+        Object.entries(own).map(([name, server]) => [
           name,
-          // CLI overrides replace this table; disabled servers still need a transport.
-          {
-            ...(typeof server.command === "string"
-              ? { command: server.command }
-              : { url: server.url }),
-            enabled: false,
-          },
-        ],
+          list && !off.has(name)
+            ? // As read, less the fields it leaves unset.
+              Object.fromEntries(
+                Object.entries(server).filter(([, v]) => v !== null),
+              )
+            : {
+                ...(typeof server.command === "string"
+                  ? { command: server.command }
+                  : { url: server.url }),
+                enabled: false,
+              },
+        ]),
       ),
-    );
+      // Values go in this message, which is where app-server takes them.
+      ...Object.fromEntries(
+        (list?.servers ?? []).map((s) => [
+          s.name,
+          s.transport === "stdio"
+            ? { command: s.command, args: s.args, env: valuesOf(s, values) }
+            : { url: s.url, http_headers: valuesOf(s, values) },
+        ]),
+      ),
+    };
     const features = normalized.config.features;
     const disabled = (features?.hooks ?? features?.codex_hooks) === false;
     const hooks =

@@ -24,6 +24,7 @@ import {
   type GooseHost,
   type Spawn,
 } from "./goose";
+import { nativeSnapshot } from "./mcp-print";
 import {
   type ConfigValue,
   valuesOf,
@@ -683,6 +684,11 @@ export class GooseSetup {
     }));
   }
 
+  /** The extensions goose's own config loads, which its agents run too,
+   * and their print. */
+  inheritedMcp() {
+    return this.with((goose) => nativeSnapshot(goose));
+  }
   private with<T>(
     run: (goose: GooseProcess, cwd: string) => Promise<T>,
     env: Readonly<Record<string, string>> = {},

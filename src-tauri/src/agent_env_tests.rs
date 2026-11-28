@@ -272,6 +272,235 @@ async fn forgetting_deletes_the_item_and_its_read_copy() {
     assert!(agent_given(&envs, ADA).await.is_empty());
 }
 
+const SLOT_A: &str = "00000000000000A1";
+const SLOT_B: &str = "00000000000000B2";
+fn mcp_name(slot: &str, name: &str) -> String {
+    format!("BUZZMCP_{slot}_{name}")
+}
+fn stored(stores: &Stores, key: &str) -> Option<String> {
+    stores
+        .lock()
+        .unwrap()
+        .get(key)
+        .and_then(|store| store.text.lock().unwrap().clone())
+}
+
+#[tokio::test]
+async fn mcp_values_join_the_agents_own_and_go_with_it() {
+    let (envs, stores) = envs();
+    envs.set(ADA, vec![set("FOO", "own")], || Ok(true))
+        .await
+        .unwrap();
+    // Only names Buzz chose for MCP values, with a slot, are taken.
+    for bad in [
+        "TOKEN",
+        "BUZZMCP_A1_TOKEN",
+        "BUZZMCP_00000000000000a1_TOKEN",
+    ] {
+        assert!(envs
+            .mcp_set(ADA, vec![set(bad, "x")], vec![], || Ok(true))
+            .await
+            .is_err());
+    }
+    let a = mcp_name(SLOT_A, "TOKEN");
+    let b = mcp_name(SLOT_B, "TOKEN");
+    envs.mcp_set(ADA, vec![set(&a, "secret")], vec![], || Ok(true))
+        .await
+        .unwrap();
+    // A save adds beside the saved values and deletes only what it names.
+    envs.mcp_set(ADA, vec![set(&b, "next")], vec![], || Ok(true))
+        .await
+        .unwrap();
+    assert_eq!(envs.mcp_values(ADA).await.unwrap().len(), 2);
+    // Each slot is its own item; the index holds no values.
+    assert!(stored(&stores, &format!("mcp:{ADA}:{SLOT_A}")).is_some());
+    let index = stored(&stores, &format!("mcp:{ADA}")).unwrap();
+    assert!(!index.contains("secret") && index.contains(SLOT_B));
+    envs.mcp_set(ADA, vec![], vec![b.clone()], || Ok(true))
+        .await
+        .unwrap();
+    assert!(stored(&stores, &format!("mcp:{ADA}:{SLOT_B}")).is_none());
+    assert!(!stored(&stores, &format!("mcp:{ADA}"))
+        .unwrap()
+        .contains(SLOT_B));
+    // Deleting a slot that's already gone is done.
+    envs.mcp_set(ADA, vec![], vec![b], || Ok(true))
+        .await
+        .unwrap();
+    assert_eq!(
+        agent_given(&envs, ADA).await,
+        vec![
+            ("FOO".to_string(), "own".to_string()),
+            (a.clone(), "secret".to_string())
+        ]
+    );
+    assert!(agent_given(&envs, BO).await.is_empty());
+    envs.forget(ADA).await.unwrap();
+    assert!(stores
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|(key, store)| !key.starts_with("mcp:") || store.text.lock().unwrap().is_none()));
+    assert!(envs.mcp_values(ADA).await.unwrap().is_empty());
+}
+
+/// A token that fits on its own still fits when an edit stages a copy of
+/// it in a new slot, as a rename or URL change does.
+#[tokio::test]
+async fn a_long_value_survives_a_move_to_a_new_slot() {
+    let (envs, _) = envs();
+    let token = "t".repeat(800);
+    let a = mcp_name(SLOT_A, "544F4B454E");
+    let b = mcp_name(SLOT_B, "544F4B454E");
+    envs.mcp_set(ADA, vec![set(&a, &token)], vec![], || Ok(true))
+        .await
+        .unwrap();
+    envs.mcp_set(ADA, vec![set(&b, &token)], vec![], || Ok(true))
+        .await
+        .unwrap();
+    envs.mcp_set(ADA, vec![], vec![a], || Ok(true))
+        .await
+        .unwrap();
+    assert_eq!(envs.mcp_values(ADA).await.unwrap().get(&b), Some(&token));
+    // One server's values still have to fit their own item.
+    let long = envs
+        .mcp_set(
+            ADA,
+            vec![set(&mcp_name(SLOT_A, "X"), &"t".repeat(SIZE_LIMIT))],
+            vec![],
+            || Ok(true),
+        )
+        .await;
+    assert_eq!(
+        long.unwrap_err(),
+        "This server's values are too long to save. Shorten them."
+    );
+}
+
+/// A slot is in the index before its item is written, so an item the
+/// index doesn't list never exists; a failed index write writes no value.
+#[tokio::test]
+async fn every_slot_item_is_in_the_index_first() {
+    let (envs, stores) = envs();
+    let index = stores
+        .lock()
+        .unwrap()
+        .entry(format!("mcp:{ADA}"))
+        .or_default()
+        .clone();
+    *index.unwritable.lock().unwrap() = true;
+    let a = mcp_name(SLOT_A, "TOKEN");
+    assert!(envs
+        .mcp_set(ADA, vec![set(&a, "secret")], vec![], || Ok(true))
+        .await
+        .is_err());
+    assert!(stored(&stores, &format!("mcp:{ADA}:{SLOT_A}")).is_none());
+    *index.unwritable.lock().unwrap() = false;
+    // The slot's write failing after the index took it leaves only a
+    // reference to nothing, which reads as no values and erases cleanly.
+    let slot = stores
+        .lock()
+        .unwrap()
+        .entry(format!("mcp:{ADA}:{SLOT_A}"))
+        .or_default()
+        .clone();
+    *slot.unwritable.lock().unwrap() = true;
+    assert!(envs
+        .mcp_set(ADA, vec![set(&a, "secret")], vec![], || Ok(true))
+        .await
+        .is_err());
+    assert!(stored(&stores, &format!("mcp:{ADA}"))
+        .unwrap()
+        .contains(SLOT_A));
+    assert!(envs.mcp_values(ADA).await.unwrap().is_empty());
+    *slot.unwritable.lock().unwrap() = false;
+    envs.forget(ADA).await.unwrap();
+    assert!(stored(&stores, &format!("mcp:{ADA}")).is_none());
+}
+
+/// An index past the item limit is refused with a clear error, and the
+/// slot it couldn't take gets no value.
+#[tokio::test]
+async fn too_many_slots_for_the_index_is_a_clear_error() {
+    let (envs, stores) = envs();
+    let slot = |n: usize| format!("{n:016X}");
+    let rows: Vec<_> = (1..=65)
+        .map(|n| set(&mcp_name(&slot(n), "T"), "v"))
+        .collect();
+    envs.mcp_set(ADA, rows, vec![], || Ok(true)).await.unwrap();
+    let error = envs
+        .mcp_set(
+            ADA,
+            vec![set(&mcp_name(&slot(66), "T"), "v")],
+            vec![],
+            || Ok(true),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("too many MCP servers"), "{error}");
+    assert!(stored(&stores, &format!("mcp:{ADA}:{}", slot(66))).is_none());
+    assert_eq!(envs.mcp_values(ADA).await.unwrap().len(), 65);
+}
+
+/// A damaged index, an older layout's item included, is an error, never
+/// an agent with no values.
+#[tokio::test]
+async fn a_damaged_index_is_an_error() {
+    for text in [
+        "{}",
+        r#"{"BUZZMCP_00000000000000A1_X":"v"}"#,
+        "[",
+        r#"{"buzzMcpSlots":1,"slots":["a1"]}"#,
+    ] {
+        let (envs, stores) = envs();
+        stores
+            .lock()
+            .unwrap()
+            .entry(format!("mcp:{ADA}"))
+            .or_default()
+            .text
+            .lock()
+            .unwrap()
+            .replace(text.into());
+        assert!(envs.mcp_values(ADA).await.is_err(), "{text}");
+        assert!(envs
+            .mcp_set(ADA, vec![set(&mcp_name(SLOT_A, "X"), "v")], vec![], || Ok(
+                true
+            ))
+            .await
+            .is_err());
+        assert!(envs.forget(ADA).await.is_err());
+        assert!(stored(&stores, &format!("mcp:{ADA}")).is_some());
+    }
+}
+
+/// An erase that fails partway keeps every id whose item is still there,
+/// so the retry finds and finishes them.
+#[tokio::test]
+async fn a_failed_mcp_erase_is_finished_by_a_retry() {
+    let (envs, stores) = envs();
+    for slot in [SLOT_A, SLOT_B] {
+        envs.mcp_set(ADA, vec![set(&mcp_name(slot, "X"), "v")], vec![], || {
+            Ok(true)
+        })
+        .await
+        .unwrap();
+    }
+    let b = stores.lock().unwrap()[&format!("mcp:{ADA}:{SLOT_B}")].clone();
+    *b.unwritable.lock().unwrap() = true;
+    assert!(envs.forget(ADA).await.is_err());
+    assert!(stored(&stores, &format!("mcp:{ADA}:{SLOT_A}")).is_none());
+    let index = stored(&stores, &format!("mcp:{ADA}")).unwrap();
+    assert!(index.contains(SLOT_B) && !index.contains(SLOT_A));
+    *b.unwritable.lock().unwrap() = false;
+    envs.forget(ADA).await.unwrap();
+    assert!(stores
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|(key, store)| !key.starts_with("mcp:") || store.text.lock().unwrap().is_none()));
+}
+
 #[tokio::test]
 async fn a_failed_forget_is_reported_and_can_be_retried() {
     let (envs, stores) = envs();

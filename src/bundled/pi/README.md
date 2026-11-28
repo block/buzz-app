@@ -27,7 +27,8 @@ bin/pnpm exec vitest run src/bundled/pi
 PI_DEPS=<installed deps folder> bin/pnpm exec vitest run src/bundled/pi/host.live.test.ts
 ```
 
-The live test runs the real host on Pi's faux provider.
+The live test runs the real host on Pi's faux provider. `mcp.live.test.ts`
+runs its MCP client the same way, against a local and an HTTP server.
 
 ## Packages
 
@@ -40,6 +41,28 @@ with `npm ci` (no install scripts) into a per-lock folder under Buzz's app data
 cd src/bundled/pi/deps
 npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolved
 ```
+
+## MCP servers
+
+Pi has no MCP client, so the host is one, with `@modelcontextprotocol/client`.
+The agent's approved, enabled servers come in its `open`, each with its values
+under their real names; `key` changes with the approval or a values save, and
+only then does the host close the old servers and start the new ones as the
+`mcp` extension. That ends calls still running in the agent's other
+conversations.
+
+- A local server starts in the agent's workspace, as in Claude Code, with the
+  host's environment, which is the agent's
+  launch one, without any `BUZZMCP_*` name (the host deletes those from its
+  own at start), plus its own values. Its error output is dropped.
+- An HTTP server gets its values as headers.
+- Each server has 10 seconds to start and list its tools; one that fails is
+  left out and named, with its error's type only, in the `mcp-servers`
+  section. One that stops later fails its calls until its list changes.
+- Tools are `mcp__<server>__<tool>`, shortened with a hash when invalid,
+  over 64 characters, or taken, and found with `tool_search`.
+- A call ends only when its turn does, as in the other harnesses.
+- A protected agent has none.
 
 ## Gateway mode
 

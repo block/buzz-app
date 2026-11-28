@@ -13,6 +13,7 @@ import type {
 import { AcpSession, type ConfigOptions } from "./session";
 import { allow, errorMessage } from "./steps";
 import type {
+  AcpMcp,
   AcpHooks,
   Choice,
   McpServer,
@@ -93,6 +94,7 @@ type AcpLaunch = Readonly<{
   /** Given the session as soon as the harness has opened it, before it
    * is set up, so a caller can close one whose open then fails. */
   onSession?: (session: AcpSession) => void;
+  mcp?: AcpMcp;
 }>;
 
 export class AcpProcess {
@@ -338,15 +340,34 @@ export class AcpProcess {
     });
     let sessionId: string;
     let opened: ConfigOptions;
+    let off: readonly string[] = [];
     try {
       // Replayed history arrives before the answer, while the session is
       // not yet in `sessions`, so none of it reaches the session.
+      // The harness's own servers win a name: the agent's of it is skipped.
+      const inherited =
+        launch.mcp &&
+        !launch.mcp.strict &&
+        (launch.mcp.servers.length || launch.mcp.disabledInherited.length) &&
+        hooks.inheritedServers
+          ? new Set(await hooks.inheritedServers(this))
+          : new Set<string>();
+      const own =
+        launch.mcp && !launch.mcp.strict
+          ? launch.mcp.servers.filter((s) => !inherited.has(s.name))
+          : [];
+      const mcpServers = [...own, ...(buzz ? [buzz] : [])];
+      off = launch.mcp?.strict
+        ? []
+        : (launch.mcp?.disabledInherited ?? []).filter(
+            (name) => !hooks.inheritedServers || inherited.has(name),
+          );
       if (load !== undefined) {
         sessionId = load;
         // ACP's load answer may be `null`: it offers no settings.
         opened = ((await this.request(
           "session/load",
-          { sessionId, cwd: launch.cwd, mcpServers: buzz ? [buzz] : [] },
+          { sessionId, cwd: launch.cwd, mcpServers },
           REQUEST_TIMEOUT_MS,
         )) ?? {}) as ConfigOptions;
       } else
@@ -354,7 +375,7 @@ export class AcpProcess {
           "session/new",
           {
             cwd: launch.cwd,
-            mcpServers: buzz ? [buzz] : [],
+            mcpServers,
             ...(standard && {
               systemPrompt: {
                 mode: "append",
@@ -367,6 +388,8 @@ export class AcpProcess {
                 provider,
                 ...(launch.platform ? { platform: launch.platform } : {}),
                 ...(launch.tags ? { tags: launch.tags } : {}),
+                // Without a list, as before lists: only the Buzz tools.
+                ...(!launch.mcp || launch.mcp.strict ? { strict: true } : {}),
               }),
             }),
           },
@@ -403,6 +426,9 @@ export class AcpProcess {
           systemPrompt,
           launch.replacePrompt,
         );
+      // A loaded session kept the ones it turned off when it was new.
+      if (load === undefined && off.length && hooks.disableInherited)
+        await hooks.disableInherited(this, sessionId, off);
     } catch (error) {
       void this.close(session);
       throw error;

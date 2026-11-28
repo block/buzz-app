@@ -20,6 +20,7 @@ import type {
   ToolServer,
 } from "./goose";
 import { abortable } from "./sessions";
+import type { AcpMcp } from "../../features/agent-harness/acp/types";
 
 export const NOT_KEPT =
   "goose couldn't save this conversation's session, so the turn didn't run.";
@@ -40,7 +41,9 @@ export type ForwardedTurn = Readonly<{
     env: Readonly<Record<string, string>>,
     onProcess: (goose: GooseProcess) => void,
   ): Promise<GooseProcess>;
-  launch(): Promise<Readonly<{ cwd: string; systemPrompt: string }>>;
+  launch(): Promise<
+    Readonly<{ cwd: string; systemPrompt: string; mcp?: AcpMcp }>
+  >;
   tools: ToolServer;
   /** The resolved provider, even when ACP inherits the configured choice. */
   provider: GatewayProvider;
@@ -50,8 +53,12 @@ export type ForwardedTurn = Readonly<{
   title?: string;
   /** Keys goose indexes a new session by, so its conversation finds it. */
   tags?: Readonly<Record<string, string>>;
-  /** The saved session to resume; it never falls back to a new one. */
+  /** The saved session to resume; it never falls back to a new one but
+   * when `resumes` says no. */
   load?: string;
+  /** Whether `load` was saved on the MCP servers this goose would start
+   * now; a session started on others is left, and a new one opens. */
+  resumes?(goose: GooseProcess): Promise<boolean>;
   /** The turn's text once its session is open, `fresh` for a new session
    * shown nothing yet; undefined sends nothing. */
   prompt(fresh: boolean): Promise<string | undefined>;
@@ -118,19 +125,31 @@ export async function forwardedTurn(
     const goose = await abortable(starting, halt.signal).finally(() =>
       halt.signal.removeEventListener("abort", kill),
     );
-    const { cwd, systemPrompt } = await abortable(turn.launch(), halt.signal);
+    const load =
+      turn.load !== undefined &&
+      (await abortable(
+        turn.resumes?.(goose) ?? Promise.resolve(true),
+        halt.signal,
+      ))
+        ? turn.load
+        : undefined;
+    const { cwd, systemPrompt, mcp } = await abortable(
+      turn.launch(),
+      halt.signal,
+    );
     session = await abortable(
       goose.open({
         cwd,
         systemPrompt,
+        ...(mcp ? { mcp } : {}),
         tools: turn.tools,
         choice: turn.choice,
-        ...(turn.load === undefined
+        ...(load === undefined
           ? {
               ...(turn.title ? { title: turn.title } : {}),
               ...(turn.tags ? { tags: turn.tags } : {}),
             }
-          : { load: turn.load }),
+          : { load }),
         onSession: (opened) => {
           session = opened;
         },
@@ -141,7 +160,7 @@ export async function forwardedTurn(
     outcome = await (async (open: AcpSession): Promise<Settled> => {
       if (turn.keep && !turn.keep(open.id))
         return { ok: false, error: NOT_KEPT };
-      if (turn.load === undefined) turn.started?.(open.id);
+      if (load === undefined) turn.started?.(open.id);
       await abortable(generation.associate(open.id), halt.signal);
       const children = forwardChildren({
         register: (call, child) => generation.registerChild(call, child),
@@ -150,7 +169,7 @@ export async function forwardedTurn(
       });
       open.observe = children.observe;
       const text = await abortable(
-        turn.prompt(turn.load === undefined),
+        turn.prompt(load === undefined),
         halt.signal,
       );
       if (text === undefined) return { ok: true, undelivered: true };

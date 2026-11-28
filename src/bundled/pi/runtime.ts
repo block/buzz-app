@@ -62,6 +62,13 @@ import {
   existingFolder,
   startingFolder,
 } from "../../features/agents/conversation-folders";
+import {
+  approvalId,
+  mcpGeneration,
+  mcpValues,
+  startList,
+  valuesOf,
+} from "../../features/agents/mcp-servers";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { withWakes } from "../../features/agents/session-usage";
@@ -124,6 +131,8 @@ export type Config = Readonly<{
   /** The context size, in tokens, its conversations compact at; unset is
    * Pi's own. This device's only. */
   compactAt?: string;
+  /** The owner's signed MCP server approval (`mcp-servers.ts`). */
+  mcpServers?: unknown;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   provider: "",
@@ -146,6 +155,30 @@ const CHAT = [9, 40002];
 /** Starts a plugin wake's request, which no relay event's id does, so a run
  * an earlier app left is known as a wake's. */
 const WAKE = "plugin/";
+
+/** An agent's MCP servers as Pi's host takes them: `key` changes with the
+ * approval or the values, and a new one replaces the servers. */
+type PiMcp = Readonly<{
+  key: string;
+  /** The agent's workspace, where its local servers start, as in Claude
+   * Code. */
+  cwd?: string;
+  servers: readonly Readonly<
+    { name: string } & (
+      | {
+          transport: "stdio";
+          command: string;
+          args: readonly string[];
+          env: Readonly<Record<string, string>>;
+        }
+      | {
+          transport: "http";
+          url: string;
+          headers: Readonly<Record<string, string>>;
+        }
+    )
+  >[];
+}>;
 
 /** Where a mention's turn replies: its thread, or the top of a Solo chat. */
 type Where = Readonly<{ channel: string; root: string; topLevel: boolean }>;
@@ -271,6 +304,13 @@ export class PiRuntime {
   private running = new Set<AgentKey>();
   /** Agents with a protection binding, which never use the shared host. */
   private bound = new Set<AgentKey>();
+  /** Each agent's MCP servers as last sent to Pi, values included, by the
+   * approval and value saves they came from: read from the keychain only
+   * when either changes. */
+  private readonly mcpSent = new Map<AgentKey, PiMcp>();
+  /** Each agent's opens, one after another, so an older one's MCP list can't
+   * reach Pi after a newer one's. */
+  private readonly opening = new Map<AgentKey, Promise<void>>();
   /** Each agent's conversations as Pi's storage and this app run's
    * deliveries know them, by key; read from storage once, when first asked. */
   private readonly known = new Map<
@@ -381,6 +421,7 @@ export class PiRuntime {
       entry.closed = true;
     }
     this.agents.delete(pubkey);
+    this.mcpSent.delete(pubkey);
     await this.pi.retire(pubkey);
   }
 
@@ -690,6 +731,7 @@ export class PiRuntime {
       entry.closed = true;
     }
     this.agents.clear();
+    this.mcpSent.clear();
     void this.pi.dispose();
   }
 
@@ -1683,10 +1725,26 @@ export class PiRuntime {
     await this.adopted(entry, agent, { again: true });
   }
 
-  private async open(agent: AgentKey) {
+  private open(agent: AgentKey): Promise<void> {
+    const done = (this.opening.get(agent) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.openNow(agent));
+    this.opening.set(agent, done);
+    void done
+      .finally(() => {
+        if (this.opening.get(agent) === done) this.opening.delete(agent);
+      })
+      .catch(() => undefined);
+    return done;
+  }
+
+  private async openNow(agent: AgentKey) {
     const entry = this.agents.get(agent);
     const handle = entry?.handle ?? this.handle(agent);
     const tokens = compactAt(entry?.config.compactAt);
+    const mcp = entry && handle && (await this.mcp(agent, entry, handle));
+    // Retired or disposed while its values were read: nothing opens it now.
+    if (entry?.closed) return;
     await this.pi.request("open", {
       agent,
       // Pi resumes an unfinished run with it, before any turn brings it.
@@ -1695,7 +1753,58 @@ export class PiRuntime {
       ...(handle && { as: { pubkey: handle.pubkey, relay: handle.relay } }),
       tools: sessionTools(this.added()),
       hint: sessionHint(this.added()),
+      ...(mcp && { mcp }),
     });
+  }
+
+  /** The agent's MCP servers, which Pi's host starts and connects to as it
+   * opens the agent, each with its own values under their real names. A
+   * protected agent has none. An unapproved list fails the open, as it
+   * fails the other harnesses' launches. */
+  private async mcp(
+    agent: AgentKey,
+    entry: Entry,
+    handle: AgentHandle,
+  ): Promise<PiMcp> {
+    const { servers } = handle.protection
+      ? { servers: [] }
+      : startList(entry.config, handle);
+    if (!servers.length) {
+      this.mcpSent.delete(agent);
+      return { key: "", servers: [] };
+    }
+    const cwd = entry.config.workspace;
+    const key = JSON.stringify([
+      approvalId(entry.config, handle),
+      mcpGeneration(handle.pubkey),
+      cwd,
+    ]);
+    const sent = this.mcpSent.get(agent);
+    if (sent?.key === key) return sent;
+    const values = await mcpValues(handle.pubkey);
+    if (entry.closed) return { key: "", servers: [] };
+    const mcp = {
+      key,
+      cwd,
+      servers: servers.map((s) =>
+        s.transport === "stdio"
+          ? {
+              name: s.name,
+              transport: s.transport,
+              command: s.command,
+              args: s.args,
+              env: valuesOf(s, values),
+            }
+          : {
+              name: s.name,
+              transport: s.transport,
+              url: s.url,
+              headers: valuesOf(s, values),
+            },
+      ),
+    };
+    this.mcpSent.set(agent, mcp);
+    return mcp;
   }
 
   /** How a request settles. A host that stopped, or an agent whose storage

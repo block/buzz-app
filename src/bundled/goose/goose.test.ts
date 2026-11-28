@@ -8,6 +8,7 @@ import {
   type ToolServer,
 } from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
+import { HELD_RETRY_MS } from "../../features/agent-harness/acp/session";
 import {
   createLocalAgentActivity,
   stepText,
@@ -165,7 +166,7 @@ describe("GooseProcess", () => {
           sessionId: session.id,
           prompt: [{ type: "text", text: "must be refused" }],
         }),
-      ).rejects.toThrow("Live voice interaction is active");
+      ).rejects.toThrow("session already has an active Live run");
       if (delegated) {
         process.update(session.id, {
           sessionUpdate: "session_info_update",
@@ -205,6 +206,53 @@ describe("GooseProcess", () => {
       await goose.kill();
     },
   );
+
+  it("fails a prompt goose keeps refusing for a held live session once the retry runs out", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    await goose.request("_goose/unstable/session/live-voice/start", {
+      sessionId: session.id,
+    });
+    vi.useFakeTimers();
+    const typed = session.send("typed after leaving");
+    await vi.advanceTimersByTimeAsync(HELD_RETRY_MS + 2_000);
+    await expect(typed).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("session already has an active Live run"),
+    });
+    const prompts = process.received.filter(
+      (message) => message.method === "session/prompt",
+    );
+    expect(prompts.length).toBeGreaterThan(2);
+    expect(prompts.length).toBeLessThan(40);
+    expect(process.turns).toHaveLength(0);
+    expect(process.killed).toBe(false);
+    vi.useRealTimers();
+    await goose.kill();
+  });
+
+  it("stops resending a held prompt once the owner stops the work", async () => {
+    const { open, process, goose } = await start();
+    const session = await open();
+    await goose.request("_goose/unstable/session/live-voice/start", {
+      sessionId: session.id,
+    });
+    vi.useFakeTimers();
+    const typed = session.send("typed after leaving");
+    await vi.advanceTimersByTimeAsync(300);
+    const sent = () =>
+      process.received.filter((message) => message.method === "session/prompt")
+        .length;
+    expect(sent()).toBeGreaterThan(1);
+    session.interrupt();
+    await expect(typed).resolves.toMatchObject({ ok: true, stopped: true });
+    const after = sent();
+    await vi.advanceTimersByTimeAsync(HELD_RETRY_MS);
+    expect(sent()).toBe(after);
+    expect(process.turns).toHaveLength(0);
+    vi.useRealTimers();
+    await goose.kill();
+  });
 
   it("refuses to claim voice after typed work won the idle-to-reserve race", async () => {
     const { open, process, goose } = await start();

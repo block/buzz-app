@@ -37,8 +37,11 @@ import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush, gated } from "./goose-testing";
 import { REQUEST_TIMEOUT_MS } from "./goose";
-import { openVoice } from "./voice";
-vi.mock("./voice", () => ({ openVoice: vi.fn() }));
+import { openVoice, VOICE_STOP_TIMEOUT_MS } from "./voice";
+vi.mock("./voice", async (actual) => ({
+  ...(await actual<typeof import("./voice")>()),
+  openVoice: vi.fn(),
+}));
 import { GATEWAY_TOKEN } from "./forwarded";
 import { AcpSession } from "../../features/agent-harness/acp/session";
 import { AgentProcess, AgentSessions, localSessions } from "./sessions";
@@ -4251,7 +4254,7 @@ it("switching voice off closes its live seat and releases queued typed work", as
   }
 });
 
-it("holds typed text queued during voice until goose lets go of the session", async () => {
+it("runs typed text queued during voice once goose lets go of the session", async () => {
   const f = setup({ scope: "channel" });
   vi.mocked(openVoice).mockImplementation(
     async (process, sessionId, _seat, _instructions, start) => {
@@ -4298,9 +4301,10 @@ it("holds typed text queued during voice until goose lets go of the session", as
       sessionUpdate: "session_info_update",
       _meta: { goose: { activeRunId: "delegated" } },
     });
-    await f.deliver(message("1", "typed while speaking"));
+    const workingUntil = vi.fn<Delivery["workingUntil"]>();
+    await f.deliver(message("1", "typed while speaking"), { workingUntil });
     // goose answers the stop and ends the run, then saves the transcript
-    // before it lets go of the session.
+    // before it lets go of the session, refusing a prompt meanwhile.
     process.liveRelease = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -4310,21 +4314,98 @@ it("holds typed text queued during voice until goose lets go of the session", as
       sessionUpdate: "session_info_update",
       _meta: { goose: { activeRunId: null } },
     });
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await closed;
     const prompts = () =>
       process.received.filter((m) => m.method === "session/prompt");
-    expect(prompts()).toHaveLength(0);
+    await vi.waitFor(() => expect(prompts().length).toBeGreaterThan(1));
+    expect(process.turns).toHaveLength(0);
     release();
-    await closed;
     await vi.waitFor(() => expect(process.turns).toHaveLength(1));
     expect(process.turns[0]?.text).toContain("typed while speaking");
-    expect(prompts()).toHaveLength(1);
+    const [done] = workingUntil.mock.calls.at(-1) ?? [];
+    await expect(done).resolves.toMatchObject({ ok: true });
   } finally {
     release?.();
     f.runtime.dispose();
     vi.mocked(openVoice).mockReset();
   }
 });
+
+it.each(["slow", "rejected"] as const)(
+  "retires a voice session whose %s instruction clear fails, never the process",
+  async (failure) => {
+    const f = setup({ scope: "channel", hold: true });
+    const listed = f.session.channels.list();
+    const first = listed.channels[0];
+    if (!first) throw new Error("missing channel");
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...listed,
+      channels: [...listed.channels, { ...first, id: "other" }],
+    });
+    vi.mocked(openVoice).mockImplementation(async () => ({
+      input: vi.fn(),
+      close: vi.fn(async () => {}),
+    }));
+    try {
+      await f.runtime.voiceSettings.setEnabled(true);
+      // Typed work in another channel shares the process, and runs on.
+      const workingUntil = vi.fn<Delivery["workingUntil"]>();
+      await f.deliver(
+        message("1", "typed elsewhere", {
+          tags: [
+            ["h", "other"],
+            ["p", self],
+          ],
+        }),
+        { channelId: "other", workingUntil },
+      );
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const process = f.goose();
+      if (!process) throw new Error("goose did not start");
+      const seat = await f.runtime.voice(
+        {
+          agent: f.agent,
+          config: { ...DEFAULT_CONFIG, scope: "channel" },
+          conversation: { channelId: channel },
+          signal: new AbortController().signal,
+          ended: vi.fn(),
+          output: vi.fn(),
+          transcript: vi.fn(),
+        } as never,
+        f.agent as never,
+      );
+      const voiceSession = String(
+        process.received.find((m) => m.params?.key === "buzz-voice")?.params
+          ?.sessionId,
+      );
+      if (failure === "rejected") process.promptError = "disk full";
+      else process.promptGate = new Promise(() => {});
+      vi.useFakeTimers();
+      const closed = seat.close();
+      await vi.advanceTimersByTimeAsync(VOICE_STOP_TIMEOUT_MS);
+      vi.useRealTimers();
+      await closed;
+      expect(process.killed).toBe(false);
+      await vi.waitFor(() => expect(process.closed).toContain(voiceSession));
+      delete process.promptGate;
+      // The room's next typed turn runs in a new session.
+      await f.deliver(message("2", "typed in the room"));
+      await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+      expect(process.turns[1]?.text).toContain("typed in the room");
+      expect(process.turns[1]?.sessionId).not.toBe(voiceSession);
+      // The other channel's turn was never touched.
+      expect(process.closed).not.toContain(process.turns[0]?.sessionId);
+      for (const turn of process.turns) turn.finish();
+      await expect(workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+        ok: true,
+      });
+    } finally {
+      vi.useRealTimers();
+      f.runtime.dispose();
+      vi.mocked(openVoice).mockReset();
+    }
+  },
+);
 
 it("puts a reused session on the agent's current instructions before voice delegates", async () => {
   const f = setup({ scope: "channel" });

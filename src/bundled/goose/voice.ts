@@ -9,6 +9,20 @@ export const TRANSCRIPT_QUIET_MS = 1_000;
  * a stop. */
 export const VOICE_STOP_TIMEOUT_MS = 30_000;
 
+/** `request`, failing with `late` after `VOICE_STOP_TIMEOUT_MS`. Leaving a
+ * seat sends untimed requests and bounds them here: one that runs late fails
+ * only this seat, where a timed request would stop the process, and every
+ * conversation the agent has in it. */
+export async function seatBound<T>(request: Promise<T>, late: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    request,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(late)), VOICE_STOP_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 /** Goose owns turn-taking and tool delegation on this same ACP session. */
 export function openVoice(
   process: GooseProcess,
@@ -121,21 +135,13 @@ export function openVoice(
     },
     async stop() {
       if (!interactionId) return;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      // A stop that runs late fails only this seat. A timed request would
-      // stop the process, and every conversation the agent has in it.
-      await Promise.race([
+      await seatBound(
         process.request("_goose/unstable/session/live-voice/stop", {
           sessionId,
           interactionId,
         }),
-        new Promise((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("Goose did not stop voice in time")),
-            VOICE_STOP_TIMEOUT_MS,
-          );
-        }),
-      ]).finally(() => clearTimeout(timer));
+        "Goose did not stop voice in time",
+      );
     },
   });
 }

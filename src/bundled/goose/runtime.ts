@@ -1,5 +1,5 @@
 import { GooseVoiceSettings } from "./voice-settings";
-import { openVoice } from "./voice";
+import { openVoice, seatBound } from "./voice";
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
@@ -137,7 +137,6 @@ import {
   type Settled,
   type ToolServer,
 } from "./goose";
-import { STOP_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
 import { forwardedTurn, type GatewayProvider } from "./forwarded";
 import { marked, sessionTags, unforged } from "./transcript";
 import {
@@ -269,43 +268,6 @@ type Entry = {
   >;
 };
 
-/** How long a stopped voice interaction has to let go of its session. */
-export const LIVE_RELEASE_TIMEOUT_MS = 20_000;
-const LIVE_BUSY = "Live voice is unavailable while this session is busy";
-
-/** goose answers a stop, and ends delegated work, before it saves the
- * transcript and lets go of the session; a prompt sent meanwhile is refused.
- * Resolves once goose stops saying the session is busy, or at the deadline. */
-async function liveReleased(process: GooseProcess, sessionId: string) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let late = false;
-  const deadline = new Promise<void>((resolve) => {
-    timer = setTimeout(() => {
-      late = true;
-      resolve();
-    }, LIVE_RELEASE_TIMEOUT_MS);
-  });
-  // Untimed, as a timed request that ran late would stop the process.
-  const ask = () =>
-    process
-      .request("_goose/unstable/session/live-voice/availability", {
-        sessionId,
-      })
-      .then(
-        (result) => (result as { message?: unknown }).message === LIVE_BUSY,
-        () => false,
-      );
-  try {
-    while (!late && (await Promise.race([ask(), deadline.then(() => false)])))
-      await Promise.race([
-        new Promise((resolve) => setTimeout(resolve, 100)),
-        deadline,
-      ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
   readonly voiceSettings: GooseVoiceSettings;
@@ -435,28 +397,31 @@ export class GooseRuntime {
       abort.abort();
       closing = (async () => {
         await opened;
+        // A session still on voice's instructions never runs typed work.
+        let reusable = !promptChanged;
         try {
           await media?.close();
           // Before admission, the busy task belongs to typed work. Canceling
           // this opening must release its lease without waiting for that task.
-          if (!promptChanged) return;
+          if (reusable) return;
           held.interrupt();
           await held.externalIdle();
-          await liveReleased(held.process, held.sessionId);
-          await held.process
-            .request(
-              "_goose/unstable/session/system-prompt/set",
-              {
-                sessionId: held.sessionId,
-                mode: "append",
-                key: "buzz-voice",
-                text: "",
-              },
-              STOP_TIMEOUT_MS,
-            )
-            .catch(() => undefined); // The process may already have exited.
+          // Untimed, as a timed request that ran late would stop the process.
+          // One that fails, or whose process has exited, retires the session.
+          await seatBound(
+            held.process.request("_goose/unstable/session/system-prompt/set", {
+              sessionId: held.sessionId,
+              mode: "append",
+              key: "buzz-voice",
+              text: "",
+            }),
+            "Goose did not clear its voice instructions in time",
+          ).then(
+            () => (reusable = true),
+            () => undefined,
+          );
         } finally {
-          held.release();
+          held.release(!reusable);
           this.voiceSeats.delete(abort);
           for (const pending of this.refreshVoice.keys())
             this.refreshVoiceProcess(pending);

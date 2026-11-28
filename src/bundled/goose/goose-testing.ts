@@ -13,7 +13,7 @@ type Message = {
   method?: string;
   params?: Record<string, unknown>;
   result?: unknown;
-  error?: { code: number; message: string };
+  error?: { code: number; message: string; data?: string };
 };
 
 export type FakeTurn = {
@@ -363,13 +363,6 @@ export function fakeSpawn(
           else release();
           return reply(id, {});
         }
-        case "_goose/unstable/session/live-voice/availability":
-          return reply(id, {
-            message:
-              running.has(sessionId) || liveInteractions.has(sessionId)
-                ? "Live voice is unavailable while this session is busy"
-                : "Start Live voice",
-          });
         case "session/prompt": {
           if (fake.rejectPrompt) {
             fake.rejectPrompt = false;
@@ -386,8 +379,9 @@ export function fakeSpawn(
               jsonrpc: "2.0",
               ...(id !== undefined && { id }),
               error: {
-                code: -32603,
-                message: "Live voice interaction is active",
+                code: -32602,
+                message: "Invalid params",
+                data: "session already has an active Live run",
               },
             });
           const runId = `run-${fake.turns.length + 1}`;

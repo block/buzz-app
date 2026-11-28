@@ -93,6 +93,10 @@ export const GOOSE: AcpHooks = {
       ?.goose?.liveTranscript !== true,
   // goose is asked to close every session, advertised or not.
   closeSession: "always",
+  // A stopped voice interaction holds the session until goose has saved its
+  // transcript, after it has answered the stop and ended delegated work.
+  heldByOther: (error) =>
+    errorMessage(error).includes("session already has an active Live run"),
   // goose names an untitled session with a model call, unless its config
   // sets `GOOSE_DISABLE_SESSION_NAMING`.
   names: (goose) =>

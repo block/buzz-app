@@ -413,12 +413,16 @@ export class AgentSessions {
         },
         externalIdle: () => held.session.externalIdle(),
         interrupt: () => held.session.interruptExternalRun(),
-        release: () => {
+        /** With `retire`, the session is closed rather than kept for the
+         * conversation's next turn, as one voice could not clean up. */
+        release: (retire = false) => {
           if (released) return;
           released = true;
           held.retained = false;
           held.session.observeExternalRuns(false);
-          if (this.live.get(key) === held) this.touch(key, held);
+          if (this.live.get(key) !== held) return;
+          if (retire) this.drop(key, held);
+          else this.touch(key, held);
         },
       };
     }

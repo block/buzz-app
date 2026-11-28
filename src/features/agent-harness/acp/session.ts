@@ -8,6 +8,8 @@ import type { ActivityReceipt, Choice, Settled } from "./types";
 
 /** The most of a turn's text kept, to post when it answers nowhere in Buzz. */
 const WRITTEN_LIMIT = 20_000;
+/** How long a prompt the harness refused as `heldByOther` is sent again. */
+export const HELD_RETRY_MS = 20_000;
 
 type Waiter = (settled: Settled) => void;
 
@@ -575,12 +577,9 @@ export class AcpSession {
           sent = true;
           if (waiter) this.sent(waiter);
           const lead = this.preamble;
-          const { stopReason } = (await this.acp.request("session/prompt", {
-            sessionId: this.id,
-            prompt: [
-              { type: "text", text: lead ? `${lead}\n\n${prompt}` : prompt },
-            ],
-          })) as { stopReason?: string };
+          const { stopReason } = (await this.prompt(
+            lead ? `${lead}\n\n${prompt}` : prompt,
+          )) as { stopReason?: string };
           this.confirmPrompt?.();
           // A rejected prompt never reached the model: the next one leads.
           this.preamble = "";
@@ -612,6 +611,43 @@ export class AcpSession {
     }
     if (!this.steering.size && !this.closed) this.done();
     this.wake();
+  }
+
+  /** Sends a turn's prompt. One the harness refused as `heldByOther` goes again
+   * until it is taken, the work stops, or `HELD_RETRY_MS` has passed. */
+  private async prompt(text: string): Promise<unknown> {
+    const signal = this.work?.signal;
+    const deadline = Date.now() + HELD_RETRY_MS;
+    for (let wait = 100; ; wait = Math.min(wait * 2, 1_000)) {
+      try {
+        return await this.acp.request("session/prompt", {
+          sessionId: this.id,
+          prompt: [{ type: "text", text }],
+        });
+      } catch (error) {
+        if (
+          !this.acp.hooks.heldByOther?.(error) ||
+          Date.now() + wait > deadline
+        )
+          throw error;
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, wait);
+        signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      // Stopped or closed while it waited: the harness never took it.
+      if (signal?.aborted || this.closed) {
+        this.confirmPrompt = undefined;
+        return { stopReason: "cancelled" };
+      }
+    }
   }
 
   /** Puts the session on the provider, model and thinking level chosen now,

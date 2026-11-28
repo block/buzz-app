@@ -1480,6 +1480,25 @@
     color: var(--text-standard);
   }
 
+  /* A tab with a detail line grows to hold it, label above detail. */
+  .buzz-tabs[data-variant="panel"] .buzz-tabs-tab[data-detail] {
+    height: auto;
+    padding-block: var(--space-2) var(--space-3);
+  }
+  .buzz-tabs-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+  .buzz-tabs-detail {
+    display: flex;
+    min-height: 1.5rem;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-metadata);
+  }
+
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab[data-selected] {
     color: var(--text-accent);
   }

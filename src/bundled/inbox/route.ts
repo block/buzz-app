@@ -1,5 +1,5 @@
 import type { JsonValue, OpenTarget } from "../../features/navigation/targets";
-import type { ActivityFilter, SenderFilter } from "./InboxFilters";
+import type { ActivityKind } from "./InboxFilters";
 
 /** Activity's page address; the route contract below applies only to it. */
 export const inboxTarget = {
@@ -12,8 +12,7 @@ export const inboxTarget = {
 /** Filters an open asks the Activity page to show; omitted choices stay as saved. */
 export type InboxRoute = {
   attention?: "all" | "unread";
-  activity?: ActivityFilter;
-  sender?: SenderFilter;
+  activity?: ActivityKind;
 };
 type Filters = Required<InboxRoute>;
 // Keyed by each union so a value added to one fails to compile until listed here.
@@ -25,21 +24,23 @@ const filters: {
     all: true,
     threads: true,
     mentions: true,
-    dms: true,
     reactions: true,
   },
-  sender: { everyone: true, humans: true, agents: true },
 };
-// Links made while the page had Archived and Drafts views still open it:
-// `show` is accepted and ignored, and `drafts` alone opens the saved filters.
-const retiredShow: Readonly<Record<string, true>> = {
-  inbox: true,
-  archived: true,
+// Links made while the page had Archived and Drafts views or a From filter
+// still open it: `show` and `sender` are accepted and ignored, and `drafts`
+// alone opens the saved filters.
+const retired: Readonly<Record<string, Readonly<Record<string, true>>>> = {
+  show: { inbox: true, archived: true },
+  sender: { everyone: true, humans: true, agents: true },
 };
 
 function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
   if (!params || typeof params !== "object" || Array.isArray(params)) return;
-  const value = params as { readonly [key: string]: JsonValue };
+  const given = params as { readonly [key: string]: JsonValue };
+  // Links made while Activity had a DMs type open All.
+  const value =
+    given.activity === "dms" ? { ...given, activity: "all" } : given;
   const keys = Object.keys(value);
   // buzz:// plugin links carry every route value as a string.
   if (keys.includes("drafts"))
@@ -51,7 +52,8 @@ function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
     keys.some((key) => {
       const choice = value[key];
       if (typeof choice !== "string") return true;
-      if (key === "show") return !Object.hasOwn(retiredShow, choice);
+      const old = Object.hasOwn(retired, key) ? retired[key] : undefined;
+      if (old) return !Object.hasOwn(old, choice);
       return (
         !Object.hasOwn(filters, key) ||
         !Object.hasOwn(filters[key as keyof Filters], choice)
@@ -60,7 +62,9 @@ function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
   )
     return;
   return Object.fromEntries(
-    keys.filter((key) => key !== "show").map((key) => [key, value[key]]),
+    keys
+      .filter((key) => !Object.hasOwn(retired, key))
+      .map((key) => [key, value[key]]),
   ) as InboxRoute;
 }
 

@@ -21,7 +21,10 @@ import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
 import type { PageNavigation } from "../../features/navigation/service";
 import { reactionRows } from "./reaction-rows";
+import { TeamChannelPicker, teamChannels, useTeamChannel } from "./teams";
+import { avatarMedia } from "../../shared/avatar-source";
 import { routeOf } from "./route";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import {
   hasUnread,
   InboxRowButton,
@@ -43,8 +46,8 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   InboxFilters,
-  type ActivityFilter,
-  type SenderFilter,
+  type ActivityGroup,
+  type ActivityKind,
 } from "./InboxFilters";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -55,6 +58,7 @@ import {
 import {
   BellIcon,
   CheckIcon,
+  UsersIcon,
   EnvelopeIcon,
   EnvelopeOpenIcon,
 } from "../../shared/design-system/icons";
@@ -78,12 +82,12 @@ import {
 
 type AttentionFilter = "all" | "unread";
 // Saved values, defaults first.
-const activities = ["all", "dms", "threads", "mentions", "reactions"] as const;
-const senders = ["everyone", "humans", "agents"] as const;
+const groups = ["all", "agents", "team", "others"] as const;
+const activities = ["all", "threads", "mentions", "reactions"] as const;
 const attentions = ["all", "unread"] as const;
 type Filters = {
-  activity: ActivityFilter;
-  sender: SenderFilter;
+  group: ActivityGroup;
+  activity: ActivityKind;
   attention: AttentionFilter;
 };
 const filtersKey = "inbox:filters";
@@ -102,29 +106,20 @@ function readFilters(scope: string): Filters {
     return options.find((option) => option === value) ?? options[0];
   };
   return {
+    group: field("group", groups),
+    // A retired DMs view, or anything unknown, shows everything.
     activity: field("activity", activities),
-    sender: field("sender", senders),
     attention: field("attention", attentions),
   };
 }
-const matchesActivity = (
-  item: InboxItem,
-  filter: ActivityFilter,
-  isDm: boolean,
-) => {
-  switch (filter) {
-    case "all":
-      return true;
-    case "reactions":
-      return false;
-    case "dms":
-      return isDm;
-    case "mentions":
-      return item.mentioned;
-    case "threads":
-      return item.thread;
-  }
-};
+const matchesActivity = (item: InboxItem, filter: ActivityKind) =>
+  filter === "reactions"
+    ? false
+    : filter === "mentions"
+      ? item.mentioned
+      : filter === "threads"
+        ? item.thread
+        : true;
 const targetOf = (item: InboxItem) => ({
   channelId: item.channelId,
   messageId: item.messageId,
@@ -329,20 +324,34 @@ function InboxList({
   );
   const viewScope = session.scope;
   const [filters, setFilters] = useState(() => readFilters(viewScope));
-  const { activity, sender: senderFilter } = filters;
-  const unreadOnly = filters.attention === "unread";
+  const { group: chosen, activity } = filters;
+  const [teamId, saveTeam] = useTeamChannel(viewScope);
+  const teamOptions = teamChannels(list.channels, scope.viewer);
+  // A saved My agents view with no agents now shows All.
+  const group: ActivityGroup =
+    chosen === "agents" && !choices.pending && !choices.selectable.length
+      ? "all"
+      : chosen;
+  const byTeam = group === "team";
+  // My team's channel, while it is one you can use; Others leaves its members out.
+  const team = teamOptions.find((channel) => channel.id === teamId);
+  // Who-tabs that need your agents wait for them, and say when some are missing.
+  const byAgents = group === "agents" || group === "others";
+  // My team explains itself and asks for a channel until it has one it can
+  // use, or while you change it.
+  const [changing, setChanging] = useState(false);
+  const setup = changing || (byTeam && list.status === "ready" && !team);
+  // Reactions have no unread state, so Unread only waits until you leave them.
+  const unreadOnly = filters.attention === "unread" && activity !== "reactions";
   // Each list returns to the session's last offset once its rows show,
   // unless the user has already scrolled it. The offset they chose wins,
   // unless the selected row they could see has since left the view.
   const scroller = useRef<HTMLDivElement | null>(null);
   const placed = useRef<HTMLDivElement | null>(null);
   function setFilter(patch: Partial<Filters>) {
-    const next = {
-      ...filters,
-      ...patch,
-      ...(patch.activity === "reactions" ? { attention: "all" as const } : {}),
-    };
+    const next = { ...filters, ...patch };
     setFilters(next);
+    setChanging(false);
     writeView(viewScope, filtersKey, next);
     // A filter change keeps the list's current offset. A mounted list stays
     // where it is, even empty at 0, rather than taking the saved offset when
@@ -362,7 +371,8 @@ function InboxList({
     )
       return;
     appliedRoutes.add(navigation);
-    setFilter(route);
+    // A shortcut naming what to show means from everyone, as before who-tabs.
+    setFilter(route.activity ? { ...route, group: "all" } : route);
   }, [navigation]);
   const subscribeFilters = useCallback(
     (listener: () => void) => subscribeView(viewScope, listener, filtersKey),
@@ -412,7 +422,7 @@ function InboxList({
       target: selectedTarget,
     });
   }, [session, opened, selectedTarget]);
-  const fallbackControl = useRef<HTMLButtonElement | null>(null);
+  const fallbackControl = useRef<HTMLElement | null>(null);
   const focusToolbar = useCallback(
     () => fallbackControl.current?.focus({ preventScroll: true }),
     [],
@@ -490,16 +500,7 @@ function InboxList({
         : activityConversation(item, muted),
     )
     .filter(
-      (item): item is InboxItem =>
-        !!item &&
-        matchesActivity(
-          item,
-          activity,
-          list.channels.some(
-            (channel) =>
-              channel.id === item.channelId && channel.channelType === "dm",
-          ),
-        ),
+      (item): item is InboxItem => !!item && matchesActivity(item, activity),
     )
     .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   // A late verified root can legitimately regroup channel:reply into
@@ -580,8 +581,16 @@ function InboxList({
           channel.id === item.channelId && channel.channelType === "dm",
       ),
   );
+  // Whose unread activity each tab holds, newest first. Every kind counts,
+  // whatever Filter shows, so the tabs don't change as you filter.
+  const unread = items
+    .map((item) => activityConversation(item, muted))
+    .filter((item): item is InboxItem => !!item && hasUnread(item))
+    .sort((a, b) => b.createdAt - a.createdAt);
   const candidateIds = [
     ...activityItems.slice(0, 50).map((item) => item.authorId),
+    // The tabs' unread faces, whatever Filter shows.
+    ...unread.slice(0, 50).map((item) => item.authorId),
     ...activityReactions
       .slice(0, 50)
       .flatMap((item) => item.events.map((event) => event.pubkey)),
@@ -596,55 +605,37 @@ function InboxList({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  // Classification covers every evaluated author, independently of bounded demand.
-  // Winning events can change without changing folded display values.
-  useSyncExternalStore(session.profiles.subscribe, () =>
-    activityItems
-      .map(({ authorId }) => session.profiles.event?.(authorId)?.id ?? "")
-      .join(":"),
-  );
   const agentIds = new Set(choices.identities.map((agent) => agent.pubkey));
-  const senderKind = (authorId: string) => {
-    if (agentIds.has(authorId) || cachedProfiles.get(authorId)?.isAgent)
-      return "agent";
-    // foldProfiles supplies a fallback for malformed kind 0; require a valid
-    // signed, parsed object before treating absent agent hints as human display evidence.
-    const event = session.profiles.event?.(authorId);
-    if (event) {
-      try {
-        const body: unknown = JSON.parse(event.content);
-        if (body !== null && typeof body === "object" && !Array.isArray(body))
-          return "human";
-      } catch {
-        /* Missing or malformed profile is unknown. */
-      }
-    }
-    return "unknown";
-  };
+  // Your agents are the owned inventory alone, never a profile's unverified
+  // owner tag; a team is its channel's relay-signed roster.
+  const members = new Set(team?.members);
+  const inGroup = (authorId: string, of: ActivityGroup) =>
+    of === "agents"
+      ? agentIds.has(authorId)
+      : of === "others"
+        ? !agentIds.has(authorId) && !members.has(authorId)
+        : of === "all" || members.has(authorId);
+  const fromView = (authorId: string) => inGroup(authorId, group);
   const visible = activityItems.filter(
     (item) =>
-      (senderFilter === "everyone" ||
-        senderKind(item.authorId) ===
-          (senderFilter === "agents" ? "agent" : "human")) &&
+      fromView(item.authorId) &&
       (!unreadOnly ||
         hasUnread(item) ||
         (item.id === selectedId &&
           item.messageIds.includes(selectedTarget?.messageId ?? ""))),
   );
   const reactionItems =
-    !unreadOnly && (activity === "all" || activity === "reactions")
-      ? reactionRows(
-          activityReactions,
-          (authorId) =>
-            senderFilter === "everyone" ||
-            senderKind(authorId) ===
-              (senderFilter === "agents" ? "agent" : "human"),
-        )
+    !unreadOnly && activity !== "threads" && activity !== "mentions"
+      ? reactionRows(activityReactions, fromView)
       : [];
-  const rows = [
-    ...visible.map((item) => ({ kind: "conversation" as const, item })),
-    ...reactionItems.map((item) => ({ kind: "reaction" as const, item })),
-  ].sort(
+  const rows = (
+    setup
+      ? []
+      : [
+          ...visible.map((item) => ({ kind: "conversation" as const, item })),
+          ...reactionItems.map((item) => ({ kind: "reaction" as const, item })),
+        ]
+  ).sort(
     (a, b) =>
       b.item.createdAt - a.item.createdAt || a.item.id.localeCompare(b.item.id),
   );
@@ -786,6 +777,7 @@ function InboxList({
           session.unread.refresh(),
           session.inboxFeed.refresh(),
           session.inboxFeed.reactions.refresh(),
+          byAgents ? session.agentChoices.refresh() : undefined,
         ]);
       }
       if (retrySync && active.current) await session.unread.retrySync();
@@ -976,40 +968,115 @@ function InboxList({
     list.status === "idle" ||
     list.status === "loading" ||
     inbox.status === "loading" ||
-    feed.status === "loading";
+    feed.status === "loading" ||
+    (byAgents && choices.pending);
   const failure =
     reactionFeed.error ??
     error ??
     list.error ??
     inbox.error ??
     feed.error ??
-    sync.error;
+    sync.error ??
+    (byAgents && choices.error
+      ? "Couldn’t read all of your agents, so this view may not be accurate."
+      : undefined);
   useLayoutEffect(() => {
     if (!retryFocus.current) return;
     retryFocus.current = false;
     if (failure || pending || document.activeElement !== document.body) return;
     focusToolbar();
   }, [failure, pending, focusToolbar]);
-  const filtered =
-    activity !== "all" || senderFilter !== "everyone" || unreadOnly;
+  const filtered = group !== "all" || activity !== "all" || unreadOnly;
   // Nothing unread anywhere: say so, rather than suggest a filter hid it.
   // Only when the list is complete: both sources ready and nothing retained.
   const caughtUp =
     unreadOnly &&
+    group === "all" &&
     activity === "all" &&
-    senderFilter === "everyone" &&
     inbox.status === "ready" &&
     feed.status === "ready" &&
     inbox.freshness !== "stale";
+  const summarize = (of: ActivityGroup) => {
+    const held = unread.filter((item) => inGroup(item.authorId, of));
+    // All only counts; the newest author draws on top of the stack.
+    const authors =
+      of === "all" ? [] : [...new Set(held.map((item) => item.authorId))];
+    return {
+      unread: held.length,
+      avatars: [...authors.slice(0, 3).reverse(), ...authors.slice(3)].map(
+        (pubkey) => {
+          const agent = choices.identities.find(
+            (entry) => entry.pubkey === pubkey,
+          );
+          return {
+            id: pubkey,
+            name: name(
+              pubkey,
+              cachedProfiles.get(pubkey)?.name ??
+                agent?.name ??
+                formatPublicKey(pubkey) ??
+                "Unknown sender",
+            ),
+            src: avatarMedia(
+              cachedProfiles.get(pubkey)?.picture ?? agent?.avatar,
+              session.media,
+            ),
+            shape:
+              agentIds.has(pubkey) || cachedProfiles.get(pubkey)?.isAgent
+                ? ("squircle" as const)
+                : ("circle" as const),
+          };
+        },
+      ),
+    };
+  };
+  // Summaries wait for what decides them: the inbox, your agents, your team.
+  // A refresh or failure keeps the rows it had, so keeps their summaries too.
+  const counted = inbox.status === "ready" || items.length > 0;
+  const listed = list.status === "ready" || list.channels.length > 0;
   const toolbar = (
     <header className={styles.toolbar}>
       <InboxFilters
-        view={activity}
-        sender={senderFilter}
+        group={group}
+        all={counted ? summarize("all") : undefined}
+        agents={
+          !choices.selectable.length
+            ? null
+            : counted && !choices.pending
+              ? summarize("agents")
+              : undefined
+        }
+        team={
+          listed && !team
+            ? null
+            : counted && team
+              ? summarize("team")
+              : undefined
+        }
+        others={
+          counted && !choices.pending && listed
+            ? summarize("others")
+            : undefined
+        }
+        myTeam={
+          teamId
+            ? [
+                {
+                  label: "Change team channel",
+                  run: () => {
+                    setFilter({ group: "team" });
+                    setChanging(true);
+                  },
+                },
+              ]
+            : []
+        }
+        onReselect={() => setChanging(false)}
+        kind={activity}
         unreadOnly={unreadOnly}
-        triggerRef={fallbackControl}
-        onViewChange={(view) => setFilter({ activity: view })}
-        onSenderChange={(sender) => setFilter({ sender })}
+        unreadRef={fallbackControl}
+        onGroupChange={(next) => setFilter({ group: next })}
+        onKindChange={(next) => setFilter({ activity: next })}
         onUnreadChange={(checked) =>
           setFilter({ attention: checked ? "unread" : "all" })
         }
@@ -1090,7 +1157,38 @@ function InboxList({
                   </Button>
                 </div>
               )}
-            {!rows.length &&
+            {setup && (
+              <div className={styles.empty}>
+                <EmptyState
+                  icon={<UsersIcon />}
+                  title="Choose who’s on your team"
+                  description="Pick a channel, and everyone in it, people and agents alike, is on your team. My team then shows their activity from anywhere you can see it, not just that channel."
+                  action={
+                    <div className={styles.teamSetup}>
+                      <TeamChannelPicker
+                        channels={teamOptions}
+                        autoFocus={changing}
+                        onSelect={(id) => {
+                          saveTeam(id);
+                          setFilter({ group: "team" });
+                        }}
+                      />
+                      {changing && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setChanging(false)}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
+                  }
+                />
+              </div>
+            )}
+            {!setup &&
+              !rows.length &&
               (inbox.status === "ready" || feed.status === "ready") &&
               !loading &&
               !failure && (
@@ -1098,7 +1196,7 @@ function InboxList({
                   <EmptyState
                     icon={caughtUp ? <CheckIcon /> : <BellIcon />}
                     title={
-                      activity === "reactions" && senderFilter === "everyone"
+                      activity === "reactions" && group === "all"
                         ? "No reactions yet."
                         : caughtUp
                           ? "All caught up"
@@ -1123,8 +1221,8 @@ function InboxList({
                               caughtUp
                                 ? { attention: "all" }
                                 : {
+                                    group: "all",
                                     activity: "all",
-                                    sender: "everyone",
                                     attention: "all",
                                   },
                             );

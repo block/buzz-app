@@ -27,9 +27,7 @@ for (const width of [1280, 280]) {
     });
     const list = inbox.getByRole("list", { name: "Activity", exact: true });
     const rows = list.getByRole("listitem");
-    const filters = inbox.getByRole("button", {
-      name: /^From /,
-    });
+    const show = inbox.getByRole("tablist", { name: "Show", exact: true });
     await expect(rows).toHaveCount(3);
     await expect(status).toHaveCount(0);
     let gate;
@@ -49,13 +47,13 @@ for (const width of [1280, 280]) {
     });
     // The list's toolbar, not the page's tab strip above it.
     const toolbar = inbox.locator("header").filter({
-      has: page.getByRole("button", { name: /^From / }),
+      has: page.getByRole("tablist", { name: "Show", exact: true }),
     });
     await expect(toolbar).toHaveCount(1);
     const geometry = () =>
       inbox.evaluate((element) => {
         const header = element
-          .querySelector('header button[aria-haspopup="menu"]')
+          .querySelector('header [role="tablist"][aria-label="Show"]')
           .closest("header");
         const box = (node) => {
           const { x, y, width, height } = node.getBoundingClientRect();
@@ -66,21 +64,19 @@ for (const width of [1280, 280]) {
             ...element.querySelectorAll('[aria-label="Activity"] > li'),
           ].map((row) => ({ ...box(row), text: row.textContent })),
           header: box(header),
-          filters: box(
-            element.querySelector('header button[aria-haspopup="menu"]'),
+          show: box(
+            element.querySelector('header [role="tablist"][aria-label="Show"]'),
           ),
-          unread: box(
-            element.querySelector('[role="switch"][aria-label="Unread"]'),
-          ),
-          types: box(
+          unread: box(element.querySelector('header [role="switch"]')),
+          groups: box(
             element.querySelector(
-              '[role="tablist"][aria-label="Activity type"]',
+              '[role="tablist"][aria-label="Activity groups"]',
             ),
           ),
         };
       });
     const measurements = [];
-    await expect(filters).toBeVisible();
+    await expect(show).toBeVisible();
     const before = await geometry();
     gate = { ...Promise.withResolvers(), started: false };
     try {
@@ -118,12 +114,10 @@ for (const width of [1280, 280]) {
     await expect(status).toHaveCount(0);
     await expect.poll(geometry).toEqual(before);
     await expect(inbox.getByRole("alert")).toHaveCount(0);
-    await expect(filters).toHaveAccessibleName("From anyone");
-    await filters.click();
-    await expect(
-      page.getByRole("menuitemradio", { name: "Anyone", exact: true }),
-    ).toBeChecked();
-    await page.keyboard.press("Escape");
+    await expect(show.getByRole("tab", { selected: true })).toHaveAttribute(
+      "title",
+      "All",
+    );
     await testInfo.attach("refresh-geometry", {
       body: JSON.stringify(measurements, null, 2),
       contentType: "application/json",
@@ -198,24 +192,17 @@ test("narrow enlarged-text rows overlay Mark as read without erasing their label
   await expect(
     inbox.getByRole("region", { name: /^Conversation in / }),
   ).toHaveCount(0);
-  const filters = inbox.getByRole("button", {
-    name: /^From /,
-  });
-  const menu = page.getByRole("menu", { name: "From" });
-  const mentions = inbox
-    .getByRole("tablist", { name: "Activity type" })
-    .getByRole("tab", { name: "Mentions", exact: true });
-  await mentions.click();
-  await expect(mentions).toHaveAttribute("aria-selected", "true");
-  await filters.click();
-  await menu
-    .getByRole("menuitemradio", { name: "Agents", exact: true })
-    .click();
-  await expect(menu).toHaveCount(0);
-  await expect(filters).toHaveAccessibleName("From agents");
-  await expect
-    .poll(() =>
-      filters.evaluate((element) => element.getBoundingClientRect().right),
-    )
-    .toBeLessThanOrEqual(390);
+  const show = inbox.getByRole("tablist", { name: "Show", exact: true });
+  const unread = inbox.getByRole("switch", { name: "Unread", exact: true });
+  await show.getByRole("tab", { name: "Mentions", exact: true }).click();
+  await expect(
+    show.getByRole("tab", { name: "Mentions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  // The quick filters stay on screen at the narrow width and doubled text size.
+  for (const control of [show, unread])
+    await expect
+      .poll(() =>
+        control.evaluate((element) => element.getBoundingClientRect().right),
+      )
+      .toBeLessThanOrEqual(390);
 });

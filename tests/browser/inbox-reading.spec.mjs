@@ -80,9 +80,7 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
     .toBe(cutoff);
   await expect(dm.getByRole("img", { name: "Unread" })).toHaveCount(0);
 
-  const filter = inbox.getByRole("button", {
-    name: /^From /,
-  });
+  const filter = inbox.getByRole("switch", { name: "Unread", exact: true });
   await filter.focus();
   await page.clock.install({ time: base });
   await page.clock.pauseAt(base + 20_000);

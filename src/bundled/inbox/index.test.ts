@@ -4,7 +4,7 @@ import { apply } from "./index";
 import manifest from "./manifest.json";
 
 afterEach(() => vi.restoreAllMocks());
-it("opens the Activity page with filters from four chords, including from the composer", () => {
+it("opens the Activity page with filters from three chords, including from the composer", () => {
   const shortcuts = { register: vi.fn() };
   const pages = { register: vi.fn() };
   const open = vi.fn();
@@ -29,7 +29,6 @@ it("opens the Activity page with filters from four chords, including from the co
       "m",
       { activity: "mentions" },
     ],
-    ["open-dms", "Open DMs in Activity", "k", { activity: "dms" }],
   ] as const;
   // No other Activity shortcut: Archive was removed with the Archived view.
   expect(registered.map((item) => item.id)).toEqual(cases.map(([id]) => id));
@@ -53,7 +52,7 @@ it("opens the Activity page with filters from four chords, including from the co
       route: { version: 1, params },
     });
   }
-  expect(orders.size).toBe(4);
+  expect(orders.size).toBe(3);
   const [page] = pages.register.mock.calls[0] ?? [];
   // Shown as Activity; the page id and route stay "inbox".
   expect(page).toMatchObject({ id: "inbox", title: "Activity" });

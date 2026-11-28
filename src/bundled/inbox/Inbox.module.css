@@ -6,7 +6,7 @@
   min-height: 0;
 }
 
-/* Status fills the unused space after Unread, never wrapping controls or
+/* Status fills the unused space after the tabs, never wrapping controls or
    rows: its margin cancels the gap before it, so it takes no room
    on a full line, and its text keeps that gap instead. */
 .refreshSlot {
@@ -18,10 +18,8 @@
   margin-inline-start: calc(var(--space-2) * -1);
 }
 
-/* Type tabs (sized to their words, like Slack's), From and Unread read as one
-   left-aligned group, so Unread stays in view on a wide page; the status after
-   them fills the row. Too narrow, Unread wraps first to the start of the next
-   line, then From. */
+/* Who-tabs (sized to their words) start the row; the refresh status fills it,
+   so the quick filters sit at the end. */
 .filters {
   display: flex;
   flex: 1 1 auto;
@@ -33,12 +31,23 @@
 }
 
 /* The panel tab strip insets its tabs by the focus ring's room; cancel that
-   here so the first tab's text starts on the toolbar edge, like Unread and
-   From when they wrap, and From follows DMs about a tab gap away. */
+   here so the first tab's text starts on the toolbar edge. */
 .typeTabs {
   flex: 0 1 auto;
   min-width: 0;
   margin-inline: calc(var(--space-1) * -1);
+}
+
+/* What happened and Unread sit at the end, even on a line of their own;
+   a pane too narrow for both puts Unread under Show. */
+.quickFilters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  max-width: 100%;
+  margin-inline-start: auto;
 }
 
 .refreshStatus {
@@ -159,4 +168,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.teamSetup {
+  display: flex;
+  inline-size: 22rem;
+  max-inline-size: 100%;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.teamSetup > :first-child {
+  flex: 1;
+  min-inline-size: 0;
 }

@@ -12,6 +12,7 @@ import {
 import { XIcon } from "../icons";
 import { useScrollEdges } from "./useScrollEdges";
 import {
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -28,6 +29,14 @@ export type TabItem<Value extends string> = {
   value: Value;
   label: string;
   icon?: ReactNode;
+  /** Show only the icon; the label stays the tab's name and tooltip. */
+  labelHidden?: boolean;
+  /** A second line under the label, such as a summary of what the tab holds.
+   * It is drawn only; `description` says it to assistive tech. Labelled
+   * variants only: icon-only and navigation tabs leave it out. */
+  detail?: ReactNode;
+  /** The tab's accessible description, such as what its detail shows. */
+  description?: string;
   disabled?: boolean;
   trailing?: ReactNode;
   /** Compose an anchored surface around the actual tab trigger, replacing its default hint. */
@@ -121,6 +130,7 @@ export function Tabs<Value extends string>({
 }) {
   const iconOnly = variant === "segmented-icons" || variant === "dock";
   const [renaming, setRenaming] = useState<Value>();
+  const descriptionId = useId();
   if (renaming !== undefined && !items.some((item) => item.value === renaming))
     setRenaming(undefined);
   const list = useScrollEdges("inline");
@@ -144,13 +154,21 @@ export function Tabs<Value extends string>({
             }
           />
         )}
-        {items.map((item) => {
+        {items.map((item, index) => {
+          const described =
+            variant !== "navigation" &&
+            item.description &&
+            `${descriptionId}-${index}`;
           const tab = (
             <BaseTabs.Tab
               value={item.value}
               title={variant === "dock" ? undefined : item.label}
               disabled={item.disabled}
+              aria-describedby={described || undefined}
               data-icon-only={iconOnly || undefined}
+              data-detail={
+                (item.detail !== undefined && !iconOnly) || undefined
+              }
               render={
                 variant === "navigation" ? (
                   <NavigationItem
@@ -221,6 +239,12 @@ export function Tabs<Value extends string>({
               ) : null}
               {variant !== "navigation" && (
                 <>
+                  {/* First, so the label stays the tab's last span. */}
+                  {described && (
+                    <span id={described} hidden>
+                      {item.description}
+                    </span>
+                  )}
                   {iconOnly ? (
                     <span className="buzz-tabs-icon" aria-hidden="true">
                       {item.icon}
@@ -228,9 +252,22 @@ export function Tabs<Value extends string>({
                   ) : (
                     item.icon
                   )}
-                  <span className={iconOnly ? "sr-only" : undefined}>
-                    {item.label}
-                  </span>
+                  {item.detail === undefined || iconOnly ? (
+                    <span
+                      className={
+                        iconOnly || item.labelHidden ? "sr-only" : undefined
+                      }
+                    >
+                      {item.label}
+                    </span>
+                  ) : (
+                    <span className="buzz-tabs-stack">
+                      <span>{item.label}</span>
+                      <span className="buzz-tabs-detail" aria-hidden="true">
+                        {item.detail}
+                      </span>
+                    </span>
+                  )}
                   {variant === "dock" && item.trailing ? (
                     <span className="buzz-tabs-badge">{item.trailing}</span>
                   ) : (

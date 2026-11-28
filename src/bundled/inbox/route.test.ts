@@ -8,14 +8,19 @@ it.each([
   { activity: "all" },
   { activity: "threads" },
   { activity: "mentions" },
-  { activity: "dms" },
+  { activity: "reactions" },
   { activity: "all", attention: "unread" },
   { show: "archived" },
   { show: "inbox" },
   { sender: "humans" },
   { sender: "agents" },
   { sender: "everyone" },
-  { activity: "dms", sender: "agents", show: "archived", attention: "unread" },
+  {
+    activity: "threads",
+    sender: "agents",
+    show: "archived",
+    attention: "unread",
+  },
   { drafts: true },
   // buzz:// plugin links carry every route value as a string.
   { drafts: "true" },
@@ -38,8 +43,8 @@ it.each([
   { drafts: false },
   { drafts: "false" },
   { drafts: "" },
-  // Drafts has no type, sender, status or attention filters to apply.
-  { drafts: true, activity: "dms" },
+  // Drafts has no type, status or attention filters to apply.
+  { drafts: true, activity: "threads" },
   { drafts: true, show: "inbox" },
   { unknown: "x" },
 ])("rejects the filter params %j", (params) => {
@@ -47,9 +52,18 @@ it.each([
 });
 
 it("reads a route only from a version 1 page target", () => {
-  const params = { activity: "dms" } as const;
+  const params = { activity: "threads" } as const;
   expect(routeOf(inboxRouteTarget(params))).toEqual(params);
-  expect(routeOf(inboxRouteTarget({ activity: "dms" }))).toEqual(params);
+  // Links made while Activity had a DMs type open All.
+  expect(
+    routeOf({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.inbox",
+      pageId: "inbox",
+      route: { version: 1, params: { activity: "dms", sender: "agents" } },
+    }),
+  ).toEqual({ activity: "all" });
   expect(routeOf({ version: 1, kind: "home" })).toBeUndefined();
   expect(
     routeOf({
@@ -71,11 +85,12 @@ it("reads a route only from a version 1 page target", () => {
   expect(routeOf(undefined)).toBeUndefined();
 });
 
-it("drops a link's retired Archived and Drafts choices", () => {
+it("drops a link's retired Archived, Drafts and From choices", () => {
   const at = (params: Record<string, string | boolean>) =>
     routeOf({ ...inboxTarget, route: { version: 1, params } });
-  expect(at({ show: "archived", sender: "agents" })).toEqual({
-    sender: "agents",
+  expect(at({ show: "archived", sender: "agents" })).toEqual({});
+  expect(at({ activity: "threads", sender: "humans" })).toEqual({
+    activity: "threads",
   });
   expect(at({ show: "inbox" })).toEqual({});
   expect(at({ drafts: "true" })).toEqual({});

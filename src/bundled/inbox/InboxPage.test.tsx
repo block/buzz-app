@@ -116,7 +116,7 @@ it.each([false, true])(
     await waitFor(() => expect(tabs("Activity tabs")).toHaveLength(1));
     expect(queryReader()).not.toBeInTheDocument();
     if (elsewhere) expect(other).toHaveFocus();
-    else expect(fromTrigger()).toHaveFocus();
+    else expect(unreadSwitch()).toHaveFocus();
     other.remove();
   },
 );
@@ -182,7 +182,7 @@ it.each([
       expect(document.activeElement).toHaveAttribute("aria-selected", "true");
     } else {
       expect(sideTabs()).toEqual([]);
-      expect(fromTrigger()).toHaveFocus();
+      expect(unreadSwitch()).toHaveFocus();
     }
   },
 );
@@ -317,40 +317,23 @@ it("neither measures nor places the list until a tab moved to the main pane unco
   expect(covered.scrollTop).toBe(160);
 });
 
-it.each([
-  ["DMs", "Activity type"],
-  ["Agents", "Sender"],
-  ["Unread only", "Attention"],
-] as const)(
-  "offers Clear filters when %s empties a filtered view",
-  async (label, control) => {
-    const h = fixture();
-    render(h.view);
-    await waitFor(() => expect(rows()).toHaveLength(2));
-    if (control === "Attention") {
-      await act(async () => {
-        await h.owner.session.unread.markChannelRead("room");
-      });
-      // Unread alone means caught up; with a type it is a filtered view.
-      await chooseFilter("DMs");
-    }
-    await chooseFilter(label, control);
-    await screen.findByText(
-      control === "Attention"
-        ? "No unread activity in this view"
-        : "No recent activity in this view",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    await waitFor(() => expect(rows()).toHaveLength(2));
-    const filters = fromTrigger();
-    expect(filters).toHaveFocus();
-    expect(filters).toHaveAccessibleName("From anyone");
-    expect(screen.getByRole("switch", { name: "Unread" })).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
-  },
-);
+it("offers Clear filters when Unread empties a filtered view", async () => {
+  const h = fixture();
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  await act(async () => {
+    await h.owner.session.unread.markChannelRead("room");
+  });
+  // Unread alone means caught up; with a type it is a filtered view.
+  await chooseFilter("Threads");
+  await chooseFilter("Unread only", "Attention");
+  await screen.findByText("No unread activity in this view");
+  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  expect(unreadSwitch()).toHaveFocus();
+  expect(activityType()).toBe("All");
+  expect(unreadOn()).toBe(false);
+});
 
 it("All caught up offers Show all once Unread leaves nothing, then shows the read conversations", async () => {
   const h = fixture();
@@ -374,8 +357,8 @@ it("All caught up offers Show all once Unread leaves nothing, then shows the rea
   ).toEqual(["Show all"]);
   fireEvent.click(within(status).getByRole("button", { name: "Show all" }));
   await waitFor(() => expect(rows()).toHaveLength(2));
-  expect(unreadToggle()).toHaveAttribute("aria-checked", "false");
-  expect(fromTrigger()).toHaveFocus();
+  expect(unreadOn()).toBe(false);
+  expect(unreadSwitch()).toHaveFocus();
 });
 
 it.each(["button", "menu"] as const)(
@@ -437,7 +420,6 @@ it.each([false, true])(
     const h = fixture({ withWriter: true, withDm: dm });
     render(h.view);
     await waitFor(() => expect(rows()).toHaveLength(dm ? 3 : 2));
-    if (dm) await chooseFilter("DMs");
     const row = rows().find((entry) =>
       entry.textContent?.includes(dm ? "A direct reply" : "A thread update"),
     );
@@ -449,7 +431,7 @@ it.each([false, true])(
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(editor).toHaveValue(""));
-    expect(rows()).toHaveLength(dm ? 1 : 2);
+    expect(rows()).toHaveLength(dm ? 3 : 2);
     expect(screen.getByRole("textbox")).toBe(editor);
   },
 );
@@ -461,48 +443,15 @@ it("defaults saved filters field by field and loads a retired Archived view as t
     JSON.stringify({ show: "archived", activity: "bogus", sender: "agents" }),
   );
   render(h.view);
-  // Archive is gone: the saved Archived view shows every conversation.
-  await waitFor(() => expect(rows()).toHaveLength(0));
-  expect(fromTrigger()).toHaveAccessibleName("From agents");
-  expect(
-    screen.getByRole("tab", { name: "All", selected: true }),
-  ).toBeInTheDocument();
-  expect(unreadToggle()).toHaveAttribute("aria-checked", "false");
-  fireEvent.click(fromTrigger());
-  fireEvent.click(await screen.findByRole("menuitemradio", { name: "Anyone" }));
+  // Archive and From are gone: the saved view shows every conversation.
   await waitFor(() => expect(rows()).toHaveLength(2));
-  expect(fromTrigger()).toHaveAccessibleName("From anyone");
+  expect(activityType()).toBe("All");
+  expect(activityGroup()).toBe("All");
+  expect(unreadOn()).toBe(false);
+  await chooseFilter("Threads");
   expect(savedFilters(h)).not.toHaveProperty("show");
+  expect(savedFilters(h)).not.toHaveProperty("sender");
 });
-
-it.each([
-  ["everyone", "From anyone", "Anyone"],
-  ["humans", "From people", "People"],
-  ["agents", "From agents", "Agents"],
-] as const)(
-  "a saved %s sender loads as %s with its From choice checked",
-  async (sender, label, choice) => {
-    const h = fixture();
-    localStorage.setItem(
-      `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
-      JSON.stringify({ sender }),
-    );
-    render(h.view);
-    await waitFor(() => expect(fromTrigger()).toHaveAccessibleName(label));
-    fireEvent.click(fromTrigger());
-    const menu = await screen.findByRole("menu", { name: "From" });
-    expect(
-      within(menu)
-        .getAllByRole("menuitemradio")
-        .map((item) => [item.textContent, item.getAttribute("aria-checked")]),
-    ).toEqual(
-      ["Anyone", "People", "Agents"].map((name) => [
-        name,
-        String(name === choice),
-      ]),
-    );
-  },
-);
 
 it("reconciles saved preferences from another window", async () => {
   const h = fixture({ withWriter: true });
@@ -521,7 +470,6 @@ it("reconciles saved preferences from another window", async () => {
         {
           show: "all",
           activity: "bogus",
-          sender: "agents",
           attention: "unread",
         },
       ],
@@ -537,11 +485,7 @@ it("reconciles saved preferences from another window", async () => {
     }
   });
   expect(activityType()).toBe("All");
-  expect(fromTrigger()).toHaveAccessibleName("From agents");
-  expect(screen.getByRole("switch", { name: "Unread" })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
+  expect(unreadOn()).toBe(true);
 });
 
 /** The sidebar hover card over the same session as the page. */
@@ -968,7 +912,9 @@ function fixture(
     withMutes?: boolean;
     withSolo?: boolean;
     withSenders?: boolean;
-    holdProfiles?: boolean;
+    holdLibrary?: boolean;
+    failLibrary?: boolean;
+    withTeams?: boolean;
     withWriter?: boolean;
     soloChannel?: boolean;
     memberAgents?: 1 | 2;
@@ -983,11 +929,13 @@ function fixture(
     late = keypair(),
     unknown = keypair(),
     relayKey = keypair();
-  // Held profiles are unpublished until release, then arrive live. Holding a
-  // read open instead would occupy the one background read slot for good.
-  let profilesHeld = options.holdProfiles ?? false;
-  const unheld = (found: RelayEvent[]) =>
-    profilesHeld ? found.filter((event) => event.kind !== 0) : found;
+  let releaseLibrary = () => {};
+  const libraryHeld = options.holdLibrary
+    ? new Promise<void>((resolve) => {
+        releaseLibrary = resolve;
+      })
+    : undefined;
+  let libraryFailure = options.failLibrary ?? false;
   let rosterFailure = options.failRoster ?? false;
   let rosterGate: Promise<void> | undefined;
   let rosterStarted = false;
@@ -1132,6 +1080,27 @@ function fixture(
           ]),
         ]
       : []),
+    // Team channels: Crew has your agent and an unprofiled author; Ops has Alice.
+    ...(options.withTeams
+      ? [
+          roster(
+            relayKey,
+            "crew",
+            [viewer.pubkey, agent.pubkey, unknown.pubkey],
+            10,
+          ),
+          metadata(relayKey, "crew", "Crew", 10, [["t", "stream"]]),
+          roster(relayKey, "ops", [viewer.pubkey, alice.pubkey], 10),
+          metadata(relayKey, "ops", "Ops", 10, [["t", "stream"]]),
+          // The viewer's own relay record of Scout, read when the local library fails.
+          signed(viewer, {
+            kind: 30177,
+            tags: [["d", agent.pubkey]],
+            content: JSON.stringify({ name: "Scout" }),
+            created_at: 5,
+          }),
+        ]
+      : []),
   ];
   if (options.guest) {
     const roster = events[0];
@@ -1216,7 +1185,7 @@ function fixture(
               throw new Error("history offline");
           }
         }
-        return unheld(filters.flatMap(answer));
+        return filters.flatMap(answer);
       },
       // The real sizing rewrite behind a pass-through proxy, so rows resolve
       // relay-hosted pictures to the variant they actually requested.
@@ -1236,15 +1205,22 @@ function fixture(
         : {}),
       ...(options.withSenders || options.memberAgents
         ? {
-            readAgentLibrary: async () => ({
-              definitions: [],
-              identities: [
-                { pubkey: agent.pubkey, name: "Scout" },
-                ...(options.memberAgents === 2
-                  ? [{ pubkey: profileAgent.pubkey, name: "Second agent" }]
-                  : []),
-              ],
-            }),
+            readAgentLibrary: async () => {
+              await libraryHeld;
+              if (libraryFailure) {
+                libraryFailure = false;
+                throw new Error("library offline");
+              }
+              return {
+                definitions: [],
+                identities: [
+                  { pubkey: agent.pubkey, name: "Scout" },
+                  ...(options.memberAgents === 2
+                    ? [{ pubkey: profileAgent.pubkey, name: "Second agent" }]
+                    : []),
+                ],
+              };
+            },
           }
         : {}),
       subscribe(callbacks) {
@@ -1309,7 +1285,7 @@ function fixture(
     },
   );
   owners.push(owner);
-  if (!options.failRoster) emit(unheld(events));
+  if (!options.failRoster) emit(events);
   const scope = {
     viewer: viewer.pubkey,
     communityOrigin: "https://relay.test",
@@ -1503,11 +1479,6 @@ function fixture(
       };
     },
     rosterStarted: () => rosterStarted,
-    releaseProfiles() {
-      if (!profilesHeld) return;
-      profilesHeld = false;
-      emit(events.filter((event) => event.kind === 0));
-    },
     agent,
     unknown,
     late,
@@ -1517,23 +1488,9 @@ function fixture(
     profileAgent,
     emit,
     events,
-    publishLateProfile() {
-      act(() => emit([profile(late, { name: "Late person" }, 30)]));
-    },
+    releaseLibrary: () => releaseLibrary(),
     publishAgentProfile() {
       act(() => emit([profile(agent, { name: "Scout", is_agent: true }, 27)]));
-    },
-    publishMalformedProfile() {
-      act(() =>
-        emit([
-          signed(unknown, {
-            kind: 0,
-            tags: [],
-            content: "broken",
-            created_at: 27,
-          }),
-        ]),
-      );
     },
     failRoster() {
       rosterFailure = true;
@@ -1671,16 +1628,24 @@ const sideTabList = () =>
     .queryAllByRole("tablist")
     .find(
       (item) =>
-        !["Activity tabs", "Activity type"].includes(
+        !["Activity tabs", "Activity groups", "Show"].includes(
           item.getAttribute("aria-label") ?? "",
         ),
     );
-/** The selected Activity type tab's label. */
-const activityType = () =>
-  within(screen.getByRole("tablist", { name: "Activity type" })).queryByRole(
-    "tab",
-    { selected: true },
-  )?.textContent;
+const unreadSwitch = () => screen.getByRole("switch", { name: "Unread" });
+const unreadOn = () => unreadSwitch().getAttribute("aria-checked") === "true";
+/** The kind of activity Show picks. */
+const activityType = () => {
+  const kind = within(screen.getByRole("tablist", { name: "Show" }))
+    .queryByRole("tab", { selected: true })
+    ?.getAttribute("title");
+  return kind;
+};
+/** The selected who-tab's label: its text also holds its summary. */
+const activityGroup = () =>
+  within(screen.getByRole("tablist", { name: "Activity groups" }))
+    .queryByRole("tab", { selected: true })
+    ?.getAttribute("title");
 /** The side pane's tabs, beside the main pane's "Activity tabs". */
 const sideTabs = () => {
   const list = sideTabList();
@@ -1720,33 +1685,25 @@ const savedFilters = (h: ReturnType<typeof fixture>) =>
       `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
     ) ?? "null",
   );
-/** The From menu's trigger, which names the current choice. */
-const fromTrigger = () => screen.getByRole("button", { name: /^From / });
-const unreadToggle = () => screen.getByRole("switch", { name: "Unread" });
 
 it.each([
   [{ activity: "all", attention: "unread" }, "All", "true"],
   [{ activity: "threads" }, "Threads", "false"],
   [{ activity: "mentions" }, "Mentions", "false"],
-  [{ activity: "dms" }, "DMs", "false"],
+  [{ activity: "reactions" }, "Reactions", "false"],
 ] as const)(
   "a shortcut open with %j applies and saves its filters, leaving the others",
   async (params, label, unread) => {
     const h = fixture({ withDm: true });
     localStorage.setItem(
       `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
-      JSON.stringify({
-        activity: "all",
-        sender: "agents",
-        attention: "all",
-      }),
+      JSON.stringify({ activity: "all", attention: "all" }),
     );
     render(viewAt(h, visit(params)));
     await waitFor(() => expect(activityType()).toBe(label));
-    expect(fromTrigger()).toHaveAccessibleName("From agents");
-    expect(unreadToggle()).toHaveAttribute("aria-checked", unread);
+    expect(String(unreadOn())).toBe(unread);
     expect(savedFilters(h)).toEqual({
-      sender: "agents",
+      group: "all",
       attention: unread === "true" ? "unread" : "all",
       ...params,
     });
@@ -1761,7 +1718,7 @@ it("keeps the saved attention when a shortcut names only an activity", async () 
   );
   render(viewAt(h, visit({ activity: "threads" })));
   await waitFor(() => expect(activityType()).toBe("Threads"));
-  expect(unreadToggle()).toHaveAttribute("aria-checked", "true");
+  expect(unreadOn()).toBe(true);
   expect(savedFilters(h)).toMatchObject({ attention: "unread" });
 });
 
@@ -1776,9 +1733,9 @@ it("re-applies a repeated shortcut open after the filters were changed by hand",
   const same = visit({ activity: "threads" });
   view.rerender(viewAt(h, same));
   await waitFor(() => expect(activityType()).toBe("Threads"));
-  await chooseFilter("DMs");
+  await chooseFilter("Reactions");
   view.rerender(viewAt(h, same));
-  expect(activityType()).toBe("DMs");
+  expect(activityType()).toBe("Reactions");
   // The host presents a repeated open of an identical address as a new object.
   view.rerender(viewAt(h, visit({ activity: "threads" })));
   await waitFor(() => expect(activityType()).toBe("Threads"));
@@ -1798,35 +1755,13 @@ it("Back/Forward to a shortcut visit keeps the filters chosen since", async () =
   expect(savedFilters(h)).toMatchObject({ activity: "mentions" });
 });
 
-it("a route open applies its sender, keeping the other saved filters", async () => {
-  const h = fixture({ withDm: true });
-  localStorage.setItem(
-    `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
-    JSON.stringify({
-      activity: "threads",
-      sender: "everyone",
-      attention: "unread",
-    }),
-  );
-  render(viewAt(h, visit({ sender: "agents" })));
-  await waitFor(() =>
-    expect(fromTrigger()).toHaveAccessibleName("From agents"),
-  );
-  expect(activityType()).toBe("Threads");
-  expect(unreadToggle()).toBeChecked();
-  expect(savedFilters(h)).toMatchObject({
-    activity: "threads",
-    sender: "agents",
-    attention: "unread",
-  });
-});
-
 it.each([
-  [{ show: "archived", sender: "agents" }, "From agents"],
-  [{ drafts: "true" }, "From anyone"],
+  { show: "archived", sender: "agents" },
+  { sender: "humans" },
+  { drafts: "true" },
 ] as const)(
-  "a link from before Archived and Drafts were removed, %j, still opens the page",
-  async (params, from) => {
+  "a link from before Archived, Drafts and From were removed, %j, still opens the page",
+  async (params) => {
     const h = fixture();
     render(
       viewAt(h, {
@@ -1840,8 +1775,7 @@ it.each([
         },
       }),
     );
-    await waitFor(() => expect(fromTrigger()).toHaveAccessibleName(from));
-    expect(activityType()).toBe("All");
+    await waitFor(() => expect(activityType()).toBe("All"));
     expect(screen.getByRole("list", { name: "Activity" })).toBeVisible();
   },
 );
@@ -1850,7 +1784,6 @@ it("a plain open leaves saved filters alone", async () => {
   const h = fixture();
   const saved = {
     activity: "mentions",
-    sender: "humans",
     attention: "unread",
   };
   localStorage.setItem(
@@ -1858,52 +1791,32 @@ it("a plain open leaves saved filters alone", async () => {
     JSON.stringify(saved),
   );
   const view = render(viewAt(h, visit()));
-  await waitFor(() =>
-    expect(fromTrigger()).toHaveAccessibleName("From people"),
-  );
-  expect(unreadToggle()).toHaveAttribute("aria-checked", "true");
+  await waitFor(() => expect(activityType()).toBe("Mentions"));
+  expect(unreadOn()).toBe(true);
   view.rerender(viewAt(h, visit()));
   expect(savedFilters(h)).toEqual(saved);
-  expect(fromTrigger()).toHaveAccessibleName("From people");
   expect(activityType()).toBe("Mentions");
 });
 
-async function chooseFilter(label: string, control = "Activity type") {
-  if (control === "Attention") {
-    const toggle = screen.getByRole("switch", { name: "Unread" });
-    if (
-      toggle.getAttribute("aria-checked") !== String(label === "Unread only")
-    ) {
-      fireEvent.click(toggle);
-    }
-    expect(toggle).toHaveAttribute(
-      "aria-checked",
-      String(label === "Unread only"),
-    );
-    return;
-  }
+const groupTabs = ["All", "My agents", "My team", "Others"];
+/** A who-tab, a kind (Threads, Mentions, Reactions, or All under "Show") or Unread. */
+async function chooseFilter(label: string, control = "Activity") {
   const user = userEvent.setup();
-  if (control === "Activity type") {
-    await user.click(
-      within(screen.getByRole("tablist", { name: "Activity type" })).getByRole(
-        "tab",
-        { name: label === "All activity" ? "All" : label },
-      ),
-    );
+  if (control === "Attention") {
+    if (unreadOn() !== (label === "Unread only"))
+      await user.click(unreadSwitch());
+    expect(unreadOn()).toBe(label === "Unread only");
     return;
   }
-  await user.click(fromTrigger());
-  const menu = await screen.findByRole("menu", { name: "From" });
   await user.click(
-    within(menu).getByRole("menuitemradio", {
-      name:
-        label === "Humans" ? "People" : label === "Everyone" ? "Anyone" : label,
-    }),
-  );
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("menu", { name: "From" }),
-    ).not.toBeInTheDocument(),
+    within(
+      screen.getByRole("tablist", {
+        name:
+          control !== "Show" && groupTabs.includes(label)
+            ? "Activity groups"
+            : "Show",
+      }),
+    ).getByRole("tab", { name: label }),
   );
 }
 it.each([false, true])(
@@ -1961,7 +1874,7 @@ it.each([false, true])(
   },
 );
 
-it("Mentions orders and classifies matching senders and reads only through matching messages", async () => {
+it("Mentions orders matching messages and reads only through them", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");
@@ -1983,12 +1896,6 @@ it("Mentions orders and classifies matching senders and reads only through match
     expect.stringContaining("Agent decision"),
     expect.stringContaining("Please review this"),
   ]);
-  await chooseFilter("Humans", "Sender");
-  expect(rows()).toHaveLength(1);
-  expect(rows()[0]).toHaveTextContent("Please review this");
-  await chooseFilter("Agents", "Sender");
-  expect(rows()).toHaveLength(1);
-  expect(rows()[0]).toHaveTextContent("Agent decision");
   const row = rows()[0];
   if (!row) throw new Error("Missing agent mention row");
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
@@ -2357,13 +2264,10 @@ it("puts the actual channel or DM source below the sender without category tags"
   expect(
     within(dmRow).getByRole("button", { name: "Open Alice in DM" }),
   ).toBeInTheDocument();
-  await chooseFilter("DMs");
-  expect(rows()).toHaveLength(1);
-  expect(rows()[0]).toHaveTextContent("A direct reply");
   await chooseFilter("Mentions");
   expect(rows()).toHaveLength(1);
   expect(rows()[0]).toHaveTextContent("Please review this");
-  await chooseFilter("All activity");
+  await chooseFilter("All", "Show");
   expect(rows()).toHaveLength(3);
 });
 
@@ -2416,55 +2320,196 @@ it("renders all loaded rows without pagination while preserving unread filtering
   expect(
     screen.queryByRole("button", { name: "Show more" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("switch", { name: "Unread" }));
+  await chooseFilter("All messages", "Attention");
   expect(rows()).toHaveLength(51);
   expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
 });
 
-it("intersects activity and representative sender evidence without inferring missing profiles", async () => {
-  const h = fixture({ withDm: true, withSenders: true, holdProfiles: true });
+const texts = () => rows().map((row) => row.textContent ?? "");
+/** Who-tabs by name: each tab's text includes its unread summary. */
+const typeTabs = () =>
+  within(screen.getByRole("tablist", { name: "Activity groups" }))
+    .getAllByRole("tab")
+    .map((tab) => tab.getAttribute("title"));
+const saveGroup = (h: ReturnType<typeof fixture>, group: string) =>
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
+    JSON.stringify({ group }),
+  );
+async function pickTeam(name: string) {
+  const user = userEvent.setup();
+  await user.type(
+    await screen.findByRole("combobox", { name: "Team channel" }),
+    name,
+  );
+  await user.click(await screen.findByRole("option", { name }));
+}
+
+it("My agents shows your agents' avatars and only their activity", async () => {
+  const h = fixture({ withDm: true, withSenders: true });
   render(h.view);
   await screen.findByText("Agent direct reply");
-  expect(activityType()).toBe("All");
-  await chooseFilter("DMs");
-  await chooseFilter("Agents", "Sender");
-  // Inbox's idle-only ensure reads the shared choices; no filter-owned inventory.
-  expect(rows()).toHaveLength(1);
-  expect(rows()[0]).toHaveTextContent("Agent direct reply");
-  await chooseFilter("Mentions");
-  expect(rows()).toHaveLength(1);
-  expect(rows()[0]).toHaveTextContent("Agent mention");
-  await chooseFilter("Humans", "Sender");
+  const tab = await screen.findByRole("tab", { name: "My agents" });
+  // Artwork, not words: the name stays for assistive tech and the tooltip.
+  expect(tab.querySelector("[data-avatar-stack]")).not.toBeNull();
+  expect(tab.querySelector('[title="Scout"]')).not.toBeNull();
+  expect(tab).toHaveAttribute("title", "My agents");
+  expect(typeTabs().slice(0, 3)).toEqual(["All", "My agents", "My team"]);
+  await chooseFilter("My agents");
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  // Another's agent and people stay out.
+  expect(
+    texts().every((text) => /Agent (direct reply|mention)/.test(text)),
+  ).toBe(true);
+  expect(h.journal()?.state.frontiers).toEqual({}); // filtering never marks read
+});
+
+it("a saved My agents view waits for your agents instead of showing a wrong list", async () => {
+  const h = fixture({ withSenders: true, holdLibrary: true });
+  saveGroup(h, "agents");
+  render(h.view);
+  await waitFor(() =>
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+  );
+  expect(screen.getByText("Checking recent activity…")).toBeInTheDocument();
   expect(rows()).toHaveLength(0);
-  try {
-    await act(async () => h.releaseProfiles());
-    await waitFor(() => expect(rows()).toHaveLength(1));
-    expect(rows()[0]).toHaveTextContent("Please review this");
-    await chooseFilter("Agents", "Sender");
-    h.publishAgentProfile();
-    await waitFor(() => expect(rows()).toHaveLength(2));
+  await act(async () => h.releaseLibrary());
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  expect(
+    texts().every((text) => /Agent (direct reply|mention)/.test(text)),
+  ).toBe(true);
+  expect(activityGroup()).toBe("My agents");
+});
+
+it("My agents keeps the agents it knows when some can't be read, and says so", async () => {
+  const h = fixture({ withSenders: true, failLibrary: true, withTeams: true });
+  saveGroup(h, "agents");
+  render(h.view);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t read all of your agents, so this view may not be accurate.",
+  );
+  // The relay still names Scout.
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  expect(
+    texts().every((text) => /Agent (direct reply|mention)/.test(text)),
+  ).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Retry activity" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+});
+
+it("says under each who-tab what is unread there, or that it is all read", async () => {
+  const h = fixture({ withSenders: true, withTeams: true });
+  render(h.view);
+  await screen.findByText("Agent mention");
+  const tab = (name: string) =>
+    within(screen.getByRole("tablist", { name: "Activity groups" })).getByRole(
+      "tab",
+      { name },
+    );
+  /** The unread count a tab's description says; 0 when it says All read. */
+  const count = (name: string) => {
+    const id = tab(name).getAttribute("aria-describedby");
+    const text = (id && document.getElementById(id)?.textContent) || "";
+    return Number(/^(\d+) unread$/.exec(text)?.[1] ?? 0);
+  };
+  await waitFor(() => expect(count("My agents")).toBe(2));
+  expect(tab("All")).toHaveAccessibleDescription(`${count("All")} unread`);
+  expect(count("All")).toBeGreaterThan(count("My agents"));
+  expect(count("Others")).toBeGreaterThan(0);
+  expect(tab("My team")).toHaveAccessibleDescription("No team yet");
+  expect(tab("My team")).toHaveTextContent("Set up");
+  const before = count("All");
+  await act(async () => {
+    await h.owner.session.unread.markChannelRead("agent-dm");
+    await h.owner.session.unread.markChannelRead("room");
+  });
+  await waitFor(() =>
+    expect(tab("My agents")).toHaveAccessibleDescription("All read"),
+  );
+  expect(tab("My agents")).toHaveTextContent("All read");
+  expect(count("All")).toBeLessThan(before);
+});
+
+it("a shortcut naming what to show opens All, even over a saved Others", async () => {
+  const h = fixture({ withSenders: true });
+  saveGroup(h, "others");
+  render(viewAt(h, visit({ activity: "threads" })));
+  await waitFor(() => expect(activityType()).toBe("Threads"));
+  expect(activityGroup()).toBe("All");
+  expect(savedFilters(h)).toMatchObject({ group: "all", activity: "threads" });
+});
+
+it("Reactions sets Unread only aside and gives it back after", async () => {
+  const h = fixture();
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  await chooseFilter("Unread only", "Attention");
+  await chooseFilter("Reactions");
+  expect(unreadOn()).toBe(false);
+  expect(unreadSwitch()).toHaveAttribute("aria-disabled", "true");
+  await chooseFilter("All", "Show");
+  expect(unreadOn()).toBe(true);
+});
+
+it("My team explains itself until you choose a channel, then shows everyone in it", async () => {
+  const h = fixture({ withSenders: true, withTeams: true });
+  render(h.view);
+  await screen.findByText("Agent mention");
+  await chooseFilter("My team");
+  expect(
+    await screen.findByRole("heading", { name: "Choose who’s on your team" }),
+  ).toBeInTheDocument();
+  expect(rows()).toHaveLength(0);
+  expect(screen.queryByText("No recent activity in this view")).toBeNull();
+  // Only channels you're in; never a DM.
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Browse channels" }));
+  expect(
+    (await screen.findAllByRole("option"))
+      .map((option) => option.textContent)
+      .sort(),
+  ).toEqual(["Crew", "Design", "Ops"]);
+  await pickTeam("Crew");
+  // Crew's members, whoever they are: your agent and an unprofiled author.
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  expect(
+    texts().every((text) =>
+      /Agent (direct reply|mention)|Unprofiled mention/.test(text),
+    ),
+  ).toBe(true);
+  expect(activityGroup()).toBe("My team");
+  // Changing it starts in the picker and can be left by Cancel or by
+  // choosing My team again, keeping the team.
+  const change = async () => {
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "My team" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Change team channel" }),
+    );
     expect(
-      rows().some((row) => row.textContent?.includes("Public agent mention")),
-    ).toBe(true);
-    await chooseFilter("Humans", "Sender");
-    h.publishMalformedProfile();
-    h.publishLateProfile();
-    await waitFor(() => expect(rows()).toHaveLength(2));
-    expect(
-      rows().some((row) => row.textContent?.includes("Late profile mention")),
-    ).toBe(true);
-    expect(
-      rows().some((row) => row.textContent?.includes("Unprofiled mention")),
-    ).toBe(false);
-    await chooseFilter("Everyone", "Sender");
-    await waitFor(() => expect(rows().length).toBeGreaterThan(4));
-    expect(
-      rows().some((row) => row.textContent?.includes("Unprofiled mention")),
-    ).toBe(true);
-    expect(h.journal()?.state.frontiers).toEqual({}); // filtering never marks read
-  } finally {
-    h.releaseProfiles();
-  }
+      await screen.findByRole("combobox", { name: "Team channel" }),
+    ).toHaveFocus();
+  };
+  await change();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  await change();
+  await userEvent.setup().click(screen.getByRole("tab", { name: "My team" }));
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  // Others is everyone else, someone else's agent included: neither Crew's
+  // members nor your agents.
+  await chooseFilter("Others");
+  await waitFor(() => expect(rows()).toHaveLength(4));
+  expect(texts().some((text) => text.includes("Public agent mention"))).toBe(
+    true,
+  );
+  expect(
+    texts().some((text) =>
+      /Agent (direct reply|mention)|Unprofiled mention/.test(text),
+    ),
+  ).toBe(false);
 });
 
 it("offers Open and Mark as read only on unread rows, and only Mark as read via right-click", async () => {
@@ -2591,13 +2636,7 @@ it("under Unread only, marking a neighbor read keeps the open conversation and i
   const h = fixture({ withWriter: true });
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
-  fireEvent.click(screen.getByRole("switch", { name: "Unread" }));
-  await waitFor(() =>
-    expect(screen.getByRole("switch", { name: "Unread" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    ),
-  );
+  await chooseFilter("Unread only", "Attention");
   const thread = rows().find((row) =>
     row.textContent?.includes("A thread update"),
   );
@@ -3079,7 +3118,7 @@ it.each(["retry", "other", "blur"] as const)(
       ).toHaveFocus(),
     );
     const retry = screen.getByRole("button", { name: "Retry activity" });
-    const other = screen.getByRole("switch", { name: "Unread" });
+    const other = unreadSwitch();
     const release = h.holdSave();
     try {
       retry.focus();
@@ -3101,7 +3140,7 @@ it.each(["retry", "other", "blur"] as const)(
     );
     expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
     // Focus the retired Retry owned moves to a stable Inbox control.
-    if (focusOwner === "retry") expect(fromTrigger()).toHaveFocus();
+    if (focusOwner === "retry") expect(unreadSwitch()).toHaveFocus();
     else expect(focusOwner === "other" ? other : document.body).toHaveFocus();
     expect(reader()).toBe(detail);
   },
@@ -3148,7 +3187,7 @@ it("a second rejected Retry retains its focused control until a successful recov
   await waitFor(() =>
     expect(screen.queryByText("disk full")).not.toBeInTheDocument(),
   );
-  expect(fromTrigger()).toHaveFocus();
+  expect(unreadSwitch()).toHaveFocus();
   expect(reader()).toBe(detail);
 });
 
@@ -3170,7 +3209,7 @@ it.each([true, false])(
     h.failAux(false);
     const release = h.holdAux();
     const retry = screen.getByRole("button", { name: "Retry activity" });
-    const other = screen.getByRole("switch", { name: "Unread" });
+    const other = unreadSwitch();
     try {
       retry.focus();
       await user.keyboard("{Enter}");
@@ -3188,36 +3227,29 @@ it.each([true, false])(
     await waitFor(() =>
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
-    expect(keepFocus ? fromTrigger() : other).toHaveFocus();
+    expect(keepFocus ? unreadSwitch() : other).toHaveFocus();
   },
 );
 
-it("keeps a From menu choice focused through incoming row updates", async () => {
+it("keeps a Show choice focused through incoming row updates", async () => {
   const h = fixture();
-  const user = userEvent.setup();
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
-  const trigger = fromTrigger();
-  act(() => trigger.focus());
-  await user.keyboard("{Enter}");
-  const people = await screen.findByRole("menuitemradio", { name: "People" });
-  await user.keyboard("{End}");
-  await user.keyboard("{ArrowUp}");
-  await waitFor(() => expect(people).toHaveFocus());
+  const mentions = within(
+    screen.getByRole("tablist", { name: "Show" }),
+  ).getByRole("tab", { name: "Mentions" });
+  await userEvent.setup().click(mentions);
+  expect(mentions).toHaveFocus();
   const incoming = message(h.alice, "room", "Another review request", 50, [
     ["p", h.viewer.pubkey],
   ]);
   h.addEvent(incoming);
   await act(async () => h.emit([incoming]));
-  await waitFor(() => expect(rows()).toHaveLength(3));
-  expect(people).toHaveFocus();
-  await user.keyboard("{Enter}");
-  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-  expect(fromTrigger()).toHaveAccessibleName("From people");
-  await waitFor(() => expect(fromTrigger()).toHaveFocus());
+  await screen.findByText("Another review request");
+  expect(mentions).toHaveFocus();
 });
 
-it("Mark as read keeps the type, From and Unread choices", async () => {
+it("Mark as read keeps the type and Unread choices", async () => {
   const h = fixture({ withSenders: true });
   render(h.view);
   await screen.findByText("Public agent mention");
@@ -3230,33 +3262,29 @@ it("Mark as read keeps the type, From and Unread choices", async () => {
   ).toBeNull();
 
   await chooseFilter("Mentions");
-  await chooseFilter("Agents", "Sender");
-  await waitFor(() => expect(rows()).toHaveLength(2));
+  await chooseFilter("Unread only", "Attention");
+  await waitFor(() =>
+    expect(
+      rows().some((row) => row.textContent?.includes("Agent mention")),
+    ).toBe(true),
+  );
+  const shown = rows().length;
   const agentRow = rows().find((row) =>
     row.textContent?.includes("Agent mention"),
   );
   if (!agentRow) throw new Error("Missing agent-authored mention");
-  await chooseFilter("Unread only", "Attention");
   const agentOpen = within(agentRow).getByRole("button", { name: /^Open / });
   agentOpen.focus();
   fireEvent.keyDown(agentOpen, { key: "F10", shiftKey: true });
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Mark as read" }),
   );
-  await waitFor(() => expect(rows()).toHaveLength(1));
-
-  const expectKept = (unread = "true") => {
-    expect(activityType()).toBe("Mentions");
-    expect(fromTrigger()).toHaveAccessibleName("From agents");
-    expect(screen.getByRole("switch", { name: "Unread" })).toHaveAttribute(
-      "aria-checked",
-      unread,
-    );
-  };
-  expectKept();
+  await waitFor(() => expect(rows()).toHaveLength(shown - 1));
+  expect(activityType()).toBe("Mentions");
+  expect(unreadOn()).toBe(true);
   await chooseFilter("All messages", "Attention");
-  await waitFor(() => expect(rows()).toHaveLength(2));
-  expectKept("false");
+  await waitFor(() => expect(rows()).toHaveLength(shown));
+  expect(activityType()).toBe("Mentions");
 });
 
 it("names the page Activity in its region, page tab and list", async () => {
@@ -3270,78 +3298,34 @@ it("names the page Activity in its region, page tab and list", async () => {
   expect(screen.queryByText(/\binbox\b/i)).toBeNull();
 });
 
-it.each([
-  ["Anyone", "From anyone", "ghost"],
-  ["People", "From people", "subtle"],
-  ["Agents", "From agents", "subtle"],
-])(
-  "From says %s in its name and tooltip, filled only while it narrows",
-  async (choice, name, variant) => {
-    const h = fixture();
-    render(h.view);
-    await waitFor(() => expect(rows()).toHaveLength(2));
-    if (choice !== "Anyone")
-      await chooseFilter(choice === "People" ? "Humans" : choice, "Sender");
-    const trigger = fromTrigger();
-    // The visible label stays "From"; its name and tooltip say the choice.
-    expect(trigger).toHaveAccessibleName(name);
-    expect(trigger).toHaveTextContent(/^From$/);
-    expect(trigger).toHaveAttribute("data-variant", variant);
-    act(() => trigger.blur());
-    fireEvent.keyDown(window, { key: "Tab" });
-    act(() => trigger.focus());
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(name);
-    const user = userEvent.setup();
-    await user.click(trigger);
-    const menu = await screen.findByRole("menu", { name: "From" });
-    // Choices are plain words.
-    expect(
-      within(menu)
-        .getAllByRole("menuitemradio")
-        .map((item) => item.textContent),
-    ).toEqual(["Anyone", "People", "Agents"]);
-    expect(menu.querySelector(".buzz-menu-icon")).toBeNull();
-    expect(
-      within(menu).getByRole("menuitemradio", { name: choice }),
-    ).toHaveAttribute("aria-checked", "true");
-    await user.keyboard("{Escape}");
-  },
-);
-
-it("orders the toolbar as tabs, From, then Unread", async () => {
+it("orders the toolbar as the who-tabs, then Show, then Unread", async () => {
   const h = fixture();
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
-  const tablist = screen.getByRole("tablist", { name: "Activity type" });
-  const unread = screen.getByRole("switch", { name: "Unread" });
   const follows = (a: Node, b: Node) =>
     !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-  expect(follows(tablist, fromTrigger())).toBe(true);
-  expect(follows(fromTrigger(), unread)).toBe(true);
+  const show = screen.getByRole("tablist", { name: "Show" });
+  expect(
+    follows(screen.getByRole("tablist", { name: "Activity groups" }), show),
+  ).toBe(true);
+  expect(follows(show, unreadSwitch())).toBe(true);
 });
 
 it("combines the existing filter choices without placeholder actions", async () => {
   const h = fixture();
   render(h.view);
   await screen.findByText("Please review this");
-  const trigger = fromTrigger();
-  expect(trigger).toHaveAccessibleName("From anyone");
   expect(screen.queryByRole("combobox")).toBeNull();
-  // Inbox's own tab holds the list; its only other tabs are the type filter.
+  // Inbox's own tab holds the list; its only other tabs say whose activity.
   expect(tabs("Activity tabs")).toEqual(["Activity"]);
-  expect(tabs("Activity type")).toEqual([
-    "All",
-    "Threads",
-    "Mentions",
-    "DMs",
-    "Reactions",
-  ]);
+  // My agents shows only for someone with agents.
+  expect(typeTabs()).toEqual(["All", "My team", "Others"]);
   expect(activityType()).toBe("All");
   expect(
     within(screen.getByRole("tabpanel", { name: "Activity" }))
       .queryAllByRole("tablist")
       .map((list) => list.getAttribute("aria-label")),
-  ).toEqual(["Activity type"]);
+  ).toEqual(["Activity groups", "Show"]);
   expect(
     screen.queryByRole("button", { name: /Mark shown as read|Mark as unread/ }),
   ).toBeNull();
@@ -3357,29 +3341,22 @@ it("combines the existing filter choices without placeholder actions", async () 
     ),
   ).toBeNull();
   expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
-  expect(screen.getByRole("switch", { name: "Unread" })).toHaveAttribute(
-    "aria-checked",
-    "false",
-  );
-  const user = userEvent.setup();
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  const menu = await screen.findByRole("menu", { name: "From" });
-  // From is a single choice; types are tabs, not menu items.
+  expect(unreadOn()).toBe(false);
+  // Show is one choice of four, each named by its tooltip; no From.
   expect(
-    within(menu)
-      .getAllByRole("menuitemradio")
-      .map((item) => [item.textContent, item.getAttribute("aria-checked")]),
+    within(screen.getByRole("tablist", { name: "Show" }))
+      .getAllByRole("tab")
+      .map((tab) => [
+        tab.getAttribute("title"),
+        tab.getAttribute("aria-selected"),
+      ]),
   ).toEqual([
-    ["Anyone", "true"],
-    ["People", "false"],
-    ["Agents", "false"],
+    ["All", "true"],
+    ["Threads", "false"],
+    ["Mentions", "false"],
+    ["Reactions", "false"],
   ]);
-  expect(within(menu).queryAllByRole("menuitemcheckbox")).toEqual([]);
-  for (const name of ["Drafts", "Projects", "Needs action", "Reactions"])
-    expect(within(menu).queryByRole("menuitemradio", { name })).toBeNull();
-  await user.keyboard("{Escape}");
-  expect(trigger).toHaveFocus();
+  expect(screen.queryByRole("button", { name: /^(From|Filter)/ })).toBeNull();
 });
 
 it("waits for roster recovery before explicit evidence refresh", async () => {
@@ -3509,50 +3486,6 @@ it("a failed captured read cannot retry after access retirement", async () => {
   );
   expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
 });
-it("classifies cached profile-only agents beyond the first 50 without unbounded enrichment", async () => {
-  const h = fixture();
-  const agent = profile(
-    h.profileAgent,
-    { name: "Cached outside", is_agent: true },
-    100,
-  );
-  const first = Array.from({ length: 51 }, (_, index) =>
-    message(h.unknown, "room", `Unknown ${index}`, 100 + index, [
-      ["p", h.viewer.pubkey],
-    ]),
-  );
-  const outside = message(h.profileAgent, "room", "Outside first fifty", 90, [
-    ["p", h.viewer.pubkey],
-  ]);
-  h.events.push(agent, ...first, outside);
-  h.emit([agent, ...first, outside]);
-  render(h.view);
-  await screen.findByText("Unknown 50");
-  await waitFor(() =>
-    expect(
-      screen.queryByText("Checking recent activity…"),
-    ).not.toBeInTheDocument(),
-  );
-  // Roster completion clears optional profiles; restore genuinely shared cache evidence after it.
-  act(() => h.emit([agent]));
-  await chooseFilter("Agents", "Sender");
-  expect(rows()).toHaveLength(1);
-  expect(rows()[0]).toHaveTextContent("Outside first fifty");
-  expect(
-    screen.queryByRole("button", { name: "Show more" }),
-  ).not.toBeInTheDocument();
-  await chooseFilter("Humans", "Sender");
-  expect(
-    rows().some((row) => row.textContent?.includes("Outside first fifty")),
-  ).toBe(false);
-  act(() => h.emit([profile(h.profileAgent, { name: "Cached outside" }, 101)]));
-  await waitFor(() =>
-    expect(
-      rows().some((row) => row.textContent?.includes("Outside first fifty")),
-    ).toBe(true),
-  );
-});
-
 it("feed invalidation has its own local recovery even when shared unread stays ready", async () => {
   const h = fixture();
   render(h.view);
@@ -3753,7 +3686,7 @@ it("Inbox Solo chat activity shared with a person sends without a tag", async ()
   expect(h.published[0]?.tags.filter(([name]) => name === "p")).toEqual([]);
 });
 
-it("a Solo chat row includes ordinary agent responses under All, not DMs, keeping threads separate", async () => {
+it("a Solo chat row includes ordinary agent responses under All, keeping threads separate", async () => {
   const h = fixture({ soloChannel: true, memberAgents: 1 });
   const progress = message(h.agent, "room", "Agent progress", 30);
   h.addEvent(progress);
@@ -3776,9 +3709,6 @@ it("a Solo chat row includes ordinary agent responses under All, not DMs, keepin
       within(rows()[1] as HTMLElement).queryByRole("img", { name: "Unread" }),
     ).not.toBeInTheDocument(),
   );
-  // The sidebar keeps Solo chats apart from direct messages; so does Inbox.
-  await chooseFilter("DMs");
-  expect(screen.queryByText("Agent progress")).not.toBeInTheDocument();
 });
 
 it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {
@@ -5135,7 +5065,6 @@ it("shows no All caught up while recent activity is still loading", async () => 
   const h = fixture();
   writeView(h.owner.session.scope, "inbox:filters", {
     activity: "all",
-    sender: "everyone",
     attention: "unread",
   });
   const release = h.holdUnread();
@@ -5172,18 +5101,19 @@ it("a failed send keeps its draft and its row", async () => {
   expect(editor).toHaveValue("Retain failed response");
 });
 
-it("moves through the Activity type tabs with arrows, Home and End, then tabs out to From", async () => {
+it("moves through the who-tabs with arrows, Home and End, then tabs out to Show", async () => {
   const h = fixture();
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(2));
   const user = userEvent.setup();
-  const list = screen.getByRole("tablist", { name: "Activity type" });
+  const list = screen.getByRole("tablist", { name: "Activity groups" });
   const tab = () => within(list).getAllByRole("tab");
   const focusable = () => tab().filter((item) => item.tabIndex === 0);
   expect(focusable()).toHaveLength(1);
   expect(focusable()[0]).toHaveAttribute("aria-selected", "true");
-  const [all, , , , last] = tab();
-  if (!all || !last) throw new Error("Missing Activity type tabs");
+  const all = tab()[0];
+  const last = tab().at(-1);
+  if (!all || !last) throw new Error("Missing who-tabs");
   act(() => all.focus());
   await user.keyboard("{ArrowRight}");
   expect(tab()[1]).toHaveFocus();
@@ -5195,7 +5125,11 @@ it("moves through the Activity type tabs with arrows, Home and End, then tabs ou
   expect(all).toHaveFocus();
   expect(focusable()).toEqual([all]);
   await user.tab();
-  expect(fromTrigger()).toHaveFocus();
+  expect(
+    within(screen.getByRole("tablist", { name: "Show" })).getByRole("tab", {
+      selected: true,
+    }),
+  ).toHaveFocus();
 });
 
 it.each([
@@ -5282,8 +5216,8 @@ it("shows reactions without unread actions and turns Unread off when selecting R
   expect(
     screen.queryByRole("button", { name: /reacted with/ }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: "Reactions" }));
-  expect(screen.getByRole("switch", { name: "Unread" })).not.toBeChecked();
+  await chooseFilter("Reactions");
+  expect(unreadOn()).toBe(false);
   fireEvent.click(
     await screen.findByRole("button", { name: /Alice reacted with/ }),
   );
@@ -5295,10 +5229,10 @@ it("shows reactions without unread actions and turns Unread off when selecting R
   );
 });
 
-it("explains an empty Reactions tab", async () => {
+it("explains an empty Reactions view", async () => {
   const h = fixture();
   render(h.view);
-  fireEvent.click(screen.getByRole("tab", { name: "Reactions" }));
+  await chooseFilter("Reactions");
   expect(await screen.findByText("No reactions yet.")).toBeInTheDocument();
   expect(
     screen.getByText(
@@ -5354,13 +5288,6 @@ it("names all three reactors instead of saying one others", async () => {
   fireEvent.click(solo);
   expect(solo).toHaveAttribute("aria-current", "page");
   expect(row).not.toHaveAttribute("aria-current");
-  await chooseFilter("Agents", "Sender");
-  expect(
-    await screen.findByRole("button", { name: /Bob reacted with heart/ }),
-  ).toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: /Alice reacted with/ }),
-  ).not.toBeInTheDocument();
 });
 
 it.each(["solo", "dm", "thread"] as const)(

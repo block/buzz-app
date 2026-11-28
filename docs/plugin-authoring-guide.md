@@ -62,6 +62,7 @@ Each line is the main call. Read the types for every field.
 | Inject | For | Main call |
 | --- | --- | --- |
 | `pages` | A page, optionally in navigation | `ctx.pages.register({ id, title, component, primary? })` |
+| `pages` | A quick view: a body in the host's search-style palette | `ctx.pages.registerQuickView({ id, title, component })`, then `ctx.pages.openQuickView(id)`, for example from a shortcut. The component gets `close()`; call it after opening something. Check that `registerQuickView` exists first; older hosts lack it. |
 | `panels` | A side panel for a link or target | `ctx.panels.register({ id, title, matches(target), component })` |
 | `settingsCards` | A Settings destination | `ctx.settingsCards.register({ id, title, component })`. The host supplies navigation and the column, not a heading. |
 | `accountActions` | An account menu entry | `ctx.accountActions.register({ id, title, component })` |

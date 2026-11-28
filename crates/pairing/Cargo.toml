@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "Buzz NIP-AB device pairing protocol"
 
 [dependencies]
-nostr = { version = "=0.45.5", default-features = false, features = ["std", "nip44", "os-rng"] }
+nostr = { version = "=0.45.7", default-features = false, features = ["std", "nip44", "os-rng"] }
 # nostr 0.45 keeps its ECDH and HKDF helpers private; these match the versions it
 # and other workspace crates already link.
 secp256k1 = { version = "0.30", default-features = false, features = ["std"] }

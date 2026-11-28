@@ -231,6 +231,12 @@ it.each(["closed", "minimize"] as const)(
         id: "00000000-0000-4000-8000-000000000002",
       });
       await vi.waitFor(() => expect(h.bridge.open).toHaveBeenCalledTimes(3));
+      // Only the person's own Open Huddle asks the window to take focus.
+      expect(vi.mocked(h.bridge.open).mock.calls.map((c) => c[2])).toEqual([
+        false,
+        true,
+        false,
+      ]);
       h.action(id, "closed");
       expect(h.companion.snapshot().visible).toBe(true);
     } finally {
@@ -308,6 +314,7 @@ it("sends speaking levels with the matching participant", async () => {
         ],
       }),
       expect.any(Function),
+      expect.any(Boolean),
     );
   } finally {
     await h.dispose();

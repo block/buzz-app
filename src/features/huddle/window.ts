@@ -47,16 +47,18 @@ export type HuddleAction =
 export type HuddleWindowAction = HuddleAction | "closed";
 export type WindowBridge = {
   resetIncoming?(): Promise<void>;
+  /** `requested`: the person asked for it, so it takes keyboard focus. */
   open(
     view: HuddleView,
     act: (id: string, action: HuddleWindowAction, text?: string) => void,
+    requested: boolean,
   ): Promise<void>;
   update(id: string, view: HuddleView | null): Promise<void>;
 };
 let sentDiscussion: { id: string; version: number | undefined } | undefined;
 export const nativeHuddleWindow: WindowBridge = {
   resetIncoming: () => invoke("huddle_window_reset_incoming"),
-  async open(view, act) {
+  async open(view, act, requested) {
     const actions = new Channel<{
       id: string;
       action: HuddleWindowAction;
@@ -66,6 +68,7 @@ export const nativeHuddleWindow: WindowBridge = {
     await invoke("huddle_window_open", {
       view: { ...view, discussionOpen: !!view.discussion },
       actions,
+      requested,
     });
     sentDiscussion = { id: view.id, version: view.discussion?.version };
   },
@@ -200,7 +203,7 @@ export function createHuddleWindow(
       ["incoming", "connected"].includes(next.phase) &&
       attempted !== next.id
     ) {
-      void open().catch(() => {});
+      void open(false).catch(() => {});
       return;
     }
     if (!opened) {
@@ -265,7 +268,7 @@ export function createHuddleWindow(
     attributes: true,
     attributeFilter: ["class"],
   });
-  async function open() {
+  async function open(requested: boolean) {
     if (disposed) return;
     if (opening) return opening;
     const next = view();
@@ -279,7 +282,7 @@ export function createHuddleWindow(
     opening = (async () => {
       await updates.catch(() => {});
       try {
-        await bridge.open(next, (id, action, text) => {
+        const act = (id: string, action: HuddleWindowAction, text?: string) => {
           const call = huddles.snapshot();
           const accepting =
             call.phase === "connecting" &&
@@ -394,7 +397,8 @@ export function createHuddleWindow(
             text
           )
             discussion?.recover(text, action === "discardMessage");
-        });
+        };
+        await bridge.open(next, act, requested);
       } catch (error) {
         // Include partial-creation cleanup in the promise disposal waits for.
         try {
@@ -416,7 +420,8 @@ export function createHuddleWindow(
   }
   if (huddles.snapshot().phase === "incoming") sync();
   return {
-    open,
+    /** The person's own Open Huddle, which takes keyboard focus. */
+    open: () => open(true),
     snapshot: () => presentation,
     dismissError: () => publish(presentation.visible, presentation.failed),
     subscribe(listener: () => void) {

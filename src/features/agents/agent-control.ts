@@ -145,7 +145,12 @@ export function createAgentControl(deps: {
         );
         stops.push(deps.activity.activate());
         const send = async () => {
-          if (!deps.activity.listening())
+          const event = await deps.sign(agent, payload, bounded);
+          bounded.throwIfAborted();
+          // Checked after signing, which can outlast a reconnect, and in the
+          // same task as publishing: a frame sent before the observer is
+          // live again could have its answer lost.
+          while (!deps.activity.listening())
             await new Promise<void>((ready, failed) => {
               const check = () => {
                 if (deps.activity.listening()) {
@@ -164,8 +169,6 @@ export function createAgentControl(deps: {
               );
               check();
             });
-          const event = await deps.sign(agent, payload, bounded);
-          bounded.throwIfAborted();
           await deps.publish(event, bounded);
         };
         send().catch((error: unknown) => {

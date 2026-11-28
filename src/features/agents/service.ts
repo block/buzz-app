@@ -2174,10 +2174,14 @@ export type Agents = {
   leave(agent: AgentKey): Promise<void>;
   /** Whether the owner can stop the agent's turns from here: a hosted
    * agent's through its provider, or one on another of the owner's devices
-   * with a NIP-AO `cancel_turn`. That one must be proven the owner's: its
-   * telemetry reached this session, or the owner's agent list has it
-   * elsewhere. */
-  interruptible(agent: AgentKey): boolean;
+   * with a NIP-AO `cancel_turn`. That one is asked through `conversation`,
+   * the agent activity of the conversation's own session, and must be proven
+   * the owner's there: its telemetry reached that session, or the owner's
+   * agent list in that community has it elsewhere. */
+  interruptible(
+    agent: AgentKey,
+    conversation?: RelaySession["agentActivity"],
+  ): boolean;
   /** A hosted agent's instructions, through its provider; undefined unless
    * the agent is hosted here and its provider offers them. Each call stops
    * with the agent's community connection. */
@@ -2264,6 +2268,7 @@ export type Agents = {
   interrupt(
     agent: AgentKey,
     place: Readonly<{ channelId: string; threadRootId: string }>,
+    conversation?: RelaySession["agentActivity"],
   ): Promise<boolean>;
   /** Leaves private context for the agent's next turn in a conversation: text at
    * the end of that turn's prompt that nobody else sees, such as what the
@@ -7175,7 +7180,10 @@ export class AgentsService extends Service implements Agents {
 
   /** Whether the owner can stop a hosted agent's turn: its provider can. A
    * hosted agent's key is its pubkey. */
-  interruptible(pubkey: AgentKey) {
+  interruptible(
+    pubkey: AgentKey,
+    conversation?: RelaySession["agentActivity"],
+  ) {
     const agent = this.state.agents.find(
       (entry) =>
         entry.pubkey === pubkey &&
@@ -7184,30 +7192,34 @@ export class AgentsService extends Service implements Agents {
     );
     return (
       !!this.types().find((entry) => entry.key === agent?.type)?.remote
-        ?.interrupt || !!this.remoteStop(pubkey)
+        ?.interrupt || !!this.remoteStop(pubkey, conversation)
     );
   }
-  /** Where the owner can ask the device running `pubkey` to stop it: a live
-   * session that sends control frames, in the community of its listing
-   * elsewhere, or one its telemetry reached. Never for an agent here or
-   * hosted, which stop their own way. */
-  private remoteStop(pubkey: string) {
+  /** The live session through which the owner can ask the device running
+   * `pubkey` to stop it: the conversation's own, when it sends control
+   * frames and the agent is the owner's there, listed elsewhere in its
+   * community or proven by its telemetry. Never for an agent here or hosted,
+   * which stop their own way. */
+  private remoteStop(
+    pubkey: string,
+    conversation: RelaySession["agentActivity"] | undefined,
+  ) {
+    if (!conversation) return undefined;
     const listed = this.state.agents.filter((entry) => entry.pubkey === pubkey);
     if (listed.some((entry) => entry.place !== "elsewhere")) return undefined;
     const viewer = this.communities.snapshot().viewer;
-    const usable = (binding: Binding | undefined) =>
-      binding?.session.agentControl && binding.viewer === viewer
-        ? binding
-        : undefined;
-    for (const entry of listed) {
-      const binding = usable(this.bindingOf(entry));
-      if (binding && entry.owner === viewer && !entry.unfinished)
-        return binding;
-    }
-    for (const { binding } of this.bound.values())
-      if (usable(binding)?.session.agentActivity.reports(pubkey))
-        return binding;
-    return undefined;
+    const binding = [...this.bound.values()].find(
+      (entry) => entry.binding?.session.agentActivity === conversation,
+    )?.binding;
+    if (!binding?.session.agentControl || binding.viewer !== viewer)
+      return undefined;
+    const owned = listed.some(
+      (entry) =>
+        entry.owner === viewer &&
+        !entry.unfinished &&
+        this.bindingOf(entry) === binding,
+    );
+    return owned || conversation.reports(pubkey) ? binding : undefined;
   }
   hostedInstructions(pubkey: AgentKey): HostedInstructions | undefined {
     const agent = this.state.agents.find(
@@ -7242,8 +7254,9 @@ export class AgentsService extends Service implements Agents {
   async interrupt(
     pubkey: AgentKey,
     place: Readonly<{ channelId: string; threadRootId: string }>,
+    conversation?: RelaySession["agentActivity"],
   ) {
-    const elsewhere = this.remoteStop(pubkey);
+    const elsewhere = this.remoteStop(pubkey, conversation);
     if (elsewhere) return this.interruptElsewhere(pubkey, elsewhere, place);
     const { agent, remote, binding } = this.hosted(pubkey);
     if (!remote.interrupt) throw new Error("This agent can't be stopped here");

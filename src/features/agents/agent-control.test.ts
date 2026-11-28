@@ -30,8 +30,10 @@ function setup() {
   const activity = createAgentActivity(true, observe, () => true);
   const sent: CancelTurn[] = [];
   const publish = vi.fn(async (_event: RelayEvent) => "ok");
+  let signing: Promise<void> = Promise.resolve();
   const control = createAgentControl({
     async sign(_agent, payload) {
+      await signing;
       sent.push(payload);
       return { id: "e".repeat(64) } as RelayEvent;
     },
@@ -78,18 +80,45 @@ function setup() {
       status: "connected",
       routes: [{ id: "observer", status: "live" }],
     } as never);
-  return { activity, control, sent, publish, answer, batched, listen, observe };
+  // The socket was replaced: its observer is being established again.
+  const reconnect = () =>
+    activity.state({
+      status: "connected",
+      routes: [{ id: "observer", status: "pending" }],
+    } as never);
+  const holdSigning = () => {
+    let release = () => {};
+    signing = new Promise((resolve) => (release = resolve));
+    return release;
+  };
+  return {
+    activity,
+    control,
+    sent,
+    publish,
+    answer,
+    batched,
+    listen,
+    reconnect,
+    holdSigning,
+    observe,
+  };
 }
 
 it("sends once the observer listens, and resolves on the agent's own sent answer", async () => {
   const f = setup();
+  const signed = f.holdSigning();
   const stop = f.control.cancelTurn(
     agent,
     { channelId: "channel", threadRootId: root },
     new AbortController().signal,
   );
+  f.listen();
+  // The connection is replaced while the host signs. Nothing goes out
+  // before the answer could be heard on the new one.
+  f.reconnect();
+  signed();
   await vi.advanceTimersByTimeAsync(0);
-  // Nothing goes out before the answer could be heard.
   expect(f.publish).not.toHaveBeenCalled();
   f.listen();
   await vi.advanceTimersByTimeAsync(0);

@@ -16235,13 +16235,21 @@ it("stops an agent on another of the owner's devices by asking that device", asy
   await vi.waitFor(() =>
     expect(service.find(sibling)?.place).toBe("elsewhere"),
   );
+  // The conversation's own session; this agent's telemetry doesn't reach it.
+  const here = { reports: () => false } as never;
+  Object.assign(session, { agentActivity: here });
   // A host that can't send control frames offers no Stop.
-  expect(service.interruptible(sibling)).toBe(false);
+  expect(service.interruptible(sibling, here)).toBe(false);
   const cancelTurn = vi.fn(async (..._: unknown[]) => "sent");
   Object.assign(session, { agentControl: { cancelTurn } });
-  expect(service.interruptible(sibling)).toBe(true);
+  expect(service.interruptible(sibling, here)).toBe(true);
+  // Stop goes only through the conversation's own community.
+  expect(service.interruptible(sibling)).toBe(false);
+  expect(service.interruptible(sibling, { reports: () => true } as never)).toBe(
+    false,
+  );
   const thread = { channelId: channel, threadRootId: "m1" };
-  await expect(service.interrupt(sibling, thread)).resolves.toBe(true);
+  await expect(service.interrupt(sibling, thread, here)).resolves.toBe(true);
   expect(cancelTurn).toHaveBeenLastCalledWith(
     sibling,
     thread,
@@ -16250,7 +16258,7 @@ it("stops an agent on another of the owner's devices by asking that device", asy
   // A DM is one conversation, so the request names no thread.
   cancelTurn.mockResolvedValueOnce("no_active_turn");
   await expect(
-    service.interrupt(sibling, { channelId: dm, threadRootId: "m1" }),
+    service.interrupt(sibling, { channelId: dm, threadRootId: "m1" }, here),
   ).resolves.toBe(false);
   expect(cancelTurn).toHaveBeenLastCalledWith(
     sibling,
@@ -16258,11 +16266,11 @@ it("stops an agent on another of the owner's devices by asking that device", asy
     expect.any(AbortSignal),
   );
   cancelTurn.mockResolvedValueOnce("ambiguous_target");
-  await expect(service.interrupt(sibling, thread)).rejects.toThrow(
+  await expect(service.interrupt(sibling, thread, here)).rejects.toThrow(
     "too old to stop one thread",
   );
   cancelTurn.mockRejectedValueOnce(new ControlUnanswered());
-  await expect(service.interrupt(sibling, thread)).rejects.toThrow(
+  await expect(service.interrupt(sibling, thread, here)).rejects.toThrow(
     "Far didn't respond. Its device may be offline or need an update.",
   );
 });
@@ -16271,15 +16279,16 @@ it("offers Stop for an unlisted agent only once its telemetry proves it the owne
   const { service, session } = await setup();
   const remote = "e".repeat(64);
   const reports = vi.fn((agent: string) => agent === remote || agent === bot);
+  const here = { ...session.agentActivity, reports };
   Object.assign(session, {
     agentControl: { cancelTurn: vi.fn() },
-    agentActivity: { ...session.agentActivity, reports },
+    agentActivity: here,
   });
-  expect(service.interruptible(remote)).toBe(true);
-  expect(service.interruptible("f".repeat(64))).toBe(false);
+  expect(service.interruptible(remote, here)).toBe(true);
+  expect(service.interruptible("f".repeat(64), here)).toBe(false);
   // An agent here stops its own way, whatever telemetry says.
   await service.create({ type: "example/echo", name: "Echo" });
-  expect(service.interruptible(bot)).toBe(false);
+  expect(service.interruptible(bot, here)).toBe(false);
 });
 
 it("keeps an unfinished hosted agent whose Delete agent storage could not save", async () => {

@@ -44,15 +44,17 @@ export function workStop(
     };
   }
   const root = scope.threadRootId ?? scope.messageId;
-  if (!root || !work.working || !agents?.interruptible(work.agent)) return;
+  if (!root || !work.working || !agents?.interruptible(work.agent, activity))
+    return;
   return {
     key,
     lifecycle: false,
     interrupt: () =>
-      agents.interrupt(work.agent, {
-        channelId: scope.channelId,
-        threadRootId: root,
-      }),
+      agents.interrupt(
+        work.agent,
+        { channelId: scope.channelId, threadRootId: root },
+        activity,
+      ),
   };
 }
 

@@ -95,6 +95,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "object",
     title: "GitHub",
+    composerLinkMenu: {
+      label: "Open in GitHub",
+      icon: () => <GithubLogoIcon size={16} />,
+    },
     channelLauncher: (props) => (
       <SoloPullLauncher {...props} relay={ctx.relay} pullsFor={pullsFor} />
     ),

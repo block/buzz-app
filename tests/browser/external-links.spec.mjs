@@ -311,6 +311,106 @@ test("message link context menus bypass the pane and return keyboard focus", asy
   await expect(panel).toBeVisible();
 });
 
+test("composer link menu opens the GitHub pane, copies the URL and opens ordinary links in the browser", async ({
+  page,
+  context,
+  app,
+}) => {
+  const target = `${github}?view=all`;
+  const draft = `Review [this pull request](${target}) and [the reference page](${ordinary})`;
+  await context.route(ordinary, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>External destination</title>",
+    }),
+  );
+  await page.route("https://api.github.com/repos/block/buzz/pulls/1", (route) =>
+    route.fulfill({ json: { title: "A useful change", state: "open" } }),
+  );
+  await page.addInitScript(() => {
+    window.copiedLinks = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (value) => window.copiedLinks.push(value) },
+    });
+  });
+  await page.goto(app.origin);
+  await openMessages(page);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await input.focus();
+  await input.evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+  }, draft);
+  const pull = input.getByText("this pull request", { exact: true });
+  const menu = page.getByRole("menu");
+  const panel = page.getByRole("complementary", {
+    name: "GitHub",
+    exact: true,
+  });
+  await pull.click();
+  await expect(panel).toHaveCount(0);
+  await pull.click({ button: "right" });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Open in browser",
+    "Copy link",
+    "Open in GitHub",
+  ]);
+  const plugins = menu.getByRole("group", { name: "Plugins" });
+  const openGitHub = plugins.getByRole("menuitem", {
+    name: "Open in GitHub",
+  });
+  await expect(openGitHub).toBeVisible();
+  await menu.getByRole("menuitem", { name: "Copy link" }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.copiedLinks))
+    .toEqual([target]);
+  await expect(input).toBeFocused();
+  await expect(input).toHaveJSProperty("value", draft);
+
+  await input.click({ button: "right", position: { x: 8, y: 8 } });
+  await expect(menu).toHaveCount(0);
+  await input.getByText("the reference page", { exact: true }).click({
+    button: "right",
+  });
+  await expect(plugins).toHaveCount(0);
+  expect(
+    await popup(page, menu.getByRole("menuitem", { name: "Open in browser" })),
+  ).toBe(ordinary);
+  await expect(menu).toHaveCount(0);
+
+  await pull.click({ button: "right" });
+  await openGitHub.click();
+  await expect(
+    panel.getByRole("heading", { name: "A useful change #1" }),
+  ).toBeVisible();
+  await expect(menu).toHaveCount(0);
+  await expect(input).toHaveJSProperty("value", draft);
+  expect(context.pages()).toHaveLength(1);
+
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  await pluginAction(page, "GitHub").click();
+  await closeSettings(page);
+  await openMessages(page);
+  await pull.click({ button: "right" });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Open in browser",
+    "Copy link",
+  ]);
+  await expect(plugins).toHaveCount(0);
+});
+
 test("GitHub object identities use their intended artwork at one size", async ({
   page,
   app,

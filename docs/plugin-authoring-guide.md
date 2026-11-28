@@ -241,6 +241,8 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 - A canonical plugin page link can open beside a conversation if the named
   plugin registers a matching panel with `addressable: true`. Links fall back
   to the plugin page if the panel does not qualify.
+- A registered panel can set `composerLinkMenu: { label, icon? }` to add an
+  action under **Plugins** when a web link in the composer resolves to that panel.
 - Call `ctx.panels.useTabTitle(label, icon?, actions?)` inside a panel to set
   its tab title. Optional `{ label, run }` actions appear in its context menu
   while the panel is mounted. Keep the actions array stable across renders.

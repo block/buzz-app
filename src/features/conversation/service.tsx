@@ -569,6 +569,9 @@ export class ConversationService extends Service implements Conversation {
         ?.open({ version: 1, kind: "settings", section });
     },
   });
+  get linkPanels() {
+    return this.ctx.reflect.get("panels");
+  }
   registerCodeBlock(value: CodeBlockRenderer) {
     validate(value);
     if (typeof value.matches !== "function")

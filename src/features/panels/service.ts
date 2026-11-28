@@ -93,6 +93,11 @@ export type Panel = Readonly<{
     label: string;
     eligible(channel: ChannelSummary, session: RelaySession): boolean;
   }>;
+  /** Optional action in the composer link menu when this panel handles the URL. */
+  composerLinkMenu?: Readonly<{
+    label: string;
+    icon?: ComponentType;
+  }>;
   /**
    * Channel launchers default to the bottom drawer; side reuses the companion
    * column; tab opens a tab in the channel's side pane beside its threads.
@@ -241,6 +246,17 @@ export class PanelsService extends Service implements Panels {
     )
       throw new Error(
         "A channel menu launcher needs a label and eligibility predicate",
+      );
+    if (
+      panel.composerLinkMenu !== undefined &&
+      (!panel.composerLinkMenu ||
+        typeof panel.composerLinkMenu.label !== "string" ||
+        !panel.composerLinkMenu.label.trim() ||
+        (panel.composerLinkMenu.icon !== undefined &&
+          typeof panel.composerLinkMenu.icon !== "function"))
+    )
+      throw new Error(
+        "A composer link menu action needs a label and optional icon component",
       );
     if (
       panel.channelPlacement !== undefined &&

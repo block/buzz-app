@@ -15,6 +15,8 @@ import type { RelayWriter } from "./transport";
 export type IdentityArchiveSnapshot = Readonly<{
   status: "unavailable" | "idle" | "loading" | "ready" | "error";
   archived: readonly string[];
+  /** The replacement key each archived key's snapshot entry names, if any. */
+  replacements?: Readonly<Record<string, string>>;
   eventId?: string;
   createdAt?: number;
   readAt?: number;
@@ -62,6 +64,31 @@ const archivedSets = new WeakMap<readonly string[], ReadonlySet<string>>();
 const empty: readonly string[] = Object.freeze([]);
 const HEX = /^[0-9a-f]{64}$/;
 const MAX_BYTES = 2 * 1024 * 1024;
+const noReplacements: Readonly<Record<string, string>> = Object.freeze({});
+
+/** NIP-IA: an archived key's snapshot entry may name its replacement as a
+ * third element. One that is not another valid key names none, and so does a
+ * key whose entries disagree. */
+function replacements(event: RelayEvent): Readonly<Record<string, string>> {
+  const named = new Map<string, string | undefined>();
+  for (const [name, key, next] of event.tags) {
+    if (name !== "p" || !key || !HEX.test(key)) continue;
+    const replacement =
+      next && HEX.test(next) && next !== key ? next : undefined;
+    named.set(
+      key,
+      named.has(key) && named.get(key) !== replacement
+        ? undefined
+        : replacement,
+    );
+  }
+  const found = [...named].filter(
+    (entry): entry is [string, string] => !!entry[1],
+  );
+  return found.length
+    ? Object.freeze(Object.fromEntries(found))
+    : noReplacements;
+}
 
 /** Relay-scoped NIP-IA visibility, never access, membership or liveness evidence.
  * The caller supplies only explicit NIP-11 self, never the contact-key fallback.
@@ -180,6 +207,7 @@ export function createIdentityArchives(
         settle({
           status: "ready",
           archived: Object.freeze(archived),
+          replacements: replacements(event),
           eventId: event.id,
           createdAt: event.created_at,
           readAt: Date.now(),

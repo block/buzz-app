@@ -16,6 +16,7 @@ import {
 import { ConfigHistoryRow } from "../../features/agents/AgentConfigHistoryRow";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails, useSyncLine } from "./AgentDetails";
+import { ProfileArchiveNotice } from "../profiles/ProfileArchiveNotice";
 import { communityDestination } from "../../features/communities/destination";
 import { communityIcon } from "../../features/communities/community-icon";
 import { communityName } from "../../features/communities/names";
@@ -24,6 +25,7 @@ import type {
   Membership,
 } from "../../features/communities/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
+import { PaneShownScope } from "../../features/panels/pane-shown";
 import { AgentMessageButton } from "./AgentMessageButton";
 import { ProviderDialog } from "./ProviderDialog";
 // Agents, teams, and marketplace, with creation and import from their menus.
@@ -735,6 +737,23 @@ export function AgentsPage({
       historyActive(params, route),
     );
   };
+  // This page opens only agents in its own list, and asks before leaving
+  // unsaved edits.
+  const canOpenOwned = (target: string) => !!find(profileKey(target));
+  const openOwned = (target: string) => {
+    const pubkey = profileKey(target);
+    return !!find(pubkey) && browse(pubkey);
+  };
+  const notice = (pubkey: string, hidden?: boolean) =>
+    connection.status === "ready" ? (
+      <ProfileArchiveNotice
+        session={connection.session}
+        pubkey={pubkey}
+        canOpen={canOpenOwned}
+        open={openOwned}
+        hidden={hidden}
+      />
+    ) : undefined;
   const panel = selected ? (
     selected.unfinished || selected.place === "elsewhere" ? (
       <AgentPeek
@@ -746,6 +765,7 @@ export function AgentsPage({
         onClose={closePanel}
         onRemoved={() => removed(selected.pubkey)}
         openSettings={openSettings}
+        notice={notice(selected.pubkey)}
       />
     ) : (
       <AgentDetails
@@ -801,11 +821,13 @@ export function AgentsPage({
             : undefined
         }
         onRemoved={() => removed(selected.pubkey)}
-        openLink={(target) => {
-          const pubkey = profileKey(target);
-          return !!find(pubkey) && browse(pubkey);
-        }}
-        canOpenLink={(target) => !!find(profileKey(target))}
+        openLink={openOwned}
+        canOpenLink={canOpenOwned}
+        notice={
+          connection.status === "ready"
+            ? (hidden) => notice(selected.pubkey, hidden)
+            : undefined
+        }
         openSettings={openSettings}
         openConversation={conversationOpener(
           navigator,
@@ -953,24 +975,26 @@ export function AgentsPage({
           >
             {split.handle}
             <Panel aria-label="Agent profile">
-              <PanelWorkspace
-                focusOnMount={false}
-                adoptSelection={selected.pubkey}
-                value={selected.pubkey}
-                select={() => {}}
-                items={[
-                  {
-                    id: selected.pubkey,
-                    label: selected.name,
-                    content: (
-                      <AgentSaveState value={reportUnsaved}>
-                        {panel}
-                      </AgentSaveState>
-                    ),
-                    close: closePanel,
-                  },
-                ]}
-              />
+              <PaneShownScope shown={tab === "yours"}>
+                <PanelWorkspace
+                  focusOnMount={false}
+                  adoptSelection={selected.pubkey}
+                  value={selected.pubkey}
+                  select={() => {}}
+                  items={[
+                    {
+                      id: selected.pubkey,
+                      label: selected.name,
+                      content: (
+                        <AgentSaveState value={reportUnsaved}>
+                          {panel}
+                        </AgentSaveState>
+                      ),
+                      close: closePanel,
+                    },
+                  ]}
+                />
+              </PaneShownScope>
             </Panel>
           </aside>
         )}
@@ -1665,6 +1689,7 @@ function AgentPeek({
   onClose,
   onRemoved,
   openSettings,
+  notice,
 }: {
   agents: Agents;
   agent: Agent;
@@ -1673,6 +1698,8 @@ function AgentPeek({
   onClose(): void;
   onRemoved(): void;
   openSettings: ((section: string) => void) | undefined;
+  /** Status text under the identity, such as an archive notice. */
+  notice?: ReactNode;
 }) {
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState("");
@@ -1693,6 +1720,7 @@ function AgentPeek({
         detail={summaryOf(agent, type)}
         onClose={onClose}
       />
+      {notice}
       {agent.place === "elsewhere" ? (
         <p className="m-0 text-body-sm text-secondary">
           {type && !type.remote ? (

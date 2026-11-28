@@ -1598,3 +1598,41 @@ test("profile preview names its status emoji above the card and stays open over 
   await page.clock.runFor(600);
   await expect(preview).toHaveAttribute("data-open", "");
 });
+
+// The real profile panel reads "archived" and "replaced by" from the relay's
+// archive snapshot, and the replacement link opens that key's profile.
+for (const replaced of [true, false]) {
+  test(`an archived profile ${replaced ? "links its replacement" : "shows the plain notice"}`, async ({
+    page,
+  }) => {
+    const errors = watchPageErrors(page);
+    await page.goto(
+      `/tests/fixtures/profiles.html?archived${replaced ? "=replaced" : ""}`,
+    );
+    const panel = page.getByRole("complementary", {
+      name: "Profile",
+      exact: true,
+    });
+    await page
+      .getByRole("button", { name: "View Mic profile", exact: true })
+      .click();
+    await expect(panel.getByRole("heading", { name: "Mic" })).toBeVisible();
+    const notice = panel.getByTestId("profile-archived");
+    if (!replaced) {
+      await expect(notice).toHaveText(
+        "This key is archived in this community.",
+      );
+      expect(errors.unexplained()).toEqual([]);
+      return;
+    }
+    await expect(notice).toHaveText("This key was replaced by Pinky.");
+    await notice
+      .getByRole("button", { name: "Open new key profile: Pinky" })
+      .click();
+    await expect(
+      panel.getByRole("heading", { name: "Pinky", exact: true }),
+    ).toBeVisible();
+    await expect(panel.getByTestId("profile-archived")).toHaveCount(0);
+    expect(errors.unexplained()).toEqual([]);
+  });
+}

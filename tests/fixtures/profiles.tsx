@@ -67,6 +67,9 @@ const memberMessageProbe = new URLSearchParams(location.search).has(
 // With existing-dm, the viewer already has the DM with Mic, so Message opens
 // it; without, Message drafts one and the DM appears only once opened.
 const existingDmProbe = new URLSearchParams(location.search).has("existing-dm");
+// With archived, the relay's archive snapshot lists Mic; archived=replaced
+// also names Pinky as Mic's replacement.
+const archiveProbe = new URLSearchParams(location.search).get("archived");
 let dmOpened = existingDmProbe;
 const dmOpens: string[][] = [];
 const dmEvents = () => [
@@ -175,6 +178,7 @@ function session() {
           }
         : {}),
       relayAuthor: authority.pubkey,
+      ...(archiveProbe === null ? {} : { archiveAuthority: authority.pubkey }),
       subscribe(callbacks) {
         callbacks.state({ status: "connected", routes: [] });
         return {
@@ -305,6 +309,21 @@ function session() {
                   }),
                 ]
               : [];
+          if (filter.kinds?.includes(13535))
+            return archiveProbe === null
+              ? []
+              : [
+                  signed(authority, {
+                    kind: 13535,
+                    content: "",
+                    tags: [
+                      ["-"],
+                      archiveProbe === "replaced"
+                        ? ["p", mic.pubkey, pinky.pubkey]
+                        : ["p", mic.pubkey],
+                    ],
+                  }),
+                ];
           if (filter.kinds?.includes(0)) {
             report.profileReads.push([...(filter.authors ?? [])]);
             if (

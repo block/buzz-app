@@ -7,7 +7,12 @@ import {
 } from "../../features/agent-harness/acp/agent-sessions";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
-import { GooseProcess, type GooseHost, type ServeMcp } from "./goose";
+import {
+  GooseProcess,
+  REQUEST_TIMEOUT_MS,
+  type GooseHost,
+  type ServeMcp,
+} from "./goose";
 import type {
   SavedConversation,
   SessionStore,
@@ -134,6 +139,24 @@ export class AgentProcess {
     this.starts.add(start);
     this.current = start;
     return start.ready;
+  }
+  /** goose caches secrets per process, so a key saved by another one reaches
+   * this one only once an inventory refresh reloads them. Its sessions then
+   * rebuild their provider on their next call. Best effort: a goose that
+   * fails to answer is killed, and the next one starts with fresh secrets. */
+  async refresh(provider: string) {
+    await Promise.all(
+      [...this.starts].map(async (start) => {
+        const goose = await start.ready.catch(() => undefined);
+        await goose
+          ?.request(
+            "_goose/unstable/providers/inventory/refresh",
+            { providerIds: [provider] },
+            REQUEST_TIMEOUT_MS,
+          )
+          .catch(() => undefined);
+      }),
+    );
   }
   /** Stops it, failing every session in it. */
   stop() {

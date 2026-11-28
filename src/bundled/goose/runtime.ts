@@ -413,6 +413,16 @@ export class GooseRuntime {
       if (!entry.config.provider.trim()) entry.sessions.reconfigure();
   }
 
+  /** Has every running goose reload a provider's key saved by Settings. */
+  async credentialsChanged(provider: string) {
+    await Promise.all(
+      [...this.agents.values()].flatMap((entry) => [
+        entry.goose.refresh(provider),
+        ...(entry.worker ? [entry.worker.refresh(provider)] : []),
+      ]),
+    );
+  }
+
   private readonly retirements = new Map<string, Promise<void>>();
   async retire(pubkey: string) {
     this.controls.interrupt(`${pubkey}/${COMMUNITY_SESSION}`, true);

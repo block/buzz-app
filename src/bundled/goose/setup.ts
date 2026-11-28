@@ -160,6 +160,10 @@ export class GooseSetup {
      * protection picker's does not, as the review worker it offers for
      * never gets them. */
     private readonly deviceEnv = true,
+    /** Called once a provider's fields are saved, before `save` resolves. */
+    private readonly credentialsChanged: (
+      provider: string,
+    ) => Promise<void> = async () => {},
   ) {}
 
   snapshot = () => this.state;
@@ -639,6 +643,7 @@ export class GooseSetup {
     this.current = undefined;
     this.live.delete(id);
     this.thinking.clear();
+    await this.credentialsChanged(id);
   }
 
   /** Asks the provider for one short reply, without tools. goose reports a

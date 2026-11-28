@@ -79,7 +79,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
           resolveDirectory: host.resolveDirectory.bind(host),
         }
       : undefined;
-  const setup = new GooseSetup(desktop, () => runtime.defaultsChanged());
+  const setup = new GooseSetup(
+    desktop,
+    () => runtime.defaultsChanged(),
+    true,
+    (provider) => runtime.credentialsChanged(provider),
+  );
   // Failed turns' reports link to where goose's provider keys are set up.
   runtime.explain = (error) =>
     explainTurn(

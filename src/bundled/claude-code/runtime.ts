@@ -1703,15 +1703,34 @@ export class ClaudeRuntime {
       entry.policies.delete(key);
       this.notify();
     });
+    let endHold!: () => void;
+    const holdEnded = new Promise<void>((resolve) => {
+      endHold = resolve;
+    });
     interruptible?.(() => {
       interrupted = true;
-      return submitted ? entry.sessions.interrupt(key) : Promise.resolve();
+      endHold();
+      const owner = entry.policies.get(key);
+      const laterRequestOwnsSession =
+        foregroundDone && !!owner && owner !== policy;
+      if (!submitted || laterRequestOwnsSession) return Promise.resolve();
+      return entry.sessions.interrupt(key);
     });
     // Deliveries keep their order: a later one waits on this handover, and
     // one with nothing to wait for is handed over before `run` returns.
     if (!wait && !handoff.deferred && !admittedDeferred) await handed;
-    // The turn outlives `run`, which the host is told so it shows it as working.
-    workingUntil(done);
+    // The turn, its background tasks and the turns they start outlive `run`.
+    workingUntil(
+      done.then(async (result) => {
+        if (!result.ok || result.stopped || key === COMMUNITY_SESSION)
+          return result;
+        await Promise.race([
+          entry.sessions.idle(key).catch(() => undefined),
+          holdEnded,
+        ]);
+        return interrupted ? { ...result, stopped: true as const } : result;
+      }),
+    );
     this.notify();
     this.watch(done, async (error) => {
       if (error)

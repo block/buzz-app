@@ -5342,6 +5342,156 @@ it("does not offer a shared native title to a later Solo source", async () => {
   }
 });
 
+async function backgroundTurn(
+  f: ReturnType<typeof setup>,
+  picks: Partial<Delivery> = {},
+) {
+  await f.deliver(
+    { type: "mention", event: message("1", "start background") },
+    picks,
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((p) => p.prompts.length)).toBe(true),
+  );
+  const worker = f.claudes().find((p) => p.prompts.length);
+  if (!worker) throw new Error("no worker");
+  worker.emit({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: [{ id: "background" }],
+  });
+  return worker;
+}
+const idle = (
+  worker: ReturnType<ReturnType<typeof setup>["claudes"]>[number],
+) =>
+  worker.emit({
+    type: "system",
+    subtype: "session_state_changed",
+    state: "idle",
+  });
+const watched = (promise: PromiseLike<unknown> | undefined) => {
+  const seen: { result?: unknown } = {};
+  void promise?.then((result) => {
+    seen.result = result;
+  });
+  return seen;
+};
+
+it("shows a turn as working until its background tasks and the turns they start finish", async () => {
+  const f = setup([], { hold: true });
+  try {
+    const worker = await backgroundTurn(f);
+    worker.finish();
+    const turn = watched(f.workingUntil.mock.calls[0]?.[0]);
+    idle(worker);
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(turn.result).toBeUndefined();
+    worker.emit({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "background",
+    });
+    worker.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+    });
+    worker.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "working",
+    });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(turn.result).toBeUndefined();
+    idle(worker);
+    await vi.waitFor(() => expect(turn.result).toMatchObject({ ok: true }));
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it.each([
+  ["failed", false],
+  ["community", true],
+])(
+  "a %s turn settles without waiting for its background tasks",
+  async (outcome, community) => {
+    const f = setup([], { hold: true });
+    try {
+      const config = community
+        ? { ...DEFAULT_CONFIG, scope: "community" as const }
+        : DEFAULT_CONFIG;
+      const worker = await backgroundTurn(f, { config });
+      worker.finish(outcome === "failed" ? { error: "boom" } : {});
+      idle(worker);
+      const turns = f.workingUntil.mock.calls.map(([done]) => watched(done));
+      await vi.waitFor(() =>
+        expect(turns.every((turn) => turn.result)).toBe(true),
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
+it("a turn stopped by its session's controls settles without waiting for its background tasks", async () => {
+  const f = setup([], { hold: true });
+  try {
+    const worker = await backgroundTurn(f);
+    const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+    await f.runtime.session(
+      agent,
+      { channelId: channel, root: message("1", "").id },
+      "interrupt",
+    );
+    worker.finish({ error: "interrupted" });
+    idle(worker);
+    const turn = watched(f.workingUntil.mock.calls[0]?.[0]);
+    await vi.waitFor(() =>
+      expect(turn.result).toMatchObject({ stopped: true }),
+    );
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("stopping a turn held by its background tasks ends the hold, not a later request's turn", async () => {
+  const f = setup([], { hold: true });
+  try {
+    const worker = await backgroundTurn(f);
+    const stop = f.interruptible.mock.calls[0]?.[0];
+    if (!stop) throw new Error("no stopper");
+    worker.finish();
+    idle(worker);
+    const first = watched(f.workingUntil.mock.calls[0]?.[0]);
+    await f.deliver({
+      type: "mention",
+      event: message("2", "next", {
+        tags: [
+          ["h", channel],
+          ["e", message("1", "").id, "", "reply"],
+        ],
+      }),
+    });
+    await vi.waitFor(() => expect(worker.prompts).toHaveLength(2));
+    await stop();
+    await vi.waitFor(() =>
+      expect(first.result).toMatchObject({ ok: true, stopped: true }),
+    );
+    expect(
+      worker.received.filter(
+        (item) =>
+          item.type === "control_request" &&
+          (item.request as { subtype?: string }).subtype === "interrupt",
+      ),
+    ).toEqual([]);
+    worker.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("keeps a background continuation on its source until native work drains", async () => {
   const f = setup([], { hold: true, solo: new Set([channel]) });
   const config = { ...DEFAULT_CONFIG, scope: "community" as const };

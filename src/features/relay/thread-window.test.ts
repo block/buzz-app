@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { verifiedSymbol } from "nostr-tools";
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { connectBrokerTransport } from "./transport";
@@ -701,7 +702,7 @@ it("replies the re-established stream replays before refresh are not overlap wit
 
 it("refresh after establishment drops a retained reply it cannot reach within the page bound and settles on the range the reader had", async () => {
   const old = at(1);
-  const fresh = Array.from({ length: 10 }, (_, index) => at(20 - index));
+  const fresh = Array.from({ length: 50 }, (_, index) => at(100 - index));
   let reconnected = false;
   const h = await setup((filter) => {
     if (filter.ids) return [root];
@@ -720,9 +721,9 @@ it("refresh after establishment drops a retained reply it cannot reach within th
   await h.view.refresh();
   reconnected = true;
   h.traffic.established(channel);
-  // Ten pages never reached `old`: it goes rather than sitting below a gap.
+  // Fifty pages never reached `old`: it goes rather than sitting below a gap.
   // The pages read stay, but the reader had one page, so the range settles
-  // on one: a later refresh re-reads one page, not ten, and older pages
+  // on one: a later refresh re-reads one page, not fifty, and older pages
   // continue from its bound. The repair stays ready throughout, so wait on
   // its rows.
   const shown = fresh.map((row) => row.id).reverse();
@@ -1952,8 +1953,8 @@ it("settles session recovery when a read view with a quiet failure passes its me
     expect(recovery.snapshot().recovering).toBe(true);
     // Live replies alone pass the limit: no read is running to report it.
     h.traffic.receive(
-      Array.from({ length: 5 }, (_, n) =>
-        message(author, channel, "x".repeat(1 << 20), 1000 + n, [
+      Array.from({ length: 9 }, (_, n) =>
+        message(author, channel, "x".repeat(4 << 20), 1000 + n, [
           ["e", root.id, "", "reply"],
         ]),
       ),
@@ -1974,5 +1975,55 @@ it("settles session recovery when a read view with a quiet failure passes its me
     vi.useRealTimers();
     vi.restoreAllMocks();
     view.dispose();
+  }
+});
+
+it("pages a 2,050-reply strict thread all the way to its oldest reply", async () => {
+  const rows: RelayEvent[] = Array.from({ length: 2050 }, (_, n) => ({
+    id: n.toString(16).padStart(64, "0"),
+    pubkey: author.pubkey,
+    created_at: 20 + n,
+    kind: 9,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ],
+    content: `reply ${n}`,
+    sig: "0".repeat(128),
+    [verifiedSymbol]: true,
+  }));
+  const serve = serving(rows);
+  let windowReads = 0;
+  const thread = createThreadView({
+    channelId: channel,
+    messageId: root.id,
+    relayAuthor: relay.pubkey,
+    reader: {
+      read: async (filters) => {
+        if (filters.some((f) => f.thread_window)) windowReads++;
+        return filters.flatMap(serve);
+      },
+    },
+    seed: root,
+    local: undefined,
+    canAccess: () => true,
+    visible: (events) => events,
+    notify: () => {},
+  });
+  try {
+    await thread.view.refresh();
+    while (thread.view.snapshot().canLoadMore) await thread.view.loadMore();
+    const snapshot = thread.view.snapshot();
+    expect(snapshot).toMatchObject({
+      status: "ready",
+      canLoadMore: false,
+      limited: false,
+    });
+    expect(windowReads).toBe(42);
+    expect(snapshot.replies).toHaveLength(2050);
+    expect(snapshot.replies[0]?.id).toBe(rows[0]?.id);
+    expect(snapshot.replies.at(-1)?.id).toBe(rows.at(-1)?.id);
+  } finally {
+    thread.view.dispose();
   }
 });

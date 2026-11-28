@@ -90,7 +90,7 @@ it("retains the selected reply beyond traversal limits without using it as a cur
     "First reply",
     "Edited target",
   ]); // Unrelated top-level seed events must not become replies before root resolution.
-  for (let page = 2; page <= 10; page++) {
+  for (let page = 2; page <= 50; page++) {
     const more = h.view.loadMore();
     const request = h.next();
     expect(request.filters[1]?.thread_cursor).toBe(page);

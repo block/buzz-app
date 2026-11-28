@@ -149,7 +149,7 @@ export function sendInBackground(
   recover: (
     files: readonly DraftAttachment[],
     preparationError?: unknown,
-  ) => boolean | "conflict",
+  ) => boolean | "conflict" | Promise<boolean | "conflict">,
   source?: AttachmentDraft,
 ) {
   const queue = queueFor(session);
@@ -186,7 +186,7 @@ export function sendInBackground(
       if (failure || signal.aborted) {
         let recovery: boolean | "conflict" = false;
         try {
-          recovery = recover(store.snapshot(), preparationError);
+          recovery = await recover(store.snapshot(), preparationError);
         } catch {
           /* Retain bytes for retry. */
         }
@@ -199,10 +199,10 @@ export function sendInBackground(
               id: key,
               title: recoveryNotice(recovery, destination.name),
               destination,
-              retry: () => {
+              retry: async () => {
                 let result: boolean | "conflict" = false;
                 try {
-                  result = recover(store.snapshot(), preparationError);
+                  result = await recover(store.snapshot(), preparationError);
                 } catch {
                   /* Retain bytes for another retry. */
                 }

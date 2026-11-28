@@ -9,7 +9,12 @@ import {
   type UploadProgress,
 } from "../relay/attachments";
 import { prepareAttachment } from "./prepare-attachment";
-import { clearView, readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  saveDraftRevision,
+  viewRevision,
+  viewScopePurgeToken,
+} from "../../shared/view-state";
 
 export type DraftAttachment = Readonly<{
   id: string;
@@ -163,17 +168,35 @@ export function attachmentDraft(
     items.flatMap((item) => (item.uploaded ? [item.uploaded] : []));
   // Save only this store's changes, so a stale window cannot rewrite a clear.
   let savedFiles = JSON.stringify(uploadedFiles());
+  let filesRevision = saved && viewRevision(...saved);
+  const purgeToken = saved && viewScopePurgeToken(saved[0]);
+  let saving: Promise<void> | undefined;
   const save = () => {
     if (!saved) return;
     const files = uploadedFiles();
     const revision = JSON.stringify(files);
     if (revision === savedFiles) return;
     savedFiles = revision;
-    try {
-      if (files.length) writeView(...saved, files);
-      else clearView(...saved);
-    } catch {
-      /* Storage unavailable; the files remain in this tab. */
+    const persist = () => {
+      const savedRevision = files.length ? revision : null;
+      const result = saveDraftRevision(
+        ...saved,
+        filesRevision,
+        savedRevision,
+        purgeToken,
+      );
+      const update = (result: "saved" | "changed" | "failed") => {
+        if (result === "saved") filesRevision = savedRevision;
+      };
+      if (result instanceof Promise) return result.then(update);
+      update(result);
+    };
+    const pending = saving ? saving.then(persist) : persist();
+    if (pending) {
+      const tracked = pending.finally(() => {
+        if (saving === tracked) saving = undefined;
+      });
+      saving = tracked;
     }
   };
   let count = items.length;

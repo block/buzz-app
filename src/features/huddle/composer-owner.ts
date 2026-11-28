@@ -6,7 +6,7 @@ import { MAX_VOICE_SECONDS } from "../relay/voice-media";
 import { mentionDraft } from "../messages/mention-draft";
 import {
   draftRetirementCursor,
-  retireViewDraft,
+  retireDraftRevision,
 } from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
@@ -324,7 +324,7 @@ export function createHuddleComposerOwner(
         // acknowledgement must not restore a message already in the main
         // outbox. The stub is what the composer saves for every send; it
         // keeps the remembered agents in memory (see seedMentions).
-        const retirement = retireViewDraft(
+        const retirement = await retireDraftRevision(
           scope,
           key,
           draft === "null" ? null : draft,

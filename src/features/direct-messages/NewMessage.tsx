@@ -488,7 +488,7 @@ export function NewMessage({
       }
       // Clear disposable views before releasing durable recovery. A failed clear
       // retains the operation for confirmation-only retry, even across unmount.
-      clearView(
+      await clearView(
         scope,
         draftKey,
         `${draftKey}:files`,

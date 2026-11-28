@@ -5,6 +5,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { TooltipProvider } from "../../shared/design-system/ui/Tooltip";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
+import { initializeDraftStorage } from "../../shared/view-state";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { HuddleAction, HuddleView } from "../../features/huddle/window";
 import { HuddleWindowView } from "./HuddleWindowView";
@@ -68,11 +69,13 @@ function Companion() {
 const container = document.getElementById("root");
 if (container) {
   container.style.height = "100dvh";
-  createRoot(container).render(
-    <AgentAvatarArtworkProvider>
-      <TooltipProvider>
-        <Companion />
-      </TooltipProvider>
-    </AgentAvatarArtworkProvider>,
+  void Promise.resolve(initializeDraftStorage()).then(() =>
+    createRoot(container).render(
+      <AgentAvatarArtworkProvider>
+        <TooltipProvider>
+          <Companion />
+        </TooltipProvider>
+      </AgentAvatarArtworkProvider>,
+    ),
   );
 }

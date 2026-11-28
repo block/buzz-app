@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { createServices } from "./app/services";
 import { loadAgentStorage } from "./features/agents/state";
 import { App } from "./app/App";
+import { initializeDraftStorage } from "./shared/view-state";
 import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
@@ -29,7 +30,11 @@ if (!container) {
 // What stops startup shows "Buzz couldn’t open" from public/launch-init.js
 // instead of a stuck launch or empty window; what unmounts the whole app once
 // its launch has ended shows "Buzz stopped working" there.
-void loadAgentStorage().finally(() => {
+const storageReady = Promise.allSettled([
+  loadAgentStorage(),
+  initializeDraftStorage(),
+]);
+void storageReady.then(() => {
   try {
     const services = createServices();
     const root = createRoot(container, {

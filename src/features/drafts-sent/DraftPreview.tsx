@@ -100,18 +100,28 @@ export function DraftPreview({
   }>();
   useEffect(() => {
     if (
-      mode === "draft" &&
-      cleaned &&
-      sent &&
-      received === sent &&
-      attachmentCount === 0 &&
-      flushPendingDraft(session.scope, entry.id) &&
-      viewRevision(session.scope, entry.id) === cleaned.revision
+      mode !== "draft" ||
+      !cleaned ||
+      !sent ||
+      received !== sent ||
+      attachmentCount !== 0
     )
-      onSaved(
-        document.activeElement === document.body ||
-          !!region.current?.contains(document.activeElement),
-      );
+      return;
+    let current = true;
+    void flushPendingDraft(session.scope, entry.id).then((flushed) => {
+      if (
+        current &&
+        flushed &&
+        viewRevision(session.scope, entry.id) === cleaned.revision
+      )
+        onSaved(
+          document.activeElement === document.body ||
+            !!region.current?.contains(document.activeElement),
+        );
+    });
+    return () => {
+      current = false;
+    };
   }, [
     cleaned,
     sent,

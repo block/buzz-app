@@ -537,14 +537,15 @@ function ScopedPage({
 
   /** Clears one draft and keeps keyboard focus in the list: the next row's clear
    * action, else the previous one's, else search. */
-  function clear(entry: Entry, button: HTMLElement) {
+  async function clear(entry: Entry, button: HTMLElement) {
     setNotice(undefined);
     const row = button.closest("li");
     const neighbor = (
       row?.nextElementSibling ?? row?.previousElementSibling
     )?.querySelector<HTMLElement>("[data-clear-draft]");
     try {
-      clearDraft(session, entry.id);
+      const cleared = clearDraft(session, entry.id);
+      if (cleared instanceof Promise) await cleared;
     } catch {
       setNotice("This draft could not be cleared. Try again.");
       return;

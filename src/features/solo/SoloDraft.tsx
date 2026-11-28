@@ -25,6 +25,7 @@ import { ownedSoloAgents } from "../relay/solo-admins";
 import {
   readView,
   writeView,
+  writeDraftView,
   subscribeView,
   viewRevision,
 } from "../../shared/view-state";
@@ -633,7 +634,7 @@ export function SoloDraft({
           ),
         );
         files.clear();
-        writeView(
+        await writeDraftView(
           scope,
           `draft:${channelId}`,
           // The toolbar keeps the agents when it routed the send.
@@ -644,7 +645,7 @@ export function SoloDraft({
       } catch (reason) {
         // The chat still starts; its own composer keeps the message to send.
         console.warn("Solo first message waits in its chat", reason);
-        writeView(scope, `draft:${channelId}`, draft);
+        await writeDraftView(scope, `draft:${channelId}`, draft);
         transferAttachmentDraft(
           files,
           attachmentDraft(
@@ -660,7 +661,7 @@ export function SoloDraft({
       writeView(scope, `${draftKey}:settings`, null);
       // A linked draft is reused for its source: clear it to absent so the
       // next start from that source seeds its link again.
-      writeView(scope, `${draftKey}:new-draft`, source ? null : "");
+      await writeDraftView(scope, `${draftKey}:new-draft`, source ? null : "");
       writeView(scope, `${draftKey}:new-draft:agents`, null);
       writeView(scope, `${draftKey}:new-project`, null);
       let savedChatPicks = !Object.keys(retainedPicks).length;
@@ -786,13 +787,14 @@ export function SoloDraft({
               // The text first: when it can't be saved, an open New chat may hold
               // unsaved text of its own, so nothing else is given back.
               const returned =
-                blank && writeView(scope, `${draftKey}:new-draft`, draft);
+                blank &&
+                (await writeDraftView(scope, `${draftKey}:new-draft`, draft));
               if (blank && !returned) {
                 await undoPrepared();
                 failedPromptWrite = true;
                 throw new Error("The recovered prompt could not be saved.");
               }
-              writeView(scope, `draft:${channelId}`, null);
+              await writeDraftView(scope, `draft:${channelId}`, null);
               clearAttachmentDraft(session, `${scope}:draft:${channelId}`);
               // What else could not be saved: the toast says so, since a retry
               // would otherwise silently use the defaults instead.

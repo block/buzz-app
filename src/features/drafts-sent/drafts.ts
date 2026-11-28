@@ -192,11 +192,14 @@ export function readDrafts(
  * reloads the empty draft, or keeps unsaved edits as a conflict. Throws when
  * storage could not forget it, before discarding any files. */
 export function clearDraft(session: Session, key: string) {
-  clearView(session.scope, key, `${key}:files`);
-  clearAttachmentDraft(
-    session as Parameters<typeof clearAttachmentDraft>[0],
-    `${session.scope}:${key}`,
-  );
+  const clearFiles = () =>
+    clearAttachmentDraft(
+      session as Parameters<typeof clearAttachmentDraft>[0],
+      `${session.scope}:${key}`,
+    );
+  const cleared = clearView(session.scope, key, `${key}:files`);
+  if (cleared instanceof Promise) return cleared.then(clearFiles);
+  clearFiles();
 }
 
 /** The session's drafts, re-read when the composer saves, clears or attaches. */

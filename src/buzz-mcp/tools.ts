@@ -57,6 +57,14 @@ import { soloChannelMetadata } from "../features/relay/discovery";
 import { channelLabelTags } from "../features/relay/channel-labels";
 import { SOLO_LABEL, SOLO_NAMED_LABEL } from "../features/solo/labels";
 import type { RelayEvent } from "../features/relay/events";
+import type { Profile } from "../features/relay/contracts";
+import { foldProfiles } from "../features/relay/profiles";
+import { preparedMarkdown } from "../features/messages/markdown-preparation";
+import {
+  profileMentionNames,
+  renderedProfileMentionParts,
+} from "../features/messages/profile-mentions";
+import { profileTarget } from "../features/profiles/target";
 import {
   compactAt as parseCompactAt,
   MIN_COMPACT_AT,
@@ -431,7 +439,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "users",
-    "Profiles by pubkey or name: each row's quoted profile name, then, for a name search, (verified: …) when the relay verified a different name, then the quoted about text, then archived for an identity the relay archived. A name search leaves archived identities out unless include_archived is true; ids always returns them.",
+    "Profiles by pubkey or name: each row's quoted profile name, then, for someone the relay verified, (verified: …) with any different verified name and the handle to @mention them by, then the quoted about text, then archived for an identity the relay archived. A name search leaves archived identities out unless include_archived is true; ids always returns them.",
     { ids: strs, q: str, include_archived: { type: "boolean" } },
   ),
   tool(
@@ -1375,11 +1383,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // One deadline bounds the key both the search and the archive check use.
     const deadline = archiveDeadline();
     const relay = tools.relayKey(deadline);
-    const [people, byId, archived] = await Promise.all([
+    const [people, byId, verifiedById, archived] = await Promise.all([
       ids.length ? undefined : tools.searchPeople(q ?? "", relay),
       ids.length
         ? client.query([{ kinds: [0], authors: ids, limit: ids.length }])
         : undefined,
+      ids.length ? tools.verifiedNames(ids) : undefined,
       // The standalone lookup serves both the search and the archive list.
       tools.archivedIdentities(deadline, client.relayAuthorLookup && relay),
     ]);
@@ -1390,11 +1399,20 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       key !== client.pubkey &&
       !!archived?.has(key);
     const profiles = people?.profiles ?? byId ?? [];
-    const verified = people?.verified ?? new Map<string, VerifiedProfile>();
+    const verified =
+      people?.verified ?? verifiedById ?? new Map<string, VerifiedProfile>();
+    // The app shows a tag only for a verified display name or full name,
+    // written exactly. The display name is normally the handle; when it is
+    // not, `@handle` would not show as a tag, so say what to write.
     const shown = (pubkey: string, name: string) => {
       const found = verified.get(pubkey);
-      const label = found && (found.fullName ?? found.displayName);
-      return label && label !== name ? ` (verified: ${label})` : "";
+      if (!found) return "";
+      const label = found.fullName ?? found.displayName;
+      const handle =
+        found.username === found.displayName
+          ? `handle @${found.username}`
+          : `handle ${found.username}, tag as @${found.displayName}`;
+      return ` (verified${label !== name ? `: ${label}` : ""}, ${handle})`;
     };
     const byKey = new Map<string, { aliases: readonly string[]; row: string }>([
       ...newest(profiles).map((event) => {
@@ -2119,6 +2137,8 @@ async function post(
 }
 
 /** One call's helpers, so lookups it repeats are made once. */
+type NameSources = Awaited<ReturnType<Tools["nameSources"]>>;
+
 class Tools {
   private readonly cache = new Map<string, Promise<unknown>>();
   constructor(
@@ -2931,12 +2951,26 @@ class Tools {
     return names;
   }
 
+  /** The profiles and relay-verified names of `pubkeys`: what `send` and the
+   * app's renderer both read names from. */
+  async nameSources(pubkeys: readonly string[]) {
+    const wanted = [...new Set(pubkeys)];
+    if (!wanted.length)
+      return { events: [], verified: new Map<string, VerifiedProfile>() };
+    const [events, verified] = await Promise.all([
+      this.client.query([
+        { kinds: [0], authors: wanted, limit: wanted.length },
+      ]),
+      this.verifiedNames(wanted),
+    ]);
+    return { events: newest(events), verified };
+  }
+
   /** Every name `send` accepts after `@` for each of `pubkeys`, with its
    * weight: lower wins when people share a name. A relay-verified name
    * outranks a name someone gave their own profile, so a profile cannot take
    * a verified person's name. */
-  async aliases(pubkeys: readonly string[]) {
-    const wanted = [...new Set(pubkeys)];
+  aliases({ events, verified }: NameSources) {
     const aliases = new Map<string, Map<string, number>>();
     const add = (pubkey: string, name: unknown, weight: number) => {
       if (typeof name !== "string" || !name.trim()) return;
@@ -2945,19 +2979,15 @@ class Tools {
       names.set(pubkey, Math.min(names.get(pubkey) ?? weight, weight));
       aliases.set(lower, names);
     };
-    if (!wanted.length) return aliases;
-    const profiles = await this.client.query([
-      { kinds: [0], authors: wanted, limit: wanted.length },
-    ]);
-    for (const event of newest(profiles)) {
+    for (const event of events) {
       const profile = parse(event.content);
       add(event.pubkey, profile.display_name, NAME_WEIGHT.displayName);
       add(event.pubkey, profile.name, NAME_WEIGHT.name);
     }
-    for (const [pubkey, verified] of await this.verifiedNames(wanted)) {
-      add(pubkey, verified.displayName, NAME_WEIGHT.verifiedDisplayName);
-      add(pubkey, verified.username, NAME_WEIGHT.verifiedUsername);
-      add(pubkey, verified.fullName, NAME_WEIGHT.verifiedFullName);
+    for (const [pubkey, found] of verified) {
+      add(pubkey, found.displayName, NAME_WEIGHT.verifiedDisplayName);
+      add(pubkey, found.username, NAME_WEIGHT.verifiedUsername);
+      add(pubkey, found.fullName, NAME_WEIGHT.verifiedFullName);
     }
     return aliases;
   }
@@ -3051,7 +3081,8 @@ class Tools {
   }
 
   /** Who `content` notifies: `mentions`, `nostr:npub…` links, and `@Name`
-   * for a channel member, as the CLI resolves them. Each must be a member. */
+   * for a channel member, as the CLI resolves them. Each must be a member,
+   * and every `@Name` written for someone it tags must show as their tag. */
   async mentions(
     channel: string,
     content: string,
@@ -3060,42 +3091,34 @@ class Tools {
     const keys = new Set(explicit.map(pubkey));
     for (const match of content.matchAll(/nostr:(npub1[02-9ac-hj-np-z]{58})/g))
       keys.add(pubkey(match[1] as string));
-    const prose = content
-      .replace(/^```[\s\S]*?^```/gm, " ")
-      .replace(/`[^`\n]*`/g, " ");
+    const prose = withoutCode(content);
     if (!prose.includes("@") && !keys.size) return [];
     const members = await this.members(channel);
+    let check: (() => void) | undefined;
     if (prose.includes("@")) {
-      const byName = await this.aliases(members.map((member) => member.pubkey));
-      const longest = [...byName.keys()].sort((a, b) => b.length - a.length);
+      const sources = await this.nameSources(
+        members.map((member) => member.pubkey),
+      );
+      const byName = this.aliases(sources);
       const unknown: string[] = [];
-      for (const match of prose.matchAll(/(^|\s)@/g)) {
-        const rest = prose
-          .slice((match.index ?? 0) + match[0].length)
-          .toLowerCase();
-        const name = longest.find(
-          (candidate) =>
-            rest.startsWith(candidate) &&
-            /^($|[\s,;.!?:)\]}])/.test(rest.slice(candidate.length)),
-        );
+      for (const { name, token } of atNames(prose, byName)) {
         const found = name ? bestNamed(byName.get(name)) : [];
         if (found.length === 1) keys.add(found[0] as string);
-        else {
-          const token = name ?? rest.match(/^[a-z0-9._-]+/)?.[0];
-          if (token)
-            unknown.push(`@${token}${found.length ? " (ambiguous)" : ""}`);
-        }
+        else if (token)
+          unknown.push(`@${token}${found.length ? " (ambiguous)" : ""}`);
       }
       if (unknown.length && !explicit.length)
         throw new Error(
           `No single channel member is ${unknown.join(", ")}. Pass their pubkeys in mentions, or drop the @.`,
         );
+      check = () => untaggedNames(content, keys, byName, sources);
     }
     const outside = [...keys].filter(
       (key) => !members.some((member) => member.pubkey === key),
     );
     if (outside.length)
       throw new Error(`Not in this channel: ${outside.join(", ")}`);
+    check?.();
     return [...keys].slice(0, 50);
   }
 
@@ -3475,6 +3498,135 @@ function bestNamed(holders: ReadonlyMap<string, number> | undefined) {
     .filter(([, weight]) => weight === best)
     .map(([key]) => key);
 }
+
+/** `content` with code blanked out, offsets kept: an `@` in code tags no one. */
+const withoutCode = (content: string) =>
+  content
+    .replace(/^```[\s\S]*?^```/gm, (code) => code.replace(/[^\n]/g, " "))
+    .replace(/`[^`\n]*`/g, (code) => " ".repeat(code.length));
+
+/** Each `@` in `prose` at a word start, with the longest name in `byName`
+ * it starts with (lowercase), or else the word that follows it. */
+function atNames(prose: string, byName: ReadonlyMap<string, unknown>) {
+  const longest = [...byName.keys()].sort((a, b) => b.length - a.length);
+  return [...prose.matchAll(/(^|\s)@/g)].map((match) => {
+    const at = (match.index ?? 0) + match[0].length - 1;
+    const rest = prose.slice(at + 1).toLowerCase();
+    const name = longest.find(
+      (candidate) =>
+        rest.startsWith(candidate) &&
+        /^($|[\s,;.!?:)\]}])/.test(rest.slice(candidate.length)),
+    );
+    return { at, name, token: name ?? rest.match(/^[a-z0-9._-]+/)?.[0] };
+  });
+}
+
+/** Refuses `content` when an `@Name` that `send` reads as someone it tags
+ * would show as plain text: the app binds a tag only by the names
+ * `profileMentionNames` lists, written exactly, so a name a person gave their
+ * own profile, a verified username or a case change can notify them yet not
+ * read as their tag. The error names what to write instead. */
+function untaggedNames(
+  content: string,
+  keys: ReadonlySet<string>,
+  byName: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  { events, verified }: NameSources,
+) {
+  const profiles = shownProfiles(events, verified);
+  const prepared = preparedMarkdown(content);
+  // A body too large for Markdown shows no tags at all; there is nothing to
+  // write instead.
+  if (prepared.kind === "plain") return;
+  const text = prepared.content;
+  const bound = new Map<number, string>();
+  let offset = 0;
+  for (const part of renderedProfileMentionParts(
+    { content, mentions: [...keys] },
+    profiles,
+    [],
+    prepared,
+  )) {
+    if (part.target) bound.set(offset, part.target);
+    offset += part.text.length;
+  }
+  const dead = new Map<string, string[]>();
+  for (const { at, name } of atNames(withoutCode(text), byName)) {
+    const tagged = [...(byName.get(name ?? "")?.keys() ?? [])].filter((key) =>
+      keys.has(key),
+    );
+    const target = bound.get(at);
+    if (!tagged.length || tagged.some((key) => profileTarget(key) === target))
+      continue;
+    const written = text.slice(at, at + 1 + (name?.length ?? 0));
+    dead.set(written, [...new Set([...(dead.get(written) ?? []), ...tagged])]);
+  }
+  if (!dead.size) return;
+  const tags = shownTags(profiles, keys);
+  const fixes = [...dead].map(
+    ([written, people]) =>
+      `${written}: ${people
+        .map((key) => {
+          const tag = tags.get(key);
+          return tag
+            ? `${personName(profiles.get(key), key)} is ${tag}`
+            : `${personName(profiles.get(key), key)} has no name that shows as a tag, so drop the @ and keep their pubkey in mentions`;
+        })
+        .join("; ")}`,
+  );
+  throw new Error(
+    `These would notify but not show as tags: ${fixes.join(". ")}. Nothing was posted.`,
+  );
+}
+
+/** Profiles as the app's directory shows them to every reader: a verified
+ * person under their verified display name, anyone else under the name their
+ * profile gives. A reader's name preference and namesake suffix change only
+ * the shown name, never the verified names a tag binds by. */
+function shownProfiles(
+  events: readonly BuzzEvent[],
+  verified: ReadonlyMap<string, VerifiedProfile>,
+) {
+  const profiles = foldProfiles(events as readonly RelayEvent[]);
+  for (const [key, found] of verified) {
+    const { nameIsFallback: _fallback, ...base } = profiles.get(key) ?? {};
+    profiles.set(key, {
+      ...base,
+      name: found.displayName,
+      username: found.username,
+      verified: found,
+    });
+  }
+  return profiles;
+}
+
+/** What to write to tag each of `keys`: `@` and the name the app shows them
+ * by, qualified with their key when another of `keys` binds the same name, as
+ * the app's composer writes it. None for someone known only by key. */
+function shownTags(
+  profiles: ReadonlyMap<string, Profile>,
+  keys: ReadonlySet<string>,
+) {
+  const tags = new Map<string, string>();
+  for (const key of keys) {
+    const profile = profiles.get(key);
+    const name = profile?.verified?.displayName ?? profile?.name;
+    if (!profile || profile.nameIsFallback || !name) continue;
+    const shared = [...keys].some(
+      (other) =>
+        other !== key &&
+        profileMentionNames(profiles.get(other)).some(
+          (same) => same?.toLowerCase() === name.toLowerCase(),
+        ),
+    );
+    tags.set(key, shared ? `@${name} (${key})` : `@${name}`);
+  }
+  return tags;
+}
+
+const personName = (profile: Profile | undefined, key: string) =>
+  profile?.verified?.fullName ??
+  profile?.verified?.displayName ??
+  (profile && !profile.nameIsFallback ? profile.name : key);
 
 const profileNames = (profile: Record<string, unknown>) =>
   [profile.display_name, profile.name].filter(

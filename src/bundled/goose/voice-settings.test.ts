@@ -138,6 +138,40 @@ describe("voice settings admission and credentials", () => {
     await old.kill();
   });
 
+  it("keeps the shared endpoint and key when a model or voice edit fails", async () => {
+    const { settings, config } = setup(async (method, params) => {
+      if (method.endsWith("/upsert") && params.key === "GOOSE_LIVE_VOICE")
+        throw new Error("voice write failed");
+    });
+    await settings.setEnabled(true);
+    await expect(
+      settings.save({ ...edit, endpoint: a, key: "", voice: "cedar" }),
+    ).rejects.toThrow("Voice is now off");
+    expect(settings.enabled).toBe(false);
+    expect(config.get(endpoint)).toBe(a);
+    expect(config.get(key)).toBe("token-a");
+  });
+
+  it("drops a switch-on that waited behind a start once voice is switched off", async () => {
+    const { settings, changed } = setup();
+    await settings.setEnabled(true);
+    changed.mockClear();
+    let finish!: () => void;
+    const start = settings.start(
+      new AbortController().signal,
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    await settings.setEnabled(false);
+    const on = settings.setEnabled(true);
+    await settings.setEnabled(false);
+    finish();
+    await start;
+    await on;
+    expect(settings.enabled).toBe(false);
+    expect(changed.mock.calls).toEqual([[false]]);
+  });
+
   it("starts only after a successful save has written the matching pair", async () => {
     let release!: () => void;
     let entered!: () => void;

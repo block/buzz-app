@@ -3,11 +3,8 @@ import type { AgentVoiceSeat } from "../../features/agents/service";
 import { GooseProcess } from "./goose";
 import { fakeSpawn } from "./goose-testing";
 import { GooseVoiceSettings } from "./voice-settings";
-import { openVoice, TRANSCRIPT_QUIET_MS } from "./voice";
-import {
-  REQUEST_TIMEOUT_MS,
-  STOP_TIMEOUT_MS,
-} from "../../features/agent-harness/acp/process";
+import { openVoice, TRANSCRIPT_QUIET_MS, VOICE_STOP_TIMEOUT_MS } from "./voice";
+import { REQUEST_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
 
 const media = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../features/huddle/voice-media", () => ({
@@ -90,8 +87,49 @@ it("routes the actual start through admission and stops the returned interaction
   expect(f.request).toHaveBeenLastCalledWith(
     "_goose/unstable/session/live-voice/stop",
     { sessionId: "session-1", interactionId: "voice-1" },
-    STOP_TIMEOUT_MS,
   );
+});
+
+it("fails only the seat, never the process, when goose stops voice slowly", async () => {
+  vi.useFakeTimers();
+  const fake = fakeSpawn({
+    silent: ["_goose/unstable/session/live-voice/stop"],
+  });
+  const process = await GooseProcess.start(fake.spawn, {
+    cwd: "/tmp",
+    serve: fake.serve,
+  });
+  let wire!: Parameters<
+    typeof import("../../features/huddle/voice-media").openVoiceMedia
+  >[4];
+  media.open.mockImplementation((_l, _s, _o, _e, signaling) => {
+    wire = signaling;
+    return signaling;
+  });
+  try {
+    openVoice(
+      process,
+      "session-1",
+      {
+        signal: new AbortController().signal,
+        output: vi.fn(),
+        ended: vi.fn(),
+      } as unknown as AgentVoiceSeat,
+      "",
+      (run) => run(),
+    );
+    await wire.start("offer");
+    const stopped = expect(wire.stop()).rejects.toThrow("in time");
+    // goose may take 12 s to close and 20 s to clean up: neither kills it.
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(fake.geese[0]?.killed).toBe(false);
+    await vi.advanceTimersByTimeAsync(VOICE_STOP_TIMEOUT_MS);
+    await stopped;
+    expect(fake.geese[0]?.killed).toBe(false);
+  } finally {
+    await process.kill();
+    vi.useRealTimers();
+  }
 });
 
 it("groups only marked transcript deltas, leaving delegated output to the main session", async () => {
@@ -163,7 +201,7 @@ it("fails an interaction that ended before its start response arrived", async ()
   expect(f.answer).not.toHaveBeenCalled();
 });
 
-it("releases admission after a silent live start times out", async () => {
+it("switches off at once while a silent live start holds admission, which it releases on timeout", async () => {
   vi.useFakeTimers();
   const fake = fakeSpawn({
     silent: ["_goose/unstable/session/live-voice/start"],
@@ -172,13 +210,14 @@ it("releases admission after a silent live start times out", async () => {
     cwd: "/tmp",
     serve: fake.serve,
   });
+  const changed = vi.fn();
   const settings = new GooseVoiceSettings(
     fake,
     {
       getItem: () => "true",
       setItem: vi.fn(),
     } as unknown as Storage,
-    vi.fn(),
+    changed,
   );
   let wire!: Parameters<
     typeof import("../../features/huddle/voice-media").openVoiceMedia
@@ -204,18 +243,24 @@ it("releases admission after a silent live start times out", async () => {
     const failed = expect(wire.start("offer")).rejects.toThrow(
       "did not answer",
     );
-    const toggled = settings.setEnabled(false);
     await vi.advanceTimersByTimeAsync(0);
     expect(
       fake.geese[0]?.received.some((m) =>
         m.method?.endsWith("live-voice/start"),
       ),
     ).toBe(true);
-    expect(settings.enabled).toBe(true);
+    // Switching off does not wait behind the start it holds.
+    await settings.setEnabled(false);
+    expect(settings.enabled).toBe(false);
+    expect(changed).toHaveBeenCalledExactlyOnceWith(false);
+    // A later switch on waits its turn, so it lands after the start ends.
+    const on = settings.setEnabled(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settings.enabled).toBe(false);
     await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
     await failed;
-    await toggled;
-    expect(settings.enabled).toBe(false);
+    await on;
+    expect(settings.enabled).toBe(true);
   } finally {
     await process.kill();
     vi.useRealTimers();

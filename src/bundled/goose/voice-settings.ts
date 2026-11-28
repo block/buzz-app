@@ -42,6 +42,7 @@ export function voiceEndpoint(value: string): string {
 export class GooseVoiceSettings {
   private tail: Promise<unknown> = Promise.resolve();
   private allowed: boolean;
+  private asked = 0;
   constructor(
     private readonly host: GooseHost | undefined,
     private readonly storage: Storage,
@@ -70,9 +71,14 @@ export class GooseVoiceSettings {
       if (previous !== this.allowed) this.changed(this.allowed);
     }
   }
-  setEnabled(enabled: boolean) {
-    return this.serial(async () => {
-      this.toggle(enabled);
+  /** Switching off takes effect at once, so seats stop even while a start
+   * holds the queue. Switching on waits its turn, and is dropped once the
+   * owner has switched again. */
+  async setEnabled(enabled: boolean) {
+    const asked = ++this.asked;
+    if (!enabled) return this.toggle(false);
+    await this.serial(async () => {
+      if (asked === this.asked) this.toggle(true);
     });
   }
   start<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
@@ -131,13 +137,18 @@ export class GooseVoiceSettings {
             },
             REQUEST_TIMEOUT_MS,
           );
+        // Only a new endpoint or key changes where a key goes. The endpoint
+        // is gone while they change, so neither key reaches the other's server.
+        const pair = endpoint !== previous.endpoint || Boolean(edit.key);
         try {
-          await remove(ENDPOINT);
-          if (!endpoint) await remove(KEY, true);
-          else if (edit.key) await put(KEY, edit.key, true);
+          if (pair) {
+            await remove(ENDPOINT);
+            if (!endpoint) await remove(KEY, true);
+            else if (edit.key) await put(KEY, edit.key, true);
+          }
           await put(MODEL, model);
           await put(VOICE, voice);
-          if (endpoint) await put(ENDPOINT, endpoint);
+          if (pair && endpoint) await put(ENDPOINT, endpoint);
           return await read(goose);
         } catch (error) {
           // Refuse all subsequent starts even if the old process is busy.
@@ -146,8 +157,11 @@ export class GooseVoiceSettings {
           } catch {
             /* Admission is already closed. */
           }
-          await remove(ENDPOINT).catch(() => undefined);
-          await remove(KEY, true).catch(() => undefined);
+          // A half-changed pair is cleared; an untouched one is kept.
+          if (pair) {
+            await remove(ENDPOINT).catch(() => undefined);
+            await remove(KEY, true).catch(() => undefined);
+          }
           throw new Error(
             "Voice settings could not be saved. Voice is now off.",
             { cause: error },

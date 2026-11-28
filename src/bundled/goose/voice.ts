@@ -1,13 +1,13 @@
 import type { AgentVoiceSeat } from "../../features/agents/service";
 import { openVoiceMedia } from "../../features/huddle/voice-media";
 import type { GooseProcess } from "./goose";
-import {
-  REQUEST_TIMEOUT_MS,
-  STOP_TIMEOUT_MS,
-} from "../../features/agent-harness/acp/process";
+import { REQUEST_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
 
 /** How long a transcript line goes without more text before it posts. */
 export const TRANSCRIPT_QUIET_MS = 1_000;
+/** goose gives its voice provider up to 20 s to clean up before it answers
+ * a stop. */
+export const VOICE_STOP_TIMEOUT_MS = 30_000;
 
 /** Goose owns turn-taking and tool delegation on this same ACP session. */
 export function openVoice(
@@ -120,15 +120,22 @@ export function openVoice(
       answer(result.answerSdp);
     },
     async stop() {
-      if (interactionId)
-        await process.request(
-          "_goose/unstable/session/live-voice/stop",
-          {
-            sessionId,
-            interactionId,
-          },
-          STOP_TIMEOUT_MS,
-        );
+      if (!interactionId) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // A stop that runs late fails only this seat. A timed request would
+      // stop the process, and every conversation the agent has in it.
+      await Promise.race([
+        process.request("_goose/unstable/session/live-voice/stop", {
+          sessionId,
+          interactionId,
+        }),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Goose did not stop voice in time")),
+            VOICE_STOP_TIMEOUT_MS,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
     },
   });
 }

@@ -717,6 +717,85 @@ pub(crate) async fn app_agent_set_protection(
     .await
 }
 
+/// The owner's native consent to delete a plugin that still protects agents.
+/// The dialog names what storage holds, not what the caller sent.
+fn release_protection_dialog(protected: &str) -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("Delete plugin and remove protection?")
+        .set_description(format!("This plugin protects {protected}. Deleting it removes their protection, so they run without security checks.\n\nTo keep them protected, cancel."))
+        .set_buttons(rfd::MessageButtons::OkCancelCustom("Delete and remove protection".into(), "Cancel".into()))
+        .show();
+    result == rfd::MessageDialogResult::Ok
+        || result == rfd::MessageDialogResult::Custom("Delete and remove protection".into())
+}
+
+/// Before a plugin is deleted, removes the protection it gives agents and the
+/// owner's defaults, once the owner confirms natively, so no plugin can
+/// unprotect an agent and none is left bound to a missing plugin. Resolves to
+/// whether the delete may go ahead: true when nothing named the plugin.
+#[tauri::command]
+pub(crate) async fn app_agent_release_protection(
+    state: tauri::State<'_, AppAgentHost>,
+    provider: String,
+    owner: Option<String>,
+) -> Result<bool, String> {
+    let agents = state.agents.clone()?;
+    let hosting = state.hosting.clone();
+    let prompt = state.protection_upgrade.clone();
+    blocking(move || {
+        let _prompt = prompt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut protected: Vec<AppAgent> = Vec::new();
+        for row in agents.list()? {
+            if !row.deleted
+                && row
+                    .protection
+                    .as_ref()
+                    .is_some_and(|binding| binding.provider == provider)
+                && !protected.iter().any(|agent| agent.pubkey == row.pubkey)
+            {
+                protected.push(row);
+            }
+        }
+        let defaults = match &owner {
+            Some(owner) => Some(agents.protection_defaults(owner)?).filter(|saved| {
+                saved
+                    .defaults
+                    .as_ref()
+                    .is_some_and(|binding| binding.provider == provider)
+            }),
+            None => None,
+        };
+        if protected.is_empty() && defaults.is_none() {
+            return Ok(true);
+        }
+        let mut names: Vec<String> = protected.iter().map(|agent| agent.name.clone()).collect();
+        if defaults.is_some() {
+            names.push("new agents".into());
+        }
+        let subject = match names.split_last() {
+            Some((last, [])) => last.clone(),
+            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+            None => String::new(),
+        };
+        if !release_protection_dialog(&subject) {
+            return Ok(false);
+        }
+        for agent in &protected {
+            hosting.protecting(&agent.pubkey, || {
+                agents.set_protection(&agent.pubkey, agent.protection_revision, &provider, None)
+            })?;
+        }
+        if let (Some(owner), Some(saved)) = (&owner, defaults) {
+            agents.set_protection_defaults(owner, saved.revision, &provider, None)?;
+        }
+        Ok(true)
+    })
+    .await
+}
+
 /// Identities earlier agent systems saved on this machine, as Agents could take
 /// them over; the caller leaves out its own.
 #[tauri::command]

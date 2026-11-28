@@ -242,6 +242,32 @@ it("bounds startup reads, permits recovery, and ignores the late read", async ()
   await vi.advanceTimersByTimeAsync(0);
   expect(plugins.snapshot().configuration).toEqual(ready());
 });
+it("deletes a plugin only once what it protects has been released", async () => {
+  const { plugins, installation } = harness();
+  await vi.advanceTimersByTimeAsync(0);
+  const release = vi.fn(async () => false);
+  const stop = plugins.beforeRemove(release);
+  await expect(plugins.change("remove", "example")).resolves.toBe(false);
+  expect(release).toHaveBeenCalledWith("example");
+  expect(installation.changePlugin).not.toHaveBeenCalled();
+  expect(plugins.snapshot().error).toContain("keep their protection");
+  release.mockRejectedValueOnce(new Error("Quit the other copy of Buzz"));
+  await expect(plugins.change("remove", "example")).resolves.toBe(false);
+  expect(plugins.snapshot().error).toContain("Quit the other copy of Buzz");
+  expect(installation.changePlugin).not.toHaveBeenCalled();
+  // Other changes never ask.
+  await plugins.change("disable", "example");
+  expect(release).toHaveBeenCalledTimes(2);
+  release.mockResolvedValueOnce(true);
+  await expect(plugins.change("remove", "example")).resolves.toBe(true);
+  expect(installation.changePlugin).toHaveBeenLastCalledWith(
+    "remove",
+    "example",
+  );
+  stop();
+  await plugins.change("remove", "example");
+  expect(release).toHaveBeenCalledTimes(3);
+});
 it("prevents overlapping edits and exposes their failure without dropping configuration", async () => {
   const change = vi.fn(async () => {
     throw new Error("Write failed");

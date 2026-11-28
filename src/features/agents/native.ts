@@ -160,6 +160,10 @@ export type AgentsNative = {
     provider: string,
     policy: unknown | null,
   ): Promise<void>;
+  /** Before plugin `provider` is deleted, removes the protection it gives
+   * agents and `owner`'s defaults if the owner confirms in a native dialog.
+   * Resolves to whether the delete may go ahead. */
+  releaseProtection?(provider: string, owner: string | null): Promise<boolean>;
   /** Sets its profile picture in one community, an HTTPS image URL, or with
    * `null` clears it. */
   setPicture(member: Membership, picture: string | null): Promise<void>;
@@ -290,6 +294,8 @@ export const nativeAgents = (): AgentsNative | undefined =>
             provider,
             policy,
           }),
+        releaseProtection: (provider, owner) =>
+          invoke("app_agent_release_protection", { provider, owner }),
         rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
         setPicture: ({ pubkey, relay }, picture) =>
           invoke("app_agent_set_picture", { pubkey, relay, picture }),

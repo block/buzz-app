@@ -2278,6 +2278,11 @@ export type Agents = {
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(agent: AgentKey): Promise<string | undefined>;
+  /** Before plugin `provider` is deleted, removes the protection it gives
+   * agents and the owner's defaults once the owner confirms in a native
+   * dialog, so no agent is left bound to a missing plugin. Resolves to
+   * whether the delete may go ahead. */
+  releaseProtection(provider: string): Promise<boolean>;
   /** Whether a watch's classifier can run on this device now. */
   classifier(): ClassifierAvailability;
   /** Creates a team, or replaces the one with `id`. Members, by pubkey, must
@@ -2973,27 +2978,9 @@ export class AgentsService extends Service implements Agents {
           const setProtection = this.native?.setProtection?.bind(this.native);
           if (!setProtection)
             throw new Error("Native agent protection is unavailable");
-          const members = this.identities.filter(
-            (agent) => agent.pubkey === pubkey && !agent.deleted,
+          await this.changeProtection(pubkey, policy !== null, () =>
+            setProtection(pubkey, revision, provider, policy),
           );
-          const agent = members[0];
-          if (!agent) throw new Error("No such agent on this device");
-          const type = this.types().find((type) => type.key === agent.type);
-          if (!type?.retire)
-            throw new Error(
-              "This runtime cannot safely change protection while Buzz is open",
-            );
-          await this.runners.retype(agent.key, agent.name, async () => {
-            if (policy !== null)
-              for (const member of members)
-                if (await this.executions.inspect(member.key))
-                  throw new Error(
-                    "Plugin execution does not support protected agents",
-                  );
-            for (const member of members) await type.retire?.(member.key);
-            await setProtection(pubkey, revision, provider, policy);
-            await this.refresh();
-          });
         },
       },
     );
@@ -8912,6 +8899,54 @@ export class AgentsService extends Service implements Agents {
       ),
     );
     return [...agents, ...[...unnamed].map((pubkey) => ({ pubkey }))];
+  }
+  /** Stops its sessions, then saves a protection change for every membership. */
+  private async changeProtection(
+    pubkey: string,
+    protecting: boolean,
+    save: () => Promise<unknown>,
+  ) {
+    const members = this.identities.filter(
+      (agent) => agent.pubkey === pubkey && !agent.deleted,
+    );
+    const agent = members[0];
+    if (!agent) throw new Error("No such agent on this device");
+    const type = this.types().find((type) => type.key === agent.type);
+    if (!type?.retire)
+      throw new Error(
+        "This runtime cannot safely change protection while Buzz is open",
+      );
+    await this.runners.retype(agent.key, agent.name, async () => {
+      if (protecting)
+        for (const member of members)
+          if (await this.executions.inspect(member.key))
+            throw new Error(
+              "Plugin execution does not support protected agents",
+            );
+      for (const member of members) await type.retire?.(member.key);
+      await save();
+      await this.refresh();
+    });
+  }
+  async releaseProtection(provider: string) {
+    const release = this.native?.releaseProtection?.bind(this.native);
+    if (!release) return true;
+    const protectedKeys = new Set(
+      this.identities
+        .filter(
+          (agent) => !agent.deleted && agent.protection?.provider === provider,
+        )
+        .map((agent) => agent.pubkey),
+    );
+    const owner = this.communities.snapshot().viewer ?? null;
+    if (!(await release(provider, owner))) return false;
+    // Restart sessions that started under the removed protection.
+    for (const pubkey of protectedKeys)
+      await this.changeProtection(pubkey, false, async () => {}).catch(
+        () => {},
+      );
+    await this.refresh();
+    return true;
   }
   /** The membership of this key, unless it was deleted. */
   private liveMember(key: AgentKey) {

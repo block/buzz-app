@@ -230,8 +230,26 @@ export function createPluginManager(
       else void pending.then(finish, finish);
     }
   }
-  const change = (action: ManagementAction, id: string) =>
-    update(() => storage.changePlugin(action, id));
+  // Set by agents: removes the protection a plugin gives before it's deleted.
+  let beforeRemove: ((id: string) => Promise<boolean>) | undefined;
+  const change = async (action: ManagementAction, id: string) => {
+    if (action === "remove" && beforeRemove && !busy && !closed) {
+      let allowed = false;
+      try {
+        allowed = await beforeRemove(id);
+        if (!allowed)
+          error =
+            "Plugin not deleted. Agents it protects keep their protection.";
+      } catch (reason) {
+        error = `Plugin not deleted: ${String(reason)}`;
+      }
+      if (!allowed) {
+        publish();
+        return false;
+      }
+    }
+    return update(() => storage.changePlugin(action, id));
+  };
   const requests = createPluginRequests({
     catalog: () =>
       configuration.status === "ready" ? configuration.catalog : undefined,
@@ -265,6 +283,14 @@ export function createPluginManager(
         true,
       ),
     change,
+    /** Runs `release` before each plugin delete; the delete goes ahead only
+     * if it resolves true. */
+    beforeRemove(release: (id: string) => Promise<boolean>) {
+      beforeRemove = release;
+      return () => {
+        if (beforeRemove === release) beforeRemove = undefined;
+      };
+    },
     requests,
     reload: (id: string) => update(() => storage.reloadPlugin(id), 120_000),
     retryPlugin: (id: string) => {

@@ -536,6 +536,7 @@ function setup(
     execution: async () => undefined,
     harness: {} as Agents["harness"],
     subscribeSteps: () => () => {},
+    releaseProtection: async () => true,
     isReady: () => true,
     whenReady: async () => {},
     switchable: () => false,

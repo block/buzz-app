@@ -193,6 +193,7 @@ export function createServices() {
     undefined,
     deviceSettings(appearance),
   );
+  ctx.effect(() => plugins.beforeRemove((id) => agents.releaseProtection(id)));
   ctx.effect(() =>
     localAgents.bind({
       snapshot: agents.local,

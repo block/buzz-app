@@ -151,6 +151,9 @@ if that desktop app is up and running.
   **⋯** menu.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
+- **Channel activity**: rest the pointer on a channel or Solo chat in the
+  sidebar to see its working agents and **Unread threads**. Choosing an unread
+  thread opens it at the reply shown, expanding the replies it is nested under.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat. With **Settings →

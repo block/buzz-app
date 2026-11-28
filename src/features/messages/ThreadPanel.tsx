@@ -73,7 +73,7 @@ import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useTrailingSheet } from "./use-trailing-sheet";
-import { useMessageReveal } from "./use-message-reveal";
+import { beginReveal, useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
 import {
   replyTarget,
@@ -366,7 +366,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         return;
       }
       if (prior?.view.snapshot().root) {
-        if (navigation) setRouting(navigation);
+        if (navigation) {
+          setRouting(navigation);
+          // The request starts now; its reveal waits for the retarget.
+          beginReveal(navigation.signal);
+        }
         let result: ThreadRetarget;
         try {
           result = await prior.view.retarget(messageId, signal);
@@ -772,26 +776,27 @@ function ThreadMessages({
     unreadSnapshot,
     unreadSnapshot,
   );
+  // Histories the reader opened, by every row so paging preserves the choice.
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const activityVisit = useRef<unknown[]>([]);
+  // Exact targets whose activity history a visit opened. The disclosure
+  // follows the target, not the group that held it when the visit began:
+  // later evidence regroups a level while the reader collapses nothing. A cold
+  // visit's window forms the group that absorbs a failure, and a late request
+  // splits it. The reader's collapse drops the target until the next request.
+  const [disclosedTargets, setDisclosedTargets] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each request discloses its target once, so a reader's collapse holds.
   useLayoutEffect(() => {
-    if (!messageId || !snapshot.replies.some((row) => row.id === messageId))
-      return;
-    const group = foldedGroupOf(tree, messageId);
-    // A target that joins a group later, as a relay does once its owner
-    // verifies, opens that group. One that stays in a group stays as the
-    // reader left it, even when paging or the unread line reshapes the group.
-    const request = [messageId, navigation?.signal, revealRequest, !!group];
-    if (request.every((part, index) => part === activityVisit.current[index]))
-      return;
-    activityVisit.current = request;
-    // Every id, so a group split at the unread line opens where the target is.
-    const ids = group ?? [];
-    if (ids.length)
-      setExpandedActivity((current) => new Set([...current, ...ids]));
-  }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
+    setDisclosedTargets((current) =>
+      current.has(messageId) ? current : new Set([...current, messageId]),
+    );
+  }, [messageId, navigation?.signal, revealRequest]);
+  const activityExpanded = (ids: readonly string[]) =>
+    ids.some((id) => expandedActivity.has(id)) ||
+    ids.some((id) => disclosedTargets.has(id));
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   // The reply this thread's draft is aimed at is kept with that draft, under
   // the key the reply box saves it by, so it follows the thread from an
@@ -981,18 +986,19 @@ function ThreadMessages({
       ].find((row) => row.dataset.messageId === messageId),
     [messageId],
   );
-  // A late ancestor reparents the exact row. Transfer only focus owned at detach,
-  // within this commit/layout expansion; a later user expansion must not restore it.
-  const selectedBranchRef = useMemo(() => {
+  // One commit can replace the exact row: a late ancestor reparents it, or an
+  // activity history absorbs, releases or regroups it. Transfer only focus the
+  // row owned when it was removed, within this commit/layout expansion; a
+  // later user expansion must not restore it.
+  const selectedHandoff = useMemo(() => {
     let restore = false;
-    return (branch: HTMLElement | null) => {
-      if (!branch) return;
-      const row = branch.querySelector<HTMLElement>("[data-message-id]");
+    return () => {
+      const row = selectedRow();
       if (
         restore &&
         row &&
         !navigation?.signal.aborted &&
-        !branch.closest("[inert]") &&
+        !row.closest("[inert]") &&
         document.activeElement === document.body
       ) {
         row.tabIndex = -1;
@@ -1000,9 +1006,11 @@ function ThreadMessages({
       }
       restore = false;
       return () => {
+        // The replacement may already be in the document.
+        const focused = document.activeElement;
         restore =
-          row?.dataset.messageId === messageId &&
-          document.activeElement === row;
+          focused?.getAttribute("data-message-id") === messageId &&
+          !!scroller.current?.contains(focused);
         // Ancestor expansion happens synchronously in a layout effect. Do not
         // retain focus intent after this update (deletion or unmount).
         queueMicrotask(() => {
@@ -1010,7 +1018,7 @@ function ThreadMessages({
         });
       };
     };
-  }, [messageId, navigation?.signal]);
+  }, [messageId, navigation?.signal, selectedRow]);
   const selectedOffset = useCallback(() => {
     const row = selectedRow();
     const container = scroller.current;
@@ -2046,12 +2054,8 @@ function ThreadMessages({
     const siblings = chronologicalSiblings;
     const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
     const groupedIds = new Set(groups.flatMap((group) => group.ids));
-    // A group stays open while any of its rows was opened, so one that gains
-    // an earlier row from paging keeps the reader's choice.
-    const open = (ids: readonly string[]) =>
-      ids.some((id) => expandedActivity.has(id));
     const hidden = new Set(
-      groups.flatMap((group) => (open(group.ids) ? [] : group.ids)),
+      groups.flatMap((group) => (activityExpanded(group.ids) ? [] : group.ids)),
     );
     return siblings.map((row, index) => {
       const group = groupsByFirst.get(row.id);
@@ -2146,40 +2150,45 @@ function ThreadMessages({
         );
       };
       const renderHistory = (entry: ChannelMessage) => (
-        <div ref={entry.id === messageId ? selectedBranchRef : undefined}>
-          {renderMessage(entry, true)}
-        </div>
+        <RowLifetime
+          handoff={entry.id === messageId ? selectedHandoff : undefined}
+        >
+          <div>{renderMessage(entry, true)}</div>
+        </RowLifetime>
       );
       const toggleGroup = () => {
         follow.current = false;
         targetAnchor.current = undefined;
+        const ids = group?.ids ?? [row.id];
+        const opened = activityExpanded(ids);
         setExpandedActivity((current) => {
           const next = new Set(current);
-          const ids = group?.ids ?? [row.id];
-          const opened = ids.some((id) => next.has(id));
           for (const id of ids) {
             if (opened) next.delete(id);
             else next.add(id);
           }
           return next;
         });
+        if (opened)
+          setDisclosedTargets(
+            (current) => new Set([...current].filter((id) => !ids.includes(id))),
+          );
       };
       const message = (
         <ActivityExpansion
           open={!hidden.has(row.id) && !groupedIds.has(row.id)}
           enabled={row.audience === "agents" || !!row.relayedFrom?.verified}
         >
-          {renderMessage(row)}
+          <RowLifetime
+            handoff={row.id === messageId ? selectedHandoff : undefined}
+          >
+            {renderMessage(row)}
+          </RowLifetime>
         </ActivityExpansion>
       );
       return (
         <li
           key={row.id}
-          ref={
-            row.id === messageId && !groupedIds.has(row.id)
-              ? selectedBranchRef
-              : undefined
-          }
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
@@ -2217,7 +2226,7 @@ function ThreadMessages({
                   profiles={profiles}
                   agentPubkeys={agentPubkeys}
                   media={session.media}
-                  expanded={open(group.ids)}
+                  expanded={activityExpanded(group.ids)}
                   onToggle={toggleGroup}
                   extensions={extensions}
                   scope={scope}
@@ -2234,7 +2243,7 @@ function ThreadMessages({
                   profiles={profiles}
                   media={session.media}
                   layout="thread"
-                  expanded={open(group.ids)}
+                  expanded={activityExpanded(group.ids)}
                   onToggle={toggleGroup}
                 />
               )}
@@ -2853,6 +2862,21 @@ function ThreadMessages({
       )}
     </MessageEditScope>
   );
+}
+/**
+ * Brackets a row's time in the document. Unlike a ref on an element that
+ * stays mounted, which detaches only after its children are removed, the
+ * cleanup of `handoff` runs while a row being removed is still in place.
+ */
+function RowLifetime({
+  handoff,
+  children,
+}: {
+  handoff: (() => () => void) | undefined;
+  children: ReactNode;
+}) {
+  useLayoutEffect(() => handoff?.(), [handoff]);
+  return children;
 }
 /** Holds the thread's area with the Buzz mark until its first page can show. */
 // How far a saved reading row has moved from its saved viewport offset. WebKit

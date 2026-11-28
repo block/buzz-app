@@ -2,6 +2,46 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 import { highlightWhenSettled, onScreen } from "./message-highlight";
 import { readingPositioned } from "./use-reading";
 
+// Presses and clicks, counted from the first request, and the element the
+// latest of them focused. A press moves focus within its own task (mousedown,
+// Tab); focus that arrives later, as an opening's handoff or a closing menu's
+// restore, is not the person's choice, whatever they pressed meanwhile.
+let inputs = 0;
+let pressing = 0;
+let chosen: { element: EventTarget | null; input: number } | undefined;
+let counting = false;
+const countInput = () => {
+  const input = ++inputs;
+  pressing = input;
+  setTimeout(() => {
+    if (pressing === input) pressing = 0;
+  });
+};
+const noteFocus = (event: FocusEvent) => {
+  if (pressing) chosen = { element: event.target, input: pressing };
+};
+const requests = new WeakMap<AbortSignal, number>();
+
+/**
+ * Starts a reveal request. Its reveal leaves focus that a press or click made
+ * since, while focus is still there. The first call for a signal fixes the
+ * start; later calls are no-ops. The hook calls this when it receives a
+ * signal, so owners that hold a request before then call it on receipt: the
+ * channels page for a message visit, a retained thread before its retarget.
+ * Other requests start late: a conversation tab's or Inbox preview's reveal
+ * when its timeline mounts, and a visit made while the community is still
+ * connecting when the channel workspace mounts.
+ */
+export function beginReveal(signal: AbortSignal) {
+  if (!counting) {
+    counting = true;
+    document.addEventListener("pointerdown", countInput, true);
+    document.addEventListener("keydown", countInput, true);
+    document.addEventListener("focusin", noteFocus, true);
+  }
+  if (!requests.has(signal)) requests.set(signal, inputs);
+}
+
 /** One reveal per request signal, never per row/profile/image update. */
 export function useMessageReveal({
   scroller,
@@ -54,6 +94,7 @@ export function useMessageReveal({
     [],
   );
   useLayoutEffect(() => {
+    if (signal && !signal.aborted) beginReveal(signal);
     if (
       !ready ||
       !messageId ||
@@ -66,10 +107,12 @@ export function useMessageReveal({
     if (!container) return;
     const target = messageId;
     let frame = 0;
+    let arrival: IntersectionObserver | undefined;
     const cancel = () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       inertObserver.disconnect();
+      arrival?.disconnect();
     };
     const schedule = () => {
       cancelAnimationFrame(frame);
@@ -92,10 +135,18 @@ export function useMessageReveal({
       placed?.();
       settled.current = true;
       // A replacement may recover lost focus, but must not take it from another
-      // control after this request already focused a row successfully.
+      // control after this request already focused a row successfully. Nor
+      // does the first reveal take focus the person moved since the request.
+      const start = requests.get(signal);
+      const moved =
+        start !== undefined &&
+        !!chosen &&
+        chosen.input > start &&
+        chosen.element === document.activeElement;
       let focusPending = false;
       if (
         focus &&
+        !moved &&
         (focused.current?.signal !== signal ||
           (focused.current.row !== row &&
             (!document.activeElement ||
@@ -133,6 +184,22 @@ export function useMessageReveal({
         ) {
           holding.current?.();
           holding.current = undefined;
+          // A panel can still be sliding in. Moving a row off or onto the
+          // screen is not a DOM mutation, so wait for it to show.
+          arrival?.disconnect();
+          if (typeof IntersectionObserver === "undefined") return;
+          arrival = new IntersectionObserver((entries) => {
+            if (
+              entries.some(
+                ({ intersectionRect: { width, height } }) =>
+                  width > 0 && height > 0,
+              )
+            ) {
+              arrival?.disconnect();
+              schedule();
+            }
+          });
+          arrival.observe(row);
           return;
         }
         revealed.current = signal;

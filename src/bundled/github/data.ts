@@ -67,6 +67,10 @@ type ResponseData = {
   default_branch?: string;
 };
 
+/** GitHub answered that this is not there, or not for this account: deleted,
+ * private or out of reach, rather than failing for the moment. */
+export class GitHubUnavailable extends Error {}
+
 /** GitHub refused a public read for this hour's limit; `resetAt` is when it
  * lifts, by its `x-ratelimit-reset` header, or an hour on without one. */
 export class GitHubRateLimited extends Error {
@@ -115,7 +119,7 @@ export async function loadGitHubDetails(
   );
   if (!response.ok) {
     if (response.status === 404)
-      throw new Error(
+      throw new GitHubUnavailable(
         "This is private or unavailable. Sign in to the gh CLI to see private repositories, or open it on GitHub.",
       );
     if (response.status === 403 || response.status === 429)

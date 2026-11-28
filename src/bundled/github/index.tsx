@@ -67,6 +67,7 @@ import { watchPulls } from "./watcher";
 import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
 import { createPanelMemory, type PanelMemory } from "./panel-memory";
+import { createRememberedStates } from "./remembered-states";
 import { PullFiles } from "./PullFiles";
 import { GitHubSettings } from "./GitHubSettings";
 import { openGitHubLinksInBuzz } from "./link-preference";
@@ -81,7 +82,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // A pull request's state is nobody's community's: one store serves every
   // session's sidebar, every link in messages, the panel and agents, so one
   // shown in several places costs one read.
-  const states = createPullStates(gh);
+  const states = createPullStates(gh, { remembered: createRememberedStates() });
   const memory = createPanelMemory();
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {

@@ -7,6 +7,7 @@
 import { loadGitHubChecks, type CheckSummary } from "./checks";
 import {
   GitHubRateLimited,
+  GitHubUnavailable,
   loadGitHubDetails,
   type GitHubDetails,
 } from "./data";
@@ -19,6 +20,7 @@ import {
   type PullData,
 } from "./pull";
 import { parseGitHubReference } from "./references";
+import type { RememberedStates } from "./remembered-states";
 
 /** How often shown pull requests that can change are read again. */
 export const PULL_REFRESH_MS = 60_000;
@@ -39,6 +41,9 @@ export const PUBLIC_READS_PER_HOUR = 30;
 const PUBLIC_READ_EARNED_MS = (60 * 60_000) / PUBLIC_READS_PER_HOUR;
 /** How long a pull request nobody shows or has asked for is kept. */
 export const PULL_RETAIN_MS = 15 * 60_000;
+/** How long what was read in an earlier session counts as polled, so one
+ * merged is read again about once a day it is shown. */
+export const REMEMBERED_FOR_MS = 24 * 60 * 60_000;
 /** The feedback text one read asks for at most, GitHub's limit for one
  * `nodes` lookup; the rest waits for the next. */
 export const FEEDBACK_READ = 100;
@@ -604,7 +609,7 @@ async function readPage(
     const pull = repository?.pullRequest;
     if (!repository || !pull)
       return failure?.type === "NOT_FOUND" || !failure
-        ? new Error(
+        ? new GitHubUnavailable(
             "GitHub couldn’t find this, or your GitHub account can’t see it.",
           )
         : new Error(failure.message);
@@ -696,7 +701,7 @@ async function readPublicState(
   const details = await loadGitHubDetails(reference, signal);
   if (reference.kind === "issue") {
     if (details.pullRequest)
-      throw new Error(
+      throw new GitHubUnavailable(
         "GitHub has a pull request, not an issue, at this number.",
       );
     return issueOf(
@@ -799,8 +804,15 @@ const allText: WantsText = () => true;
  *
  * A read asked for joins the next one, shown or not, unless what is held is
  * recent enough. What a level adds is held while someone asks for it; a pull
- * request nobody watches or asks for is forgotten after a while. */
-export function createPullStates(gh: GitHubCli | undefined): PullStates {
+ * request nobody watches or asks for is forgotten after a while.
+ *
+ * With `remembered`, a link shows what was last read of it, also in an
+ * earlier session, until it is read again; agents and the panel see only
+ * what this store read. */
+export function createPullStates(
+  gh: GitHubCli | undefined,
+  { remembered }: Readonly<{ remembered?: RememberedStates }> = {},
+): PullStates {
   const listeners = new Map<string, Set<Listener>>();
   const states = new Map<string, PullState | "failed">();
   /** Why each that could not be read last time could not. */
@@ -809,9 +821,28 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   const unreadable = new Set<string>();
   /** When each state held was read. */
   const readAt = new Map<string, number>();
+  /** What links show of `url`: what was read, or else what was remembered. */
+  const shown = (url: string) => states.get(url) ?? remembered?.get(url);
+  /** Whether links show only what was remembered of `url`, which nothing
+   * this session has read yet. */
+  const rememberedOnly = (url: string) =>
+    !states.has(url) && remembered?.get(url) !== undefined;
   /** When each was last polled, read or not, so it is due again its
    * readers' interval after, and a public poll takes the longest unpolled. */
   const polledAt = new Map<string, number>();
+  /** When `url` was polled, or else read before, when it was remembered:
+   * a merged one is then not read again that day, and one read a moment
+   * ago waits its turn. */
+  const lastPolled = (url: string) => {
+    const polled = polledAt.get(url);
+    if (polled !== undefined || states.has(url)) return polled;
+    const before = remembered?.readAt(url);
+    // One remembered from long ago is read again, so a merged one whose
+    // repository is now out of reach is not shown as it was for good.
+    return before === undefined || before <= Date.now() - REMEMBERED_FOR_MS
+      ? undefined
+      : Math.min(before, Date.now());
+  };
   /** Not polled again before then: after GitHub answered for none, or while
    * a public read is not yet earned. */
   const notBefore = new Map<string, number>();
@@ -877,7 +908,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     );
   /** How often `url`'s readers want it read now: the most often any does. */
   const interval = (url: string) => {
-    const state = states.get(url);
+    const state = shown(url);
     const when = {
       hidden: document.visibilityState !== "visible",
       public: readsPublic(),
@@ -892,9 +923,18 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   /** When watched `url` is next due: at once when never polled or lacking a
    * level, else its readers' interval after it was last polled. */
   const dueAt = (url: string) => {
-    const polled = polledAt.get(url);
+    const polled = lastPolled(url);
+    // One shown only as remembered is read once its day is up, even a merged
+    // one, and every few minutes while that read fails, until it is read.
+    const every =
+      rememberedOnly(url) && document.visibilityState === "visible"
+        ? Math.min(
+            interval(url),
+            polledAt.has(url) ? PULL_SLOW_REFRESH_MS : REMEMBERED_FOR_MS,
+          )
+        : interval(url);
     return Math.max(
-      polled === undefined || needed.has(url) ? 0 : polled + interval(url),
+      polled === undefined || needed.has(url) ? 0 : polled + every,
       notBefore.get(url) ?? 0,
     );
   };
@@ -975,12 +1015,13 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         }
     // A public poll reads only as many as it can spend: those asked for go
     // first, then the longest unpolled, so those that keep failing cannot
-    // keep one never read waiting.
+    // keep one never read waiting, and one remembered waits for those that
+    // show nothing yet.
     const due = [
       ...asked.keys(),
       ...[...listeners.keys()]
         .filter((url) => !asked.has(url) && dueAt(url) <= now)
-        .sort((a, b) => (polledAt.get(a) ?? 0) - (polledAt.get(b) ?? 0)),
+        .sort((a, b) => (lastPolled(a) ?? 0) - (lastPolled(b) ?? 0)),
     ];
     const at = (url: string, level: PullLevel) =>
       !!asked.get(url)?.levels.has(level) || watchedAt(url, level);
@@ -1047,6 +1088,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       if (current.signal.aborted) return;
       const changed: string[] = [];
       const failing: string[] = [];
+      const read: [string, PullState][] = [];
+      const lost: string[] = [];
       for (const [i, url] of reading.entries()) {
         // Those a public poll could not afford wait for the next read earned,
         // all together, so the longest unread of them takes it whenever each
@@ -1063,6 +1106,12 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
               ? new Error("GitHub did not answer")
               : undefined;
         const prior = states.get(url);
+        // GitHub answered that it is not there, or not for this account,
+        // rather than failing for the moment.
+        const gone = error instanceof GitHubUnavailable;
+        // A read that failed for the moment leaves links showing what was
+        // remembered, which is still not taken for read.
+        const kept = !!error && !gone && rememberedOnly(url);
         // A failed read keeps what was last read, and when, with why it
         // failed: readers show the latest data the store has.
         const state = !error
@@ -1070,7 +1119,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
           : typeof prior === "object"
             ? prior
             : "failed";
-        if (!error || state === "failed") readAt.set(url, now);
+        if (!error || (state === "failed" && !kept)) readAt.set(url, now);
         polledAt.set(url, now);
         notBefore.delete(url);
         if (plannedAll(url)) needed.delete(url);
@@ -1083,15 +1132,22 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
           unreadable.delete(url);
         }
         if (error?.message !== failed) failing.push(url);
+        // Gone or out of reach: links show it unavailable rather than as it
+        // was.
+        if (gone && state === "failed") lost.push(url);
+        else if (!error && state !== "failed") read.push([url, state]);
         const at = readAt.get(url) ?? now;
         for (const { resolve } of asked.get(url)?.waiting ?? [])
           resolve({ state, readAt: at, error });
         asked.delete(url);
+        if (kept) continue;
         // An unchanged state keeps its object, so whoever shows it is left be.
         if (same(states.get(url), state)) continue;
         states.set(url, state);
         changed.push(url);
       }
+      remembered?.remember(read, now);
+      remembered?.forget(lost);
       notify(changed, failing);
       reason = new GitHubRateLimited(publicEarnedTo + PUBLIC_READ_EARNED_MS);
     } catch (error) {
@@ -1218,7 +1274,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       set.add(listener);
       // What was polled within its readers' interval is kept, unless it lacks
       // what this level adds.
-      if (!holds(states.get(url), level)) needed.add(url);
+      if (!holds(shown(url), level)) needed.add(url);
       if (dueAt(url) <= Date.now()) schedule();
       else if (!controller) later();
       return () => {
@@ -1245,7 +1301,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     },
     get(url) {
       const key = keyOf(url);
-      return key ? states.get(key) : "failed";
+      return key ? shown(key) : "failed";
     },
     readAt(url) {
       const key = keyOf(url);

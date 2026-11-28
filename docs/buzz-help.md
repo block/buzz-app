@@ -101,6 +101,11 @@ if that desktop app is up and running.
   in opens Buzz on that community: it names the community and offers **Create
   account**, **Sign in** and **Not now**. The link never joins by itself; you
   join after signing in.
+- **While the browser is open.** After **Create account** or **Sign in**, Buzz
+  shows **Continue in your browser** and carries on by itself when you finish
+  there. **Open browser** opens the page again and the back arrow cancels. If
+  Buzz stops waiting it shows **Finish in your browser**: finish there, then
+  choose **Continue**.
 - **Keep a copy of your key.** Your identity is a private key. Buzz shows
   whether it's backed up in **Settings → Buzz → Identity**, and **Copy private key**
   makes a copy for a password manager. Without a copy, a lost key means a lost

@@ -1,6 +1,7 @@
 //! Remote Stop for agents this copy of the app runs: NIP-AO control frames the
 //! owner sends from another device to an agent's key. The WebView gets only a
-//! checked `cancel_turn` request, and can answer it only with that request's
+//! checked `cancel_turn` (a whole channel) or `cancel_thread_turn` (one
+//! thread) request, and can answer it only with that request's
 //! `control_result`; no other plaintext, and no key, leaves native code.
 use crate::app_agents::AppAgentHost;
 use crate::identity::IdentityHost;
@@ -101,9 +102,10 @@ fn envelope(viewer: &str, event: &AgentEvent, now: u64) -> Result<String, String
     Ok(agent)
 }
 
-/// The `cancel_turn` request a checked frame carries, decrypted with the
-/// agent's key, if its agent's owner sent it and this copy has not acted on
-/// it already. Any other request type is refused.
+/// The stop request a checked frame carries, decrypted with the agent's key,
+/// if its agent's owner sent it and this copy has not acted on it already:
+/// `cancel_turn` names a channel, and any `threadRootId` on it is ignored;
+/// `cancel_thread_turn` must name one thread. Any other request is refused.
 fn open(
     agent: &AppAgent,
     key: &Secret,
@@ -124,22 +126,23 @@ fn open(
     let field = |name: &str| body.get(name).and_then(Value::as_str);
     let channel = field("channelId").filter(|id| channel_id(id));
     let request = field("requestId").filter(|id| channel_id(id));
-    let root = match body.get("threadRootId") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(root)) if event_id(root) => Some(root.as_str()),
-        Some(_) => return Err("Invalid control frame".into()),
-    };
     let (Some(channel), Some(request)) = (channel, request) else {
         return Err("Invalid control frame".into());
     };
-    if field("type") != Some("cancel_turn") {
-        return Err("Unsupported control request".into());
-    }
+    let kind = field("type");
+    let root = match kind {
+        Some("cancel_turn") => None,
+        Some("cancel_thread_turn") => match field("threadRootId") {
+            Some(root) if event_id(root) => Some(root),
+            _ => return Err("Invalid control frame".into()),
+        },
+        _ => return Err("Unsupported control request".into()),
+    };
     if !seen.admit(&event.id, event.created_at, now) {
         return Err("Control frame already handled".into());
     }
     let mut payload = json!({
-        "type": "cancel_turn",
+        "type": kind,
         "channelId": channel,
         "requestId": request,
     });
@@ -174,12 +177,14 @@ pub(crate) async fn app_agent_control_decode(
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct ControlAnswer {
     agent: String,
+    /// The request type it answers, echoed in the result's payload.
+    r#type: String,
     channel_id: String,
     request_id: String,
     status: String,
 }
 
-/// The signed telemetry frame that answers a `cancel_turn` request, encrypted
+/// The signed telemetry frame that answers a stop request, encrypted
 /// to the agent's owner with the agent's key (NIP-AO `control_result`).
 fn answer_event(
     agent: &AppAgent,
@@ -190,6 +195,7 @@ fn answer_event(
     if answer.agent != agent.pubkey
         || !channel_id(&answer.channel_id)
         || !channel_id(&answer.request_id)
+        || !matches!(answer.r#type.as_str(), "cancel_turn" | "cancel_thread_turn")
         || !matches!(answer.status.as_str(), "sent" | "no_active_turn")
     {
         return Err("Invalid control answer".into());
@@ -198,7 +204,7 @@ fn answer_event(
         "kind": "control_result",
         "channelId": answer.channel_id,
         "payload": {
-            "type": "cancel_turn",
+            "type": answer.r#type,
             "status": answer.status,
             "requestId": answer.request_id,
         },
@@ -218,7 +224,7 @@ fn answer_event(
     )
 }
 
-/// Answers an owner's `cancel_turn` request as the agent, from the copy of the
+/// Answers an owner's stop request as the agent, from the copy of the
 /// app that runs it, in the community at `relay`.
 #[tauri::command]
 pub(crate) async fn app_agent_control_answer(
@@ -259,12 +265,16 @@ mod tests {
             vec!["frame".into(), frame.into()],
         ]
     }
+    /// A `cancel_thread_turn` for `root`, or a channel's `cancel_turn`.
     fn cancel(root: Option<&str>) -> String {
-        let mut body = json!({"type": "cancel_turn", "channelId": "c-1", "requestId": "r-1"});
-        if let Some(root) = root {
-            body["threadRootId"] = root.into();
+        match root {
+            Some(root) => json!({
+                "type": "cancel_thread_turn", "channelId": "c-1", "requestId": "r-1",
+                "threadRootId": root,
+            }),
+            None => json!({"type": "cancel_turn", "channelId": "c-1", "requestId": "r-1"}),
         }
-        body.to_string()
+        .to_string()
     }
     struct Fixture {
         owner: Secret,
@@ -301,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn the_owner_s_cancel_turn_is_decoded_once() {
+    fn the_owner_s_stop_is_decoded_once() {
         let f = fixture();
         let root = "e".repeat(64);
         let event = f.frame(&cancel(Some(&root)), "control", f.now);
@@ -311,18 +321,22 @@ mod tests {
             json!({
                 "eventId": event.id, "agent": f.agent.pubkey,
                 "request": {
-                    "type": "cancel_turn", "channelId": "c-1", "requestId": "r-1",
+                    "type": "cancel_thread_turn", "channelId": "c-1", "requestId": "r-1",
                     "threadRootId": root,
                 },
             })
         );
         // The same frame again, as a relay or an attacker might replay it.
         assert!(f.receive(&event, &mut seen).is_err());
-        // Without a thread, it names the whole conversation.
-        let flat = f.frame(&cancel(None), "control", f.now);
-        assert!(f.receive(&flat, &mut seen).unwrap()["request"]
-            .get("threadRootId")
-            .is_none());
+        // `cancel_turn` names the whole channel, even with a thread on it, as
+        // an older sender's threaded Stop.
+        let mut older: Value = serde_json::from_str(&cancel(None)).unwrap();
+        older["threadRootId"] = root.into();
+        let flat = f.frame(&older.to_string(), "control", f.now);
+        assert_eq!(
+            f.receive(&flat, &mut seen).unwrap()["request"],
+            json!({"type": "cancel_turn", "channelId": "c-1", "requestId": "r-1"})
+        );
     }
 
     #[test]
@@ -358,11 +372,12 @@ mod tests {
         let mut tampered = f.frame(&body, "control", f.now);
         tampered.created_at += 1;
         assert!(f.receive(&tampered, &mut seen).is_err());
-        // Only cancel_turn, with its IDs.
+        // Only the stop requests, with their IDs; a thread stop needs its thread.
         for body in [
             json!({"type": "switch_model", "channelId": "c-1", "requestId": "r-1"}),
             json!({"type": "cancel_turn", "requestId": "r-1"}),
-            json!({"type": "cancel_turn", "channelId": "c-1", "requestId": "r-1", "threadRootId": "x"}),
+            json!({"type": "cancel_thread_turn", "channelId": "c-1", "requestId": "r-1"}),
+            json!({"type": "cancel_thread_turn", "channelId": "c-1", "requestId": "r-1", "threadRootId": "x"}),
         ] {
             let event = f.frame(&body.to_string(), "control", f.now);
             assert!(f.receive(&event, &mut seen).is_err());
@@ -418,6 +433,7 @@ mod tests {
         let f = fixture();
         let answer = ControlAnswer {
             agent: f.agent.pubkey.clone(),
+            r#type: "cancel_thread_turn".into(),
             channel_id: "c-1".into(),
             request_id: "r-1".into(),
             status: "no_active_turn".into(),
@@ -441,10 +457,10 @@ mod tests {
             serde_json::from_str::<Value>(&text).unwrap(),
             json!({
                 "kind": "control_result", "channelId": "c-1",
-                "payload": {"type": "cancel_turn", "status": "no_active_turn", "requestId": "r-1"},
+                "payload": {"type": "cancel_thread_turn", "status": "no_active_turn", "requestId": "r-1"},
             })
         );
-        // Only a cancel_turn status.
+        // Only a status this copy can give.
         let refused = ControlAnswer {
             status: "ambiguous_target".into(),
             ..answer
@@ -457,5 +473,12 @@ mod tests {
             ..refused
         };
         assert!(answer_event(&f.agent, &f.key, &other, f.now).is_err());
+        // Only to a stop request.
+        let unknown = ControlAnswer {
+            agent: f.agent.pubkey.clone(),
+            r#type: "switch_model".into(),
+            ..other
+        };
+        assert!(answer_event(&f.agent, &f.key, &unknown, f.now).is_err());
     }
 }

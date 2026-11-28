@@ -43,20 +43,19 @@ function interruptOf(activity: ReturnType<typeof createLocalAgentActivity>) {
 }
 const host = (
   activity: ReturnType<typeof createLocalAgentActivity>,
-  request: Partial<CancelTurn> = {},
+  request: CancelTurn = {
+    type: "cancel_thread_turn",
+    channelId: "channel",
+    threadRootId: root,
+    requestId: "r-1",
+  },
 ) => ({
   interrupt: interruptOf(activity),
   decode: vi.fn(
     async (): Promise<ControlRequest> => ({
       eventId: frame.id,
       agent,
-      request: {
-        type: "cancel_turn",
-        channelId: "channel",
-        threadRootId: root,
-        requestId: "r-1",
-        ...request,
-      },
+      request,
     }),
   ),
   answer: vi.fn(async (_answer: ControlAnswer) => {}),
@@ -76,6 +75,7 @@ it("stops every turn the agent has in the thread and answers sent", async () => 
   expect(otherAgent).not.toHaveBeenCalled();
   expect(native.answer).toHaveBeenCalledWith({
     agent,
+    type: "cancel_thread_turn",
     channelId: "channel",
     requestId: "r-1",
     status: "sent",
@@ -97,18 +97,47 @@ it("answers no_active_turn when nothing there can be stopped", async () => {
   await remoteStop(frame, scope, native);
   expect(native.answer).toHaveBeenCalledWith({
     agent,
+    type: "cancel_thread_turn",
     channelId: "channel",
     requestId: "r-1",
     status: "no_active_turn",
   });
   // Again once the turn there is stopped: it is settled, not active.
-  const stopped = host(activity, { threadRootId: other });
+  const stopped = host(activity, {
+    type: "cancel_thread_turn",
+    channelId: "channel",
+    threadRootId: other,
+    requestId: "r-1",
+  });
   await remoteStop(frame, scope, stopped);
   await remoteStop(frame, scope, stopped);
   expect(stopped.answer.mock.calls.map(([{ status }]) => status)).toEqual([
     "sent",
     "no_active_turn",
   ]);
+});
+
+it("stops the agent's turns across the channel for cancel_turn", async () => {
+  const { activity, begin } = turns();
+  const first = begin("1".repeat(64), root);
+  const second = begin("2".repeat(64), other);
+  const otherChannel = begin("3".repeat(64), root, { channelId: "elsewhere" });
+  const native = host(activity, {
+    type: "cancel_turn",
+    channelId: "channel",
+    requestId: "r-2",
+  });
+  await remoteStop(frame, scope, native);
+  expect(first).toHaveBeenCalledTimes(1);
+  expect(second).toHaveBeenCalledTimes(1);
+  expect(otherChannel).not.toHaveBeenCalled();
+  expect(native.answer).toHaveBeenCalledWith({
+    agent,
+    type: "cancel_turn",
+    channelId: "channel",
+    requestId: "r-2",
+    status: "sent",
+  });
 });
 
 it("does not answer a frame native code refused", async () => {

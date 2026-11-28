@@ -1,19 +1,19 @@
 // Stop from the owner's other devices: the copy of the app that runs an agent
-// hears the owner's `cancel_turn` control frames to it, stops its turns in that
-// conversation as Stop does here, and answers with a `control_result`.
+// hears the owner's stop requests to it, stops its turns there as Stop does
+// here, and answers with a `control_result`.
 import type { RelayEvent } from "../relay/events";
 import type { CancelTurn, ControlResult } from "./agent-control";
 import type { LocalAgentSource } from "./local-activity";
 
 /** A control frame native code checked and decrypted: its agent's owner
- * asks the agent to stop its turn in a conversation. */
+ * asks the agent to stop. */
 export type ControlRequest = Readonly<{
   eventId: string;
   agent: string;
   request: CancelTurn;
 }>;
-/** What this copy answers: it never needs `ambiguous_target`, as it stops a
- * whole channel's conversation when no thread is named. */
+/** What this copy answers, for the request type it answers: it never needs
+ * `ambiguous_target`, as either request names exactly what to stop. */
 export type ControlAnswer = ControlResult &
   Readonly<{ status: "sent" | "no_active_turn" }>;
 
@@ -35,7 +35,8 @@ export async function remoteStop(
     scope,
     agent,
     channelId: request.channelId,
-    threadRootId: request.threadRootId,
+    threadRootId:
+      request.type === "cancel_thread_turn" ? request.threadRootId : undefined,
   });
   let status: ControlAnswer["status"] = "no_active_turn";
   if (stops.length) {
@@ -44,6 +45,7 @@ export async function remoteStop(
   }
   await host.answer({
     agent,
+    type: request.type,
     channelId: request.channelId,
     requestId: request.requestId,
     status,

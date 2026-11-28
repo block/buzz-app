@@ -67,7 +67,10 @@ pub(crate) fn expiry(value: &str) -> Result<i64, &'static str> {
         .map_err(|_| "invalid-expiry")
 }
 pub(crate) fn client() -> Result<Client, &'static str> {
+    // A proxy or firewall in front of a community can refuse requests
+    // without a User-Agent, which fails discovery and every live connection.
     let builder = Client::builder()
+        .user_agent(crate::relay::user_agent())
         .redirect(reqwest::redirect::Policy::none())
         .timeout(DEADLINE)
         .connect_timeout(Duration::from_secs(10));
@@ -293,6 +296,31 @@ mod tests {
         Arc,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn requests_carry_the_app_user_agent() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/info", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 4096];
+            let read = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}")
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&request[..read]).to_lowercase()
+        });
+        let _ = client().unwrap().get(&url).send().await;
+        let request = server.await.unwrap();
+        assert!(
+            request.contains(&format!(
+                "user-agent: {}",
+                crate::relay::user_agent().to_lowercase()
+            )),
+            "{request}"
+        );
+    }
 
     async fn truncated_response(
         status: u16,

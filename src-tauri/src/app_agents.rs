@@ -1542,6 +1542,7 @@ fn client() -> Result<&'static reqwest::Client, String> {
     CLIENT
         .get_or_init(|| {
             reqwest::Client::builder()
+                .user_agent(crate::relay::user_agent())
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
                 // A connection idle across sleep may be dead; open a new one.

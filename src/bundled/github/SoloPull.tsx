@@ -25,10 +25,18 @@ export function SoloPullIcon({
   const pull = useSoloPull(pulls, channelId);
   if (!pull) return fallback;
   const Icon = stateIcons[pull.state?.state ?? "open"];
+  const tone = pullTone(pull);
+  const words = describePull(pull);
   return (
-    <span className={styles.soloPull} data-tone={pullTone(pull)}>
-      <Icon size={16} aria-hidden="true" />
-      <span className="sr-only">{describePull(pull)}: </span>
+    <span className={styles.soloPull} data-tone={tone}>
+      {/* The tooltip sits on the hidden glyph, so the words are read once. */}
+      <span className={styles.soloPullGlyph} aria-hidden="true" title={words}>
+        <Icon size={16} aria-hidden="true" />
+        {(tone === "failure" || tone === "pending") && (
+          <span className={styles.soloPullBadge} />
+        )}
+      </span>
+      <span className="sr-only">{words}: </span>
     </span>
   );
 }

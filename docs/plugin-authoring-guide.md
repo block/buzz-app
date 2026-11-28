@@ -231,6 +231,23 @@ Declare in `manifest.json` the commands, processes, network origins and files yo
 
 Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`, `agentPromptSections`) are in the types. A host that doesn't know a `host` field refuses the whole manifest.
 
+## Inline embeds on desktop
+
+macOS and Linux builds allow plugins to frame the Buzz Pages relay at `https://block.github.io/buzz/embed/`. The default development window loads from `http://localhost:1430`, which is outside the relay's accepted parent origins, so the relay replies `refused` there. Windows keeps its existing frame policy (no `frame-src` allowlist, so `default-src 'self'` applies) because WebView2 adds the app's initialization scripts to subframes. Keep the original destination available as a link on every platform.
+
+Set the outer `<iframe>`'s `sandbox` to `allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox`, its `allow` to `autoplay; encrypted-media; picture-in-picture; fullscreen`, and enable `allowfullscreen`. The relay applies the same `sandbox`, `allow`, and `allowfullscreen` attributes to the inner provider frame (no `allow-top-navigation` on either frame) and sets `referrerpolicy="strict-origin-when-cross-origin"`.
+
+1. Install a `message` listener on `window` before loading the relay. Accept messages only when `event.source === iframe.contentWindow` and `event.origin === "https://block.github.io"`.
+2. On `{ type: "buzz-embed:ready" }`, post `{ type: "buzz-embed:mount", src }` to `iframe.contentWindow` with target origin `"https://block.github.io"`. The relay accepts one mount per load from its direct parent at `tauri://localhost`, `http://tauri.localhost`, or `https://tauri.localhost`.
+3. Supply an absolute HTTPS `src` on a different origin from `https://block.github.io`. The relay rejects embedded credentials, `localhost` and `*.localhost` names, trailing-dot hosts, `127.x` addresses, `0.0.0.0`, and IPv6 literals, and inserts `<meta http-equiv="Content-Security-Policy" content="frame-src <origin>">` before adding the child frame so later navigations and redirects stay on that origin.
+4. The relay sends `{ type: "buzz-embed:mounted" }` after inserting the child frame, or `{ type: "buzz-embed:refused" }` if it rejects the mount.
+
+Handle failures as follows:
+
+- **CSP refusal or rejected mount:** remove the iframe and restore the preview. For `securitypolicyviolation`, require `disposition === "enforce"`, `effectiveDirective === "frame-src"`, and a blocked URI and policy identifying a block of the relay. Open the original link once for a pending attempt, and retire the attempt when it mounts or ends (including when the reader opens the link manually).
+- **Missing or unreachable relay page:** `buzz-embed:ready` never arrives and the handshake stays unanswered; keep a preview visible until `buzz-embed:mounted`.
+- **Failure after `mounted`:** the relay confirms insertion only and sends no further load status (a provider may show its own error, or a network failure or blocked cross-origin redirect can leave the frame empty), so keep the original link usable.
+
 ## UI
 
 - The host supplies the shell, navigation, error boundaries, and the outer surface of panels and Settings. Don't add your own page frame, overlays, global styles or theme. Panels sit in a host card, so render only the body. Pages own their padding and scrolling.

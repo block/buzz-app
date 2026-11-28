@@ -205,9 +205,11 @@ export function useVoiceNoteRecorder() {
         }
       });
       recorder.start(250);
-      setStatus("recording");
 
-      const samples = new Uint8Array(analyser.fftSize);
+      // The microphone can take seconds to deliver audio after it opens; keep
+      // "Waiting for microphone…" until it does, or until the wait runs out.
+      const samples = new Float32Array(analyser.fftSize);
+      let waiting = true;
       const levelTimer = window.setInterval(() => {
         if (
           recorder.state !== "recording" ||
@@ -217,12 +219,18 @@ export function useVoiceNoteRecorder() {
           window.clearInterval(levelTimer);
           return;
         }
-        analyser.getByteTimeDomainData(samples);
-        let sumSquares = 0;
-        for (const sample of samples) {
-          const centered = (sample - 128) / 128;
-          sumSquares += centered * centered;
+        analyser.getFloatTimeDomainData(samples);
+        if (waiting) {
+          if (
+            samples.every((sample) => sample === 0) &&
+            performance.now() - session.startedAt < 10_000
+          )
+            return;
+          waiting = false;
+          if (mountedRef.current) setStatus("recording");
         }
+        let sumSquares = 0;
+        for (const sample of samples) sumSquares += sample * sample;
         const rms = Math.sqrt(sumSquares / samples.length);
         const level = Math.min(1, rms * 5.5);
         if (!mountedRef.current) return;

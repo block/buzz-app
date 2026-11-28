@@ -19,6 +19,7 @@ import { encodeVoiceNoteWav } from "../../src/bundled/voice-notes/voiceNoteWav";
 import { isVoiceNoteFile } from "../../src/bundled/voice-notes/audio";
 import {
   attachmentMessage,
+  UploadError,
   type UploadedAttachment,
 } from "../../src/features/relay/attachments";
 import { PublishRejected } from "../../src/features/relay/outbox";
@@ -70,6 +71,7 @@ const report = {
   uploads: 0,
   published: 0,
   failUpload: false,
+  missingEncoder: false,
   failSend: false,
   delayUpload: false,
 };
@@ -98,6 +100,7 @@ const owner = createRelaySession(
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort();
       });
+      if (report.missingEncoder) throw new UploadError("ffmpeg");
       if (report.failUpload) throw new Error("Fixture upload failed");
       const voice = isVoiceNoteFile(file);
       const result: UploadedAttachment = {

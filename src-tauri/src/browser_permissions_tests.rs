@@ -143,6 +143,7 @@ fn native_command_permissions_isolate_webviews() {
         "relay_archive",
         "relay_agent_memories_read",
         "relay_agent_library",
+        "install_ffmpeg",
         "relay_upload_begin",
         "relay_upload_chunk",
         "relay_upload",

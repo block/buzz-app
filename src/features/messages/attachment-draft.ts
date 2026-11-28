@@ -18,6 +18,7 @@ export type DraftAttachment = Readonly<{
   status: "queued" | "preparing" | "uploading" | "ready" | "error";
   uploaded?: UploadedAttachment;
   error?: string | undefined;
+  missingEncoder?: boolean | undefined;
   /** The relay refused this file's type, so the same bytes cannot upload. */
   unsupported?: true | undefined;
   /** Host-reported bytes for the current prepared transfer. */
@@ -306,6 +307,8 @@ export function attachmentDraft(
             error instanceof Error
               ? error.message
               : "Upload failed. Retry or remove this file.",
+          missingEncoder:
+            error instanceof UploadError && error.code === "ffmpeg",
           unsupported:
             (error instanceof UploadError && error.code === "type") ||
             undefined,
@@ -489,6 +492,7 @@ export function attachmentDraft(
         status: "queued",
         error: undefined,
         transfer: undefined,
+        missingEncoder: undefined,
         unsupported: undefined,
       });
       paused = false;

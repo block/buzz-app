@@ -6,6 +6,7 @@ import { AttachmentView } from "../conversation/AttachmentView";
 import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { useRef, useState } from "react";
+import { FfmpegInstall } from "./FfmpegInstall";
 import { FileTypeIcon } from "./FileTypeIcon";
 import fileIconStyles from "./FileTypeIcon.module.css";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -265,6 +266,17 @@ function AttachmentItem({
       ? `${Math.max(1, Math.round(bytes / 1024))} KB`
       : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   const uploadFailed = item.status === "error";
+  const encoderInstall =
+    uploadFailed && item.missingEncoder ? (
+      <FfmpegInstall
+        file={item.file}
+        disabled={disabled}
+        focusAttachment={(button) => {
+          (previewButton.current ?? button.closest("li"))?.focus();
+        }}
+        retry={() => retry(item.id)}
+      />
+    ) : undefined;
   const status = {
     queued: "Queued",
     preparing: "Preparing…",
@@ -279,7 +291,13 @@ function AttachmentItem({
     item.status === "uploading";
   if (item.voice && source && renderers)
     return (
-      <motion.li {...appearance} className={styles.voiceItem} data-voice-draft>
+      <motion.li
+        {...appearance}
+        tabIndex={-1}
+        aria-label={item.file.name}
+        className={styles.voiceItem}
+        data-voice-draft
+      >
         <AttachmentDownloadContext value={false}>
           <AttachmentView
             registry={renderers}
@@ -308,23 +326,24 @@ function AttachmentItem({
             }
           />
         </AttachmentDownloadContext>
-        {item.error && (
-          <>
-            <span role="alert">
-              {item.error}
-              {item.unsupported && UNSUPPORTED_GUIDANCE}
-            </span>
-            {!item.unsupported && (
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => retry(item.id)}
-              >
-                Retry voice note upload
-              </button>
-            )}
-          </>
-        )}
+        {encoderInstall ??
+          (item.error && (
+            <>
+              <span role="alert">
+                {item.error}
+                {item.unsupported && UNSUPPORTED_GUIDANCE}
+              </span>
+              {!item.unsupported && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => retry(item.id)}
+                >
+                  Retry voice note upload
+                </button>
+              )}
+            </>
+          ))}
       </motion.li>
     );
   return (
@@ -422,18 +441,19 @@ function AttachmentItem({
         </span>
         {failed && <span className="sr-only">Preview unavailable</span>}
       </div>
-      {uploadFailed && (
-        <p className={styles.error} role="alert">
-          <span className="sr-only">{item.file.name}: </span>
-          {item.error || "Upload failed. Retry or remove it to send."}
-          {item.unsupported && UNSUPPORTED_GUIDANCE}
-        </p>
-      )}
+      {encoderInstall ??
+        (uploadFailed && (
+          <p className={styles.error} role="alert">
+            <span className="sr-only">{item.file.name}: </span>
+            {item.error || "Upload failed. Retry or remove it to send."}
+            {item.unsupported && UNSUPPORTED_GUIDANCE}
+          </p>
+        ))}
       <div
         className={styles.actions}
         data-remove={!busy && !uploadFailed ? "" : undefined}
       >
-        {uploadFailed ? (
+        {uploadFailed && !encoderInstall ? (
           <>
             {/* The relay would refuse the same bytes again. */}
             {!item.unsupported && (

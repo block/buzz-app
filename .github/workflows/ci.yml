@@ -1,8 +1,13 @@
 name: CI
 
 on:
-  # Manual dispatch runs only Windows; automatic checks include macOS recording.
+  # Manual dispatch runs Windows, with an optional fresh FFmpeg install and conversion check.
   workflow_dispatch:
+    inputs:
+      ffmpeg_acceptance:
+        description: Exercise FFmpeg recovery on a clean Windows host
+        type: boolean
+        default: false
   # Sunday's preview (release.yml) calls this to rebuild main's caches.
   workflow_call:
   pull_request:
@@ -220,6 +225,9 @@ jobs:
         with:
           key: windows-native
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Exercise FFmpeg recovery on the Windows host
+        if: inputs.ffmpeg_acceptance
+        run: cargo test -p Buzz --lib --locked ffmpeg_install::tests::host_installation -- --ignored --nocapture
       - name: Native lint including Windows backend
         run: cargo clippy -p Buzz -p buzz-agent-controller -p buzz-credential-store -p buzz-mesh-compute --locked --all-targets -- -D warnings
       - name: All native package tests

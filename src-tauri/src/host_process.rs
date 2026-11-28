@@ -640,19 +640,7 @@ pub(crate) fn set_environment(
     environment: &HashMap<String, Option<String>>,
     version: &str,
 ) -> Result<(), String> {
-    // An AppImage's launcher points library, data and program paths into its
-    // bundle for the app alone; a host program loading the bundle's older
-    // OpenSSL fails. First, so nothing below can be undone by it.
-    let bundle = appimage_bundle();
-    if let Some(bundle) = &bundle {
-        for (name, value) in std::env::vars_os() {
-            match without_bundle_paths(&value, bundle) {
-                Some(Some(kept)) => command.env(&name, kept),
-                Some(None) => command.env_remove(&name),
-                None => command,
-            };
-        }
-    }
+    remove_bundle_environment(command);
     command.envs(login_shell.iter().cloned());
     command.envs(agent_env.vars().cloned());
     // Never pass on an identity the app was started with, even one the user
@@ -667,10 +655,7 @@ pub(crate) fn set_environment(
             command.env_remove(&name);
         }
     }
-    match bundle.and_then(|bundle| without_bundle_paths(path, &bundle)) {
-        Some(Some(kept)) => command.env("PATH", kept),
-        _ => command.env("PATH", path),
-    };
+    set_host_path(command, path);
     for (name, value) in environment {
         if name.is_empty() || name.contains(['=', '\0']) {
             return Err("Invalid environment variable".into());
@@ -728,6 +713,30 @@ fn set_claude_key(
     } else if let Some(key) = shared {
         command.env(crate::claude_key::ENV, key);
     }
+}
+
+pub(crate) fn remove_bundle_environment(command: &mut Command) {
+    // An AppImage's launcher points library, data and program paths into its
+    // bundle for the app alone; a host program loading the bundle's older
+    // OpenSSL fails. First, so nothing below can be undone by it.
+    let bundle = appimage_bundle();
+    if let Some(bundle) = &bundle {
+        for (name, value) in std::env::vars_os() {
+            match without_bundle_paths(&value, bundle) {
+                Some(Some(kept)) => command.env(&name, kept),
+                Some(None) => command.env_remove(&name),
+                None => command,
+            };
+        }
+    }
+}
+
+pub(crate) fn set_host_path(command: &mut Command, path: &OsStr) {
+    match appimage_bundle().and_then(|bundle| without_bundle_paths(path, &bundle)) {
+        Some(Some(kept)) => command.env("PATH", kept),
+        Some(None) => command.env_remove("PATH"),
+        None => command.env("PATH", path),
+    };
 }
 
 /// The mounted or extracted AppImage this app runs from: `APPDIR` only when

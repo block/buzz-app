@@ -1,3 +1,5 @@
+import { FfmpegInstall } from "../../features/messages/FfmpegInstall";
+import { UploadError } from "../../features/relay/attachments";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import {
   useCallback,
@@ -90,7 +92,7 @@ function Editor({
   const [image, setImage] = useState<{ url: string; filename: string }>();
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string | File>("");
   const [added, setAdded] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
   const uploadButton = useRef<HTMLButtonElement>(null);
@@ -163,7 +165,11 @@ function Editor({
       if (suggested && !nameRef.current.trim()) setName(suggested);
     } catch (reason) {
       if (!controller.signal.aborted && live())
-        setError(message(reason, "Failed to upload emoji image."));
+        setError(
+          reason instanceof UploadError && reason.code === "ffmpeg"
+            ? file
+            : message(reason, "Failed to upload emoji image."),
+        );
     } finally {
       if (uploadController.current === controller)
         uploadController.current = null;
@@ -206,6 +212,20 @@ function Editor({
   }
 
   const preview = image && session.media(image.url);
+  const uploadError =
+    error instanceof File ? (
+      <FfmpegInstall
+        file={error}
+        disabled={uploading || saving || !!removing}
+        retry={() => void choose(error)}
+      />
+    ) : (
+      error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )
+    );
   const uploadAction = (
     <Button
       ref={uploadRef}
@@ -292,11 +312,7 @@ function Editor({
               You already have :{normalized}: — saving will replace its image.
             </p>
           )}
-          {error && (
-            <p role="alert" className="error">
-              {error}
-            </p>
-          )}
+          {uploadError}
           {image && (
             <div
               ref={actionsRef}
@@ -332,11 +348,7 @@ function Editor({
           action={uploadAction}
         />
       )}
-      {!image && error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+      {!image && uploadError}
     </form>
   ) : null;
   const ownShortcodes = new Set(catalog.mine.map((emoji) => emoji.shortcode));

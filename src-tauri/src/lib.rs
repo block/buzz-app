@@ -97,6 +97,7 @@ use legacy_communities::legacy_communities;
 use local_skills::local_skills_list;
 use os_idle::get_os_idle_seconds;
 use repositories_folder::{repositories_folder_list, repositories_folder_validate};
+mod ffmpeg_install;
 mod relaunch;
 mod relay;
 mod relay_admin;
@@ -848,6 +849,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay::media_cache_clear,
         relay::media_cache_forget,
         relay::media_cache_usage,
+        ffmpeg_install::install_ffmpeg,
         saved_downloads::media_download_status,
         saved_downloads::media_download_open,
         media_copy_image,

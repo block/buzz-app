@@ -167,6 +167,7 @@ fn main() {
             "media_cache_clear",
             "media_cache_forget",
             "media_cache_usage",
+            "install_ffmpeg",
             "media_download_status",
             "media_download_open",
             "file_download",

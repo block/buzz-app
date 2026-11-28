@@ -1,5 +1,5 @@
+import { FfmpegInstall } from "../../features/messages/FfmpegInstall";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { ChangeEvent } from "react";
 import type { OutgoingEvent } from "../../features/relay/outbox";
 import {
   UploadError,
@@ -89,7 +89,7 @@ function FeedbackForConnection({
   );
   const [category, setCategory] = useState<FeedbackCategory | null>(null);
   const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string | File>("");
   const [busy, setBusy] = useState(false);
   const [image, setImage] = useState<UploadedAttachment>();
   const [uploadedDiagnostics, setUploadedDiagnostics] =
@@ -122,9 +122,7 @@ function FeedbackForConnection({
     hydrated &&
     connection.status === "ready" &&
     !!outbox?.supports(PRODUCT_FEEDBACK_KIND);
-  async function attachImage(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
+  async function attachImage(file: File | undefined) {
     if (!file || !connection.session.feedbackUpload || !available || busy)
       return;
     const currentAttempt = ++attempt.current;
@@ -150,7 +148,11 @@ function FeedbackForConnection({
         currentAttempt === attempt.current
       )
         setError(
-          reason instanceof Error ? reason.message : "Image upload failed.",
+          reason instanceof UploadError && reason.code === "ffmpeg"
+            ? file
+            : reason instanceof Error
+              ? reason.message
+              : "Image upload failed.",
         );
     } finally {
       if (uploadController.current === controller)
@@ -386,7 +388,11 @@ function FeedbackForConnection({
                 type="file"
                 accept="image/png,image/jpeg,image/gif,image/webp"
                 disabled={!available || busy}
-                onChange={(event) => void attachImage(event)}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  void attachImage(file);
+                }}
               />
               {image && (
                 <p>
@@ -420,7 +426,15 @@ function FeedbackForConnection({
           Connect to a Buzz deployment to send or retry feedback.
         </p>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error instanceof File ? (
+        <FfmpegInstall
+          file={error}
+          disabled={busy}
+          retry={() => void attachImage(error)}
+        />
+      ) : (
+        error && <p role="alert">{error}</p>
+      )}
     </Dialog>
   );
 }

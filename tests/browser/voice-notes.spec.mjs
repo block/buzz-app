@@ -251,6 +251,101 @@ test("permission cancellation, denial and plugin removal release microphones", {
     0,
   );
 });
+test("install FFmpeg and retry the recorded note", {
+  tag: "@media-recorder",
+}, async ({ page }) => {
+  await page.evaluate(() => {
+    window.voiceFixture.report.missingEncoder = true;
+    let firstAttempt = true;
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
+    window.isTauri = true;
+    window.__TAURI_INTERNALS__ = {
+      invoke: async (command) => {
+        if (command !== "install_ffmpeg") throw new Error(command);
+        if (firstAttempt) {
+          firstAttempt = false;
+          throw "Installation interrupted.";
+        }
+        window.voiceFixture.report.missingEncoder = false;
+      },
+    };
+  });
+  await record(page, { stopWith: "pointer" });
+  const install = page.getByRole("button", { name: /^Install for / });
+  await expect(install).toBeVisible();
+  await page.locator("[data-voice-draft]").screenshot({
+    path: test.info().outputPath("install-ffmpeg.png"),
+  });
+  await install.click();
+  await expect(page.getByText("Installation interrupted.")).toBeVisible();
+  const retry = page.getByRole("button", { name: /^Try again for / });
+  await retry.focus();
+  await retry.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Send message", exact: true }),
+  ).toBeEnabled();
+  await expect(install).toHaveCount(0);
+  await expect(page.locator("[data-voice-draft]")).toBeFocused();
+  expect(await page.evaluate(() => window.voiceFixture.report.uploads)).toBe(2);
+});
+test("a photo with the FFmpeg error offers host recovery and requests HEIC support on desktop", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    window.voiceFixture.report.missingEncoder = true;
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Linux x86_64",
+    });
+    window.isTauri = true;
+  });
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Attach files" }).click();
+  await (await chooser).setFiles({
+    name: "sample.heic",
+    mimeType: "image/heic",
+    buffer: Buffer.from("fixture"),
+  });
+  const hostRetry = page.getByRole("button", {
+    name: "Retry upload for sample.heic",
+    exact: true,
+  });
+  await expect(hostRetry).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("sample.heic");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
+    window.isTauri = true;
+    window.__TAURI_INTERNALS__ = {
+      invoke: async (command, args) => {
+        if (command !== "install_ffmpeg" || args.requireVersion8 !== true)
+          throw new Error("Unexpected installer request");
+        window.voiceFixture.report.missingEncoder = false;
+        window.voiceFixture.report.failUpload = true;
+      },
+    };
+  });
+  await hostRetry.click();
+  await page
+    .getByRole("button", {
+      name: "Install or update for sample.heic",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByText("Fixture upload failed", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Install or update" }),
+  ).toHaveCount(0);
+});
 test("failed upload survives disabling the plugin and switching conversations", {
   tag: "@media-recorder",
 }, async ({ page }) => {

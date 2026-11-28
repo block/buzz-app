@@ -1,3 +1,5 @@
+import { FfmpegInstall } from "../../features/messages/FfmpegInstall";
+import { UploadError } from "../../features/relay/attachments";
 import { useMediaCorners } from "../../features/messages/use-media-corners";
 import { animatedImage } from "../../features/messages/prepare-attachment";
 import { AgentAvatarBackdrop } from "./AgentAvatarBackdrop";
@@ -173,7 +175,9 @@ export function AgentAvatarPicker({
     },
     [localUrl],
   );
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string | { file: File; retry(): void }>(
+    "",
+  );
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<AbortController | null>(null);
   const selected =
@@ -397,9 +401,11 @@ export function AgentAvatarPicker({
       if (request.signal.aborted) return;
       restore();
       setError(
-        reason instanceof Error
-          ? reason.message
-          : "Image upload failed. Try again.",
+        reason instanceof UploadError && reason.code === "ffmpeg"
+          ? { file, retry: () => void upload(file) }
+          : reason instanceof Error
+            ? reason.message
+            : "Image upload failed. Try again.",
       );
     } finally {
       if (!request.signal.aborted) {
@@ -798,10 +804,18 @@ export function AgentAvatarPicker({
             Uploading image…
           </p>
         )}
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
+        {typeof error !== "string" ? (
+          <FfmpegInstall
+            file={error.file}
+            disabled={!!disabled}
+            retry={error.retry}
+          />
+        ) : (
+          error && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {error}
+            </p>
+          )
         )}
       </div>
       {/* Reserve help outside the card so mode changes keep its size and inset. */}

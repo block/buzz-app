@@ -1,3 +1,5 @@
+import { FfmpegInstall } from "../messages/FfmpegInstall";
+import { UploadError } from "../relay/attachments";
 import { createPortal } from "react-dom";
 import { Popover } from "@base-ui/react/popover";
 import { useEffect, useLayoutEffect, useId, useRef, useState } from "react";
@@ -559,7 +561,9 @@ function AvatarDraft({
   // A share of the image height that the preview drags; positive is down.
   const [offset, setOffset] = useState(0);
   const [pulse, setPulse] = useState(0);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string | { file: File; retry(): void }>(
+    "",
+  );
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -606,8 +610,9 @@ function AvatarDraft({
     pending.current = request;
     setBusy(true);
     setError("");
+    let file: File | undefined;
     try {
-      const file = await makeFile();
+      file = await makeFile();
       request.signal.throwIfAborted();
       const url = await uploadAvatar(file, community, request.signal);
       if (!request.signal.aborted) {
@@ -617,9 +622,11 @@ function AvatarDraft({
     } catch (reason) {
       if (!request.signal.aborted)
         setError(
-          reason instanceof Error
-            ? reason.message
-            : "Image upload failed. Try again.",
+          reason instanceof UploadError && reason.code === "ffmpeg" && file
+            ? { file, retry: () => void upload(makeFile, apply) }
+            : reason instanceof Error
+              ? reason.message
+              : "Image upload failed. Try again.",
         );
     } finally {
       if (!request.signal.aborted) {
@@ -845,10 +852,18 @@ function AvatarDraft({
             Uploading avatar…
           </p>
         )}
-        {error && (
-          <p role="alert" className="text-body-sm text-danger">
-            {error}
-          </p>
+        {typeof error !== "string" ? (
+          <FfmpegInstall
+            file={error.file}
+            disabled={!!disabled}
+            retry={error.retry}
+          />
+        ) : (
+          error && (
+            <p role="alert" className="text-body-sm text-danger">
+              {error}
+            </p>
+          )
         )}
         {!community && (
           <p className="text-body-sm text-subtle">

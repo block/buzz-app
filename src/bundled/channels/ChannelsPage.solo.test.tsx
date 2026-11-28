@@ -29,6 +29,7 @@ import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import {
   conversationTarget,
+  newMessageTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { linkedDraftKey } from "../../features/solo/linked-chat";
@@ -45,6 +46,7 @@ import { SoloWorkspaces } from "./SoloWorkspaces";
 import type { RelaySession } from "../../features/relay/session";
 import type { RegisteredSidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { ReadTarget } from "../../features/relay/read-state-model";
+import type { RegisteredPanel } from "../../features/panels/service";
 
 vi.mock(
   "../../features/messages/solo-model-picks-storage",
@@ -476,6 +478,17 @@ function fixture({
   } as unknown as Navigation;
   const archive: ArchiveShortcut = {};
   const read: ReadShortcut = {};
+  const profilePanel = {
+    id: "profile",
+    key: "fixture:profile",
+    pluginId: "fixture",
+    revision: "1",
+    title: "Profile",
+    matches: (target: string) => target.startsWith("nostr:npub"),
+    component: () => <p>Profile content</p>,
+  } as RegisteredPanel;
+  // A stable snapshot, as useSyncExternalStore requires.
+  const available = [profilePanel];
   const page = (sidebar = false) => (
     <ChannelNavigationProvider relay={relay}>
       {sidebar && (
@@ -498,9 +511,11 @@ function fixture({
             Workspace: () => null,
             useSplit: vi.fn(),
           },
-          ...contribution,
+          snapshot: () => available,
+          subscribe: () => () => {},
           register() {},
-          resolve: () => undefined,
+          resolve: (target) =>
+            profilePanel.matches(target) ? profilePanel : undefined,
           requestOpen: () => false,
           handleOpenRequests: () => () => {},
         }}
@@ -1890,6 +1905,111 @@ it.each([
   ).toBeInTheDocument();
   expect(screen.queryByText(/’s chat/)).toBeNull();
 });
+
+// This fixture's visit never changes, so the header never remounts here as it
+// does for each visit in the app. solo-workspace.spec.mjs covers focus
+// returning to the opener when the profile closes.
+it("opens a profile from the header's Share access", async () => {
+  const person = "e".repeat(64);
+  const f = fixture({ people: [person] });
+  // The dialog lists members once their names settle.
+  Object.assign(f.session.profiles, { ensure: async () => {} });
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Share access to Planning" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: /Share access/ });
+  await user.click(
+    await within(dialog).findByRole("button", {
+      name: /^Open profile for Teammate/,
+    }),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(await screen.findByText("Profile content")).toBeVisible();
+});
+
+// The header's Share access and Chat actions → Share access are wired apart.
+it.each(["the header's Share access", "Chat actions → Share access"])(
+  "offers the team's member actions from %s",
+  async (opener) => {
+    const person = "e".repeat(64);
+    const dm = "22222222-2222-4222-8222-222222222222";
+    const f = fixture({ people: [person], viewerNamed: true });
+    const openDm = vi.fn(async () => dm);
+    Object.assign(f.session.profiles, { ensure: async () => {} });
+    Object.assign(f.session, {
+      directMessages: {
+        ...f.session.directMessages,
+        available: true,
+        open: openDm,
+      },
+    });
+    f.mount();
+    const user = userEvent.setup();
+    const share = async () => {
+      if (opener === "Chat actions → Share access") {
+        await user.click(
+          await screen.findByRole("button", { name: "Chat actions" }),
+        );
+        await user.click(
+          await screen.findByRole("menuitem", { name: "Share access" }),
+        );
+      } else
+        await user.click(
+          await screen.findByRole("button", {
+            name: "Share access to Planning",
+          }),
+        );
+      return within(
+        await screen.findByRole("dialog", { name: /Share access/ }),
+      );
+    };
+    const actions = async (dialog: ReturnType<typeof within>, name: string) => {
+      await user.click(
+        await dialog.findByRole("button", { name: `Actions for ${name}` }),
+      );
+      return within(await screen.findByRole("menu"));
+    };
+    let dialog = await share();
+    // An agent and the viewer get no Send message, as in team channels.
+    for (const name of ["Scout", "Viewer"]) {
+      const menu = await actions(dialog, name);
+      expect(
+        menu.getByRole("menuitem", { name: "View profile" }),
+      ).not.toHaveAttribute("aria-disabled", "true");
+      expect(menu.queryByRole("menuitem", { name: "Send message" })).toBeNull();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    }
+    await user.click(
+      (await actions(dialog, "Teammate")).getByRole("menuitem", {
+        name: "Send message",
+      }),
+    );
+    // The viewer has no DM with them, so this opens a New message draft
+    // addressed to them. Only a send creates the DM.
+    await waitFor(() =>
+      expect(f.open).toHaveBeenLastCalledWith(
+        newMessageTarget(
+          splitPartition(f.scope) as never,
+          person,
+          expect.any(Number),
+        ),
+      ),
+    );
+    expect(openDm).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    dialog = await share();
+    await user.click(
+      (await actions(dialog, "Teammate")).getByRole("menuitem", {
+        name: "View profile",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(await screen.findByText("Profile content")).toBeVisible();
+  },
+);
 
 it("marks an archived chat once and keeps only its lifecycle actions", async () => {
   fixture({ archived: true }).mount();

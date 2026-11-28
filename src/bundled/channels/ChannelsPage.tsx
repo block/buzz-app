@@ -82,7 +82,12 @@ import {
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import type { CommunityMembership } from "../moderation/membership";
 import { useFirstChannel } from "./first-channel";
-import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
+import {
+  SoloHeading,
+  SoloToolbar,
+  useSoloMoveRecovery,
+  type SoloOpeners,
+} from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -387,6 +392,27 @@ function LiveNewMessage(
 ) {
   const { channels } = useChannelList(props.session.channels);
   return <NewMessage {...props} channels={channels} />;
+}
+
+/** The Solo header control that opened a panel, with the side tab whose
+ * toolbar held it, or none for the main header. */
+type SoloOpenerControl = {
+  control: keyof SoloOpeners;
+  tab: string | undefined;
+};
+
+/** Solo headers' registered openers, by pane. */
+type SoloHeaders = {
+  main?: SoloOpeners | undefined;
+  side?: SoloOpeners | undefined;
+};
+
+/** The registered Solo header control that is `trigger`, if any. */
+function soloControl(headers: SoloHeaders, trigger: HTMLElement) {
+  for (const pane of ["main", "side"] as const)
+    for (const control of ["share", "actions"] as const)
+      if (headers[pane]?.[control].current === trigger)
+        return { pane, control };
 }
 
 function ChannelWorkspace({
@@ -1324,6 +1350,7 @@ function ChannelWorkspace({
         target.detail.rootId === entry.rootId
       )
         return;
+      const from = navigator.snapshot().entry.id;
       tabState.leaveVisit();
       void navigator.open({
         version: 1,
@@ -1335,6 +1362,11 @@ function ChannelWorkspace({
           ...(entry.rootId ? { rootId: entry.rootId } : {}),
         },
       });
+      // A Solo opener's record adopts any visit pushed from one of its visits
+      // in the same chat, such as an agent's owner opened from its profile.
+      const opener = soloOpener.current;
+      if (target.channelId === entry.channelId && opener?.visits.includes(from))
+        opener.visits.push(navigator.snapshot().entry.id);
     },
     [navigator, tabState.leaveVisit],
   );
@@ -1412,14 +1444,20 @@ function ChannelWorkspace({
         : {}),
     };
   };
-  const keptTabReturn = useRef<{
+  const dismissalReturn = useRef<{
     from: string;
     target: string;
-    id: string;
-    pane: "main" | "side";
-    /** The side pane's visibility to restore: a kept tab shows, and a
-     * launcher's side panel keeps the visibility it had before the close. */
-    paneOpen: boolean;
+    kept:
+      | {
+          id: string;
+          pane: "main" | "side";
+          /** The side pane's visibility to restore: a kept tab shows, and a
+           * launcher's side panel keeps the visibility it had before the
+           * close. */
+          paneOpen: boolean;
+        }
+      | undefined;
+    opener: SoloOpenerControl | undefined;
   }>(undefined);
   /** A local tab has no routed address, so the return of the dismissal made
    * from visit `from` would restore the selection `fallback` had over it.
@@ -1431,12 +1469,11 @@ function ChannelWorkspace({
     pane: "main" | "side",
     paneOpen: boolean,
   ) => {
-    keptTabReturn.current = {
+    dismissalReturn.current = {
       from,
       target: targetKey(fallback),
-      id,
-      pane,
-      paneOpen,
+      kept: { id, pane, paneOpen },
+      opener: undefined,
     };
   };
   // A thread's visits are the ones whose address selected it: those this page
@@ -1469,8 +1506,9 @@ function ChannelWorkspace({
     fallback: OpenTarget,
     pane: "main" | "side",
     entries = tabState.entries,
+    opener?: SoloOpenerControl,
   ) => {
-    keptTabReturn.current = undefined;
+    dismissalReturn.current = undefined;
     if (!navigator) return;
     const keep =
       pane === "main" ? tabState.getMainSelected() : tabState.getSelected();
@@ -1478,35 +1516,43 @@ function ChannelWorkspace({
     const keptEntry = entries.find((entry) => panelTabId(entry) === keep);
     const current = navigator.snapshot().entry;
     const closesCurrent = dismissalOf([current], visits)(current);
-    if (
+    // A later close can retire more visits before the return lands, moving
+    // where it lands. It takes that return even when it retires no visit of
+    // its own, as for a profile queued behind it.
+    const pending =
+      pendingReturn.current?.from === current.id
+        ? pendingReturn.current
+        : undefined;
+    const returns = !!pending || closesCurrent;
+    const kept =
       keep !== undefined &&
       (keptTab ||
         keptEntry ||
         keep === "settings" ||
         (pane === "side" && tabState.sidePanel)) &&
-      closesCurrent &&
       (keptTab?.kind !== "thread" ||
         (pane === "side" && keptTab.channelId !== currentId)) &&
       !(keptEntry && historyPanel(keptEntry))
-    )
-      keepTabForReturn(
-        current.id,
-        fallback,
-        keep,
-        pane,
-        !!(keptTab || keptEntry || keep === "settings") || tabState.paneOpen,
-      );
-    navigator.dismiss(visits, fallback);
-    // A later close can retire more visits before the return lands, moving
-    // where it lands.
-    const pending =
-      pendingReturn.current?.from === current.id
-        ? pendingReturn.current
+        ? {
+            id: keep,
+            pane,
+            paneOpen:
+              !!(keptTab || keptEntry || keep === "settings") ||
+              tabState.paneOpen,
+          }
         : undefined;
-    if (
-      (pending || closesCurrent) &&
-      navigator.snapshot().entry.id === current.id
-    )
+    // A local survivor has no routed address, and a Solo opener's header
+    // remounts. Restore them only on this dismissal's matching return, never
+    // for unrelated later navigation.
+    if ((kept || opener) && returns)
+      dismissalReturn.current = {
+        from: current.id,
+        target: targetKey(fallback),
+        kept,
+        opener,
+      };
+    navigator.dismiss(visits, fallback);
+    if (returns && navigator.snapshot().entry.id === current.id)
       pendingReturn.current = {
         ...pending,
         from: current.id,
@@ -1542,6 +1588,37 @@ function ChannelWorkspace({
         view: Readonly<{ channelId: string; rootId?: string | undefined }>,
       ) => boolean
     >(undefined);
+  // The main Solo header remounts for each visit, ending that visit's dialogs
+  // and menus, and a side tab's toolbar unmounts while a panel covers its
+  // chat. Either way the opener is gone by the dismissal's return, so the same
+  // control in that chat's header takes focus back then. Only the record's
+  // visits do: Back can restore the same panel from another opener.
+  const soloOpener = useRef<
+    SoloOpenerControl & { trigger: HTMLElement; visits: string[] }
+  >(undefined);
+  // Solo headers register their openers by pane. The dock shows only its
+  // selected tab's toolbar.
+  const soloHeaders = useRef<SoloHeaders>({});
+  const registerSoloOpeners = useMemo(() => {
+    const register = (pane: "main" | "side") => (openers: SoloOpeners) => {
+      soloHeaders.current[pane] = openers;
+      return () => {
+        if (soloHeaders.current[pane] === openers)
+          soloHeaders.current[pane] = undefined;
+      };
+    };
+    return { main: register("main"), side: register("side") };
+  }, []);
+  // Member lists open profiles and DMs through this page. Side-tab Solo
+  // toolbars render inside useConversationTabs, before canOpenLink and
+  // openLink are declared, so these read them only when called.
+  const memberLinks = {
+    canOpenLink: (target: string) => canOpenLink(target),
+    onOpenLink: (url: string, returnFocus?: HTMLElement) =>
+      openLink(url, { returnFocus }),
+    onOpenMessage:
+      navigator && viewer ? (url: string) => openLink(url) : undefined,
+  };
   const secondary = useConversationTabs({
     openInView: (opening, view) => inView.current?.(opening, view) ?? false,
     state: tabState,
@@ -1566,6 +1643,8 @@ function ChannelWorkspace({
           channel={channel}
           navigator={navigator}
           signal={navigation?.signal}
+          {...memberLinks}
+          registerOpeners={registerSoloOpeners.side}
           onOpen={open}
           onLifecycle={(action, trigger) =>
             handoff?.openLifecycle(channel, action, trigger, navigation?.signal)
@@ -1624,13 +1703,25 @@ function ChannelWorkspace({
       if (!historyPanel(entry)) return;
       const pane = entryPane(tabState.mainEntries, entry);
       const fallback = closeTarget(pane, remaining);
-      if (fallback)
-        dismissContent(
-          tabState.detailVisits(entry.channelId, entry.target),
-          fallback,
-          pane,
-          remaining,
-        );
+      if (!fallback || !navigator) return;
+      const visits = tabState.detailVisits(entry.channelId, entry.target);
+      // The recorded opener takes focus back only from one of its visits, and
+      // only while it is still that panel's trigger. A main header opener
+      // that reopened the panel already showing is still mounted, but the
+      // return remounts its header. The dismissal retires this panel's
+      // visits; once none of its own remain, it is forgotten.
+      const opener = soloOpener.current;
+      const returning =
+        opener?.visits.includes(navigator.snapshot().entry.id) &&
+        opener.trigger === panelTrigger.current &&
+        (opener.tab === undefined || !opener.trigger.isConnected)
+          ? { control: opener.control, tab: opener.tab }
+          : undefined;
+      if (opener) {
+        opener.visits = opener.visits.filter((id) => !visits.includes(id));
+        if (!opener.visits.length) soloOpener.current = undefined;
+      }
+      dismissContent(visits, fallback, pane, remaining, returning);
     },
     onCloseThread: (tab, active, last) => {
       // X is explicit dismissal; Back/Forward never comes through this path.
@@ -1847,7 +1938,8 @@ function ChannelWorkspace({
         navigation.target.kind === "conversation"
           ? navigation.target.detail
           : undefined;
-      const kept = keptTabReturn.current;
+      const pending = dismissalReturn.current;
+      const kept = pending?.kept;
       const retained =
         kept &&
         (kept.pane === "main"
@@ -1940,16 +2032,47 @@ function ChannelWorkspace({
         } else navigation.complete({ status: "failed", reason: "unavailable" });
       }
       // Reselect it over the restored selection and give it its own visit.
-      if (reopen) open(reopen);
-      if (kept && navigation.entryId !== kept.from) {
-        keptTabReturn.current = undefined;
-        if (retained && targetKey(navigation.target) === kept.target) {
-          if (kept.pane === "main") tabState.selectMain(kept.id);
-          else {
-            tabState.select(kept.id);
-            tabState.setPaneOpen(kept.paneOpen);
+      // A Solo opener that queued it recorded the retiring visit, so it takes
+      // the fresh one instead.
+      if (reopen && returned) {
+        open(reopen);
+        const opener = soloOpener.current;
+        if (opener?.visits.includes(returned.from)) {
+          const fresh = navigator.snapshot().entry.id;
+          opener.visits = opener.visits.map((visit) =>
+            visit === returned.from ? fresh : visit,
+          );
+        }
+      }
+      if (pending && navigation.entryId !== pending.from) {
+        dismissalReturn.current = undefined;
+        if (targetKey(navigation.target) === pending.target) {
+          if (kept && retained) {
+            if (kept.pane === "main") tabState.selectMain(kept.id);
+            else {
+              tabState.select(kept.id);
+              tabState.setPaneOpen(kept.paneOpen);
+            }
           }
-          focusKept.current = kept.id;
+          // The opener's control in its remounted header takes focus, but
+          // only while focus waits where the close left it: on the chat once
+          // the pane emptied, or on the chat's tab that its pane selected
+          // instead. A main header opener that was still mounted took focus
+          // itself, and this commit's header remount removed it.
+          const { opener } = pending;
+          const focused = document.activeElement;
+          const waiting = opener?.tab
+            ? focused instanceof HTMLElement &&
+              focused.dataset.tabValue === opener.tab
+            : focused === historyContainer.current || focused === document.body;
+          const control =
+            opener &&
+            waiting &&
+            soloHeaders.current[opener.tab ? "side" : "main"]?.[opener.control]
+              .current;
+          if (control) control.focus({ preventScroll: true });
+          // Otherwise the kept tab, where the close was, takes focus back.
+          else if (kept && retained) focusKept.current = kept.id;
         }
       }
       if (navigation.focus === "preserve") setPreservedVisit(navigation);
@@ -2018,6 +2141,7 @@ function ChannelWorkspace({
     currentId,
     panels,
     panelTrigger,
+    navigator,
   ]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
@@ -2515,15 +2639,33 @@ function ChannelWorkspace({
         return true;
       if (next) {
         setSettings(undefined);
-        panelTrigger.current =
+        const trigger =
           returnFocus ??
           (document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null);
+        panelTrigger.current = trigger;
+        // Find a Solo header's opener while its header has it registered.
+        const header = trigger && soloControl(soloHeaders.current, trigger);
+        const tab =
+          header?.pane === "side" ? tabState.getSelected() : undefined;
         // Thread-origin details cover the live thread instead of retiring it.
         if (!fromThread && routedThread && !historyPanel(next))
           select(channelId);
         open(next, fromThread);
+        // Record the visit now showing the panel. Reopening the panel already
+        // shown pushes none, so the opener takes over the current visit. A
+        // reopen queued behind a close's return holds the retiring visit until
+        // the return gives the panel its own.
+        soloOpener.current =
+          trigger && header && navigator && historyPanel(next)
+            ? {
+                trigger,
+                control: header.control,
+                tab,
+                visits: [navigator.snapshot().entry.id],
+              }
+            : undefined;
         return true;
       }
       return false;
@@ -2542,6 +2684,7 @@ function ChannelWorkspace({
       // recreate openLink and re-render each memoized message row.
       tabState.setTabs,
       tabState.select,
+      tabState.getSelected,
       tabState.leaveVisit,
       panelTrigger,
     ],
@@ -3084,10 +3227,8 @@ function ChannelWorkspace({
               ? membersTrigger
               : membersHeaderTrigger
           }
-          canOpenLink={canOpenLink}
           {...(agents ? { agents } : {})}
-          onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
-          onOpenMessage={navigator && viewer ? openLink : undefined}
+          {...memberLinks}
         />
       )}
       <Panel
@@ -3215,6 +3356,8 @@ function ChannelWorkspace({
                   channel={current}
                   navigator={navigator}
                   signal={navigation?.signal}
+                  {...memberLinks}
+                  registerOpeners={registerSoloOpeners.main}
                   onConvert={(trigger) =>
                     setConversion({
                       channelId: current.id,

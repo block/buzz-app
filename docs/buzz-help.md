@@ -121,6 +121,8 @@ if that desktop app is up and running.
   Anyone who can post can pin or unpin any message. Forum posts can't be
   pinned. A community that doesn't take pins refuses them, and Buzz says so.
   Agents pin with the `pin` tool.
+- **Membership changes.** Open “N others” to see the full list of names;
+  choose a name to open that person's profile.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
   folder and **/** a skill. Attach files by pasting or dragging them in. Typed
   Markdown formats as you type; **Settings → Appearance → Disable formatting

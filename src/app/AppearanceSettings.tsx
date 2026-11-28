@@ -117,6 +117,8 @@ export function AppearanceSettings({
     preference,
     mode,
     error,
+    messageAlignment,
+    messageAlignmentError,
     messageWidth,
     messageWidthError,
     fontScale,
@@ -328,6 +330,30 @@ export function AppearanceSettings({
       <div className="mt-section-gap">
         <InlineHeader title="Conversations" />
         <SettingsGroup>
+          <PreferenceRow
+            title="Message alignment"
+            subtitle="Bottom starts short conversations above the message box. Earlier messages move up as new ones arrive."
+            trailing={
+              <Select
+                variant="compact"
+                label="Message alignment"
+                value={messageAlignment}
+                groups={[
+                  {
+                    label: "Alignment",
+                    options: [
+                      { value: "top", label: "Top" },
+                      { value: "bottom", label: "Bottom" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "top" || value === "bottom")
+                    appearance.setMessageAlignment(value);
+                }}
+              />
+            }
+          />
           <PreferenceRow
             title="Message density"
             subtitle="Compact shows conversations as a flat list that fits more messages on screen."
@@ -546,6 +572,19 @@ export function AppearanceSettings({
             />
           </SettingsGroup>
         </div>
+        {active && messageAlignmentError && (
+          <ToastNotice
+            title="Message alignment wasn’t saved"
+            description={messageAlignmentError}
+          >
+            <Button
+              size="sm"
+              onClick={() => appearance.setMessageAlignment(messageAlignment)}
+            >
+              Retry saving message alignment
+            </Button>
+          </ToastNotice>
+        )}
         {active && messageWidthError && (
           <ToastNotice
             title="Message width wasn’t saved"

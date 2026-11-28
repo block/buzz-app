@@ -74,6 +74,14 @@
     /* Default spacing remains usable without storage. */
   }
   document.documentElement.dataset.messageDensity = density;
+  let alignment = "top";
+  try {
+    if (localStorage.getItem("buzz-message-alignment.v1") === "bottom")
+      alignment = "bottom";
+  } catch {
+    /* Top alignment remains usable without storage. */
+  }
+  document.documentElement.dataset.messageAlignment = alignment;
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

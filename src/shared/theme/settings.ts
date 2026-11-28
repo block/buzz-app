@@ -6,6 +6,7 @@ import {
   type Appearance,
   type ColorModePreference,
   type MessageDensity,
+  type MessageAlignment,
 } from "./service";
 
 /** Appearance as device settings, through the one live `appearance`. */
@@ -51,6 +52,19 @@ export function appearanceSettings(appearance: Appearance): DeviceSetting[] {
       schema: { type: "string", enum: ["low", "high"] },
       read: () => ({ value: now().contrast, unsaved: now().contrastError }),
       write: (value) => appearance.setContrast(value as Contrast),
+      live,
+    },
+    {
+      key: "conversations.message_alignment",
+      description:
+        "Message alignment: bottom anchors short conversations above the message box.",
+      schema: { type: "string", enum: ["top", "bottom"] },
+      read: () => ({
+        value: now().messageAlignment,
+        unsaved: now().messageAlignmentError,
+      }),
+      write: (value) =>
+        appearance.setMessageAlignment(value as MessageAlignment),
       live,
     },
     {

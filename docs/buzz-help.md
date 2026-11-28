@@ -91,6 +91,10 @@ if that desktop app is up and running.
     checks.
   - **Plugins**: **Manage plugins**, plus each plugin's own page (Builderlab,
     Attention, Claude, GitHub, Focus and so on).
+- **Message alignment.** In **Settings → Buzz → Appearance → Conversations**,
+  choose **Bottom** to start short conversations and threads above the message
+  box. Earlier messages move up as new ones arrive. **Top** is the default, and
+  the choice is saved on this device.
 
 ## Getting started
 

@@ -1,6 +1,9 @@
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
-import { ToastNotice } from "../shared/design-system/ui/Toast";
+import {
+  ToastNotice,
+  useToastNotification,
+} from "../shared/design-system/ui/Toast";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { Button } from "../shared/design-system/ui/Button";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
@@ -90,10 +93,24 @@ export function NotificationSettings({
     notifications.snapshot,
   );
   const { preferences, permission } = state;
+  const notify = useToastNotification();
   // Only a read: the one automatic system prompt belongs to entering the app
   // and to a window focus, never to this button.
-  const [checking, checkPermission] = usePermissionCheck(() =>
-    notifications.refreshPermission({ ask: false }),
+  const [checking, checkPermission] = usePermissionCheck(
+    () => notifications.refreshPermission({ ask: false }),
+    (result) => {
+      if (result === undefined) return;
+      notify(
+        {
+          granted: "Notification permission is on.",
+          denied: "Notification permission is off.",
+          default: "Notification permission hasn’t been granted.",
+          unsupported: "This build can’t show system notifications.",
+          unknown: "Notification permission is unavailable.",
+        }[result],
+        result === "granted" ? "success" : "info",
+      );
+    },
   );
   const preview = useRef<{
     category: NotificationCategory;

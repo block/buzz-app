@@ -230,6 +230,7 @@ export class NotificationsService extends Service implements Notifications {
         this.publish({ permission });
         if (ask && permission === "default") this.requestAutomatically();
         this.schedule();
+        return permission;
       }
     } catch (error) {
       if (generation === this.permissionGeneration) this.reportError(error);

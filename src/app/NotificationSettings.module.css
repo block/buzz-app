@@ -43,7 +43,6 @@
   margin: 0;
 }
 .permission .actions {
-  overflow-x: auto;
   margin-left: auto;
   max-width: 100%;
 }

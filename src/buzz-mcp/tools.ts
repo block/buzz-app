@@ -436,7 +436,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "dm",
-    "Open a DM; returns its channel. A new DM with anyone the relay archived is refused; an existing one still opens.",
+    "Open a DM; returns its channel. Your owner is always in it, so they see what you say there. A new DM with anyone the relay archived is refused; an existing one still opens.",
     { to: strs },
     ["to"],
   ),
@@ -1446,8 +1446,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async dm(tools, args) {
     const { client } = tools;
-    const to = list(args.to).map(pubkey);
-    if (!to.length) throw new Error("to is required.");
+    const named = list(args.to).map(pubkey);
+    if (!named.length) throw new Error("to is required.");
+    // An agent's DMs always include its owner, so its human sees them.
+    const owner = client.owner && pubkey(client.owner);
+    const to = [
+      ...new Set(owner && owner !== client.pubkey ? [...named, owner] : named),
+    ];
     const first = await tools.findDm(to);
     let found = first.dm;
     let warning = "";

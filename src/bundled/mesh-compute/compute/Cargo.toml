@@ -8,12 +8,12 @@ license = "Apache-2.0"
 [dependencies]
 tempfile = "3"
 serde = { version = "1", features = ["derive"] }
-# Released Mesh 0.79.0, including the virtual-chat and peer-forwarding fixes.
-mesh-llm-embedded-runtime = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "e8c9e7fba8bf88b3fa65a4187862d1147dce372c", default-features = false }
+# Released Mesh 0.80.0.
+mesh-llm-embedded-runtime = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "2b9e64aecdcebaa4242d0718e257bbd59cbf2575", default-features = false }
 
-mesh-llm-host-runtime = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "e8c9e7fba8bf88b3fa65a4187862d1147dce372c", default-features = false, features = ["dynamic-native-runtime"] }
-mesh-llm-events = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "e8c9e7fba8bf88b3fa65a4187862d1147dce372c" }
-mesh-llm-system = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "e8c9e7fba8bf88b3fa65a4187862d1147dce372c" }
+mesh-llm-host-runtime = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "2b9e64aecdcebaa4242d0718e257bbd59cbf2575", default-features = false, features = ["dynamic-native-runtime"] }
+mesh-llm-events = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "2b9e64aecdcebaa4242d0718e257bbd59cbf2575" }
+mesh-llm-system = { git = "https://github.com/Mesh-LLM/mesh-llm.git", rev = "2b9e64aecdcebaa4242d0718e257bbd59cbf2575" }
 iroh = { version = "1.3.0" }
 anyhow = { version = "1" }
 base64 = { version = "0.22" }

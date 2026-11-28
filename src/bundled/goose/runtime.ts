@@ -654,6 +654,7 @@ export class GooseRuntime {
       ignored,
       signal,
       step,
+      action,
       acknowledged,
       accepted,
       superseded,
@@ -891,6 +892,7 @@ export class GooseRuntime {
             ? channel
             : (threadReference(event)?.rootId ?? event.id),
           ...(step ? { step } : {}),
+          ...(action ? { action } : {}),
           delivered: () => acceptProject?.(),
           ...(acknowledged ? { acknowledged } : {}),
           accepted: () => {

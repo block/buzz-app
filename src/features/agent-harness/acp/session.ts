@@ -92,6 +92,8 @@ export class AcpSession {
   private owner: Waiter | undefined;
   private readonly active = new Map<string, ActivityReceipt>();
   private lastStep = "";
+  private actionReceipt: ActivityReceipt | undefined;
+  private readonly actions = new Set<string>();
   /** The receipt each queued request displaced in its scope, superseded only
    * once that request is sent, so a request refused before then gives the
    * scope back, Stop included. */
@@ -319,6 +321,15 @@ export class AcpSession {
       }
     }
     if (kind === "session_info_update" || runId !== null) return;
+    const actionId =
+      kind === "tool_call" && typeof update.toolCallId === "string"
+        ? update.toolCallId
+        : undefined;
+    if (actionId && !this.actions.has(actionId)) {
+      this.actions.add(actionId);
+      if (this.prompting && !this.stopped)
+        this.actionReceipt?.action?.(actionId);
+    }
     const step = stepLabel(update);
     if (!step) return;
     const label = `${step.tool}\u0000${step.target ?? ""}\u0000${step.origin ?? ""}`;
@@ -375,6 +386,9 @@ export class AcpSession {
       if (runId && steering) {
         try {
           activity.accepted?.();
+          // A steer reply acknowledges queueing, not model consumption. Until
+          // the next native prompt, either request may own a fresh action.
+          this.actionReceipt = undefined;
           await steering.steer(this.acp, this.id, runId, said);
           if (live()) {
             activity.delivered?.();
@@ -536,6 +550,7 @@ export class AcpSession {
           };
         } finally {
           this.confirmPrompt = undefined;
+          this.actionReceipt = undefined;
         }
       }
     } finally {
@@ -595,6 +610,7 @@ export class AcpSession {
   /** A queued request reached the harness: the receipt it displaced is
    * superseded. */
   private sent(waiter: Waiter) {
+    this.actionReceipt = this.displaced.get(waiter)?.activity;
     this.displaced.get(waiter)?.prior?.superseded?.();
     this.displaced.delete(waiter);
   }
@@ -663,6 +679,7 @@ export class AcpSession {
     this.abortWork();
     this.pending = 0;
     this.active.clear();
+    this.actionReceipt = undefined;
     this.displaced.clear();
     this.lastFailure = undefined;
     this.acted = false;

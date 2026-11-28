@@ -113,10 +113,15 @@ fn production_environment_probe() {
     let id = state.spawn(&owner, context.clone(), 80, 24).unwrap();
     // The real login-shell command and real spawn path above must fence parent
     // credentials. Do not rebuild/fence a separate command in this regression.
+    // The shell gets the production PATH, so the tools come in by path.
+    let tool = |name: &str| std::env::var(format!("BUZZ_TERMINAL_PROBE_{name}")).unwrap();
+    let probe = format!(
+        "{} -echo; printf '\\nLOGIN=%s\\n' \"$0\"; {}; exit\n",
+        tool("STTY"),
+        tool("ENV")
+    );
     state
-        .with_session(&owner, &id, |s| {
-            s.write(b"stty -echo; printf '\nLOGIN=%s\n' \"$0\"; /usr/bin/env; exit\n")
-        })
+        .with_session(&owner, &id, |s| s.write(probe.as_bytes()))
         .unwrap();
     let output = String::from_utf8(read_all(&state, &owner, &id)).unwrap();
     assert!(output.contains("LOGIN=-sh"), "{output}");
@@ -157,6 +162,14 @@ fn real_spawn_fences_secrets_and_preserves_login_context() {
             "--nocapture",
         ])
         .env("BUZZ_TERMINAL_PROBE", "1")
+        .env(
+            "BUZZ_TERMINAL_PROBE_ENV",
+            crate::test_executable::on_path("env"),
+        )
+        .env(
+            "BUZZ_TERMINAL_PROBE_STTY",
+            crate::test_executable::on_path("stty"),
+        )
         .env("BUZZ_PRIVATE_KEY", "TOP_SECRET_PRIVATE")
         .env("BUZZ_AUTH_TAG", "TOP_SECRET_AUTH")
         .env("UNKNOWN_NEW_SECRET", "FUTURE_SECRET")

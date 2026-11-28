@@ -1,6 +1,7 @@
 import {
   useContext,
   useEffect,
+  useMemo,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -63,7 +64,12 @@ export function BestieNavigationProvider({
     session.channels.subscribeList,
     session.channels.list,
   );
-  const channel = bestieChat(channels.channels, viewer, promoted);
+  const channelId = bestieChat(channels.channels, viewer, promoted)?.id;
+  // The list changes with every preview; consumers re-render only on the DM.
+  const conversation = useMemo(
+    () => (channelId ? { session, channelId } : undefined),
+    [session, channelId],
+  );
   // The published profile wins, as in DM rows and message avatars, including a
   // profile without a picture (initials). The agent definition's art covers
   // only the wait for that profile, or an agent that never published one.
@@ -117,9 +123,7 @@ export function BestieNavigationProvider({
       : undefined;
   return (
     <BestieNavigationContext value={mark}>
-      <BestieConversationContext
-        value={channel ? { session, channelId: channel.id } : undefined}
-      >
+      <BestieConversationContext value={conversation}>
         {children}
       </BestieConversationContext>
     </BestieNavigationContext>

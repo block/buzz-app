@@ -263,7 +263,7 @@ export type ChannelTimelineProps = {
   /** One inline exact visit: focus the verified mounted row, without a page
    * navigation. `focus: false` marks it beside a reader that owns focus. */
   inlineTarget?:
-    | Readonly<{ messageId: string; signal: AbortSignal; focus?: false }>
+    | Readonly<{ messageId: string; signal: AbortSignal; focus?: boolean }>
     | undefined;
   /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
   transient?: boolean | undefined;
@@ -271,6 +271,8 @@ export type ChannelTimelineProps = {
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
+  /** The reader moved in the history: a scroll gesture, key, or press. */
+  onReaderIntent?: (() => void) | undefined;
   onOpenThread?(
     messageId: string,
     threadRootId: string,
@@ -318,6 +320,7 @@ function Timeline({
   latestRequest,
   marksRead = true,
   navigation,
+  onReaderIntent,
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
@@ -2319,6 +2322,7 @@ function Timeline({
     layoutCorrection.current = false;
     intent.current++;
     userScrolled.current = true;
+    onReaderIntent?.();
     if (scroller.current) recordPosition(scroller.current);
     // Retiring a pending restore lets the bottom be caught up. Wake dwell: a
     // wheel or touch at the end cannot scroll, so nothing else would.

@@ -303,6 +303,7 @@ export function CodePanel({
             label={read.path}
             selected={link.lines}
             scrollToSelected
+            windowed
           />
         )}
       </LoadingRegion>

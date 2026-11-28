@@ -115,6 +115,10 @@ export const test = base.extend({
   // Opt-in perf workload: chat-like Markdown (code, links, lists, mentions)
   // in most corpus rows instead of inert prose.
   markdownMessages: [false, { option: true }],
+  // Opt-in perf workload: every other corpus row, the newest included, ends
+  // with a GitHub line link, which the GitHub plugin draws as code inside the
+  // message.
+  codeLinkMessages: [false, { option: true }],
   // Opt-in perf workload: chat-like one-line rows, every fifth one two lines.
   shortMessages: [false, { option: true }],
   // Opt-in perf workload: newer activity in another joined channel fills the
@@ -212,6 +216,7 @@ export const test = base.extend({
       inboxSoloAgent,
       tallMessages,
       markdownMessages,
+      codeLinkMessages,
       shortMessages,
       firstSeenHistory,
       olderPageDelayMs,
@@ -554,7 +559,11 @@ export const test = base.extend({
         histories.set(
           `${community}/${channel}`,
           Array.from({ length: historyCounts[channel] }, (_, i) => {
-            const syntax = markdownMessages ? markdown[i % 8](i) : "";
+            const syntax = markdownMessages
+              ? markdown[i % 8](i)
+              : codeLinkMessages && i % 2 === 1
+                ? `See https://github.com/block/buzz-app/blob/main/src/bundled/github/references.ts#L${1 + (i % 20)}-L${8 + (i % 20)}`
+                : "";
             return sign(
               9,
               [
@@ -1031,6 +1040,7 @@ export const test = base.extend({
         agentPeers,
         tallMessages,
         markdownMessages,
+        codeLinkMessages,
         shortMessages,
         firstSeenHistory,
         olderPageDelayMs,

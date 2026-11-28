@@ -180,6 +180,70 @@ describe("discover", () => {
   });
 });
 
+describe("link", () => {
+  const install = (query: string) =>
+    `buzz://plugin-install?repository=https%3A%2F%2Fgithub.com%2Fowner%2Fplugins${query}`;
+
+  it("links the plugin at a path, at the latest or pinned", async () => {
+    const { agent, checkGit } = harness();
+    expect(
+      await agent.link({ repository: "owner/plugins", path: "tasks" }),
+    ).toEqual({
+      link: install("&path=tasks"),
+      markdown: `[Install EXAMPLE.TASKS](${install("&path=tasks")})`,
+      id: "example.tasks",
+      name: "EXAMPLE.TASKS",
+      commit: COMMIT,
+    });
+    expect(checkGit).toHaveBeenCalledWith("owner/plugins", "", undefined, {
+      commit: undefined,
+      path: "tasks",
+    });
+    expect(
+      (
+        await agent.link({
+          repository: "owner/plugins",
+          reference: "main",
+          path: "tasks",
+          pin: true,
+        })
+      ).link,
+    ).toBe(install(`&ref=main&path=tasks&commit=${COMMIT}`));
+  });
+
+  it("reads a GitHub folder page", async () => {
+    const { agent, checkGit } = harness();
+    expect(
+      (
+        await agent.link({
+          repository: "https://github.com/owner/plugins/tree/main/tasks",
+        })
+      ).link,
+    ).toBe(install("&ref=main&path=tasks"));
+    expect(checkGit).toHaveBeenCalledWith(
+      "https://github.com/owner/plugins",
+      "main",
+      undefined,
+      { commit: undefined, path: "tasks" },
+    );
+  });
+
+  it("asks which plugin, and refuses a repository only members can read", async () => {
+    const { agent } = harness();
+    await expect(agent.link({ repository: "owner/plugins" })).rejects.toThrow(
+      "Choose a path: notes, tasks",
+    );
+    await expect(
+      agent.link({
+        repository: `https://relay.example/git/${"a".repeat(64)}/plugins`,
+      }),
+    ).rejects.toThrow("Buzz-hosted");
+    await expect(
+      agent.link({ repository: "/Users/someone/plugins/notes" }),
+    ).rejects.toThrow("A local folder can't be shared");
+  });
+});
+
 describe("disable", () => {
   it("turns an installed plugin off at once", async () => {
     const { agent, change } = harness();

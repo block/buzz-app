@@ -207,21 +207,16 @@ function ReactionPreviewContent({
   overflowing: boolean;
   onOverflow(overflowing: boolean): void;
 }) {
-  const previewAuthors = useMemo(() => {
-    return session.viewer && authorIds.includes(session.viewer)
-      ? [session.viewer, ...authorIds.filter((id) => id !== session.viewer)]
-      : authorIds;
-  }, [authorIds, session.viewer]);
   const reactorProfiles = useMemo(
-    () => selectProfiles(session.profiles, previewAuthors),
-    [session.profiles, previewAuthors],
+    () => selectProfiles(session.profiles, authorIds),
+    [session.profiles, authorIds],
   );
   const loadedReactors = useSyncExternalStore(
     reactorProfiles.subscribe,
     reactorProfiles.snapshot,
     reactorProfiles.snapshot,
   );
-  const users = previewAuthors.map((authorId) =>
+  const users = authorIds.map((authorId) =>
     authorId === session.viewer
       ? "You"
       : (loadedReactors.get(authorId)?.name ??
@@ -231,9 +226,9 @@ function ReactionPreviewContent({
   // Opening enriches a small first page, never pointer transit across a pill.
   useEffect(() => {
     void session.profiles
-      .ensure(previewAuthors.slice(0, 32), "background")
+      .ensure(authorIds.slice(0, 32), "background")
       .catch(() => {});
-  }, [session.profiles, previewAuthors]);
+  }, [session.profiles, authorIds]);
   const observePeople = useCallback(
     (element: HTMLElement | null) => {
       peopleList.current = element;
@@ -264,7 +259,7 @@ function ReactionPreviewContent({
               },
               { root: element },
             );
-      for (let index = 0; index < previewAuthors.length; index++) {
+      for (let index = 0; index < authorIds.length; index++) {
         const person = element.firstElementChild?.children.item(index);
         if (person) visible?.observe(person);
       }
@@ -273,7 +268,7 @@ function ReactionPreviewContent({
         visible?.disconnect();
       };
     },
-    [session.profiles, previewAuthors, peopleList, onOverflow],
+    [session.profiles, authorIds, peopleList, onOverflow],
   );
   return (
     <div className={styles.reactionPreviewContent}>
@@ -290,7 +285,7 @@ function ReactionPreviewContent({
         tabIndex={overflowing ? 0 : undefined}
       >
         <div>
-          {previewAuthors.map((authorId, index) => (
+          {authorIds.map((authorId, index) => (
             <span key={authorId} data-author={authorId}>
               {index > 0 ? ", " : ""}
               {users[index]}

@@ -49,7 +49,7 @@ afterEach(() => {
 it("groups by event-local emoji identity, counts unique people and retains duplicate event IDs", () => {
   const mine = reaction(),
     duplicate = reaction(viewer, 3),
-    theirs = reaction(other);
+    theirs = reaction(other, 1);
   const custom = (url: string) =>
     signed(viewer, {
       kind: 7,
@@ -68,10 +68,11 @@ it("groups by event-local emoji identity, counts unique people and retains dupli
     custom("https://two.test/a"),
   ]);
   expect(rows[0]?.reactions).toHaveLength(3);
+  // People in the order they reacted, not the order the events arrived.
   expect(rows[0]?.reactions[0]?.events).toEqual([
+    { id: theirs.id, authorId: other.pubkey },
     { id: mine.id, authorId: viewer.pubkey },
     { id: duplicate.id, authorId: viewer.pubkey },
-    { id: theirs.id, authorId: other.pubkey },
   ]);
   expect(
     new Set(rows[0]?.reactions[0]?.events.map((item) => item.authorId)).size,

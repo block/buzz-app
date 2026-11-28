@@ -118,6 +118,46 @@ let snapshot = {
     },
   ],
 };
+// `?crowded` adds an Interest with a long title and summary, a long-named Messages
+// watch and a timer, for layouts that only break with realistic content.
+if (new URLSearchParams(location.search).has("crowded")) {
+  Object.assign(snapshot.running[0]?.attention ?? {}, {
+    "interest/crowded": {
+      slug: "interest/crowded",
+      modifiedAt: 1,
+      value: {
+        type: "interest",
+        title: "Platform reliability working group weekly planning",
+        summary:
+          "Wakes on release discussion and a weekly timer, then summarizes blockers for the working group.",
+        instructions: "# Crowded planning",
+      },
+    },
+    "watch/crowded-messages": {
+      slug: "watch/crowded-messages",
+      modifiedAt: 1,
+      value: {
+        ...value,
+        name: "Weekly reliability release discussion",
+        interest_id: "crowded",
+      },
+    },
+    "watch/crowded-timer": {
+      slug: "watch/crowded-timer",
+      modifiedAt: 1,
+      value: {
+        type: "timer",
+        interest_id: "crowded",
+        enabled: true,
+        prompt: "Summarize the open blockers.",
+        armed_at: 1,
+        interval_secs: 3600,
+        max_occurrences: null,
+        expires_at: null,
+      },
+    },
+  });
+}
 const channels = {
   channels: [{ id: channel, name: "Release planning", channelType: "stream" }],
 };

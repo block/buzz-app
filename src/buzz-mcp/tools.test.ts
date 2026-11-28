@@ -1711,13 +1711,52 @@ it("replaces memory only at the version it was shown, newer than the entry it re
     }),
   ).resolves.toBe(`saved; version ${await memoryVersion("new")}`);
   expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 50);
-  // Every read is of the one entry by its slug, not the whole listing.
+  // Every read is of the one entry by its slug, not the whole listing; the
+  // write is read back. The checks around a write read from the writer.
   expect(vi.mocked(client.memories).mock.calls).toEqual([
     ["mem/notes"],
-    ["mem/notes"],
-    ["mem/notes"],
-    ["mem/notes"],
+    ["mem/notes", true],
+    ["mem/notes", true],
+    ["mem/notes", true],
+    ["mem/notes", true],
   ]);
+  // Another session's write of the same version replaced this one.
+  vi.mocked(client.remember).mockImplementationOnce(async () => {
+    vi.mocked(client.memories).mockResolvedValue({
+      entries: [{ slug: "mem/notes", body: "theirs", createdAt: 51 }],
+      partial: false,
+    });
+  });
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: "new",
+      expected: version,
+    }),
+  ).rejects.toThrow(
+    "conflict: mem/notes was saved, but another session's write replaced it. Read it again with mem_get, merge your change into it, and pass the new version as expected.",
+  );
+  // Or another session's delete of the same version did.
+  vi.mocked(client.memories).mockResolvedValue({
+    entries: [{ slug: "mem/notes", body: "old", createdAt: 50 }],
+    partial: false,
+  });
+  vi.mocked(client.remember).mockImplementationOnce(async () => {
+    vi.mocked(client.memories).mockResolvedValue({
+      entries: [],
+      deleted: [{ slug: "mem/notes", createdAt: 51 }],
+      partial: false,
+    });
+  });
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: "new",
+      expected: version,
+    }),
+  ).rejects.toThrow(
+    "conflict: mem/notes was saved, but another session deleted it. Check with mem_get whether it should exist before you write it again.",
+  );
   // Without an entry, expected names nothing to replace.
   vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
   await expect(
@@ -1751,8 +1790,9 @@ it("deletes memory only at the version it was shown, and never core", async () =
       expected: await memoryVersion("old"),
     }),
   ).resolves.toBe("deleted mem/notes");
-  // A tombstone, dated after the entry it deletes.
+  // A tombstone, dated after the entry it deletes, checked against the writer.
   expect(client.remember).toHaveBeenCalledWith("mem/notes", null, 50);
+  expect(client.memories).toHaveBeenLastCalledWith("mem/notes", true);
   vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: true });
   await expect(
     callTool(client, {}, "mem_rm", { slug: "gone", expected: "0".repeat(16) }),
@@ -3125,6 +3165,30 @@ it("reports a canvas write the relay refused or another write overtook", async (
   );
 });
 
+it("reports a canvas write that a later edit built on as saved", async () => {
+  const saved = "e".repeat(64);
+  const edit = event({
+    kind: 40100,
+    id: "d".repeat(64),
+    tags: [["expected-revision", saved]],
+  });
+  const { client } = fake([event({ kind: 40100, id: nested })]);
+  const publish = client.publish;
+  client.publish = vi.fn(async (template) => {
+    const signed = await publish(template);
+    vi.mocked(client.query).mockResolvedValue([edit]);
+    return signed;
+  });
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", {
+      content: "# Mine",
+      expected: nested,
+    }),
+  ).resolves.toBe(
+    `saved as version ${saved}; it has since been edited as version ${edit.id}. Read canvas_get before you write again.`,
+  );
+});
+
 it("lists canvas revisions newest first, a page at a time", async () => {
   const rows = Array.from({ length: CANVAS_HISTORY_PAGE + 1 }, (_, i) =>
     event({
@@ -3402,6 +3466,31 @@ it("reports a restore that another canvas write overtook", async () => {
       }),
     ).rejects.toThrow(
       `conflict: the restore was received, but another canvas (${nested})`,
+    );
+    // A later edit written against the restore kept it.
+    const edit = event({
+      kind: 40100,
+      id: "c".repeat(64),
+      created_at: 999,
+      tags: [["expected-revision", "e".repeat(64)]],
+    });
+    const { client: built } = fake([
+      old,
+      event({ kind: 40100, id: "d".repeat(64), created_at: 200 }),
+    ]);
+    const builtPublish = built.publish;
+    built.publish = vi.fn(async (template) => {
+      const signed = await builtPublish(template);
+      (built.query as ReturnType<typeof vi.fn>).mockResolvedValue([edit]);
+      return signed;
+    });
+    await expect(
+      callTool(built, { channel: "chan" }, "canvas_restore", {
+        id: root,
+        expected: "d".repeat(64),
+      }),
+    ).resolves.toBe(
+      `restored ${root} as ${"e".repeat(64)}; it has since been edited as version ${edit.id}. Read canvas_history before you write again.`,
     );
   } finally {
     vi.useRealTimers();

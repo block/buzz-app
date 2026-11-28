@@ -4833,7 +4833,8 @@ export class AgentsService extends Service implements Agents {
                 options.cwd === undefined ? undefined : { cwd: options.cwd },
               );
             },
-            memories: (slug) => reads().memoryListing(signal, slug),
+            memories: (slug, strong) =>
+              reads().memoryListing(signal, slug, strong),
           });
           return (message) =>
             respond(
@@ -5398,7 +5399,8 @@ export class AgentsService extends Service implements Agents {
                 );
               return bytes;
             },
-            memories: (slug) => source.memoryListing(signal, slug),
+            memories: (slug, strong) =>
+              source.memoryListing(signal, slug, strong),
           });
           return (message) => {
             check();

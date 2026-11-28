@@ -333,7 +333,7 @@ export function nodeClient(
         throw new Error(`${path} is outside ${options.root}`);
       return new Uint8Array(await readFile(full));
     },
-    async memories(slug) {
+    async memories(slug, strong) {
       const key = conversation();
       const events = eventsDto(
         await request(
@@ -344,6 +344,7 @@ export function nodeClient(
               authors: [pubkey],
               "#p": [owner],
               ...(slug ? { "#d": [memoryAddress(key, slug)] } : {}),
+              ...(strong ? { consistency: "strong" } : {}),
               limit: MEMORY_LIMIT,
             },
           ]),

@@ -2547,18 +2547,21 @@ describe("goose memory reads", () => {
     );
     await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
     reads[1]?.answer("old notes");
+    // mem_set reads its write back.
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(3));
+    reads[2]?.answer("new");
     await expect(saved).resolves.toMatch(/^saved; version [0-9a-f]{16}$/);
     expect(agent.remember).toHaveBeenCalledWith("mem/notes", "new", 1);
     const after = body(call("mem_get", { slug: "core" }));
-    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(4));
     reads[0]?.answer("before the write");
     await expect(before).resolves.toBe("before the write");
     // The old read finishing must not drop the newer one.
     const later = body(call("mem_get", { slug: "core" }));
-    reads[2]?.answer("after the write");
+    reads[3]?.answer("after the write");
     await expect(after).resolves.toBe("after the write");
     await expect(later).resolves.toBe("after the write");
-    expect(memoryRead).toHaveBeenCalledTimes(3);
+    expect(memoryRead).toHaveBeenCalledTimes(4);
   });
 
   it("keeps a shared read for the others when one caller stops waiting", async () => {

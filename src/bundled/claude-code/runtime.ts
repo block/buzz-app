@@ -2318,7 +2318,8 @@ export class ClaudeRuntime {
                     undefined,
                     handle.protection?.processProtection,
                   ),
-            memories: (slug) => this.memories(agent, slug),
+            memories: (slug, strong) =>
+              this.memories(agent, slug, undefined, strong),
             remembered: () => this.forget(agent),
             signal,
             callSignal: signal,
@@ -2509,7 +2510,12 @@ export class ClaudeRuntime {
 
   /** The agent's memory, or only entry `slug`, as its community's reads give
    * it. `stop` ends the read sooner than its own limit. */
-  private memories(agent: AgentKey, slug?: string, stop?: AbortSignal) {
+  private memories(
+    agent: AgentKey,
+    slug?: string,
+    stop?: AbortSignal,
+    strong?: boolean,
+  ) {
     const reads = this.reads(agent);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     const limit = AbortSignal.timeout(READ_TIMEOUT_MS);
@@ -2518,6 +2524,7 @@ export class ClaudeRuntime {
       pubkeyOf(agent),
       stop ? AbortSignal.any([limit, stop]) : limit,
       slug,
+      strong,
     );
   }
   private forget(agent: AgentKey) {

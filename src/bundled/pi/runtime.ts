@@ -1344,7 +1344,7 @@ export class PiRuntime {
               )
             : this.readFile(path, { cwd });
         },
-        memories: (slug) => this.memories(call.agent, slug),
+        memories: (slug, strong) => this.memories(call.agent, slug, strong),
         remembered: () => this.forgetMemory(call.agent),
         ...(signal ? { signal } : {}),
       });
@@ -1988,7 +1988,7 @@ export class PiRuntime {
 
   /** The agent's memory, or only entry `slug`, as its community's reads give
    * it. */
-  private memories(agent: AgentKey, slug?: string) {
+  private memories(agent: AgentKey, slug?: string, strong?: boolean) {
     const reads = this.reads(agent);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
@@ -1996,6 +1996,7 @@ export class PiRuntime {
       pubkeyOf(agent),
       AbortSignal.timeout(READ_TIMEOUT_MS),
       slug,
+      strong,
     );
   }
   private forgetMemory(agent: AgentKey) {

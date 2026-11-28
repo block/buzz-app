@@ -5414,13 +5414,18 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   });
   expect(f.media).toHaveBeenCalledWith("shot.png");
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  // mem_set's read and a fresh post-write read, each of one entry by its slug;
-  // the turn's `core` came from the host.
+  // mem_set's check and read-back from the writer, then mem_get's fresh read,
+  // each of one entry by its slug; the turn's `core` came from the host.
   expect(
-    f.memoryRead.mock.calls.map((call: unknown[]) => [call[0], call[2]]),
+    f.memoryRead.mock.calls.map((call: unknown[]) => [
+      call[0],
+      call[2],
+      call[3],
+    ]),
   ).toEqual([
-    [pubkey, "mem/test"],
-    [pubkey, "mem/test"],
+    [pubkey, "mem/test", true],
+    [pubkey, "mem/test", true],
+    [pubkey, "mem/test", undefined],
   ]);
   expect(
     (

@@ -133,8 +133,8 @@ export class MeshGoose {
         if (delivery.current && !delivery.current())
           throw new Error("Agent turn ended");
       },
-      memories: (slug) =>
-        this.deps.memories?.(delivery.agent.key, signal, slug) ??
+      memories: (slug, strong) =>
+        this.deps.memories?.(delivery.agent.key, signal, slug, strong) ??
         Promise.resolve({ entries: [], partial: false }),
       remembered: () => this.deps.remembered?.(delivery.agent.key),
     });

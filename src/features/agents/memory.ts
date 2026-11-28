@@ -21,12 +21,14 @@ export interface MemoryListing {
   partial: boolean;
 }
 /** Reads every entry, or only entry `slug` when given. With `onPage`, a
- * reader may report the entries each page adds or changes as it lands. */
+ * reader may report the entries each page adds or changes as it lands.
+ * `strong` reads from the writer, for a check before or after a write. */
 export type MemoryReader = (
   agent: string,
   signal: AbortSignal,
   slug?: string,
   onPage?: (page: MemoryListing) => void,
+  strong?: boolean,
 ) => Promise<MemoryListing>;
 export type MemorySnapshot = Readonly<{
   /** `loading` may carry the entries read so far. */
@@ -363,7 +365,12 @@ export function createAgentMemories(
   }
   /** Runtime reads do not consume mounted-view capacity. They are serialized so
    * bursts across agents still impose one bounded owner-view read per session. */
-  function read(agent: string, signal: AbortSignal, slug?: string) {
+  function read(
+    agent: string,
+    signal: AbortSignal,
+    slug?: string,
+    strong?: boolean,
+  ) {
     const admitted = generation;
     const task = queued.then(async () => {
       signal.throwIfAborted();
@@ -384,7 +391,9 @@ export function createAgentMemories(
           controller.signal,
           AbortSignal.timeout(10000),
         ]);
-        const listing = memoryListing(await source(agent, combined, slug));
+        const listing = memoryListing(
+          await source(agent, combined, slug, undefined, strong),
+        );
         combined.throwIfAborted();
         if (admitted !== generation || !available())
           throw new Error("Memory read unavailable");

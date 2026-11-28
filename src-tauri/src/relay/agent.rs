@@ -411,12 +411,14 @@ pub(crate) async fn relay_agent_memories_read<R: tauri::Runtime>(
     community: String,
     agent: String,
     slug: Option<String>,
+    strong: Option<bool>,
     id: Option<String>,
     on_page: Option<tauri::ipc::JavaScriptChannelId>,
 ) -> Result<Value> {
+    let strong = strong.unwrap_or(false);
     let on_page = on_page.map(|channel| channel.channel_on(webview));
     let Some(id) = id else {
-        return read_agent_memories(&host, &fi, community, agent, slug, None).await;
+        return read_agent_memories(&host, &fi, community, agent, slug, strong, None).await;
     };
     let id = super::upload_id(Some(&id)).map_err(|_| "Invalid memory read")?;
     let Some(cancelled) = super::read_cancels()
@@ -430,7 +432,7 @@ pub(crate) async fn relay_agent_memories_read<R: tauri::Runtime>(
     let result = tokio::select! {
         biased;
         _ = cancelled => Err("Memory read cancelled".into()),
-        result = read_agent_memories(&host, &fi, community, agent, slug, on_page) => result,
+        result = read_agent_memories(&host, &fi, community, agent, slug, strong, on_page) => result,
     };
     super::read_cancels().finish(id);
     result
@@ -446,6 +448,7 @@ async fn read_agent_memories(
     community: String,
     agent: String,
     slug: Option<String>,
+    strong: bool,
     on_page: Option<tauri::ipc::Channel<Value>>,
 ) -> Result<Value> {
     let url = origin(&community)?
@@ -471,6 +474,11 @@ async fn read_agent_memories(
     }
     let mut filter =
         json!({"kinds":[30174], "authors":[agent], "#p":[viewer], "limit":MEMORY_PAGE});
+    // A check before or after a write reads from the writer, which a lagging
+    // replica cannot hide a newer write from.
+    if strong {
+        filter["consistency"] = json!("strong");
+    }
     if let Some(name) = slug.clone() {
         let target = agent.clone();
         let address = host.with_key(move |secret, _| {

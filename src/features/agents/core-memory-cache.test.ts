@@ -53,6 +53,7 @@ it("waits on one read with nothing cached, then answers from the cache with none
   expect(f.memoryListing).toHaveBeenCalledExactlyOnceWith(
     expect.any(AbortSignal),
     "core",
+    undefined,
   );
   // A new cache, as after a restart, starts empty and reads `core` again.
   const reads = {
@@ -66,6 +67,7 @@ it("waits on one read with nothing cached, then answers from the cache with none
   expect(f.memoryListing).toHaveBeenLastCalledWith(
     expect.any(AbortSignal),
     "core",
+    undefined,
   );
 });
 

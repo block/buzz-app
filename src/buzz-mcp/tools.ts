@@ -1517,7 +1517,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       );
     // A write must be dated after the entry it replaces, so it waits for a
     // read that finds the entry or confirms there is none.
-    const { entries, deleted, partial } = await tools.client.memories(key);
+    const { entries, deleted, partial } = await tools.client.memories(
+      key,
+      true,
+    );
     const current = entries.find((entry) => entry.slug === key);
     if (!current && partial)
       throw new Error(`Memory ${key} could not be read; try again.`);
@@ -1543,6 +1546,22 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       body,
       current?.createdAt ?? tombstone?.createdAt ?? 0,
     );
+    // The relay keeps the newest write without checking the version, so only
+    // a read shows whether another session's write replaced this one. A read
+    // that fails, or still shows the entry this one replaced, cannot tell.
+    const readBack = await tools.client
+      .memories(key, true)
+      .catch(() => undefined);
+    const now = readBack?.entries.find((entry) => entry.slug === key)?.body;
+    if (now !== undefined && now !== body && now !== current?.body)
+      throw new Error(
+        `conflict: ${key} was saved, but another session's write replaced it. Read it again with mem_get, merge your change into it, and pass the new version as expected.`,
+      );
+    const removed = readBack?.deleted?.find((entry) => entry.slug === key);
+    if (removed && removed.createdAt !== tombstone?.createdAt)
+      throw new Error(
+        `conflict: ${key} was saved, but another session deleted it. Check with mem_get whether it should exist before you write it again.`,
+      );
     const saved = `saved; version ${await memoryVersion(body)}`;
     if (key !== "core") return saved;
     const size = new TextEncoder().encode(body).length;
@@ -1559,7 +1578,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // NIP-AE has no tombstone for core; only a write replaces it.
     if (key === "core")
       throw new Error("core cannot be deleted; replace it with mem_set.");
-    const { entries, partial } = await tools.client.memories(key);
+    const { entries, partial } = await tools.client.memories(key, true);
     const current = entries.find((entry) => entry.slug === key);
     if (!current && partial)
       throw new Error(`Memory ${key} could not be read; try again.`);
@@ -1807,11 +1826,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         `saved as version ${saved.id}, but the canvas could not be read back to confirm it is current: ${reason(error)}. Read canvas_get before you write again.`,
       );
     });
-    if (selected?.id !== saved.id)
-      throw new Error(
-        `conflict: the canvas was saved as version ${saved.id}, but another (${selected?.id ?? "none"}) is now current. Read canvas_get, merge your change into it, and pass its version as expected.`,
-      );
-    return `saved; version ${saved.id}`;
+    if (selected?.id === saved.id) return `saved; version ${saved.id}`;
+    if (selected && builtOn(selected, saved.id))
+      return `saved as version ${saved.id}; it has since been edited as version ${selected.id}. Read canvas_get before you write again.`;
+    throw new Error(
+      `conflict: the canvas was saved as version ${saved.id}, but another (${selected?.id ?? "none"}) is now current. Read canvas_get, merge your change into it, and pass its version as expected.`,
+    );
   },
 
   async canvas_history(tools, args) {
@@ -1910,11 +1930,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         `restored ${id} as ${saved.id}, but the canvas could not be read back to confirm it is current: ${reason(error)}. Read canvas_history before you retry.`,
       );
     });
-    if (selected?.id !== saved.id)
-      throw new Error(
-        `conflict: the restore was received, but another canvas (${selected?.id}) is now current. Read canvas_history again before you retry.`,
-      );
-    return `restored ${id} as ${saved.id}`;
+    if (selected?.id === saved.id) return `restored ${id} as ${saved.id}`;
+    if (selected && builtOn(selected, saved.id))
+      return `restored ${id} as ${saved.id}; it has since been edited as version ${selected.id}. Read canvas_history before you write again.`;
+    throw new Error(
+      `conflict: the restore was received, but another canvas (${selected?.id}) is now current. Read canvas_history again before you retry.`,
+    );
   },
 
   async repo(tools, args) {
@@ -3495,6 +3516,10 @@ const tag = (event: BuzzEvent, name: string) =>
 const has = (event: BuzzEvent, name: string) =>
   event.tags.some((t) => t[0] === name);
 type Member = Readonly<{ pubkey: string; role: string }>;
+// A canvas written against version `id` kept that version's change.
+const builtOn = (canvas: BuzzEvent, id: string) =>
+  canvas.tags.some((t) => t[0] === "expected-revision" && t[1] === id);
+
 const reason = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 

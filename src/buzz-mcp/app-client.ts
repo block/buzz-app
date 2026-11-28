@@ -40,7 +40,7 @@ export function appClient(
     relayAuthor?: string | undefined;
     /** As `BuzzClient.signingAuthority`; undefined when unknown. */
     signingAuthority?: string | null | undefined;
-    memories(slug?: string): Promise<Memories>;
+    memories(slug?: string, strong?: boolean): Promise<Memories>;
     /** Forget a read that may have started before a successful memory write. */
     remembered?(): void;
     /** Reject operations after the owning turn or community has ended. */
@@ -302,9 +302,9 @@ export function appClient(
       agent.protection?.assertAvailable();
       return bytes;
     },
-    memories: async (slug) => {
+    memories: async (slug, strong) => {
       check();
-      const result = await options.memories(slug);
+      const result = await options.memories(slug, strong);
       check();
       return result;
     },

@@ -83,6 +83,14 @@ it("reads back its memory and rejects a tampered entry", async () => {
     entries: [{ slug: "mem/notes", body: "keep this" }],
     partial: false,
   });
+  // Only a check around a write asks for a read from the writer.
+  const consistency = () => {
+    const [, init] = vi.mocked(fetch).mock.lastCall ?? [];
+    return JSON.parse(String(init?.body))[0].consistency;
+  };
+  expect(consistency()).toBeUndefined();
+  await buzz.memories("mem/notes", true);
+  expect(consistency()).toBe("strong");
 
   // The newest head would win if its signature went unchecked.
   const entry = stored[0] as { created_at: number };

@@ -19,6 +19,7 @@ export class MemoryReads {
     agent: string,
     signal: AbortSignal,
     slug?: string,
+    strong?: boolean,
   ) {
     signal.throwIfAborted();
     let reads = this.reads.get(source.connection);
@@ -26,7 +27,7 @@ export class MemoryReads {
       reads = new Map();
       this.reads.set(source.connection, reads);
     }
-    const key = `${agent}\0${slug ?? ""}`;
+    const key = `${agent}\0${slug ?? ""}\0${strong ? "strong" : ""}`;
     let read = reads.get(key);
     if (!read) {
       const stop = new AbortController();
@@ -34,6 +35,7 @@ export class MemoryReads {
         listing: source.memoryListing(
           AbortSignal.any([stop.signal, AbortSignal.timeout(READ_TIMEOUT_MS)]),
           slug,
+          strong,
         ),
         stop,
         callers: 0,

@@ -1805,7 +1805,7 @@ export class GooseRuntime {
                 )
               : this.desktop.readFile(path, { cwd });
           },
-          memories: (slug) => this.memories(agent, slug),
+          memories: (slug, strong) => this.memories(agent, slug, strong),
           remembered: () => this.forget(agent),
         });
       const context = (conversation && entry.contexts.get(conversation)) || {};
@@ -1935,7 +1935,7 @@ export class GooseRuntime {
   /** The agent's memory, or only entry `slug`, as the owner's reads of its
    * community give it: it is encrypted to the owner, so no agent key is
    * needed. */
-  private memories(agent: AgentKey, slug?: string) {
+  private memories(agent: AgentKey, slug?: string, strong?: boolean) {
     const pubkey = pubkeyOf(agent);
     const reads = this.reads(agent);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
@@ -1944,6 +1944,7 @@ export class GooseRuntime {
       pubkey,
       AbortSignal.timeout(READ_TIMEOUT_MS),
       slug,
+      strong,
     );
   }
   private forget(agent: AgentKey) {

@@ -26,6 +26,10 @@ type Route = GatewayRoute | Readonly<{ kind: "external" }>;
 
 /** Pi's stable harness name, which the gateway enables per membership. */
 export const HARNESS = "pi";
+/** The descriptor's upstream for each Pi provider whose own requests the
+ * gateway passes through: Databricks, by its own paths and model IDs.
+ * Kept in sync with `PASS_THROUGH` in `host.mjs`. */
+const PASS_THROUGH = { databricks: "pi-databricks" } as const;
 
 /** The route Pi's agent runs on: the gateway's only when it is eligible and
  * enables Pi. Any other, blocked or still checking included, runs Pi's own
@@ -100,10 +104,17 @@ export function answerGateway(
     const gateway = gatewayRoute(route);
     const upstream = seam.upstreamFor(HARNESS);
     if (!gateway || !upstream) return { ok: false, message: LEFT };
+    const passThrough = Object.fromEntries(
+      Object.entries(PASS_THROUGH).flatMap(([provider, key]) => {
+        const base = seam.upstreamFor(key)?.base;
+        return base ? [[provider, `${gateway.gatewayOrigin}${base}`]] : [];
+      }),
+    );
     return {
       ok: true,
       revision: admitted.revision,
       root: `${gateway.gatewayOrigin}${upstream.base}`,
+      ...(Object.keys(passThrough).length ? { passThrough } : {}),
       profile: gateway.profile,
     };
   }

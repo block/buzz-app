@@ -175,6 +175,26 @@ describe("answerGateway", () => {
       root: "https://gateway.test/ai-gateway",
       profile: VECTOR_PROFILE,
     });
+    // A Pi Databricks upstream passes the Databricks provider's own
+    // requests through, such as Gemini's, apart from Pi's root.
+    const upstreams: Record<string, { base: string }> = {
+      pi: { base: "/ai-gateway" },
+      "pi-databricks": { base: "/pass-through/databricks" },
+    };
+    expect(
+      answerGateway(
+        { ...seam(eligible), upstreamFor: (key) => upstreams[key] },
+        admit,
+      ),
+    ).toEqual({
+      ok: true,
+      revision: 1,
+      root: "https://gateway.test/ai-gateway",
+      passThrough: {
+        databricks: "https://gateway.test/pass-through/databricks",
+      },
+      profile: VECTOR_PROFILE,
+    });
     expect(
       answerGateway({ ...seam(eligible), upstreamFor: () => undefined }, admit),
     ).toEqual({ ok: false, message: expect.any(String) });

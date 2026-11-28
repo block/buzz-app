@@ -326,7 +326,7 @@
       }
     },
     {
-      "name": "a codex upstream, which native doesn't forward",
+      "name": "codex and Pi Databricks upstreams, which native doesn't forward",
       "descriptor": {
         "version": 2,
         "gateway": "https://gateway.example",
@@ -355,6 +355,9 @@
           },
           "goose": {
             "base": "/upstream/goose"
+          },
+          "pi-databricks": {
+            "base": "/upstream/pi-databricks"
           }
         }
       },
@@ -386,6 +389,9 @@
           },
           "codex": {
             "base": "/upstream/codex"
+          },
+          "pi-databricks": {
+            "base": "/upstream/pi-databricks"
           }
         }
       },

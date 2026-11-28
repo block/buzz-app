@@ -18,6 +18,9 @@ const driver = String.raw`import assert from 'node:assert/strict';
 import {PassThrough} from 'node:stream';
 import {createInterface} from 'node:readline';
 import {builtinModels} from '@earendil-works/pi-ai/providers/all';
+import {createProvider} from '@earendil-works/pi-ai';
+import {anthropicMessagesApi} from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
+import {googleGenerativeAIApi} from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import {fauxProvider,fauxAssistantMessage} from '@earendil-works/pi-ai/providers/faux';
 import {Harness,defineDoc} from '@earendil-works/pi-durable';
 import {BACKGROUND_CONTEXT as context,withTelemetry} from '@earendil-works/chord/context';
@@ -207,6 +210,57 @@ assert.deepEqual(gatewayModel(models.getModel(GPT.provider,GPT.model),ROOT),{...
  assert.deepEqual([claude.id,claude.api,claude.baseUrl,claude.compat.sendSessionAffinityHeaders],[CLAUDE.model,'anthropic-messages',ROOT+'/anthropic',true]);}
 for(const model of [models.getModel('faux','faux-1'),models.getModel('google','gemini-2.5-pro'),{...models.getModel(GPT.provider,GPT.model),api:'openai-completions'},undefined])
  assert.throws(()=>gatewayModel(model,ROOT),/isn't available through the model gateway/);
+// Databricks models (Gemini and Anthropic Messages) go through their provider's
+// protocol adapters under the gateway's Pi Databricks root, using gateway-owned
+// auth (the provider's resolver is never called, so its baseUrl/headers cannot
+// override the gateway, and model.headers are stripped). Both protocols carry
+// all eight context headers and report 401 refusals. Missing upstream or baseUrl
+// fails visibly with an actionable error, sending nothing.
+{const own=builtinModels(), DATABRICKS=ORIGIN+'/upstream/pi-databricks';
+ const carbon={...own.getModel('google','gemini-2.5-pro'),provider:'databricks',id:'system.ai.gemini-4-carbon',baseUrl:'https://workspace.test/ai-gateway/gemini/v1beta',headers:{[H.launcher_client]:'spoofed','x-provider-secret':'leak'}};
+ const claudeDb={...own.getModel(CLAUDE.provider,CLAUDE.model),provider:'databricks',id:'system.ai.claude-sonnet-4-6',baseUrl:'https://workspace.test/ai-gateway/anthropic',headers:{[H.human_pubkey]:'spoofed'}};
+ let resolverCalls=0;
+ own.setProvider(createProvider({id:'databricks',name:'Databricks',models:[carbon,claudeDb],api:{'google-generative-ai':googleGenerativeAIApi(),'anthropic-messages':anthropicMessagesApi()},auth:{apiKey:{name:'Databricks',resolve:async()=>{resolverCalls++;return {auth:{apiKey:'workspace-token',baseUrl:'https://workspace.test/hijack',headers:{'x-workspace-auth':'secret'}},source:'test'};}}}}));
+ const fullBundle={[H.launcher_client]:'buzz',[H.launcher_session]:'ls1',[H.human_pubkey]:'hp1',[H.agent_pubkey]:'ap1',[H.community_id]:'co1',[H.channel_id]:'ch1',[H.message_id]:'m1',[H.thread_id]:'t1'};
+ const admitted=(passThrough,revision=1)=>async()=>({bundle:fullBundle,profile:P,root:ROOT,passThrough,revision});
+ const ask=(routed,model)=>routed.stream(model,{messages:[{role:'user',content:'hi',timestamp:0}]},{telemetry:requestTelemetry('r'),sessionId:'s1'}).result();
+ const from=requests.length;
+ const refusals=[];
+ // 1. Gemini pass-through: URL, gateway key, all 8 context headers, no leaked headers.
+ replies.push(()=>new Response('data: '+JSON.stringify({candidates:[{content:{role:'model',parts:[{text:'carbon'}]},finishReason:'STOP'}]})+'\n\n',{headers:{'content-type':'text/event-stream'}}));
+ const gemAnswer=await ask(routeModels(own,admitted({databricks:DATABRICKS},7),r=>refusals.push(r)),carbon);
+ assert.equal(gemAnswer.stopReason,'stop',gemAnswer.errorMessage);
+ const [gemSent]=requests.slice(from);
+ assert.equal(gemSent.url,DATABRICKS+'/ai-gateway/gemini/v1beta/models/system.ai.gemini-4-carbon:streamGenerateContent?alt=sse');
+ assert.equal(gemSent.headers['x-goog-api-key'],'buzz-gateway');
+ assert.equal(gemSent.headers['x-session-affinity'],'s1');
+ assert.equal(gemSent.headers['x-provider-secret'],undefined);
+ assert.equal(gemSent.headers['x-workspace-auth'],undefined);
+ for(const [k,v] of Object.entries(fullBundle))assert.equal(gemSent.headers[k],v,'gemini '+k);
+ // 2. Gemini 401 refusal invokes denied(revision).
+ replies.push(()=>new Response('{"error":{"message":"denied"}}',{status:401,headers:{'content-type':'application/json'}}));
+ const gemDenied=await ask(routeModels(own,admitted({databricks:DATABRICKS},7),r=>refusals.push(r)),carbon);
+ assert.equal(gemDenied.stopReason,'error');
+ assert.deepEqual(refusals,[7]);
+ // 3. Non-Gemini (Anthropic Messages on Databricks): URL, gateway key, all 8 context headers, and 401 refusal.
+ replies.push(()=>messages({type:'text',text:''},{type:'text_delta',text:'db-claude'},'end_turn'));
+ const claudeAnswer=await ask(routeModels(own,admitted({databricks:DATABRICKS},9),r=>refusals.push(r)),claudeDb);
+ assert.equal(claudeAnswer.stopReason,'stop',claudeAnswer.errorMessage);
+ const [claudeSent]=requests.slice(from+2);
+ assert.ok(claudeSent.url.startsWith(DATABRICKS+'/ai-gateway/anthropic/v1/messages'),claudeSent.url);
+ assert.equal(claudeSent.headers['x-api-key'],'buzz-gateway');
+ assert.equal(claudeSent.headers['x-workspace-auth'],undefined);
+ for(const [k,v] of Object.entries(fullBundle))assert.equal(claudeSent.headers[k],v,'claude '+k);
+ replies.push(()=>new Response('{"error":{"message":"denied"}}',{status:401,headers:{'content-type':'application/json'}}));
+ const claudeDenied=await ask(routeModels(own,admitted({databricks:DATABRICKS},9),r=>refusals.push(r)),claudeDb);
+ assert.equal(claudeDenied.stopReason,'error');
+ assert.deepEqual(refusals,[7,9]);
+ assert.equal(resolverCalls,0,'provider auth resolver must not run in gateway mode');
+ // 4. Missing pi-databricks upstream and invalid baseUrl fail visibly, sending nothing.
+ assert.match((await ask(routeModels(own,admitted(undefined),()=>{}),carbon)).errorMessage,/does not serve databricks models.*Anthropic or OpenAI/);
+ assert.match((await ask(routeModels(own,admitted({databricks:DATABRICKS}),()=>{}),{...carbon,baseUrl:''})).errorMessage,/has no valid base URL/);
+ assert.equal(requests.length,from+4);
+ requests.length=from;}
 result.composition=true;// The shared gateway vectors, through this copy of its composer.
 {const bare=h=>{const {'x-session-affinity':a,...rest}=h;assert.equal(a,'s1');return rest;};
  for(const c of V.COMPOSE_VECTORS)assert.deepEqual(bare(composeGateway(P,c.assembled,c.bundle,'s1')),c.composed,c.name);

@@ -48,7 +48,7 @@ test("names the create switch for configuration enablement", async () => {
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Close inspector" }));
   const toggle = screen.getByRole("switch", {
-    name: "Enabled in configuration",
+    name: "Enabled",
   });
   expect(toggle).not.toBeChecked();
   await user.click(toggle);
@@ -62,7 +62,7 @@ test("titles the dialog with the name and applies header changes only on save", 
   render(<Example onSave={save} />);
   expect(screen.getByRole("dialog", { name: "Message helper" })).toBeVisible();
   const toggle = screen.getByRole("switch", {
-    name: "Enabled in configuration",
+    name: "Enabled",
   });
   expect(toggle).not.toBeChecked();
   await user.click(toggle);
@@ -112,11 +112,10 @@ test.each([false, true])(
     );
     expect(screen.getByText("Configuration details")).toBeVisible();
     const toggle = screen.getByRole("switch", {
-      name: "Enabled in configuration",
+      name: "Enabled",
     });
-    expect(toggle).toHaveAccessibleDescription(
-      "Configuration changes apply on save. Turning off does not confirm runs have stopped or cancel active runs.",
-    );
+    // Nothing stops this switch, and the editor holds no run history here.
+    expect(toggle).not.toHaveAccessibleDescription();
     await user.click(toggle);
     expect(toggle).toBeChecked();
     expect(
@@ -155,7 +154,7 @@ test.each([
     expect(name).toBeDisabled();
     expect(name).toHaveAccessibleDescription(reason);
     const toggle = screen.getByRole("switch", {
-      name: "Enabled in configuration",
+      name: "Enabled",
     });
     expect(toggle).toHaveAttribute("aria-disabled", "true");
     expect(toggle).toHaveAccessibleDescription(reason);
@@ -165,9 +164,10 @@ test.each([
   rerender(
     <WorkflowEditor yaml={fixtureYaml} onChange={change} onSave={vi.fn()} />,
   );
-  expect(
-    screen.getByRole("switch", { name: "Enabled in configuration" }),
-  ).not.toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("switch", { name: "Enabled" })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(screen.getByRole("textbox", { name: "Workflow name" })).toBeEnabled();
   expect(screen.queryByText(reason)).not.toBeInTheDocument();
 });
@@ -281,9 +281,7 @@ test("YAML errors replace help, retain the draft and restore help after recovery
 
 test("a readable definition without enabled retains its default on state", () => {
   render(<Example initial={fixtureYaml.replace("enabled: false\n", "")} />);
-  expect(
-    screen.getByRole("switch", { name: "Enabled in configuration" }),
-  ).toBeChecked();
+  expect(screen.getByRole("switch", { name: "Enabled" })).toBeChecked();
 });
 
 test("valid advanced YAML stays valid when Form mode cannot represent it", async () => {
@@ -294,9 +292,7 @@ test("valid advanced YAML stays valid when Form mode cannot represent it", async
   expect(screen.getByRole("alert")).toBeInTheDocument();
   expect(yaml).not.toHaveAttribute("aria-invalid", "true");
   expect(yaml).toHaveAccessibleDescription(/Original text is kept/);
-  expect(
-    screen.getByRole("switch", { name: "Enabled in configuration" }),
-  ).toBeVisible();
+  expect(screen.getByRole("switch", { name: "Enabled" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
 });
 

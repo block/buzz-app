@@ -1,7 +1,8 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   WorkflowCapability,
   WorkflowDefinition,
+  WorkflowRun,
   WorkflowRunCursor,
   WorkflowReference,
 } from "../../features/workflows/types";
@@ -13,14 +14,25 @@ import { useClockFormat } from "../../shared/clock-preference";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useWorkflowView } from "./useWorkflowView";
 
+/** A run with one of these statuses has not finished. */
+const UNFINISHED: ReadonlySet<WorkflowRun["status"]> = new Set([
+  "pending",
+  "running",
+  "waiting_approval",
+]);
+
 export function WorkflowRuns({
   capability,
   workflow,
   heading = true,
+  onInProgressChange,
 }: {
   capability: WorkflowCapability;
   workflow: WorkflowDefinition;
   heading?: boolean;
+  /** Whether the page on screen lists an unfinished run. History that is
+   * unread, failed, cleared or unavailable is unknown, and reports false. */
+  onInProgressChange?: (inProgress: boolean) => void;
 }) {
   const [cursor, setCursor] = useState<WorkflowRunCursor | undefined>();
   if (!capability.availability.history)
@@ -37,6 +49,7 @@ export function WorkflowRuns({
       cursor={cursor}
       onPage={setCursor}
       heading={heading}
+      onInProgressChange={onInProgressChange}
     />
   );
 }
@@ -46,12 +59,14 @@ function RunPage({
   cursor,
   onPage,
   heading,
+  onInProgressChange,
 }: {
   capability: WorkflowCapability;
   workflow: WorkflowReference;
   cursor: WorkflowRunCursor | undefined;
   onPage: (cursor: WorkflowRunCursor | undefined) => void;
   heading: boolean;
+  onInProgressChange: ((inProgress: boolean) => void) | undefined;
 }) {
   useClockFormat();
   const { snapshot, refresh } = useWorkflowView(
@@ -60,6 +75,14 @@ function RunPage({
       [capability, workflow, cursor],
     ),
   );
+  // A refresh keeps the rows it is replacing on screen, so they still count.
+  const inProgress =
+    (snapshot?.status === "ready" || snapshot?.status === "loading") &&
+    snapshot.data.runs.some((run) => UNFINISHED.has(run.status));
+  useEffect(() => {
+    onInProgressChange?.(inProgress);
+    return () => onInProgressChange?.(false);
+  }, [inProgress, onInProgressChange]);
   if (!snapshot) return <p role="status">Reading runs…</p>;
   return (
     <section aria-label="Workflow runs" className="workflow-runs">

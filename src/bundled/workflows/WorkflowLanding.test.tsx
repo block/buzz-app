@@ -25,7 +25,9 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
   createWorkflowFixture,
   fixtureChannel,
+  fixtureCursor,
   fixtureDefinition,
+  fixtureRun,
   fixtureViewer,
   fixtureYaml,
 } from "./fixtures";
@@ -1169,14 +1171,15 @@ it("renders the selected card's detail into the target and toggles the selection
       within(detail).getByRole("button", { name: "Edit workflow" }),
     ).toBeEnabled();
     expect(open).toHaveAttribute("aria-pressed", "true");
+    // The only run on the page has completed, so the row is label and switch.
+    await within(detail).findByText("completed");
     expect(
-      within(detail).getByRole("switch", { name: "Enabled in configuration" }),
-    ).toHaveAccessibleDescription(
-      "Saved configuration only. Turning off does not confirm runs have stopped or cancel active runs.",
-    );
+      within(detail).getByRole("switch", { name: "Enabled" }),
+    ).not.toHaveAccessibleDescription();
+    // A reason shows whether or not a run is in progress.
     fireEvent.click(within(detail).getByRole("button", { name: "Run now" }));
     expect(
-      within(detail).getByRole("switch", { name: "Enabled in configuration" }),
+      within(detail).getByRole("switch", { name: "Enabled" }),
     ).toHaveAccessibleDescription(
       "Waiting for the submitted change to be resolved.",
     );
@@ -1233,6 +1236,66 @@ it("rereads the selected workflow's history after a created run", async () => {
     await waitFor(() => expect(fixture.calls.runs).toBeGreaterThan(reads));
     expect(current?.disposed()).toBe(true);
     expect(fixture.runViews.at(-1)?.disposed()).toBe(false);
+  } finally {
+    target.remove();
+  }
+});
+
+it("warns that disabling cancels nothing only while the run history on screen lists an unfinished run", async () => {
+  const caveat = "Disabling won’t cancel runs already in progress.";
+  const { fixture, target } = landing();
+  const show = (
+    status: "ready" | "loading" | "error",
+    run: "running" | "completed",
+  ) =>
+    act(() =>
+      fixture.runViews.at(-1)?.update({
+        status,
+        data: {
+          runs: [{ ...fixtureRun, status: run }],
+          next: fixtureCursor,
+        },
+      }),
+    );
+  try {
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
+    );
+    const detail = within(
+      await within(target).findByRole("region", { name: "Message helper" }),
+    );
+    const toggle = detail.getByRole("switch", { name: "Enabled" });
+    await detail.findByText("completed");
+    expect(toggle).not.toHaveAccessibleDescription();
+    expect(detail.queryByText(caveat)).toBeNull();
+    show("ready", "running");
+    expect(toggle).toHaveAccessibleDescription(caveat);
+    expect(detail.getByText(caveat)).toBeVisible();
+    // Refreshing keeps the rows on screen; a failed read vouches for nothing.
+    show("loading", "running");
+    expect(toggle).toHaveAccessibleDescription(caveat);
+    show("error", "running");
+    expect(toggle).not.toHaveAccessibleDescription();
+    // The run finishing shows only once the history is read again.
+    show("ready", "running");
+    expect(toggle).toHaveAccessibleDescription(caveat);
+    show("ready", "completed");
+    expect(toggle).not.toHaveAccessibleDescription();
+    // Only the page on screen counts: an older page drops the newest runs.
+    show("ready", "running");
+    fireEvent.click(detail.getByRole("button", { name: "Older runs" }));
+    await detail.findByText("No runs returned on this page.");
+    expect(toggle).not.toHaveAccessibleDescription();
+    show("ready", "running");
+    // A reason replaces the caveat, and a created run rereads the history.
+    fireEvent.click(detail.getByRole("button", { name: "Run now" }));
+    expect(toggle).toHaveAccessibleDescription(
+      "Waiting for the submitted change to be resolved.",
+    );
+    expect(detail.queryByText(caveat)).toBeNull();
+    act(() => fixture.finish("succeeded"));
+    await detail.findByText("completed");
+    expect(toggle).not.toHaveAccessibleDescription();
   } finally {
     target.remove();
   }
@@ -1330,12 +1393,9 @@ it("keeps the detail mounted and focused across a revision readback", async () =
       name: "Message helper",
     });
     const toggle = within(detail).getByRole("switch", {
-      name: "Enabled in configuration",
+      name: "Enabled",
     });
     expect(toggle).not.toBeChecked();
-    expect(
-      within(detail).getByText(/Turning off does not confirm runs/),
-    ).toBeVisible();
     toggle.focus();
     const user = userEvent.setup();
     await user.click(toggle);
@@ -2041,7 +2101,7 @@ it.each(["delete", "enable"] as const)(
       } else {
         fireEvent.click(
           screen.getByRole("switch", {
-            name: "Enabled in configuration: Message helper",
+            name: "Enabled: Message helper",
           }),
         );
       }
@@ -2099,7 +2159,7 @@ it("marks an archived channel's workflows as not runnable and blocks only turnin
   const run = (name: string) =>
     screen.getByRole("button", { name: `Run now: ${name}` });
   const toggle = (name: string) =>
-    screen.getByRole("switch", { name: `Enabled in configuration: ${name}` });
+    screen.getByRole("switch", { name: `Enabled: ${name}` });
   try {
     const group = await screen.findByRole("region", { name: "General" });
     await waitFor(() =>
@@ -2148,7 +2208,7 @@ it("marks an archived channel's workflows as not runnable and blocks only turnin
     expect(detailRun).toHaveAttribute("aria-disabled", "true");
     expect(detailRun).toHaveAccessibleDescription(reason);
     const detailToggle = within(detail).getByRole("switch", {
-      name: "Enabled in configuration",
+      name: "Enabled",
     });
     expect(detailToggle).toHaveAttribute("aria-disabled", "true");
     expect(detailToggle).toHaveAccessibleDescription(reason);
@@ -2196,7 +2256,7 @@ it.each(["card", "detail"] as const)(
       if (surface === "card") {
         await user.click(
           await screen.findByRole("switch", {
-            name: "Enabled in configuration: Message helper",
+            name: "Enabled: Message helper",
           }),
         );
       } else {
@@ -2206,7 +2266,7 @@ it.each(["card", "detail"] as const)(
         await user.click(
           within(
             within(target).getByRole("region", { name: "Message helper" }),
-          ).getByRole("switch", { name: "Enabled in configuration" }),
+          ).getByRole("switch", { name: "Enabled" }),
         );
       }
       const confirm = await screen.findByRole("alertdialog", {

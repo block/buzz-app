@@ -169,18 +169,19 @@ export function WorkflowEditor({
         : chooseChannel
           ? "Choose a channel before editing."
           : !fields.editable
-            ? "Correct the YAML before changing the name or configuration."
+            ? "Correct the YAML before changing the name or enabling or disabling this workflow."
             : undefined));
   const enableReason = fields.enabled === false ? enableBlocked : undefined;
+  // Run history is read only in the Runs tab, which replaces this row, so the
+  // editor cannot say here whether a run is in progress.
+  const enableDescription =
+    enableReason ??
+    // In YAML view the status line directly below already shows the reason.
+    (mode === "form" || readOnly ? controlReason : undefined);
   const enableSwitch = fields.editable ? (
     <SwitchPreferenceRow
-      label="Enabled in configuration"
-      description={
-        enableReason ??
-        // In YAML view the status line directly below already shows the reason.
-        (mode === "form" || readOnly ? controlReason : undefined) ??
-        "Configuration changes apply on save. Turning off does not confirm runs have stopped or cancel active runs."
-      }
+      label="Enabled"
+      {...(enableDescription ? { description: enableDescription } : {})}
       checked={fields.enabled !== false}
       disabled={disabled || !!enableReason}
       onCheckedChange={(enabled) =>

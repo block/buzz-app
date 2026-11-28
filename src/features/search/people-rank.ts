@@ -58,6 +58,8 @@ function personMatch(
  * so callers list the directory's rows first, in the order the relay ranked
  * them. `score` is the same order without the band, on the scale channel and
  * page rows use, so a caller can place the whole group among other groups.
+ * `rank` is the match alone: 0 equal, 1 a shown name starts with the text,
+ * 2–3 a later word, 4 and up a hidden name only.
  */
 export function rankPeople<T extends PersonCandidate>(
   people: readonly T[],
@@ -81,6 +83,7 @@ export function rankPeople<T extends PersonCandidate>(
       return [
         {
           person,
+          rank,
           order: searchOrder(usage, picked, {
             ...row,
             band: person.relationship,

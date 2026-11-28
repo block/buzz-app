@@ -10667,11 +10667,28 @@ it("loads verified names for a settled search page in the background and shows t
     signal: AbortSignal | undefined;
     release: () => void;
   }[] = [];
+  const discovery = [
+    metadata(relay, "notes", "notes"),
+    roster(relay, "notes", [viewer.pubkey]),
+  ];
+  // A full first page of hits, so Messages answer the text strongly.
+  const hits = Array.from({ length: 20 }, (_, i) =>
+    message(viewer, "notes", `fake note ${i}`, 1700000100 - i),
+  );
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
     verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
     async query(filters, signal) {
-      if (!filters.some((filter) => filter.kinds?.includes(30382))) return [];
+      if (
+        filters.some(
+          (filter) => filter.search !== undefined && !filter.kinds?.includes(0),
+        )
+      )
+        return hits;
+      if (!filters.some((filter) => filter.kinds?.includes(30382)))
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
       await new Promise<void>((release) =>
         reads.push({ subjects: filters[0]?.["#d"], signal, release }),
       );
@@ -10738,6 +10755,15 @@ it("loads verified names for a settled search page in the background and shows t
         /fnameFake Name · Start a direct message$/,
       ),
     );
+    // The label is now a username without the text, but the full name starts
+    // with it, so People still lead a full page of message hits.
+    await screen.findByRole("option", { name: /fake note 0/ });
+    expect(
+      within(screen.getByRole("listbox"))
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label")),
+    ).toEqual(["People", "Messages"]);
+    expect(people).toHaveTextContent("Name starts with it");
     // Refining the query keeps the row by its verified full name and does not
     // ask about someone already looked up.
     mounted.rerender(<SearchResults {...props} query="fake n" />);

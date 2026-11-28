@@ -299,16 +299,90 @@ export function pluginAccessIncreases(
   );
 }
 
+function ComputerAccessAccordion({ accordionKey }: { accordionKey: string }) {
+  return (
+    <Accordion
+      animate
+      key={accordionKey}
+      items={[
+        {
+          value: "computer-access",
+          title: (
+            <span className="flex items-start gap-3 text-left text-body-sm">
+              <MonitorIcon
+                size={20}
+                className="shrink-0 text-muted"
+                aria-hidden="true"
+              />
+              <span>
+                <span className="block font-medium">Computer access</span>
+                <span className="block text-muted">
+                  Can access files and run programs on your computer.
+                </span>
+              </span>
+            </span>
+          ),
+          content: (
+            <section
+              aria-label="Plugin safety"
+              className="max-w-prose pl-8 text-body"
+            >
+              <h4 className="mb-2 mt-0 text-label">Access beyond this list</h4>
+              <p className="m-0">
+                Plugins aren’t sandboxed. They can access your computer beyond
+                these declarations, even when no additional capabilities are
+                listed.
+              </p>
+              <p className="mb-0 mt-3 text-muted">
+                These declarations describe what the plugin asks Buzz to do.
+                They don’t limit what its code can do.
+              </p>
+            </section>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+export function PluginBatchAccessReview({
+  manifests,
+}: {
+  manifests: readonly PluginManifest[];
+}) {
+  return (
+    <section aria-label="Computer access" className="text-body-sm">
+      <ComputerAccessAccordion accordionKey="computer-batch" />
+      <div className="mt-4 flex flex-col gap-4">
+        {manifests.map((manifest) => (
+          <section key={manifest.id} aria-label={manifest.name}>
+            <h3 className="mb-2 mt-0 text-label">{manifest.name}</h3>
+            <PluginAccessReview
+              manifest={manifest}
+              declarationsOnly
+              declarationsLabel={`${manifest.name} declared scopes`}
+            />
+          </section>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function PluginAccessReview({
   manifest,
   previousManifest,
   unchangedOnly = false,
+  declarationsOnly = false,
+  declarationsLabel,
   unchangedTrigger,
   onShowUnchanged,
 }: {
   manifest: PluginManifest;
   previousManifest?: PluginManifest | undefined;
   unchangedOnly?: boolean;
+  declarationsOnly?: boolean;
+  declarationsLabel?: string;
   unchangedTrigger?: Ref<HTMLButtonElement>;
   onShowUnchanged?: () => void;
 }) {
@@ -395,7 +469,7 @@ export function PluginAccessReview({
     };
   }
   const allDeclarations = (
-    <section aria-label="Declared scopes">
+    <section aria-label={declarationsLabel ?? "Declared scopes"}>
       {(updating ? unchangedDetails : declaredDetails).length ? (
         <Accordion
           animate
@@ -410,7 +484,7 @@ export function PluginAccessReview({
     </section>
   );
 
-  if (unchangedOnly) return allDeclarations;
+  if (unchangedOnly || declarationsOnly) return allDeclarations;
   return (
     <section aria-label="Computer access" className="text-body-sm">
       {updating && (
@@ -453,49 +527,7 @@ export function PluginAccessReview({
           update code you trust.
         </p>
       ) : (
-        <Accordion
-          animate
-          key={`computer-${manifest.id}`}
-          items={[
-            {
-              value: "computer-access",
-              title: (
-                <span className="flex items-start gap-3 text-left text-body-sm">
-                  <MonitorIcon
-                    size={20}
-                    className="shrink-0 text-muted"
-                    aria-hidden="true"
-                  />
-                  <span>
-                    <span className="block font-medium">Computer access</span>
-                    <span className="block text-muted">
-                      Can access files and run programs on your computer.
-                    </span>
-                  </span>
-                </span>
-              ),
-              content: (
-                <section
-                  aria-label="Plugin safety"
-                  className="max-w-prose pl-8 text-body"
-                >
-                  <h4 className="mb-2 mt-0 text-label">
-                    Access beyond this list
-                  </h4>
-                  <p className="m-0">
-                    Plugins aren’t sandboxed. They can access your computer
-                    beyond these declarations, even when no additional
-                    capabilities are listed.
-                  </p>
-                  <p className="mb-0 mt-3 text-muted">
-                    These declarations describe what the plugin asks Buzz to do.
-                    They don’t limit what its code can do.
-                  </p>
-                </section>
-              ),
-            },
-          ]}
-        />
+        <ComputerAccessAccordion accordionKey={`computer-${manifest.id}`} />
       )}
       {updating
         ? unchangedDetails.length > 0 && (

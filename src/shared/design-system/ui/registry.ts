@@ -31,6 +31,11 @@ export const BASE_UI_PARTS = {
     docs: "checkbox",
     module: "@base-ui/react/checkbox",
   },
+  checkboxGroup: {
+    name: "Checkbox Group",
+    docs: "checkbox-group",
+    module: "@base-ui/react/checkbox-group",
+  },
   avatar: { name: "Avatar", docs: "avatar", module: "@base-ui/react/avatar" },
   button: { name: "Button", docs: "button", module: "@base-ui/react/button" },
   contextMenu: {
@@ -241,13 +246,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "checkbox",
     name: "Checkbox",
-    purpose: "Choose an independent option.",
+    purpose: "Choose independent options, individually or in a labelled group.",
     behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "size: sm | md", "disabled", "invalid"],
+    variants: ["default", "card", "size: sm | md", "disabled", "invalid"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/Checkbox.tsx",
-    baseUi: [BASE_UI_PARTS.checkbox],
+    baseUi: [BASE_UI_PARTS.checkbox, BASE_UI_PARTS.checkboxGroup],
     composes: [],
   },
 

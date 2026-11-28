@@ -596,7 +596,7 @@ it.each([
     fireEvent.click(
       screen.getByRole("button", { name: "Browse plugin folder" }),
     );
-    const choice = await screen.findByRole("radio", { name: "Example" });
+    const choice = await screen.findByRole("checkbox", { name: "Example" });
     expect(choice).toHaveAccessibleDescription(`${location} · example.plugin`);
     fireEvent.click(choice);
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -688,6 +688,378 @@ it("separates choosing from access review and restores the chosen folder on Back
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await user.click(screen.getByRole("button", { name: "Install plugin" }));
   expect(installImport).toHaveBeenCalledExactlyOnceWith("steps", ".");
+});
+
+it("selects multiple plugins with checkboxes and Select all, reviews access together, and installs all", async () => {
+  const user = userEvent.setup();
+  const preview: ImportPreview = {
+    token: "multi",
+    source: "https://github.com/example/buzz-plugins",
+    commit: "abcdef1234567890abcdef1234567890abcdef12",
+    warnings: [],
+    candidates: [
+      {
+        path: "plugins/one/dist",
+        manifest: {
+          id: "example.one",
+          name: "Plugin One",
+          apiVersion: 1,
+          host: {
+            commands: [
+              {
+                id: "check",
+                program: "example-cli",
+                args: ["status"],
+              },
+            ],
+          },
+        },
+        revision: "rev-one",
+      },
+      {
+        path: "plugins/two/dist",
+        manifest: {
+          id: "example.two",
+          name: "Plugin Two",
+          apiVersion: 1,
+        },
+        revision: "rev-two",
+      },
+      {
+        path: "plugins/three/dist",
+        manifest: {
+          id: "example.three",
+          name: "Plugin Three",
+          apiVersion: 1,
+        },
+        revision: "rev-three",
+      },
+    ],
+  };
+  const discard = vi.fn(async () => {});
+  const installImport = vi.fn(async () => true);
+  const change = vi.fn(async () => true);
+  const manager = {
+    imports: { git: vi.fn(async () => preview), discard },
+    installImport,
+    change,
+    snapshot: () => ({ error: null }),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  await user.type(
+    screen.getByLabelText("Git or GitHub repository"),
+    "https://github.com/example/buzz-plugins",
+  );
+  await user.click(screen.getByRole("button", { name: "Find plugins" }));
+
+  expect(
+    await screen.findByRole("dialog", { name: "Choose plugins" }),
+  ).toHaveAccessibleDescription(
+    "Select one or more plugins to review before installing.",
+  );
+  expect(screen.getByRole("group", { name: "Choose plugins" })).toBeVisible();
+  expect(screen.queryByRole("radio")).toBeNull();
+  const checkboxes = screen.getAllByRole("checkbox");
+  expect(checkboxes).toHaveLength(3);
+  expect(screen.getByText("0 of 3 selected")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+
+  // Select all / Deselect all toggle
+  await user.click(screen.getByRole("button", { name: "Select all" }));
+  for (const box of checkboxes) expect(box).toBeChecked();
+  expect(screen.getByText("3 of 3 selected")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Deselect all" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Deselect all" }));
+  for (const box of checkboxes) expect(box).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+
+  // Pick two plugins manually and continue to combined access review
+  await user.click(screen.getByRole("checkbox", { name: "Plugin One" }));
+  await user.click(screen.getByRole("checkbox", { name: "Plugin Three" }));
+  expect(screen.getByText("2 of 3 selected")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+
+  expect(
+    screen.getByRole("dialog", { name: "Review access for 2 plugins" }),
+  ).toHaveAccessibleDescription("Only install code you trust.");
+  expect(screen.getByRole("region", { name: "Computer access" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Plugin One" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Plugin Three" })).toBeVisible();
+  expect(screen.getByRole("switch", { name: "Enable plugins" })).toBeChecked();
+
+  // Back preserves checked boxes and restores focus to the first checked box
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.getByRole("checkbox", { name: "Plugin One" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Plugin One" })).toHaveFocus();
+  expect(
+    screen.getByRole("checkbox", { name: "Plugin Two" }),
+  ).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Plugin Three" })).toBeChecked();
+  expect(discard).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(screen.getByRole("button", { name: "Install 2 plugins" }));
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(installImport.mock.calls).toEqual([
+    ["multi", "plugins/one/dist"],
+    ["multi", "plugins/three/dist"],
+  ]);
+  expect(change.mock.calls).toEqual([
+    ["enable", "example.one"],
+    ["enable", "example.three"],
+  ]);
+  expect(discard).toHaveBeenCalledExactlyOnceWith("multi");
+});
+
+it("marks already-installed plugins, skips them on Select all, and handles mixed or all-installed selections", async () => {
+  const user = userEvent.setup();
+  const existingPlugin: PluginInfo = {
+    manifest: { id: "example.one", name: "Plugin One", apiVersion: 1 },
+    source: "external",
+    enabled: true,
+    revision: "rev-one",
+    previous: null,
+    reloadable: false,
+    error: null,
+  };
+  const bundledPlugin: PluginInfo = {
+    manifest: { id: "example.two", name: "Plugin Two", apiVersion: 1 },
+    source: "bundled",
+    enabled: true,
+    revision: "rev-two",
+    previous: null,
+    reloadable: false,
+    error: null,
+  };
+  const preview: ImportPreview = {
+    token: "mixed",
+    source: "https://github.com/example/buzz-plugins",
+    commit: "abcdef1234567890abcdef1234567890abcdef12",
+    warnings: [],
+    candidates: [
+      {
+        path: "plugins/one",
+        manifest: existingPlugin.manifest,
+        revision: "rev-one",
+      },
+      {
+        path: "plugins/two",
+        manifest: bundledPlugin.manifest,
+        revision: "rev-two",
+      },
+      {
+        path: "plugins/three",
+        manifest: { id: "example.three", name: "Plugin Three", apiVersion: 1 },
+        revision: "rev-three",
+      },
+    ],
+  };
+  const installImport = vi.fn(async () => true);
+  const onOpenInstalled = vi.fn();
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => preview),
+      discard: vi.fn(async () => {}),
+    },
+    installImport,
+    change: vi.fn(async () => true),
+    snapshot: () => ({ error: null }),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [existingPlugin, bundledPlugin],
+      }}
+      busy={false}
+      onOpenInstalled={onOpenInstalled}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  );
+
+  expect(
+    await screen.findByRole("checkbox", { name: "Plugin One" }),
+  ).toHaveAccessibleDescription(/Already installed/);
+  expect(
+    screen.getByRole("checkbox", { name: "Plugin Two" }),
+  ).toHaveAccessibleDescription(/Included with Buzz/);
+
+  // Select all only checks the not-already-installed plugin
+  await user.click(screen.getByRole("button", { name: "Select all" }));
+  expect(
+    screen.getByRole("checkbox", { name: "Plugin One" }),
+  ).not.toBeChecked();
+  expect(
+    screen.getByRole("checkbox", { name: "Plugin Two" }),
+  ).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Plugin Three" })).toBeChecked();
+
+  // Adding an already-installed plugin skips it in review and installs only the new one
+  await user.click(screen.getByRole("checkbox", { name: "Plugin One" }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(
+    screen.getByText("Already installed (will be skipped): Plugin One."),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Install plugin" })).toBeEnabled();
+
+  // Selecting only multiple already-installed plugins shows Already installed + Done
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("checkbox", { name: "Plugin Three" }));
+  await user.click(screen.getByRole("checkbox", { name: "Plugin Two" }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(
+    screen.getByRole("dialog", { name: "Already installed" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "These plugins are already installed. Open their details to manage them.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Done" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^Install/ })).toBeNull();
+  expect(installImport).not.toHaveBeenCalled();
+});
+
+it("keeps the preview alive and trims already-installed plugins on partial batch failure", async () => {
+  const user = userEvent.setup();
+  const preview: ImportPreview = {
+    token: "partial",
+    source: "https://github.com/example/buzz-plugins",
+    commit: "abcdef1234567890abcdef1234567890abcdef12",
+    warnings: [],
+    candidates: [
+      {
+        path: "plugins/one",
+        manifest: { id: "example.one", name: "Plugin One", apiVersion: 1 },
+        revision: "rev-one",
+      },
+      {
+        path: "plugins/two",
+        manifest: { id: "example.two", name: "Plugin Two", apiVersion: 1 },
+        revision: "rev-two",
+      },
+    ],
+  };
+  let failSecond = true;
+  const discard = vi.fn(async () => {});
+  const installImport = vi.fn(async (_token: string, path: string) => {
+    if (path === "plugins/two" && failSecond) {
+      failSecond = false;
+      return false;
+    }
+    return true;
+  });
+  const change = vi.fn(async () => true);
+  const manager = {
+    imports: { folder: vi.fn(async () => preview), discard },
+    installImport,
+    change,
+    snapshot: () => ({ error: "Publisher is not trusted" }),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  );
+  await user.click(await screen.findByRole("button", { name: "Select all" }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(screen.getByRole("switch", { name: "Enable plugins" }));
+  await user.click(screen.getByRole("button", { name: "Install 2 plugins" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not install Plugin Two: Publisher is not trusted (1 earlier plugin installed).",
+  );
+  expect(discard).not.toHaveBeenCalled();
+  expect(change).not.toHaveBeenCalled();
+
+  // Clicking Back returns to review with only Plugin Two remaining and retries cleanly
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("button", { name: "Install plugin" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(installImport.mock.calls).toEqual([
+    ["partial", "plugins/one"],
+    ["partial", "plugins/two"],
+    ["partial", "plugins/two"],
+  ]);
+  expect(discard).toHaveBeenCalledExactlyOnceWith("partial");
+});
+
+it("keeps duplicate builds of the same plugin ID mutually exclusive in multi-plugin repos", async () => {
+  const user = userEvent.setup();
+  const preview: ImportPreview = {
+    token: "dup-ids",
+    source: "https://github.com/example/buzz-plugins",
+    commit: "abcdef1234567890abcdef1234567890abcdef12",
+    warnings: [],
+    candidates: [
+      {
+        path: "plugins/one",
+        manifest: { id: "example.one", name: "Plugin One", apiVersion: 1 },
+        revision: "rev-one-a",
+      },
+      {
+        path: "plugins/one/dist",
+        manifest: { id: "example.one", name: "Plugin One", apiVersion: 1 },
+        revision: "rev-one-b",
+      },
+      {
+        path: "plugins/two",
+        manifest: { id: "example.two", name: "Plugin Two", apiVersion: 1 },
+        revision: "rev-two",
+      },
+    ],
+  };
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => preview),
+      discard: vi.fn(async () => {}),
+    },
+    installImport: vi.fn(async () => true),
+    change: vi.fn(async () => true),
+    snapshot: () => ({ error: null }),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  );
+  const boxes = await screen.findAllByRole("checkbox");
+  await user.click(screen.getByRole("button", { name: "Select all" }));
+  expect(boxes[0]).toBeChecked();
+  expect(boxes[1]).not.toBeChecked();
+  expect(boxes[2]).toBeChecked();
+
+  // Picking the alternate build for example.one replaces the earlier one
+  await user.click(boxes[1] as HTMLElement);
+  expect(boxes[0]).not.toBeChecked();
+  expect(boxes[1]).toBeChecked();
+  expect(boxes[2]).toBeChecked();
 });
 
 const outputLimitUpdates = [

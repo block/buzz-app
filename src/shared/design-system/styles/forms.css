@@ -183,11 +183,13 @@
     background: var(--affordance-disabled);
     cursor: not-allowed;
   }
-  .buzz-radio-group {
+  .buzz-radio-group,
+  .buzz-checkbox-group {
     display: grid;
     gap: var(--space-3);
   }
-  .buzz-radio-group[data-size="sm"] {
+  .buzz-radio-group[data-size="sm"],
+  .buzz-checkbox-group[data-size="sm"] {
     gap: 0;
   }
   .buzz-choice {

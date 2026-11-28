@@ -1223,16 +1223,18 @@ it("rereads the selected workflow's history after a created run", async () => {
     const detail = await within(target).findByRole("region", {
       name: "Message helper",
     });
-    await waitFor(() => expect(fixture.calls.runs).toBeGreaterThan(0));
-    const reads = fixture.calls.runs;
+    await waitFor(() => expect(fixture.calls.runReads).toBeGreaterThan(0));
+    const reads = fixture.calls.runReads;
+    const views = fixture.calls.runs;
     const current = fixture.runViews.at(-1);
     fireEvent.click(within(detail).getByRole("button", { name: "Run now" }));
     expect(fixture.calls.trigger).toBe(1);
-    expect(fixture.calls.runs).toBe(reads);
+    expect(fixture.calls.runReads).toBe(reads);
     act(() => fixture.finish("succeeded"));
-    await waitFor(() => expect(fixture.calls.runs).toBeGreaterThan(reads));
-    expect(current?.disposed()).toBe(true);
-    expect(fixture.runViews.at(-1)?.disposed()).toBe(false);
+    await waitFor(() => expect(fixture.calls.runReads).toBeGreaterThan(reads));
+    // The same list rereads, so its rows and scroll position survive.
+    expect(fixture.calls.runs).toBe(views);
+    expect(current?.disposed()).toBe(false);
   } finally {
     target.remove();
   }
@@ -1370,15 +1372,14 @@ it("rereads history only once a later run is created", async () => {
         within(detail).getByRole("button", { name: "Run now" }),
       ).toBeEnabled(),
     );
-    const reads = fixture.calls.runs;
+    const reads = fixture.calls.runReads;
     const current = fixture.runViews.at(-1);
     run();
     expect(fixture.calls.trigger).toBe(2);
-    expect(fixture.calls.runs).toBe(reads);
-    expect(current?.disposed()).toBe(false);
+    expect(fixture.calls.runReads).toBe(reads);
     act(() => fixture.finish("succeeded"));
-    await waitFor(() => expect(fixture.calls.runs).toBeGreaterThan(reads));
-    expect(current?.disposed()).toBe(true);
+    await waitFor(() => expect(fixture.calls.runReads).toBeGreaterThan(reads));
+    expect(current?.disposed()).toBe(false);
   } finally {
     target.remove();
   }

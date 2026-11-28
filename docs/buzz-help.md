@@ -324,6 +324,23 @@ mentions still work.
 - **Settings → Security** and **Settings → External apps** list connections and
   revoke them.
 
+## Workflow run history
+
+A workflow’s runs are listed newest first in the editor’s **Runs** tab and in
+its detail pane in **Workflows**. The list keeps itself current while it is on
+screen: new runs appear at the top, including one you start with **Run now**,
+and a run that is pending, running or waiting for approval changes to its next
+status in place. Updates take a few seconds while a shown run is still active
+and up to about half a minute otherwise, including for an active run that has
+not changed for about a minute. The detail pane’s list pauses while the editor
+is open over it. Scroll to the end of the list to load the next older runs, or
+use **Load older runs**; **No older runs.** marks the end. If history can’t be
+read, the runs already shown stay and **Refresh runs** retries. If the
+community refuses access to the history, the runs shown are removed and the
+list stops updating until you use **Refresh runs**. If a workflow
+starts more than 20 runs between two updates, the list starts again from the
+newest runs.
+
 ## Troubleshooting
 
 ### An agent ignores a mention

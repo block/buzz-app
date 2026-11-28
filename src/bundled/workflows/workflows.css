@@ -257,6 +257,18 @@
 .workflow-step p {
   margin: 0;
 }
+.workflow-runs {
+  /* Contain absolutely positioned descendants (the sr-only announcement line)
+     here. Neither host's scroller is positioned, so otherwise the line reaches
+     the editor's dialog body or the Workflows page's side column at the full
+     height of the list, giving it scroll overflow that a wheel then moves:
+     the editor's tab bar and the list itself scroll out of view. */
+  position: relative;
+}
+.workflow-runs-end {
+  margin: 0;
+  padding-block: var(--space-4);
+}
 .workflow-key,
 .workflow-trace {
   overflow-wrap: anywhere;
@@ -694,6 +706,10 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
   padding-block: var(--space-2);
   border-bottom: 0;
+  border-top: 1px solid var(--border-standard);
+}
+.workflow-detail .workflow-runs-end {
+  padding-block: var(--space-2);
   border-top: 1px solid var(--border-standard);
 }
 @media (max-width: 52rem) {

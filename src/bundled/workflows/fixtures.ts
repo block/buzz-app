@@ -5,6 +5,7 @@ import type {
   WorkflowView,
   WorkflowRun,
   WorkflowRunCursor,
+  WorkflowRunPage,
   WorkflowDefinitions,
 } from "../../features/workflows/types";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
@@ -108,12 +109,20 @@ export function createWorkflowFixture(
     delete: 0,
     trigger: 0,
     runs: 0,
+    /** Reads of a run page, by any view. */
+    runReads: 0,
     take: 0,
     dismiss: [] as string[],
   };
   const secrets = new Map<string, string>();
   const runViews: { disposed(): boolean }[] = [];
   let runCursor: WorkflowRunCursor | undefined;
+  /** What the relay holds now: reassign a page to change what the next read
+   * of it returns. Every cursor reads `older`. */
+  const runPages: { newest: WorkflowRunPage; older: WorkflowRunPage } = {
+    newest: { runs: [fixtureRun], next: fixtureCursor },
+    older: { runs: [], next: null },
+  };
   const publish = (next: readonly WorkflowOperation[]) => {
     operations = next;
     for (const listener of listeners) listener();
@@ -183,12 +192,16 @@ export function createWorkflowFixture(
     runs: (_workflow, cursor) => {
       calls.runs++;
       runCursor = cursor;
-      const next = fixtureView({
-        runs: cursor ? [] : [fixtureRun],
-        next: cursor ? null : fixtureCursor,
-      });
+      const page = () => (cursor ? runPages.older : runPages.newest);
+      const next = fixtureView(page());
       runViews.push(next);
-      return next.view;
+      return {
+        ...next.view,
+        async refresh() {
+          calls.runReads++;
+          if (!next.disposed()) next.update({ status: "ready", data: page() });
+        },
+      };
     },
     save(input) {
       calls.save++;
@@ -257,6 +270,7 @@ export function createWorkflowFixture(
     input: () => savedInput,
     runCursor: () => runCursor,
     runViews,
+    runPages,
     setDismissError: (message?: string) => {
       dismissError = message;
     },

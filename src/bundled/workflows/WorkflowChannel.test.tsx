@@ -197,7 +197,9 @@ it("runs despite a lost earlier run receipt, rereads open history on success and
   expect(
     screen.getByText("Run requested. Inspect run history for its result."),
   ).toBeVisible();
-  expect(fixture.calls.runs).toBe(2);
+  // The created run rereads the list in place instead of replacing it.
+  expect(fixture.calls.runs).toBe(1);
+  expect(fixture.calls.runReads).toBe(2);
   await run();
   expect(fixture.calls.trigger).toBe(3);
   act(() => fixture.finish("rejected"));

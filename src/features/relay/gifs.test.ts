@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   communityFromScope,
+  communityGifs,
   gifMarkdown,
   relaySupportsKlipy,
   fetchKlipyGifs,
@@ -290,4 +291,25 @@ test("gifMarkdown produces attachment syntax without malformed alt text", () => 
       preview: asset("https://cdn.example/wave.webp"),
     }),
   ).toBe("![Wave hello](https://cdn.example/wave%28test%29.gif)");
+});
+
+test("session GIF search goes only to the session's own community", async () => {
+  const viewer = "a".repeat(64);
+  const communities: string[] = [];
+  const requests = {
+    supports: async (community: string) => {
+      communities.push(community);
+      return true;
+    },
+    search: async (community: string) => {
+      communities.push(community);
+      return [];
+    },
+  };
+  const gifs = communityGifs(`https://gifs.test:${viewer}`, requests);
+  await gifs?.supports();
+  await gifs?.search("cats");
+  expect(communities).toEqual(["https://gifs.test", "https://gifs.test"]);
+  expect(communityGifs(`http://gifs.test:${viewer}`, requests)).toBeUndefined();
+  expect(communityGifs("offline:", requests)).toBeUndefined();
 });

@@ -43,6 +43,8 @@ export type ComposerSession = Pick<
   > &
     Partial<Pick<RelaySession["channels"], "subscribeWindow" | "window">>;
   profiles: RelaySession["profiles"];
+  /** GIF search in this session's community; absent where the host has none. */
+  gifs?: import("../relay/gifs").CommunityGifs | undefined;
   emoji: Pick<
     RelaySession["emoji"],
     "snapshot" | "subscribe" | "ensure" | "refresh"

@@ -245,6 +245,25 @@ export const relayGifRequests: GifRequests = {
   search: fetchKlipyGifs,
 };
 
+/** GIF search for one community, so callers never choose where it goes. */
+export type CommunityGifs = Readonly<{
+  supports(signal?: AbortSignal): Promise<boolean>;
+  search(query: string, signal?: AbortSignal): Promise<KlipyGif[]>;
+}>;
+
+export function communityGifs(
+  scope: string,
+  requests: GifRequests = relayGifRequests,
+): CommunityGifs | undefined {
+  const community = communityFromScope(scope);
+  if (!community) return undefined;
+  return Object.freeze({
+    supports: (signal?: AbortSignal) => requests.supports(community, signal),
+    search: (query: string, signal?: AbortSignal) =>
+      requests.search(community, query, signal),
+  });
+}
+
 /** URL-only media keeps provider bytes and credentials out of Buzz storage. */
 export function gifMarkdown(gif: KlipyGif) {
   const title = gif.title

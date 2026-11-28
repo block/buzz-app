@@ -96,6 +96,14 @@ export function useNonmemberMentions(
           restoreFocus();
           return false;
         }}
+        error={
+          pending?.error ? (
+            <>
+              {pending.error} Your draft is kept. Some people may already have
+              been added.
+            </>
+          ) : undefined
+        }
         actions={
           <>
             <Button
@@ -120,14 +128,7 @@ export function useNonmemberMentions(
             )}
           </>
         }
-      >
-        {pending?.error ? (
-          <p role="alert">
-            {pending.error} Your draft is kept. Some people may already have
-            been added.
-          </p>
-        ) : null}
-      </Dialog>
+      />
     ),
   };
 }

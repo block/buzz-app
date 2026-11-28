@@ -404,6 +404,7 @@ function OpenCreateChannelDialog({
       }
       initialFocus={input}
       finalFocus={finalFocus}
+      error={confirmDiscard || privacyChoice ? undefined : error}
       actions={
         confirmDiscard ? (
           <>
@@ -628,11 +629,6 @@ function OpenCreateChannelDialog({
               setError("");
             }}
           />
-          {error && (
-            <p role="alert" className={styles.error}>
-              {error}
-            </p>
-          )}
         </form>
       )}
     </Dialog>

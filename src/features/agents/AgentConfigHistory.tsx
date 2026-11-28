@@ -308,6 +308,7 @@ export function AgentConfigHistory({
         footerGap="compact"
         chromeSpacing="padded"
         preventClose={reverting !== undefined}
+        error={event && failure?.id === event.id ? failure.text : undefined}
         actions={
           restorable && (
             <Button
@@ -346,11 +347,6 @@ export function AgentConfigHistory({
               : !history.done && history.next <= HISTORY_MAX_OFFSET
                 ? gapAction("unloaded")
                 : null)}
-          {event && failure?.id === event.id && (
-            <p className={`text-body-sm ${styles.failure}`} role="alert">
-              {failure.text}
-            </p>
-          )}
         </div>
       </Dialog>
     </section>

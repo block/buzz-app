@@ -163,6 +163,7 @@ export function createAttentionComponents({
             title={`Delete ${label}?`}
             description="This deletes the interest and all its watches. The agent will stop watching for these triggers. This cannot be undone."
             pending={action.pending}
+            error={action.error}
             initialFocus={cancel}
             finalFocus={() =>
               trigger.current?.isConnected
@@ -188,9 +189,7 @@ export function createAttentionComponents({
                 </Button>
               </>
             }
-          >
-            {problem(action.error)}
-          </AlertDialog>
+          />
         )}
         {!confirming && problem(action.error)}
       </>

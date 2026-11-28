@@ -250,6 +250,15 @@
   .buzz-dialog-action-row {
     display: contents;
   }
+  /* A failed action's message takes its own line above the actions it belongs to. */
+  .buzz-dialog-error {
+    @apply text-body-sm;
+    flex: 1 0 100%;
+    min-width: 0;
+    margin: 0;
+    color: var(--text-danger);
+    overflow-wrap: anywhere;
+  }
   /* This gutter stays outside the scrollport when long content is clipped. */
   :where(.buzz-dialog-body) + .buzz-dialog-actions {
     padding-top: calc(var(--space-4) + var(--space-1));

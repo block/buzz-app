@@ -72,6 +72,7 @@ export function RemindDialog({
             null)
       }
       title="Remind me"
+      error={error}
       description="Choose when to be reminded about this message."
       actions={
         <>
@@ -156,11 +157,6 @@ export function RemindDialog({
             onChange={(event) => setNote(event.target.value)}
           />
         </Field>
-        {error && (
-          <p role="alert" className="text-body text-subtle">
-            {error}
-          </p>
-        )}
       </div>
     </Dialog>
   );

@@ -58,6 +58,7 @@ export function RenameSidebarSection({
       onOpenChange={(open) => !open && close()}
       preventClose={pending}
       title="Rename section"
+      error={error}
       finalFocus={finalFocus}
       actions={
         <>
@@ -103,7 +104,6 @@ export function RenameSidebarSection({
           />
         </SidebarSectionEmojiInput>
       </form>
-      {error && <p role="alert">{error}</p>}
       {pending && (
         <p role="status" className="sr-only">
           Renaming section and waiting for confirmation…

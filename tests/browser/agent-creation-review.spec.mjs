@@ -104,7 +104,7 @@ test("agent creation waits for owner review in the existing editable form", asyn
   ]);
 });
 
-test("failed agent creation keeps its error above sticky actions and allows retry", async ({
+test("failed agent creation shows its error in view above the actions and allows retry", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 420 });
@@ -127,12 +127,16 @@ test("failed agent creation keeps its error above sticky actions and allows retr
     .poll(() =>
       alert.evaluate((element) => {
         const dialog = element.closest('[role="dialog"]');
-        const header = dialog.querySelector(".buzz-dialog-header");
         const footer = dialog.querySelector(".buzz-dialog-actions");
         const error = element.getBoundingClientRect();
+        const actions = [...footer.querySelectorAll("button")].map((button) =>
+          button.getBoundingClientRect(),
+        );
         return (
-          error.top >= header.getBoundingClientRect().bottom &&
-          error.bottom <= footer.getBoundingClientRect().top
+          footer.contains(element) &&
+          error.top >= 0 &&
+          error.bottom <= window.innerHeight &&
+          actions.every((action) => error.bottom <= action.top)
         );
       }),
     )

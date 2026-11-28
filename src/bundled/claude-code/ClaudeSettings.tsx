@@ -289,6 +289,7 @@ export function ClaudeSettings({
           title="Remove Claude API key?"
           description={`This removes the key from ${storage}. ${own ? "Security reviews" : "New local Claude sessions"} will need a key. A turn already running can finish.`}
           pending={clearing}
+          error={clearError}
           onClose={() => setConfirm(false)}
           finalFocus={() =>
             actionsButton.current ??
@@ -310,13 +311,7 @@ export function ClaudeSettings({
               </Button>
             </>
           }
-        >
-          {clearError && (
-            <p role="alert" className="buzz-field-error m-0">
-              {clearError}
-            </p>
-          )}
-        </AlertDialog>
+        />
       )}
     </section>
   );

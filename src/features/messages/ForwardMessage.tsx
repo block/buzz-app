@@ -595,6 +595,7 @@ function ForwardMessageDialog({
         title="Forward message"
         description="Send a copy to people or a channel, with an optional note."
         footerGap="compact"
+        error={error}
         preventClose={pending}
         dismissOnOutsideClick={false}
         onOpenChange={(next) => {
@@ -762,12 +763,6 @@ function ForwardMessageDialog({
               }
             />
           )}
-          {error && (
-            <p role="alert" className="text-body-sm text-subtle">
-              {error}
-            </p>
-          )}
-
           {/* Shown before and after a copy, so a copy adds no line that would
               move its button. It stays while a forward is sent: the button is
               disabled for that moment, and a line removed would resize the

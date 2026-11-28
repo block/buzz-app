@@ -146,6 +146,16 @@ export function useBringAgents(
         description={
           pending && describe(pending.agents, canAdd, !!pending.reviewed)
         }
+        error={
+          pending?.error ? (
+            <>
+              {pending.error} Your draft is kept.
+              {brought.length
+                ? ` ${named(brought)} ${brought.length > 1 ? "are" : "is"} now in ${here}.`
+                : ""}
+            </>
+          ) : undefined
+        }
         preventClose={!!pending?.busy}
         // Bringing an agent changes who is in the channel, so Enter starts on
         // declining while Bring and Send retain their action styling.
@@ -186,14 +196,6 @@ export function useBringAgents(
       >
         {pending?.progress.notes.length ? (
           <p role="status">{pending.progress.notes.join(" ")}</p>
-        ) : null}
-        {pending?.error ? (
-          <p role="alert">
-            {pending.error} Your draft is kept.
-            {brought.length
-              ? ` ${named(brought)} ${brought.length > 1 ? "are" : "is"} now in ${here}.`
-              : ""}
-          </p>
         ) : null}
       </Dialog>
     ),

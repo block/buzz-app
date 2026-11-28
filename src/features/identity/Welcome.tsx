@@ -1201,6 +1201,7 @@ export function Welcome({
                     description="This deletes it from this computer’s secure storage, signs you out of your organizations and restarts Buzz. Then sign in to restore your account’s key from its backup, or enter your private key. Without a backup or a copy, that identity can’t be recovered."
                     pending={removingKey.pending}
                     onClose={() => setRemovingKey(undefined)}
+                    error={removingKey.error}
                     actions={
                       <>
                         <Button
@@ -1228,11 +1229,7 @@ export function Welcome({
                         </Button>
                       </>
                     }
-                  >
-                    {removingKey.error && (
-                      <p role="alert">{removingKey.error}</p>
-                    )}
-                  </AlertDialog>
+                  />
                 )}
               </>
             ) : (

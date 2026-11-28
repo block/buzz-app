@@ -210,6 +210,7 @@ export function NewWorkspace({
       title={moveConversation ? "Move to new workspace" : "New workspace"}
       description="Set defaults for new conversations."
       height="stable-tall"
+      error={error}
       initialFocus={input}
       finalFocus={finalFocus}
       actions={
@@ -317,7 +318,6 @@ export function NewWorkspace({
             Name, folders and instructions are kept for the retry.
           </p>
         )}
-        {error && <p role="alert">{error}</p>}
         {!writable && !busy && (
           <>
             <p role="status">Saved workspace preferences are unavailable.</p>

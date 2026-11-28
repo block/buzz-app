@@ -1418,9 +1418,7 @@ it("edits instructions directly without a separate editing step", async () => {
   );
 });
 
-it("shows a failed create's error in view, stays open, and lets it be tried again", async () => {
-  const scrollIntoView = vi.fn();
-  Element.prototype.scrollIntoView = scrollIntoView;
+it("shows a failed create's error in the footer, stays open, and lets it be tried again", async () => {
   let attempts = 0;
   const { agents, onCreated, onClose, dialog, user } = setup(
     [echo],
@@ -1434,9 +1432,6 @@ it("shows a failed create's error in view, stays open, and lets it be tried agai
 
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Credential store refused");
-  // Below a long form, the error would otherwise be out of sight.
-  expect(scrollIntoView.mock.contexts).toEqual([alert]);
-  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
   expect(screen.getByRole("dialog", { name: "Create agent" })).toBeVisible();
   expect(createButton()).toBeEnabled();
   expect(within(dialog).getByLabelText("Name")).toBeEnabled();

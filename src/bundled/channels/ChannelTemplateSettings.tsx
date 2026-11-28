@@ -206,6 +206,7 @@ function TemplateDialog({
       }
       closeLabel={confirmDiscard ? "Back to template" : "Close template"}
       initialFocus={input}
+      error={confirmDiscard ? undefined : error}
       actions={
         confirmDiscard ? (
           <>
@@ -317,11 +318,6 @@ function TemplateDialog({
               placeholder={"# Goal\n\n# Scope\n\n# Success criteria"}
             />
           </Field>
-          {error && (
-            <p role="alert" className={styles.error}>
-              {error}
-            </p>
-          )}
         </form>
       )}
     </Dialog>

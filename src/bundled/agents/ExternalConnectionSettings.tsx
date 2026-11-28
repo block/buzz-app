@@ -51,7 +51,7 @@ export function ExternalConnectionSettings({
     // A refused revoke reports through state.error and keeps the row.
     if (!connection.snapshot().grant) setConfirming(undefined);
   };
-  // Shown inside the dialog while it is open, otherwise under the row.
+  // Shown in the dialog's error slot while it is open, otherwise under the row.
   const error = state.error && (
     <p role="alert" className="m-0 text-body-sm text-danger">
       {state.error}
@@ -129,6 +129,7 @@ export function ExternalConnectionSettings({
               : "This removes the saved approval. The app must ask for access again before it can use Buzz."
           }
           pending={revoking}
+          error={state.error}
           initialFocus={cancel}
           finalFocus={() =>
             trigger.current?.isConnected
@@ -154,9 +155,7 @@ export function ExternalConnectionSettings({
               </Button>
             </>
           }
-        >
-          {error}
-        </AlertDialog>
+        />
       )}
     </section>
   );

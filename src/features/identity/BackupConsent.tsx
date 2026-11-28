@@ -222,6 +222,7 @@ export function BackupPrompt({
       initialFocus={sync}
       finalFocus={finalFocus}
       pending={saving !== undefined}
+      error={error}
       actions={
         <>
           <Button
@@ -244,8 +245,6 @@ export function BackupPrompt({
           </Button>
         </>
       }
-    >
-      {error && <p role="alert">{error}</p>}
-    </AlertDialog>
+    />
   );
 }

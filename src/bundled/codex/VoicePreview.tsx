@@ -168,13 +168,8 @@ export function VoicePreview({
     value
       ? `${name(value)}${available(value) ? "" : " (unavailable)"}`
       : "Codex default";
-  const failure = feedback && (
-    <p
-      role={feedback.error ? "alert" : "status"}
-      className={
-        feedback.error ? "buzz-field-error" : "m-0 text-body-sm text-subtle"
-      }
-    >
+  const notice = feedback && !feedback.error && (
+    <p role="status" className="m-0 text-body-sm text-subtle">
       {feedback.text}
     </p>
   );
@@ -311,6 +306,7 @@ export function VoicePreview({
         dismissOnOutsideClick={false}
         size="compact"
         headerGap="compact"
+        error={feedback?.error ? feedback.text : undefined}
         finalFocus={trigger}
       >
         <div className="grid gap-3">
@@ -369,7 +365,7 @@ export function VoicePreview({
               Loading voice samples…
             </p>
           )}
-          {failure ??
+          {notice ||
             (!previewLoading && (
               <p role="status" className="sr-only">
                 {playing?.loading ? "Loading preview…" : ""}

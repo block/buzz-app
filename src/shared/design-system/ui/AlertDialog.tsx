@@ -1,6 +1,7 @@
 import { AlertDialog as BaseAlertDialog } from "@base-ui/react/alert-dialog";
 import { XIcon } from "../icons";
 import { IconButton } from "./IconButton";
+import { DialogError } from "./Dialog";
 import { useModalWindowDrag } from "./ModalWindowDrag";
 import { useState, type ComponentProps, type ReactNode } from "react";
 
@@ -10,6 +11,7 @@ export function AlertDialog({
   description,
   children,
   actions,
+  error,
   onClose,
   pending = false,
   finalFocus,
@@ -19,6 +21,8 @@ export function AlertDialog({
   description: ReactNode;
   children?: ReactNode;
   actions: ReactNode;
+  /** A failure of the confirmed action, shown above the actions and announced. */
+  error?: ReactNode;
   onClose(): void;
   pending?: boolean;
   initialFocus?: ComponentProps<typeof BaseAlertDialog.Popup>["initialFocus"];
@@ -89,7 +93,12 @@ export function AlertDialog({
               {children}
             </div>
           )}
-          <div className="buzz-dialog-actions">{actions}</div>
+          <div className="buzz-dialog-actions">
+            {error != null && error !== false && error !== "" && (
+              <DialogError>{error}</DialogError>
+            )}
+            {actions}
+          </div>
         </BaseAlertDialog.Popup>
       </BaseAlertDialog.Portal>
     </BaseAlertDialog.Root>

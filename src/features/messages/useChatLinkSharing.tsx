@@ -192,6 +192,14 @@ export function useChatLinkSharing(
         }
         onClose={() => pending.finish(false)}
         pending={pending.busy}
+        error={
+          pending.error ? (
+            <>
+              {pending.error} Your message has not been sent. Any access change
+              already saved is kept.
+            </>
+          ) : undefined
+        }
         initialFocus={proceed}
         finalFocus={() => {
           restoreFocus();
@@ -219,14 +227,7 @@ export function useChatLinkSharing(
             </Button>
           </>
         }
-      >
-        {pending.error && (
-          <p role="alert">
-            {pending.error} Your message has not been sent. Any access change
-            already saved is kept.
-          </p>
-        )}
-      </AlertDialog>
+      />
     ),
   };
 }

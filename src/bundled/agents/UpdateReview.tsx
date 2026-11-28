@@ -75,11 +75,10 @@ export function UpdateReview({ agents }: { agents: Agents }) {
         onOpenChange={(open) => {
           if (!open) agents.dismissUpdate(request.id);
         }}
-      >
-        <p role="alert" className="m-0 text-body-sm text-danger">
-          {problem} Close this review and ask the agent for a new proposal.
-        </p>
-      </Dialog>
+        error={
+          <>{problem} Close this review and ask the agent for a new proposal.</>
+        }
+      />
     );
   return (
     <AgentCreateDialog

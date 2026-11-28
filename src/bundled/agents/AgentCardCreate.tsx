@@ -72,6 +72,7 @@ export function AgentCardCreate({
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
+      error={current?.error}
       actions={
         current && (
           <Button variant="primary" onClick={() => setAttempt((n) => n + 1)}>
@@ -80,11 +81,7 @@ export function AgentCardCreate({
         )
       }
     >
-      {current ? (
-        <p role="alert" className="m-0 text-body-sm text-danger">
-          {current.error}
-        </p>
-      ) : (
+      {!current && (
         <p role="status" className="m-0 text-body-sm text-secondary">
           Loading agent card…
         </p>

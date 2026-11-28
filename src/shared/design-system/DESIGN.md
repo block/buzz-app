@@ -40,6 +40,8 @@ and token in both themes.
 | A settled empty or setup state | `EmptyState` with the next action |
 | Content that's loading | `LoadingRegion`: it stays quiet for the first second, so fast loads don't flicker |
 | A transient result | The shared Toast; a copy button shows its own result, see [Copy feedback](#copy-feedback) |
+| A problem with one form value | `Field`'s `error` |
+| A dialog action that failed | `Dialog`'s or `AlertDialog`'s `error`; see [Errors](#errors) |
 | A person or agent | `Avatar`; see [Identity shapes](#identity-shapes) |
 
 Use `NavigationSectionHeading` for workspace and channel headings. Its
@@ -50,6 +52,31 @@ hover or keyboard focus reveals actions in place of passive metadata while
 the accessory stays mounted. Keep the Actions menu beside the title on touch.
 When there is no room for a separate New task button, keep New task in the
 menu.
+
+## Errors
+
+Show an error where the person can act on it, once.
+
+- A problem with one value goes on its `Field`.
+- A failed dialog action goes in the dialog's `error`. It sits above the
+  actions, stays visible while the body scrolls, and is announced. Don't put
+  errors in `description` or the body, and don't style them locally.
+- Keep the dialog open and the person's input intact so they can retry.
+
+Write the message in up to three short parts: what failed, what's safe, and
+what to do next. "Couldn't invite Sam. Your message hasn't been sent. Try
+again."
+
+- Name the action in plain words. Start with "Couldn't" rather than "Error" or
+  "Failed to".
+- Never show raw system text such as timeouts, status codes or exception
+  names. Translate it, or leave it out.
+- Mention what's safe only when people would otherwise worry, such as a kept
+  draft.
+- Say what's uncertain only when it changes what they should do next.
+- End with a next step the dialog offers, such as trying again.
+- Use full sentences, sentence case and a final period. No exclamation marks
+  and no apologies.
 
 ## Colour structure
 

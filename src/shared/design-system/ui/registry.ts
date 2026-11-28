@@ -189,8 +189,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "AlertDialog",
     purpose: "Confirm a consequential action before continuing.",
     behavior:
-      "Centered 25rem confirmation with 2rem insets (1rem at viewport widths up to 30rem), a grouped title/description header and secondary Close control. Optional body content precedes actions; header-only confirmations omit the body. Base UI owns modal focus and alert-dialog semantics.",
-    variants: ["default", "pending"],
+      "Centered 25rem confirmation with 2rem insets (1rem at viewport widths up to 30rem), a grouped title/description header and secondary Close control. Optional body content precedes actions; header-only confirmations omit the body. A failed action's error sits above the actions and is announced. Base UI owns modal focus and alert-dialog semantics.",
+    variants: ["default", "pending", "error"],
     status: "core",
     collection: "components",
     source: "shared/design-system/ui/AlertDialog.tsx",
@@ -215,7 +215,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Dialog",
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
-      "Shared title/description header and secondary Close; one 12px heading-to-body gap, 2rem outer insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
+      "Shared title/description header and secondary Close; one 12px heading-to-body gap, 2rem outer insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. A failed action's error sits on its own line above the actions, outside scrolling content, and is announced. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
     variants: [
       "compact (25rem)",
       "default (40rem)",
@@ -229,6 +229,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "search presentation",
       "centered artwork header",
       "integrated navigation",
+      "action error",
       "host container (sectioned: bounded 72rem × 48rem)",
     ],
     status: "proposed",

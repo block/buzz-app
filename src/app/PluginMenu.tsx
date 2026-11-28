@@ -139,6 +139,7 @@ export function PluginMenu({
           initialFocus={rollBack}
           finalFocus={deleteTrigger}
           onClose={() => setConfirmRollback(false)}
+          error={rollbackError}
           actions={
             <>
               <Button
@@ -183,13 +184,7 @@ export function PluginMenu({
               </Button>
             </>
           }
-        >
-          {rollbackError && (
-            <p role="alert" className="error text-body-sm">
-              {rollbackError}
-            </p>
-          )}
-        </AlertDialog>
+        />
       )}
       {confirmDelete && (
         <AlertDialog
@@ -199,6 +194,7 @@ export function PluginMenu({
           finalFocus={deleteTrigger}
           initialFocus={cancelDelete}
           onClose={() => setConfirmDelete(false)}
+          error={deleteError}
           actions={
             <>
               <Button
@@ -233,13 +229,7 @@ export function PluginMenu({
               </Button>
             </>
           }
-        >
-          {deleteError && (
-            <p role="alert" className="error text-body-sm">
-              {deleteError}
-            </p>
-          )}
-        </AlertDialog>
+        />
       )}
     </>
   );

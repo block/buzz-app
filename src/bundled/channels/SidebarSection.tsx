@@ -453,6 +453,7 @@ export function SidebarSection({
                 onOpenChange={setRemoveOpen}
                 dismissOnOutsideClick
                 preventClose={removing}
+                error={removeError}
                 initialFocus={cancelRemove}
                 finalFocus={() =>
                   actionsTrigger.current?.isConnected
@@ -482,7 +483,6 @@ export function SidebarSection({
                   </>
                 }
               >
-                {removeError && <p role="alert">{removeError}</p>}
                 {removing && (
                   <p role="status" className="sr-only">
                     Removing section and waiting for confirmation…

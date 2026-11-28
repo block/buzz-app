@@ -136,6 +136,7 @@ export function TypeSafeSettings({
           description={`This removes the key from ${storage}. Add a key again to keep using TypeSafe.`}
           pending={busy}
           onClose={() => setConfirm(false)}
+          error={error}
           finalFocus={() =>
             actionsButton.current ??
             container.current?.querySelector<HTMLInputElement>("input")
@@ -154,13 +155,7 @@ export function TypeSafeSettings({
               </Button>
             </>
           }
-        >
-          {error && (
-            <p role="alert" className="buzz-field-error m-0">
-              {error}
-            </p>
-          )}
-        </AlertDialog>
+        />
       )}
     </div>
   );

@@ -148,6 +148,14 @@ export function useOldAgentMentions(
             ? "Send when you're ready. Closing this keeps your draft."
             : describe(pending.found, !!chosen?.adopt))
         }
+        error={
+          pending?.error ? (
+            <>
+              {pending.error} Your draft is kept. Agents already imported stay
+              imported.
+            </>
+          ) : undefined
+        }
         preventClose={!!pending?.busy}
         finalFocus={() => {
           restoreFocus();
@@ -201,12 +209,6 @@ export function useOldAgentMentions(
         {pending?.notes?.map((note) => (
           <p key={note}>{note}</p>
         ))}
-        {pending?.error ? (
-          <p role="alert">
-            {pending.error} Your draft is kept. Agents already imported stay
-            imported.
-          </p>
-        ) : null}
       </Dialog>
     ),
   };

@@ -188,6 +188,7 @@ export function StatusEditor({
         if (!open) close();
       }}
       preventClose={busy}
+      error={error}
       initialFocus={message}
       finalFocus={finalFocus}
       actions={
@@ -382,11 +383,6 @@ export function StatusEditor({
               Retry
             </Button>
           </div>
-        )}
-        {error && (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
         )}
       </form>
     </Dialog>

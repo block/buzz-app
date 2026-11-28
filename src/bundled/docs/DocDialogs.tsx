@@ -478,6 +478,7 @@ export function DocHistory({
       height="stable"
       preventClose={pending}
       finalFocus={trigger}
+      error={saveError}
       actions={
         canEdit &&
         selected?.editable &&
@@ -503,7 +504,6 @@ export function DocHistory({
           <Button onClick={retry}>Retry history</Button>
         </>
       )}
-      {saveError && <p role="alert">{saveError}</p>}
       {busy && <p role="status">Reading revision…</p>}
       {selected && (
         <DocRevisionPreview

@@ -234,11 +234,6 @@ function ChangeReview({
       {!plugin && (
         <p className="m-0 text-body-sm">This plugin is no longer installed.</p>
       )}
-      {failure && (
-        <p role="alert" className="error text-body-sm">
-          {failure}
-        </p>
-      )}
     </>
   );
   if (action === "remove")
@@ -250,6 +245,7 @@ function ChangeReview({
         initialFocus={cancel}
         finalFocus={returnFocus}
         onClose={onClose}
+        error={failure}
         actions={
           <>
             <Button ref={cancel} disabled={working} onClick={onClose}>
@@ -277,6 +273,7 @@ function ChangeReview({
       title={`Enable ${name}?`}
       description={`Requested by ${request.requester.name}. Only enable code you trust.`}
       preventClose={working}
+      error={failure}
       dismissOnOutsideClick
       initialFocus={cancel}
       finalFocus={returnFocus}

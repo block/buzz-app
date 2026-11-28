@@ -54,6 +54,7 @@ function TeamUpdateDialog({
       description={`${request.requesterName} proposed these changes. Nothing changes until you save.`}
       height="content"
       chromeSpacing="padded"
+      error={error}
       actions={
         <Button
           variant="primary"
@@ -81,11 +82,6 @@ function TeamUpdateDialog({
             onChange={(event) => setInstructions(event.target.value)}
           />
         </Field>
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
       </div>
     </Dialog>
   );

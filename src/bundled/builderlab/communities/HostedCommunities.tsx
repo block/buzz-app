@@ -465,7 +465,6 @@ export function HostedCommunities({
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, []);
-  // Repeated inside open dialogs, whose modal backdrop hides the page copy.
   const failure = error && (
     <p role="alert" className="error flex items-start gap-2 break-words">
       <WarningCircleIcon
@@ -1185,7 +1184,7 @@ export function HostedCommunities({
                   ? `${quotaState.used} of ${quotaState.limit} communities used`
                   : null
               }
-              failure={failure}
+              error={error}
               api={api}
               enabled={ready && quotaState?.canCreate !== false}
               atLimit={
@@ -1230,7 +1229,7 @@ export function HostedCommunities({
         <DeleteCommunityDialog
           community={deleteTarget}
           pending={action === "delete"}
-          failure={failure}
+          error={error}
           close={() => setDeleteTarget(null)}
           onDelete={() => {
             const occupied = readPendingDeletion();
@@ -1292,7 +1291,7 @@ export function HostedCommunities({
           pending={busy}
           initialFocus={confirm.caution ? cancel : proceed}
           onClose={() => setConfirm(null)}
-          {...(failure ? { children: failure } : {})}
+          error={error}
           actions={
             <>
               <Button
@@ -1324,7 +1323,7 @@ export function HostedCommunities({
         <TransferDialog
           name={transfer.name ?? transfer.slug ?? "this community"}
           busy={busy}
-          failure={failure}
+          error={error}
           close={() => setTransfer(null)}
           onTransfer={(recipient) =>
             run("transfer", async () => {
@@ -1355,13 +1354,13 @@ export function HostedCommunities({
 function DeleteCommunityDialog({
   community,
   pending,
-  failure,
+  error,
   close,
   onDelete,
 }: {
   community: Community;
   pending: boolean;
-  failure: ReactNode;
+  error: string;
   close(): void;
   onDelete(): void;
 }) {
@@ -1380,6 +1379,7 @@ function DeleteCommunityDialog({
       title={`Permanently delete ${name}?`}
       description="This starts an irreversible deletion."
       preventClose={pending}
+      error={error}
       actions={
         <>
           <Button disabled={pending} onClick={close}>
@@ -1417,7 +1417,6 @@ function DeleteCommunityDialog({
           onCheckedChange={(checked) => setAcknowledged(checked === true)}
           label="I understand this cannot be canceled and deletion continues after acceptance."
         />
-        {failure}
       </div>
     </Dialog>
   );
@@ -1427,7 +1426,7 @@ function CreateCommunity({
   open,
   close,
   quotaLabel,
-  failure,
+  error,
   api,
   enabled,
   atLimit,
@@ -1438,7 +1437,7 @@ function CreateCommunity({
   open: boolean;
   close(): void;
   quotaLabel: string | null;
-  failure: ReactNode;
+  error: string;
   api: Api;
   enabled: boolean;
   atLimit: string | null;
@@ -1491,6 +1490,7 @@ function CreateCommunity({
       preventClose={creating}
       title="Create community"
       description="Choose your community’s address."
+      error={error}
       leadingActions={
         quotaLabel && (
           <p className="m-0 text-body-sm text-muted">{quotaLabel}</p>
@@ -1521,7 +1521,6 @@ function CreateCommunity({
         </>
       }
     >
-      {failure}
       <form
         id={formId}
         className="flex flex-col gap-3"
@@ -1550,13 +1549,13 @@ function CreateCommunity({
 function TransferDialog({
   name,
   busy,
-  failure,
+  error,
   close,
   onTransfer,
 }: {
   name: string;
   busy: boolean;
-  failure: ReactNode;
+  error: string;
   close(): void;
   onTransfer(npub: string): void;
 }) {
@@ -1569,6 +1568,7 @@ function TransferDialog({
       onOpenChange={(open) => !open && close()}
       preventClose={busy}
       initialFocus={recipientInput}
+      error={error}
       title="Transfer ownership"
       description={`Transfer ${name} to another person. You become a regular member. The recipient needs a connected Buzz identity first, and this can’t be undone.`}
       actions={
@@ -1605,7 +1605,6 @@ function TransferDialog({
           onValueChange={(value) => setRecipient(value.trim())}
         />
       </Field>
-      {failure}
     </Dialog>
   );
 }

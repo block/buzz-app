@@ -32,11 +32,8 @@ export function ProviderDialog({
           dismissOnOutsideClick
           visit={visit}
           finalFocus={() => finalFocus.current}
-        >
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            Provider controls are unavailable.
-          </p>
-        </Dialog>
+          error="Provider controls are unavailable."
+        />
       }
     >
       <ManagedProviderDialog

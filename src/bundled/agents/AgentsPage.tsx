@@ -2955,6 +2955,7 @@ function TeamEditor({
               : deleteButton.current
           }
           onClose={() => askDelete(false)}
+          error={error}
           actions={
             <>
               <Button disabled={pending} onClick={() => askDelete(false)}>
@@ -2969,13 +2970,7 @@ function TeamEditor({
               </Button>
             </>
           }
-        >
-          {error && (
-            <p role="alert" className="m-0 text-body-sm text-danger">
-              {error}
-            </p>
-          )}
-        </AlertDialog>
+        />
       )}
     </form>
   );

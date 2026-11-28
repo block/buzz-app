@@ -107,6 +107,7 @@ export function FocusDialog({
       onOpenChange={onOpenChange}
       title="Focus"
       closeLabel="Close Focus"
+      error={error || state.error}
       description={
         on
           ? `Focusing until ${focusUntilLabel(state.until as number)}`
@@ -171,11 +172,6 @@ export function FocusDialog({
             />
           )}
         </div>
-      )}
-      {(error || state.error) && (
-        <p role="alert" className="text-body-sm text-danger">
-          {error || state.error}
-        </p>
       )}
     </Dialog>
   );

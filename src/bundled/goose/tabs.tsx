@@ -1190,6 +1190,7 @@ export function createTabs({
         }}
         height="stable"
         title="Edit configuration"
+        error={error}
         actions={
           <>
             <Button disabled={saving} onClick={onClose}>
@@ -1233,7 +1234,6 @@ export function createTabs({
               setDraft(choice);
             }}
           />
-          {error && <p role="alert">{error}</p>}
         </div>
       </Dialog>
     );

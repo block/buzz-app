@@ -4,6 +4,10 @@ import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityOutcome } from "./ActivityOutcome";
 import { AgentResponsePreview } from "./AgentResponsePreview";
+import {
+  coordinationLabel,
+  hasCoordinationPreview,
+} from "./coordination-preview";
 import { useChannelActivitySubscription } from "../agents/use-channel-agent-activity";
 import { useSpringLoaded } from "./spring-loaded-drag";
 import { useActivityIndicator } from "./use-activity-indicator";
@@ -1997,6 +2001,13 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
     activity?.requestId,
   );
   const active = live || (activity?.active ?? false);
+  const coordination =
+    !failure &&
+    !active &&
+    !activity?.hasOutcome &&
+    activity?.container !== "history" &&
+    hasCoordinationPreview(row, agentPubkeys);
+  const coordinationSummary = coordinationLabel(1);
   // Its dots are then its request's working cue, so the conversation shows
   // no second one for that request until a newer message follows its run.
   useActivityTypingReplacement(
@@ -2026,9 +2037,11 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
     const was = focused.current;
     const now = entry.current;
     if (!was || !now || was.stop.isConnected) return;
-    const stops = (root: Element) => [
-      ...root.querySelectorAll<HTMLElement>(focusStops),
-    ];
+    const stops = (root: Element) => {
+      const all = [...root.querySelectorAll<HTMLElement>(focusStops)];
+      const line = root.querySelector<HTMLElement>("[data-activity-summary]");
+      return line ? [line, ...all.filter((stop) => stop !== line)] : all;
+    };
     const [line, ...rest] = stops(now);
     const same = rest[stops(was.entry).indexOf(was.stop as HTMLElement) - 1];
     (same?.tagName === was.stop.tagName ? same : line)?.focus({
@@ -2076,6 +2089,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
     addressedPreview.length > 280
       ? `${addressedPreview.slice(0, 279).join("")}…`
       : addressedPreview.join("");
+  const previewLabel = `${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`;
   const avatar = (who: typeof author) => (
     <span className={styles.audienceAvatar} title={who.name}>
       <AgentAvatar
@@ -2097,19 +2111,69 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
       alignViewer={false}
       day={false}
       layout="continuation"
-      stackPrevious
+      stackPrevious={!coordination || bubble}
       stackNext
       renderMessage={(message, trigger) =>
-        failure ? (
-          <div data-message-id={row.id} data-message-notice="execution-failure">
+        failure || bubble ? (
+          // biome-ignore lint/a11y/noStaticElementInteractions: Tracks descendant focus during reparenting; the wrapper is not a control.
+          <div
+            ref={entry}
+            data-message-id={row.id}
+            data-message-notice={failure ? "execution-failure" : undefined}
+            onFocus={(event) => {
+              focused.current = {
+                entry: event.currentTarget,
+                stop: event.target,
+              };
+            }}
+            onBlur={() => {
+              focused.current = null;
+            }}
+          >
             <ActivityDisclosure
+              coordination={coordination}
               expanded={open}
               onToggle={() => setOpen((value) => !value)}
               trigger={trigger}
-              label={`${open ? "Collapse" : "Show"} activity history: ${author.name}: Couldn’t finish`}
-              summary={<ActivityOutcome state="error" />}
-              expandedSummary={<ActivityOutcome state="error" />}
+              label={
+                failure
+                  ? `${open ? "Collapse" : "Show"} activity history: ${author.name}: Couldn’t finish`
+                  : coordination
+                    ? `${open ? "Collapse" : "Show"} activity history: ${coordinationSummary}`
+                    : open
+                      ? `Collapse activity history: ${previewLabel}`
+                      : previewLabel
+              }
+              icon={
+                !failure && (
+                  <>
+                    <RemoteWorkIcon
+                      session={session}
+                      viewer={props.viewer ?? session?.viewer}
+                      pubkey={row.authorId}
+                      active={active}
+                    />
+                    {active && <TypingDots size="message" />}
+                  </>
+                )
+              }
+              summary={
+                failure ? (
+                  <ActivityOutcome state="error" />
+                ) : (
+                  <>
+                    <ShimmerText active={active}>
+                      {coordination ? coordinationSummary : visiblePreview}
+                    </ShimmerText>
+                    {row.edited && <EditedMarker />}
+                  </>
+                )
+              }
+              expandedSummary={
+                failure ? <ActivityOutcome state="error" /> : undefined
+              }
               actions={
+                failure &&
                 props.canOpenLink?.(
                   profileActivityViewTarget(author.pubkey) ?? "",
                 ) && (
@@ -2189,8 +2253,13 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
               <Collapsible.Trigger
                 ref={trigger}
                 data-buzz-ui=""
+                data-activity-summary=""
                 className={styles.audienceLine}
-                aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`}
+                aria-label={
+                  coordination
+                    ? `${open ? "Collapse" : "Show"} activity history: ${coordinationSummary}`
+                    : previewLabel
+                }
               >
                 {!bubble && avatar(author)}
                 {!open && (
@@ -2202,10 +2271,11 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                   />
                 )}
                 {active && <TypingDots size="message" />}
-                {open && bubble && "Collapse"}
                 {!open && (
                   <span className={styles.audiencePreviewText}>
-                    <ShimmerText active={active}>{visiblePreview}</ShimmerText>
+                    <ShimmerText active={active}>
+                      {coordination ? coordinationSummary : visiblePreview}
+                    </ShimmerText>
                   </span>
                 )}
                 {!open && row.edited && <EditedMarker />}
@@ -2230,6 +2300,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
       {props.day && <DayDivider createdAt={row.createdAt} />}
       <AgentResponsePreview
         name={author.name}
+        variant={coordination ? "coordination" : "activity"}
         bylineHint={
           <RemoteAgentHint
             session={session}

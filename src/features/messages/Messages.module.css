@@ -4012,22 +4012,6 @@ html[data-keyboard-navigation] .activityExpansion {
   transition: none;
 }
 
-.audienceLine[data-collapse] {
-  color: var(--text-subtle);
-}
-
-/* Extend the native button hit target, keeping its painted surface content-sized. */
-.audienceRow[data-collapse] > .audienceEntry,
-.audienceLine[data-collapse] {
-  position: static;
-}
-.audienceLine[data-collapse]::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  cursor: pointer;
-}
-
 /* Standalone activity uses the normal incoming identity and bubble geometry. */
 .standaloneActivity .audienceRow {
   container-type: normal;
@@ -4047,7 +4031,7 @@ html[data-keyboard-navigation] .activityExpansion {
   padding: 0;
   font: inherit;
   letter-spacing: inherit;
-  min-height: calc(var(--text-message) * var(--text-message--line-height));
+  min-height: var(--space-6);
 }
 .standaloneActivity .audienceRow .audiencePreviewText {
   display: block;
@@ -4068,8 +4052,13 @@ html[data-keyboard-navigation] .activityExpansion {
   order: 1;
   color: var(--text-subtle);
 }
+/* Expanded originals size the content-sized disclosure, not a second query
+   container. Inline-size containment would let the Collapse label set its width. */
+.containedActivityHistory .message[data-layout="continuation"],
 .standaloneActivity .audienceBody .message[data-layout="continuation"] {
   container-type: normal;
+}
+.standaloneActivity .audienceBody .message[data-layout="continuation"] {
   padding-inline-end: 0;
 }
 
@@ -4167,21 +4156,10 @@ html[data-keyboard-navigation] .activityExpansion {
   }
 }
 
-.activityDisclosureIcon {
-  flex: none;
-  width: var(--space-4);
-  height: var(--space-4);
-  color: var(--text-subtle);
-}
-.standaloneActivity[data-contained-history]
-  .audienceLine[data-collapse]::after {
-  display: none;
-}
 .containedActivityHistory {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding-block-start: var(--space-3);
 }
 .containedActivityHistory .audienceRow .audiencePreviewText {
   white-space: normal;
@@ -4236,17 +4214,16 @@ html[data-keyboard-navigation] .activityExpansion {
   padding: calc(var(--space-1) + var(--space-half) / 2)
     calc(var(--space-1h) + var(--space-half) / 2);
 }
-/* Compact removes the bubble inset. A collapsed activity disclosure ("Stopped",
-   or a standalone failure reply inside its notice) has no trigger inset, so its
-   outlined box takes the activity bubble's inset. */
+/* Compact removes the prose inset. Activity keeps its own inset in both
+   states so opening history never moves the disclosure header. */
 :where(html[data-message-density="compact"])
   .message[data-agent-response-preview]
   .messageBubble:has(
-    > .standaloneActivity > .activityGroupHeader:not([data-expanded]),
+    > .standaloneActivity > .activityGroupHeader,
     > .standaloneActivity
-      > [data-message-notice]
+      > [data-message-id]
       > .standaloneActivity
-      > .activityGroupHeader:not([data-expanded])
+      > .activityGroupHeader
   ) {
   padding: calc(var(--space-1) + var(--space-half) / 2)
     calc(var(--space-1h) + var(--space-half) / 2);
@@ -4281,29 +4258,32 @@ html[data-keyboard-navigation] .activityExpansion {
   block-size: var(--space-6);
 }
 
-.activityGroupHeader[data-expanded] {
+.activityGroupHeader {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
+}
+.activityGroupHeader[data-expanded] > .audienceRow {
+  flex: 1 0 auto;
+  min-width: min-content;
+}
+.activityGroupActions {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .messageBubble:has(
   > .standaloneActivity > .activityGroupHeader[data-expanded],
   > .standaloneActivity
-    > [data-message-notice]
+    > [data-message-id]
     > .standaloneActivity
     > .activityGroupHeader[data-expanded]
 ) {
-  padding: var(--space-4);
+  padding: var(--space-2) var(--space-4) var(--space-4);
 }
-.standaloneActivity .activityGroupHeader[data-expanded] .audienceLine {
-  min-height: var(--size-control-sm);
-}
-.activityGroupHeader[data-expanded] > .audienceRow {
-  flex: 1;
-  min-width: 0;
-}
-.activityGroupHeader[data-expanded] > div:last-child {
-  flex-shrink: 0;
+/* A coordination header keeps the same type and origin in both states.
+   Expanded history retains the message prose role. */
+.activityGroupHeader[data-coordination] > .audienceRow .audienceLine {
+  @apply text-disclosure;
 }
 .agentNote {
   margin: var(--space-1h) 0 0;

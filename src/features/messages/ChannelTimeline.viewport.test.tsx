@@ -205,6 +205,7 @@ it("shows one latest-agent preview, retains expanded history through appends, an
       name: /Show activity history/,
     });
     fireEvent.click(toggle);
+    toggle = screen.getByRole("button", { name: /Collapse activity history/ });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Update 0")).toBeVisible();
     view.rerender(content(updates(11)));
@@ -212,13 +213,10 @@ it("shows one latest-agent preview, retains expanded history through appends, an
     expect(toggle).toHaveFocus();
     expect(screen.getByText("Update 0")).toBeVisible();
     expect(screen.getAllByText("Update 10")).toHaveLength(1);
-    expect(
-      screen.getByText("Update 0").compareDocumentPosition(toggle) &
-        Node.DOCUMENT_POSITION_PRECEDING,
-    ).toBeTruthy();
     fireEvent.click(toggle);
     expect(screen.queryByText("Update 5")).toBeNull();
     expect(screen.getByText("Update 10")).toBeVisible();
+    toggle = screen.getByRole("button", { name: /Show activity history/ });
     expect(toggle).toHaveTextContent("Update 10");
     expect(toggle).toHaveFocus();
     view.rerender(
@@ -279,14 +277,6 @@ it("shows the first three distinct agents in the visible identity cluster while 
     );
     expect(screen.queryByText("+1")).toBeNull();
     expect(screen.getByText("Update 8")).toBeVisible();
-    const collapse = screen.getByRole("button", {
-      name: /Collapse activity history/,
-    });
-    expect(collapse).toHaveTextContent("Collapse");
-    expect(
-      screen.getByText("Update 8").compareDocumentPosition(collapse) &
-        Node.DOCUMENT_POSITION_PRECEDING,
-    ).toBeTruthy();
     expect(screen.getByText("Update 0")).toBeVisible();
   } finally {
     owner.dispose();

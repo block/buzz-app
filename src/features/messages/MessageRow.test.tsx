@@ -96,18 +96,24 @@ it("discloses an automatic failure reply while keeping its original text availab
   };
   try {
     const view = renderDom(<MessageRow {...props} />);
-    const details = screen.getByRole("button", {
+    let details = screen.getByRole("button", {
       name: "Show activity history: Spongebob: Couldn’t finish",
     });
     expect(details).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText(content)).not.toBeInTheDocument();
     fireEvent.click(details);
+    details = screen.getByRole("button", {
+      name: "Collapse activity history: Spongebob: Couldn’t finish",
+    });
     expect(screen.getByText(content)).toBeVisible();
     expect(details).toHaveAttribute("aria-expanded", "true");
     expect(details).toHaveAccessibleName(
       "Collapse activity history: Spongebob: Couldn’t finish",
     );
     fireEvent.click(details);
+    details = screen.getByRole("button", {
+      name: "Show activity history: Spongebob: Couldn’t finish",
+    });
     expect(details).toHaveAttribute("aria-expanded", "false");
     view.rerender(
       <MessageRow
@@ -3563,7 +3569,7 @@ it("marks remote activity steps and animates only while active", () => {
   };
   const view = renderDom(<MessageRow {...props} />);
   try {
-    const trigger = screen.getByRole("button", { name: "Agent: Root" });
+    let trigger = screen.getByRole("button", { name: "Agent: Root" });
     const cloud = () => trigger.querySelector(".tabler-icon-cloud");
     expect(cloud()).toHaveAttribute("data-active", "true");
     expect(cloud()).toHaveAttribute("aria-hidden", "true");
@@ -3577,8 +3583,12 @@ it("marks remote activity steps and animates only while active", () => {
     expect(cloud()).not.toBeNull();
     expect(cloud()).not.toHaveAttribute("data-active");
     fireEvent.click(trigger);
+    trigger = screen.getByRole("button", {
+      name: "Collapse activity history: Agent: Root",
+    });
     expect(cloud()).toBeNull();
     fireEvent.click(trigger);
+    trigger = screen.getByRole("button", { name: "Agent: Root" });
     expect(cloud()).not.toBeNull();
     view.rerender(<MessageRow {...props} viewer="someone-else" />);
     expect(cloud()).toBeNull();

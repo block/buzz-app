@@ -13,7 +13,9 @@ export function AgentResponsePreview({
   children,
   stackPrevious = false,
   bylineHint,
+  variant = "activity",
 }: {
+  variant?: "activity" | "coordination";
   bylineHint?: ReactNode;
   stackPrevious?: boolean;
   name: string;
@@ -29,7 +31,7 @@ export function AgentResponsePreview({
   // A flat list's group avatar is on its first row; a continuation keeps only
   // the label, which names the row while its byline is omitted.
   const flat = useMessageDensity() === "compact";
-  const hiddenAvatar = stackPrevious && flat;
+  const hiddenAvatar = stackPrevious && flat && variant !== "coordination";
   const avatars: typeof participants = participants.length
     ? participants.slice(0, 3)
     : [{ id: "primary", name, picture }];
@@ -39,6 +41,7 @@ export function AgentResponsePreview({
       data-stack-previous={stackPrevious || undefined}
       data-layout={layout}
       data-agent-response-preview=""
+      data-preview-variant={variant}
     >
       <span className={styles.messageGutter} />
       <div className={styles.messageBody}>
@@ -71,7 +74,7 @@ export function AgentResponsePreview({
               ))}
             </span>
           </div>
-          {!stackPrevious && (
+          {!stackPrevious && variant !== "coordination" && (
             <div className={styles.messageHeader}>
               <div className={styles.byline}>
                 <strong className={styles.author}>

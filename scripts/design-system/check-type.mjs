@@ -42,6 +42,7 @@ const SIZE_ROLES = [
   "label",
   "label-sm",
   "caption",
+  "disclosure",
   "display",
   "title",
   "heading",

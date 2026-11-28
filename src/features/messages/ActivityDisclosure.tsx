@@ -1,6 +1,5 @@
 import { Children, type ReactNode, type RefObject, type Ref } from "react";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { CaretUpIcon } from "../../shared/design-system/icons";
+import { CaretDownIcon, CaretUpIcon } from "../../shared/design-system/icons";
 import styles from "./Messages.module.css";
 
 /** The conversation's existing activity disclosure, shared by history and outcomes. */
@@ -16,6 +15,7 @@ export function ActivityDisclosure({
   container,
   interactive = true,
   expandedSummary,
+  coordination = false,
 }: {
   expanded: boolean;
   onToggle: () => void;
@@ -28,6 +28,7 @@ export function ActivityDisclosure({
   container?: Ref<HTMLDivElement> | undefined;
   interactive?: boolean;
   expandedSummary?: ReactNode;
+  coordination?: boolean;
 }) {
   return (
     <div
@@ -38,6 +39,7 @@ export function ActivityDisclosure({
       <div
         className={styles.activityGroupHeader}
         data-expanded={expanded || undefined}
+        data-coordination={coordination || undefined}
       >
         <div
           className={styles.audienceRow}
@@ -56,25 +58,15 @@ export function ActivityDisclosure({
               tabIndex={interactive ? undefined : -1}
               onClick={(event) => {
                 if (!interactive) return;
+                // One persistent header keeps pointer and keyboard focus in place.
                 event.currentTarget.focus({ preventScroll: true });
                 onToggle();
               }}
             >
               {expanded ? (
-                <span className={styles.audienceAvatar}>
-                  <Avatar
-                    alt=""
-                    fallback="Collapse"
-                    size="fill"
-                    shape="squircle"
-                    fallbackContent={
-                      <CaretUpIcon
-                        className={styles.activityDisclosureIcon}
-                        aria-hidden="true"
-                      />
-                    }
-                  />
-                </span>
+                <CaretUpIcon size={16} aria-hidden="true" />
+              ) : coordination ? (
+                <CaretDownIcon size={16} aria-hidden="true" />
               ) : (
                 icon
               )}
@@ -84,7 +76,11 @@ export function ActivityDisclosure({
             </button>
           </div>
         </div>
-        {actions && <div hidden={!expanded}>{actions}</div>}
+        {actions && (
+          <div className={styles.activityGroupActions} hidden={!expanded}>
+            {actions}
+          </div>
+        )}
       </div>
       {expanded && (
         <div

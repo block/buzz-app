@@ -9,6 +9,7 @@
 
   /* Primitive sizes are private; application code consumes named roles. */
   --type-size-12: calc(var(--type-rem) * 0.75);
+  --type-size-13: calc(var(--type-rem) * 0.8125);
   --type-size-14: calc(var(--type-rem) * 0.875);
   --type-size-16: calc(var(--type-rem) * 1);
   --type-size-18: calc(var(--type-rem) * 1.125);
@@ -75,6 +76,11 @@
   --text-label-sm--line-height: 1.4285714285714286;
   --text-label-sm--letter-spacing: 0.0025em;
   --text-label-sm--font-weight: var(--type-weight-medium);
+  /* Quiet disclosure labels stay readable without competing with message prose. */
+  --text-disclosure: var(--type-size-13);
+  --text-disclosure--line-height: 1.5384615384615385;
+  --text-disclosure--letter-spacing: -0.01em;
+  --text-disclosure--font-weight: var(--type-weight-normal);
   --text-caption: var(--type-size-12);
   --text-caption--line-height: 1.3333333333333333;
   --text-caption--letter-spacing: 0.0133em;

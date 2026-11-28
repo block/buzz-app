@@ -20,12 +20,17 @@ import type { ActivityPresentation } from "./activity-presentation";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { avatarMedia } from "../../shared/avatar-source";
 import { messagePreviewText } from "../conversation/message-preview-text";
+import {
+  coordinationLabel,
+  hasCoordinationPreview,
+} from "./coordination-preview";
 
 /** One stable disclosure for a run of activity, showing its latest speaker. */
 export function ActivityGroupPreview({
   group,
   session,
   profiles,
+  agentPubkeys,
   media,
   expanded,
   onToggle,
@@ -41,6 +46,7 @@ export function ActivityGroupPreview({
   group: ActivityPresentation;
   session?: RelaySession | undefined;
   profiles: ReadonlyMap<string, Profile>;
+  agentPubkeys?: ReadonlySet<string> | undefined;
   media: (url: string, size?: "small") => string | undefined;
   expanded: boolean;
   onToggle: () => void;
@@ -118,6 +124,22 @@ export function ActivityGroupPreview({
     )
     .join("; ");
   const namedPreview = `${speaker}: ${preview}`;
+  // Lifecycle cues and special results keep their content-bearing treatment.
+  // Every row must qualify: the latest update cannot speak for a mixed run.
+  const coordination =
+    !working &&
+    !live &&
+    !outcomes.length &&
+    history.length > 0 &&
+    history.every((entry) => hasCoordinationPreview(entry, agentPubkeys));
+  const label = coordinationLabel(history.length);
+  const avatarParticipants = coordination
+    ? [
+        ...new Set(
+          history.flatMap((entry) => [entry.authorId, ...entry.mentions]),
+        ),
+      ]
+    : participants;
   const summaryLabel = [
     outcomeText,
     working
@@ -129,6 +151,7 @@ export function ActivityGroupPreview({
   return (
     <AgentResponsePreview
       name={name}
+      variant={coordination ? "coordination" : "activity"}
       bylineHint={
         <RemoteAgentHint
           session={session}
@@ -136,7 +159,7 @@ export function ActivityGroupPreview({
           pubkey={primary}
         />
       }
-      participants={participants.map((id) => ({
+      participants={avatarParticipants.map((id) => ({
         id,
         name: named(id),
         picture: avatarMedia(profiles.get(id)?.picture, media),
@@ -149,8 +172,9 @@ export function ActivityGroupPreview({
         container={container}
         trigger={disclosure}
         expanded={expanded}
+        coordination={coordination}
         onToggle={onToggle}
-        label={`${expanded ? "Collapse" : "Show"} activity history: ${summaryLabel}`}
+        label={`${expanded ? "Collapse" : "Show"} activity history: ${coordination ? label : summaryLabel}`}
         icon={
           <>
             <RemoteWorkIcon
@@ -163,7 +187,9 @@ export function ActivityGroupPreview({
           </>
         }
         summary={
-          outcomes.length ? (
+          coordination ? (
+            label
+          ) : outcomes.length ? (
             <span className="inline-flex flex-wrap items-center gap-2">
               {outcomes.map((entry) => (
                 <ActivityOutcome

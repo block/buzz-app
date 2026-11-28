@@ -2210,6 +2210,7 @@ function ThreadMessages({
                 <ActivityGroupPreview
                   session={session}
                   group={group}
+                  agentPubkeys={agentPubkeys}
                   openActivity={openViewLink}
                   canOpenActivity={canOpenLink}
                   renderHistory={renderHistory}

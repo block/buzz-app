@@ -1,7 +1,12 @@
 import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import { activate } from "./navigation.mjs";
-import { clickRow, virtuaIdle } from "./timeline.mjs";
+import { clickRow, virtuaIdle, open } from "./timeline.mjs";
+import { test as appTest } from "./fixture.mjs";
+import { finalizeEvent, getPublicKey } from "nostr-tools";
+
+test.use({ video: "on" });
+appTest.use({ video: "on" });
 
 test("a long relayed message fits the chat before and after opening", async ({
   page,
@@ -255,8 +260,6 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     await expect(toggle).toBeVisible();
     await expect(toggle).toContainText("Activity update 15");
     await toggle.hover();
-    await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await expect(toggle).toHaveCSS("text-decoration-line", "none");
     await expect(messages).toHaveCount(0);
     await page.screenshot({
       path: test.info().outputPath("activity-collapsed.png"),
@@ -266,9 +269,7 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     ).toHaveCount(0);
     await toggle.focus();
     await page.keyboard.press("Enter");
-    await expect(toggle).toHaveText("Collapse");
-    await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await expect(toggle).toHaveCSS("text-decoration-line", "none");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect(messages).toHaveCount(16);
     await expect(toggle).toBeFocused();
     await expect
@@ -313,7 +314,7 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     const top = await first.evaluate((e) => e.getBoundingClientRect().top);
     await page.getByRole("button", { name: "Append update" }).click();
     await expect(messages).toHaveCount(17);
-    await expect(toggle).toHaveText("Collapse");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect
       .poll(() => first.evaluate((e) => e.getBoundingClientRect().top))
       .toBeCloseTo(top, 0);
@@ -578,5 +579,230 @@ test("activity details keep readable text through both handoffs and survive new 
     await expect(step.locator('[class*="audienceBody"]')).toBeVisible();
   } finally {
     await server.close();
+  }
+});
+
+appTest.describe("activity disclosure interaction", () => {
+  appTest.use({
+    productionBroker: true,
+    readState: true,
+    historyCounts: { alpha: 1, beta: 0 },
+  });
+
+  appTest(
+    "multi-participant history collapses with the pointer and restores keyboard focus",
+    async ({ page, app }) => {
+      const names = [
+        "Builder",
+        "Reviewer",
+        "Researcher",
+        "Writer",
+        "Planner",
+        "Tester",
+        "Reader",
+        "Helper",
+      ];
+      const keys = names.map((_, index) =>
+        Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? 10 + index : 0)),
+      );
+      const agents = keys.map(getPublicKey);
+      keys.forEach((key, index) => {
+        app.serveProfile(key, { name: names[index], is_agent: true });
+      });
+      await page.route("**/agent-library", (route) =>
+        route.fulfill({
+          json: {
+            definitions: [],
+            identities: agents.map((pubkey, index) => ({
+              pubkey,
+              name: names[index],
+            })),
+          },
+        }),
+      );
+      const root = app.sign({
+        kind: 9,
+        created_at: 1700000100,
+        content: "A result with multi-participant activity",
+        tags: [["h", "alpha"]],
+      });
+      const step = (content, created_at, index = 0) =>
+        finalizeEvent(
+          {
+            kind: 9,
+            created_at,
+            content,
+            tags: [
+              ["h", "alpha"],
+              ["e", root.id, "", "reply"],
+              ["audience", "agents"],
+              ["p", agents[(index + 1) % agents.length]],
+            ],
+          },
+          keys[index],
+        );
+      const first = step("Inspect the original source", 1700000101);
+      const history = app.histories.get("primary/alpha");
+      history.splice(
+        0,
+        history.length,
+        root,
+        first,
+        ...agents
+          .slice(1)
+          .map((_, index) =>
+            step(
+              `Findings from ${names[index + 1]}`,
+              1700000103 + index,
+              index + 1,
+            ),
+          ),
+      );
+      await page.setViewportSize({ width: 860, height: 950 });
+      await open(page, app);
+      app.threadSummary(root.id, agents, 8);
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const thread = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      await thread
+        .getByRole("button", { name: /^Show activity history:/ })
+        .click();
+      const original = thread.getByText(first.content, { exact: true });
+      for (const width of [860, 1440]) {
+        await page.setViewportSize({ width, height: 950 });
+        await expect(original).toBeVisible();
+        // Every participant adds a transcript action. Pointer collapse must
+        // remain usable even when those actions need to wrap in a Side pane.
+        await thread
+          .getByRole("button", { name: /^Collapse activity history:/ })
+          .click();
+        const showHistory = thread.getByRole("button", {
+          name: /^Show activity history:/,
+        });
+        await expect(showHistory).toBeFocused();
+        await expect(original).toBeHidden();
+        await showHistory.click();
+        await expect(original).toBeVisible();
+      }
+    },
+  );
+
+  for (const recipient of ["person", "unaddressed", "agent"]) {
+    appTest(
+      `activity with ${recipient} recipients keeps its human reply discoverable`,
+      async ({ page, app }) => {
+        const keys = [10, 11].map((seed) =>
+          Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0)),
+        );
+        const agents = keys.map(getPublicKey);
+        keys.forEach((key, index) => {
+          app.serveProfile(key, {
+            name: ["Builder", "Reviewer"][index],
+            is_agent: true,
+          });
+        });
+        await page.route("**/agent-library", (route) =>
+          route.fulfill({
+            json: {
+              definitions: [],
+              identities: agents.map((pubkey, index) => ({
+                pubkey,
+                name: ["Builder", "Reviewer"][index],
+              })),
+            },
+          }),
+        );
+        const root = app.sign({
+          kind: 9,
+          created_at: 1700000100,
+          content: "A discussion with an outstanding decision",
+          tags: [["h", "alpha"]],
+        });
+        const step = (content, created_at, index) =>
+          finalizeEvent(
+            {
+              kind: 9,
+              created_at,
+              content,
+              tags: [
+                ["h", "alpha"],
+                ["e", root.id, "", "reply"],
+                ["audience", "agents"],
+                ...(recipient === "unaddressed"
+                  ? []
+                  : [
+                      [
+                        "p",
+                        recipient === "person" ? app.viewer : agents[1 - index],
+                      ],
+                    ]),
+              ],
+            },
+            keys[index],
+          );
+        const decision = step(
+          "Please decide whether the proposed rollout is acceptable.",
+          1700000101,
+          0,
+        );
+        const objection = app.sign({
+          kind: 9,
+          created_at: 1700000102,
+          content: "Do not proceed with this rollout.",
+          tags: [
+            ["h", "alpha"],
+            ["e", root.id, "", "root"],
+            ["e", decision.id, "", "reply"],
+          ],
+        });
+        const bookkeeping = step(
+          "Background bookkeeping continues.",
+          1700000103,
+          1,
+        );
+        const history = app.histories.get("primary/alpha");
+        history.splice(
+          0,
+          history.length,
+          root,
+          decision,
+          objection,
+          bookkeeping,
+        );
+        await open(page, app);
+        app.threadSummary(root.id, [...agents, app.viewer], 3);
+        await page
+          .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+          .getByRole("button", { name: /^View thread:/ })
+          .click();
+        const thread = page.getByRole("complementary", {
+          name: "Thread",
+          exact: true,
+        });
+        const replies = thread.getByRole("button", {
+          name: "View 1 reply",
+          exact: true,
+        });
+        // A content-bearing decision and the human reply affordance must not
+        // disappear behind a later bookkeeping preview, even without a quiet label.
+        await expect(replies).toBeVisible();
+        if (recipient !== "agent") {
+          await expect(
+            thread.getByRole("button", {
+              name: /Please decide whether the proposed rollout is acceptable/,
+            }),
+          ).toBeVisible();
+        }
+        await replies.click();
+        await expect(
+          thread.getByText(objection.content, { exact: true }),
+        ).toBeVisible();
+      },
+    );
   }
 });

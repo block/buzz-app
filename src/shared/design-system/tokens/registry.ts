@@ -1885,6 +1885,16 @@ export const TYPE_ROLES: TypeRole[] = [
     status: "core",
   },
   {
+    token: "text-disclosure",
+    pointsAt: "detail/disclosure",
+    size: "13px",
+    lineHeight: "20px",
+    tracking: "-0.01em",
+    weight: "400",
+    use: "Quiet expandable summaries and their collapse labels.",
+    status: "core",
+  },
+  {
     token: "text-caption",
     pointsAt: "detail/caption",
     size: "12px",
@@ -1949,12 +1959,17 @@ export const TYPE_RAMPS = [
     id: "size",
     name: "Size",
     description:
-      "Thirteen size steps. Caption and xsmall detail both use 12px, with separate semantic tokens so each can evolve independently. Values shown at 100% text size.",
+      "Fourteen size steps. Caption and xsmall detail both use 12px; quiet disclosure labels use 13px. Values shown at 100% text size.",
     steps: [
       {
         step: 12,
         value: "12px",
         job: "caption and xsmall detail",
+      },
+      {
+        step: 13,
+        value: "13px",
+        job: "quiet disclosure labels",
       },
       {
         step: 14,

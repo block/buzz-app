@@ -2659,6 +2659,7 @@ function Timeline({
                       <ActivityGroupPreview
                         session={queries}
                         group={disclosure}
+                        agentPubkeys={agentPubkeys}
                         openActivity={(url) =>
                           openViewLink(url, disclosure.ids[0])
                         }

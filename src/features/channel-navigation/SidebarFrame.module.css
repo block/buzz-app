@@ -23,6 +23,39 @@
   padding: var(--space-3) 0 0;
   min-width: 0;
 }
+/* A hairline separates the fixed destinations from the scrolling list. It is
+   a shadow, not a border, so it does not move the rows below it. */
+.sidebarFilter:not(:empty) {
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 1px 0 var(--border-standard);
+}
+/* Once rows scroll under the destinations, a soft shade below the hairline
+   shows that the list continues above. */
+.sidebarFilter:not(:empty)::after {
+  content: "";
+  position: absolute;
+  inset-block-start: calc(100% + 1px);
+  inset-inline: 0;
+  block-size: var(--space-2);
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--border-prominent) 25%, transparent),
+    transparent
+  );
+  opacity: 0;
+  transition: opacity var(--duration-state) var(--easing-state);
+}
+.sidebar:has(.channelList[data-overflow-start])
+  .sidebarFilter:not(:empty)::after {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebarFilter:not(:empty)::after {
+    transition: none;
+  }
+}
 .sidebarBody {
   display: flex;
   flex-direction: column;

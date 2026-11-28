@@ -112,6 +112,8 @@ jobs:
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+      # The called workflow declares OIDC for its main-push reporting job.
+      id-token: write
 
   promote_preview:
     name: Promote verified preview

@@ -743,9 +743,21 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   place-items: center;
   padding: var(--space-1);
 }
-.imageGroup {
+.mediaGroup {
   min-width: 0;
-  margin-top: var(--space-2);
+}
+.mediaList {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-half);
+}
+.mediaDisclosure {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: fit-content;
+  max-width: 100%;
+  user-select: none;
 }
 .imageList {
   display: flex;
@@ -1670,7 +1682,8 @@ button.mediaPreview {
   min-height: 0;
   min-width: 0;
   margin: 0 auto;
-  overflow: hidden;
+  /* Focusing the sliding comment pane must not scroll the viewer header. */
+  overflow: clip;
   border-radius: var(--radius-card);
   background: var(--surface-panel);
   box-shadow: var(--elevation-popover);
@@ -3538,8 +3551,15 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message[data-viewer-message]
   > .messageBody
   > .messageContent
-  :is(.messageAttachments, .imageList:not(.imageGrid)) {
+  :is(.messageAttachments, .imageList:not(.imageGrid), .mediaList) {
   align-items: flex-end;
+}
+
+.message[data-viewer-message]
+  > .messageBody
+  > .messageContent
+  .mediaDisclosure {
+  margin-inline-start: auto;
 }
 
 .text pre {

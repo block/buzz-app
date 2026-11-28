@@ -24,6 +24,7 @@ import type { RelayEvent } from "../relay/events";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
+import { mediaGroupKey, setMediaCollapsed } from "./collapsed-media";
 import { ThreadPanel } from "./ThreadPanel";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
@@ -48,7 +49,7 @@ type ReviewFixtureOptions = {
     root: RelayEvent,
   ) => readonly RelayEvent[];
   extraRootTags?: readonly string[][];
-  fromThread?: boolean;
+  fromThread?: boolean | "inline";
   attachmentInReply?: boolean;
   openThreadTab?: () => boolean;
   media?: (url: string) => string | undefined;
@@ -184,7 +185,7 @@ async function setupReview({
         channelName="One"
         messageId={selectedId}
         initialTime={selectedTime}
-        hasComments={fromThread}
+        hasComments={!!fromThread}
         close={() => setSelectedId(undefined)}
         onOpenLink={() => false}
       />
@@ -197,22 +198,38 @@ async function setupReview({
         messageId={root.id}
         close={() => {}}
         onOpenLink={() => false}
-        onOpenMediaReview={(id, item, seconds, hasComments) => {
-          openReview(id, item, seconds, hasComments);
-          setSelectedTime(seconds);
-          setSelectedId(id);
-        }}
+        {...(fromThread === "inline"
+          ? {}
+          : {
+              onOpenMediaReview: (id, item, seconds, hasComments) => {
+                openReview(id, item, seconds, hasComments);
+                setSelectedTime(seconds);
+                setSelectedId(id);
+              },
+            })}
       />
     );
   }
-  render(
+  const tree = (key: number) => (
     <LinkThreadTabContext value={openThreadTab}>
-      <Harness />
-    </LinkThreadTabContext>,
+      <Harness key={key} />
+    </LinkThreadTabContext>
   );
+  const view = render(tree(0));
+  const reopenThread = () => view.rerender(tree(1));
   if (openComments && !fromThread)
     fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
-  return { owner, root, sign, user, attachmentOwner, openReview, source };
+  return {
+    owner,
+    root,
+    sign,
+    user,
+    attachmentOwner,
+    openReview,
+    source,
+    reopenThread,
+    attachment,
+  };
 }
 
 function deferredRead() {
@@ -619,6 +636,44 @@ it("seeks the review video from a timecode reply when the thread has one video",
   expect(video.currentTime).toBe(42);
   expect(play).toHaveBeenCalledTimes(1);
   expect(pause).not.toHaveBeenCalled();
+});
+
+it("plays a fresh inline timecode when a thread reopens at its first request number", async () => {
+  const { user, root, attachment, reopenThread } = await setupReview({
+    kind: "video",
+    fromThread: "inline",
+    media: (url) => `/api/relay/media?url=${encodeURIComponent(url)}`,
+    replies: (viewer, root) => [
+      message(viewer, "one", "[00:05] Seek the video", 2, [
+        ["e", root.id, "", "reply"],
+      ]),
+    ],
+  });
+  const seek = async (count: number) => {
+    await user.click(await screen.findByRole("button", { name: "00:05" }));
+    const video = document.querySelector("video");
+    assert.exists(video);
+    fireEvent.loadedMetadata(video);
+    expect(video.currentTime).toBe(5);
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(count);
+  };
+  await seek(1);
+  // The same group can also be hidden and shown in a second view.
+  const group = mediaGroupKey(root.id, attachment.url);
+  act(() => setMediaCollapsed("review-video", group, true));
+  act(() => setMediaCollapsed("review-video", group, false));
+  const video = document.querySelector("video");
+  assert.exists(video);
+  fireEvent.loadedMetadata(video);
+  expect(video.currentTime).toBe(0);
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Video" }));
+  reopenThread();
+  expect(await screen.findByRole("button", { name: "Video" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await seek(2);
 });
 
 it.each([

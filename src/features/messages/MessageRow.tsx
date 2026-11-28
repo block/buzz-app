@@ -94,6 +94,12 @@ import {
   contributionKey,
 } from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import {
+  createMediaSeek,
+  mediaGroupKey,
+  type MediaSeek,
+} from "./collapsed-media";
+import { CollapsibleMediaGroup } from "./CollapsibleMediaGroup";
 import { AttachmentImage } from "./AttachmentImage";
 import { AgentDeclineNotes } from "./AgentDeclineNotes";
 import { DeliveryNotice } from "./DeliveryNotice";
@@ -211,7 +217,12 @@ export type MessageRowProps = {
   ) => void;
 };
 
-type MessageContentProps = MessageRowProps & {
+// ThreadPanel owns a request across row remounts. Plugins only pass numbers.
+type InternalMessageRowProps = MessageRowProps & {
+  mediaSeek?: MediaSeek | undefined;
+};
+
+type MessageContentProps = InternalMessageRowProps & {
   shownRow?: ChannelMessage;
   /** Leave out the reactions row and its controls. */
   withoutReactions?: boolean;
@@ -220,6 +231,11 @@ type MessageContentProps = MessageRowProps & {
     trigger: RefObject<HTMLButtonElement | null>,
   ) => ReactElement;
 };
+
+function mediaGroupLabel(count: number, imageOnly: boolean) {
+  if (count === 1) return imageOnly ? "Image" : "Video";
+  return `${count} ${imageOnly ? "images" : "photos and videos"}`;
+}
 
 /** A reply is not completion evidence. Read the exact request's lifecycle. */
 function useCompletedMessageWork(
@@ -304,8 +320,7 @@ function MessageRowContent({
   alignViewer = true,
 
   mediaMode = "inline",
-  mediaSeekTo,
-  mediaSeekRequest,
+  mediaSeek,
   onMediaPlayback,
   onMediaTime,
   onOpenMediaReview,
@@ -811,6 +826,10 @@ function MessageRowContent({
   // forgets them.
   const attachmentMedia = (url: string, size?: "small") =>
     media(url, size, row.channelId);
+  const seekTarget =
+    mediaSeek === undefined
+      ? undefined
+      : row.attachments.find((item) => item.kind === "video");
   const attachmentContent = (copied = false) =>
     attachmentGroups.some(
       (group) => copiedUrls.has(group[0]?.url ?? "") === copied,
@@ -831,12 +850,16 @@ function MessageRowContent({
             const images =
               group[0]?.kind === "image" || group[0]?.kind === "video";
             const imageOnly = group.every((item) => item.kind === "image");
-            const mediaLabel = imageOnly ? "images" : "photos and videos";
+            const mediaLabel = mediaGroupLabel(group.length, imageOnly);
             const files = group[0]?.kind === "file";
             // Only collapse when the host can open the complete gallery.
             const collapsed = images && group.length > 4 && !!onOpenMediaReview;
             const previews = collapsed ? group.slice(0, 4) : group;
-            const items = previews.map((attachment, index) => {
+            const renderItem = (
+              attachment: ChannelMessage["attachments"][number],
+              index: number,
+              allowSeek: boolean,
+            ) => {
               const url = safeMessageUrl(attachment.url);
               if (!url) return null;
               const source = attachmentMedia(url);
@@ -931,7 +954,7 @@ function MessageRowContent({
                     keepMounted={keepRowMounted}
                     label={
                       collapsed && index === 3
-                        ? `View all ${group.length} ${mediaLabel}, starting at ${imageOnly ? "image" : "item"} 4`
+                        ? `View all ${mediaLabel}, starting at ${imageOnly ? "image" : "item"} 4`
                         : group.length > 1
                           ? `Open image ${index + 1} of ${group.length}`
                           : "Open image attachment"
@@ -977,16 +1000,18 @@ function MessageRowContent({
                   overlayCount={collapsed && index === 3 ? group.length - 3 : 0}
                   label={
                     collapsed && index === 3
-                      ? `View all ${group.length} ${mediaLabel}, starting at item 4`
+                      ? `View all ${mediaLabel}, starting at item 4`
                       : `Open video ${index + 1} of ${group.length}`
                   }
                   mode={mediaMode}
-                  {...(attachment.kind === "video" && mediaSeekTo !== undefined
+                  {...(attachment.kind === "video" &&
+                  mediaSeek !== undefined &&
+                  allowSeek
                     ? {
-                        seekTo: mediaSeekTo,
-                        ...(mediaSeekRequest !== undefined
-                          ? { seekRequest: mediaSeekRequest }
-                          : {}),
+                        seekTo: mediaSeek.seconds,
+                        ...(mediaSeek.request !== undefined && {
+                          seekRequest: mediaSeek.request,
+                        }),
                       }
                     : {})}
                   {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
@@ -1006,23 +1031,31 @@ function MessageRowContent({
                     : {})}
                 />
               );
-            });
-            return images &&
-              !(group[0] && drawn(group[0])) &&
-              (imageOnly || group.length >= 4) ? (
-              <div className={styles.imageGroup} key={group[0]?.url}>
-                {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
-                <div
-                  className={`${styles.imageList} ${group.length >= 4 ? styles.imageGrid : ""}`}
-                  data-image-grid={group.length >= 4 || undefined}
-                  role="group"
-                  aria-label={`${group.length} ${imageOnly ? (group.length === 1 ? "image" : "images") : "photos and videos"}`}
+            };
+            const renderItems = (allowSeek: boolean) =>
+              previews.map((attachment, index) =>
+                renderItem(attachment, index, allowSeek),
+              );
+            const first = group[0];
+            if (first && images && !drawn(first)) {
+              return (
+                <CollapsibleMediaGroup
+                  key={first.url}
+                  groupKey={mediaGroupKey(row.id, first.url)}
+                  scope={scope}
+                  label={mediaLabel}
+                  imageList={imageOnly || group.length >= 4}
+                  grid={group.length >= 4}
+                  seek={mediaSeek}
+                  openOnSeek={!!seekTarget && group.includes(seekTarget)}
                 >
-                  {items}
-                </div>
-              </div>
-            ) : files ? (
-              <div className={styles.fileGroup} key={group[0]?.url}>
+                  {renderItems}
+                </CollapsibleMediaGroup>
+              );
+            }
+            const items = renderItems(true);
+            return files ? (
+              <div className={styles.fileGroup} key={first?.url}>
                 {/* A block each, so a copied selection puts every
                     card on its own line. */}
                 {items.map((item) => item && <div key={item.key}>{item}</div>)}
@@ -1924,13 +1957,55 @@ function MessageRowContent({
     messageActions(message, true)
   );
 }
+// A mounted row can distinguish a new numeric request from its initial props.
+// On mount, an existing request must respect groups the reader already hid.
+function useNumericMediaSeek({
+  row,
+  scope,
+  mediaSeekTo,
+  mediaSeekRequest,
+}: MessageRowProps) {
+  const capture = (keepHidden: boolean) => ({
+    id: row.id,
+    scope,
+    seek:
+      mediaSeekTo === undefined
+        ? undefined
+        : createMediaSeek(
+            scope,
+            row,
+            mediaSeekTo,
+            mediaSeekRequest,
+            keepHidden,
+          ),
+  });
+  const [previous, setPrevious] = useState(() => capture(true));
+  const sameRow = previous.id === row.id && previous.scope === scope;
+  let seek = previous.seek;
+  if (
+    !sameRow ||
+    !Object.is(seek?.seconds, mediaSeekTo) ||
+    (seek && !Object.is(seek.request, mediaSeekRequest))
+  ) {
+    const next = capture(!sameRow);
+    setPrevious(next);
+    seek = next.seek;
+  }
+  useLayoutEffect(() => seek?.observeHides(), [seek]);
+  return seek;
+}
+
 /** Coordination between agents reads as one quiet line in time order: who
  * wrote it, who it is for, and its first paragraph. Opening the line shows
  * the whole message. The mentions it opens with become the line's recipients,
  * so they are not repeated in its text. */
 export const MessageRow = memo(function AudienceMessageRow(
-  props: MessageRowProps,
+  inputs: InternalMessageRowProps,
 ) {
+  const numericSeek = useNumericMediaSeek(inputs);
+  const props = numericSeek
+    ? { ...inputs, mediaSeek: inputs.mediaSeek ?? numericSeek }
+    : inputs;
   const { onOpenLink, canOpenLink, row } = props;
   const rootId = row.threadRootId ?? row.id;
   const view = useComposerScope();
@@ -1972,7 +2047,9 @@ export const MessageRow = memo(function AudienceMessageRow(
 // What can hold focus in an activity entry. Its line is the first.
 const focusStops =
   "a[href], button, input, select, textarea, summary, audio[controls], video[controls], [tabindex]";
-function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
+function AgentsMessageRow(
+  props: InternalMessageRowProps & { failure?: boolean },
+) {
   const {
     row,
     session,
@@ -2259,7 +2336,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
 /** Another agent's message that its owner relayed here from another chat. It
  * reads as that agent's quiet line, never as the signer's own message, and
  * opens to the text without the notice older clients show in its place. */
-function RelayedMessageRow(props: MessageRowProps) {
+function RelayedMessageRow(props: InternalMessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
   const source = row.relayedFrom;
   const references = props.references ?? session;

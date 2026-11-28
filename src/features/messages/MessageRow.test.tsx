@@ -50,6 +50,7 @@ import {
 } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
+import { createMediaSeek } from "./collapsed-media";
 import { MessageRow } from "./MessageRow";
 import { MessageContextMenus } from "./MessageActionBar";
 import { ReplySummary } from "./ReplySummary";
@@ -1237,6 +1238,43 @@ it("copies each file card in a message on its own line", () => {
     ]);
   } finally {
     cleanup();
+  }
+});
+
+it("copies a selection across media without its disclosure label", () => {
+  const gif = "https://example.org/preview.gif";
+  const view = renderMessage({
+    row: {
+      ...row,
+      attachments: [
+        { kind: "image", url: gif },
+        {
+          kind: "file",
+          url: "https://relay.test/notes.txt",
+          name: "notes.txt",
+          size: 1024,
+        },
+      ],
+    },
+    media: (url) =>
+      url === gif ? url : `/api/relay/media?url=${encodeURIComponent(url)}`,
+  });
+  const copy = () => {
+    const selection = document.getSelection();
+    if (!selection) throw new Error("jsdom selection missing");
+    const range = document.createRange();
+    range.setStart(screen.getByText("Root"), 0);
+    range.setEndAfter(screen.getByText("1 KB"));
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return serializeSelection(selection, "text");
+  };
+  try {
+    expect(copy()).toBe(`Root\n${gif}\nnotes.txt`);
+    fireEvent.click(screen.getByRole("button", { name: "Image" }));
+    expect(copy()).toBe("Root\nnotes.txt");
+  } finally {
+    view.unmount();
   }
 });
 
@@ -2433,7 +2471,7 @@ it.each([
   );
   const document = new DOMParser().parseFromString(html, "text/html");
   const group = document.querySelector(
-    `[aria-label="${attachments.length} photos and videos"]`,
+    `[role="group"][aria-label="${attachments.length} photos and videos"]`,
   );
   expect(group).not.toBeNull();
   const links = [...(group?.querySelectorAll("a") ?? [])];
@@ -5893,5 +5931,245 @@ it("reads a relayed line's date when Message timestamps hides its clock", () => 
   } finally {
     cleanup();
     setClockPreference({ messageTimestamps: "show" });
+  }
+});
+
+it("keeps a media disclosure focused and restores its state when the row returns", async () => {
+  const props = {
+    row: {
+      ...row,
+      attachments: [
+        { kind: "image" as const, url: "https://relay.test/media/one.gif" },
+      ],
+    },
+    scope: "media-disclosure-test",
+    profile: undefined,
+    media: (url: string) => url,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  const toggle = () => screen.getByRole("button", { name: "Image" });
+  const image = () =>
+    screen.queryByRole("link", { name: "Open image attachment" });
+  try {
+    const view = renderDom(<MessageRow {...props} />);
+    const user = userEvent.setup();
+    toggle().focus();
+    await user.keyboard("{Enter}");
+    expect(toggle()).toHaveFocus();
+    expect(toggle()).toHaveTextContent("Image");
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
+    expect(
+      document.getElementById(toggle().getAttribute("aria-controls") ?? ""),
+    ).toBeEmptyDOMElement();
+    expect(image()).toBeNull();
+    view.unmount();
+    renderDom(<MessageRow {...props} />);
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
+    toggle().focus();
+    await user.keyboard(" ");
+    expect(toggle()).toHaveAttribute("aria-expanded", "true");
+    expect(image()).toBeVisible();
+  } finally {
+    cleanup();
+  }
+});
+
+it("a timecode opens only its video group and saves that choice", () => {
+  const props = {
+    row: {
+      ...row,
+      attachments: [
+        { kind: "image" as const, url: "https://relay.test/media/still.png" },
+        { kind: "video" as const, url: "https://relay.test/media/clip.mp4" },
+      ],
+    },
+    scope: "timecode-test",
+    profile: undefined,
+    media: (url: string) => `/api/relay/media?url=${encodeURIComponent(url)}`,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  const toggle = (name: string) => screen.getByRole("button", { name });
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  try {
+    const view = renderDom(<MessageRow {...props} />);
+    fireEvent.click(toggle("Image"));
+    fireEvent.click(toggle("Video"));
+    view.rerender(
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, 1)}
+      />,
+    );
+    expect(toggle("Video")).toHaveAttribute("aria-expanded", "true");
+    expect(toggle("Image")).toHaveAttribute("aria-expanded", "false");
+    const video = () => {
+      const element = view.container.querySelector("video");
+      if (!element) throw new Error("Expected the inline video to be visible");
+      return element;
+    };
+    fireEvent.loadedMetadata(video());
+    expect(video().currentTime).toBe(5);
+    expect(play).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(toggle("Video"));
+    fireEvent.click(toggle("Video"));
+    fireEvent.loadedMetadata(video());
+    expect(video().paused).toBe(true);
+    expect(play).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, 2)}
+      />,
+    );
+    fireEvent.loadedMetadata(video());
+    expect(video().currentTime).toBe(5);
+    expect(play).toHaveBeenCalledTimes(2);
+    view.unmount();
+    renderDom(<MessageRow {...props} />);
+    expect(toggle("Video")).toHaveAttribute("aria-expanded", "true");
+  } finally {
+    play.mockRestore();
+    cleanup();
+  }
+});
+
+it.each(["enclosing message", "row"] as const)(
+  "keeps a retired seek from reopening the video when the %s remounts",
+  async (remount) => {
+    const props = {
+      row: {
+        ...row,
+        ...(remount === "enclosing message"
+          ? { audience: "agents" as const }
+          : {}),
+        attachments: [
+          { kind: "video" as const, url: "https://relay.test/media/clip.mp4" },
+        ],
+      },
+      profile: { name: "Agent" },
+      scope: `seek-remount-${remount}`,
+      media: (url: string) => `/api/relay/media?url=${encodeURIComponent(url)}`,
+      onOpenLink: () => false,
+      day: false,
+      retry: undefined,
+    };
+    const seek = (request: number) => (
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, request)}
+      />
+    );
+    const first = seek(1);
+    const toggle = () => screen.getByRole("button", { name: "Video" });
+    const fold = () =>
+      fireEvent.click(screen.getByRole("button", { name: "Agent: Root" }));
+    const foldAndUnmount = async () => {
+      fold();
+      await waitFor(() =>
+        expect(
+          view.container.querySelector('button[aria-label="Video"]'),
+        ).toBeNull(),
+      );
+    };
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue();
+    const view = renderDom(first);
+    const playAtTimecode = (count: number) => {
+      const video = view.container.querySelector("video");
+      if (!video) throw new Error("Expected a visible video");
+      fireEvent.loadedMetadata(video);
+      expect(video.currentTime).toBe(5);
+      expect(play).toHaveBeenCalledTimes(count);
+    };
+    try {
+      if (remount === "enclosing message") fold();
+      playAtTimecode(1);
+      fireEvent.click(toggle());
+      if (remount === "enclosing message") {
+        await foldAndUnmount();
+        fold();
+      } else {
+        view.rerender(null);
+        view.rerender(first);
+      }
+      expect(toggle()).toHaveAttribute("aria-expanded", "false");
+      expect(view.container.querySelector("video")).toBeNull();
+      expect(play).toHaveBeenCalledTimes(1);
+      view.rerender(seek(2));
+      playAtTimecode(2);
+      if (remount === "enclosing message") {
+        fireEvent.click(toggle());
+        await foldAndUnmount();
+        view.rerender(seek(3));
+        fold();
+        playAtTimecode(3);
+      }
+    } finally {
+      cleanup();
+      play.mockRestore();
+    }
+  },
+);
+
+it("seeks each shown video once and ignores old seeks when a group reopens", () => {
+  const props = {
+    row: {
+      ...row,
+      attachments: ["one", "two", "three"].map((name) => ({
+        kind: "video" as const,
+        url: `https://relay.test/media/${name}.mp4`,
+      })),
+    },
+    scope: "multi-video-seek",
+    profile: undefined,
+    media: (url: string) => `/api/relay/media?url=${encodeURIComponent(url)}`,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  const view = renderDom(<MessageRow {...props} />);
+  const players = () => [...view.container.querySelectorAll("video")];
+  try {
+    const [first, , third] = screen.getAllByRole("button", { name: "Video" });
+    if (!first || !third) throw new Error("Expected three video disclosures");
+    view.rerender(
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, 1)}
+      />,
+    );
+    for (const video of players().reverse()) fireEvent.loadedMetadata(video);
+    expect(players().map((video) => video.currentTime)).toEqual([5, 5, 5]);
+    expect(play).toHaveBeenCalledTimes(3);
+
+    fireEvent.click(first);
+    fireEvent.click(third);
+    view.rerender(
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, 2)}
+      />,
+    );
+    expect(first).toHaveAttribute("aria-expanded", "true");
+    expect(third).toHaveAttribute("aria-expanded", "false");
+    for (const video of players()) fireEvent.loadedMetadata(video);
+    expect(play).toHaveBeenCalledTimes(5);
+    fireEvent.click(third);
+    const reopened = players()[2];
+    if (!reopened) throw new Error("Expected the third video to be shown");
+    fireEvent.loadedMetadata(reopened);
+    expect(reopened.currentTime).toBe(0);
+    expect(play).toHaveBeenCalledTimes(5);
+  } finally {
+    view.unmount();
+    play.mockRestore();
   }
 });

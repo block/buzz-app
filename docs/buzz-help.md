@@ -130,6 +130,8 @@ if that desktop app is up and running.
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my
   draft** or **Load saved draft**.
+- **Message media.** Select the caret above images or videos to hide the group.
+  Select its label to show it again.
 - **File downloads.** In the desktop app, a file card
   that downloads when chosen saves to Downloads once and then opens that copy;
   right-click it to **Show in Finder** (or **Show in folder**) or **Download

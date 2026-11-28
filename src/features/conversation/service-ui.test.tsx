@@ -1,12 +1,21 @@
 // @vitest-environment jsdom
 import { Context } from "@deepseek-ai/cordis";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, StrictMode, useState } from "react";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PluginRuntime } from "../../plugins/runtime";
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 import { ConversationService } from "./service";
+
+stubAvatarBrowserApis();
 
 const dispose: (() => Promise<unknown>)[] = [];
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
@@ -149,4 +158,89 @@ it("gives plugins the host image viewer for an image outside any message", async
     "src",
     `/api/relay/media?url=${encodeURIComponent(relayed)}`,
   );
+});
+
+function pluginVideo(scope: string) {
+  const ctx = new Context();
+  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
+  new ConversationService(ctx);
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  dispose.push(async () => {
+    play.mockRestore();
+    await runtime.dispose();
+    await ctx.fiber.dispose();
+  });
+
+  const row = {
+    id: "clip",
+    channelId: "channel",
+    authorId: "author",
+    content: "Clip",
+    createdAt: 1,
+    mentions: [],
+    participants: [],
+    reactions: [],
+    replyCount: 0,
+    attachments: [
+      { kind: "video" as const, url: "https://relay.test/clip.mp4" },
+    ],
+  };
+  const message = (mediaSeekTo: number, request?: number) => (
+    <ctx.conversation.ui.Message
+      row={row}
+      scope={scope}
+      profile={undefined}
+      day={false}
+      retry={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      mediaSeekTo={mediaSeekTo}
+      {...(request !== undefined && { mediaSeekRequest: request })}
+    />
+  );
+  function position() {
+    const video = document.querySelector("video");
+    if (!video) throw new Error("Expected a shown video");
+    fireEvent.loadedMetadata(video);
+    return video.currentTime;
+  }
+  return { message, play, position };
+}
+
+it("seeks a plugin video with or without a request number", () => {
+  const { message, play, position } = pluginVideo("plugin-seek");
+  const view = render(message(5));
+  expect(position()).toBe(5);
+  expect(play).toHaveBeenCalledTimes(1);
+
+  view.rerender(message(12, 1));
+  expect(position()).toBe(12);
+  expect(play).toHaveBeenCalledTimes(2);
+  view.rerender(message(12, 2));
+  expect(position()).toBe(12);
+  expect(play).toHaveBeenCalledTimes(3);
+
+  const toggle = screen.getByRole("button", { name: "Video" });
+  fireEvent.click(toggle);
+  fireEvent.click(toggle);
+  expect(position()).toBe(0);
+  expect(play).toHaveBeenCalledTimes(3);
+});
+
+it("keeps a plugin video hidden on remount until a new seek request", () => {
+  const { message, play, position } = pluginVideo("plugin-hidden-seek");
+  const view = render(message(12, 1));
+  fireEvent.click(screen.getByRole("button", { name: "Video" }));
+  view.rerender(null);
+  view.rerender(message(12, 2));
+  expect(screen.getByRole("button", { name: "Video" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  expect(view.container.querySelector("video")).toBeNull();
+  expect(play).toHaveBeenCalledTimes(0);
+
+  view.rerender(message(12, 3));
+  expect(position()).toBe(12);
+  expect(play).toHaveBeenCalledTimes(1);
 });

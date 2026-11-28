@@ -59,6 +59,7 @@ import {
 import { useProfileGeneration, useRowProfiles } from "../relay/react";
 import { diffPreview, rowProfileIds } from "../relay/membership";
 import { plainText } from "../notifications/content";
+import { createMediaSeek, type MediaSeek } from "./collapsed-media";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { MessageContextMenus } from "./MessageActionBar";
 import {
@@ -1417,10 +1418,8 @@ function ThreadMessages({
     if (focusRequest) setReplyFocus((value) => value + 1);
   }, [focusRequest]);
   const pendingReplyFocus = usePendingRequest(replyFocus);
-  const [mediaSeek, setMediaSeek] = useState<{
-    seconds: number;
-    request: number;
-  }>();
+  const [mediaSeek, setMediaSeek] = useState<MediaSeek>();
+  useLayoutEffect(() => mediaSeek?.observeHides(), [mediaSeek]);
   const rootId = snapshot.root?.id;
   const rootPresentation = useMemo(
     () =>
@@ -1528,12 +1527,16 @@ function ThreadMessages({
         openRootMedia(videoOwner.id, videoAttachment, Math.max(0, seconds - 3));
         return;
       }
-      setMediaSeek((current) => ({
-        seconds,
-        request: (current?.request ?? 0) + 1,
-      }));
+      setMediaSeek((current) =>
+        createMediaSeek(
+          scope,
+          videoOwner,
+          seconds,
+          (current?.request ?? 0) + 1,
+        ),
+      );
     },
-    [videoOwner, videoAttachment, onOpenMediaReview, openRootMedia],
+    [scope, videoOwner, videoAttachment, onOpenMediaReview, openRootMedia],
   );
   // Only legacy traversal is eager. Strict windows open at the newest page.
   useEffect(() => {
@@ -2624,12 +2627,7 @@ function ThreadMessages({
                   layout="thread"
                   retry={session.messages.retry}
                   mediaMode="thread"
-                  {...(mediaSeek
-                    ? {
-                        mediaSeekTo: mediaSeek.seconds,
-                        mediaSeekRequest: mediaSeek.request,
-                      }
-                    : {})}
+                  mediaSeek={mediaSeek}
                   {...(onOpenMediaReview
                     ? { onOpenMediaReview: openRootMedia }
                     : {})}

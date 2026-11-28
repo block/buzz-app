@@ -6,6 +6,7 @@ import {
 } from "../../features/agents/attention";
 import type { Agent, Agents } from "../../features/agents/service";
 import {
+  DREAM_V2,
   dream,
   FEATURES,
   type Feature,
@@ -15,6 +16,7 @@ import {
   memory,
   notes,
   restoredFeature,
+  selfReview,
   upgradedFeature,
   withFeature,
 } from "./features";
@@ -136,6 +138,16 @@ function featureAttention(
       expires_at: null,
       channel,
     };
+  }
+  // Self-review owns mem/lessons, which Nightly review's earlier text doesn't
+  // leave alone: On brings an Interest still saved as that text to the
+  // current one. One the owner edited stays theirs.
+  const nightly = on && feature === selfReview && dream.timer;
+  if (nightly) {
+    const slug = interestSlug(nightly.id);
+    const saved = agent.attention[slug]?.value;
+    if (saved?.type === "interest" && saved.instructions === DREAM_V2)
+      attention[slug] = { ...saved, instructions: nightly.interest };
   }
   return attention;
 }

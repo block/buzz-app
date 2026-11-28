@@ -5,7 +5,8 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { chooseDefaultAgent } from "../../features/solo/default-agent";
-import { dream, memory, notes, withFeature } from "./features";
+import { dream, memory, notes, selfReview, withFeature } from "./features";
+import { instructionsOf } from "./save";
 import { v1CheckIn } from "./test-helpers";
 import {
   formerWithSettings,
@@ -191,6 +192,55 @@ it("stops a former Bestie's Hourly notes and Nightly review, one save each, and 
   ]);
   // No section was there to take out, so its instructions are never saved.
   expect(save.mock.calls.some(([, change]) => change.config)).toBe(false);
+  stop();
+});
+
+/** Self-review on: its Lessons section, an Interest and a timer. */
+const reviewing = withFeature(remembering, selfReview, true);
+const SELF_REVIEW = {
+  "interest/bestie-self-review": { value: { type: "interest" } },
+  "watch/bestie-self-review": { value: { type: "timer", channel: DM } },
+};
+const SELF_REVIEW_OFF = {
+  "interest/bestie-self-review": null,
+  "watch/bestie-self-review": null,
+};
+
+it("stops a former Bestie's Self-review, taking its Lessons section out of the instructions and leaving its memory", async () => {
+  const { relay, settle } = community();
+  const dora = agent("d", reviewing, SELF_REVIEW);
+  const { agents, save, notify } = host([dora, bea]);
+  const stop = stopFormerCheckIns(relay, agents);
+  await settle(bea.pubkey);
+  await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(save.mock.calls).toEqual([
+    [dora.key, { attention: SELF_REVIEW_OFF }],
+    [dora.key, { config: { instructions: remembering } }],
+  ]);
+  // Once stopped there is nothing more to do.
+  save.mockClear();
+  notify();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(save).not.toHaveBeenCalled();
+  stop();
+});
+
+it("stops only Self-review's timer on an agent also in another community, keeping the Lessons section it shares, and doesn't retry", async () => {
+  const { relay, settle } = community();
+  const dora = agent("d", reviewing, SELF_REVIEW);
+  const elsewhere = { ...dora, relay: "wss://other.example" } as Agent;
+  const { agents, save, notify } = host([dora, bea], [elsewhere]);
+  const stop = stopFormerCheckIns(relay, agents);
+  await settle(bea.pubkey);
+  await vi.waitFor(() => expect(save).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(save.mock.calls).toEqual([[dora.key, { attention: SELF_REVIEW_OFF }]]);
+  expect(instructionsOf(agents.snapshot().agents[0] as Agent)).toBe(reviewing);
+  // The section left behind isn't tried again until something changes.
+  save.mockClear();
+  notify();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(save).not.toHaveBeenCalled();
   stop();
 });
 

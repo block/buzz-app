@@ -84,7 +84,7 @@ describe("cross-client rich content compatibility", () => {
     });
   });
 
-  it("preserves original imeta attachments on text-only edits without imeta", () => {
+  it("treats an edit without imeta as removing every attachment", () => {
     const original = message(alice, channel, "Original attachment", 10, [
       imageIMeta(),
     ]);
@@ -101,15 +101,8 @@ describe("cross-client rich content compatibility", () => {
     expect(fold([original, edit])).toMatchObject({
       content: "Edited text",
       edited: true,
-      attachments: [
-        {
-          url: imageUrl,
-          kind: "image",
-          mime: "image/png",
-          name: "photo.png",
-          dimensions: { width: 640, height: 480 },
-        },
-      ],
+      attachmentSourceId: edit.id,
+      attachments: [],
     });
   });
 
@@ -147,6 +140,44 @@ describe("cross-client rich content compatibility", () => {
       ]),
     );
   });
+
+  it("keeps only the listed attachments and accepts an empty attachment source", async () => {
+    const original = message(alice, channel, "Both", 10, [
+      imageIMeta(),
+      fileIMeta(),
+    ]);
+    const events: EventData[] = [original];
+    const outbox = localOutbox(alice.pubkey);
+    await outbox.ready();
+    const messages = createMessages(
+      outbox,
+      alice.pubkey,
+      (id) => events.find((event) => event.id === id),
+      () => [],
+      () => {},
+    );
+    const sent = (id: string) =>
+      outbox.snapshot().find((item) => item.event.id === id)?.event;
+
+    const first = sent(
+      messages.edit(original.id, "File", original.id, [fileUrl]),
+    );
+    expect(first?.tags.filter(([name]) => name === "imeta")).toEqual([
+      fileIMeta(),
+    ]);
+    const empty = signed(alice, {
+      kind: 40003,
+      content: "None",
+      created_at: 11,
+      tags: [
+        ["h", channel],
+        ["e", original.id],
+      ],
+    });
+    events.push(empty);
+    const next = sent(messages.edit(original.id, "Still none", empty.id));
+    expect(next?.tags.some(([name]) => name === "imeta")).toBe(false);
+  });
 });
 
 it.each([9, 40002])(
@@ -168,10 +199,7 @@ it.each([9, 40002])(
       kind: 40003,
       content: "Latest caption",
       created_at: 12,
-      tags: [
-        ["h", channel],
-        ["e", original.id],
-      ],
+      tags: [["h", channel], ["e", original.id], imageIMeta()],
     });
     const spoof = signed(keypair(), {
       kind: 40003,
@@ -188,23 +216,41 @@ it.each([9, 40002])(
     const after = projection.reconcile([original, media, text, spoof], []);
     expect(after[0]).toMatchObject({
       content: "Latest caption",
-      attachmentSourceId: media.id,
+      attachmentSourceId: text.id,
     });
     expect(after[0]?.attachments).toEqual(before[0]?.attachments);
     expect(after).toEqual(
       foldMessages(channel, relay.pubkey, [original, media, text, spoof]),
     );
-    const deleted = signed(alice, {
+    const latestDeleted = signed(alice, {
       kind: 5,
       content: "",
       created_at: 14,
+      tags: [
+        ["h", channel],
+        ["e", text.id],
+      ],
+    });
+    const previous = projection.reconcile(
+      [original, media, text, spoof, latestDeleted],
+      [],
+    );
+    expect(previous[0]).toMatchObject({
+      content: "Current",
+      attachmentSourceId: media.id,
+    });
+    expect(previous[0]?.attachments).toEqual(before[0]?.attachments);
+    const deleted = signed(alice, {
+      kind: 5,
+      content: "",
+      created_at: 15,
       tags: [
         ["h", channel],
         ["e", media.id],
       ],
     });
     const restored = projection.reconcile(
-      [original, media, text, spoof, deleted],
+      [original, media, text, spoof, latestDeleted, deleted],
       [],
     );
     expect(restored[0]?.attachmentSourceId).toBeUndefined();
@@ -239,7 +285,6 @@ it("rejects unavailable or unrelated attachment sources without queuing an edit"
     source([["e", original.id], imageIMeta()], keypair()),
     source([["e", "f".repeat(64)], imageIMeta()]),
     source([["e", original.id], ["h", "elsewhere"], imageIMeta()]),
-    source([["e", original.id]]),
     source([["e", original.id], imageIMeta()], alice, 7),
   ];
   const outbox = localOutbox(alice.pubkey);

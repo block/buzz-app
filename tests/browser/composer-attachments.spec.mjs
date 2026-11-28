@@ -2,6 +2,7 @@ import { test, expect } from "./playwright-test.mjs";
 import { readFile } from "node:fs/promises";
 import react from "@vitejs/plugin-react";
 import { createServer } from "./vite-server.mjs";
+import { test as sourceTest } from "./source-fixture.mjs";
 
 // The preparation journeys import their modules into a bare same-origin page.
 // The app's index.html would boot the whole app, and its first load
@@ -406,21 +407,11 @@ test.describe("background Cancel focus handoff", () => {
 });
 
 // Browser-only boundary: toolbar geometry and keyboard order with real contributed tools.
-test("paperclip follows mentions and recipients, before the remaining tools", async ({
-  page,
-}) => {
-  const server = await createServer({
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
-  });
-  await server.listen();
-  try {
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?attachments`,
-    );
+// The shared source server is warmed, so the first load fits the navigation timeout.
+sourceTest(
+  "paperclip follows mentions and recipients, before the remaining tools",
+  async ({ page }) => {
+    await page.goto("/tests/fixtures/mentions.html?attachments");
     const mention = page.getByRole("button", {
       name: "Mention a member",
       exact: true,
@@ -480,10 +471,8 @@ test("paperclip follows mentions and recipients, before the remaining tools", as
     await recipient.focus();
     await page.keyboard.press("Tab");
     await expect(attach).toBeFocused();
-  } finally {
-    await server.close();
-  }
-});
+  },
+);
 
 // Browser-only boundary: real decoders/canvas, module worker/Wasm and browser output MIME.
 test("preparation preserves snapshot/animation and uses lossless WebP for pixel cleanup", async ({

@@ -54,10 +54,13 @@ test("Cmd+Up edits in the existing composer and restores native focus, draft his
       await editor.evaluate((el, original) => el === original, originalNode),
     ).toBe(true);
     const source = await editor.evaluate((el) => el.value);
-    expect(source).toContain("Original caption");
-    expect(source).toContain(
-      "[report.txt](<https://attachments.invalid/media/",
-    );
+    // Sent attachments are tiles beside the editor, not Markdown inside it.
+    expect(source).toBe("Original caption");
+    await expect(
+      page
+        .getByRole("region", { name: "Attachments" })
+        .getByRole("button", { name: "Remove report.txt", exact: true }),
+    ).toBeVisible();
     expect(
       await editor.evaluate((el) => [el.selectionStart, el.selectionEnd]),
     ).toEqual([source.length, source.length]);

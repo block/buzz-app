@@ -404,7 +404,11 @@ test("saving an attachment caption preserves its original metadata through the b
     exact: true,
   });
   await expect(editor).toBeFocused();
-  await editor.fill(`Corrected caption\n\n${link}`);
+  await expect(editor).toHaveText("Original caption");
+  await expect(
+    page.getByRole("button", { name: "Remove report.pdf", exact: true }),
+  ).toBeVisible();
+  await editor.fill("Corrected caption");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect
     .poll(

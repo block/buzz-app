@@ -2,8 +2,17 @@ import { assert, describe, expect, it } from "vitest";
 import { shareMessageRows } from "../relay/row-identity";
 import { foldMessages } from "../relay/fold";
 import { profileTarget } from "../profiles/target";
-import { messageEditText, validateMessageEdit } from "./message-edit";
+import {
+  messageEditContent,
+  messageEditDraft,
+  messageEditText,
+} from "./message-edit";
 import type { EventData } from "../relay/events";
+import {
+  forwardBody,
+  forwardTag,
+  snapshotMessage,
+} from "../relay/forwarded-message";
 
 const author = "a".repeat(64),
   person = "b".repeat(64);
@@ -42,6 +51,7 @@ describe("message edit round trips", () => {
       tags: [
         ["h", "room"],
         ["e", original.id],
+        ["imeta", "url https://example.com/photo.png", "m image/png"],
       ],
     };
     const edited = firstRow([original, edit]);
@@ -96,23 +106,141 @@ describe("message edit round trips", () => {
   });
 });
 
-it("rejects changed attachment links while allowing text-only edits", () => {
-  const row = firstRow([original]);
-  assert.exists(row);
-  const initial = row.sourceContent ?? row.content;
-  expect(
-    validateMessageEdit(row, initial, initial.replace("Hello", "Corrected")),
-  ).toContain("Corrected");
-  expect(() => validateMessageEdit(row, initial, "Removed the image")).toThrow(
-    "Keep attachment links unchanged",
-  );
-  expect(() =>
-    validateMessageEdit(
-      row,
-      initial,
-      initial.replace("photo.png", "other.png"),
-    ),
-  ).toThrow("Keep attachment links unchanged");
+describe("message edit attachments", () => {
+  const file = "https://example.com/report.pdf";
+  const sent: EventData = {
+    ...original,
+    content: `Hello\n\n![photo](<https://example.com/photo.png>)\n\n[report.pdf](<${file}>)`,
+    tags: [
+      ["h", "room"],
+      ["imeta", "url https://example.com/photo.png", "m image/png"],
+      ["imeta", `url ${file}`, "m application/pdf"],
+    ],
+  };
+  const editOf = (content: string, tags: string[][]): EventData => ({
+    ...sent,
+    id: "d".repeat(64),
+    kind: 40003,
+    created_at: 2,
+    content,
+    tags: [["h", "room"], ["e", sent.id], ...tags],
+  });
+
+  it("edits prose without attachment Markdown and restores kept attachments", () => {
+    const row = firstRow([sent]);
+    const draft = messageEditDraft(row, profiles);
+    expect(draft.text).toBe("Hello");
+    expect(draft.attachments.map(({ attachment }) => attachment.url)).toEqual([
+      "https://example.com/photo.png",
+      file,
+    ]);
+    const content = messageEditContent("Hi", draft.attachments);
+    expect(content).toBe(sent.content.replace("Hello", "Hi"));
+    const edited = firstRow([sent, editOf(content, sent.tags.slice(1))]);
+    expect(edited.attachments).toEqual(row.attachments);
+    expect(edited.content).toBe("Hi");
+  });
+
+  it("removes an attachment the edit no longer keeps", () => {
+    const draft = messageEditDraft(firstRow([sent]), profiles);
+    const kept = draft.attachments.filter(
+      ({ attachment }) => attachment.url === file,
+    );
+    const content = messageEditContent(draft.text, kept);
+    expect(content).toBe(`Hello\n\n[report.pdf](<${file}>)`);
+    const edited = firstRow([sent, editOf(content, sent.tags.slice(2))]);
+    expect(edited.attachments.map(({ url }) => url)).toEqual([file]);
+  });
+
+  it("keeps image Markdown that places no attachment in the prose", () => {
+    const row = firstRow([
+      {
+        ...sent,
+        content: `Hello ![x](http://example.org/a.png)\n\n${sent.content}`,
+      },
+    ]);
+    expect(messageEditDraft(row, profiles).text).toBe(
+      "Hello ![x](http://example.org/a.png)\n\nHello",
+    );
+  });
+
+  it("removes a Markdown-only image by dropping its Markdown", () => {
+    const gif = "![party](https://example.com/party.gif)";
+    const row = firstRow([
+      { ...original, content: `Hi\n\n${gif}`, tags: [["h", "room"]] },
+    ]);
+    const draft = messageEditDraft(row, profiles);
+    expect(draft.text).toBe("Hi");
+    expect(
+      draft.attachments.map(({ markdown }) => markdown.map(({ text }) => text)),
+    ).toEqual([[gif]]);
+    expect(messageEditContent(draft.text, draft.attachments)).toBe(
+      `Hi\n\n${gif}`,
+    );
+    expect(messageEditContent(draft.text, [])).toBe("Hi");
+  });
+
+  it("cuts a removed image out of the kept link that wraps it", () => {
+    const image = "https://example.com/photo.png";
+    const row = firstRow([
+      { ...sent, content: `Caption [![private](${image})](${file})` },
+    ]);
+    const draft = messageEditDraft(row, profiles);
+    expect(draft.text).toBe("Caption");
+    const kept = draft.attachments.filter(
+      ({ attachment }) => attachment.url === file,
+    );
+    const content = messageEditContent(draft.text, kept);
+    expect(content).not.toContain(image);
+    const edited = firstRow([sent, editOf(content, sent.tags.slice(2))]);
+    expect(edited.attachments.map(({ url }) => url)).toEqual([file]);
+  });
+
+  it("keeps a forward's quoted media in place and its card intact", () => {
+    const source = firstRow([sent]);
+    const snapshot = snapshotMessage(source, "Sam");
+    const forward: EventData = {
+      ...sent,
+      id: "f".repeat(64),
+      content: forwardBody(snapshot, "Look"),
+      tags: [["h", "room"], forwardTag(snapshot), ...sent.tags.slice(1)],
+    };
+    const row = firstRow([forward]);
+    assert.exists(row.forward);
+    const draft = messageEditDraft(row, profiles);
+    expect(draft.attachments).toEqual([]);
+    expect(draft.locked).toEqual(row.attachments.map(({ url }) => url));
+    const content = messageEditContent(
+      draft.text.replace("Look", "See"),
+      draft.attachments,
+    );
+    const edited = firstRow([
+      forward,
+      {
+        ...editOf(content, []),
+        tags: [["h", "room"], ["e", forward.id], ...sent.tags.slice(1)],
+      },
+    ]);
+    expect(edited.forward?.note).toBe("See");
+    expect(edited.attachments).toEqual(row.attachments);
+  });
+
+  it("keeps metadata for attachments a text-only edit still places", () => {
+    const edited = firstRow([
+      sent,
+      editOf(`Hi\n\n[report.pdf](<${file}>)`, []),
+    ]);
+    expect(edited.attachments).toEqual([
+      expect.objectContaining({ url: file, mime: "application/pdf" }),
+    ]);
+    expect(edited.content).toBe("Hi");
+  });
+
+  it("treats an edit's empty attachment set as authoritative", () => {
+    const edited = firstRow([sent, editOf("Hello", [])]);
+    expect(edited.attachments).toEqual([]);
+    expect(edited.attachmentSourceId).toBe("d".repeat(64));
+  });
 });
 
 it("row sharing retains latest editable source even when attachment rendering is unchanged", () => {

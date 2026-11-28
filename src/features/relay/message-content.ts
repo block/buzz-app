@@ -184,6 +184,8 @@ export function projectMarkdownAttachments(
   seams: readonly number[];
   urls: readonly string[];
   names: readonly ProjectedAttachmentLinkName[];
+  /** Source ranges of attachment Markdown with a safe URL, in order. */
+  sources: readonly Readonly<{ url: string; start: number; end: number }>[];
 } {
   const { tooDeep, definitions, images, links } = scanMarkdown(content);
   if (tooDeep)
@@ -192,12 +194,13 @@ export function projectMarkdownAttachments(
       seams: Object.freeze([]),
       urls: Object.freeze([]),
       names: Object.freeze([]),
+      sources: Object.freeze([]),
     };
 
   const urls: string[] = [];
   const seen = new Set<string>();
   const names: ProjectedAttachmentLinkName[] = [];
-  const ranges: Array<{ start: number; end: number }> = [];
+  const ranges: Array<{ start: number; end: number; url?: string }> = [];
 
   for (const image of images) {
     const url = resolvedNodeUrl(image, definitions);
@@ -209,7 +212,7 @@ export function projectMarkdownAttachments(
     const start = image.position?.start.offset;
     const end = image.position?.end.offset;
     if (typeof start === "number" && typeof end === "number")
-      ranges.push({ start, end });
+      ranges.push({ start, end, ...(safeUrl ? { url: safeUrl } : {}) });
   }
 
   if (attachmentUrls.size) {
@@ -221,7 +224,7 @@ export function projectMarkdownAttachments(
       const start = link.position?.start.offset;
       const end = link.position?.end.offset;
       if (typeof start === "number" && typeof end === "number")
-        ranges.push({ start, end });
+        ranges.push({ start, end, url });
 
       const label = safeAttachmentName(nodeText(link).trim());
       if (!label || !adoptableAttachmentLabel(label, url)) continue;
@@ -233,5 +236,10 @@ export function projectMarkdownAttachments(
     ...stripRanges(content, ranges),
     urls: Object.freeze(urls),
     names: Object.freeze(names),
+    sources: Object.freeze(
+      ranges.flatMap(({ url, start, end }) =>
+        url ? [Object.freeze({ url, start, end })] : [],
+      ),
+    ),
   };
 }

@@ -683,26 +683,65 @@ it("hides unsent attachments during edit and restores them after cancel and save
   );
 });
 
-it("rejects an empty edit of a message with original attachments without deleting it", async () => {
+it("shows sent attachments as removable tiles and saves an edit without the removed one", async () => {
   const h = await fixture(true, false, false, true);
-  expect(
-    h.owner.session.channels.window("room").rows[0]?.attachments.length,
-  ).toBeGreaterThan(0);
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Edit message" }),
   );
-  expect(
-    await screen.findByRole("textbox", { name: "Edit message" }),
-  ).toHaveFocus();
+  const field = await screen.findByRole("textbox", { name: "Edit message" });
+  expect(field).toHaveTextContent("Original message");
+  expect(field).not.toHaveTextContent("original.pdf");
+  const tray = screen.getByRole("region", { name: "Attachments" });
+  expect(tray).toHaveTextContent("original.pdf");
+  fireEvent.click(
+    within(tray).getByRole("button", { name: "Remove original.pdf" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("region", { name: "Attachments" })).toBeNull(),
+  );
+  submit();
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  const sent = h.publication(0).event;
+  expect(sent.kind).toBe(40003);
+  expect(sent.content).toBe("Original message");
+  expect(sent.tags.some(([name]) => name === "imeta")).toBe(false);
+  await act(async () => h.publication(0).result.resolve());
+  await waitFor(() =>
+    expect(
+      h.owner.session.channels.window("room").rows[0]?.attachments,
+    ).toEqual([]),
+  );
+});
+
+it("keeps a message with only its sent attachments when the text is cleared", async () => {
+  const h = await fixture(true, false, false, true);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Edit message" }),
+  );
+  await screen.findByRole("textbox", { name: "Edit message" });
   fill("");
   submit();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Keep attachment links unchanged. To remove this message, use Delete message.",
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  expect(h.publication(0).event.content).toBe(
+    "[original.pdf](https://fixture.test/media/original.pdf)",
   );
   expect(
     screen.queryByRole("alertdialog", { name: "Delete message?" }),
   ).toBeNull();
-  expect(h.owner.session.channels.window("room").rows).toHaveLength(1);
+});
+
+it("offers deletion once the text and every attachment tile are removed", async () => {
+  const h = await fixture(true, false, false, true);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Edit message" }),
+  );
+  await screen.findByRole("textbox", { name: "Edit message" });
+  fill("");
+  fireEvent.click(screen.getByRole("button", { name: "Remove original.pdf" }));
+  submit();
+  expect(
+    await screen.findByRole("alertdialog", { name: "Delete message?" }),
+  ).toBeVisible();
   expect(h.publications).toHaveLength(0);
 });
 

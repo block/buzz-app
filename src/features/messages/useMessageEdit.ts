@@ -1,4 +1,8 @@
-import { messageEditText, validateMessageEdit } from "./message-edit";
+import {
+  type EditAttachment,
+  messageEditContent,
+  messageEditDraft,
+} from "./message-edit";
 import {
   useEffect,
   useEffectEvent,
@@ -74,6 +78,8 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
   const [operation, setOperation] = useState<string>();
   const submitted = useRef<string | undefined>(undefined);
   const initial = useRef<string | undefined>(undefined);
+  const [attachments, setAttachments] = useState<readonly EditAttachment[]>([]);
+  const [lockedUrls, setLockedUrls] = useState<readonly string[]>([]);
   const [error, setError] = useState<string>();
   const pending = useSyncExternalStore(
     session.outbox?.subscribe ?? subscribe,
@@ -97,6 +103,7 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
     setOperation(undefined);
     submitted.current = undefined;
     initial.current = undefined;
+    setAttachments([]);
     setError(undefined);
   };
   // The row shows the edit optimistically; MessageManagementStatus owns
@@ -110,24 +117,35 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
     error: error ?? delivery?.error,
     close,
     clearError: () => setError(undefined),
+    /** Sent attachments the edit keeps; removing one drops it from the message. */
+    attachments,
+    removeAttachment(url: string) {
+      setAttachments((items) =>
+        items.filter(({ attachment }) => attachment.url !== url),
+      );
+    },
     start(
       row: ChannelMessage,
       normalize: (body: string) => string = (body) => body,
     ) {
       setTarget(row);
       setError(undefined);
-      const body = messageEditText(
+      const draft = messageEditDraft(
         row,
         session.profiles.snapshot(),
         session.agentLibrary.snapshot().identities,
       );
-      initial.current = normalize(body);
-      return body;
+      initial.current = normalize(draft.text);
+      setAttachments(draft.attachments);
+      setLockedUrls(draft.locked);
+      return draft.text;
     },
     startDraft(draft: DraftMessageEdit) {
       setTarget(draft);
       setError(undefined);
       initial.current = draft.content;
+      setAttachments([]);
+      setLockedUrls([]);
       return draft.content;
     },
     save(body: string, current: ChannelMessage | undefined) {
@@ -142,26 +160,44 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
           .finally(() => setDraftSaving(false));
         return;
       }
-      if (!body.trim()) return;
+      const content = messageEditContent(body, attachments);
+      if (!content.trim()) {
+        // Attachments sent without Markdown cannot stand alone in an edit.
+        if (attachments.length)
+          setError(
+            "Add text to keep these attachments, or remove them to delete the message.",
+          );
+        return;
+      }
       if (!current || !lastEditableMessage(session, [current])) {
         setError("This message is no longer available to edit.");
         return;
       }
-      if (source(current) !== source(target)) {
+      if (
+        source(current) !== source(target) ||
+        current.attachmentSourceId !== target.attachmentSourceId
+      ) {
         setError(
           "This message changed while you were editing. Copy your changes, then cancel and reopen it.",
         );
         return;
       }
-      if (body === initial.current || body === source(target)) {
+      if (
+        attachments.length + lockedUrls.length === target.attachments.length &&
+        (body === initial.current || content === source(target))
+      ) {
         close();
         return;
       }
       try {
         const id = session.messages.edit(
           target.id,
-          validateMessageEdit(target, source(target), body),
+          content,
           current.attachmentSourceId ?? current.id,
+          [
+            ...lockedUrls,
+            ...attachments.map(({ attachment }) => attachment.url),
+          ],
         );
         submitted.current = id;
         setOperation(id);

@@ -94,6 +94,33 @@ export function imetaAttachmentUrls(event: {
   return urls;
 }
 
+/** The latest edit's attachment set is authoritative. An edit without imeta
+ * (some clients edit text only) keeps the earlier metadata of attachments its
+ * content still places, so dropping their Markdown still removes them. */
+function editAttachmentEvent(
+  event: EventData,
+  edits: readonly EventData[],
+  content: string,
+): EventData {
+  const latest = edits[0];
+  if (!latest || latest.tags.some(([name]) => name === "imeta"))
+    return latest ?? event;
+  const source =
+    edits.find((edit) => edit.tags.some(([name]) => name === "imeta")) ?? event;
+  const placed = new Set(
+    projectMarkdownAttachments(
+      content,
+      imetaAttachmentUrls(source),
+    ).sources.map(({ url }) => url),
+  );
+  const tags = source.tags.filter(
+    (tag) =>
+      tag[0] === "imeta" &&
+      [...imetaAttachmentUrls({ tags: [tag] })].some((url) => placed.has(url)),
+  );
+  return tags.length ? { ...source, tags } : latest;
+}
+
 export function parseAttachments(
   event: EventData,
   markdownImages: readonly string[],
@@ -395,9 +422,7 @@ export function foldMessages(
       const body = objectBody(content);
       if (typeof body?.content === "string") content = body.content;
     }
-    const attachmentEvent =
-      edits.find((edit) => edit.tags.some(([name]) => name === "imeta")) ??
-      event;
+    const attachmentEvent = editAttachmentEvent(event, edits, content);
     const imetaUrls = imetaAttachmentUrls(attachmentEvent);
     // Every CommonMark image begins with `![`, and every attachment title link
     // needs an imeta URL match; avoid parsing ordinary messages.
@@ -543,7 +568,7 @@ export function foldMessages(
             ),
           ),
         ]),
-        ...(attachmentEvent !== event
+        ...(attachmentEvent.id !== event.id
           ? { attachmentSourceId: attachmentEvent.id }
           : {}),
         attachments: Object.freeze(

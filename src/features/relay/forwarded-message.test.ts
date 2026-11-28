@@ -452,3 +452,33 @@ it("rejects an unsafe destination media target before publishing a forward", asy
   expect(h.outbox.snapshot()).toEqual([]);
   expect(h.writer.publish).not.toHaveBeenCalled();
 });
+it("forwards only the attachments a text-only edit kept", async () => {
+  const file = "https://example.org/report.pdf";
+  const source = eventDto(
+    message(author, "private-source", `Both\n\n[report.pdf](${file})`, 100, [
+      ["imeta", "url https://example.org/photo.png", "m image/png"],
+      ["imeta", `url ${file}`, "m application/pdf"],
+    ]),
+  );
+  // Some clients edit text only and send no imeta; this edit drops the photo.
+  const edit = eventDto(
+    signed(author, {
+      kind: 40003,
+      content: `File only\n\n[report.pdf](${file})`,
+      created_at: 101,
+      tags: [
+        ["h", "private-source"],
+        ["e", source.id],
+      ],
+    }),
+  );
+  const { messages, row, outbox, writer } = setup([source, edit]);
+  expect(row.attachments.map(({ url }) => url)).toEqual([file]);
+  await outbox.ready();
+  messages.forward("destination", row, "Original Author", "");
+  await vi.waitFor(() => expect(writer.publish).toHaveBeenCalledOnce());
+  const event = eventDto(writer.publish.mock.calls[0]?.[0]);
+  expect(event.tags.filter(([name]) => name === "imeta")).toEqual([
+    source.tags.find((tag) => tag[0] === "imeta" && tag[1] === `url ${file}`),
+  ]);
+});

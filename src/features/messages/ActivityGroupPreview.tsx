@@ -2,7 +2,6 @@ import { useChannelIdentityNames } from "../identity-names/react";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { ActivityGroupActions } from "./ActivityGroupActions";
 import { useActivityTypingReplacement } from "../conversation/typing-presentation";
-import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import { useRef, type ReactNode } from "react";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import {
@@ -47,10 +46,8 @@ export function ActivityGroupPreview({
   layout?: "timeline" | "thread";
   renderHistory?: (row: ChannelMessage) => ReactNode;
 }) {
-  const container = useRef<HTMLDivElement>(null);
   const disclosure = useRef<HTMLButtonElement>(null);
   const resolveName = useChannelIdentityNames(session, group.latest.channelId);
-  useActivityFocusHandoff(container);
   const {
     latest: row,
     history,
@@ -144,9 +141,23 @@ export function ActivityGroupPreview({
       stackPrevious={!group.standalone}
       picture={avatarMedia(profile?.picture, media)}
       layout={layout}
+      profile={
+        openActivity && canOpenActivity
+          ? {
+              pubkey: primary,
+              session,
+              channelId: row.channelId,
+              canOpen: canOpenActivity,
+              open: (target) =>
+                openActivity(
+                  target,
+                  row.threadRootId ? { rootId: row.threadRootId } : undefined,
+                ),
+            }
+          : undefined
+      }
     >
       <ActivityDisclosure
-        container={container}
         trigger={disclosure}
         expanded={expanded}
         onToggle={onToggle}

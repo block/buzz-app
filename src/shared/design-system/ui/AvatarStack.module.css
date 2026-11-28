@@ -58,6 +58,19 @@
   margin-inline-end: calc(-1 * var(--space-1h));
 }
 
+.root[data-size="badge"] {
+  padding-inline-end: 0;
+}
+.root[data-size="badge"] .item {
+  padding: 1.5px;
+  width: 0.9375rem;
+  height: 0.9375rem;
+  margin-inline-end: calc(-1 * var(--space-1h));
+}
+.root[data-size="badge"] .item:last-child {
+  margin-inline-end: 0;
+}
+
 /* A hero row, such as the agents an empty page offers to import. */
 .root:is([data-size="hero"], [data-size="hero-large"]) .item {
   padding: 3px;

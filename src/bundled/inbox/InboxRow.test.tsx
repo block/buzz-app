@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import * as content from "../../features/notifications/content";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
@@ -199,3 +199,80 @@ it.each([
     expect(view.getByText(context)).toBeInTheDocument();
   },
 );
+
+it("shows a row's other unread senders on its avatar, naming the same ones, until they are read", async () => {
+  const carol = keypair(),
+    dan = keypair(),
+    photo = "data:image/png;base64,AAAA";
+  const people = new Map<string, Profile>([
+    ...profiles,
+    [alice.pubkey, { name: "Alice", picture: photo }],
+    [carol.pubkey, { name: "Carol" }],
+    [dan.pubkey, { name: "Dan" }],
+  ]);
+  const item = {
+    id: "row",
+    channelId: "room",
+    authorId: bob.pubkey,
+    createdAt: 1,
+    messageIds: [],
+    preview: "Shipping it",
+    previewMentions: { content: "Shipping it", mentions: [] },
+    unreadCount: 8,
+    // Bob, the row's own sender, sent the most.
+    moreUnread: {
+      count: 7,
+      senders: [
+        { authorId: bob.pubkey },
+        { authorId: alice.pubkey },
+        { authorId: relay.pubkey, workflowOwnerId: alice.pubkey },
+        { authorId: carol.pubkey },
+        { authorId: dan.pubkey },
+      ],
+    },
+    manual: false,
+  } as unknown as InboxItem;
+  const row = (item: InboxItem) => (
+    <InboxRowButton
+      item={item}
+      identity={rowIdentity(item, undefined, people, name)}
+      session={
+        {
+          ...session,
+          profiles: { subscribe: () => () => {}, snapshot: () => people },
+          channels: {
+            list: () => ({ channels: [] }),
+            subscribeList: () => () => {},
+          },
+        } as unknown as RelaySession
+      }
+      feed={{ incomplete: [] } as unknown as InboxFeedSnapshot}
+      time="now"
+      previewId="preview"
+    />
+  );
+  const view = render(row(item));
+  const workflow = workflowLabel("Alice");
+  expect(view.getByRole("button")).toHaveAccessibleDescription(
+    `Shipping it and 7 more messages from ${new Intl.ListFormat(undefined, {
+      type: "conjunction",
+    }).format(["Alice", workflow, "Carol", "1 other"])}`,
+  );
+  const faces = () =>
+    [...view.container.querySelectorAll("[data-avatar-stack] [title]")].map(
+      (face) => face.getAttribute("title"),
+    );
+  // The top sender sits on top, last.
+  expect(faces()).toEqual(["Carol", workflow, "Alice"]);
+  // A workflow never wears its owner's face.
+  const face = (title: string) =>
+    view.container.querySelector(`[data-avatar-stack] [title="${title}"]`);
+  expect(face("Alice")?.querySelector("img")).toHaveAttribute("src", photo);
+  expect(face(workflow)?.querySelector("img")).toBeNull();
+
+  // Reading the row lets its faces leave.
+  const { moreUnread: _, ...read } = item;
+  view.rerender(row({ ...read, unreadCount: 0 } as InboxItem));
+  expect(view.getByRole("button")).toHaveAccessibleDescription("Shipping it");
+  await waitFor(() => expect(faces()).toEqual([]));
+});

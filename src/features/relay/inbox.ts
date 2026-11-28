@@ -1,6 +1,18 @@
 import type { PreviewMentions } from "../messages/PreviewText";
 import type { ReadTarget } from "./read-state-model";
 
+/** Who sent a message, as its conversation byline names them: a verified
+ * workflow by its owner, otherwise the message's author, never a relay key
+ * that signed for them. */
+export type InboxSender = Readonly<{
+  authorId: string;
+  workflowOwnerId?: string | undefined;
+}>;
+
+/** One key per sender, keeping a workflow apart from its owner. */
+export const senderKey = ({ authorId, workflowOwnerId }: InboxSender) =>
+  workflowOwnerId ? `workflow:${workflowOwnerId}` : `person:${authorId}`;
+
 /** A conversation projected from the unread owner's bounded verified evidence. */
 export type InboxItem = Readonly<{
   id: string;
@@ -23,6 +35,9 @@ export type InboxItem = Readonly<{
   /** The preview message's body and signed mentions, which its chips bind. */
   previewMentions: PreviewMentions;
   createdAt: number;
+  /** Unread messages besides the preview's, with their senders: most messages
+   * first, then the newest. */
+  moreUnread?: Readonly<{ count: number; senders: readonly InboxSender[] }>;
   mentioned: boolean;
   /** Verified group members with time and viewer-mention classification. */
   messages: readonly Readonly<{

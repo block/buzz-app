@@ -2,7 +2,12 @@ import { viewerMember } from "./membership";
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience, detailsBrief, messageAudience } from "./audience";
-import type { InboxItem, InboxSnapshot } from "./inbox";
+import {
+  senderKey,
+  type InboxItem,
+  type InboxSender,
+  type InboxSnapshot,
+} from "./inbox";
 import type { ChannelMessage, ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import {
@@ -675,6 +680,14 @@ export function createUnread({
   let indexed = false;
   // Rows folded from the indexed events, so read marks reuse them.
   const foldedRows = new Map<string, readonly ChannelMessage[]>();
+  /** A message's sender as its byline names it. A workflow keeps the key
+   * that signed it, which its owner's attribution replaces. */
+  function inboxSender(event: RelayEvent): InboxSender {
+    const owner = workflowOwner(event, workflowAuthority);
+    return owner
+      ? { authorId: event.pubkey, workflowOwnerId: owner }
+      : { authorId: messageAuthor(event, signingAuthority) };
+  }
   function folded(channelId: string) {
     let rows = foldedRows.get(channelId);
     if (!rows) {
@@ -1789,6 +1802,21 @@ export function createUnread({
             const unread = entries.filter((entry) =>
               isUnread(entry, state, dm),
             );
+            const more = unread.filter((entry) => entry.event.id !== shown.id);
+            // Senders with the most unread messages first; ties, the newest.
+            // A workflow stays apart from its owner's own messages.
+            const moreSenders = new Map<
+              string,
+              { sender: InboxSender; count: number }
+            >();
+            for (const { event } of [...more].reverse()) {
+              const sender = inboxSender(event);
+              const key = senderKey(sender);
+              const known = moreSenders.get(key);
+              if (known) known.count++;
+              else moreSenders.set(key, { sender, count: 1 });
+            }
+            const shownSender = inboxSender(shown);
             const representative = unread[0] ?? latest;
             const replies = entries.filter(
               (entry) => entry.rootId !== undefined,
@@ -1852,14 +1880,26 @@ export function createUnread({
               unread.every((entry) => entry.rootId === representative.rootId)
                 ? { threadOnly: true as const }
                 : {}),
-              authorId: shown.pubkey,
-              workflowOwnerId: workflowOwner(shown, workflowAuthority),
+              authorId: shownSender.authorId,
+              workflowOwnerId: shownSender.workflowOwnerId,
               preview:
                 content.get(shown.id) ??
                 previewBody(shown.content, messageAudience(shown)),
               previewMessageId: shown.id,
               previewMentions: previewRows.get(shown.id) ?? noMentions,
               createdAt: shown.created_at,
+              ...(more.length
+                ? {
+                    moreUnread: Object.freeze({
+                      count: more.length,
+                      senders: Object.freeze(
+                        [...moreSenders.values()]
+                          .sort((a, b) => b.count - a.count)
+                          .map(({ sender }) => Object.freeze(sender)),
+                      ),
+                    }),
+                  }
+                : {}),
               mentioned: entries.some((entry) => entry.mentioned),
               messages: Object.freeze(
                 entries.map(({ event, mentioned }) =>

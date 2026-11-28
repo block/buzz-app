@@ -3,7 +3,7 @@ import {
   type HuddleAudioSettings,
 } from "./audio-settings";
 import workletUrl from "./capture.worklet.js?url&no-inline";
-import { createPlayout } from "./playout";
+import { createPlayout, type PlayoutEvent } from "./playout";
 
 export type HuddleAudio = {
   settings?: HuddleAudioSettings;
@@ -16,9 +16,15 @@ export type OpenHuddleAudio = (
   send: (samples: number[]) => void,
   ended: () => void,
   signal: AbortSignal,
+  report?: (peer: string, event: PlayoutEvent) => void,
 ) => Promise<HuddleAudio>;
 
-export const openHuddleAudio: OpenHuddleAudio = async (send, ended, signal) => {
+export const openHuddleAudio: OpenHuddleAudio = async (
+  send,
+  ended,
+  signal,
+  report,
+) => {
   if (!navigator.mediaDevices?.getUserMedia)
     throw new Error("Microphone access is unavailable in this app.");
   const context = new AudioContext({
@@ -169,7 +175,13 @@ export const openHuddleAudio: OpenHuddleAudio = async (send, ended, signal) => {
         if (closed) return;
         let entry = playback.get(peer);
         if (!entry) {
-          entry = createPlayout(context, output, 0.06);
+          entry = createPlayout(
+            context,
+            output,
+            0.06,
+            `play ${peer.slice(0, 8)}`,
+            report && ((event) => report(peer, event)),
+          );
           playback.set(peer, entry);
         }
         entry.play(samples);

@@ -71,6 +71,7 @@ function fixture(resume = Promise.resolve()) {
     onconnectionstatechange: () => {},
     ontrack: (_event: { track: { kind: string } }) => {},
     close: vi.fn(),
+    getStats: vi.fn(async (): Promise<Map<string, object>> => new Map()),
     addTrack: vi.fn(),
     createDataChannel: vi.fn(() => events),
     createOffer: async () => ({ type: "offer", sdp: "offer" }),
@@ -130,6 +131,7 @@ function fixture(resume = Promise.resolve()) {
   const open = (
     send: (samples: number[]) => Promise<void> = output,
     voice?: string,
+    diagnostic?: (event: unknown) => void,
   ) =>
     openVoice(
       rpc as unknown as AppServer,
@@ -140,6 +142,7 @@ function fixture(resume = Promise.resolve()) {
       "instructions",
       thinking,
       voice,
+      diagnostic,
     );
   return {
     open,
@@ -168,6 +171,40 @@ it("keeps incoming WebRTC audio decoding and releases its muted sink on close", 
   await connection.close();
   expect(f.decoder.pause).toHaveBeenCalledOnce();
   expect(f.decoder.srcObject).toBeNull();
+});
+it("reports new Codex audio concealment with its sampling window", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const diagnostic = vi.fn();
+  const inbound = (concealmentEvents: number, concealedSamples: number) =>
+    new Map([
+      [
+        "audio",
+        {
+          type: "inbound-rtp",
+          kind: "audio",
+          concealmentEvents,
+          concealedSamples,
+        },
+      ],
+    ]);
+  f.peer.getStats
+    .mockResolvedValueOnce(inbound(3, 4800))
+    .mockResolvedValueOnce(inbound(5, 5760));
+  const connection = await f.open(f.output, undefined, diagnostic);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(diagnostic).not.toHaveBeenCalled();
+  const fromMs = Date.now();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(diagnostic).toHaveBeenCalledExactlyOnceWith({
+    kind: "codex-webrtc",
+    fromMs,
+    detectedAtMs: fromMs + 1000,
+    concealmentEvents: 2,
+    concealedMs: 20,
+    packetsLost: 0,
+  });
+  await connection.close();
 });
 it("forwards output while the seat is busy and cuts it on close", async () => {
   const f = fixture();

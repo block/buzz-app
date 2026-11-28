@@ -10,6 +10,7 @@ import { createHuddleRing } from "../../features/huddle/ring";
 import type { PluginModule } from "../../plugins/api";
 import { nativeHuddles } from "../../features/huddle/bridge";
 import { openHuddleAudio } from "../../features/huddle/audio";
+import { registerHuddlePlayoutTool } from "../../features/huddle/playout-tool";
 import {
   createHuddles,
   provideHuddleStatus,
@@ -36,6 +37,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (connection, destination) =>
       dmVoiceAgent(connection, destination, ctx.agents)?.pubkey,
   );
+  registerHuddlePlayoutTool(ctx.agents, huddles);
   const remoteVoices = remoteDmVoiceCalls(ctx.relay, ctx.agents);
   const stopVoices = createHuddleVoices(
     withRemoteDmVoiceCalls(huddles, remoteVoices),
@@ -46,6 +48,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       if (remoteVoices.snapshot().id === call) huddles.remoteVoiceError(error);
       else huddles.voiceError(call, error);
     },
+    huddles.voiceDiagnostic,
   );
   provideHuddleStatus(ctx, huddles);
   const stopRing = createHuddleRing(huddles);

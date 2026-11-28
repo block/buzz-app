@@ -9,6 +9,7 @@
     "allow-huddle-open",
     "allow-huddle-close",
     "allow-huddle-pcm",
+    "allow-huddle-stats",
     "allow-huddle-touch",
     "allow-pairing-account",
     "allow-pairing-start",

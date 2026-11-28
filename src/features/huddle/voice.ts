@@ -9,6 +9,7 @@ import { relayOrigin } from "../communities/destination";
 import type { RelayData } from "../relay/service";
 import type { HuddleBridge, HuddleDestination } from "./bridge";
 import type { Huddles } from "./service";
+import { huddleAudio, type VoiceDiagnostic } from "./diagnostics";
 
 type Seat = {
   call: string;
@@ -28,6 +29,7 @@ export function createHuddleVoices(
   relay: RelayData,
   bridge: HuddleBridge,
   report: (call: string, error: string) => void,
+  record?: Huddles["voiceDiagnostic"],
 ) {
   const seats = new Map<string, Seat>();
   let session = relay.snapshot().session;
@@ -57,10 +59,20 @@ export function createHuddleVoices(
         `${agent.name}: ${error instanceof Error ? error.message : error || "Voice disconnected"}. Leave and rejoin the Huddle to retry.`,
       );
     };
+    const diagnostic =
+      huddleAudio.enabled && record
+        ? (event: VoiceDiagnostic) => {
+            if (!abort.signal.aborted) record(call, agent.pubkey, event);
+          }
+        : undefined;
     const sender = createPcmSender(
       (samples) => bridge.send(id, samples),
       abort.signal,
       fail,
+      "agent send",
+      diagnostic &&
+        (() =>
+          diagnostic({ kind: "agent-send-drop", detectedAtMs: Date.now() })),
     );
     function stop() {
       if (closing) return closing;
@@ -127,6 +139,7 @@ export function createHuddleVoices(
               huddles.voiceThinking(call, agent.pubkey, active);
           },
           output: sender.send,
+          ...(diagnostic && { diagnostic }),
         });
         if (abort.signal.aborted) await opened.close();
         else {

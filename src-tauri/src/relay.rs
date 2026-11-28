@@ -11,7 +11,9 @@ pub(crate) use agent::{
     relay_agent_resolve,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-pub(crate) use huddle::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
+pub(crate) use huddle::{
+    huddle_close, huddle_open, huddle_pcm, huddle_stats, huddle_touch, Huddles,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{

@@ -73,6 +73,7 @@ fn main() {
             "huddle_open",
             "huddle_close",
             "huddle_pcm",
+            "huddle_stats",
             "huddle_touch",
             "pairing_account",
             "pairing_start",

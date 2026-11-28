@@ -44,6 +44,54 @@ impl Huddles {
         Ok(())
     }
 }
+/// Audio each native hop discarded, for development diagnostics: index 0 is
+/// the person's own call, 1 an agent's seat. Counts only, never audio.
+pub(super) struct Drops {
+    /// Frames from the page while the encoder queue was full.
+    pcm: AtomicU64,
+    /// Encoded frames while the WebSocket write queue was full.
+    socket: AtomicU64,
+    /// Received packets the jitter buffer refused, such as late ones.
+    rejected: AtomicU64,
+    /// Sequence numbers skipped between received packets.
+    lost: AtomicU64,
+}
+pub(super) static DROPS: [Drops; 2] = [Drops::new(), Drops::new()];
+impl Drops {
+    const fn new() -> Self {
+        Self {
+            pcm: AtomicU64::new(0),
+            socket: AtomicU64::new(0),
+            rejected: AtomicU64::new(0),
+            lost: AtomicU64::new(0),
+        }
+    }
+    pub(super) fn add(counter: &AtomicU64, value: u64) {
+        counter.fetch_add(value, Ordering::Relaxed);
+    }
+}
+
+/// Native drop counts by call kind; `reset` zeroes them after reading.
+#[tauri::command]
+pub(crate) fn huddle_stats(reset: bool) -> Value {
+    let read = |counter: &AtomicU64| {
+        if reset {
+            counter.swap(0, Ordering::Relaxed)
+        } else {
+            counter.load(Ordering::Relaxed)
+        }
+    };
+    let [person, agent] = DROPS.each_ref().map(|d| {
+        json!({
+            "pcm queue dropped": read(&d.pcm),
+            "socket queue dropped": read(&d.socket),
+            "jitter rejected": read(&d.rejected),
+            "packets lost": read(&d.lost),
+        })
+    });
+    json!({ "native you": person, "native agent": agent })
+}
+
 struct Active {
     /// The agent this call seats, or `None` for the person's own call.
     agent: Option<String>,
@@ -64,6 +112,8 @@ pub(crate) struct Call {
     /// An agent of `viewer` to seat in the existing `room`, signing as itself.
     #[serde(default)]
     agent: Option<String>,
+    #[serde(default)]
+    diagnostics: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -79,6 +129,13 @@ pub(crate) enum Update {
     Audio {
         peer: String,
         samples: Vec<f32>,
+    },
+    Diagnostic {
+        peer: String,
+        #[serde(rename = "packetsSkipped")]
+        packets_skipped: u64,
+        #[serde(rename = "jitterRejected")]
+        jitter_rejected: u64,
     },
     Ended {
         error: Option<String>,
@@ -462,7 +519,7 @@ async fn seat_agent(
             participants: connection.peers.values().cloned().collect(),
         })
         .map_err(|_| "Huddle view closed")?;
-    audio::run(connection, pcm, stop.clone(), updates, &touched).await
+    audio::run(connection, pcm, stop.clone(), updates, &touched, false).await
 }
 
 async fn run(
@@ -534,6 +591,7 @@ async fn run(
             stop.clone(),
             updates,
             &touched,
+            call.diagnostics,
         )
         .await
     }.await;
@@ -596,7 +654,9 @@ pub(crate) fn huddle_pcm(
     }
     let calls = huddles.0.lock().map_err(|_| "Huddles unavailable")?;
     if let Some(a) = calls.get(&id).filter(|a| !*a.stop.borrow()) {
-        let _ = a.pcm.try_send(samples);
+        if a.pcm.try_send(samples).is_err() {
+            Drops::add(&DROPS[a.agent.is_some() as usize].pcm, 1);
+        }
     }
     Ok(())
 }
@@ -622,6 +682,7 @@ mod tests {
             parent: uuid::Uuid::new_v4().to_string(),
             room: None,
             agent: None,
+            diagnostics: false,
         };
         let _ = admit_membership(&community.host, &community.fi, &call).await;
         let heads = server.heads().await;
@@ -726,6 +787,7 @@ mod tests {
             parent: uuid::Uuid::new_v4().to_string(),
             room: None,
             agent: None,
+            diagnostics: false,
         };
         let updates = Channel::new(|_| panic!("Cancelled admission must not connect"));
         let (stop, cancelled) = watch::channel(false);
@@ -918,6 +980,7 @@ mod tests {
             parent: uuid::Uuid::new_v4().to_string(),
             room: Some(uuid::Uuid::new_v4().to_string()),
             agent: Some(agent.pubkey.clone()),
+            diagnostics: false,
         };
         validate(&call).unwrap();
         let (_stop, stop) = watch::channel(false);
@@ -971,6 +1034,7 @@ mod tests {
             parent: uuid::Uuid::new_v4().to_string(),
             room: None,
             agent: None,
+            diagnostics: false,
         };
         assert!(validate(&call).is_ok());
         call.community = "https://relay.example/other".into();

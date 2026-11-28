@@ -13,6 +13,7 @@ import {
 } from "../features/developer/logging";
 import { clientMetrics } from "../features/developer/client-metrics";
 import { ClientMetricsPanel } from "./ClientMetricsPanel";
+import { HuddleAudioPanel } from "./HuddleAudioPanel";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import {
   importScenario,
@@ -217,6 +218,7 @@ export function DeveloperSettings() {
             />
           </SettingsGroup>
         </div>
+        <HuddleAudioPanel />
       </div>
     </section>
   );

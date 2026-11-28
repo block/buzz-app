@@ -1,3 +1,4 @@
+import type { VoiceDiagnostic } from "../huddle/diagnostics";
 import type { PublishOptions } from "../../buzz-mcp/client";
 import { followUpQueue } from "../messages/follow-up-queue";
 import type {
@@ -1167,6 +1168,7 @@ export type AgentVoiceSeat<Config = unknown> = Readonly<
     ended(error?: Error): void;
     /** Presentation only; never authorizes work. */
     thinking?(active: boolean): void;
+    diagnostic?(event: VoiceDiagnostic): void;
   } & Pick<Delivery<Config>, "config" | "revisions" | "synced" | "team">
 >;
 

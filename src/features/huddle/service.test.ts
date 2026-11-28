@@ -13,6 +13,7 @@ import { createRelaySession } from "../relay/session";
 import type { HuddleAudio, OpenHuddleAudio } from "./audio";
 import type { HuddleBridge, HuddleDestination, HuddleUpdate } from "./bridge";
 import { createHuddles, provideHuddleStatus } from "./service";
+import { huddleAudio } from "./diagnostics";
 
 const viewerKey = keypair();
 const relayKey = keypair();
@@ -198,6 +199,57 @@ describe("Huddle lifetime", () => {
       "first",
     ]);
     await h.dispose();
+  });
+  it("returns diagnostics for the requested voice in the active call only", async () => {
+    const restore = huddleAudio.enabled;
+    huddleAudio.enabled = true;
+    const h = harness();
+    try {
+      await h.service.join(destination);
+      h.receive({
+        type: "connected",
+        room: "room",
+        participants: ["agent", "other"],
+      });
+      const call = h.service.snapshot().id;
+      if (!call) throw new Error("Expected an active call");
+      const detectedAtMs = Date.now();
+      h.service.voiceDiagnostic(call, "agent", {
+        kind: "codex-decoded-gap",
+        detectedAtMs,
+        durationMs: 85,
+      });
+      h.service.voiceDiagnostic(call, "agent", {
+        kind: "agent-send-drop",
+        detectedAtMs: detectedAtMs - 61_000,
+      });
+      h.service.voiceDiagnostic("stale", "agent", {
+        kind: "agent-send-drop",
+        detectedAtMs,
+      });
+      h.receive({
+        type: "diagnostic",
+        peer: "other",
+        packetsSkipped: 3,
+        jitterRejected: 1,
+      });
+      expect(h.service.recentPlayout("room", "agent")?.voiceEvents).toEqual([
+        { kind: "codex-decoded-gap", detectedAtMs, durationMs: 85 },
+      ]);
+      expect(h.service.recentPlayout("room", "other")?.voiceEvents).toEqual([
+        expect.objectContaining({
+          kind: "native-relay",
+          packetsSkipped: 3,
+          jitterRejected: 1,
+        }),
+      ]);
+      expect(h.service.recentPlayout("wrong-room", "agent")).toBeUndefined();
+      await h.service.leave();
+      expect(h.service.recentPlayout("room", "agent")).toBeUndefined();
+    } finally {
+      huddleAudio.enabled = restore;
+      await h.dispose();
+    }
   });
   it.each(["not a member", "huddle has ended"])(
     "removes an unavailable candidate after relay admission rejection: %s",

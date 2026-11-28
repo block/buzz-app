@@ -267,6 +267,7 @@ async fn open(
 struct Receiver {
     jitter: PeerJitterBuffer,
     last_packet: tokio::time::Instant,
+    seq: Option<u16>,
 }
 struct Codec {
     encoder: AudioEncoder,
@@ -274,36 +275,52 @@ struct Codec {
     /// The only pubkey decoded, if any. Indices are reused, so it is checked
     /// on every frame, by pubkey, before any decoder exists.
     only: Option<String>,
+    drops: &'static super::Drops,
 }
 impl Codec {
     fn new(only: Option<String>) -> Result<Self> {
         Ok(Self {
             encoder: AudioEncoder::new()?,
             receivers: BTreeMap::new(),
+            drops: &super::DROPS[only.is_some() as usize],
             only,
         })
     }
-    fn insert(&mut self, frame: &[u8], peers: &Peers) -> Result<()> {
+    fn insert<'a>(
+        &mut self,
+        frame: &[u8],
+        peers: &'a Peers,
+    ) -> Result<Option<(&'a str, u64, bool)>> {
         if frame.len() > 4009 {
-            return Ok(());
+            return Ok(None);
         }
         let Some((index, header, payload)) = parse_relay_frame(frame) else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(peer) = peers.get(&index) else {
-            return Ok(());
+            return Ok(None);
         };
         if self.only.as_ref().is_some_and(|only| only != peer) {
-            return Ok(());
+            return Ok(None);
         }
         if let std::collections::btree_map::Entry::Vacant(entry) = self.receivers.entry(index) {
             entry.insert(Receiver {
                 jitter: PeerJitterBuffer::new(index)
                     .map_err(|e| format!("Audio decoder unavailable: {e}"))?,
                 last_packet: tokio::time::Instant::now(),
+                seq: None,
             });
         }
+        let mut lost = 0;
+        let mut rejected = false;
         if let Some(receiver) = self.receivers.get_mut(&index) {
+            // Forward skips are lost packets; a backward one is reordering.
+            let skipped = receiver.seq.map_or(1, |last| header.seq.wrapping_sub(last));
+            if skipped < 1000 {
+                lost = u64::from(skipped.saturating_sub(1));
+                super::Drops::add(&self.drops.lost, lost);
+                receiver.seq = Some(header.seq);
+            }
             // Malformed or excessively late media must not end the call.
             if receiver
                 .jitter
@@ -311,9 +328,12 @@ impl Codec {
                 .is_ok()
             {
                 receiver.last_packet = tokio::time::Instant::now();
+            } else {
+                rejected = true;
+                super::Drops::add(&self.drops.rejected, 1);
             }
         }
-        Ok(())
+        Ok((lost > 0 || rejected).then_some((peer.as_str(), lost, rejected)))
     }
     fn play(
         &mut self,
@@ -372,6 +392,7 @@ pub(super) async fn run(
     mut stop: watch::Receiver<bool>,
     updates: &Channel<Update>,
     touched: &std::sync::atomic::AtomicU64,
+    diagnostics: bool,
 ) -> Result<()> {
     ensure_authorized(connection.expires_at, &connection.cancellation)?;
     let (mut sink, mut socket) = connection
@@ -388,6 +409,9 @@ pub(super) async fn run(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut playout = tokio::time::interval(Duration::from_millis(10));
     playout.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+    let mut diagnostic_samples = BTreeMap::<String, (u64, u64)>::new();
+    let mut flush_diagnostics = tokio::time::interval(Duration::from_secs(1));
+    flush_diagnostics.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_received = tokio::time::Instant::now();
     authorization_guard(expires_at, &authorization_cancellation, async {
         // Writes queue to their own future, so a stalled send never blocks
@@ -419,11 +443,23 @@ pub(super) async fn run(
                     if last_received.elapsed() > Duration::from_secs(30) { return Err("Huddle connection timed out. You can join again.".into()); }
                     let _ = out.try_send(Message::Ping(now().to_be_bytes().to_vec().into()));
                 }
+                _ = flush_diagnostics.tick(), if diagnostics => {
+                    for (peer, (packets_skipped, jitter_rejected)) in std::mem::take(&mut diagnostic_samples) {
+                        // Diagnostics are optional and never end a Huddle.
+                        let _ = updates.send(Update::Diagnostic { peer, packets_skipped, jitter_rejected });
+                    }
+                }
                 packet = socket.next() => {
                     last_received = tokio::time::Instant::now();
                     match packet {
                         Some(Ok(Message::Binary(frame))) => {
-                            codec.insert(&frame, &peers)?;
+                            if let Some((peer, packets_skipped, jitter_rejected)) =
+                                codec.insert(&frame, &peers)?.filter(|_| diagnostics)
+                            {
+                                let sample = diagnostic_samples.entry(peer.to_owned()).or_default();
+                                sample.0 += packets_skipped;
+                                sample.1 += u64::from(jitter_rejected);
+                            }
                         }
                         Some(Ok(Message::Text(text))) => {
                             let value: Value = serde_json::from_str(&text).map_err(|_| "Invalid Huddle update")?;
@@ -466,7 +502,9 @@ pub(super) async fn run(
                 samples = pcm.recv() => {
                     let Some(samples) = samples else { break; };
                     let frame = codec.encoder.encode(&samples)?;
-                    let _ = out.try_send(Message::Binary(frame.into()));
+                    if out.try_send(Message::Binary(frame.into())).is_err() {
+                        super::Drops::add(&codec.drops.socket, 1);
+                    }
                 }
             }
         }
@@ -647,6 +685,7 @@ mod tests {
                 stop,
                 &updates,
                 &touched,
+                false,
             )
             .await
         });
@@ -723,7 +762,14 @@ mod tests {
         };
         let ended = tokio::time::timeout(
             Duration::from_secs(5),
-            run(connection, pcm, stop, &Channel::new(|_| Ok(())), &touched),
+            run(
+                connection,
+                pcm,
+                stop,
+                &Channel::new(|_| Ok(())),
+                &touched,
+                false,
+            ),
         )
         .await
         .expect("a removed agent kept its seat");
@@ -822,6 +868,7 @@ mod tests {
                 parent: uuid::Uuid::new_v4().to_string(),
                 room: None,
                 agent: None,
+                diagnostics: false,
             };
             (
                 Relay(listener, acceptor),
@@ -1036,7 +1083,7 @@ mod tests {
                 super::super::super::lease_time(),
             ));
             let mut relay = socket;
-            let playing = run(seated, pcm, stopped, &updates, &touched);
+            let playing = run(seated, pcm, stopped, &updates, &touched, false);
             let relay_side = async {
                 send(
                     &mut relay,
@@ -1195,7 +1242,13 @@ mod tests {
             codec.encoder.encode(&vec![0.1; FRAME_SAMPLES]).unwrap(),
         ]
         .concat();
-        codec.insert(&frame, &peers).unwrap();
+        assert!(codec.insert(&frame, &peers).unwrap().is_none());
+        let _skipped = spoken(&mut codec, 1);
+        let next = spoken(&mut codec, 1);
+        assert_eq!(
+            codec.insert(&next, &peers).unwrap(),
+            Some((peers[&1].as_str(), 1, false)),
+        );
         codec.joined(
             &mut peers,
             roster(&json!({"peers":[{"peer_index":3,"pubkey":"c".repeat(64)}]})).unwrap(),
@@ -1329,7 +1382,7 @@ mod tests {
         let (resume, resuming) = oneshot::channel();
         let owner = tokio::spawn(async move {
             let touched = std::sync::atomic::AtomicU64::new(super::super::lease_time());
-            let running = run(connection, pcm, stopped, &updates, &touched);
+            let running = run(connection, pcm, stopped, &updates, &touched, false);
             tokio::pin!(running);
             // Suspend at an observable startup boundary without exposing a new
             // production pause hook. Network input has not been pre-peeked.
@@ -1453,7 +1506,7 @@ mod tests {
             cancellation: CancellationToken::new(),
             seat: None,
         };
-        let running = run(connection, pcm, stopped, &updates, &touched);
+        let running = run(connection, pcm, stopped, &updates, &touched, false);
         tokio::pin!(running);
         let _ = tokio::time::timeout(Duration::from_secs(1), &mut running).await;
         let pulls = heard.load(std::sync::atomic::Ordering::SeqCst);
@@ -1492,7 +1545,7 @@ mod tests {
                 cancellation: CancellationToken::new(),
                 seat: None,
             };
-            run(connection, pcm, stopped, &updates, &touched).await
+            run(connection, pcm, stopped, &updates, &touched, false).await
         });
         let wire = |frame: &[u8]| {
             let (header, _) = FrameHeader::parse(frame).unwrap();

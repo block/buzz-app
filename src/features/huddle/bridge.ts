@@ -1,4 +1,5 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import { huddleAudio } from "./diagnostics";
 import { relayOrigin } from "../communities/destination";
 
 export type HuddleDestination = Readonly<{
@@ -12,6 +13,12 @@ export type HuddleUpdate =
   | { type: "connected"; room: string; participants: string[] }
   | { type: "participants"; participants: string[] }
   | { type: "audio"; peer: string; samples: number[] }
+  | {
+      type: "diagnostic";
+      peer: string;
+      packetsSkipped: number;
+      jitterRejected: number;
+    }
   | { type: "ended"; error: string | null };
 export type HuddleBridge = {
   available: boolean;
@@ -39,6 +46,7 @@ export const nativeHuddles: HuddleBridge = {
         parent: destination.channelId,
         room: room ?? null,
         agent: agent ?? null,
+        diagnostics: huddleAudio.enabled && !agent,
       },
       updates,
     });
@@ -47,3 +55,7 @@ export const nativeHuddles: HuddleBridge = {
   touch: (id) => invoke("huddle_touch", { id }),
   send: (id, samples) => invoke("huddle_pcm", { id, samples }),
 };
+
+/** Development: native drop counts by call kind; `reset` zeroes them. */
+export const nativeHuddleStats = (reset = false) =>
+  invoke<Record<string, Record<string, number>>>("huddle_stats", { reset });

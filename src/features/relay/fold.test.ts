@@ -46,6 +46,25 @@ describe("message fold", () => {
       replyParentId: request.id,
       content: "Failure explanation",
     });
+    expect(rows[1]?.sentFromThread).toBeUndefined();
+  });
+  it("shows another client's broadcast thread reply in the channel as sent from its thread", () => {
+    const root = message(alice, channel, "Music thread", 1);
+    const reply = message(bob, channel, "Try this", 2, [
+      ["e", root.id, "", "reply"],
+      ["broadcast", "1"],
+    ]);
+    const quiet = message(carol, channel, "Only in the thread", 3, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const rows = foldMessages(channel, relay.pubkey, [root, reply, quiet]);
+    expect(rows.map((row) => row.id)).toEqual([root.id, reply.id]);
+    expect(rows[1]?.sentFromThread).toEqual({ rootId: root.id });
+    // In the thread itself it is an ordinary reply.
+    const thread = foldMessages(channel, relay.pubkey, [root, reply], {
+      includeReplies: true,
+    });
+    expect(thread[1]?.sentFromThread).toBeUndefined();
   });
   it("reads only the explicit automatic failure notice tag without changing the message", () => {
     const content = "A failure explanation";

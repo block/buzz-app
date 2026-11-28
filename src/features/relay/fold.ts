@@ -451,13 +451,24 @@ export function foldMessages(
             ([name, id]) =>
               name === "buzz:sent-from-thread" && id && HEX64.test(id),
           );
-          return tag?.[1]
-            ? {
-                rootId: tag[1],
-                excerpt: tag[2]
-                  ? Array.from(tag[2]).slice(0, 64).join("")
-                  : undefined,
-              }
+          if (tag?.[1])
+            return {
+              rootId: tag[1],
+              excerpt: tag[2]
+                ? Array.from(tag[2]).slice(0, 64).join("")
+                : undefined,
+            };
+          // Another client can list a thread reply in the channel itself
+          // (broadcast) rather than send a copy. It reads as sent from its
+          // thread too; an automatic failure notice stays its request's caption.
+          const rootId = threadReference(event)?.rootId;
+          return !includeReplies &&
+            rootId &&
+            event.tags.some(
+              ([name, value]) => name === "broadcast" && value === "1",
+            ) &&
+            !event.tags.some(([name]) => name === "buzz:notice")
+            ? { rootId }
             : undefined;
         })(),
         authorId,

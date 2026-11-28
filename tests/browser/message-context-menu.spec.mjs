@@ -182,6 +182,8 @@ test("right-clicking a message timestamp offers its ⋯ actions and copies its l
     .get("primary/alpha")
     .find((event) => event.content === "Thread root 0");
   const reply = app.reply(root.id, false, false);
+  // Room below the newest row for the whole menu, so it opens at the pointer.
+  await page.setViewportSize({ width: 1440, height: 1200 });
   await open(page, app);
   const target = app.append("primary", "alpha", "Context target");
   const rowOf = (id) =>

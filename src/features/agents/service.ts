@@ -236,6 +236,7 @@ import {
 } from "./model-routes";
 import { fromOwner as ownerSent, workflowOf } from "./owner-attestation";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
+import { sidebarSections } from "../relay/sidebar-agent-sections";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import { replyInvocationIntents } from "../relay/messages";
@@ -332,6 +333,7 @@ import {
   defaultAgentControl,
   type DefaultAgentControl,
   forgetDefaultAgent,
+  readSavedAgent,
 } from "../solo/default-agent";
 import type { AgentPlugins } from "../../plugins/requests";
 import type { DeviceSettings } from "../../shared/device-settings";
@@ -779,6 +781,9 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
+  /** On a run's handle only: the owner's sidebar sections in the agent's
+   * community; undefined while it is not connected. */
+  sections?(): ReturnType<typeof sidebarSections> | undefined;
   /** On a run's handle only: the owner's sidebar workspaces. */
   workspaces?: Readonly<{
     list(
@@ -3720,6 +3725,15 @@ export class AgentsService extends Service implements Agents {
       tabs: (agent) => {
         const session = this.bindingOf(agent)?.session;
         return session && channelTabs(session, ctx.navigation);
+      },
+      sections: (agent) => {
+        const binding = this.bindingOf(agent);
+        if (!binding) return undefined;
+        const { session, scope } = binding;
+        return sidebarSections(
+          session,
+          async () => (await readSavedAgent(session, scope)) === agent.pubkey,
+        );
       },
       settings: () => this.deviceSettings,
       bestie: (agent) => {

@@ -26,6 +26,7 @@ import {
   type AgentToolProof,
 } from "../features/agents/tool-operation";
 import { callPluginTool, isPluginTool, PLUGIN_TOOLS } from "./plugins";
+import { callSectionsTool, isSectionsTool, SECTIONS_TOOLS } from "./sections";
 import { callSettingsTool, isSettingsTool, SETTINGS_TOOLS } from "./settings";
 import {
   callSoloWorkerTool,
@@ -76,6 +77,7 @@ export const BUZZ_SESSION: BuzzSession = Object.freeze({
     ...PLUGIN_TOOLS,
     ...SETTINGS_TOOLS,
     ...BESTIE_TOOLS,
+    ...SECTIONS_TOOLS,
   ],
 });
 
@@ -102,6 +104,7 @@ export const sessionTools = (
   ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...BESTIE_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...SECTIONS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
 ];
 
@@ -251,15 +254,22 @@ async function dispatchSessionTool(
 ): Promise<Reply> {
   const tool = added.find((tool) => tool.name === name);
   if (tool) {
-    // A plugin's tool doesn't get the agent's device settings, Bestie or
-    // the owner's workspaces.
-    const { settings: _, bestie: __, workspaces: ___, ...plugin } = client;
+    // A plugin's tool doesn't get the agent's device settings, Bestie, the
+    // owner's workspaces or sections.
+    const {
+      settings: _,
+      bestie: __,
+      workspaces: ___,
+      sections: ____,
+      ...plugin
+    } = client;
     return tool.call(plugin, context, args);
   }
   if (isSoloWorkerTool(name)) return callSoloWorkerTool(client, name, args);
   if (isPluginTool(name)) return callPluginTool(client, context, name, args);
   if (isSettingsTool(name)) return callSettingsTool(client, name, args);
   if (isBestieTool(name)) return callBestieTool(client, name, args);
+  if (isSectionsTool(name)) return callSectionsTool(client, name, args);
   if (!isAttentionTool(name)) return callTool(client, context, name, args);
   const { attention } = client;
   if (!attention) throw new Error(`No tool ${name}`);

@@ -2,9 +2,21 @@ import { steerPrompt } from "../../../bundled/claude-code/prompt";
 import { unsupportedSynced } from "../../agents/agent-config";
 import type { HostMcpServer } from "../../host/service";
 import { ContextMeter } from "../context-meter";
-import type { AcpProcess } from "./process";
-import { codeOf, errorMessage, stepLabel } from "./steps";
-import type { ActivityReceipt, Choice, Settled } from "./types";
+import { NO_OPTIONS, offers, optionState, values } from "./options";
+import { type AcpProcess, REQUEST_TIMEOUT_MS } from "./process";
+import { AUTH_REQUIRED, codeOf, errorMessage, stepLabel } from "./steps";
+import {
+  type ActivityReceipt,
+  type BuildPrompt,
+  type Choice,
+  FRESH,
+  type Mark,
+  type OptionState,
+  type Overridden,
+  type Pick,
+  type Settled,
+  type Source,
+} from "./types";
 
 /** The most of a turn's text kept, to post when it answers nowhere in Buzz. */
 const WRITTEN_LIMIT = 20_000;
@@ -13,11 +25,6 @@ type Waiter = (settled: Settled) => void;
 
 /** A session's settings, as `session/new` and `session/set_config_option`
  * return them. */
-/** Chooses a turn's model and effort as it starts (`Delivery.route`);
- * undefined sends nothing. */
-export type TurnRoute = () => Promise<
-  Readonly<{ model?: string; effort?: string }> | undefined
->;
 export type ConfigOptions = {
   configOptions?: {
     category?: string | null;
@@ -26,15 +33,37 @@ export type ConfigOptions = {
 };
 /** A select's choice, or a group of them. */
 export type ConfigValue = { value?: string; options?: ConfigValue[] };
-/** Every choice's value, groups flattened. */
-export const valuesOf = (options: readonly ConfigValue[] = []): string[] =>
-  options.flatMap((option) =>
-    option.options
-      ? valuesOf(option.options)
-      : typeof option.value === "string"
-        ? [option.value]
-        : [],
-  );
+/** A prompt the harness took in: it received every message in it. */
+const SUCCESS = new Set(["end_turn", "max_tokens", "max_turn_requests"]);
+
+/** What a pinned session (one whose agent sets `pin`) does beyond the
+ * client's plain path, given by its `AgentSessions`. */
+export type Parity = Readonly<{
+  /** Its agent's pinned snapshot, given to `build` and the Buzz tools. */
+  pinned: unknown;
+  /** Picks go through `session/set_config_option`. */
+  configOptions: boolean;
+  /** Before any option is set, so no saved record outlives what it says. */
+  setting(): void;
+  /** A built turn succeeded: the harness has every message through `covered`. */
+  commit(covered: Mark): void;
+  /** A resumed session failed before any prompt in it succeeded. */
+  lost(): void;
+  refuse?(state: OptionState, pick: Pick, source: Source): string | undefined;
+  onState?(state: OptionState): void;
+}>;
+
+/** Chooses a turn's model and effort as it starts (`Delivery.route`);
+ * undefined sends nothing. */
+export type TurnRoute = () => Promise<
+  Readonly<{ model?: string; effort?: string }> | undefined
+>;
+/** One turn's extra inputs: on a pinned session, and its model route. */
+export type Turn = Readonly<{
+  build?: BuildPrompt<never>;
+  source?: Source;
+  route?: TurnRoute;
+}>;
 
 /** One conversation's ACP session. Messages sent while a turn runs are
  * steered into it, when the harness can steer; one that arrives as the turn
@@ -54,6 +83,25 @@ export class AcpSession {
   /** Run before each new turn is sent, one at a time: brings the session's
    * system prompt up to date. */
   beforeTurn: (() => Promise<void>) | undefined;
+  /** Set by its `AgentSessions` when its agent pins sessions. */
+  parity: Parity | undefined;
+  /** The harness's latest option state, kept only for a pinned session. */
+  state: OptionState = NO_OPTIONS;
+  /** The latest title the harness gave it. */
+  title: string | undefined;
+  /** Between `session/load` and its answer: updates only set state. */
+  replaying = false;
+  /** Between `session/load` or `session/resume` and its answer: option
+   * updates are kept, before its owner is attached. */
+  reopening = false;
+  /** Opened from a saved record rather than new. */
+  resumed = false;
+  /** The newest message the harness definitely received. */
+  covered: Mark = FRESH;
+  /** Which fields Buzz has set on it. */
+  overridden: Overridden = { model: false, effort: false };
+  /** A prompt in it has succeeded. */
+  private succeeded = false;
   /** The harness's id for the running turn, which a steer must name. */
   private runId: string | undefined;
   /** Steers waiting for the running turn's id, which the harness sends just
@@ -66,7 +114,7 @@ export class AcpSession {
   private readonly steering = new Set<Waiter>();
   private steered = Promise.resolve();
   /** Turns to run, each with the model and level it was asked for, if any. */
-  private readonly queue: {
+  private readonly queue: ({
     text: string;
     model?: string;
     effort?: string;
@@ -76,8 +124,7 @@ export class AcpSession {
     waiter?: Waiter;
     delivered?: () => void;
     accepted?: () => void;
-    route?: TurnRoute;
-  }[] = [];
+  } & Turn)[] = [];
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
   /** The thinking level the running turn runs on; empty is the harness's own. */
@@ -177,8 +224,7 @@ export class AcpSession {
     effort?: string,
     /** A synced level the turn must run on, or it fails before its prompt. */
     kept?: string,
-    /** Chooses `model` and `effort` as a turn for this message starts. */
-    route?: TurnRoute,
+    turn: Turn = {},
   ): Promise<Settled> {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
@@ -200,9 +246,10 @@ export class AcpSession {
       (!model || model === this.model) &&
       (!effort || effort === this.level)
     )
-      void this.steer(text, activity, waiter, model, effort, kept, route);
+      void this.steer(text, activity, waiter, model, effort, kept, turn);
     else {
       this.queue.push({
+        ...turn,
         text,
         ...(activity.delivered ? { delivered: activity.delivered } : {}),
         ...(activity.accepted ? { accepted: activity.accepted } : {}),
@@ -212,7 +259,6 @@ export class AcpSession {
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         ...(kept ? { kept } : {}),
-        ...(route ? { route } : {}),
       });
       this.acknowledge(activity, waiter, true);
       void this.pump();
@@ -281,6 +327,15 @@ export class AcpSession {
       );
     }
     const kind = update.sessionUpdate;
+    // Kept while it reopens too, before its owner is attached.
+    if ((this.parity || this.reopening) && kind === "config_option_update") {
+      this.replace(update.configOptions);
+      return;
+    }
+    if (kind === "session_info_update" && typeof update.title === "string")
+      this.title = update.title.trim() || this.title;
+    // A replay is the session's past: nothing in it is new work.
+    if (this.replaying) return;
     // A cancel before goose has the final message's result would save that
     // call as interrupted. goose reports a batch's results together, once
     // every call in it has one, and keeps them when the turn is cancelled.
@@ -342,7 +397,7 @@ export class AcpSession {
     model?: string,
     effort?: string,
     kept?: string,
-    route?: TurnRoute,
+    turn: Turn = {},
   ) {
     this.steering.add(waiter);
     const prior = this.steered;
@@ -392,6 +447,7 @@ export class AcpSession {
             this.waiters.indexOf(turn.waiter) > this.waiters.indexOf(waiter),
         );
         this.queue.splice(next < 0 ? this.queue.length : next, 0, {
+          ...turn,
           text,
           ...(activity.delivered ? { delivered: activity.delivered } : {}),
           ...(activity.accepted ? { accepted: activity.accepted } : {}),
@@ -402,7 +458,6 @@ export class AcpSession {
           ...(effort ? { effort } : {}),
           // As a turn of its own, it is checked and routed like any other.
           ...(kept ? { kept } : {}),
-          ...(route ? { route } : {}),
         });
         this.acknowledge(activity, waiter, true);
       }
@@ -418,7 +473,7 @@ export class AcpSession {
    * unsent, or failed with `error` when it was refused before its prompt.
    * Either way it is undelivered, so what it carried comes back for the next
    * turn. */
-  private discard(waiter: Waiter, error?: string) {
+  private discard(waiter: Waiter, error?: string, code?: number) {
     this.withdraw(waiter);
     this.waiters = this.waiters.filter((pending) => pending !== waiter);
     this.pending = this.waiters.length;
@@ -427,7 +482,13 @@ export class AcpSession {
       if (receipt.current && !receipt.current()) this.active.delete(scope);
     waiter(
       error
-        ? { ok: false, error, undelivered: true }
+        ? {
+            ok: false,
+            error,
+            ...(code === undefined ? {} : { code }),
+            ...this.signIn(code),
+            undelivered: true,
+          }
         : { ok: true, undelivered: true },
     );
   }
@@ -460,13 +521,16 @@ export class AcpSession {
           waiter,
           delivered,
           accepted,
+          build,
+          source = {},
           route,
-        } = this.queue.shift() ?? {
-          text: "",
-        };
-        let sent = false;
+        } = this.queue.shift() ?? { text: "" };
+        // Built from what the harness has, so a failed turn's messages go again.
+        const from = this.covered;
+        let through: Mark | undefined;
+        let prompted = false;
         try {
-          await this.beforeTurn?.();
+          if (this.beforeTurn) await this.beforeTurn();
           // A model route chooses as its turn starts.
           const chosen = route ? await route() : { model, effort };
           if (!chosen) {
@@ -481,7 +545,7 @@ export class AcpSession {
           );
           // A harness may ignore a level its model lacks, and keep one across
           // a model switch without its being set again.
-          if (kept && !this.levels.includes(kept))
+          if (kept && !this.offered.includes(kept))
             throw new Error(
               unsupportedSynced(
                 "effort",
@@ -489,7 +553,16 @@ export class AcpSession {
                 `${this.acp.hooks.label}'s ${this.model || "default model"}`,
               ),
             );
-          const prompt = refresh ? await refresh() : text;
+          let prompt = text;
+          if (build) {
+            const built = await build(from, this.parity?.pinned as never);
+            // Nothing is left to send.
+            if (!built) {
+              if (waiter) this.discard(waiter);
+              continue;
+            }
+            ({ text: prompt, through } = built);
+          } else if (refresh) prompt = await refresh();
           // The owner stopped it while its provider switch was going.
           if (this.stopped) {
             this.cancelEnded();
@@ -501,12 +574,23 @@ export class AcpSession {
             if (waiter) this.discard(waiter);
             continue;
           }
+          const refused = this.parity?.refuse?.(
+            this.state,
+            { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+            source,
+          );
+          // Only its own request fails: queued ones still run.
+          if (refused) {
+            if (waiter) this.discard(waiter, refused);
+            else this.lastFailure = { error: refused };
+            continue;
+          }
           accepted?.();
           this.confirmPrompt = () => {
             this.confirmPrompt = undefined;
             delivered?.();
           };
-          sent = true;
+          prompted = true;
           if (waiter) this.sent(waiter);
           const lead = this.preamble;
           const { stopReason } = (await this.acp.request("session/prompt", {
@@ -523,10 +607,19 @@ export class AcpSession {
             this.lastFailure = {
               error: `${this.acp.hooks.label} refused the request`,
             };
+          // A stop wins over the answer, whatever it says.
+          if (SUCCESS.has(stopReason ?? "") && !this.stopped) {
+            this.succeeded = true;
+            // Only when nothing else committed since this turn was built.
+            if (through !== undefined && from === this.covered) {
+              this.covered = through;
+              this.parity?.commit(through);
+            }
+          }
         } catch (error) {
           // Refused before the harness saw it: only that request fails.
-          if (!sent && waiter) {
-            this.discard(waiter, errorMessage(error));
+          if (!prompted && waiter) {
+            this.discard(waiter, errorMessage(error), codeOf(error));
             continue;
           }
           const code = codeOf(error);
@@ -537,6 +630,7 @@ export class AcpSession {
         } finally {
           this.confirmPrompt = undefined;
         }
+        if (prompted && this.resumed && !this.succeeded) this.parity?.lost();
       }
     } finally {
       this.prompting = false;
@@ -552,6 +646,14 @@ export class AcpSession {
    * or `model` of that provider and level `effort`. A steer joins the running
    * turn, so a change waits for the next. */
   private async select(model?: string, effort?: string) {
+    if (this.parity?.configOptions) {
+      this.model = model ?? "";
+      this.level = effort ?? "";
+      // The model first: the efforts offered can depend on it.
+      await this.setOption("model", this.model);
+      await this.setOption("effort", this.level);
+      return;
+    }
     const chosen = this.choice?.();
     if (!chosen) return;
     const want = {
@@ -570,7 +672,42 @@ export class AcpSession {
     const option = configOptions.find(
       (item) => item.category === "thought_level",
     );
-    this.levels = valuesOf(option?.options);
+    this.levels = values(option?.options).map(({ value }) => value);
+  }
+  /** Sets one option to `value` when its control offers it; a value it
+   * doesn't offer leaves the harness's current one. */
+  private async setOption(field: "model" | "effort", value: string) {
+    const control = this.state[field];
+    if (!value || !control || control.currentValue === value) return;
+    if (!offers(control, value)) return;
+    this.parity?.setting();
+    const result = (await this.acp.request(
+      "session/set_config_option",
+      { sessionId: this.id, configId: control.id, value },
+      REQUEST_TIMEOUT_MS,
+    )) as { configOptions?: unknown } | undefined;
+    this.overridden = { ...this.overridden, [field]: true };
+    this.replace(result?.configOptions);
+  }
+  /** Whether the running turn or one queued sets `field` off its default. */
+  sets(field: "model" | "effort") {
+    const running = field === "model" ? this.model : this.level;
+    return (
+      (this.prompting && !!running) || this.queue.some((turn) => !!turn[field])
+    );
+  }
+  /** Replaces the whole option state with the harness's latest. */
+  replace(raw: unknown) {
+    if (raw === undefined) return;
+    this.state = optionState(raw);
+    if (!this.replaying) this.parity?.onState?.(this.state);
+  }
+
+  /** The levels a kept one must be among: a pinned session's whole option
+   * state, groups flattened, else what the last config answer listed. */
+  private get offered() {
+    if (!this.parity) return this.levels;
+    return this.state.effort?.options.map(({ value }) => value) ?? [];
   }
 
   private ranAs(runId: string | undefined) {
@@ -618,11 +755,20 @@ export class AcpSession {
     const text = this.acted || this.stopped ? "" : this.written.trim();
     const failure = this.lastFailure;
     this.settle({
-      ...(failure?.error ? { ok: false, ...failure } : { ok: true }),
+      ...(failure?.error
+        ? { ok: false, ...failure, ...this.signIn(failure.code) }
+        : { ok: true }),
       ...(text ? { text } : {}),
       ...(this.acted ? { answered: true } : {}),
       ...(!failure?.error && this.stopped?.ended ? { stopped: true } : {}),
     });
+  }
+  /** For a pinned session's `auth_required` error: the sign-in methods
+   * `initialize` advertised. */
+  private signIn(code: number | undefined) {
+    return this.parity && code === AUTH_REQUIRED
+      ? { authMethods: this.acp.authMethods }
+      : {};
   }
   /** The owner's cancel ended the turn, if it was stopping it. */
   private cancelEnded() {

@@ -210,6 +210,10 @@ if that desktop app is up and running.
   a section, or put the default text back in the editor for you to save.
 - **Sessions.** By default an agent starts a fresh conversation for each
   thread. Its settings can make it one per channel or one per community.
+- **Custom ACP agents** run the command you confirmed. A conversation a plugin
+  gave its own folder works there, and a change to a conversation's
+  instructions starts a new session on its next turn. **Activity** →
+  **Transcript** replays a session only when the harness supports it.
 - **Auto models.** Some builds add choices such as **Auto Balanced** to the
   Model menu of Claude Code, Codex and Goose agents. Before each new turn, the build
   picks a model and thinking level for that message, and the turn's activity

@@ -1422,7 +1422,8 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         let id = plugin.manifest.id.as_str();
         let default = !matches!(
             id,
-            "com.squareup.docs"
+            "buzz.acp"
+                | "com.squareup.docs"
                 | "buzz.pi"
                 | "buzz.usage"
                 | "buzz.reminders"

@@ -133,6 +133,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.equal(
         plugin.enabledByDefault,
         ![
+          "buzz.acp",
           "com.squareup.docs",
           "buzz.pi",
           "buzz.usage",

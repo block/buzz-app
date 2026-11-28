@@ -1095,6 +1095,7 @@ it("revalidates a missing strict root before repair and preserves tombstones on 
     root: undefined,
     replies: [],
     canLoadMore: false,
+    missing: true,
   });
   expect(h.view.snapshot().error).toContain(
     "original thread message is unavailable",
@@ -1107,6 +1108,186 @@ it("revalidates a missing strict root before repair and preserves tombstones on 
     replies: [],
     canLoadMore: false,
   });
+  expect(h.view.snapshot().missing).toBeUndefined();
+});
+
+it("marks a legacy read missing when an old relay's fallback answers without the root", async () => {
+  // The strict root read finds it; the window has no bounds, so the reader
+  // falls back to the legacy read, which no longer returns the root.
+  let rootReads = 0;
+  const h = await setup((f) =>
+    f.ids
+      ? ++rootReads === 1
+        ? [root]
+        : []
+      : f.thread_window
+        ? [reply(100)]
+        : [reply(0)],
+  );
+  await h.view.refresh();
+  expect(rootReads).toBe(2);
+  expect(h.requests.at(-1)).toHaveLength(2);
+  expect(h.requests.at(-1)?.[1]).not.toHaveProperty("thread_window");
+  expect(h.view.snapshot()).toMatchObject({
+    status: "error",
+    root: undefined,
+    canLoadMore: false,
+    missing: true,
+  });
+  expect(h.view.snapshot().error).toContain(
+    "original thread message is unavailable",
+  );
+});
+
+it.each([
+  ["a root the opening named, which the relay answers without", "root", true],
+  ["a reply whose root may still exist", "reply", undefined],
+] as const)(
+  "an exact read marks missing only %s",
+  async (_, opened, expected) => {
+    const h = await setup(() => []);
+    const id = "e".repeat(64);
+    const gone = h.session.thread(channel, id, {
+      exact: true,
+      openedRoot: opened === "root" ? id : root.id,
+    });
+    try {
+      await gone.refresh();
+      expect(gone.snapshot()).toMatchObject({
+        status: "ready",
+        targetStatus: "unavailable",
+      });
+      expect(gone.snapshot().missing).toBe(expected);
+    } finally {
+      gone.dispose();
+    }
+  },
+);
+
+it("an exact read never marks its named root missing when the read fails", async () => {
+  const h = await setup((filter) => {
+    if (filter.ids) throw new Error("relay down");
+    return [];
+  });
+  const id = "e".repeat(64);
+  const gone = h.session.thread(channel, id, { exact: true, openedRoot: id });
+  try {
+    await gone.refresh();
+    expect(gone.snapshot().targetStatus).not.toBe("ready");
+    expect(gone.snapshot().missing).toBeUndefined();
+  } finally {
+    gone.dispose();
+  }
+});
+
+it("an exact read marks its root missing when the relay returns it with its deletion", async () => {
+  const deletion = signed(author, {
+    kind: 5,
+    created_at: 500,
+    content: "",
+    tags: [["e", root.id]],
+  });
+  const h = await setup((filter) =>
+    filter.ids
+      ? [root]
+      : filter.kinds?.includes(5) && filter["#e"]?.includes(root.id)
+        ? [deletion]
+        : [],
+  );
+  const gone = h.session.thread(channel, root.id, {
+    exact: true,
+    openedRoot: root.id,
+  });
+  try {
+    await gone.refresh();
+    expect(gone.snapshot()).toMatchObject({
+      status: "ready",
+      root: undefined,
+      targetStatus: "unavailable",
+      missing: true,
+    });
+  } finally {
+    gone.dispose();
+  }
+});
+
+it("marks a root missing once a live deletion folds it away, and never for a reply's", async () => {
+  const row = reply(0);
+  const h = await setup((filter) =>
+    filter.ids ? [root] : [row, bounds(filter)],
+  );
+  await h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    root: { id: root.id },
+  });
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      created_at: 500,
+      content: "",
+      tags: [["e", row.id]],
+    }),
+  ]);
+  expect(h.view.snapshot().replies).toEqual([]);
+  expect(h.view.snapshot().missing).toBeUndefined();
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      created_at: 501,
+      content: "",
+      tags: [["e", root.id]],
+    }),
+  ]);
+  expect(h.view.snapshot()).toMatchObject({ root: undefined, missing: true });
+});
+
+it("never marks a root missing for a deletion someone else signed", async () => {
+  const h = await setup((filter) => (filter.ids ? [root] : [bounds(filter)]));
+  await h.view.refresh();
+  h.traffic.receive([
+    signed(keypair(), {
+      kind: 5,
+      created_at: 500,
+      content: "",
+      tags: [["e", root.id]],
+    }),
+  ]);
+  expect(h.view.snapshot()).toMatchObject({ root: { id: root.id } });
+  expect(h.view.snapshot().missing).toBeUndefined();
+});
+
+it("never marks a thread missing when its read fails", async () => {
+  const h = await setup((filter) => {
+    if (filter.ids) throw new Error("relay down");
+    return [bounds(filter)];
+  });
+  const gone = h.session.thread(channel, "e".repeat(64));
+  try {
+    await gone.refresh();
+    expect(gone.snapshot().status).not.toBe("ready");
+    expect(gone.snapshot().missing).toBeUndefined();
+  } finally {
+    gone.dispose();
+  }
+});
+
+it("marks a thread missing when the relay answers without the message it opened", async () => {
+  const h = await setup((filter) => (filter.ids ? [] : [bounds(filter)]));
+  const gone = h.session.thread(channel, "e".repeat(64));
+  try {
+    expect(gone.snapshot().missing).toBeUndefined();
+    await gone.refresh();
+    expect(gone.snapshot()).toMatchObject({
+      status: "error",
+      root: undefined,
+      missing: true,
+    });
+    // A thread whose read found its root is never marked.
+    expect(h.view.snapshot().missing).toBeUndefined();
+  } finally {
+    gone.dispose();
+  }
 });
 
 it.each([

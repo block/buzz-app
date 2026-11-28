@@ -57,6 +57,9 @@ export type ThreadSnapshot = Readonly<{
   seeking?: true | undefined;
   /** A read failed and waits on session recovery, which retries it. */
   recovering?: true | undefined;
+  /** The relay answered without this view's message or its thread root, as
+   * after a deletion; a failed read never sets it. */
+  missing?: true | undefined;
 }>;
 /** What a closed ordinary thread last showed. A view opened from it shows
  * these rows at once, as display only: they are never evidence, and the
@@ -142,6 +145,7 @@ export function createThreadView({
   visible,
   notify,
   exact = false,
+  openedRoot,
   subthread = false,
   priority = "foreground",
   admit = (events) => events,
@@ -169,6 +173,10 @@ export function createThreadView({
   visible(events: readonly RelayEvent[]): readonly RelayEvent[];
   notify(listener: () => void): void;
   exact?: boolean;
+  /** The root the opening named for this thread, a hint only. When it names
+   * the opened message itself, an exact read answered without that message
+   * confirms the root missing. It never shows two messages share a thread. */
+  openedRoot?: string | undefined;
   /** Project the branch anchored by the opening message. */
   subthread?: boolean;
   /** Admission for every read this view makes. A passive reader, one that
@@ -213,6 +221,8 @@ export function createThreadView({
   let disposed = false;
   let rootId: string | undefined;
   let rootUnavailable = false;
+  // The relay's answer lacked the opened message or its root.
+  let missing = false;
   let targetStatus: ThreadSnapshot["targetStatus"] = exact
     ? "loading"
     : undefined;
@@ -367,6 +377,7 @@ export function createThreadView({
       ...next,
       seeking: seeking || undefined,
       recovering: failed ? true : undefined,
+      missing: missing || undefined,
     };
     const keys = Object.keys(next) as (keyof ThreadSnapshot)[];
     if (keys.every((key) => next[key] === snapshot[key])) return;
@@ -453,6 +464,18 @@ export function createThreadView({
           : row;
       }),
     );
+    // A verified deletion folded away the root this thread was opened at, so
+    // that root is missing. The fold drops a root only for a deletion its
+    // author signed; a reply's deletion, or an unread root, never marks it.
+    if (
+      !subthreadId &&
+      rootId &&
+      rootId === messageId &&
+      inputs.has(rootId) &&
+      deletionTargets(inputs.values()).has(rootId) &&
+      !sourceRows.some((row) => row.id === rootId)
+    )
+      missing = true;
     const displayedRoot = subthreadId ?? rootId;
     let rows = sourceRows;
     if (subthreadId) {
@@ -625,6 +648,7 @@ export function createThreadView({
       remote = [];
       staged = [];
       rootId = undefined;
+      missing = false;
       cursor = undefined;
       pages = 0;
       held = undefined;
@@ -890,6 +914,15 @@ export function createThreadView({
         );
         if (!active()) return;
         if (anchorResult !== "selected" && revision === selectionRevision) {
+          // The relay answered without a message opened as its own thread's
+          // root, so that root is missing. A selected reply's absence says
+          // nothing about its root, and a failed read throws before this.
+          if (
+            anchorResult === "unavailable" &&
+            !subthreadId &&
+            openedRoot === selectedId
+          )
+            missing = true;
           targetStatus = "unavailable";
           publish({ status: "ready", canLoadMore: false });
           return;
@@ -920,7 +953,10 @@ export function createThreadView({
             isThreadContent(event) &&
             inChannel(event, channelId),
         );
-        if (!event) throw new Error("The selected message is unavailable.");
+        if (!event) {
+          missing = true;
+          throw new Error("The selected message is unavailable.");
+        }
         rootId = threadReference(event)?.rootId ?? event.id;
       }
       const rootFilter: ReadFilter = {
@@ -982,6 +1018,7 @@ export function createThreadView({
           )
         ) {
           rootUnavailable = true;
+          missing = true;
           cursor = undefined;
           pages = 0;
           publish({ canLoadMore: false });
@@ -1070,6 +1107,7 @@ export function createThreadView({
         ) {
           // Hide unavailable history without throwing away known tombstones.
           rootUnavailable = true;
+          missing = true;
           cursor = undefined;
           pages = 0;
           publish({ canLoadMore: false });
@@ -1132,6 +1170,7 @@ export function createThreadView({
       )
         return;
       rootUnavailable = false;
+      missing = false;
       cursor = nextCursor;
       pages = nextPages;
       if (replace) readAt = startedAt;

@@ -469,6 +469,104 @@ test("message actions reveal, copy, restore focus and reply across responsive la
       '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
     )
     .click();
+
+  // A Send to channel copy is a separate top-level event. Until it has
+  // replies of its own, Reply on it continues the thread it was sent from
+  // instead of starting a second thread under the copy.
+  const copy = app.append(
+    "primary",
+    "alpha",
+    "Sent to channel copy",
+    true,
+    true,
+    undefined,
+    undefined,
+    [["buzz:sent-from-thread", event.id, event.content]],
+  );
+  const copyRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${copy.id}"]`,
+  );
+  await expect(page.locator("[data-panel-dock][data-closing]")).toHaveCount(0);
+  await hoverMessage(copyRow);
+  await copyRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(root).toBeVisible();
+  await expect(replyBox).toBeFocused();
+  await expect(replyBox).toHaveText("Keep this reply draft");
+  await expect(panel.locator(`[data-message-id="${copy.id}"]`)).toHaveCount(0);
+  await page
+    .locator(
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+    )
+    .click();
+
+  // A copy whose original was deleted: once its thread reads without a root,
+  // Reply on the copy starts a thread under the copy, which has a composer.
+  const orphan = app.append(
+    "primary",
+    "alpha",
+    "Copy of a deleted thread",
+    true,
+    true,
+    undefined,
+    undefined,
+    [["buzz:sent-from-thread", "f".repeat(64), "Deleted original"]],
+  );
+  const orphanRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${orphan.id}"]`,
+  );
+  await expect(page.locator("[data-panel-dock][data-closing]")).toHaveCount(0);
+  await hoverMessage(orphanRow);
+  await orphanRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(panel.getByText("Original message unavailable.")).toBeVisible();
+  await expect(replyBox).toHaveCount(0);
+  await hoverMessage(orphanRow);
+  await orphanRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(panel.locator(`[data-message-id="${orphan.id}"]`)).toBeVisible();
+  await expect(replyBox).toBeFocused();
+  for (let tabs = 0; tabs < 2; tabs++)
+    await page
+      .locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+      )
+      .click();
+  await expect(panel).toHaveCount(0);
+
+  // The same, when the deleted original is first opened from the copy's
+  // Sent from link: that read, too, confirms it missing, so Reply on the copy
+  // reaches the copy's own thread instead of the unavailable original.
+  const linked = app.append(
+    "primary",
+    "alpha",
+    "Copy linked to a deleted thread",
+    true,
+    true,
+    undefined,
+    undefined,
+    [["buzz:sent-from-thread", "e".repeat(64), "Linked deleted original"]],
+  );
+  const linkedRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${linked.id}"]`,
+  );
+  await expect(page.locator("[data-panel-dock][data-closing]")).toHaveCount(0);
+  await linkedRow
+    .getByRole("link", { name: /Linked deleted original/ })
+    .click({ button: "right" });
+  await page
+    .getByRole("menu")
+    .getByRole("menuitem", { name: "Open link", exact: true })
+    .click();
+  await expect(panel.getByText("This message isn’t available.")).toBeVisible();
+  await hoverMessage(linkedRow);
+  await linkedRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(panel.locator(`[data-message-id="${linked.id}"]`)).toBeVisible();
+  await expect(replyBox).toBeFocused();
+  for (let tabs = 0; tabs < 2; tabs++)
+    await page
+      .locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+      )
+      .click();
+  await expect(panel).toHaveCount(0);
   for (const width of [900, 603, 390]) {
     await page.setViewportSize({ width, height: 850 });
     await row.scrollIntoViewIfNeeded();

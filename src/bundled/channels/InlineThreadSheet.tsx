@@ -123,6 +123,7 @@ export function InlineThreadSheet({
                   revealSelected={messageId !== undefined}
                   focusRequest={focusRequest}
                   onResolvedRoot={onResolvedRoot}
+                  threadRootId={rootId}
                 />
                 <LayerReader channelId={confirmed.id} />
               </ComposerScopeProvider>

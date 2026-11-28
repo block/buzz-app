@@ -87,6 +87,7 @@ import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
 import { contentSelector } from "./useFloatingActionBar";
+import { markThreadRoot } from "./missing-thread-roots";
 
 export type ThreadPanelProps = {
   intro?: ReactNode;
@@ -104,6 +105,9 @@ export type ThreadPanelProps = {
   /** Display and compose only within this invocation's branch. */
   subthreadId?: string | undefined;
   sourceThreadId?: string | undefined;
+  /** The root the opening named for this thread, a hint only: see
+   * createThreadView's `openedRoot`. A conversation navigation names its own. */
+  threadRootId?: string | undefined;
   /** Channel workspaces retain the editor across same-thread link navigation. */
   retainThread?: boolean | undefined;
   /** The hosting tab strip owns the title, close and Escape. */
@@ -268,6 +272,16 @@ type ThreadPlace = {
 };
 const THREAD_PLACE = "thread";
 /** Reader lifetime follows the open thread; navigation owns only a reveal request. */
+/** The root an opening named: its navigation's, or else its host's. */
+function openedRoot(
+  navigation: PageNavigation | undefined,
+  threadRootId: string | undefined,
+) {
+  return navigation?.target.kind === "conversation" &&
+    navigation.target.threadRootId
+    ? navigation.target.threadRootId
+    : threadRootId;
+}
 function RetainedThreadPanel(props: ThreadPanelProps) {
   type Opening = {
     view: ThreadView;
@@ -308,6 +322,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     revealSelected,
     revealRequest,
     unreadRequest,
+    threadRootId,
   } = props;
   const retryNavigation = useCallback(() => {
     retrying.current = true;
@@ -396,6 +411,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
             navigation.target.threadRootId !== messageId);
         const view = session.thread(channelId, messageId, {
           exact,
+          openedRoot: openedRoot(navigation, threadRootId),
           reading: true,
         });
         prior?.view.dispose();
@@ -432,6 +448,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     revealSelected,
     revealRequest,
     unreadRequest,
+    threadRootId,
     attempt,
   ]);
   return (
@@ -477,6 +494,7 @@ function OwnedThreadPanel({
   messageId,
   subthreadId,
   sourceThreadId,
+  threadRootId,
   navigation,
   onOpenLink,
   onOpenMediaReview,
@@ -515,6 +533,7 @@ function OwnedThreadPanel({
           navigation.target.threadRootId !== messageId);
       const owned = session.thread(channelId, subthreadId ?? messageId, {
         exact,
+        openedRoot: openedRoot(navigation, threadRootId),
         reading: true,
         ...(subthreadId ? { subthread: true } : {}),
       });
@@ -545,6 +564,7 @@ function OwnedThreadPanel({
     messageId,
     subthreadId,
     sourceThreadId,
+    threadRootId,
     attempt,
     navigation,
     revealSelected,
@@ -712,6 +732,14 @@ function ThreadMessages({
   useEffect(() => {
     if (resolvedRoot) reportRoot.current?.(resolvedRoot);
   }, [resolvedRoot]);
+  // The relay answering without this thread's root confirms it missing, so a
+  // channel copy of one of its replies offers its own thread instead.
+  const rootMissing = !!snapshot.missing && !snapshot.root;
+  useEffect(() => {
+    if (rootMissing) markThreadRoot(session.scope, channelId, messageId, false);
+    else if (resolvedRoot)
+      markThreadRoot(session.scope, channelId, resolvedRoot, true);
+  }, [rootMissing, resolvedRoot, session.scope, channelId, messageId]);
   // Read the current root only when sharing; paging must not invalidate every reply row.
   const getThreadRoot = useCallback(() => {
     const current = view.snapshot();

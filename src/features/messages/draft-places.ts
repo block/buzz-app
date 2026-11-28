@@ -166,6 +166,18 @@ export function useShowingDraft(scope: string, key: string, shown: boolean) {
   }, [scope, key, shown]);
 }
 
+/** Whether a thread has a saved draft, shown in a composer or not. */
+export function useSavedThreadDraft(
+  session: Session | undefined,
+  channelId: string,
+  threadRootId: string,
+) {
+  const key = `draft:${channelId}:thread:${threadRootId}`;
+  return useDraftSnapshot(session, (places) =>
+    places.some((place) => place.key === key),
+  );
+}
+
 /** A thread draft that no open composer already shows. */
 export function useThreadDraft(
   session: Session | undefined,
@@ -173,9 +185,7 @@ export function useThreadDraft(
   threadRootId: string,
 ) {
   const key = `draft:${channelId}:thread:${threadRootId}`;
-  const saved = useDraftSnapshot(session, (places) =>
-    places.some((place) => place.key === key),
-  );
+  const saved = useSavedThreadDraft(session, channelId, threadRootId);
   const scope = session?.scope;
   const inView = () =>
     scope !== undefined && showing.has(showingKey(scope, key));

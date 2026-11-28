@@ -963,6 +963,75 @@ it("leaves a protected Buzz tool call to Claude's own tool review", async () => 
   }
 });
 
+it("denies restricted native tools before protected Claude review", async () => {
+  const f = setup([], { hold: true, nativeHistory: [] });
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection = {
+    key: "policy",
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable() {},
+    check,
+    spawn: async () => {
+      throw new Error("Unused protected runtime");
+    },
+  };
+  await f.deliver(
+    { type: "mention", event: message("1", "Howzit") },
+    {
+      config: { ...DEFAULT_CONFIG, toolPreset: "chat" },
+      agent: {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, toolPreset: "chat" },
+        protection,
+      } as unknown as Delivery["agent"],
+    },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((worker) => worker.prompts.length)).toBe(true),
+  );
+  const worker = f.claudes().find((candidate) => candidate.prompts.length);
+  if (!worker) throw new Error("Claude did not start");
+  try {
+    worker.emit({
+      type: "control_request",
+      request_id: "native-policy",
+      request: {
+        subtype: "hook_callback",
+        callback_id: "security-tool",
+        input: {
+          transcript_path: "/native/transcript",
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: { command: "echo denied" },
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(worker.received).toContainEqual(
+        expect.objectContaining({
+          type: "control_response",
+          response: expect.objectContaining({
+            request_id: "native-policy",
+            subtype: "success",
+            response: expect.objectContaining({
+              hookSpecificOutput: expect.objectContaining({
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+              }),
+            }),
+          }),
+        }),
+      ),
+    );
+    expect(check).not.toHaveBeenCalled();
+    expect(worker.killed).toBe(false);
+  } finally {
+    worker.finish();
+    await f.runtime.retire(self);
+  }
+});
+
 it("launches unprotected once an agent's protection is cleared", async () => {
   const { runtime, deliver, claudes } = setup([], { hold: true });
   const binding = { provider: "test", policy: {} };
@@ -3307,11 +3376,14 @@ it("offers the tools plugins add, runs them as the agent, and replaces an idle s
   expect(await names(second, 3)).not.toContain("tasks_create");
 });
 
-it("keeps one spare for all its agents, and none once they are gone", async () => {
+it("keeps one spare for unrestricted agents, and none once they are gone", async () => {
   const { runtime, claudes } = setup();
-  const agent = (pubkey: string) =>
-    ({ key: pubkey, pubkey, config: DEFAULT_CONFIG }) as Agent;
-  runtime.sync([agent(self), agent(alice)]);
+  const agent = (pubkey: string, config = DEFAULT_CONFIG) =>
+    ({ key: pubkey, pubkey, config }) as Agent;
+  runtime.sync([
+    agent(self),
+    agent(alice, { ...DEFAULT_CONFIG, toolPreset: "chat" }),
+  ]);
   await flush(10);
   expect(claudes()).toHaveLength(1);
   expect(claudes()[0]?.options.cwd).toBe(DEFAULT_CONFIG.workspace);

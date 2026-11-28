@@ -147,6 +147,12 @@ import {
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { withWakes } from "../../features/agents/session-usage";
+import {
+  hookedToolName,
+  nativeToolDenial,
+  pickToolConfig,
+  toolPolicyKey,
+} from "../../features/agents/tool-access";
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -177,6 +183,9 @@ export type Config = Readonly<{
   compactAt?: string;
   /** On Recommended, whose model and thinking level runs replace these. */
   preset?: typeof PRESET;
+  /** Device-local tool policy fields; absent preserves full access. */
+  toolPreset?: string;
+  toolAllow?: string;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
@@ -188,6 +197,7 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  ...pickToolConfig(value),
   scope: sessionScope((value as Partial<Config> | undefined)?.scope),
 });
 
@@ -713,6 +723,7 @@ export class ClaudeRuntime {
           (agent) =>
             !agent.protection &&
             !this.target &&
+            !toolPolicyKey(this.resolveConfig(agent.config)) &&
             !(this.bound(agent.key) || this.confirmedRemote.has(agent.key)),
         )
         .map((agent) => where(this.resolveConfig(agent.config))),
@@ -2333,6 +2344,7 @@ export class ClaudeRuntime {
           message,
           this.added(),
           listing(this.added()),
+          entry.config,
         );
         const call = message as {
           method?: string;
@@ -2430,6 +2442,7 @@ export class ClaudeRuntime {
           entry.name,
           entry.memory,
           addedKey(this.added()),
+          toolPolicyKey(entry.config),
           this.credentials,
         ]),
       // A change gives the session the new prompt at its next turn.
@@ -2484,6 +2497,15 @@ export class ClaudeRuntime {
             : {}),
           hook: (session, event, input) =>
             this.hook(agent, session, event, input),
+          // Protected sessions bypass plugin hooks, but never the owner's
+          // current native policy. A denial leaves the process reviewable.
+          toolPolicy: (input) =>
+            nativeToolDenial(
+              "claude",
+              "PreToolUse",
+              hookedToolName(input) ?? "",
+              entry.config,
+            ),
           tools: tools(cwd),
           systemPrompt: systemPrompt({
             scope,

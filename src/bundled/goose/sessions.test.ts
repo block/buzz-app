@@ -1,4 +1,17 @@
+import { execFileSync, spawn as spawnChild } from "node:child_process";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import manifest from "./manifest.json";
 import {
   type Choice,
   REQUEST_TIMEOUT_MS,
@@ -17,7 +30,9 @@ import {
   AgentProcess,
   type SessionStore,
   type SessionsOptions,
+  type GooseAccess,
 } from "./sessions";
+import { type GooseRoot, UNENFORCEABLE } from "./permissions";
 
 const tools: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -1918,4 +1933,184 @@ it("asks for the variables of the local agent it runs, and none for no agent", a
   expect(fake.geese[0]?.options.envAgent).toBe(agent.pubkey);
   await own.shutdown();
   await none.shutdown();
+});
+
+describe("AgentProcess tool access", () => {
+  const access = (
+    root: GooseRoot | undefined,
+    restricted: () => boolean,
+  ): GooseAccess => ({
+    root: async () => root,
+    restricted,
+    permits: async () => true,
+  });
+  const ROOT = { root: "/data/goose-agents/a", permissions: "/c/perm.yaml" };
+
+  it("runs goose in the agent's own root with Buzz deciding its tools", async () => {
+    const fake = fakeSpawn();
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      undefined,
+      () => undefined,
+      () => undefined,
+      access(ROOT, () => true),
+    );
+    await process.get();
+    expect(fake.geese[0]?.env).toMatchObject({ GOOSE_PATH_ROOT: ROOT.root });
+    await process.shutdown();
+  });
+
+  it("refuses a restricted role where the root can't be prepared, and replaces an unisolated goose once the role tightens", async () => {
+    const fake = fakeSpawn();
+    let restricted = false;
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      undefined,
+      () => undefined,
+      () => undefined,
+      access(undefined, () => restricted),
+    );
+    const plain = await process.get();
+    expect(fake.geese[0]?.env.GOOSE_PATH_ROOT).toBeUndefined();
+    expect(await process.get()).toBe(plain);
+    restricted = true;
+    await expect(process.get()).rejects.toThrow(UNENFORCEABLE);
+    await process.shutdown();
+  });
+
+  it("stops a running unisolated turn as soon as the role tightens, before another tool call", async () => {
+    const fake = fakeSpawn({ hold: true });
+    let restricted = false;
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      undefined,
+      () => undefined,
+      () => undefined,
+      access(undefined, () => restricted),
+    );
+    const sessions = new AgentSessions({
+      resolveDirectory: fake.resolveDirectory,
+      tools,
+      process,
+      pool: new ServerPool(),
+      launch: async () => ({ workspace: "/w", systemPrompt: "" }),
+      choice: () => ({ provider: "", model: "" }),
+      fingerprint: () => "",
+    });
+    const turn = sessions.deliver("a", "one", 1);
+    await flush(30);
+    expect(fake.geese[0]?.turns).toHaveLength(1);
+    process.enforce();
+    expect(fake.geese[0]?.killed).toBe(false);
+    restricted = true;
+    process.enforce();
+    await expect(turn).resolves.toMatchObject({ ok: false });
+    expect(fake.geese[0]?.killed).toBe(true);
+    await expect(sessions.deliver("a", "two", 2)).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("saved tool permissions"),
+    });
+    sessions.dispose();
+  });
+});
+
+describe("goose-root", () => {
+  const script = manifest.host.processes.find(
+    (item) => item.id === "goose-root",
+  )?.args?.[1] as string;
+  const run = (env: Record<string, string>) =>
+    execFileSync("/bin/sh", ["-c", script, "buzz-goose-root", "agent-a"], {
+      env: { ...globalThis.process.env, ...env },
+      encoding: "utf8",
+    }).split("\n")[0] as string;
+
+  it("shares the owner's data and state across restarts, even before goose made them", async () => {
+    const base = mkdtempSync(join(tmpdir(), "buzz-goose-root-"));
+    const owner = join(base, "owner");
+    mkdirSync(join(owner, "config"), { recursive: true });
+    writeFileSync(join(owner, "config", "config.yaml"), "{}\n");
+    const env = { GOOSE_PATH_ROOT: owner, XDG_DATA_HOME: base };
+    const root = run(env);
+    writeFileSync(join(root, "data", "sessions.db"), "saved");
+    expect(run(env)).toBe(root);
+    expect(readFileSync(join(owner, "data", "sessions.db"), "utf8")).toBe(
+      "saved",
+    );
+    expect(lstatSync(join(root, "state")).isSymbolicLink()).toBe(true);
+
+    // Concurrent refreshes leave every link in place and pointing at the owner.
+    const links = () =>
+      ["data", "state", "config/config.yaml"].map((name) =>
+        lstatSync(join(root, name)).isSymbolicLink(),
+      );
+    const parallel = Array.from(
+      { length: 6 },
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const child = spawnChild(
+            "/bin/sh",
+            ["-c", script, "buzz-goose-root", "agent-a"],
+            {
+              env: { ...globalThis.process.env, ...env },
+            },
+          );
+          child.on("exit", (code) =>
+            code === 0 ? resolve() : reject(new Error(`exit ${code}`)),
+          );
+        }),
+    );
+    const seen: boolean[][] = [];
+    const watching = setInterval(() => seen.push(links()), 1);
+    await Promise.all(parallel);
+    clearInterval(watching);
+    expect(seen.flat().every(Boolean)).toBe(true);
+    expect(links()).toEqual([true, true, true]);
+
+    // A root an earlier start left with its own directory links it again.
+    rmSync(join(root, "data"));
+    mkdirSync(join(root, "data"));
+    expect(run(env)).toBe(root);
+    expect(lstatSync(join(root, "data")).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(root, "config", "permission.yaml"))).toBe(false);
+  });
+});
+
+describe("AgentProcess enforcement across workers", () => {
+  it("stops a replaced unisolated worker still serving a session once the role tightens", async () => {
+    const fake = fakeSpawn();
+    let restricted = false;
+    let rooted = false;
+    let limit = 1;
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      undefined,
+      () => undefined,
+      () => limit,
+      {
+        root: async () =>
+          rooted
+            ? { root: "/data/goose-agents/a", permissions: "/c/p.yaml" }
+            : undefined,
+        restricted: () => restricted,
+        permits: async () => true,
+      },
+    );
+    await process.get();
+    rooted = true;
+    limit = 2;
+    await process.get();
+    expect(fake.geese).toHaveLength(2);
+    expect(fake.geese[0]?.env.GOOSE_PATH_ROOT).toBeUndefined();
+    expect(fake.geese[1]?.env.GOOSE_PATH_ROOT).toBe("/data/goose-agents/a");
+    restricted = true;
+    process.enforce();
+    await flush(20);
+    expect(fake.geese[0]?.killed).toBe(true);
+    expect(fake.geese[1]?.killed).toBe(false);
+    await process.shutdown();
+  });
 });

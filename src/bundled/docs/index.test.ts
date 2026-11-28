@@ -55,6 +55,14 @@ it("owns only channel-backed doc routes, tools and panels while preserving separ
       "doc_history",
       "doc_delete",
     ]);
+    const reviewer = sessionTools(service.tools(), {
+      toolPreset: "reviewer",
+    }).map((tool) => tool.name);
+    expect(reviewer).toEqual(
+      expect.arrayContaining(["doc_help", "doc_get", "doc_history"]),
+    );
+    expect(reviewer).not.toContain("doc_set");
+    expect(reviewer).not.toContain("doc_delete");
     const background = await docsFixture();
     try {
       const doc = background.seed(

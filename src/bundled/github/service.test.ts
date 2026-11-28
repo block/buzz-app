@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import {
+  type AddedTool,
+  callSessionTool,
+  sessionTools,
+} from "../../buzz-mcp/session-tools";
 import type { GitHubCli } from "./gh";
 import { addPullStateTool } from "./pull-state-tool";
 import { createPullStates } from "./pull-states";
@@ -328,4 +332,48 @@ it("gives each plugin its own copy of the details' lists and objects", async () 
   expect(github.prState(pull, { details: true })).toEqual(expected);
   expect(gh).toHaveBeenCalledOnce();
   unwatch();
+});
+
+it("lets Reviewer read a pull request through Buzz's own GitHub connection, but not watch it", async () => {
+  const gh = vi.fn(async () => ({
+    r0: rollup("OPEN"),
+  })) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const states = createPullStates(gh);
+  const tools: AddedTool[] = [
+    {
+      name: "github_watch_pr",
+      effect: "coordinate",
+      description: "",
+      call: vi.fn(),
+    } as unknown as AddedTool,
+  ];
+  addPullStateTool({ addTool: (tool) => tools.push(tool) }, states);
+  const reviewer = { toolPreset: "reviewer" };
+  const client = {} as BuzzClient;
+
+  const reply = await callSessionTool(
+    client,
+    { channel: "c" },
+    "github_pr_state",
+    { url: pull },
+    tools,
+    reviewer,
+  );
+  expect(JSON.stringify(reply)).toContain("open");
+  await expect(
+    callSessionTool(
+      client,
+      { channel: "c" },
+      "github_watch_pr",
+      { url: pull },
+      tools,
+      reviewer,
+    ),
+  ).rejects.toThrow("disabled by this agent's Tools setting");
+  expect(sessionTools(tools, reviewer).map((tool) => tool.name)).toContain(
+    "github_pr_state",
+  );
+  expect(sessionTools(tools, reviewer).map((tool) => tool.name)).not.toContain(
+    "github_watch_pr",
+  );
 });

@@ -208,6 +208,34 @@ if that desktop app is up and running.
   gives agents on this device. Open a section to read it. For editable
   sections, use **Save** or **Cancel**. **Options** lets you disable or enable
   a section, or put the default text back in the editor for you to save.
+- **Tools.** Local Claude Code, Codex, Goose and Pi agents have a per-device
+  **Tools** tab with three roles. **All** (default) can use every available
+  tool, including administrative tools for Buzz channels, members, agents,
+  plugins, and settings. **Builder** can read from any available source, edit
+  files, run commands, make changes in connected apps, and contribute in Buzz
+  through conversations, notes, and canvases. **Reviewer** can read files, the
+  web and Buzz, read connected apps through Buzz's own connections (such as
+  GitHub pull request status), and participate in Buzz conversations; apps the
+  harness connects to directly can't be limited to reads, so Reviewer can't use
+  those, and on Goose it can list
+  folders and view images but can't open text files. An agent saved with Orchestrator or an
+  individual tool selection by an earlier version keeps it, shown as **Earlier
+  selection**, until you choose a role. Where the harness has a native Skill tool,
+  such as Claude Code, every role can load skills; each action a skill takes
+  still follows the role, and a connected server's tool named Skill doesn't
+  count.
+  Saving applies to the agent's next tool call, even in a running
+  turn; hidden Buzz tools are also refused when called directly, and native
+  subagents inherit the role. Read roles get each harness's own read tools:
+  Claude Code, Codex and Pi can read and search files, while Goose's read tools only list
+  folders (`tree`) and view images (`read_image`), so a Goose Reviewer can't open
+  text files or diffs. Goose sessions list every developer tool and Buzz refuses
+  the ones the current role disallows, so a resumed session follows role changes. A role without Shell can't run Attention command watches. Goose agents also obey the owner's saved Goose
+  denials and approval requirements, but a saved "always allow" never overrides
+  the role; where Buzz can't enforce that, a Goose agent with a restricted role
+  stops its running turn and holds new messages, saying so under its name,
+  until the role can be enforced or is loosened. Tool access is not a process sandbox: an allowed Shell can still
+  use files and credentials available to the agent process.
 - **Sessions.** By default an agent starts a fresh conversation for each
   thread. Its settings can make it one per channel or one per community.
 - **Auto models.** Some builds add choices such as **Auto Balanced** to the
@@ -319,8 +347,9 @@ mentions still work.
 - **The `buzz` CLI** comes with the desktop app. `buzz auth desktop pair` asks
   you to **Allow** it, and then it can read and post as you.
 - **External apps** connect from the app's side: you approve them in Buzz, for
-  one community and agent, and they get that agent's full access. Approve only
-  setups you started.
+  one community and agent, and they can use the Buzz tools that agent's role
+  allows. Approve
+  only setups you started.
 - **Settings → Security** and **Settings → External apps** list connections and
   revoke them.
 

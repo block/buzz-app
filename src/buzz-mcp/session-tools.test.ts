@@ -288,3 +288,67 @@ it("never hands a plugin's tool or operation the owner's workspaces", async () =
   expect(seen).toHaveLength(2);
   for (const plugin of seen) expect(plugin).not.toHaveProperty("workspaces");
 });
+
+it("hides and refuses Buzz and plugin tools a role does not allow", async () => {
+  const access = { toolPreset: "reviewer" };
+  const added = [
+    tool("notes_add"),
+    { ...tool("tasks_list"), effect: "read" as const },
+  ];
+  const names = sessionTools(added, access).map((tool) => tool.name);
+  expect(names).toEqual(expect.arrayContaining(["send", "read", "tasks_list"]));
+  expect(names).not.toContain("notes_add");
+  expect(names).not.toContain("channel_create");
+  expect(names).not.toContain("watch_add");
+
+  const call = vi.fn(async () => "called");
+  await expect(
+    callSessionTool(
+      {} as import("./client").BuzzClient,
+      {},
+      "notes_add",
+      {},
+      [{ ...tool("notes_add"), call }],
+      access,
+    ),
+  ).rejects.toThrow("disabled by this agent's Tools setting");
+  expect(call).not.toHaveBeenCalled();
+  await expect(
+    callSessionTool(
+      {} as import("./client").BuzzClient,
+      {},
+      "notes_add",
+      {},
+      [{ ...tool("notes_add"), call }],
+      { toolPreset: "custom", toolAllow: "plugin:notes_add" },
+    ),
+  ).resolves.toBe("called");
+});
+
+it("lists and refuses Buzz tools through MCP by the agent's role", async () => {
+  const listed = await respond(
+    undefined,
+    {},
+    { id: 1, method: "tools/list" },
+    [],
+    {},
+    { toolPreset: "reviewer" },
+  );
+  const names = (
+    listed as { result: { tools: { name: string }[] } }
+  ).result.tools.map((tool) => tool.name);
+  expect(names).toContain("send");
+  expect(names).not.toContain("watch_add");
+  const called = await respond(
+    undefined,
+    {},
+    { id: 2, method: "tools/call", params: { name: "mem_set", arguments: {} } },
+    [],
+    {},
+    { toolPreset: "reviewer" },
+  );
+  expect(
+    (called as { result: { content: { text: string }[] } }).result.content[0]
+      ?.text,
+  ).toContain("disabled by this agent's Tools setting");
+});

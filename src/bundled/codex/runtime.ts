@@ -125,6 +125,15 @@ import {
   unverifiedSynced,
 } from "../../features/agents/agent-config";
 import { conversationHistory } from "./history";
+import {
+  pickToolConfig,
+  type ToolConfig,
+  toolPolicyKey,
+} from "../../features/agents/tool-access";
+
+/** Why a restricted Codex agent doesn't run where its role can't be checked. */
+export const CODEX_UNENFORCEABLE =
+  "Codex's native hooks are off for this agent, so Buzz can't enforce its Tools role. Turn Codex hooks on, or choose All.";
 import { buzzHome } from "./setup";
 import {
   contextText,
@@ -300,6 +309,7 @@ type Active = {
 /** A watch or timer turn on an ephemeral thread of its own. Its tools have
  * no default destination and it answers no request. */
 type Once = {
+  settings: Config;
   threadId?: string;
   turnId?: string;
   finished: boolean;
@@ -561,6 +571,10 @@ export class CodexRuntime {
     }
   >();
   private entries = new Map<AgentKey, Entry>();
+  /** Each agent's tool access as the owner last saved it. */
+  private access = new Map<AgentKey, ToolConfig>();
+  /** Agents with a thread that runs without the native role hook. */
+  private unhooked = new Set<AgentKey>();
   private actions = new Map<
     AgentKey,
     Set<{ abort: AbortController; done: Promise<void> }>
@@ -1379,6 +1393,21 @@ export class CodexRuntime {
     if (this.ownServers.get(agent) === server) this.ownServers.delete(agent);
   }
   sync(agents: readonly Agent[]) {
+    this.access = new Map(
+      agents.map((agent) => [agent.key, pickToolConfig(agent.config)]),
+    );
+    // A thread without the hook would keep the tools a tighter role removes.
+    for (const agent of this.unhooked)
+      if (toolPolicyKey(this.access.get(agent))) {
+        this.unhooked.delete(agent);
+        void this.retire(agent).catch((error) =>
+          console.error(
+            "Codex could not stop an unenforced agent",
+            agent,
+            error,
+          ),
+        );
+      }
     const present = new Set(agents.map((agent) => agent.key));
     const held = new Set([
       ...this.entries.keys(),
@@ -3101,6 +3130,7 @@ export class CodexRuntime {
     let notice = delivery.gatewayFallback?.notice;
     let release!: () => void;
     const once: Once = {
+      settings,
       finished: false,
       signal,
       workspace: settings.workspace,
@@ -3154,7 +3184,7 @@ export class CodexRuntime {
         {
           ...params,
           ephemeral: true,
-          dynamicTools: dynamicTools(this.added()),
+          dynamicTools: dynamicTools(this.added(), settings),
         },
       );
       once.threadId = started.thread.id;
@@ -3720,6 +3750,8 @@ export class CodexRuntime {
       call.tool,
       args,
       this.added(),
+      // The owner's latest save, not the one the turn started with.
+      this.access.get(agent.key) ?? owner.settings,
     ).catch((error) => {
       if (final)
         for (const taken of settling)
@@ -3973,6 +4005,12 @@ export class CodexRuntime {
         : undefined;
     const hookAdapter =
       !disabled && this.ordinary(rpc) ? this.hooks : undefined;
+    // Without the hook nothing checks native tool calls against the role.
+    if (!hookAdapter) {
+      if (toolPolicyKey(this.access.get(agent.key) ?? settings))
+        throw new Error(CODEX_UNENFORCEABLE);
+      this.unhooked.add(agent.key);
+    }
     const bridge = hookAdapter
       ? await openHookBridge(hookAdapter.serve, (session, event, input) =>
           hookAdapter.run(agent.key, session, event, input),
@@ -4169,7 +4207,8 @@ export class CodexRuntime {
       // Resume restores the thread's tools, so one started with other added
       // tools starts fresh.
       const added = this.added();
-      const tools = addedKey(added);
+      const policy = toolPolicyKey(settings);
+      const tools = `${addedKey(added)}${policy ? `:${policy}` : ""}`;
       const same =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
       const resuming = same && this.keepsSections(existing?.sections, base);
@@ -4199,7 +4238,7 @@ export class CodexRuntime {
       const start = () =>
         rpc.request<Started>("thread/start", {
           ...params,
-          dynamicTools: dynamicTools(added),
+          dynamicTools: dynamicTools(added, settings),
         });
       const resume = (threadId: string) =>
         rpc.request<Started>("thread/resume", {
@@ -4866,12 +4905,12 @@ function follow(
  * keeps a deferred tool from the model until its tool search finds it. Every
  * model in Codex's catalog has tool search (supports_search_tool); one
  * without it would not see deferred tools. */
-const dynamicTools = (added: readonly AddedTool[]) => [
+const dynamicTools = (added: readonly AddedTool[], access?: unknown) => [
   {
     type: "namespace",
     name: "buzz",
     description: sessionHint(added),
-    tools: sessionTools(added).map(({ load, ...tool }) => ({
+    tools: sessionTools(added, access).map(({ load, ...tool }) => ({
       type: "function",
       ...tool,
       ...(load === "search" ? { deferLoading: true } : {}),

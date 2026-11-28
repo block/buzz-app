@@ -133,6 +133,7 @@ export function registerDecideTool(
   let running = 0;
   agents.addTool({
     name: "decisions_ask",
+    effect: "message",
     description:
       "Ask fast yes/no (noul), choice or score questions about some content, in TypeSafe's System One format (https://docs.typesafe.ai/api/system-one.md). The decisions provider your owner chose in Settings answers, so it sees state and questions: send only what it needs. Differences: each question needs instructions (a noul may give criteria instead), a choice needs 2 to 255 criteria and a score 2 to 10, there is no model, images or box, and the reply has no usage. Answers come back under each question's name: a noul is the probability of yes; a choice or score has its confidence and, where the provider reports them, a probability for each option or level.",
     inputSchema: {

@@ -19,6 +19,7 @@ import type {
   ServeMcp,
   Settled,
   ToolServer,
+  PlatformTools,
 } from "./types";
 
 /** A conversation's session closes after this long without a message. */
@@ -161,6 +162,8 @@ export type Launch = Readonly<{
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
   systemPrompt: string;
+  /** Harness built-ins beside the Buzz tools, for harnesses that take them. */
+  platform?: PlatformTools;
 }>;
 
 export type SessionsOptions = Readonly<{
@@ -1064,6 +1067,7 @@ export class AgentSessions {
         onSession: (session) => (opened = session),
         cwd,
         systemPrompt: launch.systemPrompt,
+        ...(launch.platform ? { platform: launch.platform } : {}),
         ...(title ? { title } : {}),
         ...(named ? { named } : {}),
         tools: this.options.tools,

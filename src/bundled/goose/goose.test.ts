@@ -273,6 +273,21 @@ describe("GooseProcess", () => {
       },
     ]);
     expect(process.prompts.get(session.id)).toBe("Be Buzz");
+
+    // Restricted policies with no native tools enable no developer extension;
+    // their empty list must not be confused with an empty available_tools list.
+    const withoutNative = await open({
+      systemPrompt: "Buzz only",
+      platform: [],
+    });
+    expect(process.opened[1]).toEqual(
+      expect.objectContaining({
+        _meta: expect.objectContaining({
+          enabledExtensions: [expect.objectContaining({ type: "mcp" })],
+        }),
+      }),
+    );
+    expect(process.prompts.get(withoutNative.id)).toBe("Buzz only");
   });
 
   it("replaces goose's base prompt with ours, raw, when asked", async () => {

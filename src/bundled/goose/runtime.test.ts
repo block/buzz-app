@@ -404,14 +404,16 @@ it("reads a protected Goose file under containment and reviews the captured text
         })
       ).result,
     ).not.toMatchObject({ isError: true });
-    expect(f.spawn).toHaveBeenCalledExactlyOnceWith(
-      "read-protected",
-      expect.objectContaining({
-        cwd: DEFAULT_CONFIG.workspace,
-        args: ["notes.md"],
-        protection: protection.processProtection,
-      }),
-    );
+    expect(f.spawn.mock.calls.filter(([id]) => id !== "goose-root")).toEqual([
+      [
+        "read-protected",
+        expect.objectContaining({
+          cwd: DEFAULT_CONFIG.workspace,
+          args: ["notes.md"],
+          protection: protection.processProtection,
+        }),
+      ],
+    ]);
     expect(f.readFile).not.toHaveBeenCalled();
     expect(check).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4565,6 +4567,116 @@ describe("goose turns through the agent gateway", () => {
       );
       expect(f.published).toEqual([]);
     } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("stops a forwarded turn that runs without its own root once the role tightens", async () => {
+    const g = gateway();
+    const f = setup({
+      forwarding: g.forwarding,
+      provider: "databricks",
+      hold: true,
+      wrap: (spawn) => async (id, options) => {
+        if (id === "goose-root") throw new Error("No symlinks here");
+        return spawn(id, options);
+      },
+    });
+    const coder = { ...DEFAULT_CONFIG, provider: "databricks" };
+    try {
+      f.runtime.sync([{ ...f.agent, config: coder } as unknown as Agent]);
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+      expect(f.fake.geese[0]?.env.GOOSE_PATH_ROOT).toBeUndefined();
+      f.runtime.sync([
+        {
+          ...f.agent,
+          config: { ...coder, toolPreset: "reviewer" },
+        } as unknown as Agent,
+      ]);
+      await vi.waitFor(() => expect(f.fake.geese[0]?.killed).toBe(true));
+      expect(f.published).toEqual([]);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("holds messages while a restricted role can't be enforced, and hands each over once it can", async () => {
+    const f = setup({
+      wrap: (spawn) => async (id, options) => {
+        if (id === "goose-root") throw new Error("No symlinks here");
+        return spawn(id, options);
+      },
+    });
+    const reviewer = { ...DEFAULT_CONFIG, toolPreset: "reviewer" };
+    try {
+      f.runtime.sync([{ ...f.agent, config: reviewer } as unknown as Agent]);
+      const first = f.deliver(message("1", "First"));
+      const second = f.deliver(message("2", "Second"));
+      await vi.waitFor(() =>
+        expect(f.runtime.paused(f.agent.key)).toMatch(/saved tool permissions/),
+      );
+      expect(f.fake.geese).toHaveLength(0);
+      f.runtime.sync([
+        { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent,
+      ]);
+      await Promise.all([first, second]);
+      await vi.waitFor(() =>
+        expect(
+          f.fake.geese.flatMap((goose) => goose.turns.map((turn) => turn.text)),
+        ).toEqual([
+          expect.stringContaining("First"),
+          expect.stringContaining("Second"),
+        ]),
+      );
+      expect(f.runtime.paused(f.agent.key)).toBeUndefined();
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("hands held messages over once isolation recovers with the role still restricted, except one interrupted while it waited", async () => {
+    let rootless = true;
+    const f = setup({
+      wrap: (spawn) => async (id, options) => {
+        if (id === "goose-root" && rootless)
+          throw new Error("No symlinks here");
+        return spawn(id, options);
+      },
+    });
+    const reviewer = {
+      ...f.agent,
+      config: { ...DEFAULT_CONFIG, toolPreset: "reviewer" },
+    } as unknown as Agent;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      f.runtime.sync([reviewer]);
+      const kept = f.deliver(message("1", "Kept"));
+      const cancelled = f.deliver(message("2", "Cancelled"));
+      await vi.waitFor(() =>
+        expect(f.runtime.paused(f.agent.key)).toBeTruthy(),
+      );
+      await f.runtime.session(
+        reviewer,
+        { channelId: channel, root: "2".repeat(64) },
+        "interrupt",
+      );
+      rootless = false;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await Promise.all([kept, cancelled]);
+      await vi.waitFor(() =>
+        expect(
+          f.fake.geese.flatMap((goose) => goose.turns.map((turn) => turn.text)),
+        ).toEqual([expect.stringContaining("Kept")]),
+      );
+      expect(f.fake.geese[0]?.env.GOOSE_PATH_ROOT).toContain("goose-agents");
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(
+        f.fake.geese.flatMap((goose) => goose.turns.map((turn) => turn.text)),
+      ).toEqual([expect.stringContaining("Kept")]);
+      expect(f.runtime.paused(f.agent.key)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
       f.runtime.dispose();
     }
   });

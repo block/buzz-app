@@ -1064,6 +1064,7 @@ it("lists active primary pages in the app dock", async () => {
       .sort();
   await waitFor(() =>
     expect(tabs()).toEqual([
+      "buzz.agents/tools",
       "buzz.bestie/bestie",
       "buzz.bestie/former-bestie",
       "buzz.watching/watching",
@@ -1071,12 +1072,17 @@ it("lists active primary pages in the app dock", async () => {
   );
   await act(() => current.plugins.change("disable", "buzz.watching"));
   await waitFor(() =>
-    expect(tabs()).toEqual(["buzz.bestie/bestie", "buzz.bestie/former-bestie"]),
+    expect(tabs()).toEqual([
+      "buzz.agents/tools",
+      "buzz.bestie/bestie",
+      "buzz.bestie/former-bestie",
+    ]),
   );
   expect(providers()).toContain("attention/command");
   await act(() => current.plugins.change("enable", "buzz.watching"));
   await waitFor(() =>
     expect(tabs()).toEqual([
+      "buzz.agents/tools",
       "buzz.bestie/bestie",
       "buzz.bestie/former-bestie",
       "buzz.watching/watching",
@@ -1084,6 +1090,13 @@ it("lists active primary pages in the app dock", async () => {
   );
 
   await act(() => current.plugins.change("disable", "buzz.agents"));
+  await waitFor(() =>
+    expect(tabs()).toEqual([
+      "buzz.bestie/bestie",
+      "buzz.bestie/former-bestie",
+      "buzz.watching/watching",
+    ]),
+  );
   expect(
     within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
       "button",

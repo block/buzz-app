@@ -7813,6 +7813,38 @@ it.each([
   },
 );
 
+it("refuses a restricted role where Codex's hooks are off, and stops one that tightens while running", async () => {
+  const f = fixture([], undefined, false, { features: { hooks: false } });
+  const once = (delivery: Delivery) =>
+    f.runtime.runOnce({
+      delivery,
+      key: "source/check",
+      signal: new AbortController().signal,
+      prompt: async () => "check",
+    });
+  const coder = f.delivery("check");
+  const reviewer = {
+    ...coder,
+    config: { ...(coder.config as object), toolPreset: "reviewer" },
+  } as Delivery;
+  const save = (delivery: Delivery) =>
+    f.runtime.sync([
+      { ...coder.agent, config: delivery.config } as unknown as Agent,
+    ]);
+  save(reviewer);
+  await expect(once(reviewer)).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining("can't enforce its Tools role"),
+  });
+  expect(f.starts()).toHaveLength(0);
+
+  save(coder);
+  const running = once(coder);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  save(reviewer);
+  await expect(running).resolves.toMatchObject({ ok: false });
+});
+
 it("keeps interrupting an idle existing conversation a no-op", async () => {
   const f = fixture();
   const delivery = f.delivery("first");

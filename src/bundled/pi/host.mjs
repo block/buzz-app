@@ -403,10 +403,21 @@ export function routeModels(models, gatewayOf, denied) {
 
 /** Hold all native tool output until reviewed, including streaming progress,
  * diagnostics and thrown errors. Wrapping execute also covers safe replay. */
-export function protectTool(tool, inspect, preceding = async () => []) {
+export function protectTool(
+  tool,
+  inspect,
+  preceding = async () => [],
+  policy = async () => undefined,
+) {
   return {
     ...tool,
     async execute(original, api, signalled) {
+      const denied = await policy(api, signalled);
+      if (denied?.block)
+        return {
+          isError: true,
+          output: [{ type: "text", text: String(denied.block) }],
+        };
       const args = structuredClone(original);
       const session = String(api.conversationId);
       const signal = signalled.abortSignal;
@@ -1208,17 +1219,31 @@ export function serve({
             ? {
                 ...extension,
                 tools: extension.tools?.map((tool) =>
-                  protectTool(tool, inspect, async (api, context) => {
-                    const conversation = await harness.conversation(
-                      api.conversationId,
-                      context,
-                    );
-                    if (!conversation)
-                      throw new Error(
-                        "The tool's preceding conversation is unavailable",
+                  protectTool(
+                    tool,
+                    inspect,
+                    async (api, context) => {
+                      const conversation = await harness.conversation(
+                        api.conversationId,
+                        context,
                       );
-                    return (await conversation.context(context)).messages;
-                  }),
+                      if (!conversation)
+                        throw new Error(
+                          "The tool's preceding conversation is unavailable",
+                        );
+                      return (await conversation.context(context)).messages;
+                    },
+                    (api, context) =>
+                      awaitWithContext(
+                        call("hook", {
+                          agent,
+                          conversation: api.conversationId,
+                          event: "policy",
+                          input: { name: tool.name },
+                        }),
+                        context,
+                      ),
+                  ),
                 ),
               }
             : extension,

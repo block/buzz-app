@@ -60,17 +60,24 @@ export function stepLabel(
 }
 
 /** The option that allows the call, preferring one that keeps allowing. */
-export function allow(params: Record<string, unknown>) {
+const select = (params: Record<string, unknown>, kinds: readonly string[]) => {
   const options = Array.isArray(params.options)
     ? (params.options as { optionId?: unknown; kind?: unknown }[])
     : [];
-  const option =
-    options.find((item) => item.kind === "allow_always") ??
-    options.find((item) => item.kind === "allow_once");
+  const option = kinds
+    .map((kind) => options.find((item) => item.kind === kind))
+    .find(Boolean);
   return option && typeof option.optionId === "string"
     ? { outcome: "selected", optionId: option.optionId }
     : { outcome: "cancelled" };
-}
+};
+export const allow = (params: Record<string, unknown>) =>
+  select(params, ["allow_always", "allow_once"]);
+/** Never remembered: the next call is decided again. */
+export const allowOnce = (params: Record<string, unknown>) =>
+  select(params, ["allow_once"]);
+export const rejectOnce = (params: Record<string, unknown>) =>
+  select(params, ["reject_once"]);
 
 /** The JSON-RPC code of a harness's error answer, when `error` is one. */
 export function codeOf(error: unknown) {

@@ -138,9 +138,24 @@ import { marked, sessionTags, unforged } from "./transcript";
 import {
   absolute,
   AgentProcess,
+  type GooseAccess,
   AgentSessions,
   localSessions,
 } from "./sessions";
+import {
+  type GooseRoot,
+  ownerAllows,
+  prepareRoot,
+  UNENFORCEABLE,
+} from "./permissions";
+
+/** How often messages paused for an unenforceable role check again. */
+const PAUSE_RETRY_MS = 60_000;
+import {
+  nativeToolAllowed,
+  pickToolConfig,
+  toolPolicyKey,
+} from "../../features/agents/tool-access";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -158,6 +173,9 @@ export type Config = Readonly<{
   /** The context size, in tokens, its sessions compact at, when below
    * goose's own; unset is goose's default. This device's only. */
   compactAt?: string;
+  /** Device-local tool policy fields; absent preserves full access. */
+  toolPreset?: string;
+  toolAllow?: string;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
@@ -170,6 +188,7 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
 export const config = (value: unknown): Config => ({
   ...DEFAULT_CONFIG,
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  ...pickToolConfig(value),
   scope: sessionScope((value as Partial<Config> | undefined)?.scope),
 });
 /** What an agent runs on: its config, with `candidate`'s provider, model and
@@ -246,6 +265,12 @@ type Entry = {
   /** The section choices each conversation's session prompt was last built
    * with: a message that steers its turn reads its Canvas with these. */
   located: Map<string, SectionChoices | undefined>;
+  /** Forwarded turns' goose processes that run without the agent's own
+   * root, stopped once its role restricts any tool. */
+  unisolated: Set<GooseProcess>;
+  /** Why messages wait to be handed to goose, while they do; settled when
+   * the agent's config changes, so they check again. */
+  paused?: Readonly<{ reason: string; changed: Promise<void>; change(): void }>;
   policies: Map<
     string,
     {
@@ -385,6 +410,79 @@ export class GooseRuntime {
     return this.desktop.readFile(path, { cwd: config(agent.config).workspace });
   }
 
+  /** Waits, without handing a message to goose, while the agent's role
+   * restricts a tool and goose can't run in the agent's own root, so saved
+   * permissions could override it. It checks again when the config changes
+   * and every minute, and the message is handed over once, as usual. */
+  private async enforceable(
+    agentKey: AgentKey,
+    entry: Entry,
+    stopped: () => boolean,
+  ) {
+    const access = this.access(agentKey, () => entry.config);
+    while (
+      access.restricted() &&
+      !stopped() &&
+      this.agents.get(agentKey) === entry &&
+      !(entry.goose.isolated || entry.worker?.isolated) &&
+      !(await access.root())
+    ) {
+      if (!entry.paused) {
+        let change!: () => void;
+        const changed = new Promise<void>((resolve) => (change = resolve));
+        entry.paused = { reason: UNENFORCEABLE, changed, change };
+        this.notify();
+      }
+      const { changed } = entry.paused;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        changed,
+        new Promise((resolve) => (timer = setTimeout(resolve, PAUSE_RETRY_MS))),
+      ]);
+      clearTimeout(timer);
+      if (entry.paused?.changed === changed) {
+        delete entry.paused;
+        this.notify();
+      }
+    }
+  }
+
+  /** Why the agent's messages wait to be handed to goose, if they do. */
+  paused(agent: AgentKey) {
+    return this.agents.get(agent)?.paused?.reason;
+  }
+
+  /** Each agent's latest root preparation, which the next one waits for. */
+  private readonly rooting = new Map<
+    AgentKey,
+    Promise<GooseRoot | undefined>
+  >();
+
+  /** An agent's tool access for its goose: its own root, and every tool
+   * call decided by the owner's saved permissions and its current role. */
+  private access(agent: AgentKey, current: () => Config): GooseAccess {
+    return {
+      root: () => {
+        // One preparation at a time per agent, so concurrent starts never
+        // refresh the links a running goose is using.
+        const prepared = (this.rooting.get(agent) ?? Promise.resolve())
+          .catch(() => undefined)
+          .then(() => prepareRoot(this.desktop.spawn, agent))
+          .catch((error: unknown) => {
+            console.warn("goose's root couldn't be prepared", error);
+            return undefined;
+          });
+        this.rooting.set(agent, prepared);
+        return prepared;
+      },
+      restricted: () => toolPolicyKey(current()) !== "",
+      permits: async (name, root) =>
+        nativeToolAllowed(name, current()) &&
+        (!root ||
+          (await ownerAllows(this.desktop.readFile, root.permissions, name))),
+    };
+  }
+
   /** The desktop host's methods goose agents run with. */
   private get desktop() {
     const { host } = this;
@@ -480,6 +578,11 @@ export class GooseRuntime {
       ) {
         entry.config = next;
         entry.name = agent.name;
+        entry.goose.enforce();
+        entry.worker?.enforce();
+        if (toolPolicyKey(next))
+          for (const goose of entry.unisolated) void goose.kill();
+        entry.paused?.change();
         entry.sessions.reconfigure();
       }
     }
@@ -589,6 +692,7 @@ export class GooseRuntime {
     const control = `${agent.key}/${key}`;
     const entry = this.entry(agent.key, this.settings(agent.config));
     if (action === "interrupt") {
+      entry.paused?.change();
       if (!this.controls.compacting(control)) entry.policies.get(key)?.cancel();
       this.controls.interrupt(control);
       await entry.sessions.interrupt(key);
@@ -842,6 +946,7 @@ export class GooseRuntime {
         }
         if (!deferred) signal.throwIfAborted();
         await wait;
+        await this.enforceable(agent.key, entry, () => interrupted);
         if (interrupted || this.agents.get(agent.key) !== entry) {
           delivered = Promise.resolve({ ok: true, undelivered: true });
           return;
@@ -1382,20 +1487,35 @@ export class GooseRuntime {
               ? AbortSignal.any([signal, turn.signal])
               : signal,
           ),
-        start: async (env, onProcess) =>
-          GooseProcess.start(desktop.spawn, {
+        start: async (env, onProcess) => {
+          const access = this.access(agent, () => entry.config);
+          const root = await access.root();
+          if (!root && access.restricted()) throw new Error(UNENFORCEABLE);
+          const goose = await GooseProcess.start(desktop.spawn, {
             cwd: await workspace(),
-            env,
+            env: { ...env, ...(root && { GOOSE_PATH_ROOT: root.root }) },
             // Its Buzz tools' server counts in the pool sessions share.
             serve: entry.sessions.pooled((handler) => this.serve(handler)),
             onProcess,
+            permits: (name) => access.permits(name, root),
             // Acts as the agent, with its variables, as its ordinary goose
             // does.
             ...(entry.handle && {
               agent: { pubkey: entry.handle.pubkey, relay: entry.handle.relay },
               secrets: ["agent-env"],
             }),
-          }),
+          });
+          if (!root) {
+            // Tightened while it started.
+            if (access.restricted()) {
+              await goose.kill();
+              throw new Error(UNENFORCEABLE);
+            }
+            entry.unisolated.add(goose);
+            void goose.exited.finally(() => entry.unisolated.delete(goose));
+          }
+          return goose;
+        },
         launch: async () => {
           // A conversation given its own folder runs there.
           const launched = await this.launch(
@@ -1727,6 +1847,7 @@ export class GooseRuntime {
         undefined,
         () => entry.handle,
         () => compactAt(entry.config.compactAt),
+        this.access(agent, () => entry.config),
       ),
       tools: undefined as unknown as ToolServer,
       retiring: new Set(),
@@ -1734,6 +1855,7 @@ export class GooseRuntime {
       contexts: new Map(),
       folders: new Map(),
       located: new Map(),
+      unisolated: new Set(),
       policies: new Map(),
     };
     // Every session of the agent shares them, so they read the settings, the
@@ -1809,7 +1931,7 @@ export class GooseRuntime {
           remembered: () => this.forget(agent),
         });
       const context = (conversation && entry.contexts.get(conversation)) || {};
-      return respond(client, context, message, this.added());
+      return respond(client, context, message, this.added(), {}, entry.config);
     };
     entry.tools = tools;
     const get = (
@@ -1838,6 +1960,7 @@ export class GooseRuntime {
         protection,
         () => entry.handle,
         () => compactAt(entry.config.compactAt),
+        this.access(agent, () => entry.config),
       );
       const worker = entry.worker;
       const { stopping } = entry;
@@ -1882,6 +2005,7 @@ export class GooseRuntime {
           entry.config.workspace,
           entry.config.scope,
           addedKey(this.added()),
+          toolPolicyKey(entry.config),
         ]),
       launch: (conversation) => this.launch(agent, entry, conversation),
     });

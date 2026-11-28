@@ -11,7 +11,7 @@ import type {
   HostProcessOptions,
 } from "../../host/service";
 import { AcpSession, type ConfigOptions } from "./session";
-import { allow, errorMessage } from "./steps";
+import { allow, allowOnce, errorMessage, rejectOnce } from "./steps";
 import type {
   AcpHooks,
   Choice,
@@ -72,6 +72,18 @@ type Pending = {
   reject: (error: Error) => void;
 };
 
+/** Whether the agent may run a tool now, by the harness's name for it. */
+export type ToolPermits = (toolName: string) => boolean | Promise<boolean>;
+
+/** The harness's own name for a tool call, where it reports one. */
+const toolNameOf = (call: Record<string, unknown>) => {
+  const meta = call._meta as
+    | { goose?: { toolCall?: { toolName?: unknown } } }
+    | undefined;
+  const name = meta?.goose?.toolCall?.toolName;
+  return typeof name === "string" ? name : undefined;
+};
+
 type AcpLaunch = Readonly<{
   cwd: string;
   systemPrompt: string;
@@ -111,11 +123,14 @@ export class AcpProcess {
   private capabilities: Readonly<Record<string, unknown>> = {};
   /** Whether the harness names untitled sessions, read once. */
   private naming: Promise<boolean> | undefined;
+  /** Each pending tool call's name, from the update that announced it. */
+  private readonly toolNames = new Map<string, string>();
 
   private constructor(
     private readonly process: HostProcess,
     readonly hooks: AcpHooks,
     private readonly serve: ServeMcp | undefined,
+    private readonly permits?: ToolPermits,
   ) {
     this.exited = process.exited.then((code) => {
       this.alive = false;
@@ -153,6 +168,9 @@ export class AcpProcess {
        * a caller can keep one whose start fails until it has exited. */
       onProcess?: (acp: AcpProcess) => void;
       secrets?: HostProcessOptions["secrets"];
+      /** Decides every tool permission request by the tool's name, read
+       * when it is asked; without it each is allowed. */
+      permits?: ToolPermits;
     }>,
   ) {
     const { signal } = launch;
@@ -195,7 +213,7 @@ export class AcpProcess {
         void process.kill();
         throw error;
       });
-    acp = new AcpProcess(process, hooks, launch.serve);
+    acp = new AcpProcess(process, hooks, launch.serve, launch.permits);
     launch.onProcess?.(acp);
     for (const data of earlyErrors) acp.readError(data);
     for (const data of early) acp.read(data);
@@ -396,6 +414,13 @@ export class AcpProcess {
       throw new Error(STOPPED);
     }
     try {
+      // A loaded session keeps the mode it was saved with.
+      if (this.permits && hooks.askingMode)
+        await this.request(
+          "session/set_mode",
+          { sessionId, modeId: hooks.askingMode },
+          REQUEST_TIMEOUT_MS,
+        );
       if (systemPrompt && hooks.systemPrompt)
         await hooks.systemPrompt(
           this,
@@ -568,10 +593,31 @@ export class AcpProcess {
   private update(params: Record<string, unknown>) {
     const session = this.sessions.get(String(params.sessionId));
     const update = params.update as Record<string, unknown> | undefined;
+    if (this.permits && update) this.track(update);
     if (session && update) session.update(update);
   }
-  /** Answers what the harness asks its client: since tools run without
-   * asking, any permission prompt with allow. */
+  private track(update: Record<string, unknown>) {
+    const id = update.toolCallId;
+    if (typeof id !== "string") return;
+    const name = toolNameOf(update);
+    if (update.sessionUpdate === "tool_call" && name)
+      this.toolNames.set(id, name);
+    if (update.status === "completed" || update.status === "failed")
+      this.toolNames.delete(id);
+  }
+  /** Answers what the harness asks its client. Without `permits`, tools run
+   * without asking, so any permission prompt is allowed. With it, each is
+   * decided once by the tool's name, which unknown fails closed on. */
+  private async decide(params: Record<string, unknown>) {
+    if (!this.permits) return allow(params);
+    const call = (params.toolCall ?? {}) as Record<string, unknown>;
+    const id = typeof call.toolCallId === "string" ? call.toolCallId : "";
+    const name = this.toolNames.get(id) ?? toolNameOf(call) ?? "";
+    const permitted = await Promise.resolve(this.permits(name)).catch(
+      () => false,
+    );
+    return permitted ? allowOnce(params) : rejectOnce(params);
+  }
   private async answer(
     id: number | string,
     method: string,
@@ -579,7 +625,11 @@ export class AcpProcess {
   ) {
     let reply: Wire;
     if (method === "session/request_permission")
-      reply = { jsonrpc: "2.0", id, result: { outcome: allow(params) } };
+      reply = {
+        jsonrpc: "2.0",
+        id,
+        result: { outcome: await this.decide(params) },
+      };
     else
       reply = {
         jsonrpc: "2.0",

@@ -203,6 +203,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     },
     summary: (agent) => {
+      const paused = runtime.paused(agent.key);
+      if (paused) return `Messages paused: ${paused}`;
       const { model, provider } = running(agent.config, recommended.current());
       const route =
         activeRoute(TYPE_ID, model, onAutomatic(agent.config, TYPE_ID))

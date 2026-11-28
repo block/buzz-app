@@ -7,6 +7,7 @@ import {
   REQUEST_TIMEOUT_MS,
   SAVED,
   STOP_TIMEOUT_MS,
+  type ToolPermits,
 } from "../../features/agent-harness/acp/process";
 import type {
   AcpSession,
@@ -82,6 +83,8 @@ export const GOOSE: AcpHooks = {
   program: "goose",
   missing: "goose-acp is missing from this Buzz build.",
   env: ENV,
+  // Unlike `smart_approve`, asks even for tools annotated read-only.
+  askingMode: "approve",
   // goose is asked to close every session, advertised or not.
   closeSession: "always",
   // goose names an untitled session with a model call, unless its config
@@ -218,6 +221,7 @@ export const GooseProcess = {
       /** Native-held secrets: a local agent's own launch asks for
        * `agent-env`, and a goose Buzz starts briefly for its device list. */
       secrets?: HostProcessOptions["secrets"];
+      permits?: ToolPermits;
     }>,
   ) => {
     const goose = await AcpProcess.start(spawn, GOOSE, {

@@ -20,6 +20,7 @@ import {
   ServerPool,
   SHARED_POOL,
 } from "./agent-sessions";
+import { nativeToolAllowed } from "../../agents/tool-access";
 import { AcpProcess, REQUEST_TIMEOUT_MS, TOOL_SERVER } from "./process";
 import { AcpSession } from "./session";
 import type { AcpHooks, ToolServer } from "./types";
@@ -152,6 +153,7 @@ function fakeHarness(
             });
           else if (method === "session/new")
             reply(id, { sessionId: `session-${++sessions}` });
+          else if (method === "session/set_mode") reply(id, {});
           else if (method === "session/close" && options.closeError)
             send({ id, error: options.closeError });
           else if (method === "session/close" && options.holdClose)
@@ -420,6 +422,101 @@ describe("starting a harness", () => {
     await stopping;
     expect(harness.started[0]?.killed).toBe(true);
     expect(harness.sent("session/new")).toEqual([]);
+  });
+});
+
+describe("a process that decides tool permissions", () => {
+  const PERMISSION_OPTIONS = ["allow_always", "allow_once", "reject_once"].map(
+    (kind) => ({ optionId: kind, name: kind, kind }),
+  );
+  async function gated(load?: string) {
+    const harness = fakeHarness({
+      capabilities: { mcpCapabilities: { http: true }, loadSession: true },
+    });
+    let config: unknown = { toolPreset: "coding" };
+    const acp = await start(
+      harness,
+      { permits: (name) => nativeToolAllowed(name, config) },
+      { ...HOOKS, askingMode: "approve" },
+    );
+    const session = await acp.open({
+      cwd: "/work",
+      systemPrompt: "",
+      ...(load ? { load } : {}),
+    });
+    const harnessSays = (message: Record<string, unknown>) =>
+      harness.started[0]?.options.onStdout?.(
+        `${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`,
+      );
+    let asked = 900;
+    const ask = async (toolName: string | undefined) => {
+      const toolCallId = `call-${++asked}`;
+      if (toolName)
+        harnessSays({
+          method: "session/update",
+          params: {
+            sessionId: session.id,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId,
+              _meta: { goose: { toolCall: { toolName } } },
+            },
+          },
+        });
+      harnessSays({
+        id: asked,
+        method: "session/request_permission",
+        params: {
+          sessionId: session.id,
+          toolCall: { toolCallId, title: "Tool" },
+          options: PERMISSION_OPTIONS,
+        },
+      });
+      const id = asked;
+      await vi.waitFor(() =>
+        expect(harness.received.some((message) => message.id === id)).toBe(
+          true,
+        ),
+      );
+      const answer = harness.received.find((message) => message.id === id) as {
+        result?: { outcome?: { optionId?: string } };
+      };
+      return answer.result?.outcome?.optionId;
+    };
+    return {
+      harness,
+      session,
+      ask,
+      save: (next: unknown) => (config = next),
+    };
+  }
+
+  it("asks before every tool call in each session it opens", async () => {
+    const { harness, session } = await gated();
+    expect(harness.sent("session/set_mode")).toMatchObject([
+      { params: { sessionId: session.id, modeId: "approve" } },
+    ]);
+  });
+
+  it("decides a resumed session's calls by the current role, tightened or loosened", async () => {
+    const { harness, ask, save } = await gated("saved-session");
+    expect(harness.sent("session/set_mode")).toMatchObject([
+      { params: { sessionId: "saved-session", modeId: "approve" } },
+    ]);
+    save({ toolPreset: "reviewer" });
+    expect(await ask("developer__shell")).toBe("reject_once");
+    save({ toolPreset: "coder" });
+    expect(await ask("developer__shell")).toBe("allow_once");
+  });
+
+  it("decides the next call by the policy saved after the session opened", async () => {
+    const { ask, save } = await gated();
+    expect(await ask("developer__write")).toBe("allow_once");
+    save({ toolPreset: "reviewer" });
+    expect(await ask("developer__write")).toBe("reject_once");
+    expect(await ask("developer__tree")).toBe("allow_once");
+    expect(await ask("buzz__send")).toBe("allow_once");
+    expect(await ask(undefined)).toBe("reject_once");
   });
 });
 

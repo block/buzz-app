@@ -22,6 +22,7 @@ export async function respondExternal(
   connected: () => void,
   scopes: readonly ExternalScope[],
   added: () => readonly AddedTool[],
+  access: () => unknown = () => undefined,
 ) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new Error("Expected one JSON-RPC message.");
@@ -58,9 +59,16 @@ export async function respondExternal(
   if (method === "tools/list") {
     if (params.cursor !== undefined)
       return error("Tool cursors are not supported.");
-    const list = await respond(client, {}, input, added(), {
-      tool: ({ load: _, ...tool }) => ({ ...tool, _meta: required }),
-    });
+    const list = await respond(
+      client,
+      {},
+      input,
+      added(),
+      {
+        tool: ({ load: _, ...tool }) => ({ ...tool, _meta: required }),
+      },
+      access(),
+    );
     return {
       ...list,
       result: {
@@ -93,7 +101,7 @@ export async function respondExternal(
       },
     };
   if (method !== "tools/call")
-    return respond(client, {}, input, added(), { instructions });
+    return respond(client, {}, input, added(), { instructions }, access());
   const calls = inflight.get(client) ?? new Map<unknown, AbortController>();
   inflight.set(client, calls);
   const cancelled = new AbortController();
@@ -102,9 +110,14 @@ export async function respondExternal(
     ? AbortSignal.any([client.signal, cancelled.signal])
     : cancelled.signal;
   try {
-    return await respond({ ...client, signal }, {}, input, added(), {
-      instructions,
-    });
+    return await respond(
+      { ...client, signal },
+      {},
+      input,
+      added(),
+      { instructions },
+      access(),
+    );
   } finally {
     if (calls.get(id) === cancelled) calls.delete(id);
   }

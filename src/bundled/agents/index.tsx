@@ -19,6 +19,7 @@ import { externalMcpEnabled } from "../../features/agents/external-connection";
 import { forgetMemoryListingsOnSelection } from "../../features/agents/memory";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { gatewayRoutes } from "../../features/agents/gateway/route";
+import { AgentToolAccess } from "./AgentToolAccess";
 
 export const inject = [
   "pages",
@@ -36,6 +37,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
   registerAttention(ctx);
   registerDiscovery(ctx.agents);
   registerDecideTool(ctx.agents, ctx.decisions);
+  const localToolHarness =
+    /^(buzz\.claude-code\/claude-code|buzz\.codex\/codex|buzz\.goose\/goose|buzz\.pi\/pi)$/;
+  ctx.agents.registerTab({
+    id: "tools",
+    title: "Tools",
+    when: (agent) =>
+      agent.place === "here" &&
+      localToolHarness.test(agent.type) &&
+      !agent.executionBinding &&
+      !ctx.agents.executionBinding(agent.key),
+    component: ({ agent }) => (
+      <AgentToolAccess agents={ctx.agents} agent={agent} />
+    ),
+  });
   ctx.effect(() => forgetMemoryListingsOnSelection(ctx.communityReader));
   const { relay, navigation: navigator } = ctx;
   const agents = developerMode ? withImportScenario(ctx.agents) : ctx.agents;

@@ -41,6 +41,8 @@ export type FakeGoose = {
   closed: string[];
   /** Sessions `session/load` resumed. */
   loaded: string[];
+  /** Each session's mode, as `session/set_mode` last set it. */
+  modes: Map<string, string>;
   /** Every `session/load` is answered with this error. */
   loadError?: string;
   /** Kill asks it to stop, and it never exits on its own. */
@@ -176,6 +178,7 @@ export function fakeSpawn(
     id: string,
     process: HostProcessOptions = {},
   ): Promise<HostProcess> => {
+    if (id === "goose-root") return gooseRoot(options.home, process);
     let resolveExit!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => {
       resolveExit = resolve;
@@ -223,6 +226,7 @@ export function fakeSpawn(
       turns: [],
       closed: [],
       loaded: [],
+      modes: new Map(),
       holdExit: false,
       cancelled: [],
       deleted: [],
@@ -407,6 +411,9 @@ export function fakeSpawn(
             models.set(sessionId, String(params.value));
           if (params.configId === "provider") models.delete(sessionId);
           return reply(id, { configOptions: configOptions(sessionId) });
+        case "session/set_mode":
+          fake.modes.set(sessionId, String(params.modeId));
+          return reply(id, {});
         case "session/cancel":
           fake.cancelled.push(sessionId);
           running.get(sessionId)?.finish("cancelled");
@@ -567,6 +574,25 @@ export function fakeSpawn(
     get geese() {
       return processes.filter((process) => process.id === "goose");
     },
+  };
+}
+
+/** The `goose-root` step: prints the agent's root and the owner's permission
+ * file under `home`, and exits. */
+function gooseRoot(
+  home = "/home/test",
+  process: HostProcessOptions,
+): HostProcess {
+  queueMicrotask(() =>
+    process.onStdout?.(
+      `${home}/.local/share/buzz/goose-agents/${process.args?.[0]}\n${home}/.config/goose/permission.yaml\n`,
+    ),
+  );
+  return {
+    write: async () => undefined,
+    end: async () => undefined,
+    kill: async () => undefined,
+    exited: Promise.resolve(0),
   };
 }
 

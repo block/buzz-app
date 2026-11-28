@@ -91,6 +91,8 @@ export type ClaudeLaunch = Readonly<{
   /** The in-process MCP server's tools. */
   tools?: ToolServer;
   hook?: ClaudeHook;
+  /** Owner enforcement for protected sessions, which skip plugin hooks. */
+  toolPolicy?: (input: unknown) => Record<string, unknown> | undefined;
   /** The agent it works for: the `buzz` it runs acts as that agent. */
   agent?: Readonly<{ pubkey: string; relay: string }>;
 }>;
@@ -193,6 +195,7 @@ async function setsInheritedHeaders(spawn: Spawn) {
 
 export class ClaudeProcess {
   private protection: ClaudeProtection | undefined;
+  private toolPolicy: ClaudeLaunch["toolPolicy"];
   private protectionLifetime = new AbortController();
   private protectedInstructions = "";
   private protectedHistory: unknown = [];
@@ -502,7 +505,7 @@ export class ClaudeProcess {
   async initialize(
     launch: Pick<
       ClaudeLaunch,
-      "systemPrompt" | "tools" | "protection" | "hook" | "agent"
+      "systemPrompt" | "tools" | "protection" | "hook" | "toolPolicy" | "agent"
     >,
   ) {
     if (launch.agent)
@@ -514,6 +517,7 @@ export class ClaudeProcess {
       });
     try {
       if (launch.tools) this.tools = launch.tools;
+      this.toolPolicy = launch.toolPolicy;
       this.hook = launch.protection ? undefined : launch.hook;
       const { written, answer } = this.request({
         subtype: "initialize",
@@ -1214,6 +1218,12 @@ export class ClaudeProcess {
             response: success({}),
           });
         const tool = request.callback_id === "security-tool";
+        const policyDenied = tool ? this.toolPolicy?.(input) : undefined;
+        if (policyDenied)
+          return this.write({
+            type: "control_response",
+            response: success(policyDenied),
+          });
         const kind = tool
           ? "tool"
           : ["UserPromptSubmit", "SessionStart"].includes(

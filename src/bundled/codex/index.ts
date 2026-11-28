@@ -1,4 +1,11 @@
 import { nativeHookOutput } from "../hook-output";
+import { sessionTools } from "../../buzz-mcp/session-tools";
+import {
+  hookedToolName,
+  isCodexBuzzTool,
+  missingToolPolicyDenial,
+  nativeToolDenial,
+} from "../../features/agents/tool-access";
 import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
 import { communityDestination } from "../../features/communities/destination";
@@ -65,6 +72,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ? {
           serve: ctx.host.serveMcp.bind(ctx.host),
           run: async (agent, session, event, input) => {
+            const configured = ctx.agents
+              .snapshot()
+              .running.find((item) => item.key === agent);
+            const hooked = hookedToolName(input) ?? "";
+            const buzz = sessionTools(ctx.agents.tools()).map(
+              (tool) => tool.name,
+            );
+            const name = isCodexBuzzTool(hooked, buzz) ? "" : hooked;
+            const denied = configured
+              ? nativeToolDenial("codex", event, name, configured.config)
+              : missingToolPolicyDenial("codex", event, name);
+            if (denied) return denied;
             return ((await ctx.agents.dispatchHook(
               typeKey,
               event,

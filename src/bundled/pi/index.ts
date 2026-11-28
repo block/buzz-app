@@ -1,5 +1,10 @@
 import { piHookOutput } from "../hook-output";
 import { usageOn } from "../../features/agents/standalone-sessions";
+import {
+  hookedToolName,
+  missingToolPolicyDenial,
+  nativeToolDenial,
+} from "../../features/agents/tool-access";
 // Pi agents: an agent type whose agents run on Pi durable on this computer,
 // with any provider Pi supports. One Pi host runs them all, each with its own
 // storage; each conversation the agent is in is one continuing, durable Pi
@@ -37,6 +42,25 @@ export const apply: PluginModule["apply"] = (ctx) => {
     repositoriesContext,
     (key) => agents.handle(key),
     async (agent, session, event, input) => {
+      const configured = agents
+        .snapshot()
+        .running.find((item) => item.key === agent);
+      const name = hookedToolName(input) ?? "";
+      const denied = configured
+        ? nativeToolDenial(
+            "pi",
+            event === "policy" ? "beforeTool" : event,
+            name,
+            configured.config,
+          )
+        : missingToolPolicyDenial(
+            "pi",
+            event === "policy" ? "beforeTool" : event,
+            name,
+          );
+      if (denied) return denied;
+      // Protected Pi evaluates the owner policy without enabling plugin hooks.
+      if (event === "policy") return null;
       return (
         (await agents.dispatchHook(
           typeKey,

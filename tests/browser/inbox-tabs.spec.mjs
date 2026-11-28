@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -245,6 +246,116 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
     await expect(tab).toBeFocused();
   });
 });
+
+// Browser-only: native focus across the review's top-layer dialog, the tab
+// workspace's frame-deferred focus and the side pane's unmount. A comment's
+// Open link leaves the review for a side thread; closing that only side tab
+// returns focus to the image in the main-pane thread that opened the review.
+// Where the side pane floats over the main pane, the image is inert until the
+// close commits, so real layout decides when it can take focus again.
+async function followMediaCommentLink({ page, app, context }, width, floating) {
+  await page.setViewportSize({ width, height: 900 });
+  await context.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: fileURLToPath(
+        new URL("../../public/shell-gradient.png", import.meta.url),
+      ),
+      contentType: "image/png",
+    }),
+  );
+  await open(page, app);
+  await openPage(page, "Activity");
+  const inbox = page.getByRole("region", { name: "Activity", exact: true });
+  await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+  const linked = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  const post = app.append(
+    "primary",
+    "alpha",
+    "Image post",
+    true,
+    true,
+    undefined,
+    undefined,
+    [["imeta", "url https://primary.example/media/photo.png", "m image/png"]],
+  );
+  app.append(
+    "primary",
+    "alpha",
+    `See <buzz://message?channel=alpha&id=${linked.id}&thread=${linked.id}>`,
+    true,
+    false,
+    post.id,
+  );
+  const main = inbox.getByRole("tablist", { name: "Activity tabs" });
+  const side = inbox.getByRole("tablist", { name: "Panel tabs" });
+  await inbox
+    .getByRole("list", { name: "Activity", exact: true })
+    .getByRole("listitem")
+    .filter({ hasText: "See buzz://message" })
+    .getByRole("button", { name: /^Open / })
+    .click();
+  const threads = inbox.getByRole("region", {
+    name: "Thread messages",
+    exact: true,
+  });
+  // Opening the thread focuses its composer once the thread has loaded.
+  // Move the tab after that, or the late focus takes it from the tab.
+  await expect(
+    inbox.getByRole("textbox", { name: "Reply to thread" }),
+  ).toBeFocused();
+  await side.getByRole("tab", { name: "Image post", exact: true }).focus();
+  await page.keyboard.press("Alt+Shift+ArrowLeft");
+  await expect(main.getByRole("tab")).toHaveText(["Activity", "Image post"]);
+  await expect(
+    main.getByRole("tab", { name: "Image post", exact: true }),
+  ).toBeFocused();
+  await expect(side).toHaveCount(0);
+
+  const attachment = inbox.getByRole("link", {
+    name: "Open image attachment",
+    exact: true,
+  });
+  // The keyboard opens it, so every engine records the image as the opener.
+  await attachment.focus();
+  await page.keyboard.press("Enter");
+  const review = page.getByRole("dialog", {
+    name: "Image viewer",
+    exact: true,
+  });
+  await expect(review).toBeVisible();
+  await expect(review).not.toHaveAttribute("data-review-opening");
+  await review
+    .getByRole("complementary", { name: "Media comments" })
+    .getByRole("link")
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Open link", exact: true }).click();
+  await expect(review).toHaveCount(0);
+  await expect(side.getByRole("tab")).toHaveText(["Thread root 0"]);
+  // The followed thread keeps focus once it has revealed its message.
+  await expect(
+    threads.locator(`[data-message-id="${linked.id}"]`),
+  ).toBeFocused();
+  // A floating pane covers the main pane, hiding the image from roles.
+  await expect(attachment).toHaveCount(floating ? 0 : 1);
+
+  await inbox
+    .getByRole("button", { name: "Close Thread root 0 tab", exact: true })
+    .click();
+  await expect(side).toHaveCount(0);
+  await expect(attachment).toBeFocused();
+}
+for (const [pane, width] of [
+  ["docked", 1280],
+  ["floating", 760],
+])
+  test(`closing the ${pane} side thread a media comment opened returns focus to the image in Activity's main pane`, async ({
+    page,
+    app,
+    context,
+  }) =>
+    followMediaCommentLink({ page, app, context }, width, pane === "floating"));
 
 // Browser-only: the list's offset needs real layout. Leaving Inbox through a
 // thread tab's channel name unmounts the page; Back returns to the offset the

@@ -273,8 +273,15 @@ function Provider({
 }
 
 function ConversationMediaReview(props: MediaReview) {
-  const { session, scope, channelId, channelName, extensions, onOpenLink } =
-    useConversation();
+  const {
+    session,
+    scope,
+    channelId,
+    channelName,
+    extensions,
+    onOpenLink,
+    canOpenLink,
+  } = useConversation();
   return (
     <MediaReviewViewer
       session={session}
@@ -283,6 +290,7 @@ function ConversationMediaReview(props: MediaReview) {
       channelName={channelName}
       extensions={extensions}
       onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
       {...props}
     />
   );

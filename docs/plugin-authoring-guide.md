@@ -170,6 +170,12 @@ host commits the audio at each pause and at the end. `status()` reports
 `ready`, `checking`, `unconfirmed` or `needs-setup`, and `Settings` is its
 sign-in or setup UI.
 
+## Scheduled delivery
+
+A relay that advertises scheduled delivery exposes an optional queue on the
+current relay session. See [Scheduling messages from a plugin](scheduled-messages.md)
+for the capability and how to handle acknowledgments.
+
 ## Migration writes
 
 Check `ctx.relay.snapshot().session.supportsMigrationWrites === true` before

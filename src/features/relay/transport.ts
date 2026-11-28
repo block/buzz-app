@@ -1,4 +1,5 @@
 import { isAdminAddition } from "../channel-members/administration-protocol.ts";
+import type { ScheduledHost } from "./scheduled-messages";
 import type { ArtifactIncrementalReader } from "./artifact-incremental-reader.ts";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
@@ -114,6 +115,9 @@ export type DirectMessageHistory =
   | { readonly channelId: string; readonly includeHistory: "ask" };
 
 export interface ReadTransport {
+  /** Owner-scoped relay queue; available only when advertised by this relay. */
+  readonly scheduledMessages?: ScheduledHost;
+
   /** Hear the relay refuse this account for the whole community, on any
    * request after connecting: its sign-in ended, or it has no access. One
    * item's refusal (a gated channel, say) stays with whoever asked for it. */
@@ -549,6 +553,7 @@ export async function connectBrokerTransport(
     archiveAuthority?: unknown;
     writeKinds?: number[];
     workflowReads?: boolean;
+    scheduledMessages?: boolean;
     projectGit?: boolean;
     attachmentUploads?: boolean;
     directMessages?: boolean;
@@ -774,6 +779,33 @@ export async function connectBrokerTransport(
     relayAuthor: session.relayAuthor,
     ...(typeof session.archiveAuthority === "string"
       ? { archiveAuthority: session.archiveAuthority }
+      : {}),
+    ...(session.scheduledMessages === true
+      ? {
+          scheduledMessages: {
+            sign: async (event: EventTemplate, signal: AbortSignal) => {
+              signal.throwIfAborted();
+              const response = await fetch(`${endpoint}/sign`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(event),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error("Could not sign scheduled message");
+              return eventDto(await response.json());
+            },
+            request: (body: unknown, signal: AbortSignal) =>
+              fetch(`${endpoint}/scheduled-messages`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+                signal,
+              }),
+          },
+        }
       : {}),
     ...(session.workflowReads === true
       ? {

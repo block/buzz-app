@@ -27,6 +27,10 @@ import type { Outbox, OutboxRecovery } from "./outbox";
 import { signedMessageTokenTags } from "../messages/message-tokens";
 import type { AgentInvocationIntent } from "../agents/session-admission";
 import { PIN_KIND, UNPIN_KIND } from "./pins";
+import {
+  createScheduledMessages,
+  type ScheduledHost,
+} from "./scheduled-messages";
 import type { RelaySession } from "./session";
 
 /** The agent service binds its active matcher to each live relay session. */
@@ -86,6 +90,11 @@ export function createMessages(
     channelId: string,
     rootId: string,
   ) => ((agentPubkey: string) => boolean) | undefined,
+  scheduling?: {
+    host: ScheduledHost;
+    signal: AbortSignal;
+    name(channelId: string): string;
+  },
 ) {
   const writer = (
     kind: number,
@@ -465,7 +474,108 @@ export function createMessages(
       );
     return event;
   };
+  function prepareSend(
+    channelId: string,
+    content: string,
+    mentions: readonly string[] = [],
+    attachments: readonly UploadedAttachment[] = [],
+    references: readonly string[] = [],
+    picks: MentionPicks = {},
+  ) {
+    if (!channelId) throw new Error("A channel is required");
+    const message = attachmentMessage(content, attachments, relayOrigin);
+    const out = writer(9, channelId);
+    const template = {
+      kind: 9,
+      content: text(message.content),
+      tags: [
+        ["h", channelId],
+        ...mentionTags(channelId, withDmAgents(channelId, mentions)),
+        ...referenceTags(references),
+        ...pickTags(channelId, mentions, picks),
+        ...emojiTags(content),
+        ...message.tags,
+        ...signedMessageTokenTags(),
+      ],
+    };
+    return { out, template };
+  }
+  function prepareReply(
+    channelId: string,
+    rootId: string,
+    content: string,
+    mentions: readonly string[] = [],
+    attachments: readonly UploadedAttachment[] = [],
+    parentId: string = rootId,
+    references: readonly string[] = [],
+    picks: MentionPicks = {},
+    mediaTargetUrl?: string,
+  ) {
+    if (!channelId) throw new Error("A channel is required");
+    if (!/^[0-9a-f]{64}$/.test(rootId))
+      throw new Error("A valid thread root is required");
+    if (!/^[0-9a-f]{64}$/.test(parentId))
+      throw new Error("A valid reply parent is required");
+    const mediaTarget = mediaTargetUrl
+      ? safeMessageUrl(mediaTargetUrl)
+      : undefined;
+    if (mediaTargetUrl && !mediaTarget)
+      throw new Error("A valid media target is required");
+    const message = attachmentMessage(content, attachments, relayOrigin);
+    const out = writer(9, channelId);
+    const recipients = mentionTags(
+      channelId,
+      withDmAgents(channelId, mentions),
+    );
+    const template = {
+      kind: 9,
+      content: text(message.content),
+      tags: [
+        ["h", channelId],
+        ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
+        ["e", parentId, "", "reply"],
+        ...recipients,
+        ...invocationTags(channelId, rootId, parentId, recipients),
+        ...referenceTags(references),
+        ...pickTags(channelId, mentions, picks),
+        ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),
+        ...emojiTags(content),
+        ...message.tags,
+        ...signedMessageTokenTags(),
+      ],
+    };
+    return { out, template };
+  }
   return Object.freeze({
+    scheduled:
+      scheduling && viewer
+        ? createScheduledMessages(scheduling.host, {
+            viewer,
+            signal: scheduling.signal,
+            name: scheduling.name,
+            prepare: (message) =>
+              message.threadRootId
+                ? prepareReply(
+                    message.channelId,
+                    message.threadRootId,
+                    message.text,
+                    message.recipients,
+                    message.attachments,
+                    message.parentId,
+                    message.references,
+                    message.picks,
+                    message.mediaTarget,
+                  ).template
+                : prepareSend(
+                    message.channelId,
+                    message.text,
+                    message.recipients,
+                    message.attachments,
+                    message.references,
+                    message.picks,
+                  ).template,
+          })
+        : undefined,
     forwardProblem(
       channelId: string,
       row: ChannelMessage,
@@ -484,30 +594,21 @@ export function createMessages(
     send(
       channelId: string,
       content: string,
-      mentions: readonly string[] = [],
-      attachments: readonly UploadedAttachment[] = [],
+      mentions?: readonly string[],
+      attachments?: readonly UploadedAttachment[],
       recovery?: OutboxRecovery,
-      references: readonly string[] = [],
-      picks: MentionPicks = {},
+      references?: readonly string[],
+      picks?: MentionPicks,
     ) {
-      if (!channelId) throw new Error("A channel is required");
-      const message = attachmentMessage(content, attachments, relayOrigin);
-      return writer(9, channelId).send(
-        {
-          kind: 9,
-          content: text(message.content),
-          tags: [
-            ["h", channelId],
-            ...mentionTags(channelId, withDmAgents(channelId, mentions)),
-            ...referenceTags(references),
-            ...pickTags(channelId, mentions, picks),
-            ...emojiTags(content),
-            ...message.tags,
-            ...signedMessageTokenTags(),
-          ],
-        },
-        ...(recovery ? [recovery] : []),
+      const { out, template } = prepareSend(
+        channelId,
+        content,
+        mentions,
+        attachments,
+        references,
+        picks,
       );
+      return out.send(template, ...(recovery ? [recovery] : []));
     },
     /** Forward only the reconciled row supplied by an authorized source reader. */
     forward(
@@ -663,50 +764,9 @@ export function createMessages(
         ],
       });
     },
-    reply(
-      channelId: string,
-      rootId: string,
-      content: string,
-      mentions: readonly string[] = [],
-      attachments: readonly UploadedAttachment[] = [],
-      parentId: string = rootId,
-      references: readonly string[] = [],
-      picks: MentionPicks = {},
-      mediaTargetUrl?: string,
-    ) {
-      if (!channelId) throw new Error("A channel is required");
-      if (!/^[0-9a-f]{64}$/.test(rootId))
-        throw new Error("A valid thread root is required");
-      if (!/^[0-9a-f]{64}$/.test(parentId))
-        throw new Error("A valid reply parent is required");
-      const mediaTarget = mediaTargetUrl
-        ? safeMessageUrl(mediaTargetUrl)
-        : undefined;
-      if (mediaTargetUrl && !mediaTarget)
-        throw new Error("A valid media target is required");
-      const message = attachmentMessage(content, attachments, relayOrigin);
-      const out = writer(9, channelId);
-      const recipients = mentionTags(
-        channelId,
-        withDmAgents(channelId, mentions),
-      );
-      return out.send({
-        kind: 9,
-        content: text(message.content),
-        tags: [
-          ["h", channelId],
-          ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
-          ["e", parentId, "", "reply"],
-          ...recipients,
-          ...invocationTags(channelId, rootId, parentId, recipients),
-          ...referenceTags(references),
-          ...pickTags(channelId, mentions, picks),
-          ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),
-          ...emojiTags(content),
-          ...message.tags,
-          ...signedMessageTokenTags(),
-        ],
-      });
+    reply(...args: Parameters<typeof prepareReply>) {
+      const { out, template } = prepareReply(...args);
+      return out.send(template);
     },
     /** Supply the current folded attachmentSourceId, or the row ID for original media. */
     edit: (messageId: string, content: string, attachmentSourceId: string) =>

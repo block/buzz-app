@@ -345,6 +345,9 @@ async function relayAuthority(fetch, relay) {
     relayAuthor: author,
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
+    scheduledMessages:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-scheduled-messages-v1"),
     // NIP-CL: the relay keeps channel labels and answers label lookups.
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
@@ -1782,6 +1785,7 @@ export function relayBrokerPlugin({
               memberAdministration: true,
               identityArchives: true,
               workflowReads: true,
+              scheduledMessages: (await getAuthority(relay)).scheduledMessages,
               projectGit: true,
               attachmentUploads: true,
               sidebarPreferences: true,
@@ -2571,6 +2575,7 @@ export function relayBrokerPlugin({
               "/api/relay/gifs",
               "/api/relay/profile-search",
               "/api/relay/workflow-runs",
+              "/api/relay/scheduled-messages",
               "/api/relay/project-git",
             ].includes(route) ||
             req.method !== "POST"
@@ -2848,6 +2853,7 @@ export function relayBrokerPlugin({
           }
           if (presence && !presenceFilter(filters))
             return json(res, 400, { error: "Invalid presence filter" });
+          const scheduled = route === "/api/relay/scheduled-messages";
           let workflowPath;
           if (route === "/api/relay/workflow-runs") {
             try {
@@ -3289,6 +3295,7 @@ export function relayBrokerPlugin({
             !gifs &&
             !profileSearch &&
             !workflowPath &&
+            !scheduled &&
             !readPublishing &&
             !snapshot &&
             !channelActivity &&
@@ -3371,6 +3378,7 @@ export function relayBrokerPlugin({
           const upstreamPath =
             workflowPath ??
             invitePath ??
+            (scheduled ? "/scheduled-messages" : null) ??
             (gifs
               ? gifSearchPath
               : profileSearch

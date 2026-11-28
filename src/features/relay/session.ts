@@ -3189,6 +3189,17 @@ export function createRelaySession(
           ).values(),
         ],
         invocationScope,
+        transport?.scheduledMessages
+          ? {
+              host: transport.scheduledMessages,
+              signal: lifetime.signal,
+              name: (id) =>
+                channels.queries
+                  .list()
+                  .channels.find((channel) => channel.id === id)?.name ??
+                "Conversation",
+            }
+          : undefined,
       ),
       /** UI eligibility only; signing/publication recheck the same role proof. */
       canRetry(event: Pick<EventData, "kind" | "tags">) {

@@ -85,6 +85,7 @@ fn request_url(community: &str, path: &str, method: &str) -> Result<Url> {
         "POST" => matches!(
             path,
             "/query"
+                | "/scheduled-messages"
                 | "/events"
                 | "/api/invites"
                 | "/api/invites/revoke"

@@ -132,6 +132,10 @@ export type {
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
 export type {
+  ScheduledMessage,
+  ScheduledMessages,
+} from "../features/relay/scheduled-messages";
+export type {
   ArtifactSyncFilter,
   ArtifactSyncSnapshot,
   ArtifactSyncStatus,

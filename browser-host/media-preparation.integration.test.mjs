@@ -109,3 +109,62 @@ test("video preparation shrinks Retina screen recordings into the relay envelope
     await rm(directory, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("animated avatar preparation keeps a WebM's alpha in a looping APNG", async () => {
+  if (mediaToolVersion("ffmpeg") === null) return;
+  const directory = await mkdtemp(join(tmpdir(), "buzz-animation-"));
+  try {
+    const input = join(directory, "avatar.webm");
+    execFileSync("ffmpeg", [
+      "-y",
+      "-nostdin",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=red@0.5:s=32x32:r=24:d=1,format=yuva420p",
+      "-c:v",
+      "libvpx-vp9",
+      "-auto-alt-ref",
+      "0",
+      "-pix_fmt",
+      "yuva420p",
+      input,
+    ]);
+    const req = Readable.from([await readFile(input)]);
+    req.headers = {
+      "x-attachment-name": "avatar.webm",
+      "x-buzz-preparation": "animation",
+    };
+    await prepareMedia(
+      req,
+      new AbortController().signal,
+      async (path, type) => {
+        expect(type).toBe("image/png");
+        const bytes = await readFile(path);
+        const actl = bytes.indexOf("acTL");
+        expect(actl).toBeGreaterThan(0);
+        expect(bytes.readUInt32BE(actl + 8)).toBe(0); // Loops forever.
+        const frame = execFileSync("ffmpeg", [
+          "-nostdin",
+          "-loglevel",
+          "error",
+          "-i",
+          path,
+          "-frames:v",
+          "1",
+          "-f",
+          "rawvideo",
+          "-pix_fmt",
+          "rgba",
+          "-",
+        ]);
+        expect(frame.length).toBe(32 * 32 * 4);
+        expect(Math.abs(frame[3] - 128)).toBeLessThanOrEqual(2);
+      },
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);

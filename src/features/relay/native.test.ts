@@ -2105,6 +2105,44 @@ it("prepares HEIC and video in the native upload without dev-broker fetches", as
     size: 7,
   });
   expect(uploads.at(-1)?.headers["x-buzz-preparation"]).toBe("video:avi");
+  const webm = new File(
+    [new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0])],
+    "avatar.webm",
+    { type: "video/webm" },
+  );
+  await expect(
+    transport.uploadAttachment(webm, new AbortController().signal),
+  ).resolves.toMatchObject({ name: "avatar.mp4", type: "video/mp4" });
+  expect(uploads.at(-1)?.headers["x-buzz-preparation"]).toBe("video:matroska");
+  preparedResponse = () => ({
+    body: {
+      url: `${community}/media/${hash}.png`,
+      type: "image/png",
+      size: 9,
+      sha256: hash,
+    },
+  });
+  await expect(
+    transport.uploadAttachment(
+      webm,
+      new AbortController().signal,
+      undefined,
+      "animation",
+    ),
+  ).resolves.toMatchObject({ name: "avatar.png", type: "image/png", size: 9 });
+  expect(uploads.at(-1)?.headers["x-buzz-preparation"]).toBe(
+    "animation:matroska",
+  );
+  const calls = vi.mocked(invoke).mock.calls.length;
+  await expect(
+    transport.uploadAttachment(
+      avi,
+      new AbortController().signal,
+      undefined,
+      "animation",
+    ),
+  ).rejects.toMatchObject({ code: "video" });
+  expect(vi.mocked(invoke).mock.calls).toHaveLength(calls);
   expect(fetch).not.toHaveBeenCalled();
 });
 

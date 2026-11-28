@@ -742,6 +742,70 @@ it("shows every affected community with unsaved shared settings and submits the 
   expect(listeners.size).toBe(0);
 });
 
+it("plays an uploaded Gloopie behind the portrait as well as in it", async () => {
+  vi.stubGlobal("fetch", async () => Response.json({}));
+  HTMLImageElement.prototype.decode = () => Promise.resolve();
+  try {
+    const origin = "https://current.example";
+    const animation = `${origin}/media/${"b".repeat(64)}.png`;
+    const agent = {
+      key: "a".repeat(64),
+      pubkey: "a".repeat(64),
+      owner: "f".repeat(64),
+      name: "Ada",
+      type: "test/hosted",
+      place: "hosted",
+      relay: "wss://current.example",
+      picture: `${origin}/media/${"a".repeat(64)}.png#buzz-anim=${encodeURIComponent(animation)}`,
+      config: {},
+      attention: {},
+      skipped: {},
+      timers: {},
+      attentionEnabled: true,
+    } satisfies Agent;
+    const type = {
+      key: agent.type,
+      pluginId: "test",
+      revision: "1",
+      id: "hosted",
+      title: "Hosted",
+      defaults: () => ({ config: {} }),
+      tabs: [],
+    } as unknown as RegisteredAgentType;
+    const agents = {
+      subscribe: () => () => {},
+      snapshot: () => ({ agents: [agent] }),
+      configHistory: () => undefined,
+      agentSync: () => undefined,
+      addedTabs: () => [],
+      memberships: () => [],
+    } as unknown as Agents;
+    const { container } = render(
+      <AgentDetails
+        agents={agents}
+        agent={agent}
+        type={type}
+        types={[type]}
+        channels={[]}
+        memories={undefined}
+        onRemoved={vi.fn()}
+        messageAction={() => <Button>Message</Button>}
+      />,
+    );
+    const playing = () =>
+      [...container.querySelectorAll("img")].filter((image) =>
+        image.getAttribute("src")?.endsWith(encodeURIComponent(animation)),
+      );
+    // The portrait and the backdrop behind it.
+    await waitFor(() => expect(playing()).toHaveLength(2));
+    expect(playing().some((image) => image.style.objectFit === "cover")).toBe(
+      true,
+    );
+  } finally {
+    Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
+  }
+});
+
 it("retains the inline save action outside an agent pane", () => {
   const view = render(
     <AgentSaveButton form="settings" disabled saving={false} />,

@@ -273,3 +273,59 @@ test("release n-prefix versions permit HEIC conversion", async () => {
   );
   expect(deliver).toHaveBeenCalledOnce();
 });
+
+test("animated avatars convert a WebM to a looping APNG with the alpha-aware decoder", async () => {
+  let launched;
+  processFixture.launch = (_command, args, _options, callback) => {
+    launched = args;
+    const child = new EventEmitter();
+    void (async () => {
+      const file = await open(args.at(-1), "w");
+      await file.write("apng");
+      await file.close();
+      callback(null);
+      child.emit("close", 0);
+    })();
+    return child;
+  };
+  const req = Readable.from([Buffer.from("\x1a\x45\xdf\xa3webm", "latin1")]);
+  req.headers = {
+    "x-attachment-name": "avatar.webm",
+    "x-buzz-preparation": "animation",
+  };
+  const deliver = vi.fn();
+  await prepareMedia(req, new AbortController().signal, deliver);
+  const input = launched.indexOf("-i");
+  expect(launched.slice(input - 4, input + 1)).toEqual([
+    "-f",
+    "matroska",
+    "-c:v",
+    "libvpx-vp9",
+    "-i",
+  ]);
+  expect(launched.join(" ")).toContain("-plays 0");
+  expect(launched.slice(-3, -1)).toEqual(["-f", "apng"]);
+  expect(launched.at(-1)).toMatch(/prepared\.png$/);
+  expect(deliver).toHaveBeenCalledWith(
+    launched.at(-1),
+    "image/png",
+    4,
+    expect.anything(),
+  );
+});
+
+test("animated avatar preparation refuses input that is not a WebM", async () => {
+  processFixture.launch = vi.fn();
+  const deliver = vi.fn();
+  await expect(
+    prepareMedia(
+      Object.assign(request("avatar.webm"), {
+        headers: { "x-buzz-preparation": "animation" },
+      }),
+      new AbortController().signal,
+      deliver,
+    ),
+  ).rejects.toMatchObject({ code: "video" });
+  expect(processFixture.launch).not.toHaveBeenCalled();
+  expect(deliver).not.toHaveBeenCalled();
+});

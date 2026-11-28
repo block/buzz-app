@@ -7,19 +7,21 @@ import {
   cleanup,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
 } from "@testing-library/react";
 import { createServer, type RequestListener } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { keypair } from "../relay/testing";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { retryFailedImages } from "../../shared/design-system/useReadyImage";
 import { AvatarEditor } from "./AvatarEditor";
-import { useAvatarPreview } from "./use-avatar-preview";
+import { useAvatarAnimation, useAvatarPreview } from "./use-avatar-preview";
 
 const community = "https://unjoined.example";
 const picture = `${community}/media/${"a".repeat(64)}.png`;
@@ -198,4 +200,183 @@ it("keeps initials after rejected registration and never registers public artwor
     "https://images.example/public.png",
   );
   expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+describe("an animated avatar", () => {
+  const animation = `${community}/media/${"b".repeat(64)}.png`;
+  const descriptor = `${picture}#buzz-anim=${encodeURIComponent(animation)}`;
+  /** Images the hook preloads, each decoding as `decode` says. */
+  function preloads(decode: () => Promise<void>) {
+    const sources: string[] = [];
+    vi.stubGlobal(
+      "Image",
+      class {
+        set src(value: string) {
+          sources.push(value);
+        }
+        decode = decode;
+      },
+    );
+    vi.stubGlobal("fetch", async () => Response.json({}));
+    return sources;
+  }
+
+  it("plays the full-size animation once it has decoded, keeping the poster until then", async () => {
+    const decoded = deferred();
+    const sources = preloads(() => decoded.promise);
+    const { result } = renderHook(() =>
+      useAvatarAnimation(descriptor, community),
+    );
+    // The relay's thumbnail is only the first frame.
+    const full = `/api/relay/${encodeURIComponent(community)}/media?url=${encodeURIComponent(animation)}`;
+    await waitFor(() => expect(sources).toEqual([full]));
+    expect(result.current).toBeUndefined();
+    await act(async () => {
+      decoded.resolve();
+      await decoded.promise;
+    });
+    expect(result.current).toBe(full);
+  });
+
+  /** The system's reduced-motion setting, changeable while mounted. */
+  function motionSetting(reduced: boolean) {
+    const listeners = new Set<() => void>();
+    vi.stubGlobal("matchMedia", () => ({
+      get matches() {
+        return reduced;
+      },
+      addEventListener: (_: string, listener: () => void) =>
+        listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) =>
+        listeners.delete(listener),
+    }));
+    return (next: boolean) =>
+      act(() => {
+        reduced = next;
+        for (const listener of listeners) listener();
+      });
+  }
+
+  it("never fetches the animation under reduced motion, and follows the setting live", async () => {
+    const setReduced = motionSetting(true);
+    const sources = preloads(() => Promise.resolve());
+    const { result } = renderHook(() =>
+      useAvatarAnimation(descriptor, community),
+    );
+    await act(async () => {});
+    expect(sources).toEqual([]);
+    setReduced(false);
+    await waitFor(() => expect(result.current).toBe(sources[0]));
+    setReduced(true);
+    expect(result.current).toBeUndefined();
+  });
+
+  it("keeps the poster after a failed decode, then plays once a recovered connection serves it", async () => {
+    let fail = true;
+    const sources = preloads(() =>
+      fail ? Promise.reject(new Error("Unavailable")) : Promise.resolve(),
+    );
+    const { result } = renderHook(() =>
+      useAvatarAnimation(descriptor, community),
+    );
+    await waitFor(() => expect(sources).toHaveLength(1));
+    await act(async () => {});
+    expect(result.current).toBeUndefined();
+    fail = false;
+    act(() => retryFailedImages());
+    await waitFor(() => expect(result.current).toBe(sources[0]));
+    expect(sources).toHaveLength(2);
+  });
+
+  it("never starts a second request while one is pending, and retries at once if a recovery came during it", async () => {
+    const attempts: {
+      promise: Promise<void>;
+      resolve: () => void;
+      reject: (reason: Error) => void;
+    }[] = [];
+    const sources = preloads(() => {
+      let resolve!: () => void;
+      let reject!: (reason: Error) => void;
+      const promise = new Promise<void>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      attempts.push({ promise, resolve, reject });
+      return promise;
+    });
+    const { result } = renderHook(() =>
+      useAvatarAnimation(descriptor, community),
+    );
+    await waitFor(() => expect(sources).toHaveLength(1));
+    act(() => retryFailedImages());
+    expect(sources).toHaveLength(1);
+    await act(async () => {
+      attempts[0]?.reject(new Error("Unavailable"));
+      await attempts[0]?.promise.catch(() => {});
+    });
+    await waitFor(() => expect(sources).toHaveLength(2));
+    await act(async () => {
+      attempts[1]?.resolve();
+      await attempts[1]?.promise;
+    });
+    expect(result.current).toBe(sources[0]);
+  });
+
+  it("plays in a waiting mount as soon as another mount of the same animation loads it", async () => {
+    let calls = 0;
+    const sources = preloads(() =>
+      calls++ === 0
+        ? Promise.reject(new Error("Unavailable"))
+        : Promise.resolve(),
+    );
+    const card = renderHook(() => useAvatarAnimation(descriptor, community));
+    await waitFor(() => expect(sources).toHaveLength(1));
+    await act(async () => {});
+    expect(card.result.current).toBeUndefined();
+    // Long before the card's own 2 s retry.
+    const details = renderHook(() => useAvatarAnimation(descriptor, community));
+    await waitFor(() => expect(details.result.current).toBe(sources[0]));
+    await waitFor(() => expect(card.result.current).toBe(sources[0]));
+  });
+
+  it("makes no request after unmounting, even with a retry scheduled", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const sources = preloads(() => Promise.reject(new Error("Unavailable")));
+      const { unmount } = renderHook(() =>
+        useAvatarAnimation(descriptor, community),
+      );
+      await waitFor(() => expect(sources).toHaveLength(1));
+      await act(async () => {});
+      unmount();
+      act(() => retryFailedImages());
+      await act(() => vi.advanceTimersByTimeAsync(60_000));
+      expect(sources).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a failed decode on the mounted-image schedule", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let failures = 2;
+      const sources = preloads(() =>
+        failures-- > 0
+          ? Promise.reject(new Error("Unavailable"))
+          : Promise.resolve(),
+      );
+      const { result } = renderHook(() =>
+        useAvatarAnimation(descriptor, community),
+      );
+      await waitFor(() => expect(sources).toHaveLength(1));
+      await act(() => vi.advanceTimersByTimeAsync(2_000));
+      expect(sources).toHaveLength(2);
+      await act(() => vi.advanceTimersByTimeAsync(10_000));
+      await waitFor(() => expect(result.current).toBe(sources[0]));
+      expect(sources).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

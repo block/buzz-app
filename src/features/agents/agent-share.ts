@@ -2,7 +2,7 @@
 // exports as a buzz-agent-snapshot v1 file, the format block/buzz writes. Both
 // are built from an explicit allowlist: no key, workspace, environment or
 // memory crosses this boundary.
-import { avatarSource } from "../../shared/avatar-source";
+import { animatedAvatar, avatarSource } from "../../shared/avatar-source";
 import { cleanPng, pngChunks } from "../messages/image-metadata";
 import { newer, type EventData } from "../relay/events";
 import type { RelaySession } from "../relay/session";
@@ -121,9 +121,13 @@ export function shareable(
   const instructions = type.carry?.(agent.config).instructions ?? "";
   checkText(agent.name, instructions);
   // A query or fragment can carry a token, so such a picture stays behind
-  // whole, as in earlier Buzz, rather than cut into a broken URL.
+  // whole, as in earlier Buzz, rather than cut into a broken URL, except an
+  // animated-avatar descriptor, which names only two media blobs of one relay.
   const source = https(agent.picture);
-  const picture = source && !/[?#]/.test(source) ? source : undefined;
+  const picture =
+    source && (!/[?#]/.test(source) || animatedAvatar(source))
+      ? source
+      : undefined;
   const definition = {
     name: agent.name,
     ...(picture && { picture }),

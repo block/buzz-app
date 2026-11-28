@@ -2,6 +2,7 @@ import { assert, afterEach, expect, it, vi } from "vitest";
 import {
   attachmentMessage,
   brokerUpload,
+  hostUpload,
   readUploadResponse,
   UPLOAD_MAX_BYTES,
   validateUploadResult,
@@ -371,6 +372,77 @@ it("uploads prepared video bytes rather than the original, preserving the prepar
   );
   expect(result.size).toBe(converted.length);
   expect(calls).toEqual(["/api/relay/prepare-media", "/api/relay/upload"]);
+});
+
+it("uploads an animated avatar as relay-clean APNG, without ffmpeg's pHYs", async () => {
+  const source = new File(
+    [new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0])],
+    "avatar.webm",
+    { type: "video/webm" },
+  );
+  const chunk = (kind: string, payload: number[]) => {
+    const bytes = new Uint8Array(12 + payload.length);
+    new DataView(bytes.buffer).setUint32(0, payload.length);
+    bytes.set(
+      Array.from(kind, (char) => char.charCodeAt(0)),
+      4,
+    );
+    bytes.set(payload, 8);
+    return [...bytes];
+  };
+  const apng = (...kinds: string[]) =>
+    new Uint8Array([
+      ...[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+      ...kinds.flatMap((kind) => chunk(kind, kind === "IEND" ? [] : [1, 2])),
+    ]);
+  const converted = apng("IHDR", "pHYs", "acTL", "fcTL", "IDAT", "IEND");
+  const clean = apng("IHDR", "acTL", "fcTL", "IDAT", "IEND");
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/prepare-media")) {
+      expect(new Headers(init.headers).get("X-Buzz-Preparation")).toBe(
+        "animation",
+      );
+      return new Response(converted, {
+        headers: {
+          "Content-Type": "image/png",
+          "Content-Length": String(converted.length),
+        },
+      });
+    }
+    const sent = init.body as File;
+    expect(new Uint8Array(await sent.arrayBuffer())).toEqual(clean);
+    expect(sent.name).toBe("avatar.png");
+    return Response.json({
+      ...descriptor,
+      url: `${origin}/media/${hash}.png`,
+      type: "image/png",
+      size: clean.length,
+    });
+  });
+  await expect(
+    brokerUpload("/api/relay", origin)(
+      source,
+      new AbortController().signal,
+      undefined,
+      "animation",
+    ),
+  ).resolves.toMatchObject({ name: "avatar.png", type: "image/png" });
+});
+
+it("refuses an animation on a host that can't convert one, before sending anything", async () => {
+  const send = vi.fn(async () => Response.json(descriptor));
+  const webm = new File([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], "a.webm", {
+    type: "video/webm",
+  });
+  await expect(
+    hostUpload(send, origin)(
+      webm,
+      new AbortController().signal,
+      undefined,
+      "animation",
+    ),
+  ).rejects.toMatchObject({ code: "unavailable" });
+  expect(send).not.toHaveBeenCalled();
 });
 
 it("cancellation during preparation cannot start a later upload", async () => {

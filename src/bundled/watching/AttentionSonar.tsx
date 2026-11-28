@@ -9,6 +9,10 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { RobotIcon } from "../../shared/design-system/icons";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { PackedAgentAvatar } from "../../features/agents/PackedAgentAvatar";
+import {
+  useAvatarAnimation,
+  useAvatarPreview,
+} from "../../features/profiles/use-avatar-preview";
 import "./sonar.css";
 
 export const sonarDefaults = {
@@ -61,11 +65,14 @@ const messages = [
 
 export function AttentionSonar({
   picture,
+  community,
   name,
   size = "small",
   hints = false,
 }: {
   picture?: string | undefined;
+  /** The agent's community, whose media access serves an uploaded picture. */
+  community?: string | undefined;
   name: string;
   size?: "small" | "large";
   hints?: boolean;
@@ -118,6 +125,12 @@ export function AttentionSonar({
         (item) => item.url === picture || item.preview === picture,
       )
     : undefined;
+  const poster = useAvatarPreview(
+    avatar ? "" : (picture ?? ""),
+    community,
+    "small",
+  );
+  const animation = useAvatarAnimation(avatar ? undefined : picture, community);
   return (
     <div
       className="attention-sonar"
@@ -176,7 +189,7 @@ export function AttentionSonar({
             <PackedAgentAvatar avatar={avatar} />
           ) : (
             <Avatar
-              src={picture}
+              src={animation ?? poster}
               alt=""
               fallback={name}
               fallbackContent={

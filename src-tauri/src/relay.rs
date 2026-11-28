@@ -1947,17 +1947,14 @@ async fn cached_media(
 /// The type to save a relay response under: only a complete image that renders
 /// inline and fits an entry. Attachments, including SVG, are never saved.
 fn saved_kind(response: &tauri::http::Response<Vec<u8>>) -> Option<String> {
-    if response.status() != 200
-        || response.headers().contains_key("content-disposition")
-        || response.body().len() > media_cache::ENTRY_MAX
-    {
+    if response.status() != 200 || response.headers().contains_key("content-disposition") {
         return None;
     }
     response
         .headers()
         .get("content-type")
         .and_then(|value| value.to_str().ok())
-        .filter(|kind| kind.starts_with("image/"))
+        .filter(|kind| kind.starts_with("image/") && media_cache::fits(kind, response.body()))
         .map(str::to_owned)
 }
 

@@ -346,7 +346,11 @@ export function createAttentionComponents({
             aria-label="Attention settings"
           >
             {!empty && (
-              <AttentionSonar name={agent.name} picture={agent.picture} />
+              <AttentionSonar
+                name={agent.name}
+                picture={agent.picture}
+                community={agent.relay || undefined}
+              />
             )}
             <PreferenceRow
               title="Attention"
@@ -418,7 +422,11 @@ export function createAttentionComponents({
           </section>
         )}
         {empty && (
-          <AttentionEmptyState name={agent.name} picture={agent.picture} />
+          <AttentionEmptyState
+            name={agent.name}
+            picture={agent.picture}
+            community={agent.relay || undefined}
+          />
         )}
       </div>
     );

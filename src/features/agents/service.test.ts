@@ -80,7 +80,7 @@ import { createRelayReader } from "../relay/reader";
 import type { LiveBatch } from "../relay/incoming";
 import type { RelaySession } from "../relay/session";
 import { huddleDescription } from "../huddle/lifecycle";
-import type { AgentIdentity } from "./native";
+import type { AgentIdentity, AgentsNative } from "./native";
 import {
   type Agent,
   type Agents,
@@ -6716,6 +6716,64 @@ describe("an agent in several communities", () => {
     const { agent } = await service.join(bot);
     return { ...ready, agent };
   }
+
+  it.each([
+    ["at once", 0],
+    ["after one retry", 1],
+    ["never", 2],
+  ] as const)(
+    "copies an animated avatar's poster, and its animation when that comes (%s)",
+    async (_when, failures) => {
+      let failing: number = failures;
+      const comes = failures < 2;
+      const media = (origin: string, hex: string) =>
+        `${origin}/media/${hex.repeat(64)}.png`;
+      const poster = media("https://relay.example.test", "a");
+      const animation = media("https://relay.example.test", "b");
+      const copied = {
+        poster: media("https://other.example.test", "c"),
+        animation: media("https://other.example.test", "d"),
+      };
+      const { service, native, select, second } = await setup();
+      await service.create({
+        type: "example/echo",
+        name: "Echo",
+        picture: `${poster}#buzz-anim=${encodeURIComponent(animation)}`,
+      });
+      select(second.origin);
+      await vi.waitFor(() =>
+        expect(service.joinable().map((agent) => agent.key)).toEqual([bot]),
+      );
+      vi.mocked<AgentsNative["media"]>(native.media).mockImplementation(
+        async (_member, url) => {
+          if (url === animation && failing-- > 0) throw new Error("Not found");
+          return { path: "", type: "image/png", size: 1, data: btoa(url) };
+        },
+      );
+      vi.mocked<AgentsNative["upload"]>(native.upload).mockImplementation(
+        async (_member, data, type) => ({
+          url: atob(data) === poster ? copied.poster : copied.animation,
+          sha256: "",
+          size: 1,
+          type,
+        }),
+      );
+      const { notes } = await service.join(bot);
+      expect(notes).toEqual(
+        comes
+          ? []
+          : [
+              "Echo's animation didn't come over, so it shows still. Upload its Gloopie ZIP again in its settings.",
+            ],
+      );
+      expect(native.setPicture).toHaveBeenLastCalledWith(
+        expect.objectContaining({ relay: "wss://other.example.test" }),
+        comes
+          ? `${copied.poster}#buzz-anim=${encodeURIComponent(copied.animation)}`
+          : copied.poster,
+      );
+    },
+  );
 
   it("joins with the same key, shares its settings, and keeps its own attention and runs", async () => {
     const { service, native, run, emit, second, select, agent } =

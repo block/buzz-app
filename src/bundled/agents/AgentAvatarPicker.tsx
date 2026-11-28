@@ -31,9 +31,17 @@ import {
   emojiAvatarScale,
   avatarCropBox,
   uncropped,
+  uploadAnimatedAvatar,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
-import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
+import {
+  type GloopieParts,
+  readGloopieZip,
+} from "../../features/profiles/gloopie-zip";
+import {
+  useAvatarAnimation,
+  useAvatarPreview,
+} from "../../features/profiles/use-avatar-preview";
 import {
   CircleIcon,
   ImageIcon,
@@ -164,7 +172,9 @@ export function AgentAvatarPicker({
     });
   };
   const uploading = local && local.picture === undefined ? local : null;
-  const busy = !!uploading;
+  // Opening a ZIP comes before its preview, and holds Save and the dock too.
+  const [reading, setReading] = useState(false);
+  const busy = !!uploading || reading;
   const localUrl = local?.url;
   useEffect(
     () => () => {
@@ -313,6 +323,11 @@ export function AgentAvatarPicker({
     return () => surface.removeEventListener("wheel", wheel);
   }, []);
   const preview = useAvatarPreview(selected ? "" : picture, community, "small");
+  // An uploaded Gloopie plays here as a pack avatar does, once it has decoded.
+  const animation = useAvatarAnimation(
+    selected ? undefined : picture,
+    community,
+  );
   useEffect(
     () => () => {
       pending.current?.abort();
@@ -368,26 +383,59 @@ export function AgentAvatarPicker({
     if (!community || pending.current || disabled) return;
     const request = new AbortController();
     pending.current = request;
-    const url = URL.createObjectURL(file);
+    setReading(true);
+    onBusyChange(true);
+    let parts: GloopieParts | undefined;
+    try {
+      parts = await readGloopieZip(file, request.signal);
+    } catch (reason) {
+      if (request.signal.aborted) return;
+      pending.current = null;
+      onBusyChange(false);
+      setError(
+        reason instanceof Error ? reason.message : "Couldn't open this ZIP.",
+      );
+      return;
+    } finally {
+      setReading(false);
+    }
+    if (request.signal.aborted) return;
+    // A Gloopie unzipped by the browser leaves its video; only the ZIP animates.
+    if (
+      !parts &&
+      (/^video\/(webm|mp4)$/.test(file.type) ||
+        /\.(webm|mp4)$/i.test(file.name))
+    ) {
+      pending.current = null;
+      onBusyChange(false);
+      setError("Choose the Gloopie's ZIP, not the video inside it.");
+      return;
+    }
+    const url = URL.createObjectURL(parts?.poster ?? file);
     kept.current = local;
     setLocal({ url });
-    onBusyChange(true);
     setError("");
     try {
-      const value = await uploadAvatar(
-        file,
-        community,
-        request.signal,
-        (sent, total) => {
-          if (!request.signal.aborted && total)
-            setLocal({ url, progress: sent / total });
-        },
-      );
+      const onProgress = (sent: number, total: number) => {
+        if (!request.signal.aborted && total)
+          setLocal({ url, progress: sent / total });
+      };
+      const value = parts
+        ? await uploadAnimatedAvatar(
+            parts,
+            community,
+            request.signal,
+            onProgress,
+          )
+        : await uploadAvatar(file, community, request.signal, onProgress);
       // Uploads stay as chosen when painting would keep only an animation's
       // first frame, or when this browser can't decode them (HEIC outside
-      // WebKit, which the host converts).
+      // WebKit, which the host converts). A Gloopie ZIP shows its poster and
+      // is never re-framed, since framing would keep only a still.
       const fixed =
-        (await animatedImage(file).catch(() => true)) || !(await decodes(url));
+        !!parts ||
+        (await animatedImage(file).catch(() => true)) ||
+        !(await decodes(url));
       if (request.signal.aborted) return;
       if (kept.current) URL.revokeObjectURL(kept.current.url);
       kept.current = null;
@@ -482,7 +530,7 @@ export function AgentAvatarPicker({
               },
               {
                 value: "image",
-                label: "Upload image",
+                label: "Upload image or Gloopie ZIP",
                 icon: <ImageIcon />,
                 disabled: locked,
               },
@@ -511,7 +559,7 @@ export function AgentAvatarPicker({
         <input
           ref={input}
           type="file"
-          accept="image/*"
+          accept="image/*,.zip,application/zip"
           aria-label="Upload an image"
           hidden
           onChange={(event) => {
@@ -654,7 +702,7 @@ export function AgentAvatarPicker({
                 />
               ) : (
                 <Avatar
-                  src={shown ?? preview}
+                  src={animation ?? shown ?? preview}
                   alt="Selected avatar"
                   fallback={name}
                   size="fill"

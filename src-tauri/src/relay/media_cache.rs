@@ -28,9 +28,40 @@ const BUDGET: u64 = 256 * 1024 * 1024;
 /// Larger images, such as full-size photos, are fetched each time, so a few of
 /// them cannot evict the avatars and thumbnails this cache is for.
 pub(super) const ENTRY_MAX: usize = 2 * 1024 * 1024;
+/// An animated avatar is fetched full size, since the relay's thumbnail is
+/// only its first frame. Upload preparation keeps it under this.
+pub(super) const ANIMATION_ENTRY_MAX: usize = 4 * 1024 * 1024;
 const CLEARED: &str = ".cleared";
 /// A hit refreshes its age at most this often, so reads rarely write.
 const TOUCH_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Whether an image response is small enough to keep on disk.
+pub(super) fn fits(kind: &str, body: &[u8]) -> bool {
+    body.len() <= ENTRY_MAX
+        || (kind.starts_with("image/png")
+            && body.len() <= ANIMATION_ENTRY_MAX
+            && animated_png(body))
+}
+
+/// Whether a PNG declares animation (acTL) before its first image data.
+fn animated_png(body: &[u8]) -> bool {
+    let Some(mut rest) = body.strip_prefix(b"\x89PNG\r\n\x1a\n") else {
+        return false;
+    };
+    while let (Some(length), Some(kind)) = (rest.get(..4), rest.get(4..8)) {
+        match kind {
+            b"acTL" => return true,
+            b"IDAT" => return false,
+            _ => {}
+        }
+        let length = u32::from_be_bytes([length[0], length[1], length[2], length[3]]) as usize;
+        let Some(next) = length.checked_add(12).and_then(|end| rest.get(end..)) else {
+            return false;
+        };
+        rest = next;
+    }
+    false
+}
 
 #[derive(Clone)]
 pub(crate) struct MediaCache(Arc<Inner>);
@@ -142,7 +173,7 @@ impl MediaCache {
         let (Some(root), Some(path)) = (self.0.root.as_ref(), self.path(url, channel)) else {
             return Ok(());
         };
-        let Some(dir) = path.parent().filter(|_| body.len() <= ENTRY_MAX) else {
+        let Some(dir) = path.parent().filter(|_| fits(kind, body)) else {
             return Ok(());
         };
         fs::create_dir_all(dir)?;
@@ -527,6 +558,29 @@ mod tests {
             )
             .unwrap();
         assert!(cache.get(&url("a"), None).is_none());
+        // An animated avatar is kept up to its own cap; a large still is not.
+        let animated = |kind: &[u8], size: usize| {
+            let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+            png.extend([0; 17]);
+            png.extend(b"\0\0\0\x08");
+            png.extend(kind);
+            png.resize(size, 0);
+            png
+        };
+        let apng = animated(b"acTL", ENTRY_MAX + 1);
+        cache
+            .put(&url("b"), None, cache.ticket(), "image/png", &apng)
+            .unwrap();
+        assert_eq!(cache.get(&url("b"), None).unwrap().1, apng);
+        for (name, body) in [
+            ("c", animated(b"IDAT", ENTRY_MAX + 1)),
+            ("d", animated(b"acTL", ANIMATION_ENTRY_MAX + 1)),
+        ] {
+            cache
+                .put(&url(name), None, cache.ticket(), "image/png", &body)
+                .unwrap();
+            assert!(cache.get(&url(name), None).is_none());
+        }
         let none = MediaCache::new(None);
         none.put(&url("a"), None, none.ticket(), "image/png", b"a")
             .unwrap();

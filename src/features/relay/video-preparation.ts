@@ -1,4 +1,11 @@
+import { MIB } from "./attachment-limits.ts";
+
 export const VIDEO_PREPARATION_MS = 600_000;
+// An animated avatar's VP9-alpha WebM becomes an APNG that keeps transparency; small enough for an agent join to copy.
+export const ANIMATION_FILTER =
+  "fps=12,scale=w='min(256,iw)':h='min(256,ih)':force_original_aspect_ratio=decrease:flags=lanczos,format=rgba";
+export const ANIMATION_MAX = 3.5 * MIB;
+export const ANIMATION_PREPARATION_MS = 120_000;
 
 /** Container bytes choose a fixed demuxer, never a caller-supplied ffmpeg argument. */
 export function videoDemuxer(bytes: Uint8Array): string | undefined {

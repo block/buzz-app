@@ -15,6 +15,11 @@ function subscribeReducedMotion(change: () => void) {
 const prefersReducedMotion = () =>
   !!window.matchMedia?.(reducedMotionQuery).matches;
 
+/** The system's reduced-motion setting, followed live while mounted. */
+export function usePrefersReducedMotion() {
+  return useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion);
+}
+
 // Covered panes stay laid out under `visibility: hidden`, which an
 // IntersectionObserver still reports as intersecting. One observer rechecks
 // mounted avatars whenever a pane is covered or revealed.
@@ -48,10 +53,7 @@ export function PackedAgentAvatar({
   avatar: (typeof agentAvatars)[number];
   fit?: "contain" | "cover";
 }) {
-  const reducedMotion = useSyncExternalStore(
-    subscribeReducedMotion,
-    prefersReducedMotion,
-  );
+  const reducedMotion = usePrefersReducedMotion();
   const videoRef = useRef<HTMLVideoElement>(null);
   const synchronizing = useRef(false);
   const visible = useRef(false);

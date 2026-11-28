@@ -1,3 +1,5 @@
+import type { NotificationsService } from "../../features/notifications/service";
+import { ConversationSoundSettings } from "../../features/notifications/ConversationSoundSettings";
 import { viewerMember } from "../../features/relay/membership";
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
@@ -202,6 +204,7 @@ export function ChannelsPage({
   read,
   membership,
   seen,
+  notifications,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
@@ -221,6 +224,7 @@ export function ChannelsPage({
   companion?: ReactNode;
   /** Records one-time experiences, such as the inline thread intro. */
   seen?: Seen | undefined;
+  notifications?: NotificationsService | undefined;
 }) {
   const session = useRelayConnection(relay);
   const openSwitcher = useContext(OpenCommunitySwitcher);
@@ -375,6 +379,7 @@ export function ChannelsPage({
           communities={communities}
           membership={membership}
           seen={seen}
+          notifications={notifications}
         />
       )}
     </section>
@@ -407,6 +412,7 @@ function ChannelWorkspace({
   read,
   membership,
   seen,
+  notifications,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
@@ -425,6 +431,7 @@ function ChannelWorkspace({
   archive?: ArchiveShortcut | undefined;
   read?: ReadShortcut | undefined;
   seen?: Seen | undefined;
+  notifications?: NotificationsService | undefined;
 }) {
   const messageDraft =
     navigation?.target.kind === "page"
@@ -2648,6 +2655,23 @@ function ChannelWorkspace({
       scope={scope}
       {...(current?.channelType !== "solo" ? { openMembers } : {})}
       key={settings?.id}
+      notificationSound={
+        notifications &&
+        viewer &&
+        current &&
+        !cached && (
+          <ConversationSoundSettings
+            key={JSON.stringify([scope, current.id])}
+            notifications={notifications}
+            active={showingSettings && !companion && !fullscreenMedia}
+            scope={{
+              viewer,
+              communityOrigin: scope.slice(0, -(viewer.length + 1)),
+            }}
+            channelId={current.id}
+          />
+        )
+      }
       setupTools={
         current &&
         handoff &&

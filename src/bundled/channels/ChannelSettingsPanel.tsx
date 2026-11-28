@@ -56,6 +56,7 @@ export function ChannelSettingsPanel({
   close,
   children,
   setupTools,
+  notificationSound,
   details,
   lifecycle,
   membership,
@@ -69,6 +70,7 @@ export function ChannelSettingsPanel({
   close(): void;
   children: ReactNode;
   setupTools?: ReactNode;
+  notificationSound?: ReactNode;
   details?: ChannelDetailsCapability;
   /** With `membership`, offers the community owner/admin auto-join switch. */
   lifecycle?: ChannelLifecycleCapability | undefined;
@@ -268,6 +270,7 @@ export function ChannelSettingsPanel({
               </dl>
             </>
           )}
+          {notificationSound}
           {editStatus}
           {setupTools}
           {diagnosticsAvailable && (

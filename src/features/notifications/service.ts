@@ -1,10 +1,15 @@
 import { createUnreadIndicator } from "./indicator";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
-import { parseOpenTarget, type OpenTarget } from "../navigation/targets";
+import {
+  parseOpenTarget,
+  type NavigationScope,
+  type OpenTarget,
+} from "../navigation/targets";
 import type { Navigation } from "../navigation/controller";
 import {
   createNotificationPreferences,
+  conversationSoundKey,
   type NotificationPreferences,
 } from "./preferences";
 import {
@@ -215,6 +220,19 @@ export class NotificationsService extends Service implements Notifications {
   updatePreferences(patch: Partial<NotificationPreferences>) {
     return this.preferences.update(patch);
   }
+  /** Local to this account/device. A stale conversation cannot edit another account. */
+  setConversationSound(
+    scope: NavigationScope,
+    channelId: string,
+    sound?: SoundName,
+  ) {
+    if (this.closed || scope.viewer !== this.state.viewer) return false;
+    const key = conversationSoundKey(scope.communityOrigin, channelId);
+    const conversationSounds = { ...this.state.preferences.conversationSounds };
+    if (sound === undefined) delete conversationSounds[key];
+    else conversationSounds[key] = sound;
+    return this.updatePreferences({ conversationSounds });
+  }
   reloadPreferences() {
     this.preferences.reload();
   }
@@ -318,11 +336,20 @@ export class NotificationsService extends Service implements Notifications {
       this.gated(item.target)
     );
   }
-  private soundEnabled(category: string) {
-    return (
-      this.state.preferences.sound &&
-      resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
-    );
+  private soundFor(item: Candidate): SoundName {
+    const preferences = this.state.preferences;
+    if (item.target.kind === "conversation") {
+      const key = conversationSoundKey(
+        item.target.scope.communityOrigin,
+        item.target.channelId,
+      );
+      const sound = preferences.conversationSounds[key];
+      if (sound !== undefined) return sound;
+    }
+    return resolveCategorySound(preferences.sounds, item.category);
+  }
+  private soundEnabled(item: Candidate) {
+    return this.state.preferences.sound && this.soundFor(item) !== "silent";
   }
   /** Whether every registered gate lets this target alert. */
   gated(target: OpenTarget) {
@@ -354,11 +381,11 @@ export class NotificationsService extends Service implements Notifications {
     }
     // Outstanding audio decisions stay under revalidation until the platform
     // resolves them. Any interval of revoked policy/access/eligibility — or
-    // Sound turned off or category set to Silent — cancels audio for good.
+    // Sound turned off or resolved sound set to Silent — cancels audio for good.
     // Restoring the setting before submission resolves must not resurrect it.
     for (const decision of this.sounding) {
       if (
-        !this.soundEnabled(decision.item.category) ||
+        !this.soundEnabled(decision.item) ||
         !this.allowed(decision.item) ||
         decision.item.eligible() === false
       )
@@ -536,7 +563,7 @@ export class NotificationsService extends Service implements Notifications {
       // The item is out of `pending`, so register its audio decision for
       // sticky cancellation by `revalidate` while the submission is
       // outstanding. Sound off at submission means no decision at all.
-      const decision = this.soundEnabled(item.category)
+      const decision = this.soundEnabled(item)
         ? { item, cancelled: false }
         : null;
       if (decision) this.sounding.add(decision);
@@ -566,8 +593,8 @@ export class NotificationsService extends Service implements Notifications {
       } finally {
         if (decision) this.sounding.delete(decision);
       }
-      // Banners are always submitted silent; the selected per-category sound
-      // plays here once the platform accepted the presentation — but only if
+      // Banners are always submitted silent; the resolved sound plays here
+      // once the platform accepted the presentation — but only if
       // the decision survived: not stickily cancelled by any intervening
       // revocation while the submission was outstanding, same account
       // generation, and still allowed, eligible and Sound-enabled now.
@@ -575,13 +602,11 @@ export class NotificationsService extends Service implements Notifications {
         decision &&
         !decision.cancelled &&
         generation === this.generation &&
-        this.soundEnabled(item.category) &&
+        this.soundEnabled(item) &&
         this.allowed(item) &&
         item.eligible() === true
       )
-        this.playSound(
-          resolveCategorySound(this.state.preferences.sounds, item.category),
-        );
+        this.playSound(this.soundFor(item));
     } catch (error) {
       this.pending.delete(item);
       this.reportError(error);

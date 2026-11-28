@@ -30,6 +30,9 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import { VoiceNoteCard } from "../../bundled/voice-notes/VoiceNoteCard";
 import { ThreadPanel } from "./ThreadPanel";
 import { ChannelTimeline } from "./ChannelTimeline";
+import { Context } from "@deepseek-ai/cordis";
+import { PluginRuntime } from "../../plugins/runtime";
+import { MessagesService } from "./messages-service";
 
 // Virtualizer boundary: render only "visible" indices plus `keepMounted`,
 // as Virtua does for rows scrolled out of its buffer. Layout is browser-tested.
@@ -234,6 +237,53 @@ it("keeps the reporting row mounted through a held submission and its notice, th
   // Once the notice and focus are gone, the virtualizer may evict the row.
   await waitFor(() => expect(h.row()).toBeNull());
   expect(h.neighborRow()).not.toBeNull();
+});
+
+it("keeps a row mounted while any plugin holds it, and lets go when the last one stops", async () => {
+  const root = new Context();
+  new MessagesService(root);
+  const plugins = new Map<string, Context>();
+  const runtime = new PluginRuntime(root, async (info) => ({
+    inject: ["messages"],
+    apply(ctx) {
+      plugins.set(info.manifest.id, ctx);
+    },
+  }));
+  const info = (id: string) => ({
+    manifest: { id, name: id, apiVersion: 1 as const },
+    enabled: true,
+    source: "external" as const,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  });
+  try {
+    runtime.reconcile([info("a.keys"), info("b.keys")]);
+    await waitFor(() => expect(plugins.size).toBe(2));
+    const h = await mount(async () => {});
+    const row = h.row();
+    if (!row) throw new Error("Missing target row");
+    act(() => {
+      for (const plugin of plugins.values())
+        plugin.messages.listOf(row)?.keepMounted(target.id);
+    });
+    h.evict();
+    expect(h.row()).toBe(row);
+    act(() => runtime.reconcile([info("b.keys")]));
+    await act(() => new Promise((resolve) => setTimeout(resolve)));
+    h.evict();
+    expect(h.row()).toBe(row);
+    act(() => runtime.reconcile([]));
+    await waitFor(() => {
+      h.evict();
+      expect(h.row()).toBeNull();
+    });
+    expect(h.neighborRow()).not.toBeNull();
+  } finally {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  }
 });
 
 it("releases on cancel, pins again on reopen, and unmounts cleanly while open", async () => {

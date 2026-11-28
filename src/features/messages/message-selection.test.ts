@@ -11,7 +11,10 @@ import {
   selectNewestMessage,
   type MessageList,
 } from "./message-selection";
+import { Context } from "@deepseek-ai/cordis";
+import { MessagesService } from "./messages-service";
 
+const messages = new MessagesService(new Context());
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
@@ -182,4 +185,50 @@ it("leaves keys native while the newest message is scrolled out of the window", 
   box("two")?.focus();
   expect(key(list, "ArrowDown")).toBe(false);
   expect(document.activeElement).toBe(box("two"));
+});
+
+it("gives plugins the lists, selection and threads through the messages service", () => {
+  const { list, box, composer } = fixture();
+  expect(messages.lists()).toEqual([list]);
+  const row = box("two")?.parentElement as HTMLElement;
+  const handle = messages.listOf(row);
+  expect(handle?.element).toBe(list);
+  expect(handle?.newest()).toBe("three");
+  expect(handle?.has("two")).toBe(true);
+  expect(handle?.has("gone")).toBe(false);
+  expect(handle?.composer()).toBe(composer);
+  // One handle per list, so a plugin can tell whether its owner changed.
+  expect(messages.listOf(list)).toBe(handle);
+
+  messages.select(row);
+  expect(document.activeElement).toBe(box("two"));
+  expect(messages.selected()).toEqual({ row, id: "two", list });
+  expect(messages.focusTarget(row)).toBe(box("two"));
+  expect(messages.selectNewest(list)).toBe(true);
+  expect(messages.selected()?.id).toBe("three");
+
+  // Only the row's own summary counts, not a nested reply's.
+  const summary = document.createElement("button");
+  summary.dataset.threadSummary = "";
+  const opened = vi.fn();
+  summary.addEventListener("click", opened);
+  box("two")?.append(summary);
+  expect(messages.hasThread(row)).toBe(true);
+  expect(messages.hasThread(box("one")?.parentElement as HTMLElement)).toBe(
+    false,
+  );
+  expect(messages.openThread(row)).toBe(true);
+  expect(opened).toHaveBeenCalledOnce();
+
+  // The Menu key opens whatever the element's own menu is.
+  const menu = vi.fn((event: Event) => event.preventDefault());
+  box("one")?.addEventListener("keydown", menu);
+  expect(messages.openActions(box("one") as HTMLElement)).toBe(true);
+  expect(menu.mock.calls[0]?.[0]).toMatchObject({ key: "ContextMenu" });
+  expect(messages.openActions(box("three") as HTMLElement)).toBe(false);
+
+  // A row that has left the page is ignored.
+  row.remove();
+  messages.select(row);
+  expect(messages.selected()?.id).toBe("three");
 });

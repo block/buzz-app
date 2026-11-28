@@ -342,15 +342,22 @@ it("keeps Solo creation to chats and the New menu above the sections", async () 
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
   ).toEqual(["New chat", "New channel", "New DM", "New workspace"]);
-  await user.click(screen.getByRole("menuitem", { name: "New DM" }));
-  expect(f.open).toHaveBeenLastCalledWith({
+  const newMessage = {
     version: 1,
     kind: "page",
     pluginId: "buzz.channels",
     pageId: "channels",
     scope: { viewer, communityOrigin: "https://relay.test" },
     route: { version: 1, params: "new-message" },
+  };
+  await user.click(screen.getByRole("menuitem", { name: "New DM" }));
+  expect(f.open).toHaveBeenLastCalledWith(newMessage);
+  // A plugin runs the same item by id, without the menu.
+  f.open.mockClear();
+  act(() => {
+    expect(f.shortcuts.runHost("new-dm")).toBe(true);
   });
+  expect(f.open).toHaveBeenLastCalledWith(newMessage);
 });
 
 it("collapses the Solo and Team home sections independently", async () => {

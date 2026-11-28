@@ -20,6 +20,8 @@ import {
 } from "../../features/channel-navigation/ChannelNavigationState";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { NewMenu } from "./NewMenu";
+import { Context } from "@deepseek-ai/cordis";
+import { ShortcutsService } from "../../features/shortcuts/service";
 import type { Agents } from "../../features/agents/service";
 import { PrimarySidebar } from "./sidebar-section-testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
@@ -247,6 +249,13 @@ export function fixture(
     handoff = useChannelNavigation();
     return null;
   };
+  // The New menu registers its actions, which plugins run by id.
+  const shortcutsContext = new Context();
+  shortcutsContext.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const shortcuts = new ShortcutsService(shortcutsContext, undefined);
   const tree = () => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
@@ -256,6 +265,7 @@ export function fixture(
             relay={relay}
             navigator={navigator}
             agents={agents}
+            shortcuts={shortcuts}
           >
             {(creationAction) =>
               sidebarVisible && (
@@ -294,6 +304,7 @@ export function fixture(
   );
   const rendered = render(tree());
   return {
+    shortcuts,
     session,
     relay,
     navigate(next: OpenTarget) {

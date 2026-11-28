@@ -84,7 +84,9 @@ Each line is the main call. Read the types for every field.
 | `sidebarSections` (optional) | A Team sidebar section | `register({ version: 1, id, title, icon, rows, select })` |
 | `conversation` | Composer and message UI | `registerAccessory`, `registerMessage`, `registerMessageAction`, `registerLink`, `registerLinkPreview` (a link-preview renderer that needs setup first adds `status()`, `subscribe(listener)` and `settings`, its Settings card id; while `status()` is `"needs-setup"` the host draws a card that opens that Settings card), `registerSendGate`, and host components under `ctx.conversation.ui` (Markdown, DocumentEditor, ImageViewer, MembersDialog, Workspace) |
 | `agents` | Agent tools and instructions | `ctx.agents.addTool({ name, description, inputSchema, call })`; `addInstructions({ id, text })`; `wake`; hooks need `host.agentHooks` |
-| `shortcuts` | Key bindings | `ctx.shortcuts.register({ id, title, binding, run })` |
+| `shortcuts` | Key bindings, and running Buzz's own | `ctx.shortcuts.register({ id, title, binding, run })`; `ctx.shortcuts.runHost(id)` runs one of Buzz's shortcuts or actions if it can run now, and returns whether it ran |
+| `messages` | Messages on screen and the keyboard selection | `select(row)`, `selected()`, `selectNewest(list)`, `lists()`, `listOf(node)` (with `newest()`, `has(id)`, `keepMounted(id)`, `composer()`), `openActions(element)`, `openThread(row)`, and `composerOf(element)` for a message box you can read, edit, undo and label (`setStatus`, shown beside Send). Get message elements from these calls, not by their attributes, which are internal. Buzz releases a kept message and clears a label when the plugin stops. |
+| `focus` | Where focus goes when a conversation opens | `const release = ctx.focus.preferMessagesOnOpen(pick?)` selects a message instead of focusing the message box, until released: the row `pick(list)` returns, or the newest. Buzz releases it when the plugin stops. |
 | `navigation` | Open a destination | `await ctx.navigation.open({ version: 1, kind: "plugin", pluginId, pageId? })` |
 | `notifications` | OS notifications | `ctx.notifications.register({ id, label }).submit({ sourceKey, target, title?, body? })` |
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, community })`. It never rejects. |
@@ -94,6 +96,8 @@ Each line is the main call. Read the types for every field.
 | `notices` (optional) | A notice on any page, with up to three buttons | `await ctx.reflect.get("notices")?.show({ title, description?, actions? }, { signal? })` resolves with the picked action's `id`, or `undefined` if dismissed or aborted. Proceed only on an allow `id`. Pass a tool call's `client.signal` to ask the owner before it runs. |
 | `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`, and `Menu` (newer hosts: check `ui.Menu`). `Menu` takes `items` (`label`, `onSelect`, `tone: "destructive"`, `disabled`), a `label` or `aria-label`, `icon` and `align`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
+
+`runHost` runs only these ids for plugins: `global-search`, `conversation-search` (search in this conversation), `new` (the New menu), `new-chat`, `new-channel`, `new-dm`, `new-workspace`, `settings` and `home`. Any other id returns `false`.
 
 Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short.
 

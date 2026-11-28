@@ -90,6 +90,8 @@ import {
 } from "../plugins/installer";
 import { withTimeout } from "../plugins/timeout";
 import { createExternalApps } from "../features/agents/external-connection";
+import { MessagesService } from "../features/messages/messages-service";
+import { FocusService } from "../features/messages/focus-service";
 
 export function createServices() {
   const appearance = createAppearance();
@@ -137,6 +139,8 @@ export function createServices() {
   ctx.provide("ui", pluginUi);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
+  new MessagesService(ctx);
+  new FocusService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const identityNames = new IdentityNamesService(ctx, localAgents.agents);
   const identity = nativeIdentityEnabled() ? createIdentity() : undefined;

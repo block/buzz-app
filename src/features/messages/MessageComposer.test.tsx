@@ -14,6 +14,9 @@ import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
 import { mentionHistory } from "./mention-history";
+import { FocusService } from "./focus-service";
+import { MessagesService } from "./messages-service";
+import { registerMessageList } from "./message-selection";
 import {
   composerDOMFixture,
   longMentionDraft,
@@ -89,7 +92,7 @@ import { publishOutgoing, type OutgoingMessage } from "./outgoing-message";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
-import { registerMessageList } from "./message-selection";
+import type { MessageList } from "./message-selection";
 import { setEditWithUpArrowPreference } from "./edit-key-preference";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
@@ -1117,6 +1120,232 @@ it("defers initial focus until a loading conversation enables its composer", () 
   expect(h.input()).not.toHaveFocus();
   h.retarget({ disabled: false });
   expect(h.input()).toHaveFocus();
+});
+
+it("selects the newest message instead while a plugin prefers messages on open", async () => {
+  const list = document.createElement("section");
+  list.innerHTML =
+    '<div data-message-id="old"><div data-layout="timeline"></div></div>' +
+    '<div data-message-id="new"><div data-layout="timeline"></div></div>';
+  document.body.append(list);
+  const focus = new FocusService(new Context());
+  const release = focus.preferMessagesOnOpen();
+  try {
+    const h = mount({ autoFocus: true, disabled: true });
+    const unregister = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => h.input(),
+    } as unknown as MessageList);
+    h.retarget({ disabled: false });
+    const newest = list.querySelector<HTMLElement>(
+      '[data-message-id="new"] > [data-layout]',
+    );
+    expect(document.activeElement).toBe(newest);
+    // The handoff is done: a later reload doesn't take focus again.
+    newest?.blur();
+    h.retarget({ disabled: true });
+    h.retarget({ disabled: false });
+    expect(document.activeElement).toBe(document.body);
+    unregister();
+
+    // A plugin can pick the message, such as the one it last selected.
+    const old = list.querySelector<HTMLElement>('[data-message-id="old"]');
+    const releasePick = focus.preferMessagesOnOpen(() => old ?? undefined);
+    const picked = mount({ autoFocus: true, disabled: true });
+    const unregisterPicked = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => picked.input(),
+    } as unknown as MessageList);
+    picked.retarget({ disabled: false });
+    expect(document.activeElement).toBe(old?.firstElementChild);
+    unregisterPicked();
+    releasePick();
+
+    // While it waits for the message to render, focus moving elsewhere wins.
+    const rows = list.innerHTML;
+    list.replaceChildren();
+    const waiting = mount({ autoFocus: true, disabled: true });
+    const unregisterWaiting = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => waiting.input(),
+    } as unknown as MessageList);
+    waiting.retarget({ disabled: false });
+    // Even when what took focus disappears before the next frame.
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    elsewhere.remove();
+    list.innerHTML = rows;
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.activeElement).toBe(document.body);
+    unregisterWaiting();
+
+    // Also when the composer is disabled and enabled again before the frame.
+    list.replaceChildren();
+    const reloaded = mount({ autoFocus: true, disabled: true });
+    const unregisterReloaded = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => reloaded.input(),
+    } as unknown as MessageList);
+    reloaded.retarget({ disabled: false });
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    elsewhere.remove();
+    reloaded.retarget({ disabled: true });
+    list.innerHTML = rows;
+    reloaded.retarget({ disabled: false });
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.activeElement).toBe(document.body);
+    unregisterReloaded();
+
+    // A composer that mounts enabled waits through StrictMode's effect replay.
+    list.replaceChildren();
+    const enabled = mount({ autoFocus: true });
+    const unregisterEnabled = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => enabled.input(),
+    } as unknown as MessageList);
+    list.innerHTML = rows;
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(document.activeElement).toBe(
+      list.querySelector('[data-message-id="new"] > [data-layout]'),
+    );
+    unregisterEnabled();
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    // Focus the plugin's own choice moves elsewhere wins as well.
+    const releaseMoving = focus.preferMessagesOnOpen(() => {
+      elsewhere.focus();
+      return undefined;
+    });
+    document.body.append(elsewhere);
+    const moving = mount({ autoFocus: true, disabled: true });
+    const unregisterMoving = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => moving.input(),
+    } as unknown as MessageList);
+    moving.retarget({ disabled: false });
+    expect(document.activeElement).toBe(elsewhere);
+    unregisterMoving();
+    releaseMoving();
+    elsewhere.remove();
+
+    // Letting go of the choice while it waits gives the message box focus.
+    release();
+    list.replaceChildren();
+    const releaseWaiting = focus.preferMessagesOnOpen();
+    const released = mount({ autoFocus: true, disabled: true });
+    const unregisterReleased = registerMessageList(list, {
+      row: (id: string) => ({ id }),
+      newest: () => "new",
+      composer: () => released.input(),
+    } as unknown as MessageList);
+    released.retarget({ disabled: false });
+    releaseWaiting();
+    list.innerHTML = rows;
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(released.input()).toHaveFocus();
+    unregisterReleased();
+  } finally {
+    release();
+    release();
+    list.remove();
+  }
+  const h = mount({ autoFocus: true, disabled: true });
+  h.retarget({ disabled: false });
+  expect(h.input()).toHaveFocus();
+});
+
+it("gives plugins a message box handle, and undoes what a plugin set when it stops", async () => {
+  const root = new Context();
+  new MessagesService(root);
+  new FocusService(root);
+  const plugins = new Map<string, Context>();
+  const runtime = new PluginRuntime(root, async (info) => ({
+    inject: ["messages", "focus"],
+    apply(ctx) {
+      plugins.set(info.manifest.id, ctx);
+    },
+  }));
+  onTestFinished(async () => {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  });
+  const info = (id: string) => ({
+    manifest: { id, name: id, apiVersion: 1 as const },
+    enabled: true,
+    source: "external" as const,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  });
+  runtime.reconcile([info("example.keys"), info("example.other")]);
+  await vi.waitFor(() => expect(plugins.size).toBe(2));
+  const plugin = plugins.get("example.keys");
+  const messages = plugin?.messages;
+  const other = plugins.get("example.other")?.messages;
+  if (!messages || !other) throw new Error("Missing messages service");
+
+  const h = mount();
+  expect(messages.composerOf(document.body)).toBeUndefined();
+  const box = messages.composerOf(h.input());
+  if (!box) throw new Error("Missing message box handle");
+  expect(messages.composerOf(h.input())).toBe(box);
+  expect(box.element).toBe(h.input());
+  expect(box.undoDepth).toBe(0);
+  act(() => {
+    box.insertText("hello world");
+  });
+  expect(box.value).toBe("hello world");
+  expect(box.undoDepth).toBe(1);
+  act(() => box.setSelectionRange(0, 5));
+  expect([box.selectionStart, box.selectionEnd]).toEqual([0, 5]);
+  act(() => {
+    box.insertText("bye", { start: 0, end: 5 });
+  });
+  expect(box.value).toBe("bye world");
+  act(() => box.undo(false));
+  expect(box.value).toBe("hello world");
+  expect(box.atoms).toEqual([]);
+  act(() => box.setStatus("NORMAL"));
+  expect(screen.getByText("NORMAL")).toBeVisible();
+  act(() => box.setStatus(undefined));
+  expect(screen.queryByText("NORMAL")).toBeNull();
+
+  // Each plugin's label is its own; the newest shows.
+  const otherBox = other.composerOf(h.input());
+  act(() => box.setStatus("NORMAL"));
+  act(() => otherBox?.setStatus("OTHER"));
+  expect(screen.getByText("OTHER")).toBeVisible();
+  act(() => box.setStatus(undefined));
+  expect(screen.getByText("OTHER")).toBeVisible();
+  act(() => box.setStatus("NORMAL"));
+  expect(screen.getByText("NORMAL")).toBeVisible();
+  // Stopping the plugin whose label is newest shows the older one again.
+  act(() => otherBox?.setStatus("OTHER"));
+  expect(screen.getByText("OTHER")).toBeVisible();
+  act(() => runtime.reconcile([info("example.keys")]));
+  await vi.waitFor(() => expect(screen.getByText("NORMAL")).toBeVisible());
+  expect(screen.queryByText("OTHER")).toBeNull();
+  // A handle kept after its plugin stops can't show a label.
+  expect(() => act(() => otherBox?.setStatus("LATE"))).toThrow();
+  expect(screen.queryByText("LATE")).toBeNull();
+
+  // Turning the plugin off clears its label and its opening-focus choice.
+  plugin?.focus.preferMessagesOnOpen();
+  act(() => runtime.reconcile([]));
+  await vi.waitFor(() => expect(screen.queryByText("NORMAL")).toBeNull());
+  h.input().blur();
+  const next = mount({ autoFocus: true, disabled: true });
+  next.retarget({ disabled: false });
+  expect(next.input()).toHaveFocus();
 });
 
 it("cancels a deferred draft handoff when another control takes focus and disappears", () => {

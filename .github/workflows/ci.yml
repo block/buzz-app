@@ -36,6 +36,9 @@ jobs:
       # check already ran TypeScript; do not repeat pnpm build's typecheck.
       - name: Frontend build
         run: ./bin/pnpm exec vite build
+      # Discovery needs only Node; keep it off the native compilation lane.
+      - name: Browser CI coverage
+        run: ./bin/node --test tests/ci/*.test.mjs
 
   javascript:
     if: github.event_name != 'workflow_dispatch'

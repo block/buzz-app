@@ -22,7 +22,14 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import type { LiveCallbacks } from "../relay/live";
 import type { RelayEvent } from "../relay/events";
 import { createRelaySession } from "../relay/session";
-import { keypair, message, metadata, roster, signed } from "../relay/testing";
+import {
+  keypair,
+  message,
+  metadata,
+  roster,
+  signed,
+  threadWindowBounds,
+} from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { ThreadPanel } from "./ThreadPanel";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
@@ -123,43 +130,74 @@ async function setupReview({
         ]
       : []),
   ];
+  const origin = "https://review.test";
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      scope: origin,
       media,
       writer: { sign, publish },
       async query(filters) {
-        return filters.flatMap((filter) => {
-          if (filter.kinds?.includes(0))
-            return events.filter((event) => event.kind === 0);
-          if (filter.kinds?.includes(39002) || filter.kinds?.includes(39000))
-            return [
-              roster(relay, "one", [viewer.pubkey]),
-              metadata(relay, "one", "One"),
-              ...(forwardSource
-                ? [
-                    roster(relay, "private-source", [viewer.pubkey]),
-                    metadata(
-                      relay,
-                      "private-source",
-                      "Private source",
-                      1_700_000_000,
-                      [["private"]],
-                    ),
-                  ]
-                : []),
-            ];
-          if (filter.ids)
-            return events.filter((event) => filter.ids?.includes(event.id));
-          if (filter.depth_limit)
-            return replies.filter(
-              (event) =>
-                filter.thread_cursor === undefined ||
-                event.created_at > filter.thread_cursor,
-            );
-          return [];
-        });
+        return (
+          await Promise.all(
+            filters.map(async (filter) => {
+              if (filter.kinds?.includes(0))
+                return events.filter((event) => event.kind === 0);
+              if (
+                filter.kinds?.includes(39002) ||
+                filter.kinds?.includes(39000)
+              )
+                return [
+                  roster(relay, "one", [viewer.pubkey]),
+                  metadata(relay, "one", "One"),
+                  ...(forwardSource
+                    ? [
+                        roster(relay, "private-source", [viewer.pubkey]),
+                        metadata(
+                          relay,
+                          "private-source",
+                          "Private source",
+                          1_700_000_000,
+                          [["private"]],
+                        ),
+                      ]
+                    : []),
+                ];
+              if (filter.ids)
+                return events.filter((event) => filter.ids?.includes(event.id));
+              if (filter.thread_window) {
+                const ordered = replies
+                  .filter(
+                    (event) =>
+                      filter.until === undefined ||
+                      event.created_at < filter.until ||
+                      (event.created_at === filter.until &&
+                        event.id > (filter.before_id ?? "")),
+                  )
+                  .sort(
+                    (a, b) =>
+                      b.created_at - a.created_at || a.id.localeCompare(b.id),
+                  );
+                const page = ordered.slice(0, filter.limit);
+                const last = page.at(-1);
+                return [
+                  ...page,
+                  await threadWindowBounds(
+                    relay,
+                    origin,
+                    viewer.pubkey,
+                    filter,
+                    ordered.length > page.length && last
+                      ? { created_at: last.created_at, id: last.id }
+                      : null,
+                  ),
+                ];
+              }
+              return [];
+            }),
+          )
+        ).flat();
       },
     },
     { outboxStorage: { load: () => [], save: () => {} } },
@@ -253,10 +291,22 @@ it.each([
     );
     let gate: ReturnType<typeof deferredRead> | undefined;
     let events = [root];
-    const query = vi.fn(async () => (gate ? gate.promise : events));
+    const origin = "https://review.test";
+    const query = vi.fn(
+      async (filters: readonly import("../relay/events").ReadFilter[]) => {
+        if (gate) return gate.promise;
+        const window = filters.find((filter) => filter.thread_window);
+        if (window)
+          return [
+            await threadWindowBounds(relay, origin, viewer.pubkey, window),
+          ];
+        return events;
+      },
+    );
     const owner = createRelaySession({
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      scope: origin,
       media: (url) => url,
       query,
       subscribe(callbacks) {
@@ -456,7 +506,7 @@ it("keeps timed reactions on the exact video while moving through a gallery", as
   });
   fireEvent.durationChange(firstVideo);
   expect(
-    within(dialog).getByRole("button", { name: /^Seek to 0:11,/ }),
+    await within(dialog).findByRole("button", { name: /^Seek to 0:11,/ }),
   ).toBeVisible();
   expect(
     within(dialog).queryByRole("button", { name: /^Seek to 0:21,/ }),
@@ -701,7 +751,9 @@ it("keeps root-parented legacy timecodes visible across a reply-video gallery", 
     value: 60,
   });
   fireEvent.durationChange(firstVideo);
-  expect(within(dialog).getByRole("button", { name: "0:42" })).toBeVisible();
+  expect(
+    await within(dialog).findByRole("button", { name: "0:42" }),
+  ).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Next media" }));
   const secondVideo = dialog.querySelector("video");

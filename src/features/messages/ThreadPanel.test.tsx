@@ -410,7 +410,7 @@ it("allocation failure exposes an effective retry rather than leaving a spinner"
   expect(h.thread).toHaveBeenCalledTimes(2);
   expect(h.view.refresh).toHaveBeenCalledOnce();
 });
-it("loads history automatically with error-only retry and no routine history controls", () => {
+it("exposes error-only retry and no routine history controls", () => {
   const h = messagesHarness();
   h.render();
   expect(h.ensure).toHaveBeenCalledExactlyOnceWith(
@@ -424,15 +424,12 @@ it("loads history automatically with error-only retry and no routine history con
   expect(h.view.loadMore).not.toHaveBeenCalled();
   h.snapshot.canLoadMore = true;
   h.render();
-  expect(h.view.loadMore).toHaveBeenCalledOnce();
-  h.snapshot.status = "loading";
-  h.render();
-  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.view.loadMore).not.toHaveBeenCalled();
   h.snapshot.status = "error";
   h.snapshot.error = "offline";
   h.render();
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.view.loadMore).not.toHaveBeenCalled();
   expect(h.view.refresh).toHaveBeenCalledTimes(2);
   h.snapshot.status = "ready";
   h.snapshot.error = undefined;
@@ -452,7 +449,7 @@ it("loads history automatically with error-only retry and no routine history con
 });
 it("keeps initial rows pending until positioned, exposes errors, and lets reading interrupt loading", () => {
   const h = messagesHarness(ordinaryNavigation());
-  h.snapshot.canLoadMore = true;
+  h.snapshot.status = "loading";
   h.render();
   expect(h.element).toHaveAttribute("data-positioning");
   expect(h.element.querySelector("[data-thread-rows]")).toHaveAttribute(
@@ -473,13 +470,12 @@ it("keeps initial rows pending until positioned, exposes errors, and lets readin
   expect(h.element).not.toHaveAttribute("data-positioning");
   h.scroll(500);
   h.snapshot.status = "ready";
-  h.snapshot.canLoadMore = false;
+  h.snapshot.loaded = true;
   h.render();
   expect(h.element.scrollTop).toBe(500);
 });
 it("starts a single older page after scrolling through 80% of loaded history, capped at 2400px on tall threads", () => {
   const h = messagesHarness();
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   const section = h.render();
   fireEvent.wheel(section, { deltaY: -1 });
@@ -556,10 +552,10 @@ it.each([
     );
   },
 );
-it("holds seeded rows behind the loader until the first page, and unread until the legacy walk settles", async () => {
+it("holds seeded rows behind the loader until the first page, then settles reading immediately", async () => {
   vi.useFakeTimers();
   const h = messagesHarness(ordinaryNavigation());
-  h.resize(600);
+  h.resize(1200);
   vi.mocked(document.hasFocus).mockReturnValue(true);
   vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
     new DOMRect(0, 0, 500, 500),
@@ -581,6 +577,7 @@ it("holds seeded rows behind the loader until the first page, and unread until t
   });
   h.snapshot.status = "loading";
   h.snapshot.readKind = "refresh";
+  h.snapshot.replies = [{ ...row, id: "reply", content: "reply" }];
   h.render();
   h.element.focus();
   expect(h.element).toHaveAttribute("data-positioning");
@@ -591,32 +588,19 @@ it("holds seeded rows behind the loader until the first page, and unread until t
   expect(reading).not.toHaveBeenCalled();
 
   h.snapshot.status = "ready";
+  h.snapshot.loaded = true;
   h.snapshot.readKind = undefined;
-  h.snapshot.direction = "forward";
   h.snapshot.canLoadMore = true;
-  h.snapshot.replies = [{ ...row, id: "reply", content: "reply" }];
   h.render();
-  expect(h.view.loadMore).toHaveBeenCalledOnce();
-  h.snapshot.status = "loading";
-  h.snapshot.readKind = "older";
-  h.render();
+  expect(h.view.loadMore).not.toHaveBeenCalled();
   expect(h.element).not.toHaveAttribute("data-positioning");
   expect(h.element.querySelector("[data-thread-rows]")).not.toHaveAttribute(
     "inert",
   );
-  await act(() => vi.advanceTimersByTimeAsync(300));
-  expect(reading).not.toHaveBeenCalled();
-
-  // The empty continuation changes neither rows nor geometry. Readiness must
-  // wake the existing reader, without a new focus or scroll gesture.
-  h.snapshot.status = "ready";
-  h.snapshot.readKind = undefined;
-  h.snapshot.canLoadMore = false;
-  h.render();
-  expect(h.element).not.toHaveAttribute("data-positioning");
+  // Removing the loading overlay schedules one reflow frame before the 300ms dwell.
   await act(() => vi.advanceTimersByTimeAsync(299));
   expect(observe).not.toHaveBeenCalled();
-  await act(() => vi.advanceTimersByTimeAsync(1));
+  await act(() => vi.advanceTimersByTimeAsync(20));
   expect(observe).toHaveBeenCalledExactlyOnceWith([row.id, "reply"]);
 });
 it.each([false, true])(
@@ -886,7 +870,6 @@ it("opens at the first unread reply behind a line that reading keeps, paging pas
   ];
   unread.add(first.id).add(later.id);
   thread.through = 2;
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [first, later];
   h.render();
@@ -936,7 +919,7 @@ it("shows the loaded page while the read for the first unread reply waits on rec
   const [read, first] = [reply("read", 2), reply("first unread", 3)];
   unread.add(first.id);
   thread.through = 2;
-  h.snapshot.direction = "older";
+  h.snapshot.loaded = true;
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [first];
   h.render();
@@ -968,7 +951,6 @@ it("keeps the first unread reply and its line showing when a page brings the rep
   ];
   unread.add(first.id).add(later.id);
   thread.through = 2;
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.seeking = true;
   h.snapshot.replies = [read, first, later];
@@ -991,6 +973,28 @@ it("keeps the first unread reply and its line showing when a page brings the rep
   expect(branch).toContainElement(line());
   expect(h.view.loadMore).not.toHaveBeenCalled();
 });
+it("keeps a branch collapsed when its parent lands before initial positioning finishes", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const parent = reply("parent", 1);
+  const child = { ...reply("child", 2), replyParentId: parent.id };
+  unread.add(parent.id).add(child.id);
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [child];
+  h.render();
+  // Unread paging requested older history while still hidden behind positioning.
+  expect(h.view.loadMore).toHaveBeenCalledOnce();
+  expect(h.element).toHaveAttribute("aria-busy", "true");
+
+  h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [parent, child];
+  h.render();
+  expect(h.element).toHaveAttribute("aria-busy", "false");
+  expect(
+    h.element.querySelector(`[data-message-id="${parent.id}"]`),
+  ).not.toBeNull();
+  expect(h.element.querySelector(`[data-message-id="${child.id}"]`)).toBeNull();
+});
 it("pages past an own or individually read reply until history or a thread-wide read reaches it", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread } = unreadReplies(h);
@@ -1000,7 +1004,6 @@ it("pages past an own or individually read reply until history or a thread-wide 
     reply("later unread", 4),
   ];
   unread.add(older.id).add(later.id);
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [own, later];
   h.render();
@@ -1024,7 +1027,6 @@ it("pages past an own or individually read reply until history or a thread-wide 
   const limited = messagesHarness(ordinaryNavigation());
   const limits = unreadReplies(limited);
   limits.unread.add("later unread");
-  limited.snapshot.direction = "older";
   limited.snapshot.limited = true;
   limited.snapshot.replies = [
     limits.reply("own", 3),
@@ -1040,7 +1042,6 @@ it("leaves focus the person moved while the first unread reply loads", () => {
   const { reply, unread } = unreadReplies(h);
   const first = reply("first unread", 3);
   unread.add(first.id);
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [first];
   h.render();
@@ -1074,7 +1075,6 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
     delete (HTMLElement.prototype as Partial<HTMLElement>).checkVisibility;
   });
   h.props.active = false;
-  h.snapshot.direction = "older";
   h.snapshot.replies = [first, later];
   h.render();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
@@ -1156,7 +1156,7 @@ it("a kept line still splits relayed replies while a late navigation decides it 
   const [, , first] = relayed;
   if (!first) throw new Error("Missing relayed fixture");
   unread.add(first.id);
-  h.snapshot.direction = "older";
+  h.snapshot.loaded = true;
   h.snapshot.replies = relayed;
   h.render();
   const groups = () =>
@@ -1166,7 +1166,7 @@ it("a kept line still splits relayed replies while a late navigation decides it 
 
   // The route's retarget rereads the thread before the line is decided again.
   h.snapshot.status = "loading";
-  delete h.snapshot.direction;
+  delete h.snapshot.loaded;
   h.render();
   Object.assign(h.props, { navigation: ordinaryNavigation() });
   h.rerenderProps();
@@ -1214,7 +1214,6 @@ it("an opening's line keeps its place when relayed replies around it fold later"
           );
     },
   );
-  h.snapshot.direction = "older";
   h.snapshot.replies = relayed(false);
   h.render();
   const line = screen.getByRole("separator", { name: "New messages" });
@@ -1236,7 +1235,7 @@ it("keeps a shown line while a late navigation for the opening decides it again"
   const { reply, unread } = unreadReplies(h);
   const [read, first] = [reply("read", 2), reply("first unread", 3)];
   unread.add(first.id);
-  h.snapshot.direction = "older";
+  h.snapshot.loaded = true;
   h.snapshot.replies = [read, first];
   h.render();
   const line = screen.getByRole("separator", { name: "New messages" });
@@ -1245,7 +1244,7 @@ it("keeps a shown line while a late navigation for the opening decides it again"
 
   // The route's retarget rereads the thread before the line is decided again.
   h.snapshot.status = "loading";
-  delete h.snapshot.direction;
+  delete h.snapshot.loaded;
   h.render();
   Object.assign(h.props, { navigation: ordinaryNavigation() });
   h.rerenderProps();
@@ -1254,7 +1253,7 @@ it("keeps a shown line while a late navigation for the opening decides it again"
   ]);
 
   h.snapshot.status = "ready";
-  h.snapshot.direction = "older";
+  h.snapshot.loaded = true;
   h.render();
   expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
     line,
@@ -1264,12 +1263,12 @@ it("keeps a shown line while a late navigation for the opening decides it again"
   // A later opening that finds nothing unread retires the kept line.
   unread.clear();
   h.snapshot.status = "loading";
-  delete h.snapshot.direction;
+  delete h.snapshot.loaded;
   h.render();
   Object.assign(h.props, { navigation: ordinaryNavigation() });
   h.rerenderProps();
   h.snapshot.status = "ready";
-  h.snapshot.direction = "older";
+  h.snapshot.loaded = true;
   h.render();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
 });
@@ -1279,7 +1278,6 @@ it("shows a visible inactive preview and read resumed rows at once, without a li
   const previewReplies = unreadReplies(preview);
   previewReplies.unread.add("unread");
   preview.props.active = false;
-  preview.snapshot.direction = "older";
   preview.snapshot.canLoadMore = true;
   preview.snapshot.replies = [previewReplies.reply("unread", 2)];
   preview.render();
@@ -1291,7 +1289,6 @@ it("shows a visible inactive preview and read resumed rows at once, without a li
 
   const h = messagesHarness(ordinaryNavigation());
   const { reply } = unreadReplies(h);
-  h.snapshot.direction = "older";
   h.snapshot.replies = [reply("read", 2)];
   h.snapshot.resumed = true;
   h.render();
@@ -1307,11 +1304,17 @@ it("waits for resumed rows to refresh and a failed read to recover before decidi
   Object.assign(h.session.unread, { snapshot: () => known });
   const top = reply("read", 2);
   const nested = { ...reply("nested unread", 4), replyParentId: top.id };
-  h.snapshot.direction = "older";
+  h.resize(600);
+  h.snapshot.loaded = true;
+  h.snapshot.canLoadMore = true;
   h.snapshot.replies = [top];
   h.snapshot.resumed = true;
   h.render();
   expect(h.element).toHaveAttribute("data-positioning");
+  // Resumed/unpositioned views must not start viewport-fill prefetch before positioning.
+  expect(h.view.loadMore).not.toHaveBeenCalled();
+  h.resize(4000);
+  h.snapshot.canLoadMore = false;
   h.snapshot.status = "error";
   h.snapshot.resumed = undefined;
   h.snapshot.error = "offline";
@@ -1336,7 +1339,7 @@ it("waits for resumed rows to refresh and a failed read to recover before decidi
 it("keeps a place the reader chose after a failed read when it recovers", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread } = unreadReplies(h);
-  h.snapshot.direction = "older";
+  h.snapshot.loaded = true;
   h.snapshot.replies = [reply("read", 2)];
   h.snapshot.status = "error";
   h.snapshot.error = "offline";
@@ -1365,7 +1368,6 @@ it("keeps a place the reader chose after a failed read when it recovers", () => 
 it("opens a read thread at its latest reply, and an explicit target at itself, without a line", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply } = unreadReplies(h);
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [reply("read", 2), reply("also read", 3)];
   h.render();
@@ -1384,7 +1386,6 @@ it("opens a read thread at its latest reply, and an explicit target at itself, w
     messageId: target.id,
     revealSelected: true,
   });
-  exact.snapshot.direction = "older";
   exact.snapshot.canLoadMore = true;
   exact.snapshot.replies = [exactReply("first unread", 2), target];
   exact.snapshot.target = target;
@@ -1402,7 +1403,6 @@ it("pages past a read frontier for a reply marked unread older than the loaded r
   const marked = reply("marked unread", 1);
   unread.add(marked.id);
   read.through = 4;
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [reply("read", 3), reply("also read", 4)];
   h.render();
@@ -1438,7 +1438,6 @@ it("places a requested read time's line above the first branch unread as of that
   Object.assign(h.props as ThreadPanelProps, {
     unreadRequest: { readThrough: 2 },
   });
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [later];
   h.render();
@@ -1610,7 +1609,6 @@ it("renders replies after the original without a reply-count divider", () => {
 
 it("keeps older-page loading quiet and retry between root and replies", () => {
   const h = messagesHarness();
-  h.snapshot.direction = "older";
   h.snapshot.canLoadMore = true;
   h.snapshot.replies = [{ ...row, id: "older-reply", content: "older reply" }];
   const section = h.render();
@@ -1651,7 +1649,7 @@ it("keeps older-page loading quiet and retry between root and replies", () => {
 });
 it("keeps retained-range repair quiet and retry after the replies", () => {
   const h = messagesHarness();
-  h.snapshot.direction = "older";
+  h.snapshot.loaded = true;
   h.snapshot.replies = [
     { ...row, id: "retained-reply", content: "retained reply" },
   ];
@@ -1736,33 +1734,47 @@ it("keeps video threads free of the timestamp comment shortcut at any playback p
   }
 });
 
-it("counts replies recovered after a completed traversal, not initial history pages", () => {
+it("counts recovered and live replies while ignoring initial and older history pages", () => {
   const h = messagesHarness();
-  h.snapshot.canLoadMore = true;
-  h.render();
-  h.scroll(500);
   h.snapshot.status = "loading";
-  h.snapshot.replies = [{ ...row, id: "history", createdAt: 1 }];
   h.render();
   h.snapshot.status = "ready";
-  h.snapshot.canLoadMore = false;
+  h.snapshot.canLoadMore = true;
+  h.snapshot.replies = [{ ...row, id: "newest", createdAt: 10 }];
   h.render();
   h.scroll(500);
   expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
 
+  // Loading an older page (even with a same-second reply) does not count as new.
   h.snapshot.status = "loading";
+  h.snapshot.readKind = "older";
+  h.render();
+  h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
+  h.snapshot.replies = [
+    { ...row, id: "older", createdAt: 1 },
+    { ...row, id: "same-second-older", createdAt: 10 },
+    ...h.snapshot.replies,
+  ];
+  h.render();
+  expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+
+  // Reconnect recovery and live arrivals count even while older pages remain.
+  h.snapshot.status = "loading";
+  h.snapshot.readKind = "refresh";
   h.render();
   h.snapshot.replies = [
     ...h.snapshot.replies,
-    { ...row, id: "recovered", createdAt: 2 },
+    { ...row, id: "recovered", createdAt: 11 },
   ];
   h.render();
   h.snapshot.status = "ready";
+  h.snapshot.readKind = undefined;
   h.render();
   expect(screen.getByRole("button", { name: "1 new message" })).toBeVisible();
   h.snapshot.replies = [
     ...h.snapshot.replies,
-    { ...row, id: "live", createdAt: 3 },
+    { ...row, id: "live", createdAt: 12 },
   ];
   h.render();
   expect(screen.getByRole("button", { name: "2 new messages" })).toBeVisible();
@@ -2001,65 +2013,6 @@ it.each([
     expect(h.element.scrollTop).toBe(follows ? 4200 : 3400 - gap);
   },
 );
-it("finishes automatic pages before initial positioning and preserves a reader’s intervening scroll", () => {
-  const h = messagesHarness();
-  h.snapshot.canLoadMore = true;
-  h.render();
-  expect(h.view.loadMore).toHaveBeenCalledTimes(1);
-  expect(h.element.scrollTop).toBe(0);
-  const section = h.render();
-  fireEvent.wheel(section, { deltaY: -1 });
-  h.scroll(500);
-  h.snapshot.status = "loading";
-  h.render();
-  h.snapshot.status = "ready";
-  h.snapshot.canLoadMore = false;
-  h.snapshot.replies = [{ ...row, id: "history" }];
-  h.resize(4800);
-  h.render();
-  expect(h.element.scrollTop).toBe(500);
-  h.scroll(4200);
-  h.snapshot.replies = [...h.snapshot.replies, { ...row, id: "live" }];
-  h.resize(5500);
-  h.render();
-  expect(h.element.scrollTop).toBe(4900);
-});
-it.each([
-  { limited: false, routed: false },
-  { limited: false, routed: true },
-])(
-  "positions after automatic loading stops (limited=$limited, routed=$routed), without restarting pagination",
-  ({ limited, routed }) => {
-    const navigation = routed ? ordinaryNavigation() : undefined;
-    const h = messagesHarness(navigation);
-    h.snapshot.canLoadMore = true;
-    h.render();
-    expect(h.element.scrollTop).toBe(0);
-    expect(h.view.loadMore).toHaveBeenCalledTimes(1);
-    if (navigation)
-      expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
-        status: "opened",
-      });
-    h.snapshot.status = "loading";
-    h.render();
-    expect(h.view.loadMore).toHaveBeenCalledTimes(1);
-    h.snapshot.status = "ready";
-    h.snapshot.canLoadMore = false;
-    h.snapshot.limited = limited;
-    h.snapshot.replies = [{ ...row, id: "history" }];
-    h.resize(4800);
-    h.render();
-    expect(h.element.scrollTop).toBe(4200);
-    expect(h.view.loadMore).toHaveBeenCalledTimes(1);
-    // A live update follows without completing the same visit twice.
-    h.snapshot.replies = [...h.snapshot.replies, { ...row, id: "live" }];
-    h.render();
-    if (navigation)
-      expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
-        status: "opened",
-      });
-  },
-);
 it.each(
   [false, true].flatMap((routed) =>
     (routed ? ["wheel", "touchMove", "pointerDown", "keyDown"] : ["wheel"]).map(
@@ -2144,12 +2097,10 @@ it("a presented ordinary thread survives the real navigation deadline while hist
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    h.view.loadMore.mockImplementation(() => held);
-    h.snapshot.canLoadMore = true;
-    h.render();
-    expect(h.view.loadMore).toHaveBeenCalledTimes(1);
+    h.view.refresh.mockImplementation(() => held);
     h.snapshot.status = "loading";
     h.render();
+    expect(h.view.refresh).toHaveBeenCalledTimes(1);
     await act(() => vi.advanceTimersByTimeAsync(16_000));
     expect(controller.navigation.snapshot().status).toBe("opened");
     expect(await result).toEqual({ status: "opened" });
@@ -2159,7 +2110,7 @@ it("a presented ordinary thread survives the real navigation deadline while hist
     release();
     await held;
     h.snapshot.status = "ready";
-    h.snapshot.canLoadMore = false;
+    h.snapshot.loaded = true;
     h.render();
     expect(h.element.scrollTop).toBe(3400);
     expect(navigation.complete).toHaveBeenCalledTimes(1);

@@ -139,7 +139,6 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
   const h = await setup((f) => {
     if (f.ids) return [root];
     expect(f.thread_window).toBe(true);
-    expect(f.thread_cursor).toBeUndefined();
     const eligible = newest.filter(
       (e) =>
         f.until === undefined ||
@@ -165,7 +164,7 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
   await h.view.refresh();
   expect(h.view.snapshot()).toMatchObject({
     status: "ready",
-    direction: "older",
+    loaded: true,
     canLoadMore: true,
   });
   expect(new Set(h.view.snapshot().replies.map((e) => e.id))).toEqual(
@@ -384,37 +383,7 @@ it("uses raw scan progress across empty pages without deriving cursors from rows
     replies: [],
   });
 });
-it("discards an old relay's 200 probe and restarts legacy with clean state", async () => {
-  const old = reply(0),
-    probeOnly = reply(100);
-  const h = await setup((f) =>
-    f.ids
-      ? [root]
-      : f.thread_window
-        ? [probeOnly]
-        : f.thread_cursor === undefined
-          ? [old]
-          : [],
-  );
-  await h.view.refresh();
-  expect(h.view.snapshot()).toMatchObject({
-    status: "ready",
-    direction: "forward",
-    canLoadMore: true,
-  });
-  expect(h.view.snapshot().replies.map((r) => r.id)).toEqual([old.id]);
-  expect(h.requests.at(-1)).toHaveLength(2);
-  expect(h.requests.at(-1)?.[1]).not.toHaveProperty("thread_window");
-  expect(h.requests.at(-1)?.[1]).not.toHaveProperty("until");
-  expect(h.requests.at(-1)?.[1]?.kinds).toContain(40008);
-  await h.view.loadMore();
-  expect(h.requests.at(-1)?.[1]).toMatchObject({
-    thread_cursor: old.created_at,
-    thread_cursor_id: old.id,
-  });
-  expect(h.view.snapshot().canLoadMore).toBe(false);
-});
-it("does not downgrade a later missing bound or admit its rows", async () => {
+it("rejects a missing bound on continuation without admitting its rows", async () => {
   let calls = 0;
   const first = reply(200),
     untrusted = reply(0);
@@ -429,12 +398,13 @@ it("does not downgrade a later missing bound or admit its rows", async () => {
   await h.view.loadMore();
   expect(h.view.snapshot()).toMatchObject({
     status: "error",
-    direction: "older",
+    loaded: true,
   });
   expect(h.view.snapshot().replies.map((r) => r.id)).toEqual([first.id]);
   expect(h.requests.every((fs) => fs.length === 1)).toBe(true);
 });
 it.each([
+  ["missing bounds", () => []],
   ["wrong signer", (f: ReadFilter) => [bounds(f, null, {}, author)]],
   ["duplicate bounds", (f: ReadFilter) => [bounds(f), bounds(f)]],
   [
@@ -1975,4 +1945,41 @@ it("settles session recovery when a read view with a quiet failure passes its me
     vi.restoreAllMocks();
     view.dispose();
   }
+});
+
+it("a first open ignores seeded older replies from retained session data instead of paging back to them or leaving a gap", async () => {
+  const rows = Array.from({ length: 12 }, (_, n) => filler(n));
+  const oldest = rows[0];
+  const newest = rows.at(-1);
+  assert.exists(oldest);
+  assert.exists(newest);
+  const h = await setup(serving(rows));
+  h.view.dispose();
+  // Seed both an older reply outside page 1 (like an old broadcast reply) and a
+  // newer reply inside page 1 into session retention before opening the thread.
+  h.traffic.receive([root, oldest, newest]);
+  const view = h.session.thread(channel, root.id);
+  cleanup.push(view.dispose);
+  expect(view.snapshot().replies.map((row) => row.id)).toEqual([
+    oldest.id,
+    newest.id,
+  ]);
+  const before = h.requests.length;
+  await view.refresh();
+  // Only the initial 10-reply window is read; the unreached seeded reply is
+  // dropped rather than left below a gap, and loadMore reaches it continuously.
+  expect(windows(h.requests.slice(before))).toEqual([10]);
+  expect(view.snapshot()).toMatchObject({
+    status: "ready",
+    loaded: true,
+    canLoadMore: true,
+  });
+  expect(view.snapshot().replies.map((row) => row.id)).toEqual(
+    rows.slice(2).map((row) => row.id),
+  );
+  await view.loadMore();
+  expect(view.snapshot().replies.map((row) => row.id)).toEqual(
+    rows.map((row) => row.id),
+  );
+  expect(view.snapshot().canLoadMore).toBe(false);
 });

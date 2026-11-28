@@ -300,26 +300,6 @@ export function policyRelay({
             );
           });
         }
-        if (filters.length === 2 && filters[1].depth_limit) {
-          const [root, replies] = filters;
-          expect(root).toEqual({
-            ids: replies["#e"],
-            "#h": replies["#h"],
-            limit: 1,
-          });
-          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([
-            9, 40002, 40008,
-          ]);
-          for (const filter of filters)
-            report.queries.push({
-              community: communityOf(url),
-              filter,
-              at: performance.now(),
-            });
-          return Response.json(
-            filters.flatMap((filter) => answer(communityOf(url), filter)),
-          );
-        }
         if (filters.length === 2 && filters[1].kinds?.includes(13534)) {
           // Identity archive consent: the target's profile plus the relay roster.
           expect(filters).toEqual([

@@ -1763,18 +1763,27 @@ export const test = base.extend({
         const channelId = filter["#h"][0],
           rootId = filter["#e"][0];
         const candidates = [
+          ...(community === "primary"
+            ? [
+                ...(threadReplies.get(rootId) ?? []),
+                ...(displacedReplies.get(rootId) ?? []),
+              ]
+            : []),
           ...(histories.get(`${community}/${channelId}`) ?? []),
-          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
-        ];
+        ].filter((event) => {
+          const refs = event.tags.filter(([key]) => key === "e");
+          const root =
+            refs.find((tag) => tag[3] === "root") ??
+            refs.find((tag) => tag[3] === "reply") ??
+            refs[0];
+          return root?.[1]?.toLowerCase() === rootId;
+        });
         const rows = [
           ...new Map(candidates.map((event) => [event.id, event])).values(),
         ]
           .filter(
             (event) =>
               filter.kinds.includes(event.kind) &&
-              event.tags.some(
-                ([k, v]) => k === "e" && v.toLowerCase() === rootId,
-              ) &&
               (filter.until === undefined ||
                 event.created_at < filter.until ||
                 (event.created_at === filter.until &&
@@ -1785,14 +1794,35 @@ export const test = base.extend({
           );
         const page = rows.slice(0, filter.limit),
           last = page.at(-1);
+        const ids = new Set(page.map((event) => event.id));
+        const aux = [];
+        if (filter.include_aux && community === "primary")
+          for (let hop = 0; hop < 2; hop++)
+            for (const event of targetEvents) {
+              if (
+                ids.has(event.id) ||
+                ![5, 7, 9005, 39005, 40003].includes(event.kind)
+              )
+                continue;
+              if (
+                event.tags.some(([key, value]) => key === "e" && ids.has(value))
+              ) {
+                aux.push(event);
+                ids.add(event.id);
+              }
+            }
         const hasMore = rows.length > page.length;
+        const host = new URL(
+          JSON.parse(fixtureAliases)[community] ??
+            `https://${community}.example`,
+        ).host;
         const binding = createHash("sha256")
           .update(
             JSON.stringify([
               "tw",
               1,
               "older",
-              `${community}.example`,
+              host,
               viewer,
               channelId,
               rootId,
@@ -1808,6 +1838,7 @@ export const test = base.extend({
           .digest("hex");
         return [
           ...page,
+          ...aux,
           sign(
             39007,
             [
@@ -1825,56 +1856,6 @@ export const test = base.extend({
             }),
           ),
         ];
-      }
-      if (filter.depth_limit) {
-        const rootId = filter["#e"]?.[0];
-        const candidates = [
-          ...(community === "primary"
-            ? [
-                ...(threadReplies.get(rootId) ?? []),
-                ...(displacedReplies.get(rootId) ?? []),
-              ]
-            : []),
-          ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
-        ].filter((event) => {
-          const refs = event.tags.filter(([key]) => key === "e");
-          const root =
-            refs.find((tag) => tag[3] === "root") ??
-            refs.find((tag) => tag[3] === "reply");
-          return root?.[1]?.toLowerCase() === rootId;
-        });
-        const rows = [
-          ...new Map(candidates.map((event) => [event.id, event])).values(),
-        ]
-          .filter(
-            (event) =>
-              filter.thread_cursor === undefined ||
-              event.created_at > filter.thread_cursor ||
-              (event.created_at === filter.thread_cursor &&
-                event.id > filter.thread_cursor_id),
-          )
-          .toSorted(
-            (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-          )
-          .slice(0, filter.limit);
-        const ids = new Set(rows.map((event) => event.id));
-        const aux = [];
-        if (filter.include_aux && community === "primary")
-          for (let hop = 0; hop < 2; hop++)
-            for (const event of targetEvents) {
-              if (
-                ids.has(event.id) ||
-                ![5, 7, 9005, 39005, 40003].includes(event.kind)
-              )
-                continue;
-              if (
-                event.tags.some(([key, value]) => key === "e" && ids.has(value))
-              ) {
-                aux.push(event);
-                ids.add(event.id);
-              }
-            }
-        return [...rows, ...aux];
       }
       // Unread conversation lookup: the viewer's replies to undecided parents.
       if (

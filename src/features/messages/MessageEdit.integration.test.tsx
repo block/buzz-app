@@ -20,6 +20,7 @@ import {
   metadata,
   roster,
   signed,
+  threadWindowBounds,
 } from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 import { MediaReviewViewer } from "./MediaReviewViewer";
@@ -66,27 +67,43 @@ it("real ThreadPanel edits its own reply and recovers emoji preparation without 
       scope: "https://edit.test",
       media: () => undefined,
       query: async (filters) =>
-        filters.flatMap((filter) => {
-          if (filter.kinds?.includes(30030)) {
-            if (!emojiAvailable) throw new Error("Emoji unavailable");
-            return [];
-          }
-          if (filter.kinds?.includes(39002))
-            return [roster(relay, "channel", [viewer.pubkey, other.pubkey])];
-          if (filter.kinds?.includes(39000))
-            return [metadata(relay, "channel", "General")];
-          if (filter.ids)
-            return events.filter((event) => filter.ids?.includes(event.id));
-          if (filter.kinds?.includes(9))
-            return [
-              ...events,
-              bounds(relay, "channel", "head", {
-                has_more: false,
-                next_cursor: null,
-              }),
-            ];
-          return [];
-        }),
+        (
+          await Promise.all(
+            filters.map(async (filter) => {
+              if (filter.kinds?.includes(30030)) {
+                if (!emojiAvailable) throw new Error("Emoji unavailable");
+                return [];
+              }
+              if (filter.kinds?.includes(39002))
+                return [
+                  roster(relay, "channel", [viewer.pubkey, other.pubkey]),
+                ];
+              if (filter.kinds?.includes(39000))
+                return [metadata(relay, "channel", "General")];
+              if (filter.ids)
+                return events.filter((event) => filter.ids?.includes(event.id));
+              if (filter.thread_window)
+                return [
+                  reply,
+                  await threadWindowBounds(
+                    relay,
+                    "https://edit.test",
+                    viewer.pubkey,
+                    filter,
+                  ),
+                ];
+              if (filter.kinds?.includes(9))
+                return [
+                  ...events,
+                  bounds(relay, "channel", "head", {
+                    has_more: false,
+                    next_cursor: null,
+                  }),
+                ];
+              return [];
+            }),
+          )
+        ).flat(),
       writer: {
         kinds: [9, 40003],
         sign: async (template) => signed(viewer, template),
@@ -188,34 +205,60 @@ function editOwner(
       scope: "https://edit.test",
       media: (url) => url,
       query: async (filters) =>
-        filters.flatMap((filter) => {
-          if (filter.kinds?.includes(39002))
-            return [
-              roster(relay, "channel", [
-                ...new Set(events.map((event) => event.pubkey)),
-              ]),
-            ];
-          if (filter.kinds?.includes(39000))
-            return [metadata(relay, "channel", "General")];
-          if (filter.ids)
-            return events.filter((event) => filter.ids?.includes(event.id));
-          if (filter.kinds?.includes(40003) && filter["#e"])
-            return events.filter((event) =>
-              event.tags.some(
-                ([name, id]) =>
-                  name === "e" && filter["#e"]?.includes(id ?? ""),
-              ),
-            );
-          if (filter.depth_limit)
-            return events.filter(
-              (event) =>
-                event.id !== exactOnly &&
-                event.tags.some(([name]) => name === "e") &&
-                (filter.thread_cursor === undefined ||
-                  event.created_at > filter.thread_cursor),
-            );
-          return [];
-        }),
+        (
+          await Promise.all(
+            filters.map(async (filter) => {
+              if (filter.kinds?.includes(39002))
+                return [
+                  roster(relay, "channel", [
+                    ...new Set(events.map((event) => event.pubkey)),
+                  ]),
+                ];
+              if (filter.kinds?.includes(39000))
+                return [metadata(relay, "channel", "General")];
+              if (filter.ids)
+                return events.filter((event) => filter.ids?.includes(event.id));
+              if (filter.kinds?.includes(40003) && filter["#e"])
+                return events.filter((event) =>
+                  event.tags.some(
+                    ([name, id]) =>
+                      name === "e" && filter["#e"]?.includes(id ?? ""),
+                  ),
+                );
+              if (filter.thread_window) {
+                const replies = events
+                  .filter(
+                    (event) =>
+                      event.id !== exactOnly &&
+                      event.tags.some(([name]) => name === "e") &&
+                      (filter.until === undefined ||
+                        event.created_at < filter.until ||
+                        (event.created_at === filter.until &&
+                          event.id > (filter.before_id ?? ""))),
+                  )
+                  .sort(
+                    (a, b) =>
+                      b.created_at - a.created_at || a.id.localeCompare(b.id),
+                  );
+                const page = replies.slice(0, filter.limit);
+                const last = page.at(-1);
+                return [
+                  ...page,
+                  await threadWindowBounds(
+                    relay,
+                    "https://edit.test",
+                    viewer.pubkey,
+                    filter,
+                    replies.length > page.length && last
+                      ? { created_at: last.created_at, id: last.id }
+                      : null,
+                  ),
+                ];
+              }
+              return [];
+            }),
+          )
+        ).flat(),
       writer: {
         kinds: [9, 40003],
         sign: async (template) => signed(viewer, template),

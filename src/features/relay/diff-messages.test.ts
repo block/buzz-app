@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { bounds, keypair, roster, signed } from "./testing";
+import { bounds, keypair, roster, signed, threadWindowBounds } from "./testing";
 import type { LiveCallbacks } from "./live";
 import type { ReadFilter } from "./events";
 
@@ -8,6 +8,7 @@ it("reads diff history, live roots/replies and exact targets through the real se
   const viewer = keypair(),
     relay = keypair(),
     author = keypair();
+  const origin = "https://relay.test";
   const diff = (time: number, tags: string[][] = []) =>
     signed(author, {
       kind: 40008,
@@ -23,6 +24,7 @@ it("reads diff history, live roots/replies and exact targets through the real se
   const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
+    scope: origin,
     media: () => undefined,
     subscribe(callbacks) {
       live = callbacks;
@@ -30,36 +32,46 @@ it("reads diff history, live roots/replies and exact targets through the real se
     },
     async query(filters) {
       reads.push(...filters);
-      return filters.flatMap((f) => {
-        const matched = events.filter(
-          (event) =>
-            (!f.kinds || f.kinds.includes(event.kind)) &&
-            (!f.ids || f.ids.includes(event.id)) &&
-            (!f["#h"] ||
-              event.tags.some(
-                ([key, value]) =>
-                  key === "h" &&
-                  value !== undefined &&
-                  f["#h"]?.includes(value),
-              )) &&
-            (!f["#e"] ||
-              event.tags.some(
-                ([key, value]) =>
-                  key === "e" &&
-                  value !== undefined &&
-                  f["#e"]?.includes(value),
-              )),
-        );
-        return f.top_level && f["#h"]
-          ? [
-              ...matched,
-              bounds(relay, "a", "head", {
-                has_more: false,
-                next_cursor: null,
-              }),
-            ]
-          : matched;
-      });
+      return (
+        await Promise.all(
+          filters.map(async (f) => {
+            const matched = events.filter(
+              (event) =>
+                (!f.kinds || f.kinds.includes(event.kind)) &&
+                (!f.ids || f.ids.includes(event.id)) &&
+                (!f.top_level || !event.tags.some(([key]) => key === "e")) &&
+                (!f["#h"] ||
+                  event.tags.some(
+                    ([key, value]) =>
+                      key === "h" &&
+                      value !== undefined &&
+                      f["#h"]?.includes(value),
+                  )) &&
+                (!f["#e"] ||
+                  event.tags.some(
+                    ([key, value]) =>
+                      key === "e" &&
+                      value !== undefined &&
+                      f["#e"]?.includes(value),
+                  )),
+            );
+            if (f.thread_window)
+              return [
+                ...matched,
+                await threadWindowBounds(relay, origin, viewer.pubkey, f),
+              ];
+            return f.top_level && f["#h"]
+              ? [
+                  ...matched,
+                  bounds(relay, "a", "head", {
+                    has_more: false,
+                    next_cursor: null,
+                  }),
+                ]
+              : matched;
+          }),
+        )
+      ).flat();
     },
   });
   try {
@@ -76,9 +88,16 @@ it("reads diff history, live roots/replies and exact targets through the real se
     );
     const thread = owner.session.thread("a", root.id);
     await thread.refresh();
-    expect(thread.snapshot().replies.map((row) => row.id)).toEqual([reply.id]);
+    expect(thread.snapshot().root?.id).toBe(root.id);
+    expect(thread.snapshot().root?.diff?.filePath).toBe("a.ts");
+    // The relay's thread_window row allowlist excludes legacy diffs (kind 40008).
     expect(
-      reads.some((f) => f["#e"]?.includes(root.id) && f.kinds?.includes(40008)),
+      reads.some(
+        (f) =>
+          f.thread_window &&
+          f["#e"]?.includes(root.id) &&
+          !f.kinds?.includes(40008),
+      ),
     ).toBe(true);
     const liveRoot = diff(3),
       liveReply = diff(4, [["e", root.id, "", "reply"]]);
@@ -88,7 +107,6 @@ it("reads diff history, live roots/replies and exact targets through the real se
       owner.session.channels.window("a").rows.map((row) => row.id),
     ).toEqual([root.id, liveRoot.id]);
     expect(thread.snapshot().replies.map((row) => row.id)).toEqual([
-      reply.id,
       liveReply.id,
     ]);
     const exact = owner.session.thread("a", reply.id, { exact: true });

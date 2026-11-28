@@ -165,59 +165,98 @@ for (const reading of [false, true]) {
       .get("primary/alpha")
       .find((row) => row.content === "Thread root 0");
     let last;
-    for (let i = 0; i < 120; i++) last = app.reply(root.id, false, false);
+    for (let i = 0; i < 55; i++) last = app.reply(root.id, i % 2 === 0, false);
+    await page.setViewportSize({ width: 1440, height: 650 });
     await open(page, app, { cold: true });
     await markAllRead(page);
     const region = page.getByRole("region", {
       name: "Thread messages",
       exact: true,
     });
-    let release;
-    const held = new Promise((resolve) => {
-      release = resolve;
-    });
-    let requested = false;
-    const routePattern = "**/api/relay/primary/query";
-    await page.route(routePattern, async (route) => {
-      if (
-        !requested &&
-        route
-          .request()
-          .postDataJSON()
-          .some(
-            (filter) =>
-              filter.depth_limit && filter.thread_cursor !== undefined,
-          )
-      ) {
-        requested = true;
-        await held;
-      }
-      await route.continue();
-    });
-    try {
-      const trigger = page
-        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ });
-      // Virtua can retain its pointer lock after geometry stops moving. Wait
-      // for input readiness before Playwright tries alternate scroll alignments.
-      await virtuaIdle(page);
-      await trigger.click();
-      await expect.poll(() => requested).toBe(true);
-      // One of the 50 loaded replies is a collapsed descendant.
-      await expect(region.locator("[data-message-id]")).toHaveCount(50);
-      await expect(
-        region.getByText("Broadcast descendant", { exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        region.getByText("Loading thread…", { exact: true }),
-      ).toHaveCount(0);
-      // The panel is presented even while bounded history is still pending.
-      await expect
-        .poll(() =>
-          page.evaluate(() => window.fixtureNavigation.snapshot().status),
-        )
-        .toBe("opened");
-      await expect(region).toHaveAttribute("aria-busy", "false");
+    const trigger = page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ });
+    // Virtua can retain its pointer lock after geometry stops moving. Wait
+    // for input readiness before Playwright tries alternate scroll alignments.
+    await virtuaIdle(page);
+    await trigger.click();
+    // The fixture relay holds older thread_window pages in app.pending.
+    await expect
+      .poll(() =>
+        app.pending.some(
+          (entry) => entry.filter.thread_window && entry.filter.until,
+        ),
+      )
+      .toBe(true);
+    await expect(region.locator("[data-message-id]")).toHaveCount(11);
+    await expect(
+      region.getByText("Broadcast descendant", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      region.getByText("Loading thread…", { exact: true }),
+    ).toHaveCount(0);
+    // The panel is presented even while bounded history is still pending.
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+    await expect(region).toHaveAttribute("aria-busy", "false");
+    await expect
+      .poll(() =>
+        region.evaluate(
+          (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+        ),
+      )
+      .toBeLessThan(4);
+    let anchor;
+    if (reading) {
+      const bottom = await region.evaluate((node) => node.scrollTop);
+      await region.hover();
+      // A wheel request is not an exact displacement (Linux WebKit can stop
+      // short), so the reading position is wherever the completed gesture
+      // came to rest; the checks below then hold that row in place.
+      await wheel(page, -500, region);
+      const scrolled = await region.evaluate((node) => node.scrollTop);
+      expect(scrolled, "reading gesture leaves the bottom").toBeLessThan(
+        bottom,
+      );
+      anchor = await region.evaluate((node) => {
+        const top = node.getBoundingClientRect().top;
+        const row = [...node.querySelectorAll("ol [data-message-id]")].find(
+          (item) => item.getBoundingClientRect().bottom > top,
+        );
+        if (!row) throw new Error("Missing visible reading reply");
+        return {
+          id: row.dataset.messageId,
+          top: row.getBoundingClientRect().top - top,
+        };
+      });
+    }
+    for (const entry of app.pending.splice(0)) entry.release();
+    await expect(region.locator("[data-message-id]")).toHaveCount(58);
+    await expect(
+      region.getByText("Loading thread…", { exact: true }),
+    ).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+    let position = 0;
+    if (reading) {
+      const afterTop = await region.evaluate((node, id) => {
+        const row = node.querySelector(`[data-message-id="${id}"]`);
+        if (!row) throw new Error("Anchored reply disappeared");
+        return (
+          row.getBoundingClientRect().top - node.getBoundingClientRect().top
+        );
+      }, anchor.id);
+      expect(Math.abs(afterTop - anchor.top)).toBeLessThan(1.5);
+      position = await region.evaluate((node) => node.scrollTop);
+      const jumpToLatest = region.locator("button[data-jump-to-latest]");
+      await expect(jumpToLatest).toHaveAccessibleName("Jump to latest");
+    } else {
       await expect
         .poll(() =>
           region.evaluate(
@@ -225,118 +264,75 @@ for (const reading of [false, true]) {
           ),
         )
         .toBeLessThan(4);
-      let position = 0;
-      if (reading) {
-        const bottom = await region.evaluate((node) => node.scrollTop);
-        await region.hover();
-        // A wheel request is not an exact displacement (Linux WebKit can stop
-        // short), so the reading position is wherever the completed gesture
-        // came to rest; the checks below then hold that value exactly.
-        await wheel(page, -500, region);
-        position = await region.evaluate((node) => node.scrollTop);
-        expect(position, "reading gesture leaves the bottom").toBeLessThan(
-          bottom,
-        );
-      }
-      release();
-      await expect(region.locator("[data-message-id]")).toHaveCount(123);
       await expect(
-        region.getByText("Loading thread…", { exact: true }),
-      ).toHaveCount(0);
-      await expect
-        .poll(() =>
-          page.evaluate(() => window.fixtureNavigation.snapshot().status),
-        )
-        .toBe("opened");
-      if (reading) {
-        expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
-        const jumpToLatest = region.locator("button[data-jump-to-latest]");
-        await expect(jumpToLatest).toHaveAccessibleName("Jump to latest");
-      } else {
-        await expect
-          .poll(() =>
-            region.evaluate(
-              (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
-            ),
-          )
-          .toBeLessThan(4);
-        await expect(
-          region.locator(`[data-message-id="${last.id}"]`),
-        ).toBeInViewport();
-        await expect(
-          page.getByRole("textbox", { name: "Reply to thread", exact: true }),
-        ).toBeFocused();
-      }
-      const live = app.reply(root.id);
+        region.locator(`[data-message-id="${last.id}"]`),
+      ).toBeInViewport();
+      await expect(
+        page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+      ).toBeFocused();
+    }
+    const live = app.reply(root.id);
+    await expect(
+      region.locator(`[data-message-id="${live.id}"]`),
+    ).toBeVisible();
+    if (reading) {
+      expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
+      const jumpToLatest = region.locator("button[data-jump-to-latest]");
+      await expect(jumpToLatest).toHaveAccessibleName("1 new message");
+      await jumpToLatest.focus();
+      await page.keyboard.press("Space");
+      await expect(region).toBeFocused();
       await expect(
         region.locator(`[data-message-id="${live.id}"]`),
-      ).toBeVisible();
-      if (reading) {
-        expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
-        const jumpToLatest = region.locator("button[data-jump-to-latest]");
-        await expect(jumpToLatest).toHaveAccessibleName("1 new message");
-        await jumpToLatest.focus();
-        await page.keyboard.press("Space");
-        await expect(region).toBeFocused();
-        await expect(
-          region.locator(`[data-message-id="${live.id}"]`),
-        ).toBeInViewport();
-        await expect(jumpToLatest).toHaveCount(1);
-        await expect(
-          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
-        ).toHaveAttribute("inert", "");
-        await expect(
-          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
-        ).toHaveAttribute("aria-hidden", "true");
-        await expect(region.getByRole("button").and(jumpToLatest)).toHaveCount(
-          0,
-        );
-        await expect(jumpToLatest).toBeHidden();
-        await region.hover();
-        await wheel(page, -500, region);
-        await expect
-          .poll(() =>
-            region.evaluate(
-              (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
-            ),
-          )
-          .toBeGreaterThan(80);
-        const nextLive = app.reply(root.id);
-        await expect(jumpToLatest).toHaveAccessibleName("1 new message");
-        await jumpToLatest.focus();
-        await page.keyboard.press("Enter");
-        await expect(region).toBeFocused();
-        await expect(
-          region.locator(`[data-message-id="${nextLive.id}"]`),
-        ).toBeInViewport();
-        await expect(jumpToLatest).toHaveCount(1);
-        await expect(
-          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
-        ).toHaveAttribute("inert", "");
-        await expect(
-          jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
-        ).toHaveAttribute("aria-hidden", "true");
-        await expect(region.getByRole("button").and(jumpToLatest)).toHaveCount(
-          0,
-        );
-        await expect(jumpToLatest).toBeHidden();
-      } else {
-        await expect(
-          region.locator(`[data-message-id="${live.id}"]`),
-        ).toBeInViewport();
-      }
-      // Expansion changes visibility, not the loaded-history count.
-      await region.getByRole("button", { name: /^View 1 reply/ }).click();
-      await expect(
-        region.getByText("Broadcast descendant", { exact: true }),
       ).toBeInViewport();
-      await expect(region.locator("[data-message-id]")).toHaveCount(
-        reading ? 126 : 125,
-      );
-    } finally {
-      release();
-      await page.unroute(routePattern);
+      await expect(jumpToLatest).toHaveCount(1);
+      await expect(
+        jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+      ).toHaveAttribute("inert", "");
+      await expect(
+        jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+      ).toHaveAttribute("aria-hidden", "true");
+      await expect(region.getByRole("button").and(jumpToLatest)).toHaveCount(0);
+      await expect(jumpToLatest).toBeHidden();
+      await region.hover();
+      await wheel(page, -500, region);
+      await expect
+        .poll(() =>
+          region.evaluate(
+            (node) => node.scrollHeight - node.clientHeight - node.scrollTop,
+          ),
+        )
+        .toBeGreaterThan(80);
+      const nextLive = app.reply(root.id);
+      await expect(jumpToLatest).toHaveAccessibleName("1 new message");
+      await jumpToLatest.focus();
+      await page.keyboard.press("Enter");
+      await expect(region).toBeFocused();
+      await expect(
+        region.locator(`[data-message-id="${nextLive.id}"]`),
+      ).toBeInViewport();
+      await expect(jumpToLatest).toHaveCount(1);
+      await expect(
+        jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+      ).toHaveAttribute("inert", "");
+      await expect(
+        jumpToLatest.locator("xpath=ancestor::*[@data-visible][1]"),
+      ).toHaveAttribute("aria-hidden", "true");
+      await expect(region.getByRole("button").and(jumpToLatest)).toHaveCount(0);
+      await expect(jumpToLatest).toBeHidden();
+    } else {
+      await expect(
+        region.locator(`[data-message-id="${live.id}"]`),
+      ).toBeInViewport();
     }
+    // Expansion changes visibility, not the loaded-history count.
+    await region.getByRole("button", { name: /^View 1 reply/ }).click();
+    await expect(
+      region.getByText("Broadcast descendant", { exact: true }),
+    ).toBeInViewport();
+    await expect(region.locator("[data-message-id]")).toHaveCount(
+      reading ? 61 : 60,
+    );
   });
 }
 
@@ -1084,7 +1080,7 @@ test("Back and Forward return to a root-linked thread's reading place; a fresh l
     app.append(
       "primary",
       "alpha",
-      `Long reply ${i}\n${"Enough text to scroll the thread. ".repeat(8)}`,
+      `Long reply ${i}\n${"Enough text to scroll the thread. ".repeat(20)}`,
       false,
       false,
       root.id,

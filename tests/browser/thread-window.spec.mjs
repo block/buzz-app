@@ -181,38 +181,6 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
   }
 });
 
-test("legacy continuation failure exposes recovery after retained replies", async ({
-  page,
-}) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
-  await server.listen();
-  try {
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?failLegacyContinuation=1`,
-    );
-    const history = page.getByRole("region", { name: "Thread messages" });
-    const replies = history.locator("ol [data-message-id]");
-    // The first page is started on mount; the next page is a separate read.
-    await expect(replies).toHaveCount(50);
-    const error = history.getByRole("alert");
-    const retry = history.getByRole("button", { name: "Try again" });
-    await expect(error).toHaveText("This thread didn’t load.");
-    await expect(retry).toBeVisible();
-    await retry.click();
-    await expect(replies).toHaveCount(61);
-    await expect(error).toHaveCount(0);
-  } finally {
-    await server.close();
-  }
-});
-
 // Browser boundary: actual layout/scroll anchoring and user demand over the real
 // StrictMode session and ThreadPanel. Protocol permutations stay in owner tests.
 test("older-page loading adds no row or layout shift while the request is held, and a page that leaves its reader at the latest reply keeps them following", async ({
@@ -459,7 +427,7 @@ test("newest window positions immediately; scrollback holds the visible reply in
     expect(new Set(ids).size).toBe(305);
     expect(
       (await page.evaluate(() => window.messagesFixture.report.filters)).every(
-        (f) => f.thread_window && f.thread_cursor === undefined,
+        (f) => f.thread_window === true,
       ),
     ).toBe(true);
     expect(errors.unexplained()).toEqual([]);

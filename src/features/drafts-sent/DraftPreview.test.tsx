@@ -127,13 +127,8 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
                 historyStarted();
                 await historyGate;
               }
-              const found = events.filter(
-                (event) =>
-                  matchesEvent(event, filter) &&
-                  (filter.thread_cursor === undefined ||
-                    event.created_at > filter.thread_cursor ||
-                    (event.created_at === filter.thread_cursor &&
-                      event.id > (filter.thread_cursor_id ?? ""))),
+              const found = events.filter((event) =>
+                matchesEvent(event, filter),
               );
               const channelId = filter["#h"]?.[0];
               const rootId = filter["#e"]?.[0];
@@ -516,6 +511,11 @@ it.each([false, true])(
     );
     const region = screen.getByRole("region", { name: "Draft for #Design" });
     await within(region).findByRole("textbox");
+    await waitFor(() =>
+      expect(
+        within(region).getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
     vi.useFakeTimers();
     fireEvent.click(
       within(region).getByRole("button", { name: "Send message" }),

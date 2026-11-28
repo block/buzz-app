@@ -36,23 +36,31 @@ afterEach(() => {
 async function reviewAfterCachedFailure() {
   const { useMediaElementSource } = await import("./use-media-element-source");
   const { createRelaySession } = await import("../relay/session");
-  const { keypair, message } = await import("../relay/testing");
+  const { keypair, message, threadWindowBounds } = await import(
+    "../relay/testing"
+  );
   const { MediaReviewViewer } = await import("./MediaReviewViewer");
   const inline = renderHook(() => useMediaElementSource(source));
   await waitFor(() => expect(inline.result.current.unavailable).toBe(true));
   inline.unmount();
   const viewer = keypair();
+  const relay = keypair();
+  const scope = "https://relay.test";
   const root = message(viewer, "one", "Video", 1, [
     ["imeta", `url ${url}`, "m video/mp4"],
   ]);
   const owner = createRelaySession({
     viewer: viewer.pubkey,
-    relayAuthor: keypair().pubkey,
+    relayAuthor: relay.pubkey,
+    scope,
     media: () => source,
     async query(filters) {
-      return filters.some((filter) => filter.ids?.includes(root.id))
-        ? [root]
-        : [];
+      if (filters.some((filter) => filter.ids?.includes(root.id)))
+        return [root];
+      const window = filters.find((filter) => filter.thread_window);
+      if (window)
+        return [await threadWindowBounds(relay, scope, viewer.pubkey, window)];
+      return [];
     },
   });
   owners.push(owner);

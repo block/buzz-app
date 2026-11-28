@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
-import { keypair, message, signed } from "../relay/testing";
+import { keypair, message, signed, threadWindowBounds } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -28,12 +28,15 @@ const videoAttachment = {
 
 function setupReview(initialTime = 7, writable = false) {
   const viewer = keypair();
+  const relay = keypair();
+  const scope = "https://relay.test";
   const root = message(viewer, "one", "Video", 1, [
     ["imeta", `url ${videoAttachment.url}`, "m video/mp4"],
   ]);
   const owner = createRelaySession({
     viewer: viewer.pubkey,
-    relayAuthor: keypair().pubkey,
+    relayAuthor: relay.pubkey,
+    scope,
     media: (url) => `media:${url}`,
     ...(writable
       ? {
@@ -46,6 +49,9 @@ function setupReview(initialTime = 7, writable = false) {
     async query(filters) {
       if (filters.some((filter) => filter.ids?.includes(root.id)))
         return [root];
+      const window = filters.find((filter) => filter.thread_window);
+      if (window)
+        return [await threadWindowBounds(relay, scope, viewer.pubkey, window)];
       return [];
     },
   });
@@ -84,12 +90,12 @@ it("opens shared video review at the requested frame and tracks playback time", 
   fireEvent.timeUpdate(video);
 
   expect(
-    within(
+    await within(
       screen.getByRole("complementary", { name: "Media comments" }),
-    ).getByText("01:05"),
+    ).findByText("01:05"),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("checkbox", { name: "Comment at current frame" }),
+    await screen.findByRole("checkbox", { name: "Comment at current frame" }),
   ).toBeChecked();
 });
 
@@ -122,7 +128,7 @@ it("keeps the same video and playback position when hiding and showing comments"
   const comments = screen.getByRole("complementary", {
     name: "Media comments",
   });
-  const timeOption = screen.getByRole("checkbox", {
+  const timeOption = await screen.findByRole("checkbox", {
     name: "Comment at current frame",
   });
   fireEvent.click(timeOption);
@@ -278,7 +284,9 @@ it("leaves editing, native sliders, speed menus, and modified arrow keys alone",
   if (!video) throw new Error("Missing video element");
   video.currentTime = 25;
   fireEvent.click(screen.getByRole("button", { name: "Video volume" }));
-  const composer = screen.getByRole("textbox", { name: "Reply to thread" });
+  const composer = await screen.findByRole("textbox", {
+    name: "Reply to thread",
+  });
   for (const target of [
     composer,
     timeline,
@@ -358,8 +366,11 @@ it("preserves Space in the composer and on focused controls", async () => {
   const play = vi.spyOn(video, "play");
   const pause = vi.spyOn(video, "pause");
   fireEvent.click(screen.getByRole("button", { name: "Video volume" }));
+  const composer = await screen.findByRole("textbox", {
+    name: "Reply to thread",
+  });
   for (const target of [
-    screen.getByRole("textbox", { name: "Reply to thread" }),
+    composer,
     screen.getByRole("button", { name: "Close fullscreen viewer" }),
     screen.getByRole("button", { name: "Play video" }),
     screen.getByRole("slider", { name: "Video volume" }),

@@ -15,7 +15,13 @@ import userEvent from "@testing-library/user-event";
 import { PanelWorkspace } from "../panels/PanelWorkspace";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
-import { keypair, message, profile, signed } from "../relay/testing";
+import {
+  keypair,
+  message,
+  profile,
+  signed,
+  threadWindowBounds,
+} from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { profileTarget } from "../profiles/target";
 
@@ -58,29 +64,35 @@ it("keeps fullscreen comment avatar hints in sync without loading the agent libr
     profile(libraryAgent, { name: "Library agent" }),
     profile(envelope, { name: "Envelope agent" }),
   ];
+  const relay = keypair();
+  const origin = "https://review.test";
   const owner = createRelaySession({
     viewer: viewer.pubkey,
-    relayAuthor: keypair().pubkey,
+    relayAuthor: relay.pubkey,
+    scope: origin,
     media: (url) => url,
     readAgentLibrary,
     async query(filters) {
-      return filters.flatMap((filter) => {
-        if (filter.kinds?.includes(0))
-          return profiles.filter((event) =>
-            filter.authors?.includes(event.pubkey),
-          );
-        if (filter.ids)
-          return [root, ...replies].filter((event) =>
-            filter.ids?.includes(event.id),
-          );
-        if (filter.depth_limit)
-          return replies.filter(
-            (event) =>
-              filter.thread_cursor === undefined ||
-              event.created_at > filter.thread_cursor,
-          );
-        return [];
-      });
+      return (
+        await Promise.all(
+          filters.map(async (filter) => {
+            if (filter.kinds?.includes(0))
+              return profiles.filter((event) =>
+                filter.authors?.includes(event.pubkey),
+              );
+            if (filter.ids)
+              return [root, ...replies].filter((event) =>
+                filter.ids?.includes(event.id),
+              );
+            if (filter.thread_window)
+              return [
+                ...replies,
+                await threadWindowBounds(relay, origin, viewer.pubkey, filter),
+              ];
+            return [];
+          }),
+        )
+      ).flat();
     },
   });
   owners.push(owner);
@@ -166,28 +178,34 @@ it("renders comment mentions as names even though comment links stay inert", asy
     profile(viewer, { name: "Human" }),
     profile(tyler, { name: "Tyler" }),
   ];
+  const relay = keypair();
+  const origin = "https://review.test";
   const owner = createRelaySession({
     viewer: viewer.pubkey,
-    relayAuthor: keypair().pubkey,
+    relayAuthor: relay.pubkey,
+    scope: origin,
     media: (url) => url,
     async query(filters) {
-      return filters.flatMap((filter) => {
-        if (filter.kinds?.includes(0))
-          return profiles.filter((event) =>
-            filter.authors?.includes(event.pubkey),
-          );
-        if (filter.ids)
-          return [root, ...replies].filter((event) =>
-            filter.ids?.includes(event.id),
-          );
-        if (filter.depth_limit)
-          return replies.filter(
-            (event) =>
-              filter.thread_cursor === undefined ||
-              event.created_at > filter.thread_cursor,
-          );
-        return [];
-      });
+      return (
+        await Promise.all(
+          filters.map(async (filter) => {
+            if (filter.kinds?.includes(0))
+              return profiles.filter((event) =>
+                filter.authors?.includes(event.pubkey),
+              );
+            if (filter.ids)
+              return [root, ...replies].filter((event) =>
+                filter.ids?.includes(event.id),
+              );
+            if (filter.thread_window)
+              return [
+                ...replies,
+                await threadWindowBounds(relay, origin, viewer.pubkey, filter),
+              ];
+            return [];
+          }),
+        )
+      ).flat();
     },
   });
   owners.push(owner);
@@ -259,24 +277,30 @@ it("opens comments at the reply the reader was viewing behind the review", async
     },
   );
   const scrollTop = vi.spyOn(Element.prototype, "scrollTop", "set");
+  const relay = keypair();
+  const origin = "https://review.test";
   const owner = createRelaySession({
     viewer: viewer.pubkey,
-    relayAuthor: keypair().pubkey,
+    relayAuthor: relay.pubkey,
+    scope: origin,
     media: (url) => url,
     async query(filters) {
-      return filters.flatMap((filter) => {
-        if (filter.ids)
-          return [root, ...replies].filter((event) =>
-            filter.ids?.includes(event.id),
-          );
-        if (filter.depth_limit)
-          return replies.filter(
-            (event) =>
-              filter.thread_cursor === undefined ||
-              event.created_at > filter.thread_cursor,
-          );
-        return [];
-      });
+      return (
+        await Promise.all(
+          filters.map(async (filter) => {
+            if (filter.ids)
+              return [root, ...replies].filter((event) =>
+                filter.ids?.includes(event.id),
+              );
+            if (filter.thread_window)
+              return [
+                ...replies,
+                await threadWindowBounds(relay, origin, viewer.pubkey, filter),
+              ];
+            return [];
+          }),
+        )
+      ).flat();
     },
   });
   owners.push(owner);
@@ -318,13 +342,19 @@ it("wires image review links to the viewer host opener", async () => {
   const root = message(viewer, "one", "Image", 1, [
     ["imeta", `url ${image.url}`, "m image/png"],
   ]);
+  const relay = keypair();
+  const origin = "https://review.test";
   const owner = createRelaySession({
     viewer: viewer.pubkey,
-    relayAuthor: keypair().pubkey,
+    relayAuthor: relay.pubkey,
+    scope: origin,
     media: (url) => url,
     async query(filters) {
       if (filters.some((filter) => filter.ids?.includes(root.id)))
         return [root];
+      const window = filters.find((filter) => filter.thread_window);
+      if (window)
+        return [await threadWindowBounds(relay, origin, viewer.pubkey, window)];
       return [];
     },
   });
@@ -364,13 +394,19 @@ it("excludes generic files from the image review grid", async () => {
     ["imeta", `url ${image.url}`, "m image/png"],
     ["imeta", `url ${file.url}`, "m application/pdf"],
   ]);
+  const relay = keypair();
+  const origin = "https://review.test";
   const owner = createRelaySession({
     viewer: viewer.pubkey,
-    relayAuthor: keypair().pubkey,
+    relayAuthor: relay.pubkey,
+    scope: origin,
     media: (url) => url,
     async query(filters) {
       if (filters.some((filter) => filter.ids?.includes(root.id)))
         return [root];
+      const window = filters.find((filter) => filter.thread_window);
+      if (window)
+        return [await threadWindowBounds(relay, origin, viewer.pubkey, window)];
       return [];
     },
   });
@@ -405,14 +441,20 @@ it("Escape closes media opened from a tab without closing the tab", async () => 
   const root = message(viewer, "one", "Image", 1, [
     ["imeta", `url ${attachment.url}`, "m image/png"],
   ]);
+  const relay = keypair();
+  const origin = "https://review.test";
   const owner = createRelaySession({
     viewer: viewer.pubkey,
-    relayAuthor: keypair().pubkey,
+    relayAuthor: relay.pubkey,
+    scope: origin,
     media: (url) => url,
     async query(filters) {
-      return filters.some((filter) => filter.ids?.includes(root.id))
-        ? [root]
-        : [];
+      if (filters.some((filter) => filter.ids?.includes(root.id)))
+        return [root];
+      const window = filters.find((filter) => filter.thread_window);
+      if (window)
+        return [await threadWindowBounds(relay, origin, viewer.pubkey, window)];
+      return [];
     },
   });
   owners.push(owner);

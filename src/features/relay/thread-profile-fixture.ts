@@ -11,8 +11,16 @@ import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import type { SavedHead } from "./persistence";
 import type { ReadJournal } from "./read-state-storage";
-import { bounds, message, profile, roster } from "./testing";
+import {
+  bounds,
+  message,
+  profile,
+  roster,
+  threadWindowBounds,
+} from "./testing";
 import { connectBrokerTransport } from "./transport";
+
+const PROFILE_ORIGIN = "https://profile.example";
 
 export const workload = {
   version: 1,
@@ -160,6 +168,7 @@ export async function threadSample(
           JSON.stringify({
             viewer: data.viewer.pubkey,
             relayAuthor: data.relay.pubkey,
+            relayUrl: PROFILE_ORIGIN,
           }),
         );
         return;
@@ -204,35 +213,47 @@ export async function threadSample(
           if (filter.authors)
             assert.deepEqual(filter.authors, [data.viewer.pubkey]);
         events = [];
+      } else if (first?.thread_window) {
+        assert.equal(filters.length, 1);
+        assert.deepEqual(first, {
+          kinds: [40002, 9],
+          "#h": ["a"],
+          "#e": [data.root.id],
+          depth_limit: 100,
+          limit: first.until === undefined ? 10 : 50,
+          include_aux: true,
+          thread_window: true,
+          ...(first.until !== undefined
+            ? { until: first.until, before_id: first.before_id }
+            : {}),
+        });
+        const newest = [...data.replies].reverse();
+        const eligible = newest.filter(
+          (event) =>
+            first.until === undefined ||
+            event.created_at < first.until ||
+            (event.created_at === first.until &&
+              event.id > (first.before_id ?? "")),
+        );
+        const page = eligible.slice(0, first.limit);
+        const last = page.at(-1);
+        assert.ok(last);
+        events = [
+          ...page,
+          await threadWindowBounds(
+            data.relay,
+            PROFILE_ORIGIN,
+            data.viewer.pubkey,
+            first,
+            eligible.length > page.length
+              ? { created_at: last.created_at, id: last.id }
+              : null,
+          ),
+        ];
       } else {
         assert.deepEqual(first, { ids: [data.root.id], "#h": ["a"], limit: 1 });
-        assert.ok(filters.length === 1 || filters.length === 2);
+        assert.equal(filters.length, 1);
         events = [data.root];
-        const page = filters[1];
-        if (page) {
-          const cursor = data.replies.findIndex(
-            (r) => r.id === page.thread_cursor_id,
-          );
-          if (page.thread_cursor_id !== undefined) {
-            assert.ok(cursor >= 0);
-            assert.equal(page.thread_cursor, data.replies[cursor]?.created_at);
-          }
-          assert.deepEqual(page, {
-            kinds: [40002, 40008, 9],
-            "#h": ["a"],
-            "#e": [data.root.id],
-            depth_limit: 100,
-            limit: 50,
-            include_aux: true,
-            ...(cursor >= 0
-              ? {
-                  thread_cursor: data.replies[cursor]?.created_at,
-                  thread_cursor_id: data.replies[cursor]?.id,
-                }
-              : {}),
-          });
-          events.push(...data.replies.slice(cursor + 1, cursor + 51));
-        }
       }
       const payload = JSON.stringify(
         corrupt && events[0]?.id === data.root.id
@@ -359,7 +380,7 @@ export async function threadSample(
           done.reject(fixtureError ?? new Error(snapshot.error));
         if (
           snapshot.status === "ready" &&
-          !snapshot.canLoadMore &&
+          !snapshot.resumed &&
           data.profiles.every((p) =>
             owner.session.profiles.snapshot().has(p.pubkey),
           )
@@ -382,12 +403,23 @@ export async function threadSample(
         const cpuUsed = process.cpuUsage(cpu);
         await mounted.rendered();
         const domReadyMs = performance.now() - start;
+        await deadline(
+          (async () => {
+            while (
+              owner.session.profiling
+                .snapshot()
+                .some((t) => t.outcome === "pending")
+            )
+              await new Promise((resolve) => setTimeout(resolve, 1));
+          })(),
+        );
         if (fixtureError) throw fixtureError;
         const snapshot = view.snapshot();
         assert.equal(snapshot.root?.id, data.root.id);
+        const expectedReplies = data.replies.slice(-10);
         assert.deepEqual(
           snapshot.replies.map((r) => r.id),
-          data.replies.map((r) => r.id),
+          expectedReplies.map((r) => r.id),
         );
         assertProjection(
           data,
@@ -395,6 +427,7 @@ export async function threadSample(
           snapshot.replies,
           owner.session.profiles.snapshot(),
         );
+        assert.equal(snapshot.canLoadMore, true);
         assert.equal(snapshot.limited, false);
         assert.equal(snapshot.error, undefined);
         const timings = owner.session.profiling.snapshot();
@@ -410,21 +443,22 @@ export async function threadSample(
           mode === "cold" ? 1 : 0,
         );
         assert.equal(
-          trace.filter((r) => r.filters.length === 2 && !lookup(r.filters))
-            .length,
-          4,
-          "three data pages plus empty continuation",
+          trace.filter((r) => r.filters[0]?.thread_window).length,
+          1,
+          "initial newest-first window",
         );
         assert.equal(
           trace.filter(
             (r) =>
               r.filters.length === 1 && r.filters[0]?.ids && !lookup(r.filters),
           ).length,
-          mode === "cold" ? 1 : 0,
+          mode === "cold" ? 2 : 1,
         );
+        // Root lands before the first reply window, so cold open fetches the
+        // root author's profile first and the reply authors' profiles second.
         assert.equal(
           trace.filter((r) => r.filters[0]?.kinds?.includes(0)).length,
-          mode === "cold" ? 1 : 0,
+          mode === "cold" ? 2 : 0,
         );
         assert.equal(
           timings.filter((t) => t.stage === "read.verify").length,
@@ -504,7 +538,7 @@ export function assertProjection(
 ) {
   assert.ok(root);
   const rows = [root, ...replies];
-  const source = [data.root, ...data.replies];
+  const source = [data.root, ...data.replies.slice(-replies.length)];
   assert.equal(rows.length, source.length);
   rows.forEach((row, i) => {
     const event = source[i];

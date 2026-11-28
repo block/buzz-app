@@ -10,6 +10,7 @@ import { hasTag, type ReadFilter, type RelayEvent } from "./events";
 import { PublishRejected } from "./outbox";
 import { authTagOwner } from "../agents/owner-attestation";
 import type { ReadTransport, Signer } from "./transport";
+import { threadBinding, type ThreadCursor } from "./thread-window";
 
 /** Test-only signing helpers. Real signatures so the transport's verification stays on. */
 export function keypair() {
@@ -100,6 +101,32 @@ export function bounds(
       ["h", channelId],
       ["d", `${channelId}:${cursorSuffix}`],
     ],
+  });
+}
+export async function threadWindowBounds(
+  relay: Key,
+  origin: string,
+  viewer: string,
+  filter: ReadFilter,
+  cursor: ThreadCursor | null = null,
+): Promise<RelayEvent> {
+  const channelId = filter["#h"]?.[0];
+  const rootId = filter["#e"]?.[0];
+  if (!channelId || !rootId)
+    throw new Error("threadWindowBounds requires #h and #e filters");
+  return signed(relay, {
+    kind: 39007,
+    tags: [
+      ["d", await threadBinding(filter, origin, viewer)],
+      ["h", channelId],
+      ["e", rootId],
+    ],
+    content: JSON.stringify({
+      version: 1,
+      direction: "older",
+      has_more: cursor !== null,
+      next_cursor: cursor,
+    }),
   });
 }
 export function summary(
@@ -205,12 +232,14 @@ export function scriptedTransport(
   {
     notices = false,
     statuses = false,
-  }: { notices?: boolean; statuses?: boolean } = {},
+    scope,
+  }: { notices?: boolean; statuses?: boolean; scope?: string } = {},
 ) {
   const pending: Scripted[] = [];
   const transport: ReadTransport = {
     viewer,
     relayAuthor,
+    ...(scope ? { scope } : {}),
     media: (url) => (/^https:\/\//.test(url) ? url : undefined),
     query(filters, signal) {
       if (!notices && isNoticeRead(filters)) return Promise.resolve([]);

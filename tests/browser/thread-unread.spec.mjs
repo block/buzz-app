@@ -6,6 +6,7 @@ import {
   holdReadingFocus,
   readJournal,
   releaseReadingFocus,
+  releasing,
 } from "./reading.mjs";
 import { openPage } from "./navigation.mjs";
 import { channelUnread } from "./unread-state.mjs";
@@ -836,9 +837,9 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
   }
 });
 
-// Browser-only contract: fitting rows generate no scroll/resize when an empty
-// legacy continuation finishes. Opening alone must still earn reading dwell.
-test("opening a fitting thread reads after unchanged-row continuation without another gesture", async ({
+// Browser-only contract: fitting rows generate no scroll/resize when the first
+// thread window settles. Opening alone must still earn reading dwell.
+test("opening a fitting thread reads without another gesture and retargeting transfers focus", async ({
   page,
   app,
 }) => {
@@ -851,50 +852,24 @@ test("opening a fitting thread reads after unchanged-row continuation without an
     .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
     .getByRole("button", { name: /^View thread:/ });
   await expect(button).toHaveAccessibleName(/Observed unread replies/);
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  let continuation = false;
-  await page.route("**/query", async (route) => {
-    const filters = route.request().postDataJSON();
-    if (
-      filters.some(
-        (filter) =>
-          filter.depth_limit &&
-          filter["#e"]?.[0] === root.id &&
-          filter.thread_cursor !== undefined,
-      )
-    ) {
-      continuation = true;
-      await gate;
-    }
-    await route.continue();
-  });
   const panel = page.getByRole("complementary", {
     name: "Thread",
     exact: true,
   });
   const history = panel.getByRole("region", { name: "Thread messages" });
-  try {
-    await button.click();
-    await expect.poll(() => continuation).toBe(true);
-    await expect(
-      panel.getByText("Unread reply 1", { exact: true }),
-    ).toBeInViewport();
-    await expect(
-      panel.getByRole("textbox", { name: "Reply to thread", exact: true }),
-    ).toBeFocused();
-    expect(
-      await history.evaluate(
-        (element) => element.scrollHeight <= element.clientHeight,
-      ),
-    ).toBe(true);
-    await page.clock.runFor(300);
-    await expect(button).toHaveAccessibleName(/Observed unread replies/);
-  } finally {
-    release();
-  }
+  await button.click();
+  await expect(
+    panel.getByText("Unread reply 1", { exact: true }),
+  ).toBeInViewport();
+  await expect(
+    panel.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeFocused();
+  expect(
+    await history.evaluate(
+      (element) => element.scrollHeight <= element.clientHeight,
+    ),
+  ).toBe(true);
+  await page.clock.runFor(400);
   await expect(button).not.toHaveAccessibleName(/Observed unread replies/);
   // An explicit retarget of the still-open panel also transfers reading focus.
   const otherRoot = app.histories
@@ -1035,6 +1010,16 @@ test("a line placed just short of the latest reply stays in view", async ({
   // Scrolled up from a fitting line that follows, a new reply leaves it there.
   await page.setViewportSize({ width, height: 950 });
   expect((await reopen()).below).toBeLessThan(1);
+  // Release the viewport-fill older page so the thread has scrollable history
+  // above the fitting line.
+  await releasing(app, async () => {
+    expect(
+      await history.evaluate(
+        (element) => element.scrollHeight - element.clientHeight,
+      ),
+    ).toBeGreaterThan(200);
+  });
+  expect((await measure()).below).toBeLessThan(1);
   await history.hover();
   await page.mouse.wheel(0, -200);
   await expect.poll(async () => (await measure()).below).toBeGreaterThan(100);

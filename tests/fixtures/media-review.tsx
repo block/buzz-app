@@ -21,6 +21,7 @@ import {
   roster,
   profile,
   signed,
+  threadWindowBounds,
 } from "../../src/features/relay/testing";
 import "../../src/shared/styles/globals.css";
 
@@ -191,10 +192,12 @@ if (reactionTarget) {
     );
   }
 }
+const reviewOrigin = "https://media-review.test";
 const owner = createRelaySession(
   {
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
+    scope: reviewOrigin,
     media: (url) =>
       url === portraitUrl
         ? "/shell-gradient.png"
@@ -250,34 +253,70 @@ const owner = createRelaySession(
         filters.some((filter) => filter.ids || filter.depth_limit)
       )
         await new Promise((resolve) => setTimeout(resolve, 1200));
-      return filters.flatMap((filter) => {
-        if (filter.kinds?.includes(39002) || filter.kinds?.includes(39000))
-          return [
-            roster(relay, "video-preview", [
-              viewer.pubkey,
-              designer.pubkey,
-              helper.pubkey,
-            ]),
-            metadata(relay, "video-preview", "Video preview"),
-          ];
-        if (filter.ids)
-          return new URLSearchParams(location.search).has("missing-root")
-            ? []
-            : events.filter((event) => filter.ids?.includes(event.id));
-        if (filter.kinds?.includes(0))
-          return events.filter((event) => event.kind === 0);
-        if (filter.kinds?.includes(7))
-          return events.filter((event) => event.kind === 7);
-        if (filter.depth_limit)
-          return (emptyThread ? [] : events).filter(
-            (event) =>
-              (event.kind === 9 || event.kind === 7) &&
-              event.id !== rootMessage.id &&
-              (!filter.thread_cursor ||
-                event.created_at > filter.thread_cursor),
-          );
-        return [];
-      });
+      return (
+        await Promise.all(
+          filters.map(async (filter) => {
+            if (filter.kinds?.includes(39002) || filter.kinds?.includes(39000))
+              return [
+                roster(relay, "video-preview", [
+                  viewer.pubkey,
+                  designer.pubkey,
+                  helper.pubkey,
+                ]),
+                metadata(relay, "video-preview", "Video preview"),
+              ];
+            if (filter.ids)
+              return new URLSearchParams(location.search).has("missing-root")
+                ? []
+                : events.filter((event) => filter.ids?.includes(event.id));
+            if (filter.kinds?.includes(0))
+              return events.filter((event) => event.kind === 0);
+            if (filter.kinds?.includes(7))
+              return events.filter((event) => event.kind === 7);
+            if (filter.thread_window) {
+              const replies = (emptyThread ? [] : events)
+                .filter(
+                  (event) =>
+                    event.kind === 9 &&
+                    event.id !== rootMessage.id &&
+                    (filter.until === undefined ||
+                      event.created_at < filter.until ||
+                      (event.created_at === filter.until &&
+                        event.id > (filter.before_id ?? ""))),
+                )
+                .sort(
+                  (a, b) =>
+                    b.created_at - a.created_at || a.id.localeCompare(b.id),
+                );
+              const page = replies.slice(0, filter.limit);
+              const pageIds = new Set(page.map((event) => event.id));
+              const aux = (emptyThread ? [] : events).filter(
+                (event) =>
+                  event.kind === 7 &&
+                  event.tags.some(
+                    ([key, value]) =>
+                      key === "e" && value !== undefined && pageIds.has(value),
+                  ),
+              );
+              const last = page.at(-1);
+              return [
+                ...page,
+                ...aux,
+                await threadWindowBounds(
+                  relay,
+                  reviewOrigin,
+                  viewer.pubkey,
+                  filter,
+                  replies.length > page.length && last
+                    ? { created_at: last.created_at, id: last.id }
+                    : null,
+                ),
+              ];
+            }
+            return [];
+          }),
+        )
+      ).flat();
     },
   },
   { outboxStorage: { load: () => [], save: () => {} } },

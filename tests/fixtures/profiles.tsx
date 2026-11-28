@@ -37,6 +37,7 @@ import {
   roster,
   signed,
   summary,
+  threadWindowBounds,
 } from "../../src/features/relay/testing";
 import {
   profileTarget,
@@ -147,7 +148,7 @@ function session() {
   return createRelaySession(
     {
       viewer: viewer.pubkey,
-      ...(localAgentProbe ? { scope: fixtureOrigin } : {}),
+      scope: fixtureOrigin,
       ...(memberMessageProbe
         ? {
             openDirectMessage: async (keys: readonly string[]) => {
@@ -223,127 +224,143 @@ function session() {
           replyPending = true;
           await replyGate;
         }
-        return filters.flatMap((filter) => {
-          // Only a lookup of the DM alone; a batched one also names channels.
-          if (
-            dmOpened &&
-            filter["#d"]?.length === 1 &&
-            filter["#d"][0] === "member-dm"
-          )
-            return dmEvents().filter((event) =>
-              filter.kinds?.includes(event.kind),
-            );
-          if (filter.kinds?.includes(9) && filter["#h"]?.includes("member-dm"))
-            return [
-              bounds(authority, "member-dm", "head", {
-                has_more: false,
-                next_cursor: null,
-              }),
-            ];
-          if (filter.kinds?.includes(39002))
-            return [
-              roster(authority, "one", [
-                viewer.pubkey,
-                mic.pubkey,
-                pinky.pubkey,
-              ]),
-              roster(authority, "two", [viewer.pubkey]),
-              ...(existingDmProbe
-                ? dmEvents().filter((event) => event.kind === 39002)
-                : []),
-            ];
-          if (filter.kinds?.includes(39000))
-            return [
-              signed(authority, {
-                kind: 39000,
-                content: JSON.stringify({ name: "One" }),
-                tags: [
-                  ["d", "one"],
-                  ["name", "One"],
-                  ["t", "stream"],
-                  ...(soloProbe ? [["private"], ["t", SOLO_LABEL]] : []),
-                ],
-              }),
-              signed(authority, {
-                kind: 39000,
-                content: JSON.stringify({ name: "Two" }),
-                tags: [
-                  ["d", "two"],
-                  ["name", "Two"],
-                  ["t", "stream"],
-                ],
-              }),
-              ...(existingDmProbe
-                ? dmEvents().filter((event) => event.kind === 39000)
-                : []),
-            ];
-          if (
-            filter.kinds?.includes(30315) &&
-            filter.authors?.includes(viewer.pubkey) &&
-            new URLSearchParams(location.search).has("long-status")
-          )
-            return [
-              signed(viewer, {
-                kind: 30315,
-                content: "Working EST hours until Oct 23",
-                tags: [
-                  ["d", "general"],
-                  ["emoji", "🇺🇸"],
-                ],
-              }),
-            ];
-          if (filter.kinds?.includes(30315))
-            return filter.authors?.includes(mic.pubkey)
-              ? [
-                  signed(mic, {
-                    kind: 30315,
-                    content: "In a meeting",
-                    tags: [
-                      ["d", "general"],
-                      ["emoji", "📅"],
-                    ],
-                  }),
-                ]
-              : [];
-          if (filter.kinds?.includes(0)) {
-            report.profileReads.push([...(filter.authors ?? [])]);
-            if (
-              failMissing &&
-              filter.authors?.length === 1 &&
-              filter.authors[0] === missing.pubkey
-            )
-              throw new Error("Fixture profile failure");
-            return data.filter((event) =>
-              filter.authors?.includes(event.pubkey),
-            );
-          }
-          if (filter.ids)
-            return [root, unknown, reply].filter((event) =>
-              filter.ids?.includes(event.id),
-            );
-          if (filter.depth_limit) return [reply];
-          if (filter.kinds?.includes(9))
-            return filter["#h"]?.includes("two")
-              ? [
-                  bounds(authority, "two", "head", {
-                    has_more: false,
-                    next_cursor: null,
-                  }),
-                ]
-              : [
-                  root,
-                  unknown,
-                  summary(authority, "one", root.id, {
-                    reply_count: 1,
-                    participants: [viewer.pubkey],
-                  }),
-                  bounds(authority, "one", "head", {
+        return (
+          await Promise.all(
+            filters.map(async (filter) => {
+              // Only a lookup of the DM alone; a batched one also names channels.
+              if (
+                dmOpened &&
+                filter["#d"]?.length === 1 &&
+                filter["#d"][0] === "member-dm"
+              )
+                return dmEvents().filter((event) =>
+                  filter.kinds?.includes(event.kind),
+                );
+              if (
+                filter.kinds?.includes(9) &&
+                filter["#h"]?.includes("member-dm")
+              )
+                return [
+                  bounds(authority, "member-dm", "head", {
                     has_more: false,
                     next_cursor: null,
                   }),
                 ];
-          return [];
-        });
+              if (filter.kinds?.includes(39002))
+                return [
+                  roster(authority, "one", [
+                    viewer.pubkey,
+                    mic.pubkey,
+                    pinky.pubkey,
+                  ]),
+                  roster(authority, "two", [viewer.pubkey]),
+                  ...(existingDmProbe
+                    ? dmEvents().filter((event) => event.kind === 39002)
+                    : []),
+                ];
+              if (filter.kinds?.includes(39000))
+                return [
+                  signed(authority, {
+                    kind: 39000,
+                    content: JSON.stringify({ name: "One" }),
+                    tags: [
+                      ["d", "one"],
+                      ["name", "One"],
+                      ["t", "stream"],
+                      ...(soloProbe ? [["private"], ["t", SOLO_LABEL]] : []),
+                    ],
+                  }),
+                  signed(authority, {
+                    kind: 39000,
+                    content: JSON.stringify({ name: "Two" }),
+                    tags: [
+                      ["d", "two"],
+                      ["name", "Two"],
+                      ["t", "stream"],
+                    ],
+                  }),
+                  ...(existingDmProbe
+                    ? dmEvents().filter((event) => event.kind === 39000)
+                    : []),
+                ];
+              if (
+                filter.kinds?.includes(30315) &&
+                filter.authors?.includes(viewer.pubkey) &&
+                new URLSearchParams(location.search).has("long-status")
+              )
+                return [
+                  signed(viewer, {
+                    kind: 30315,
+                    content: "Working EST hours until Oct 23",
+                    tags: [
+                      ["d", "general"],
+                      ["emoji", "🇺🇸"],
+                    ],
+                  }),
+                ];
+              if (filter.kinds?.includes(30315))
+                return filter.authors?.includes(mic.pubkey)
+                  ? [
+                      signed(mic, {
+                        kind: 30315,
+                        content: "In a meeting",
+                        tags: [
+                          ["d", "general"],
+                          ["emoji", "📅"],
+                        ],
+                      }),
+                    ]
+                  : [];
+              if (filter.kinds?.includes(0)) {
+                report.profileReads.push([...(filter.authors ?? [])]);
+                if (
+                  failMissing &&
+                  filter.authors?.length === 1 &&
+                  filter.authors[0] === missing.pubkey
+                )
+                  throw new Error("Fixture profile failure");
+                return data.filter((event) =>
+                  filter.authors?.includes(event.pubkey),
+                );
+              }
+              if (filter.ids)
+                return [root, unknown, reply].filter((event) =>
+                  filter.ids?.includes(event.id),
+                );
+              if (filter.thread_window)
+                return [
+                  reply,
+                  await threadWindowBounds(
+                    authority,
+                    fixtureOrigin,
+                    viewer.pubkey,
+                    filter,
+                  ),
+                ];
+              if (filter.kinds?.includes(9))
+                return filter["#h"]?.includes("two")
+                  ? [
+                      bounds(authority, "two", "head", {
+                        has_more: false,
+                        next_cursor: null,
+                      }),
+                    ]
+                  : [
+                      root,
+                      unknown,
+                      summary(authority, "one", root.id, {
+                        reply_count: 1,
+                        participants: [viewer.pubkey],
+                      }),
+                      bounds(authority, "one", "head", {
+                        has_more: false,
+                        next_cursor: null,
+                      }),
+                    ];
+              return [];
+            }),
+          )
+        ).flat();
       },
     },
     localAgentProbe

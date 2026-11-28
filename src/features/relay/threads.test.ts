@@ -10,9 +10,11 @@ import {
 } from "./threads";
 import { byteSize } from "./budget";
 import { ReadError } from "./errors";
+import type { ReadFilter, RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
 import type { OutgoingEvent } from "./outbox";
 import type { LiveCallbacks } from "./live";
+import type { ThreadCursor } from "./thread-window";
 import {
   bounds,
   flush,
@@ -22,8 +24,10 @@ import {
   roster,
   scriptedTransport,
   signed,
+  threadWindowBounds,
 } from "./testing";
 
+const origin = "https://relay.example";
 const relay = keypair(),
   viewer = keypair(),
   alice = keypair();
@@ -32,7 +36,9 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
 function setup(archiveAuthority?: string) {
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    scope: origin,
+  });
   let traffic!: LiveCallbacks;
   const owner = createRelaySession({
     ...wire.transport,
@@ -45,6 +51,40 @@ function setup(archiveAuthority?: string) {
   owners.push(owner);
   return { ...wire, ...owner, traffic };
 }
+const windowBounds = (
+  filter: Parameters<typeof threadWindowBounds>[3],
+  cursor: ThreadCursor | null = null,
+) => threadWindowBounds(relay, origin, viewer.pubkey, filter, cursor);
+async function respondWindow(
+  h: ReturnType<typeof setup>,
+  replies: readonly RelayEvent[],
+  cursor: ThreadCursor | null = null,
+) {
+  const page = h.next();
+  const filter = page.filters[0];
+  if (!filter?.thread_window) throw new Error("Expected thread_window query");
+  page.respond([...replies, await windowBounds(filter, cursor)]);
+}
+async function respondThread(
+  h: ReturnType<typeof setup>,
+  replies: readonly RelayEvent[],
+  cursor: ThreadCursor | null = null,
+  rootEvents: readonly RelayEvent[] = [root],
+) {
+  h.next().respond([...rootEvents]);
+  await flush();
+  await respondWindow(h, replies, cursor);
+}
+const endBound = signed(relay, {
+  kind: 39007,
+  tags: [],
+  content: JSON.stringify({
+    version: 1,
+    direction: "older",
+    has_more: false,
+    next_cursor: null,
+  }),
+});
 const root = message(alice, "a", "Root", 1);
 const replacementId = "f".repeat(64);
 const membership = {
@@ -353,7 +393,7 @@ it("seeds a thread root and observed replies synchronously from retained session
 /** A thread opened while the stream is up, as a settled view's resume needs. */
 function live() {
   const h = setup();
-  h.traffic.established();
+  h.traffic.established("a");
   h.traffic.receive([root]);
   return { ...h, view: h.session.thread("a", root.id) };
 }
@@ -361,22 +401,21 @@ it("reopens a closed thread at once from its last read and repairs it in the bac
   const h = live();
   const first = reply("first", 10);
   const loaded = h.view.refresh();
-  h.next().respond([root, first]);
+  await respondThread(h, [first]);
   await loaded;
   h.view.dispose();
 
   const view = h.session.thread("a", root.id);
   expect(view.snapshot()).toMatchObject({
     status: "ready",
-    direction: "forward",
+    loaded: true,
   });
   expect(view.snapshot().root?.id).toBe(root.id);
   expect(view.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
   const later = reply("later", 11);
   const repair = view.refresh();
-  const read = h.next();
   expect(view.snapshot().status).toBe("ready");
-  read.respond([root, first, later]);
+  await respondThread(h, [first, later]);
   await repair;
   expect(view.snapshot()).toMatchObject({ status: "ready" });
   expect(view.snapshot().replies.map((row) => row.id)).toEqual([
@@ -385,9 +424,8 @@ it("reopens a closed thread at once from its last read and repairs it in the bac
   ]);
   // Only the first refresh after reopening is a background repair.
   const next = view.refresh();
-  const again = h.next();
   expect(view.snapshot().status).toBe("loading");
-  again.respond([root, first, later]);
+  await respondThread(h, [first, later]);
   await next;
 });
 
@@ -395,7 +433,7 @@ it("reopens a thread at once after a route retargeted it to its root", async () 
   const h = live();
   const first = reply("first", 10);
   const loaded = h.view.refresh();
-  h.next().respond([root, first]);
+  await respondThread(h, [first]);
   await loaded;
   // Opening a thread from the timeline routes to its root, which the shown
   // view verifies in place.
@@ -420,7 +458,7 @@ it("reopens a thread from scratch after a cache clear, a close mid-read or an ex
   const first = reply("first", 10);
   const load = async (view: typeof h.view) => {
     const loaded = view.refresh();
-    h.next().respond([root, first]);
+    await respondThread(h, [first]);
     await loaded;
   };
   await load(h.view);
@@ -469,9 +507,9 @@ const direct = (
     relayAuthor: relay.pubkey,
     agentOwner,
     reader: {
-      read: async () => {
+      read: async (filters: readonly ReadFilter[]) => {
         if (events instanceof Error) throw events;
-        return events;
+        return filters[0]?.thread_window ? [...events, endBound] : events;
       },
     } as unknown as RelayReader,
     canRefresh: () => false,
@@ -600,7 +638,7 @@ it("shows a reply sent from a reopened thread before its first read lands", asyn
 it("reopens without admitting retained replies when only the resume holds the root", async () => {
   const h = live();
   const loaded = h.view.refresh();
-  h.next().respond([root, first, gone]);
+  await respondThread(h, [first, gone]);
   await loaded;
   h.view.dispose();
   // Unrelated traffic evicts the root from the session's recent events, then
@@ -617,7 +655,7 @@ it("reopens without admitting retained replies when only the resume holds the ro
     gone.id,
   ]);
   const repair = view.refresh();
-  h.next().respond([root, first]);
+  await respondThread(h, [first]);
   await repair;
   expect(view.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
 });
@@ -626,19 +664,21 @@ it("keeps a reply selected during a reopened thread's repair", async () => {
   const h = live();
   const first = reply("first", 10);
   const loaded = h.view.refresh();
-  h.next().respond([root, first]);
+  await respondThread(h, [first]);
   await loaded;
   h.view.dispose();
   const view = h.session.thread("a", root.id);
   const repair = view.refresh();
-  const window = h.next();
+  const rootRead = h.next();
   const selecting = view.retarget(first.id, new AbortController().signal);
   h.next().respond([first]);
   await flush();
   h.next().respond([]);
   expect(await selecting).toBe("selected");
   // Newer replies pushed it past the repair's range; it was still read.
-  window.respond([root]);
+  rootRead.respond([root]);
+  await flush();
+  await respondWindow(h, []);
   await repair;
   expect(view.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
 });
@@ -646,7 +686,7 @@ it("keeps a reply selected during a reopened thread's repair", async () => {
 it("keeps a resume when its reopened view closes mid-read, and drops every resume on lost access", async () => {
   const h = live();
   const loaded = h.view.refresh();
-  h.next().respond([root, reply("first", 10)]);
+  await respondThread(h, [reply("first", 10)]);
   await loaded;
   h.view.dispose();
   // StrictMode, or a quick switch away, closes a view while its repair runs.
@@ -688,96 +728,6 @@ it("resolves canonical marked ancestry, never arbitrary references or a lone roo
   });
 });
 
-it("keeps exact forward page cursors separate from concurrent live rows and auxiliary timestamps", async () => {
-  const h = seeded();
-  const first = reply("first", 10),
-    second = reply("second", 20),
-    live = reply("live", 100);
-  const loading = h.view.refresh();
-  const page = h.next();
-  expect(page.filters).toEqual([
-    { ids: [root.id], "#h": ["a"], limit: 1 },
-    {
-      kinds: [40002, 40008, 9],
-      "#h": ["a"],
-      "#e": [root.id],
-      depth_limit: 100,
-      include_aux: true,
-      limit: 50,
-    },
-  ]);
-  h.traffic.receive([live]);
-  page.respond([
-    root,
-    first,
-    second,
-    signed(alice, {
-      kind: 40003,
-      content: "edited",
-      created_at: 200,
-      tags: [["e", first.id]],
-    }),
-  ]);
-  await loading;
-  expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
-    "edited",
-    "second",
-    "live",
-  ]);
-  const more = h.view.loadMore();
-  const next = h.next();
-  expect(next.filters[1]).toMatchObject({
-    thread_cursor: 20,
-    thread_cursor_id: second.id,
-  });
-  next.respond([root, reply("third", 30)]);
-  await more;
-  expect(h.view.snapshot().replies.map((row) => row.createdAt)).toEqual([
-    10, 20, 30, 100,
-  ]);
-});
-
-it("pages same-second ties, counts non-rendered content and keeps short pages continuable", async () => {
-  const h = seeded();
-  const tied = [reply("one", 10), reply("two", 10)].sort((a, b) =>
-    a.id.localeCompare(b.id),
-  );
-  const first = h.view.refresh();
-  h.next().respond([root, ...tied]);
-  await first;
-  const more = h.view.loadMore();
-  const page = h.next();
-  expect(page.filters[1]).toMatchObject({
-    thread_cursor: 10,
-    thread_cursor_id: tied[1]?.id,
-  });
-  const other = signed(alice, {
-    kind: 45003,
-    content: "other content kind",
-    created_at: 11,
-    tags: [
-      ["h", "a"],
-      ["e", root.id, "", "reply"],
-    ],
-  });
-  page.respond([root, other]);
-  await more;
-  expect(h.view.snapshot().canLoadMore).toBe(true);
-  const end = h.view.loadMore();
-  const empty = h.next();
-  expect(empty.filters[1]).toMatchObject({
-    thread_cursor: 11,
-    thread_cursor_id: other.id,
-  });
-  empty.respond([root]);
-  await end;
-  expect(h.view.snapshot()).toMatchObject({
-    status: "ready",
-    canLoadMore: false,
-    limited: false,
-  });
-});
-
 it("resolves a selected broadcast reply to its actual root", async () => {
   const h = setup();
   const selected = reply("nested", 3, "b".repeat(64));
@@ -785,20 +735,29 @@ it("resolves a selected broadcast reply to its actual root", async () => {
   const loading = view.refresh();
   h.next().respond([selected]);
   await flush();
+  h.next().respond([root]);
+  await flush();
   const page = h.next();
-  expect(page.filters[1]?.["#e"]).toEqual([root.id]);
-  page.respond([root, selected]);
+  expect(page.filters[0]).toMatchObject({
+    thread_window: true,
+    "#e": [root.id],
+  });
+  const filter = page.filters[0];
+  if (!filter) throw new Error("Missing thread window filter");
+  page.respond([selected, await windowBounds(filter)]);
   await loading;
   expect(view.snapshot().root?.id).toBe(root.id);
 });
 
 it("preserves folded identities across status changes and extends them across pages", async () => {
   const h = seeded();
-  const first = reply("first", 10);
+  const newest = reply("newest", 20);
   const initial = h.view.refresh();
-  const request = h.next();
   const loading = h.view.snapshot();
-  request.respond([root, first]);
+  await respondThread(h, [newest], {
+    created_at: newest.created_at,
+    id: newest.id,
+  });
   await initial;
 
   const ready = h.view.snapshot();
@@ -811,23 +770,26 @@ it("preserves folded identities across status changes and extends them across pa
   expect(h.view.snapshot()).toMatchObject({ status: "loading" });
   expect(h.view.snapshot().root).toBe(retainedRoot);
   expect(h.view.snapshot().replies).toBe(retainedReplies);
-  const second = reply("second", 20);
-  h.next().respond([root, second]);
+  const older = reply("older", 10);
+  await respondThread(h, [older]);
   await more;
 
   expect(h.view.snapshot().root).toBe(retainedRoot);
-  expect(h.view.snapshot().replies[0]).toBe(retainedReply);
+  expect(h.view.snapshot().replies[1]).toBe(retainedReply);
   expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
-    "first",
-    "second",
+    "older",
+    "newest",
   ]);
 });
 
 it("preserves folded identities when a page fails", async () => {
   const h = seeded();
-  const first = reply("first", 10);
+  const first = reply("first", 20);
   const initial = h.view.refresh();
-  h.next().respond([root, first]);
+  await respondThread(h, [first], {
+    created_at: first.created_at,
+    id: first.id,
+  });
   await initial;
   const ready = h.view.snapshot();
 
@@ -846,7 +808,7 @@ it("does not invalidate folded content for duplicate or unrelated live traffic",
   const h = seeded();
   const first = reply("first", 10);
   const loading = h.view.refresh();
-  h.next().respond([root, first]);
+  await respondThread(h, [first]);
   await loading;
   const before = h.view.snapshot();
 
@@ -865,7 +827,7 @@ it("updates nested replies and reply-targeted overlays without a new socket or a
   const parent = reply("parent", 10),
     child = reply("child", 11, parent.id);
   const loading = h.view.refresh();
-  h.next().respond([root, parent]);
+  await respondThread(h, [parent]);
   await loading;
   h.traffic.receive([
     child,
@@ -900,13 +862,13 @@ it("purges atomically on access loss, fences late results and allows explicit re
   expect(h.view.snapshot().root).toBeUndefined();
   expect(h.view.snapshot().replies).toEqual([]);
   h.traffic.receive([roster(relay, "a", [viewer.pubkey], 12)]);
-  stale.respond([root, reply("late", 10)]);
+  stale.respond([root]);
   await loading;
   expect(h.view.snapshot().replies).toEqual([]);
   const fresh = h.view.refresh();
   h.next().respond([root]);
   await flush();
-  h.next().respond([root, reply("fresh", 13)]);
+  await respondThread(h, [reply("fresh", 13)]);
   await fresh;
   expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
     "fresh",
@@ -936,11 +898,17 @@ it("repairs retained thread pages through the real channel-established catch-up 
     bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
   ]);
   await flush();
+  const later = reply("later", 20);
+  const old = reply("old", 10);
+  const missed = reply("missed", 15);
   const first = h.view.refresh();
-  h.next().respond([root, reply("old", 10)]);
+  await respondThread(h, [later], {
+    created_at: later.created_at,
+    id: later.id,
+  });
   await first;
   const more = h.view.loadMore();
-  h.next().respond([root, reply("later", 20)]);
+  await respondThread(h, [old]);
   await more;
   h.traffic.established("b");
   expect(h.pending).toHaveLength(0);
@@ -948,66 +916,97 @@ it("repairs retained thread pages through the real channel-established catch-up 
   h.traffic.state({ status: "retrying", routes: [] });
   h.traffic.state({ status: "connected", routes: [] });
   h.traffic.established("a");
-  const repair = h.next();
+  const repairRoot = h.next();
   await flush(); // EOSE queues the actual retained channel catch-up.
   const head = h.next();
   expect(head.filters[0]?.depth_limit).toBeUndefined();
   expect(head.filters[0]?.["#h"]).toEqual(["a"]);
-  expect(repair.signal?.aborted).toBe(false);
+  expect(repairRoot.signal?.aborted).toBe(false);
   head.respond([
     bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
   ]);
-  repair.respond([root, reply("old", 10), reply("missed", 15)]);
+  repairRoot.respond([root]);
   await flush();
+  await respondWindow(h, [later, missed], {
+    created_at: missed.created_at,
+    id: missed.id,
+  });
+  await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
   const next = h.next();
-  expect(next.filters[1]?.thread_cursor).toBe(15);
-  next.respond([root, reply("later", 20)]);
-  await flush();
-  expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
-    "old",
-    "missed",
-    "later",
-  ]);
+  expect(next.filters[0]).toMatchObject({
+    thread_window: true,
+    until: missed.created_at,
+    before_id: missed.id,
+  });
+  const filter = next.filters[0];
+  if (!filter) throw new Error("Missing repair continuation filter");
+  next.respond([old, await windowBounds(filter)]);
+  await vi.waitFor(() =>
+    expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
+      "old",
+      "missed",
+      "later",
+    ]),
+  );
 });
 
 it("repairs a ready thread on stream establishment without notifying when nothing changed, then runs an older page requested meanwhile", async () => {
   const h = seeded();
+  const newer = reply("newer", 20);
   const first = h.view.refresh();
-  h.next().respond([root, reply("old", 10)]);
+  await respondThread(h, [newer], {
+    created_at: newer.created_at,
+    id: newer.id,
+  });
   await first;
   const ready = h.view.snapshot();
   const statuses: string[] = [];
   const stop = h.view.subscribe(() => statuses.push(h.view.snapshot().status));
 
   h.traffic.established("a");
-  const repair = h.next();
+  const repairRoot = h.next();
   expect(h.view.snapshot()).toBe(ready);
   const more = h.view.loadMore();
   expect(h.pending).toHaveLength(0);
-  repair.respond([root, reply("old", 10)]);
+  repairRoot.respond([root]);
   await flush();
+  await respondWindow(h, [newer], {
+    created_at: newer.created_at,
+    id: newer.id,
+  });
+  await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
   // The unchanged repair published nothing; only the queued page shows loading.
   expect(statuses).toEqual(["loading"]);
   expect(h.view.snapshot()).toMatchObject({ readKind: "older" });
   expect(h.view.snapshot().replies).toBe(ready.replies);
 
-  const page = h.next();
-  expect(page.filters[1]?.thread_cursor).toBe(10);
-  page.respond([root, reply("later", 20)]);
-  await more;
+  h.next().respond([root]);
   await flush();
-  expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
-    "old",
-    "later",
-  ]);
-  expect(statuses.at(-1)).toBe("ready");
+  const page = h.next();
+  expect(page.filters[0]).toMatchObject({
+    thread_window: true,
+    until: newer.created_at,
+    before_id: newer.id,
+  });
+  const filter = page.filters[0];
+  if (!filter) throw new Error("Missing older page filter");
+  page.respond([reply("old", 10), await windowBounds(filter)]);
+  await more;
+  await vi.waitFor(() => {
+    expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
+      "old",
+      "newer",
+    ]);
+    expect(statuses.at(-1)).toBe("ready");
+  });
   stop();
 });
 
 it("keeps a failed establishment repair visible and drops the older page requested meanwhile", async () => {
   const h = seeded();
   const first = h.view.refresh();
-  h.next().respond([root, reply("old", 10)]);
+  const old = reply("old", 10);
+  await respondThread(h, [old], { created_at: old.created_at, id: old.id });
   await first;
 
   h.traffic.established("a");
@@ -1020,7 +1019,7 @@ it("keeps a failed establishment repair visible and drops the older page request
   expect(h.view.snapshot().error).toContain("offline");
 });
 
-it("offers retry on failures and rejects a non-advancing cursor without erasing readable rows", async () => {
+it("offers retry on failures without erasing seeded root rows", async () => {
   const h = seeded();
   const first = h.view.refresh();
   h.next().fail(new Error("offline"));
@@ -1032,13 +1031,12 @@ it("offers retry on failures and rejects a non-advancing cursor without erasing 
   const retry = h.view.refresh();
   await vi.waitFor(() => expect(h.pending).toHaveLength(1));
   const one = reply("one", 10);
-  h.next().respond([root, one]);
+  await respondThread(h, [one]);
   await retry;
-  const more = h.view.loadMore();
-  h.next().respond([root, one]);
-  await more;
-  expect(h.view.snapshot().error).toContain("did not advance");
-  expect(h.view.snapshot().replies).toHaveLength(1);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    replies: [{ id: one.id }],
+  });
 });
 
 it("drops stale root content when the finite root is missing and exposes explicit page limits", async () => {
@@ -1048,11 +1046,16 @@ it("drops stale root content when the finite root is missing and exposes explici
   await missing;
   expect(h.view.snapshot().root).toBeUndefined();
   const retry = h.view.refresh();
-  h.next().respond([root, reply("1", 10)]);
+  const newest = reply("10", 100);
+  await respondThread(h, [newest], {
+    created_at: newest.created_at,
+    id: newest.id,
+  });
   await retry;
   for (let page = 2; page <= 10; page++) {
     const more = h.view.loadMore();
-    h.next().respond([root, reply(String(page), page * 10)]);
+    const row = reply(String(11 - page), (11 - page) * 10);
+    await respondThread(h, [row], { created_at: row.created_at, id: row.id });
     await more;
   }
   expect(h.view.snapshot()).toMatchObject({
@@ -1066,7 +1069,7 @@ it("drops stale root content when the finite root is missing and exposes explici
 it("explicitly limits oversized evidence rather than evicting aux and resurrecting deleted rows", async () => {
   const h = seeded();
   const loading = h.view.refresh();
-  h.next().respond([root, reply("x".repeat(4 * 1024 * 1024), 2)]);
+  await respondThread(h, [reply("x".repeat(4 * 1024 * 1024), 2)]);
   await loading;
   expect(h.view.snapshot()).toMatchObject({
     status: "error",
@@ -1118,7 +1121,10 @@ it.each(["live", "read"])(
       channelId: "a",
       messageId: root.id,
       relayAuthor: relay.pubkey,
-      reader: { read: async () => events },
+      reader: {
+        read: async (filters) =>
+          filters[0]?.thread_window ? [...events, endBound] : [root],
+      },
       seed: root,
       local: undefined,
       canAccess: () => true,
@@ -1208,7 +1214,7 @@ it("trips the live byte limit at exactly the whole-thread serialised size", asyn
   const h = seeded();
   const first = reply("first", 10);
   const loading = h.view.refresh();
-  h.next().respond([root, first]);
+  await respondThread(h, [first]);
   await loading;
   const limit = 4 * 1024 * 1024;
   const sized = (length: number) => reply("x".repeat(length), 11);
@@ -1229,7 +1235,7 @@ it("checks live overlays against retained thread targets after shared-cache evic
   const h = seeded();
   const row = reply("retained", 10);
   const first = h.view.refresh();
-  h.next().respond([root, row]);
+  await respondThread(h, [row]);
   await first;
   // Byte budget eviction with a few large, unrelated verified events.
   h.traffic.receive(
@@ -1273,7 +1279,7 @@ it("keeps pre-refresh live tombstones and edits when a stale finite repair omits
   const deleted = reply("deleted", 10),
     edited = reply("original", 11);
   const first = h.view.refresh();
-  h.next().respond([root, deleted, edited]);
+  await respondThread(h, [deleted, edited]);
   await first;
   h.traffic.receive([
     signed(alice, { kind: 5, content: "", tags: [["e", deleted.id]] }),
@@ -1283,7 +1289,7 @@ it("keeps pre-refresh live tombstones and edits when a stale finite repair omits
     "edited",
   ]);
   const refresh = h.view.refresh();
-  h.next().respond([root, deleted, edited]);
+  await respondThread(h, [deleted, edited]);
   await refresh;
   expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
     "edited",
@@ -1309,7 +1315,7 @@ it("keeps deleted edits and reactions removed, including a delete-of-aux arrivin
     tags: [["e", edit.id]],
   });
   const first = h.view.refresh();
-  h.next().respond([root, row, removeEdit, edit, reaction]);
+  await respondThread(h, [row, removeEdit, edit, reaction]);
   await first;
   expect(h.view.snapshot().replies[0]).toMatchObject({
     content: "original",
@@ -1331,7 +1337,7 @@ it("does not lose tombstones through missing-root recovery, and clears handles o
   const h = seeded();
   const row = reply("deleted", 10);
   const first = h.view.refresh();
-  h.next().respond([root, row]);
+  await respondThread(h, [row]);
   await first;
   h.traffic.receive([
     signed(alice, { kind: 5, content: "", tags: [["e", row.id]] }),
@@ -1341,7 +1347,7 @@ it("does not lose tombstones through missing-root recovery, and clears handles o
   await missing;
   expect(h.view.snapshot().root).toBeUndefined();
   const retry = h.view.refresh();
-  h.next().respond([root, row]);
+  await respondThread(h, [row]);
   await retry;
   expect(h.view.snapshot().root?.id).toBe(root.id);
   expect(h.view.snapshot().replies).toEqual([]);
@@ -1401,7 +1407,10 @@ it("ignores known replay IDs while admitting new evidence after reads and purge"
     channelId: "a",
     messageId: root.id,
     relayAuthor: relay.pubkey,
-    reader: { read: async () => events },
+    reader: {
+      read: async (filters) =>
+        filters[0]?.thread_window ? [...events, endBound] : [root],
+    },
     seed: root,
     local: undefined,
     canAccess: () => true,

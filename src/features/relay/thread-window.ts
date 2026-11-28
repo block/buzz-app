@@ -3,15 +3,14 @@ import { ReadError } from "./errors";
 import { isObject, objectBody } from "./body";
 
 export type ThreadCursor = Readonly<{ created_at: number; id: string }>;
-export class MissingThreadBounds extends ReadError {
-  constructor(readonly legacyRows = false) {
-    super("invalid-response", "Relay did not serve a signed thread window");
-  }
-}
+export const missingThreadBounds = () =>
+  new ReadError(
+    "invalid-response",
+    "Relay did not serve a signed thread window",
+  );
 const invalid = () =>
   new ReadError("invalid-response", "Thread window bounds are invalid");
 const hex = /^[0-9a-f]{64}$/;
-export const canonicalChannel = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 
 /** Same authority normalization as buzz-core::tenant::normalize_host. Never use the local broker host. */
 export function threadAuthority(origin: string) {
@@ -88,8 +87,7 @@ export function threadBounds(event: RelayEvent): {
   return { hasMore: body.has_more, cursor: next as ThreadCursor | null };
 }
 
-/** Runs on signature-verified finite results BEFORE session admission. Missing bounds
- * are distinct from invalid bounds; only the first probe may choose a clean legacy restart. */
+/** Runs on signature-verified finite results BEFORE session admission. */
 export async function verifyThreadWindows(
   filters: readonly ReadFilter[],
   events: readonly RelayEvent[],
@@ -106,21 +104,7 @@ export async function verifyThreadWindows(
   )
     throw invalid();
   const bounds = events.filter((event) => event.kind === 39007);
-  if (!bounds.length)
-    throw new MissingThreadBounds(
-      events.some((event) =>
-        filters.some(
-          (filter) =>
-            filter.kinds?.includes(event.kind) &&
-            event.tags.some(
-              ([key, value]) => key === "h" && value === filter["#h"]?.[0],
-            ) &&
-            event.tags.some(
-              ([key, value]) => key === "e" && value === filter["#e"]?.[0],
-            ),
-        ),
-      ),
-    );
+  if (!bounds.length) throw missingThreadBounds();
   if (bounds.length !== filters.length) throw invalid();
   const remaining = new Set(bounds);
   for (const filter of filters) {

@@ -10,6 +10,7 @@ import {
   metadata,
   roster,
   message,
+  threadWindowBounds,
 } from "../../../src/features/relay/testing";
 
 const viewer = keypair();
@@ -133,21 +134,19 @@ export function mediaFixture() {
     roster(relay, "studio", [viewer.pubkey]),
     metadata(relay, "studio", "Design studio"),
   ];
+  const origin = "https://dialog-gallery.test";
   const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
+    scope: origin,
     media: (url) => (url === imageUrl ? sampleImage : undefined),
     async query(filters) {
-      return events.filter((event) =>
+      const matched = events.filter((event) =>
         filters.some(
           (filter) =>
             (!filter.kinds || filter.kinds.includes(event.kind)) &&
             (!filter.ids || filter.ids.includes(event.id)) &&
             (!filter.authors || filter.authors.includes(event.pubkey)) &&
-            (filter.thread_cursor === undefined ||
-              event.created_at > filter.thread_cursor ||
-              (event.created_at === filter.thread_cursor &&
-                event.id > (filter.thread_cursor_id ?? ""))) &&
             (!filter["#e"] ||
               event.tags.some(
                 ([key, value]) =>
@@ -157,6 +156,14 @@ export function mediaFixture() {
               )),
         ),
       );
+      const windowBounds = await Promise.all(
+        filters
+          .filter((filter) => filter.thread_window)
+          .map((filter) =>
+            threadWindowBounds(relay, origin, viewer.pubkey, filter),
+          ),
+      );
+      return [...matched, ...windowBounds];
     },
   });
   return { owner, root };

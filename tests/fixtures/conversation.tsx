@@ -29,6 +29,7 @@ import {
   roster,
   profile,
   bounds,
+  threadWindowBounds,
 } from "../../src/features/relay/testing";
 import type { RelayEvent } from "../../src/features/relay/events";
 import type { PluginStorage } from "../../src/plugins/storage";
@@ -75,11 +76,12 @@ const owners = ["a", "b"].map((community) => {
     ),
   ];
   const rejected = new Set<string>();
+  const origin = `https://${community}.test`;
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
       relayAuthor: relayKey.pubkey,
-      scope: community,
+      scope: origin,
       media: (url) =>
         url.startsWith("https://")
           ? `/proof-media/${encodeURIComponent(url)}`
@@ -89,35 +91,47 @@ const owners = ["a", "b"].map((community) => {
         return { update() {}, retry() {}, dispose() {} };
       },
       async query(filters) {
-        return filters.flatMap((filter) => {
-          if (filter.kinds?.includes(30030)) {
-            if (failCatalog) throw new Error("Fixture emoji offline");
-            return [catalog];
-          }
-          if (filter.kinds?.includes(39002))
-            return [
-              roster(relayKey, "general", [viewer.pubkey, member.pubkey]),
-            ];
-          if (filter.kinds?.includes(39000))
-            return [metadata(relayKey, "general", "General")];
-          if (filter.kinds?.includes(0))
-            return [
-              profile(viewer, { name: "Reader" }),
-              profile(member, { name: "Member" }),
-            ];
-          if (filter.ids)
-            return events.filter((event) => filter.ids?.includes(event.id));
-          if (filter.depth_limit) return [];
-          if (filter["#h"]?.includes("general"))
-            return [
-              ...events,
-              bounds(relayKey, "general", "head", {
-                has_more: false,
-                next_cursor: null,
-              }),
-            ];
-          return [];
-        });
+        return (
+          await Promise.all(
+            filters.map(async (filter) => {
+              if (filter.kinds?.includes(30030)) {
+                if (failCatalog) throw new Error("Fixture emoji offline");
+                return [catalog];
+              }
+              if (filter.kinds?.includes(39002))
+                return [
+                  roster(relayKey, "general", [viewer.pubkey, member.pubkey]),
+                ];
+              if (filter.kinds?.includes(39000))
+                return [metadata(relayKey, "general", "General")];
+              if (filter.kinds?.includes(0))
+                return [
+                  profile(viewer, { name: "Reader" }),
+                  profile(member, { name: "Member" }),
+                ];
+              if (filter.ids)
+                return events.filter((event) => filter.ids?.includes(event.id));
+              if (filter.thread_window)
+                return [
+                  await threadWindowBounds(
+                    relayKey,
+                    origin,
+                    viewer.pubkey,
+                    filter,
+                  ),
+                ];
+              if (filter["#h"]?.includes("general"))
+                return [
+                  ...events,
+                  bounds(relayKey, "general", "head", {
+                    has_more: false,
+                    next_cursor: null,
+                  }),
+                ];
+              return [];
+            }),
+          )
+        ).flat();
       },
       writer: {
         kinds: [9, 40003],

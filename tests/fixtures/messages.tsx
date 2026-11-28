@@ -131,8 +131,10 @@ function channelOf(event: RelayEvent) {
   if (!id) throw new Error("Missing fixture channel");
   return id;
 }
+const replyCount = forwarded ? 1 : strictWindows ? 303 : 9;
+const markdownIndex = strictWindows ? 59 : replyCount - 1;
 const replies = roots.flatMap((root) =>
-  Array.from({ length: forwarded ? 1 : strictWindows ? 303 : 60 }, (_, i) =>
+  Array.from({ length: replyCount }, (_, i) =>
     i === 0 && root === roots[0]
       ? signed(viewer, {
           kind: 9,
@@ -147,7 +149,7 @@ const replies = roots.flatMap((root) =>
       : message(
           viewer,
           channelOf(root),
-          i === 59 && root === roots[0]
+          i === markdownIndex && root === roots[0]
             ? `## Markdown reply
 **Bold**, *italic*, and ~~done~~
 
@@ -177,7 +179,7 @@ const message = "${"wide-content-".repeat(35)}";
           10 + i,
           [
             ["e", root.id, "", "reply"],
-            ...(i === 59 && root === roots[0]
+            ...(i === markdownIndex && root === roots[0]
               ? ([
                   ["emoji", "_lead", "https://emoji.test/lead.png"],
                   ["emoji", "trail_", "https://emoji.test/trail.png"],
@@ -268,9 +270,6 @@ let holdOlderPage = new URLSearchParams(location.search).has("holdOlderPage");
 let failOlderPages = Number(
   new URLSearchParams(location.search).get("failOlderPages") ?? 0,
 );
-let failLegacyContinuation = new URLSearchParams(location.search).has(
-  "failLegacyContinuation",
-);
 const owner = createRelaySession({
   scope: "https://fixture.test",
   viewer: viewer.pubkey,
@@ -336,104 +335,101 @@ const owner = createRelaySession({
                     name === "e" && filter["#e"]?.includes(value),
                 ),
             );
-          if (filter.depth_limit) {
+          if (filter.thread_window) {
             const rootId = filter["#e"]?.[0];
-            if (!rootId) throw new Error("Missing fixture thread root");
+            const channelId = filter["#h"]?.[0];
+            if (!rootId || !channelId)
+              throw new Error("Missing fixture thread root");
             report.pages.push(rootId);
             report.filters.push(filter);
-            if (filter.thread_window) {
-              if (holdOlderPage && filter.until !== undefined) {
-                await new Promise<void>((resolve) => {
-                  releaseOlderPage = resolve;
-                });
-                holdOlderPage = false;
-                releaseOlderPage = undefined;
-              }
-              if (filter.until !== undefined && failOlderPages > 0) {
-                failOlderPages--;
-                throw new Error("Older page failed");
-              }
-              const eligible = events
-                .filter(
-                  (event) =>
-                    threadReference(event)?.rootId === rootId &&
-                    (filter.until === undefined ||
-                      event.created_at < filter.until ||
-                      (event.created_at === filter.until &&
-                        event.id > (filter.before_id ?? ""))),
-                )
-                .sort(
-                  (a, b) =>
-                    b.created_at - a.created_at || a.id.localeCompare(b.id),
-                );
-              const page = eligible.slice(0, filter.limit);
-              const last = page.at(-1);
-              const canonical = JSON.stringify([
-                "tw",
-                1,
-                "older",
-                "fixture.test",
-                viewer.pubkey,
-                filter["#h"]?.[0],
-                rootId,
-                filter.limit,
-                100,
-                [9, 40002],
-                filter.until === undefined
-                  ? null
-                  : [filter.until, filter.before_id],
-                true,
-              ]);
-              const digest = [
-                ...new Uint8Array(
-                  await crypto.subtle.digest(
-                    "SHA-256",
-                    new TextEncoder().encode(canonical),
-                  ),
-                ),
-              ]
-                .map((byte) => byte.toString(16).padStart(2, "0"))
-                .join("");
-              return [
-                ...page,
-                signed(relay, {
-                  kind: 39007,
-                  tags: [
-                    ["d", `tw:1:${digest}`],
-                    ["h", channelOf(roots[0])],
-                    ["e", rootId],
-                  ],
-                  content: JSON.stringify({
-                    version: 1,
-                    direction: "older",
-                    has_more: eligible.length > page.length,
-                    next_cursor:
-                      eligible.length > page.length && last
-                        ? { created_at: last.created_at, id: last.id }
-                        : null,
-                  }),
-                }),
-              ];
+            if (holdOlderPage && filter.until !== undefined) {
+              await new Promise<void>((resolve) => {
+                releaseOlderPage = resolve;
+              });
+              holdOlderPage = false;
+              releaseOlderPage = undefined;
             }
-            if (failLegacyContinuation && filter.thread_cursor !== undefined) {
-              failLegacyContinuation = false;
-              throw new Error("Legacy continuation failed");
+            if (filter.until !== undefined && failOlderPages > 0) {
+              failOlderPages--;
+              throw new Error("Older page failed");
             }
-            return events
-              .filter((event) => {
-                if (threadReference(event)?.rootId !== rootId) return false;
-                return (
-                  filter.thread_cursor === undefined ||
-                  event.created_at > filter.thread_cursor ||
-                  (event.created_at === filter.thread_cursor &&
-                    event.id > (filter.thread_cursor_id ?? ""))
-                );
-              })
+            const eligible = events
+              .filter(
+                (event) =>
+                  threadReference(event)?.rootId === rootId &&
+                  (filter.until === undefined ||
+                    event.created_at < filter.until ||
+                    (event.created_at === filter.until &&
+                      event.id > (filter.before_id ?? ""))),
+              )
               .sort(
                 (a, b) =>
-                  a.created_at - b.created_at || a.id.localeCompare(b.id),
-              )
-              .slice(0, filter.limit);
+                  b.created_at - a.created_at || a.id.localeCompare(b.id),
+              );
+            const page = eligible.slice(0, filter.limit);
+            const pageIds = new Set(page.map((event) => event.id));
+            const aux = filter.include_aux
+              ? events.filter(
+                  (event) =>
+                    (event.kind === 5 ||
+                      event.kind === 7 ||
+                      event.kind === 40003) &&
+                    event.tags.some(
+                      ([key, value]) =>
+                        key === "e" &&
+                        value !== undefined &&
+                        pageIds.has(value),
+                    ),
+                )
+              : [];
+            const last = page.at(-1);
+            const canonical = JSON.stringify([
+              "tw",
+              1,
+              "older",
+              "fixture.test",
+              viewer.pubkey,
+              channelId,
+              rootId,
+              filter.limit,
+              100,
+              [9, 40002],
+              filter.until === undefined
+                ? null
+                : [filter.until, filter.before_id],
+              true,
+            ]);
+            const digest = [
+              ...new Uint8Array(
+                await crypto.subtle.digest(
+                  "SHA-256",
+                  new TextEncoder().encode(canonical),
+                ),
+              ),
+            ]
+              .map((byte) => byte.toString(16).padStart(2, "0"))
+              .join("");
+            return [
+              ...page,
+              ...aux,
+              signed(relay, {
+                kind: 39007,
+                tags: [
+                  ["d", `tw:1:${digest}`],
+                  ["h", channelId],
+                  ["e", rootId],
+                ],
+                content: JSON.stringify({
+                  version: 1,
+                  direction: "older",
+                  has_more: eligible.length > page.length,
+                  next_cursor:
+                    eligible.length > page.length && last
+                      ? { created_at: last.created_at, id: last.id }
+                      : null,
+                }),
+              }),
+            ];
           }
           return [];
         }),

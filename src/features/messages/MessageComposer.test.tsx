@@ -92,7 +92,13 @@ import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { registerMessageList } from "./message-selection";
 import { setEditWithUpArrowPreference } from "./edit-key-preference";
 import { createRelaySession, type RelaySession } from "../relay/session";
-import { keypair, metadata, roster, signed } from "../relay/testing";
+import {
+  keypair,
+  metadata,
+  roster,
+  signed,
+  threadWindowBounds,
+} from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "../relay/events";
 import type {
@@ -1982,6 +1988,16 @@ async function mountUploadComposer(
         return result.promise;
       },
       async query(filters) {
+        const window = filters.find((filter) => filter.thread_window);
+        if (window)
+          return [
+            await threadWindowBounds(
+              relay,
+              "https://relay.example.test",
+              viewer.pubkey,
+              window,
+            ),
+          ];
         if (
           options.sourceMessages &&
           filters.some((filter) => filter.ids?.length)

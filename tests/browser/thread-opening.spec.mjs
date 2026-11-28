@@ -11,6 +11,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   page,
   app,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 420 });
   await open(page, app);
   await page.locator('button[data-channel-id="beta"]').click();
   let release, intercepted;
@@ -94,7 +95,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   await expect(history.locator("[data-thread-rows]")).not.toHaveAttribute(
     "inert",
   );
-  await expect(history.locator("[data-message-id]")).toHaveCount(81);
+  await expect(history.locator("[data-message-id]")).toHaveCount(11);
   await expect
     .poll(() => page.evaluate(() => window.firstThreadFrame))
     .toBeTruthy();

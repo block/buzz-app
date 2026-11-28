@@ -10,12 +10,27 @@ export function WireframePanel({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-2">{children}</div>;
 }
 
-/** A first-run page titled by its `welcome-title` heading. */
-export function WireframeScreen({ children }: { children: ReactNode }) {
+/**
+ * A first-run page titled by its `welcome-title` heading. `next` is what
+ * first run does after the page, added under one that ends without actions;
+ * a page with actions of its own places it above them itself.
+ */
+export function WireframeScreen({
+  children,
+  next,
+}: {
+  children: ReactNode;
+  next?: ReactNode;
+}) {
   return (
     <OnboardingScreen
       labelledBy="welcome-title"
-      intro={<div className={styles.flow}>{children}</div>}
+      intro={
+        <div className={styles.flow}>
+          {children}
+          {next}
+        </div>
+      }
     >
       {null}
     </OnboardingScreen>

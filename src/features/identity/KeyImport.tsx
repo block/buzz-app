@@ -1,5 +1,5 @@
 import { OnboardingBack } from "./OnboardingBack";
-import { useId, useRef, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { useFileDrop } from "../messages/use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -30,6 +30,7 @@ export function KeyImport({
   onBack,
   onLost,
   onImport,
+  next,
 }: {
   /** The hex key linked to the signed-in account, when the lane has one. */
   expectedPubkey?: string | undefined;
@@ -39,6 +40,8 @@ export function KeyImport({
   onLost?: (() => void) | undefined;
   /** Rejects with the native refusal, shown under the field. */
   onImport: (nsec: string) => Promise<void>;
+  /** What first run does after the import, shown above the actions. */
+  next?: ReactNode;
 }) {
   const [text, setText] = useState("");
   const [revealed, setRevealed] = useState(false);
@@ -100,6 +103,7 @@ export function KeyImport({
   return (
     <OnboardingScreen
       labelledBy="welcome-title"
+      next={next}
       intro={
         busy ? (
           <div className={`${styles.importContent} items-center`}>

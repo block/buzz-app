@@ -174,7 +174,11 @@ if that desktop app is up and running.
 - **Create one** from **Agents → New agent**: pick a harness, a model and
   optionally instructions. A remote harness such as Builderlab needs no setup
   on this computer. Local harnesses need their sign-in or API key in
-  **Settings → Agent setup → Harness defaults**.
+  **Settings → Agent setup → Harness defaults**. **Sign out** there signs Codex
+  out, including the Codex CLI on this computer, which shares its sign-in.
+  **Remove key** deletes a Goose or Pi key saved there; keys set in the
+  environment stay. Signing out of Buzz and erasing this device also deletes
+  saved Claude and TypeSafe keys.
 - **An agent's page** has its identity and instructions, settings, **Memory**,
   **Activity** (its past sessions) and plugin tabs such as **Attention**.
   Local Claude and Codex transcripts can open on recent activity. Choose

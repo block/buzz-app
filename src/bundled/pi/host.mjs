@@ -2182,6 +2182,9 @@ export function serve({
     /** Pi's providers, as they are now. */
     async providers() {
       const providers = [];
+      const stored = await new AuthFile(join(dir, "auth.json"))
+        .all()
+        .catch(() => ({}));
       for (const provider of models.getProviders()) {
         if (!models.getModels(provider.id).length) continue;
         const auth = await models.checkAuth(provider.id).catch(() => undefined);
@@ -2191,6 +2194,7 @@ export function serve({
           key: Boolean(provider.auth.apiKey),
           signsIn: Boolean(provider.auth.oauth),
           ...(auth ? { configured: auth.source ?? auth.type } : {}),
+          ...(stored[provider.id]?.type === "api_key" ? { saved: true } : {}),
         });
       }
       providers.sort((a, b) => a.name.localeCompare(b.name));
@@ -2225,6 +2229,30 @@ export function serve({
           );
         },
       });
+    },
+    /** Removes the provider's saved API key with Pi's own logout, which
+     * deletes only that provider's entry from `auth.json`, under the file's
+     * lock. A sign-in made with `pi` is left for its `/logout`. */
+    async logout({ provider }) {
+      if (protectedAgent)
+        throw new Error(
+          "Remove keys in Pi setup, outside the protected worker",
+        );
+      const name = models.getProvider(provider)?.name ?? provider;
+      const stored = (await new AuthFile(join(dir, "auth.json")).all())[
+        provider
+      ];
+      if (stored && stored.type !== "api_key")
+        throw new Error(
+          `${name} is signed in through Pi, not with a key. Sign out with the pi command's /logout.`,
+        );
+      try {
+        await models.logout(provider);
+      } catch (error) {
+        throw new Error(
+          `Could not remove the ${name} key: ${error.cause?.message ?? error.message}`,
+        );
+      }
     },
     /** Asks the model for one short reply. */
     async test(turn) {

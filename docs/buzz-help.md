@@ -151,6 +151,10 @@ if that desktop app is up and running.
   **⋯** menu.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
+- **Notifications** in a channel's sidebar or header menu picks **All new
+  posts**, **Just mentions** (the default) or **Mute**. All new posts is saved
+  on this device; **Channel posts** in Settings → Notifications turns it off
+  everywhere. DMs keep a plain Mute.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat. With **Settings →

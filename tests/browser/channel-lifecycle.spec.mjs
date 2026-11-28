@@ -61,7 +61,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await page.keyboard.press("Shift+F10");
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move to…",
-    "Mute",
+    "Notifications",
     "Mark as unread",
     "Copy link",
     "Archive channel",

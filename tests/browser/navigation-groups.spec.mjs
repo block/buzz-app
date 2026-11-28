@@ -192,7 +192,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
     actions.getByRole("menuitem", { name: "Move to…", exact: true }),
   ).toBeVisible();
   await expect(
-    actions.getByRole("menuitem", { name: "Mute", exact: true }),
+    actions.getByRole("menuitem", { name: "Notifications", exact: true }),
   ).toBeVisible();
   await page.getByRole("menuitem", { name: "Move to…", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
@@ -1234,7 +1234,7 @@ test("Move and Create persist across apps without a sidebar", async ({
     exact: true,
   });
   await expect(
-    actions.getByRole("menuitem", { name: "Mute", exact: true }),
+    actions.getByRole("menuitem", { name: "Notifications", exact: true }),
   ).toBeVisible();
   await menu
     .getByRole("menuitem", { name: "Create new…", exact: true })

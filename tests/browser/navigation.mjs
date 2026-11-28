@@ -7,6 +7,51 @@ export async function clickSidebarHeadingAction(action) {
   await action.click();
 }
 
+/** Opens a channel menu's Notifications submenu: All new posts, Just mentions, Mute. */
+export async function notificationLevels(page, menu) {
+  // Sidebar preferences add Move to… above Notifications when they load. A menu
+  // opened right after a reload can gain it while the submenu is open, which
+  // pulls focus back to the parent menu, so wait for the settled item list.
+  await expect(
+    menu.getByRole("menuitem", { name: "Move to…", exact: true }),
+  ).toBeVisible();
+  // A pointer left by an earlier click can rest where the trigger opens. WebKit
+  // hovers it late, after focus has entered the submenu, and pulls focus back.
+  // Park it off the menu and let any submenu it opened close first.
+  await page.mouse.move(0, 0);
+  await expect(
+    page.getByRole("menu", { name: /^Notifications for / }),
+  ).toHaveCount(0);
+  // Keyboard, not hover: a pointer already resting on the trigger cannot reopen it.
+  await menu
+    .getByRole("menuitem", { name: "Notifications", exact: true })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  const levels = page.getByRole("menu", { name: /^Notifications for / });
+  await expect(levels).toBeVisible();
+  // Focus enters the submenu a frame after it opens; keys sent sooner go to the parent.
+  await expect(levels.getByRole("menuitemradio").first()).toBeFocused();
+  return levels;
+}
+
+export function notificationLevel(levels, name) {
+  return levels.getByRole("menuitemradio", { name, exact: true });
+}
+
+/** Checks the open row menu's level, then returns focus to the parent menu. */
+export async function expectNotificationLevel(page, menu, name) {
+  await expect(
+    notificationLevel(await notificationLevels(page, menu), name),
+  ).toBeChecked();
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    page.getByRole("menu", { name: /^Notifications for / }),
+  ).toHaveCount(0);
+  await expect(
+    menu.getByRole("menuitem", { name: "Notifications", exact: true }),
+  ).toBeFocused();
+}
+
 export async function pageChoices(page, query = "") {
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });

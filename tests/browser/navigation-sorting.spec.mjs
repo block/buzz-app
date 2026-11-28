@@ -1,7 +1,13 @@
 import { test, expect } from "./fixture.mjs";
 import { animationsSettled } from "./animations.mjs";
 import { open } from "./timeline.mjs";
-import { clickSidebarHeadingAction, openPage } from "./navigation.mjs";
+import {
+  clickSidebarHeadingAction,
+  expectNotificationLevel,
+  notificationLevel,
+  notificationLevels,
+  openPage,
+} from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({ productionBroker: true, savedSidebar: true, sortingSidebar: true });
@@ -940,7 +946,10 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await cedar.click({ button: "right" });
   const rowMenu = page.getByRole("menu", { name: "Actions for Cedar" });
   const muted = page.waitForResponse("**/sidebar-mute");
-  await rowMenu.getByRole("menuitem", { name: "Mute", exact: true }).click();
+  await notificationLevel(
+    await notificationLevels(page, rowMenu),
+    "Mute",
+  ).click();
   expect((await muted).ok()).toBe(true);
   await (await muted).finished();
   await expect(rowMenu).toHaveCount(0);
@@ -1040,9 +1049,7 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await page.reload();
   await expect.poll(order).toEqual(alphaOrder);
   await cedar.click({ button: "right" });
-  await expect(
-    rowMenu.getByRole("menuitem", { name: "Unmute", exact: true }),
-  ).toBeEnabled();
+  await expectNotificationLevel(page, rowMenu, "Mute");
   await page.keyboard.press("Escape");
   await expect(cedar).toBeFocused();
   await clickSidebarHeadingAction(

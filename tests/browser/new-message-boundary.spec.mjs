@@ -613,11 +613,7 @@ appTest.describe("history longer than one page", () => {
       // Read to the bottom: the channel catch-up read covers every seeded row.
       await reachEdge(page, 1);
       await composer(page).focus();
-      await expect
-        .poll(
-          async () => (await readJournal(page))?.state.frontiers["alpha"] ?? 0,
-        )
-        .toBeGreaterThanOrEqual(seeded.at(-1).created_at);
+      await readThrough(page, app, "alpha");
 
       await page.getByRole("button", { name: /^Beta/ }).click();
       await expect(
@@ -659,15 +655,10 @@ appTest.describe("history longer than one page", () => {
   appTest(
     "marks messages that arrive while the window is away from an open channel",
     async ({ page, app }) => {
-      const seeded = app.histories.get("primary/alpha");
       await open(page, app);
       await reachEdge(page, 1);
       await composer(page).focus();
-      await expect
-        .poll(
-          async () => (await readJournal(page))?.state.frontiers["alpha"] ?? 0,
-        )
-        .toBeGreaterThanOrEqual(seeded.at(-1).created_at);
+      await readThrough(page, app, "alpha");
       await expect(separator(page)).toHaveCount(0);
 
       // The app stays on Alpha while another app has the window's focus.
@@ -713,6 +704,14 @@ const fiveChannels = {
   channelNames: { gamma: "Gamma", delta: "Delta", epsilon: "Epsilon" },
   historyCounts: { alpha: 15, beta: 15, gamma: 5, delta: 5, epsilon: 5 },
 };
+// Wait until the channel's catch-up read frontier covers its newest row.
+const readThrough = async (page, app, channel) => {
+  await expect
+    .poll(async () => (await readJournal(page))?.state.frontiers[channel] ?? 0)
+    .toBeGreaterThanOrEqual(
+      app.histories.get(`primary/${channel}`).at(-1).created_at,
+    );
+};
 const go = async (page, name) => {
   await page.getByRole("button", { name: new RegExp(`^${name}`) }).click();
   await expect(
@@ -726,11 +725,18 @@ const read = async (page, app, name) => {
   await page
     .getByRole("textbox", { name: `Message #${name}`, exact: true })
     .focus();
-  await expect
-    .poll(async () => (await readJournal(page))?.state.frontiers[channel] ?? 0)
-    .toBeGreaterThanOrEqual(
-      app.histories.get(`primary/${channel}`).at(-1).created_at,
-    );
+  await readThrough(page, app, channel);
+};
+// Back to Alpha, and wait for Alpha's own catch-up read only. That read lands
+// after Alpha's dwell, and a visit settles with no line when any read intent
+// is saved after it begins. So a read still in flight when Beta is opened, or
+// one replayed after a reload, would settle Beta's visit early. Beta would
+// then be read before the boundary these tests wait for. This guards nothing
+// else: a later step that reads another channel needs its own wait.
+const returnToAlpha = async (page, app) => {
+  await go(page, "Alpha");
+  await settle(page);
+  await readThrough(page, app, "alpha");
 };
 const arrive = (app, channel, deliver) =>
   [1, 2, 3].map((index) =>
@@ -776,8 +782,7 @@ appTest.describe("a visit that begins before its first verified page", () => {
       await open(page, app);
       await go(page, "Beta");
       await read(page, app, "Beta");
-      await go(page, "Alpha");
-      await settle(page);
+      await returnToAlpha(page, app);
       // A full reload is a new app session: no window is loaded yet.
       await open(page, app);
       const arrivals = await arriveUnloaded(page, app);
@@ -883,10 +888,10 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
     await expect(separator(page)).toHaveCount(0);
   };
   // The hold ends with the read: the channel then reads itself as usual.
-  const expectRead = async (page, arrivals) => {
-    await expect
-      .poll(async () => (await readJournal(page))?.state.frontiers["beta"] ?? 0)
-      .toBeGreaterThanOrEqual(arrivals.at(-1).created_at);
+  const expectRead = async (page, app, arrivals) => {
+    // The arrivals are Beta's newest rows.
+    expect(app.histories.get("primary/beta").at(-1)).toBe(arrivals.at(-1));
+    await readThrough(page, app, "beta");
     await expect(separator(page)).toHaveCount(1);
   };
 
@@ -898,8 +903,7 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
       await open(page, app);
       await go(page, "Beta");
       await read(page, app, "Beta");
-      await go(page, "Alpha");
-      await settle(page);
+      await returnToAlpha(page, app);
       const arrivals = arrive(app, "beta", true);
       await expect
         .poll(() => unreadIn(page, "beta", arrivals))
@@ -923,7 +927,7 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
         head.release();
       }
       await expectBoundaryAt(page, arrivals);
-      await expectRead(page, arrivals);
+      await expectRead(page, app, arrivals);
     },
   );
 
@@ -936,8 +940,7 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
       await open(page, app);
       await go(page, "Beta");
       await read(page, app, "Beta");
-      await go(page, "Alpha");
-      await settle(page);
+      await returnToAlpha(page, app);
       // A full reload is a new app session: no window is loaded yet.
       await open(page, app);
       const arrivals = await arriveUnloaded(page, app);
@@ -957,7 +960,7 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
         head.release();
       }
       await expectBoundaryAt(page, arrivals);
-      await expectRead(page, arrivals);
+      await expectRead(page, app, arrivals);
     },
   );
 });

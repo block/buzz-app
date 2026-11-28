@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useRef, useState } from "react";
+import { StrictMode, useCallback, useMemo, useRef, useState } from "react";
 import {
   act,
   cleanup,
@@ -136,6 +136,92 @@ test("a plugin panel names its tab with panels.useTabTitle, and renders without 
   render(<Build id="3" />);
   expect(screen.getByText("Build 3")).toBeInTheDocument();
 });
+
+function BuildTitle({ showLogs }: { showLogs: () => void }) {
+  const actions = useMemo(
+    () => [{ label: "Show logs", run: showLogs }],
+    [showLogs],
+  );
+  usePanelTabTitle("Build", undefined, actions);
+  return null;
+}
+
+const buildHostActions = [{ label: "Open build", run() {} }];
+function BuildWorkspace({
+  hasBuild,
+  hostAction = false,
+}: {
+  hasBuild: boolean;
+  hostAction?: boolean;
+}) {
+  const [showLogs, setShowLogs] = useState(false);
+  const openLogs = useCallback(() => setShowLogs(true), []);
+  return (
+    <PanelWorkspace
+      value="build"
+      select={() => {}}
+      items={[
+        {
+          id: "build",
+          label: "Build",
+          actions: hostAction ? buildHostActions : undefined,
+          content: (
+            <>
+              {hasBuild && <BuildTitle showLogs={openLogs} />}
+              <p>{showLogs ? "Build logs" : "Build summary"}</p>
+            </>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+test("a plugin-only tab menu preserves focus and closes when its action is withdrawn", async () => {
+  const user = userEvent.setup();
+  const { rerender } = render(<BuildWorkspace hasBuild={false} />);
+  tab("Build").focus();
+  rerender(<BuildWorkspace hasBuild />);
+  expect(tab("Build")).toHaveFocus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await screen.findByRole("menuitem", { name: "Show logs" });
+  await vi.waitFor(() => expect(screen.getByRole("menu")).toHaveFocus());
+
+  rerender(<BuildWorkspace hasBuild={false} />);
+  await vi.waitFor(() => expect(tab("Build")).toHaveFocus());
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(screen.queryByRole("menu")).toBeNull();
+
+  rerender(<BuildWorkspace hasBuild />);
+  expect(tab("Build")).toHaveFocus();
+  expect(screen.queryByRole("menu")).toBeNull();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await user.click(await screen.findByRole("menuitem", { name: "Show logs" }));
+  expect(await screen.findByText("Build logs")).toBeVisible();
+});
+
+test.each([false, true])(
+  "withdrawing a selected plugin action cancels it during dismissal (host action present: %s)",
+  async (hostAction) => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <BuildWorkspace hasBuild hostAction={hostAction} />,
+    );
+    tab("Build").focus();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await screen.findByRole("menu");
+    await vi.waitFor(() => expect(menu).toHaveFocus());
+    const action = within(menu).getByRole("menuitem", { name: "Show logs" });
+
+    act(() => {
+      fireEvent.click(action);
+      rerender(<BuildWorkspace hasBuild={false} hostAction={hostAction} />);
+    });
+    await vi.waitFor(() => expect(menu).not.toBeInTheDocument());
+    expect(screen.getByText("Build summary")).toBeVisible();
+  },
+);
+
 test("switches retained panels, associates their tabs, and closes inactive or active tabs with focus recovery", async () => {
   const user = userEvent.setup();
   render(

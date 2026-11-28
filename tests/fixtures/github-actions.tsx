@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import "@fontsource-variable/inter/wght.css";
 import "../../src/shared/styles/globals.css";
 import { GitHubPanel } from "../../src/bundled/github";
-import type { GitHubCli } from "../../src/bundled/github/gh";
+import type { GitHubCli, GitHubDiff } from "../../src/bundled/github/gh";
 import { PanelWorkspace } from "../../src/features/panels/PanelWorkspace";
 import { Panel } from "../../src/shared/design-system/ui/Panel";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
@@ -10,6 +10,15 @@ import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKe
 // Real panel and menu; GitHub reads and changes stay in memory.
 const ready = new URLSearchParams(location.search).has("ready");
 const queue = new URLSearchParams(location.search).has("queue");
+const showChanges = new URLSearchParams(location.search).has("diff");
+const diff: GitHubDiff =
+  async () => `diff --git a/RELEASE_NOTES.md b/RELEASE_NOTES.md
+--- a/RELEASE_NOTES.md
++++ b/RELEASE_NOTES.md
+@@ -1 +1,2 @@
+ # Release notes
++## Improvements
+`;
 let queued = false;
 let draft = false;
 const gh: GitHubCli = async (query) => {
@@ -44,9 +53,9 @@ const gh: GitHubCli = async (query) => {
           headRefOid: "fixture-head",
           headRepository: { nameWithOwner: "sample/project" },
           baseRepository: { nameWithOwner: "sample/project" },
-          additions: 12,
-          deletions: 4,
-          changedFiles: 2,
+          additions: showChanges ? 1 : 12,
+          deletions: showChanges ? 0 : 4,
+          changedFiles: showChanges ? 1 : 2,
           updatedAt: "2026-10-27T12:00:00Z",
           mergeStateStatus: ready ? "CLEAN" : "BLOCKED",
           reviewDecision: ready ? "APPROVED" : "REVIEW_REQUIRED",
@@ -105,6 +114,7 @@ function Fixture() {
                 target="https://github.com/sample/project/pull/42"
                 close={() => {}}
                 gh={gh}
+                diff={showChanges ? diff : undefined}
               />
             ),
           },

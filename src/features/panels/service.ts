@@ -159,10 +159,10 @@ export type Panels = {
   handleOpenRequests(
     handler: (request: PanelOpenRequest) => boolean,
   ): () => void;
-  /** React hook for a panel component: names its tab, in place of the static
-   * `title`, while mounted, with an optional icon. Also works in a host workspace.
-   * Does nothing outside a tab. Absent on hosts
-   * that predate it, so feature-detect before calling. */
+  /** React hook for a panel component. Sets its tab title, optional icon, and
+   * context-menu actions while mounted. Keep the actions array stable between
+   * renders. Also works in a host workspace and does nothing outside a tab.
+   * Feature-detect the hook on older hosts. */
   useTabTitle?: typeof usePanelTabTitle;
 };
 declare module "@deepseek-ai/cordis" {

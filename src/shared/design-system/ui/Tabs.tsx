@@ -44,8 +44,9 @@ export type TabItem<Value extends string> = {
   onMove?: ((delta: -1 | 1) => void) | undefined;
   /** Double-click, F2 or the tab's menu edits its name; blank restores the default. */
   onRename?: ((name: string) => void) | undefined;
-  /** Listed first in the tab's menu. */
   actions?: readonly TabAction[] | undefined;
+  /** Listed first and valid only while the panel publishes them. */
+  contributedActions?: readonly TabAction[] | undefined;
 };
 
 /**
@@ -245,6 +246,7 @@ export function Tabs<Value extends string>({
               key={JSON.stringify([tabMenu?.key, item.value])}
               label={item.label}
               actions={item.actions}
+              contributedActions={item.contributedActions}
               closeAll={tabMenu?.closeAll}
               closeOthers={
                 tabMenu?.closeOthers &&
@@ -358,6 +360,7 @@ function SegmentedIndicator({
 export function TabMenu({
   label,
   actions,
+  contributedActions,
   onClose,
   onRename,
   closeAll,
@@ -366,6 +369,7 @@ export function TabMenu({
 }: {
   label: string;
   actions: readonly TabAction[] | undefined;
+  contributedActions?: readonly TabAction[] | undefined;
   onClose: (() => void) | undefined;
   onRename: (() => void) | undefined;
   closeAll: (() => boolean) | undefined;
@@ -373,13 +377,53 @@ export function TabMenu({
   closeOthers: (() => boolean) | undefined;
   children: ReactNode;
 }) {
+  const hasMenu = !!(
+    contributedActions?.length ||
+    actions?.length ||
+    onRename ||
+    closeAll ||
+    closeOthers
+  );
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
+  const lastFocused = useRef<HTMLElement>(null);
   const [anchor, setAnchor] = useState<HTMLElement>();
   const closingAll = useRef(false);
-  // A host action runs once the menu has closed, from its tab, so a
+  // An action runs once the menu has closed, from its tab, so a
   // destination it opens can take focus from there.
-  const afterClose = useRef<() => void>(undefined);
+  const afterClose = useRef<{ action: TabAction; contributed: boolean }>(
+    undefined,
+  );
+  useLayoutEffect(() => {
+    const pending = afterClose.current;
+    if (
+      !hasMenu ||
+      (pending?.contributed && !contributedActions?.includes(pending.action))
+    )
+      afterClose.current = undefined;
+    if (!hasMenu) {
+      setOpen(false);
+      return;
+    }
+    const menu = popup.current;
+    const previousFocus = lastFocused.current;
+    // WebKit can leave focus on the body when a focused menu item is removed.
+    if (open && menu && previousFocus && !previousFocus.isConnected) {
+      const doc = menu.ownerDocument;
+      if (doc.activeElement === doc.body) menu.focus({ preventScroll: true });
+    }
+  }, [contributedActions, hasMenu, open]);
+  const renderAction = (action: TabAction, contributed: boolean) => (
+    <MenuItem
+      key={`${contributed ? "panel" : "host"}:${action.label}`}
+      onClick={() => {
+        afterClose.current = { action, contributed };
+      }}
+    >
+      {action.label}
+    </MenuItem>
+  );
   // Middle-click closes a closable tab, without the browser's own default.
   const item = {
     className: "buzz-tabs-item",
@@ -393,24 +437,27 @@ export function TabMenu({
       onClose();
     },
   };
-  if (!actions?.length && !onRename && !closeAll)
-    return <span {...item}>{children}</span>;
   return (
     <ContextMenuRoot
-      open={open}
-      onOpenChange={(next) => {
+      disabled={!hasMenu}
+      open={hasMenu && open}
+      onOpenChange={(next, details) => {
+        if (next && !hasMenu) {
+          details.cancel();
+          return;
+        }
         if (next) closingAll.current = false;
         setOpen(next);
       }}
       onOpenChangeComplete={(next) => {
         if (next) return;
-        const action = afterClose.current;
+        const pending = afterClose.current;
         afterClose.current = undefined;
-        if (!action) return;
+        if (!hasMenu || !pending) return;
         trigger.current
           ?.querySelector<HTMLElement>('[role="tab"], button')
           ?.focus();
-        action();
+        pending.action.run();
       }}
     >
       <ContextMenuTrigger
@@ -422,8 +469,9 @@ export function TabMenu({
         onTouchStart={() => setAnchor(undefined)}
         onKeyDown={(event) => {
           if (
-            event.key === "ContextMenu" ||
-            (event.shiftKey && event.key === "F10")
+            hasMenu &&
+            (event.key === "ContextMenu" ||
+              (event.shiftKey && event.key === "F10"))
           ) {
             event.preventDefault();
             closingAll.current = false;
@@ -435,6 +483,10 @@ export function TabMenu({
         {children}
       </ContextMenuTrigger>
       <MenuPopup
+        ref={popup}
+        onFocus={(event) => {
+          lastFocused.current = event.target;
+        }}
         aria-label={`Actions for ${label} tab`}
         size="compact"
         anchor={anchor}
@@ -446,16 +498,8 @@ export function TabMenu({
               ) ?? false)
         }
       >
-        {actions?.map((action) => (
-          <MenuItem
-            key={action.label}
-            onClick={() => {
-              afterClose.current = action.run;
-            }}
-          >
-            {action.label}
-          </MenuItem>
-        ))}
+        {contributedActions?.map((action) => renderAction(action, true))}
+        {actions?.map((action) => renderAction(action, false))}
         {onRename && <MenuItem onClick={onRename}>Rename tab</MenuItem>}
         {closeOthers && (
           <MenuItem onClick={closeOthers}>Close other tabs</MenuItem>

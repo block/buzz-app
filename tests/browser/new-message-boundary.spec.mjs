@@ -900,6 +900,20 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
       await read(page, app, "Beta");
       await go(page, "Alpha");
       await settle(page);
+      // Finish setup's Alpha read before Beta captures its entry revision.
+      await read(page, app, "Alpha");
+      const alphaLatest = app.histories.get("primary/alpha").at(-1).id;
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (id) =>
+              window.fixtureRelay
+                .snapshot()
+                .session.unread.attention("alpha", id).prefixRead === true,
+            alphaLatest,
+          ),
+        )
+        .toBe(true);
       const arrivals = arrive(app, "beta", true);
       await expect
         .poll(() => unreadIn(page, "beta", arrivals))

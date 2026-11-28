@@ -1766,6 +1766,614 @@ fn managed_policy_lives_beside_profiles_and_never_installs() {
         .any(|plugin| plugin.manifest.id == "example.managed"));
 }
 
+#[path = "../src/main.rs"]
+#[allow(dead_code)]
+mod cli;
+
+mod cli_cleanup {
+    use super::*;
+    use buzz_credential_store::Error;
+    use buzzodz_plugins::secrets::{begin_sign_out, SecretStore};
+    use buzzodz_plugins::SecretStatus;
+    use std::collections::HashMap;
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+    use zeroize::Zeroizing;
+
+    #[derive(Default)]
+    struct Fake {
+        items: Mutex<HashMap<String, Vec<u8>>>,
+        remaining: Mutex<Option<usize>>,
+        gate: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+        calls: Mutex<usize>,
+    }
+    impl SecretStore for Fake {
+        fn read(&self, account: &str) -> std::result::Result<Zeroizing<Vec<u8>>, Error> {
+            *self.calls.lock().unwrap() += 1;
+            self.items
+                .lock()
+                .unwrap()
+                .get(account)
+                .cloned()
+                .map(Zeroizing::new)
+                .ok_or(Error::Absent)
+        }
+        fn add(&self, account: &str, value: &[u8]) -> std::result::Result<(), Error> {
+            *self.calls.lock().unwrap() += 1;
+            self.items
+                .lock()
+                .unwrap()
+                .insert(account.into(), value.to_vec());
+            Ok(())
+        }
+        fn delete(&self, account: &str) -> std::result::Result<(), Error> {
+            *self.calls.lock().unwrap() += 1;
+            if let Some((started, release)) = self.gate.lock().unwrap().take() {
+                started.send(()).unwrap();
+                release.recv().unwrap();
+            }
+            if let Some(left) = &mut *self.remaining.lock().unwrap() {
+                if *left == 0 {
+                    return Err(Error::Denied);
+                }
+                *left -= 1;
+            }
+            self.items.lock().unwrap().remove(account);
+            Ok(())
+        }
+    }
+    fn setup() -> (tempfile::TempDir, Manager, Arc<Fake>) {
+        let (temp, manager, source) = fixture();
+        let store = Arc::new(Fake::default());
+        let manager = manager.with_secret_storage(temp.path().join("inventory"), store.clone());
+        fs::write(source.join("manifest.json"), r#"{"id":"example.page","name":"Example","apiVersion":1,"host":{"networkOrigins":["https://api.example.test"],"secrets":[{"id":"api-key","label":"API key","origins":["https://api.example.test"],"header":"Authorization","scheme":"Bearer"}]}}"#).unwrap();
+        sign(&source);
+        let catalog = manager.install(&source).unwrap();
+        let revision = &catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+            .revision;
+        manager.change("enable", "example.page").unwrap();
+        for identity in ["1".repeat(64), "2".repeat(64)] {
+            manager
+                .secret_set(
+                    "example.page",
+                    revision,
+                    "api-key",
+                    &identity,
+                    "sk-cli-sentinel",
+                    &|| true,
+                )
+                .unwrap();
+        }
+        (temp, manager, store)
+    }
+    fn run(manager: &Manager, action: &str, budget: Duration) -> (bool, String) {
+        let args = if action == "remove" {
+            vec!["example.page".into()]
+        } else {
+            vec![]
+        };
+        let mut out = Vec::new();
+        let result = cli::dispatch(manager, action, &args, "test", &mut out, budget).unwrap();
+        let mut text = String::from_utf8(out).unwrap();
+        if let Err(error) = &result {
+            text.push_str(error);
+        }
+        assert!(!text.contains("sk-cli-sentinel"));
+        assert!(!text.contains(&"1".repeat(64)));
+        assert!(!text.contains(&"2".repeat(64)));
+        (result.is_ok(), text)
+    }
+    const WAIT: Duration = Duration::from_secs(3);
+    const WARNING: &str =
+        "Warning: Saved credential cleanup is incomplete/unknown — not confirmed.";
+
+    /// A saved change reports unconfirmed cleanup as a separate stderr warning,
+    /// which libtest captures in-process. Rerun `test` alone, uncaptured, and
+    /// return that stderr with its secrets and paths checked; `None` in the rerun.
+    fn rerun_for_stderr(test: &str) -> Option<String> {
+        const CHILD: &str = "BUZZ_CLI_CLEANUP_STDERR";
+        if std::env::var_os(CHILD).is_some() {
+            return None;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("cli_cleanup::{test}"), "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{stderr}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(!stderr.contains("sk-cli-sentinel"));
+        assert!(!stderr.contains(&"1".repeat(64)));
+        assert!(!stderr.contains(&"2".repeat(64)));
+        assert!(!stderr.contains("confirmed complete"));
+        Some(stderr)
+    }
+
+    #[test]
+    fn cli_complete_remove_and_recover_commit_then_confirm_both_identities() {
+        for action in ["remove", "recover"] {
+            let (temp, manager, store) = setup();
+            let state = temp.path().join("inventory/state.json");
+            let before = fs::read(&state).unwrap();
+            let (ok, text) = run(&manager, action, WAIT);
+            assert!(ok, "{text}");
+            let mutation = if action == "remove" {
+                "Removed example.page"
+            } else {
+                "Reset profile"
+            };
+            assert!(text.find(mutation).unwrap() < text.find("confirmed complete").unwrap());
+            assert!(store.items.lock().unwrap().is_empty());
+            assert_eq!(manager.credential_cleanup_status().unwrap().pending, 0);
+            assert_eq!(
+                fs::read(state).unwrap(),
+                before,
+                "cleanup cannot enroll or observe a native count"
+            );
+            assert!(!manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .iter()
+                .any(|p| p.manifest.id == "example.page"));
+        }
+    }
+    #[test]
+    fn cli_partial_denied_restart_no_row_and_explicit_retry_zero_one() {
+        if let Some(stderr) =
+            rerun_for_stderr("cli_partial_denied_restart_no_row_and_explicit_retry_zero_one")
+        {
+            // One separate warning per saved removal, never a path.
+            assert_eq!(stderr.matches(WARNING).count(), 2, "{stderr}");
+            assert!(!stderr.contains("/tmp") && !stderr.contains("/var/folders"));
+            return;
+        }
+        for allowed in [0, 1] {
+            let (temp, manager, store) = setup();
+            *store.remaining.lock().unwrap() = Some(allowed);
+            let (ok, text) = run(&manager, "remove", WAIT);
+            assert!(ok, "the saved removal succeeds: {text}");
+            assert!(text.contains("Removed example.page"));
+            assert!(!text.contains("confirmed complete"));
+            assert!(!text.contains(temp.path().to_str().unwrap()));
+            let reopened = Manager::open(Some(temp.path().into()), "test", false)
+                .unwrap()
+                .with_secret_storage(temp.path().join("inventory"), store.clone());
+            let (ok, text) = run(&reopened, "list", WAIT);
+            assert!(!ok);
+            assert!(!text.contains("example.page"));
+            assert!(text.contains(&format!("pending: {}", 2 - allowed)));
+            assert!(!run(&reopened, "cleanup-retry", WAIT).0);
+            *store.remaining.lock().unwrap() = None;
+            assert!(run(&reopened, "cleanup-retry", WAIT).0);
+            assert!(store.items.lock().unwrap().is_empty());
+            assert!(run(&reopened, "list", WAIT).0);
+        }
+    }
+    #[test]
+    fn cli_stalled_wait_and_busy_namespace_keep_debt_without_claiming_deletion() {
+        if let Some(stderr) = rerun_for_stderr(
+            "cli_stalled_wait_and_busy_namespace_keep_debt_without_claiming_deletion",
+        ) {
+            assert_eq!(stderr.matches(WARNING).count(), 1, "{stderr}");
+            return;
+        }
+        let (temp, manager, store) = setup();
+        let (started, observed) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        *store.gate.lock().unwrap() = Some((started, released));
+        let caller = manager.clone();
+        let job = std::thread::spawn(move || run(&caller, "remove", Duration::from_millis(100)));
+        observed.recv_timeout(WAIT).unwrap();
+        let (ok, text) = job.join().unwrap();
+        let debt = manager.credential_cleanup_status().unwrap();
+        let busy = run(&manager, "cleanup-retry", WAIT);
+        let listing = run(&manager, "list", WAIT);
+        let removed = !manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .any(|p| p.manifest.id == "example.page");
+        // Release even when an assertion below fails. The denied fake retains debt.
+        *store.remaining.lock().unwrap() = Some(0);
+        release.send(()).unwrap();
+        let worker = fs::read_dir(temp.path().join("inventory"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.to_string_lossy().ends_with(".worker.lock"))
+            .unwrap();
+        let barrier = fs::File::open(worker).unwrap();
+        barrier.lock().unwrap(); // The real cleanup worker has finished with its namespace.
+        assert!(
+            removed,
+            "removal must commit before the stalled OS deletion"
+        );
+        assert!(text.contains("Removed example.page"));
+        assert!(ok, "the saved removal succeeds: {text}");
+        assert!(!text.contains("confirmed complete"));
+        assert_eq!(debt.pending, 2);
+        assert_eq!(debt.running, 1);
+        assert!(!busy.0);
+        assert!(!listing.0);
+        assert!(listing.1.contains("running: 1"));
+        assert_eq!(store.items.lock().unwrap().len(), 2);
+    }
+    #[test]
+    fn cli_journal_refuses_without_clearing_or_observing_native_count() {
+        let (temp, manager, store) = setup();
+        begin_sign_out(&temp.path().join("inventory"), Some(&"1".repeat(64)), None).unwrap();
+        let state = temp.path().join("inventory/state.json");
+        let before = fs::read(&state).unwrap();
+        let (ok, text) = run(&manager, "cleanup-retry", WAIT);
+        assert!(!ok);
+        assert!(text.contains("open Buzz"));
+        assert_eq!(fs::read(state).unwrap(), before);
+        assert_eq!(store.items.lock().unwrap().len(), 2);
+    }
+    #[test]
+    fn cli_unknown_and_unconfigured_tracking_never_become_clean() {
+        let (temp, manager, store) = setup();
+        manager.change("remove", "example.page").unwrap();
+        let unconfigured = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let (ok, text) = run(&unconfigured, "list", WAIT);
+        assert!(!ok);
+        assert!(text.contains("Profile: test"));
+        assert!(text.contains("not confirmed"));
+        fs::write(temp.path().join("inventory/state.json"), b"broken").unwrap();
+        for action in ["list", "cleanup-retry"] {
+            let (ok, text) = run(&manager, action, WAIT);
+            assert!(!ok);
+            assert!(text.contains("not confirmed"));
+            assert!(!text.contains("confirmed complete"));
+        }
+        assert_eq!(store.items.lock().unwrap().len(), 2);
+    }
+    #[test]
+    fn cli_configured_legacy_absent_inventory_never_confirms_cleanup() {
+        if let Some(stderr) =
+            rerun_for_stderr("cli_configured_legacy_absent_inventory_never_confirms_cleanup")
+        {
+            // Saved remove and recover each warn; list and retry report in their output.
+            assert_eq!(stderr.matches(WARNING).count(), 2, "{stderr}");
+            return;
+        }
+        let mut failures = Vec::new();
+        for action in ["list", "cleanup-retry", "remove", "recover"] {
+            let (temp, manager, source) = fixture();
+            let store = Arc::new(Fake::default());
+            let root = temp.path().join("inventory");
+            let manager = manager.with_secret_storage(root.clone(), store.clone());
+            manager.install(&source).unwrap();
+            assert!(!root.exists());
+            let (ok, text) = run(&manager, action, WAIT);
+            // A saved change succeeds; only cleanup-retry fails when unconfirmed.
+            let truthful = ok == (action != "cleanup-retry")
+                && !text.contains("confirmed complete")
+                && match action {
+                    "list" => text.contains("not observed"),
+                    "cleanup-retry" => text.contains("incomplete/unknown"),
+                    _ => !text.contains("Saved credential cleanup"),
+                };
+            if !truthful {
+                failures.push(format!("{action}: ok={ok}, {text}"));
+            }
+            if action == "remove" {
+                assert!(text.contains("Removed example.page"));
+            }
+            if action == "recover" {
+                assert!(text.contains("Reset profile"));
+            }
+            assert!(!root.exists(), "{action} must not create inventory history");
+            assert!(store.items.lock().unwrap().is_empty());
+            let registry: serde_json::Value = serde_json::from_slice(
+                &fs::read(temp.path().join("profiles/test/registry.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(registry["version"], 2);
+            assert!(registry.get("secrets").is_none());
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+    #[test]
+    fn cli_discharged_recovery_inventory_confirms_without_registry_lineage() {
+        let (temp, manager, store) = setup();
+        let (ok, text) = run(&manager, "recover", WAIT);
+        assert!(ok, "{text}");
+        assert!(text.contains("confirmed complete"));
+        let registry: serde_json::Value = serde_json::from_slice(
+            &fs::read(temp.path().join("profiles/test/registry.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(registry["version"], 2);
+        assert!(registry.get("secrets").is_none());
+        let root = temp.path().join("inventory");
+        let record = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                let name = path.file_name().unwrap().to_string_lossy();
+                name.starts_with("ns-") && name.ends_with(".json")
+            })
+            .unwrap();
+        let record: serde_json::Value = serde_json::from_slice(&fs::read(record).unwrap()).unwrap();
+        assert!(record["entries"].as_array().unwrap().is_empty());
+        assert!(store.items.lock().unwrap().is_empty());
+        let reopened = Manager::open(Some(temp.path().into()), "test", false)
+            .unwrap()
+            .with_secret_storage(root, store);
+        for action in ["list", "cleanup-retry", "recover"] {
+            let (ok, text) = run(&reopened, action, WAIT);
+            assert!(ok, "{action}: {text}");
+            assert!(text.contains("confirmed complete"));
+            assert!(!text.contains("not observed"));
+        }
+    }
+    #[test]
+    fn cli_unconfigured_arbitrary_home_does_not_enroll_or_create_native_evidence() {
+        if let Some(stderr) = rerun_for_stderr(
+            "cli_unconfigured_arbitrary_home_does_not_enroll_or_create_native_evidence",
+        ) {
+            assert_eq!(stderr.matches(WARNING).count(), 2, "{stderr}");
+            return;
+        }
+        let (temp, manager, source) = fixture();
+        manager.install(&source).unwrap();
+        for action in ["list", "remove", "recover", "cleanup-retry"] {
+            let (ok, text) = run(&manager, action, WAIT);
+            // Saved changes succeed; an unconfirmed retry still fails.
+            assert_eq!(ok, action != "cleanup-retry", "{action}: {text}");
+            assert!(!text.contains("confirmed complete"), "{action}: {text}");
+        }
+        let registry: serde_json::Value = serde_json::from_slice(
+            &fs::read(temp.path().join("profiles/test/registry.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(registry["version"], 2);
+        assert!(registry.get("secrets").is_none());
+        assert!(!temp.path().join("inventory").exists());
+    }
+
+    const IDENTITIES: [&str; 2] = [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    ];
+    const SLOT_MANIFEST: &str = r#"{"id":"example.page","name":"Example","apiVersion":1,"host":{"networkOrigins":["https://api.example.test"],"secrets":[{"id":"api-key","label":"API key","origins":["https://api.example.test"],"header":"Authorization","scheme":"Bearer"}]}}"#;
+
+    fn test_publisher() -> String {
+        nostr::key::Keys::new(SecretKey::from_hex(TEST_KEY).unwrap())
+            .public_key()
+            .to_hex()
+    }
+    /// Writes the default trust file beside the profiles, listing only `publisher`.
+    fn trust_only(temp: &tempfile::TempDir, publisher: &str) {
+        fs::write(
+            temp.path().join(buzzodz_plugins::trust::FILE_NAME),
+            serde_json::json!({"version": 1, "trustedPublishers": [{"publisher": publisher}]})
+                .to_string(),
+        )
+        .unwrap();
+    }
+    fn untrusted() -> String {
+        nostr::key::Keys::new(SecretKey::generate())
+            .public_key()
+            .to_hex()
+    }
+    fn revision(manager: &Manager) -> String {
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+            .revision
+    }
+    fn statuses(manager: &Manager, revision: &str) -> Vec<SecretStatus> {
+        IDENTITIES
+            .iter()
+            .map(|identity| {
+                manager
+                    .secret_status("example.page", revision, "api-key", identity)
+                    .unwrap()
+            })
+            .collect()
+    }
+    fn no_secret(text: &str) {
+        assert!(!text.contains("sk-cli-sentinel"), "{text}");
+        for identity in IDENTITIES {
+            assert!(!text.contains(identity), "{text}");
+        }
+    }
+
+    #[test]
+    fn revoked_publisher_blocks_slot_authority_without_retiring_enrollment() {
+        let (temp, manager, store) = setup();
+        let revision = revision(&manager);
+        trust_only(&temp, &test_publisher());
+        assert_eq!(statuses(&manager, &revision), [SecretStatus::Saved; 2]);
+
+        trust_only(&temp, &untrusted());
+        let state = temp.path().join("inventory/state.json");
+        let registry = temp.path().join("profiles/test/registry.json");
+        let (state_before, registry_before) =
+            (fs::read(&state).unwrap(), fs::read(&registry).unwrap());
+        let (items, calls) = (
+            store.items.lock().unwrap().clone(),
+            *store.calls.lock().unwrap(),
+        );
+        let catalog = manager.catalog().unwrap();
+        let row = catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.page")
+            .expect("an untrusted plugin stays listed");
+        assert!(
+            row.error.as_deref().unwrap().contains("not trusted"),
+            "{:?}",
+            row.error
+        );
+        let refusals = [
+            manager.module("example.page", &revision).err(),
+            manager.host_grants("example.page", &revision).err(),
+            manager
+                .secret_status("example.page", &revision, "api-key", IDENTITIES[0])
+                .err(),
+            manager
+                .secret_set(
+                    "example.page",
+                    &revision,
+                    "api-key",
+                    IDENTITIES[0],
+                    "sk-cli-sentinel",
+                    &|| true,
+                )
+                .err(),
+            manager
+                .secret_clear("example.page", &revision, "api-key", IDENTITIES[0])
+                .err(),
+        ];
+        for refusal in refusals {
+            let refusal = refusal.expect("the artifact gate refuses an untrusted publisher");
+            assert!(refusal.contains("not trusted"), "{refusal}");
+            no_secret(&refusal);
+        }
+        assert_eq!(*store.items.lock().unwrap(), items);
+        assert_eq!(
+            *store.calls.lock().unwrap(),
+            calls,
+            "refusals reach no slot store"
+        );
+        assert_eq!(fs::read(&registry).unwrap(), registry_before);
+        assert_eq!(
+            fs::read(&state).unwrap(),
+            state_before,
+            "revocation retires nothing"
+        );
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 0);
+
+        // Revocation is admission, not deletion: trusting again restores the same enrollment.
+        trust_only(&temp, &test_publisher());
+        assert_eq!(statuses(&manager, &revision), [SecretStatus::Saved; 2]);
+        assert_eq!(*store.items.lock().unwrap(), items);
+    }
+
+    #[test]
+    fn untrusted_update_or_reload_changes_no_slot_policy_until_admitted() {
+        let (temp, manager, store) = setup();
+        let source = temp.path().join("build");
+        let revision = revision(&manager);
+        manager.change("disable", "example.page").unwrap();
+        // A changed slot policy makes an accidental retirement observable.
+        fs::write(
+            source.join("manifest.json"),
+            SLOT_MANIFEST.replace(
+                r#""origins":["https://api.example.test"]"#,
+                r#""origins":["https://api.example.test","https://api.example.test:8443"]"#,
+            )
+            .replace(
+                r#""networkOrigins":["https://api.example.test"]"#,
+                r#""networkOrigins":["https://api.example.test","https://api.example.test:8443"]"#,
+            ),
+        )
+        .unwrap();
+        sign(&source);
+        trust_only(&temp, &untrusted());
+        let state = temp.path().join("inventory/state.json");
+        let registry = temp.path().join("profiles/test/registry.json");
+        let (state_before, registry_before) =
+            (fs::read(&state).unwrap(), fs::read(&registry).unwrap());
+        let calls = *store.calls.lock().unwrap();
+        for refusal in [
+            manager.install(&source).err(),
+            manager.reload("example.page").err(),
+        ] {
+            let refusal = refusal.expect("an untrusted release is refused");
+            assert!(refusal.contains("not trusted"), "{refusal}");
+            no_secret(&refusal);
+        }
+        assert_eq!(fs::read(&registry).unwrap(), registry_before);
+        assert_eq!(fs::read(&state).unwrap(), state_before);
+        assert_eq!(*store.calls.lock().unwrap(), calls);
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 0);
+
+        trust_only(&temp, &test_publisher());
+        manager.change("enable", "example.page").unwrap();
+        assert_eq!(statuses(&manager, &revision), [SecretStatus::Saved; 2]);
+        manager.change("disable", "example.page").unwrap();
+        manager.install(&source).unwrap();
+        manager.change("enable", "example.page").unwrap();
+        let updated = self::revision(&manager);
+        assert_ne!(updated, revision);
+        assert_eq!(statuses(&manager, &updated), [SecretStatus::Missing; 2]);
+        // The admitted policy change retired both enrollments as cleanup debt.
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 2);
+        assert_eq!(manager.credential_cleanup(WAIT).unwrap().pending, 0);
+        assert!(store.items.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn removal_while_untrusted_still_retires_and_keeps_cleanup_debt() {
+        let (temp, manager, store) = setup();
+        trust_only(&temp, &untrusted());
+        *store.remaining.lock().unwrap() = Some(0);
+        let (ok, text) = run(&manager, "remove", WAIT);
+        assert!(
+            ok,
+            "the saved removal succeeds without trusting its code: {text}"
+        );
+        assert!(text.contains("Removed example.page"), "{text}");
+        assert!(!text.contains("confirmed complete"), "{text}");
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 2);
+        assert_eq!(store.items.lock().unwrap().len(), 2);
+        assert!(!run(&manager, "cleanup-retry", WAIT).0);
+        *store.remaining.lock().unwrap() = None;
+        let (ok, text) = run(&manager, "cleanup-retry", WAIT);
+        assert!(ok, "{text}");
+        assert!(store.items.lock().unwrap().is_empty());
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 0);
+    }
+
+    #[test]
+    fn trust_policy_and_refusals_create_no_credential_custody() {
+        let (temp, manager, source) = fixture();
+        let store = Arc::new(Fake::default());
+        let manager = manager.with_secret_storage(temp.path().join("inventory"), store.clone());
+        fs::write(source.join("manifest.json"), SLOT_MANIFEST).unwrap();
+        sign(&source);
+        let unlisted = untrusted();
+        manager
+            .trust()
+            .update(|policy| {
+                policy.publishers.push(buzzodz_plugins::trust::Publisher {
+                    publisher: unlisted.clone(),
+                    name: None,
+                });
+                Ok(())
+            })
+            .unwrap();
+        assert!(install_error(&manager, &source).contains("not trusted"));
+        let (ok, text) = run(&manager, "list", WAIT);
+        assert!(ok, "{text}");
+        assert!(manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .all(|p| p.manifest.id != "example.page"));
+        assert!(!temp.path().join("inventory").exists());
+        assert_eq!(*store.calls.lock().unwrap(), 0);
+    }
+}
+
 #[test]
 fn trusted_publishers_restrict_install_load_and_unsigned_overrides() {
     use std::process::Command;

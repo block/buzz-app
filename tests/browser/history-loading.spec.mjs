@@ -834,10 +834,16 @@ test.describe("pages inside one second", () => {
     await expectAnchor(page, beforeGrowth);
   });
 
-  test(
-    "a drag released before a render that holds its row again ends the hold",
-    endedBeforeHold("drag"),
-  );
+  test.describe("among the loaded rows with room above", () => {
+    // Generated keys decide which rows of the second land above the reader;
+    // some leave it under 150px from the top, too little for its 300px input.
+    // These keys land the page among the loaded rows with room above.
+    test.use({ fixedKeys: true });
+    test(
+      "a drag released before a render that holds its row again ends the hold",
+      endedBeforeHold("drag"),
+    );
+  });
   // Reader input moves 300px up and ends while the page's rows wait to
   // measure, before a live message renders.
   function endedBeforeHold(input) {

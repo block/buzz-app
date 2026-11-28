@@ -2537,6 +2537,134 @@ it.each([
   },
 );
 
+/** The provider's refusal of every request on a thread holding a voice clip. */
+const AUDIO_REFUSED = `{
+  "error": {
+    "message": "Audio input is not available.",
+    "type": "invalid_request_error",
+    "param": "input",
+    "code": null
+  }
+}`;
+const FRESH_SESSION = "Your next mention starts a fresh Codex session.";
+
+/** Ends the latest turn as failed, with Codex's error class. */
+const failTurn = (
+  f: ReturnType<typeof fixture>,
+  message: string,
+  codexErrorInfo: unknown,
+) => {
+  const index = f.starts().length - 1;
+  const params = f.starts()[index]?.params as { threadId: string };
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: params.threadId,
+      turn: {
+        id: `turn-${index + 1}`,
+        status: "failed",
+        error: { message, codexErrorInfo, additionalDetails: null },
+      },
+    },
+  });
+};
+
+it.each([
+  ["a bad request", "Unsupported operation", "badRequest"],
+  ["the provider's invalid request", AUDIO_REFUSED, "other"],
+])(
+  "starts a fresh Codex thread on the next mention after %s",
+  async (_, error, codexErrorInfo) => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    failTurn(f, error, codexErrorInfo);
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: `Codex could not finish: ${error}. ${FRESH_SESSION}`,
+    });
+    expect(
+      JSON.parse(
+        [...f.storage].find(([key]) =>
+          key.startsWith("buzz.codex.sessions."),
+        )?.[1] ?? "{}",
+      ),
+    ).toEqual({});
+    await f.runtime.run(f.delivery("follow-up"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/resume"),
+    ).toHaveLength(0);
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/start"),
+    ).toHaveLength(2);
+  },
+);
+
+it.each([
+  ["another failure", "model busy", "other"],
+  ["a usage limit", "You've hit your usage limit.", "usageLimitExceeded"],
+  ["a rate limit", "Rate limit reached", "rateLimitExceeded"],
+])("keeps the Codex thread after %s", async (_, error, codexErrorInfo) => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  failTurn(f, error, codexErrorInfo);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: `Codex could not finish: ${error}.`,
+  });
+  await f.runtime.run(f.delivery("follow-up"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.sent.filter((wire) => wire.method === "thread/resume")[0]?.params,
+  ).toMatchObject({ threadId: "thread-1" });
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+});
+
+it("starts a remote Codex thread fresh after the provider's invalid request, without asking for a new session", async () => {
+  const lifetime = new AbortController();
+  let f!: ReturnType<typeof fixture>;
+  const target: AgentExecution = {
+    workspace: "/guest/project",
+    signal: lifetime.signal,
+    spawn: vi.fn(async (_program, options) => {
+      options?.onStdout?.(
+        `${JSON.stringify({ buzzCodexHook: "ready", url: "http://127.0.0.1:1234" })}\n`,
+      );
+      return f.spawn("app-server", options);
+    }),
+    resolveDirectory: vi.fn(async (path) => path),
+    readFile: vi.fn(async () => new Uint8Array()),
+    dispose: vi.fn(async () => lifetime.abort(new Error("unloaded"))),
+  };
+  f = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    async () => target,
+  );
+  try {
+    await f.runtime.run(f.delivery("first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    failTurn(f, AUDIO_REFUSED, "other");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+    await f.runtime.run(f.delivery("follow-up"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/resume"),
+    ).toHaveLength(0);
+    expect(f.publish).toHaveBeenCalledOnce();
+  } finally {
+    await target.dispose();
+  }
+});
+
 it.each(["thread/start", "turn/start"])(
   "links Codex's Settings and quotes Codex when Codex refuses %s for its sign-in, keeping Codex's words for the Activity tab",
   async (method) => {
@@ -7837,9 +7965,19 @@ describe("voice seats", () => {
   async function seated(
     overrides: Partial<AgentVoiceSeat> = {},
     configure: (f: ReturnType<typeof fixture>) => void = () => {},
+    persisted?: AgentStore,
   ) {
     vi.stubGlobal("RTCPeerConnection", class {});
-    const f = fixture();
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      persisted,
+    );
     configure(f);
     f.huddleChannels.add("channel");
     const delivery = f.delivery("hello");
@@ -8186,6 +8324,83 @@ describe("voice seats", () => {
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     f.complete(0, "DONE");
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalled());
+  });
+  it("ends the seat on a thread the provider refused, so the next mention starts fresh", async () => {
+    const f = await seated();
+    await f.runtime.run(f.delivery("typed work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.starts()[0]?.params).toMatchObject({ threadId: "thread-1" });
+    failTurn(f, AUDIO_REFUSED, "other");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: `Codex could not finish: ${AUDIO_REFUSED}. ${FRESH_SESSION}`,
+    });
+    await vi.waitFor(() => expect(f.ended).toHaveBeenCalledOnce());
+    await f.runtime.run(f.delivery("follow-up"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).not.toMatchObject({ threadId: "thread-1" });
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/start"),
+    ).toHaveLength(2);
+  });
+  it("starts a mention queued behind the refused turn fresh, not on the ending seat", async () => {
+    // Hold the refused turn while it forgets its thread, so the mention
+    // queues behind it before the seat ends.
+    const saved = new Map<string, string>();
+    const base = localStore({
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => saved.set(key, value),
+      removeItem: (key: string) => saved.delete(key),
+    } as unknown as Storage);
+    let forgetting: Promise<void> | undefined;
+    const held = vi.fn();
+    const store: AgentStore = {
+      ...base,
+      async set(key, value) {
+        if (forgetting) {
+          held();
+          await forgetting;
+        }
+        return base.set(key, value);
+      },
+    };
+    const f = await seated({}, () => {}, store);
+    await f.runtime.run(f.delivery("typed work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const gate = deferred<void>();
+    forgetting = gate.promise;
+    failTurn(f, AUDIO_REFUSED, "other");
+    await vi.waitFor(() => expect(held).toHaveBeenCalled());
+    forgetting = undefined;
+    await f.runtime.run(f.delivery("queued follow-up"));
+    expect(f.starts()).toHaveLength(1);
+    gate.resolve();
+    await vi.waitFor(() => expect(f.ended).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).not.toMatchObject({ threadId: "thread-1" });
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/start"),
+    ).toHaveLength(2);
+    const [, bindings = "{}"] =
+      [...saved].find(([key]) => key.startsWith("buzz.codex.sessions.")) ?? [];
+    expect(
+      Object.values(JSON.parse(bindings)).map(
+        (binding) => (binding as { threadId: string }).threadId,
+      ),
+    ).toEqual(["thread-2"]);
+  });
+  it("leaves a seat on another Codex thread when the provider refuses a thread", async () => {
+    const f = await seated({ conversation: { channelId: "other" } }, (f) =>
+      f.huddleChannels.add("other"),
+    );
+    await f.runtime.run(f.delivery("typed work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.starts()[0]?.params).toMatchObject({ threadId: "thread-2" });
+    failTurn(f, AUDIO_REFUSED, "other");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+    expect(f.ended).not.toHaveBeenCalled();
+    expect(f.abort.signal.aborted).toBe(false);
+    await f.connection.close();
   });
   it("keeps a running typed turn alive when its seat aborts", async () => {
     vi.mocked(openVoice).mockImplementationOnce(async (rpc, threadId) => ({

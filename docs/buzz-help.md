@@ -217,6 +217,12 @@ if that desktop app is up and running.
   model, and a model chosen beside Send still wins.
 - **While it works**, the agent shows typing dots, and you can stop it. If it
   can't finish, it says why and offers **Retry**.
+- **If the model provider refuses a Codex agent's request**, for example with
+  `invalid_request_error`, the next mention starts a fresh Codex session. The
+  agent still gets the Buzz conversation but loses Codex's memory of earlier
+  turns. Rate limits, network errors and interrupts keep the session.
+  A Codex agent in a Huddle voice seat on that session leaves the Huddle; add
+  it again to talk to it there.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents

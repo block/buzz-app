@@ -628,6 +628,10 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/finder/manifest.json"))
             .expect("finder manifest"),
         serde_json::from_str(include_str!(
+            "../../../src/bundled/voice-jump/manifest.json"
+        ))
+        .expect("voice jump manifest"),
+        serde_json::from_str(include_str!(
             "../../../src/bundled/changesets/manifest.json"
         ))
         .expect("changesets manifest"),

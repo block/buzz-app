@@ -164,6 +164,10 @@ if that desktop app is up and running.
   ⌘⇧P (Ctrl+Shift+P) searches all of Buzz; a switch under the field changes
   between them. Letters don't need to be next to each other: `dplyrlbk` finds
   "deploy rollback". While typing in a text field, ⌘⇧P stays Spoiler.
+- **Voice Jump.** With the Voice Jump plugin on (it's off by default), ⇧⌘J
+  (Shift+Ctrl+J) or the mic beside Search listens through your speech
+  provider and opens the plugin page or conversation you name, listing the
+  likeliest as you talk.
 - **Charts.** With the Charts plugin on, a `buzz-chart` code block of JSON
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.

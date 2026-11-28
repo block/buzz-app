@@ -1,0 +1,7 @@
+{
+  "id": "buzz.voice-jump",
+  "name": "Voice Jump",
+  "apiVersion": 1,
+  "description": "Say a page, channel, person, chat or thread, and go there.",
+  "discovery": { "category": "productivity", "tags": ["tasks"] }
+}

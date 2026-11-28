@@ -204,7 +204,7 @@ assert.throws(()=>composeGateway(undefined,{},{},'s'),/no header profile/);
 // Only Pi's built-in Anthropic and OpenAI models go to the gateway, by their own ID.
 assert.deepEqual(gatewayModel(models.getModel(GPT.provider,GPT.model),ROOT),{...models.getModel(GPT.provider,GPT.model),provider:'buzz-gateway',baseUrl:ROOT+'/openai/v1'});
 {const claude=gatewayModel(models.getModel(CLAUDE.provider,CLAUDE.model),ROOT);
- assert.deepEqual([claude.id,claude.api,claude.baseUrl,claude.compat.sendSessionAffinityHeaders],[CLAUDE.model,'anthropic-messages',ROOT+'/anthropic',true]);}
+ assert.deepEqual([claude.id,claude.api,claude.baseUrl,claude.compat.sendSessionAffinityHeaders,claude.compat.supportsMidConvoEffort],[CLAUDE.model,'anthropic-messages',ROOT+'/anthropic',true,false]);}
 for(const model of [models.getModel('faux','faux-1'),models.getModel('google','gemini-2.5-pro'),{...models.getModel(GPT.provider,GPT.model),api:'openai-completions'},undefined])
  assert.throws(()=>gatewayModel(model,ROOT),/isn't available through the model gateway/);
 result.composition=true;// The shared gateway vectors, through this copy of its composer.
@@ -571,6 +571,13 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   }
   assert.equal(elsewhere.length,0);assert.deepEqual(told,[]);
  }
+ // A model Pi gives per-message effort markers sends its effort once, top-level, to the gateway.
+ {const model=models.getModel('anthropic','claude-opus-5-5');assert.equal(model.compat.supportsMidConvoEffort,true);
+  const from=requests.length;replies.push(say('effort'));
+  const reply=await routed.completeSimple(model,input,{sessionId:'effort',telemetry:requestTelemetry('r'),reasoning:'xhigh'});
+  assert.equal(reply.stopReason,'stop',reply.errorMessage);assert.equal(requests.length,from+1);
+  const {body}=requests[from];assert.deepEqual(body.output_config,{effort:'xhigh'});
+  assert.ok(body.messages.every(m=>!('output_config' in m)),JSON.stringify(body.messages));}
  result.methods=true;}
 // A turn in the host on each: a tool call and its continuation carry the run's context and native
 // affinity, and a refusal stops the run visibly, told at the binding's revision, sending nothing more.

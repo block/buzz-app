@@ -102,6 +102,13 @@ import TablerBrowserIcon from "@tabler/icons-react/dist/esm/icons/IconBrowser.mj
 export const BrowserIcon = defineIcon("tabler", TablerBrowserIcon);
 import TablerCalendarIcon from "@tabler/icons-react/dist/esm/icons/IconCalendar.mjs";
 export const CalendarIcon = defineIcon("tabler", TablerCalendarIcon);
+import TablerArrowBarToDownIcon from "@tabler/icons-react/dist/esm/icons/IconArrowBarToDown.mjs";
+export const ArrowBarToDownIcon = defineIcon(
+  "tabler",
+  TablerArrowBarToDownIcon,
+);
+import TablerArrowBarToUpIcon from "@tabler/icons-react/dist/esm/icons/IconArrowBarToUp.mjs";
+export const ArrowBarToUpIcon = defineIcon("tabler", TablerArrowBarToUpIcon);
 import TablerArrowDownIcon from "@tabler/icons-react/dist/esm/icons/IconArrowDown.mjs";
 export const ArrowDownIcon = defineIcon("tabler", TablerArrowDownIcon);
 import TablerArrowLeftIcon from "@tabler/icons-react/dist/esm/icons/IconArrowLeft.mjs";

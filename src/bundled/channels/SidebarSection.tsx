@@ -26,6 +26,8 @@ import {
   MenuTrailing,
 } from "../../shared/design-system/ui/Menu";
 import {
+  ArrowBarToDownIcon,
+  ArrowBarToUpIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   ArrowsDownUpIcon,
@@ -143,7 +145,9 @@ export function SidebarSection({
   dragging?: boolean;
   /** Single-pointer and keyboard reordering; an absent direction is disabled. */
   move?:
-    | { up?: (() => void) | undefined; down?: (() => void) | undefined }
+    | Partial<
+        Record<"top" | "up" | "down" | "bottom", (() => void) | undefined>
+      >
     | undefined;
   children: ReactNode;
 }) {
@@ -373,34 +377,30 @@ export function SidebarSection({
                       </MenuItem>
                     </>
                   )}
-                  {move && (
-                    <>
+                  {move &&
+                    (
+                      [
+                        ["top", ArrowBarToUpIcon, "Move to top"],
+                        ["up", ArrowUpIcon, "Move up"],
+                        ["down", ArrowDownIcon, "Move down"],
+                        ["bottom", ArrowBarToDownIcon, "Move to bottom"],
+                      ] as const
+                    ).map(([direction, Icon, label]) => (
                       <MenuItem
-                        disabled={!move.up}
+                        key={direction}
+                        disabled={!move[direction]}
                         onClick={() => {
-                          move.up?.();
+                          move[direction]?.();
                           setMenuOpen(false);
                         }}
                       >
                         <MenuIcon>
-                          <ArrowUpIcon size={14} />
+                          <Icon size={14} />
                         </MenuIcon>
-                        Move up
+                        {label}
                       </MenuItem>
-                      <MenuItem
-                        disabled={!move.down}
-                        onClick={() => {
-                          move.down?.();
-                          setMenuOpen(false);
-                        }}
-                      >
-                        <MenuIcon>
-                          <ArrowDownIcon size={14} />
-                        </MenuIcon>
-                        Move down
-                      </MenuItem>
-                    </>
-                  )}
+                    ))}
+
                   {menuActions?.(() => setMenuOpen(false), actionsTrigger)}
 
                   {canRemove && (

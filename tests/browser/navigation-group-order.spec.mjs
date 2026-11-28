@@ -185,13 +185,37 @@ test("dragging a group header moves the whole group, keeps its state, and persis
     .poll(() => groups(page))
     .toEqual(["group:laptop", "group:work", "group:missing"]);
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(3);
+  const moveWork = async (name, publications) => {
+    await clickSidebarHeadingAction(
+      page.getByRole("button", { name: "More actions for Work" }),
+    );
+    await page.getByRole("menuitem", { name, exact: true }).click();
+    await expect
+      .poll(() => app.report.sidebarPublications?.length ?? 0)
+      .toBe(publications);
+  };
+  await moveWork("Move to bottom", 4);
+  await expect
+    .poll(() => groups(page))
+    .toEqual(["group:laptop", "group:missing", "group:work"]);
+  await clickSidebarHeadingAction(
+    page.getByRole("button", { name: "More actions for Work" }),
+  );
+  await expect(
+    page.getByRole("menuitem", { name: "Move to bottom", exact: true }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await page.keyboard.press("Escape");
+  await moveWork("Move to top", 5);
+  await expect
+    .poll(() => groups(page))
+    .toEqual(["group:work", "group:laptop", "group:missing"]);
 
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   await page.reload();
   await openPage(page, "Messages");
   await expect
     .poll(() => groups(page))
-    .toEqual(["group:laptop", "group:work", "group:missing"]);
+    .toEqual(["group:work", "group:laptop", "group:missing"]);
   await expect(laptop.locator("details")).not.toHaveAttribute("open");
   await expect(work.locator('[data-channel-id="beta"]')).toBeVisible();
 });

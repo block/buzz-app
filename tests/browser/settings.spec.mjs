@@ -480,8 +480,8 @@ confirmedPresence(
       await avatar.click();
       await expect(account).toBeHidden();
       await avatar.click();
-      // The dock account popup opens beside the bottom controls.
-      // Click exposed content above it to exercise outside dismissal.
+      // The account popup opens below the header controls.
+      // Click exposed content beside it to exercise outside dismissal.
       const main = page.getByRole("main");
       const bounds = await main.boundingBox();
       await main.click({
@@ -518,13 +518,7 @@ confirmedPresence(
       await expect(
         page.getByRole("button", { name: /^Community switcher:/ }),
       ).toBeFocused();
-      await tab(true);
-      await expect(
-        page
-          .getByRole("navigation", { name: "Apps dock" })
-          .getByRole("tab")
-          .and(page.locator('[tabindex="0"]')),
-      ).toBeFocused();
+      // The account controls follow search in the header; there is no dock.
       await tab(true);
       await expect(button(page, "Search Buzz")).toBeFocused();
     }

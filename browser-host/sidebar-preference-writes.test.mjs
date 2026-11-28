@@ -13,6 +13,7 @@ import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { prepareSidebarStar } from "./sidebar-toggle.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createRelaySession } from "../src/features/relay/session.ts";
+import { WORKSPACE_PREFERENCE_COORDINATES } from "../src/features/relay/sidebar-preferences.ts";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 
 const emptyWorkspace = { sections: [], assignments: {}, sectionOrder: [] };
@@ -198,7 +199,14 @@ it.each([false, true])(
       ]);
       expect(preferences.sectionCreationWritable).toBe(true);
       const batches = h.calls.filter(
-        ({ body }) => Array.isArray(body) && body.length === 5,
+        // The account preference batch: one filter per saved coordinate.
+        ({ body }) =>
+          Array.isArray(body) &&
+          body.length === WORKSPACE_PREFERENCE_COORDINATES.length &&
+          body.every(
+            (filter, i) =>
+              filter["#d"]?.[0] === WORKSPACE_PREFERENCE_COORDINATES[i],
+          ),
       );
       expect(batches).toHaveLength(fails ? 3 : 2);
       expect(

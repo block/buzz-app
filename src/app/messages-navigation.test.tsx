@@ -80,10 +80,17 @@ it("opens the Drafts & sent plugin page from global search inside Messages", asy
     pluginId: "buzz.drafts-and-sent",
     pageId: "drafts-sent",
   });
-  expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute(
-    "aria-selected",
-    "true",
+  // Messages stays the owner: its sidebar is still shown, with the page row current.
+  expect(document.getElementById("shell-navigation")).toHaveAttribute(
+    "aria-hidden",
+    "false",
   );
+  expect(
+    within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
+      "button",
+      { name: "Drafts & sent" },
+    ),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 it("opens Drafts & sent from a plugin-owned sidebar's shared Pages navigation", async () => {
@@ -141,10 +148,6 @@ it("opens Drafts & sent inside Messages and retains the sidebar through Back/For
   expect(
     await screen.findByRole("region", { name: "Drafts & sent" }),
   ).toBeVisible();
-  expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
   expect(document.getElementById("shell-navigation")).toHaveAttribute(
     "aria-hidden",
     "false",
@@ -232,9 +235,15 @@ it.each(Object.keys(legacyLinks) as (keyof typeof legacyLinks)[])(
       pageId: "drafts-sent",
       scope: null,
     });
-    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    expect(document.getElementById("shell-navigation")).toHaveAttribute(
+      "aria-hidden",
+      "false",
     );
+    expect(
+      within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
+        "button",
+        { name: "Drafts & sent" },
+      ),
+    ).toHaveAttribute("aria-current", "page");
   },
 );

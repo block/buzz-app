@@ -506,6 +506,18 @@ async function readResponseError(response: Response) {
   );
 }
 
+/** A failed relay read. Only the relay's own 401/403 is a denial; an edge or
+ * proxy page with that status (a VPN still reconnecting) is an outage. */
+async function relayReadError(response: Response) {
+  const failure = await readApiFailure(response);
+  return new ReadError(
+    failure.denied ? "denied" : "unavailable",
+    failure.error,
+    response.status,
+    failure.retryAfterMs,
+  );
+}
+
 /** The broker marks any response whose upstream relay request met a community
  * refusal with `x-buzz-refusal` (`relay-broker.mjs`), whatever its route does
  * with the relay's body. Every broker request below goes through here. */
@@ -1419,7 +1431,7 @@ export async function connectBrokerTransport(
                 ),
                 signal,
               });
-              if (!result.ok) throw httpReadError(result.status);
+              if (!result.ok) throw await relayReadError(result);
               return parseEvents(
                 JSON.parse(sized(await result.text())),
                 verify,
@@ -1467,15 +1479,7 @@ export async function connectBrokerTransport(
           body: JSON.stringify(filters),
           signal: signal ?? null,
         });
-        if (!result.ok) {
-          const failure = await readApiFailure(result);
-          throw new ReadError(
-            failure.denied ? "denied" : "unavailable",
-            failure.error,
-            result.status,
-            failure.retryAfterMs,
-          );
-        }
+        if (!result.ok) throw await relayReadError(result);
         recordServerTiming(result, profiling, requestId);
         return profiling.measureAsync("read.verify", requestId, async () =>
           parseEvents(JSON.parse(sized(await result.text())), verify, signal),
@@ -1674,15 +1678,7 @@ export async function connectSignedTransport(
           principal().api,
           priority,
         );
-        if (!result.ok) {
-          const failure = await readApiFailure(result);
-          throw new ReadError(
-            failure.denied ? "denied" : "unavailable",
-            failure.error,
-            result.status,
-            failure.retryAfterMs,
-          );
-        }
+        if (!result.ok) throw await relayReadError(result);
         recordServerTiming(result, profiling, requestId);
         return profiling.measureAsync("read.verify", requestId, async () =>
           parseEvents(JSON.parse(sized(await result.text())), verify, signal),

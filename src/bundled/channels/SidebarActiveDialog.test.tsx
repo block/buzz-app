@@ -7,24 +7,44 @@ import { SidebarActiveDialog } from "./SidebarActiveDialog";
 
 afterEach(cleanup);
 
-it("starts with the saved preset and cancels without writing", async () => {
+it("starts with the saved window and cancels without writing", async () => {
   const apply = vi.fn(),
     close = vi.fn();
   render(
     <SidebarActiveDialog
-      seconds={7 * 86400}
+      seconds={14 * 86400}
       apply={apply}
       close={close}
       finalFocus={{ current: null }}
     />,
   );
-  expect(screen.getByRole("radio", { name: "7 days" })).toBeChecked();
+  expect(screen.getByRole("spinbutton", { name: "Days" })).toHaveValue(14);
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(close).toHaveBeenCalledOnce();
   expect(apply).not.toHaveBeenCalled();
 });
 
-it("retains a preset after failed confirmation and prevents closing while saving", async () => {
+it("rejects an invalid draft inline without writing", async () => {
+  const user = userEvent.setup();
+  const apply = vi.fn();
+  render(
+    <SidebarActiveDialog
+      apply={apply}
+      close={vi.fn()}
+      finalFocus={{ current: null }}
+    />,
+  );
+  const days = screen.getByRole("spinbutton", { name: "Days" });
+  await user.clear(days);
+  await user.type(days, "0");
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Enter a whole number of days from 1 to 365.",
+  );
+  expect(apply).not.toHaveBeenCalled();
+});
+
+it("keeps the draft after a failed save and prevents closing while saving", async () => {
   const user = userEvent.setup();
   let reject!: (error: Error) => void;
   const gate = new Promise<void>((_resolve, fail) => {
@@ -42,61 +62,20 @@ it("retains a preset after failed confirmation and prevents closing while saving
       finalFocus={{ current: null }}
     />,
   );
-  await user.click(screen.getByRole("radio", { name: "90 days" }));
+  const days = screen.getByRole("spinbutton", { name: "Days" });
+  await user.clear(days);
+  await user.type(days, "45");
   await user.click(screen.getByRole("button", { name: "Apply" }));
-  expect(apply).toHaveBeenCalledExactlyOnceWith(90 * 86400);
+  expect(apply).toHaveBeenCalledExactlyOnceWith(45 * 86400);
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-  expect(screen.getByRole("radio", { name: "7 days" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
   await user.keyboard("{Escape}");
   expect(close).not.toHaveBeenCalled();
   await act(async () => reject(new Error("Duration not confirmed")));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Duration not confirmed",
   );
-  expect(screen.getByRole("radio", { name: "90 days" })).toBeChecked();
+  expect(days).toHaveValue(45);
   await user.click(screen.getByRole("button", { name: "Apply" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
-  expect(apply).toHaveBeenLastCalledWith(90 * 86400);
-});
-
-it("offers five presets and opens an older custom value as a 30-day draft", async () => {
-  const user = userEvent.setup();
-  const apply = vi.fn();
-  render(
-    <SidebarActiveDialog
-      seconds={14 * 86400}
-      apply={apply}
-      close={vi.fn()}
-      finalFocus={{ current: null }}
-    />,
-  );
-  expect(
-    screen.getAllByRole("radio").map((radio) => radio.textContent),
-  ).toHaveLength(5);
-  expect(screen.queryByRole("radio", { name: "Custom" })).toBeNull();
-  expect(screen.queryByRole("spinbutton")).toBeNull();
-  expect(screen.getByRole("radio", { name: "30 days" })).toBeChecked();
-  expect(apply).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("radio", { name: "1 day" }));
-  await user.click(screen.getByRole("button", { name: "Apply" }));
-  expect(apply).toHaveBeenCalledExactlyOnceWith(86400);
-});
-
-it("applies the 3-day preset as 72 hours", async () => {
-  const user = userEvent.setup();
-  const apply = vi.fn();
-  render(
-    <SidebarActiveDialog
-      seconds={3 * 86400}
-      apply={apply}
-      close={vi.fn()}
-      finalFocus={{ current: null }}
-    />,
-  );
-  expect(screen.getByRole("radio", { name: "3 days" })).toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Apply" }));
-  expect(apply).toHaveBeenCalledExactlyOnceWith(72 * 3600);
+  expect(apply).toHaveBeenLastCalledWith(45 * 86400);
 });

@@ -1878,9 +1878,13 @@ export function createUnread({
                   ({ target }) => !!reads.localUnread(targetKey(target)),
                 ) ||
                 (timeline &&
-                  entries.some(
+                  (entries.some(
                     (entry) => !!reads.localUnread(`msg:${entry.event.id}`),
-                  )),
+                  ) ||
+                    // A Solo chat marked unread as a whole: the mark that
+                    // bolds its row also makes it need you.
+                    snapshot({ kind: "channel", channelId: channel.id })
+                      .manual !== "none")),
               ...(timeline ? { timeline: true as const } : {}),
               readThrough: Object.freeze(
                 readThrough.map((step) =>
@@ -3521,12 +3525,14 @@ export function createUnread({
             timestamp: entry.event.created_at,
             channelId,
           }));
-        const covered = (state.frontiers[channelId] ?? -1) >= cut;
+        // Reading a Solo chat from Activity also ends its whole-chat mark.
+        const marked = snapshot(target).manual !== "none";
+        const covered = (state.frontiers[channelId] ?? -1) >= cut && !marked;
         return reads.readMessages(
           covered
             ? marks
             : [{ key: channelId, timestamp: cut, channelId }, ...marks],
-          undefined,
+          marked ? messageForceKey(channelId) : undefined,
           valid,
           false,
           undefined,

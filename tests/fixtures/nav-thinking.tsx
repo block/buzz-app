@@ -147,6 +147,12 @@ const session = {
       channelId === "design" && active.design?.length && showUnreadThread
         ? activeThreadActivity
         : threadActivity.get(channelId),
+    inbox: () => ({
+      status: "ready" as const,
+      items: [],
+      freshness: "unknown" as const,
+    }),
+    subscribeInbox: () => () => {},
     subscribeActivity(_channelId: string, listener: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);

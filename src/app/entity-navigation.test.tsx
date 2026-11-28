@@ -1036,17 +1036,23 @@ it("lists active primary pages in the app dock", async () => {
   services = createServices();
   const current = services;
   render(<App services={current} />);
-  // Activity is a row in the Messages sidebar; the others are dock apps.
+  // Every active primary page is a row in the Messages sidebar; there is no
+  // app dock, so none of them is a tab.
+  const pagesNav = () => screen.getByRole("navigation", { name: "Pages" });
   await within(
     await screen.findByRole("navigation", { name: "Pages" }),
   ).findByRole("button", { name: "Activity" });
-  expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
-  expect(screen.getByRole("tab", { name: "Bestie" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab")).toBeNull();
+  expect(
+    within(pagesNav()).getByRole("button", { name: "Bestie" }),
+  ).toBeInTheDocument();
 
   expect(
-    screen.queryByRole("tab", { name: "Repository" }),
+    within(pagesNav()).queryByRole("button", { name: "Repository" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument();
+  expect(
+    within(pagesNav()).getByRole("button", { name: "Agents" }),
+  ).toBeInTheDocument();
 
   // The fixture page is active and searchable but never a sidebar row.
   expect(current.pages.snapshot().map((page) => page.key)).toContain(
@@ -1090,9 +1096,13 @@ it("lists active primary pages in the app dock", async () => {
       { name: "Activity" },
     ),
   ).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Bestie" })).toBeInTheDocument();
+  expect(
+    within(pagesNav()).getByRole("button", { name: "Bestie" }),
+  ).toBeInTheDocument();
 
-  expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();
+  expect(
+    within(pagesNav()).queryByRole("button", { name: "Agents" }),
+  ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const search = await screen.findByRole("dialog", { name: "Search Buzz" });
   expect(
@@ -1117,8 +1127,7 @@ it("lists active primary pages in the app dock", async () => {
   expect(
     screen.queryByRole("navigation", { name: "Pages" }),
   ).not.toBeInTheDocument();
-  expect(screen.queryByRole("tab", { name: "Bestie" })).not.toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Messages" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   expect(
     screen.getByRole("complementary", { name: "Sidebar" }),
   ).toBeInTheDocument();

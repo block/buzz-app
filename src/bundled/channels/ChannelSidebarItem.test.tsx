@@ -15,6 +15,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
+import type { InboxItem, InboxSnapshot } from "../../features/relay/inbox";
 import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { UnreadBadge } from "./UnreadBadge";
@@ -42,6 +43,12 @@ function owner(profiles = new Map<string, Profile>()) {
     items: [],
     coverage: "observed",
     freshness: "observed",
+  };
+  const inboxListeners = new Set<() => void>();
+  let inbox: InboxSnapshot = {
+    status: "ready",
+    items: [],
+    freshness: "unknown",
   };
   const session = {
     channels: { prepare: vi.fn() },
@@ -83,11 +90,26 @@ function owner(profiles = new Map<string, Profile>()) {
         return () => listeners.delete(listener);
       },
       activity: () => activity,
+      inbox: () => inbox,
+      subscribeInbox: (listener: () => void) => {
+        inboxListeners.add(listener);
+        return () => inboxListeners.delete(listener);
+      },
       subscribeActivity: () => () => {},
     },
   } as unknown as RelaySession;
   return {
     session,
+    inbox(items: Partial<InboxItem>[]) {
+      inbox = {
+        status: "ready",
+        items: items.map(
+          (item) => ({ channelId: "alpha", ...item }) as InboxItem,
+        ),
+        freshness: "observed",
+      };
+      for (const listener of inboxListeners) listener();
+    },
     profiles,
     listeners,
     mute(value: boolean) {
@@ -170,14 +192,14 @@ it.each([
   ({ working, unread }) => {
     const state = owner();
     render(<ChannelSidebarItem {...itemProps(state.session, working)} />);
-    if (unread) act(() => state.unread(1, 1));
+    if (unread) act(() => state.inbox([{ unreadCount: 1 }]));
     const stack = document.querySelector("[data-channel-indicators]");
     if (!(stack instanceof HTMLElement))
       throw new Error("Missing indicator stack");
     expect(stack.querySelector("[data-channel-working]") !== null).toBe(
       working,
     );
-    expect(stack.querySelector("[data-channel-priority]") !== null).toBe(
+    expect(stack.querySelector("[data-channel-needs-you]") !== null).toBe(
       unread,
     );
   },
@@ -251,12 +273,13 @@ it("shows the viewer's agents typing in the channel or its threads as working", 
 it("layers the working indicator above unread at the same position", () => {
   const state = owner();
   render(<ChannelSidebarItem {...itemProps(state.session, true)} />);
-  act(() => state.unread(1, 1));
+  act(() => state.inbox([{ unreadCount: 1 }]));
   const stack = document.querySelector("[data-channel-indicators]");
-  const unread = stack?.querySelector("[data-channel-priority]");
+  const unread = stack?.querySelector("[data-channel-needs-you]");
   const working = stack?.querySelector("[data-channel-working]");
   expect(stack).toBeInTheDocument();
-  expect(unread).toHaveAttribute("data-indicator-layer", "unread");
+  expect(unread).toBeInTheDocument();
+  expect(unread?.closest("[data-channel-working]")).toBeNull();
   expect(working).toHaveAttribute("data-indicator-layer", "working");
   expect(working?.compareDocumentPosition(unread as Node)).toBe(
     Node.DOCUMENT_POSITION_PRECEDING,
@@ -531,17 +554,14 @@ it("shows what the row has not seen, while the channel stays unread", () => {
     state.unread(3, 2, { observedCount: 0, attentionCount: 0, threadCount: 0 }),
   );
   expect(row()).not.toHaveAttribute("data-ordinary");
-  for (const name of [
-    "data-channel-unread",
-    "data-channel-priority",
-    "data-channel-activity",
-  ])
+  for (const name of ["data-channel-unread", "data-channel-needs-you"])
     expect(marker(name)).toBeNull();
-  // A later thread reply lights the row's thread dot.
-  act(() =>
-    state.unread(4, 3, { observedCount: 1, attentionCount: 1, threadCount: 1 }),
-  );
-  expect(marker("data-channel-activity")).not.toBeNull();
+  // A later reply in a thread you follow reaches Activity, so the row needs you.
+  act(() => {
+    state.unread(4, 3, { observedCount: 1, attentionCount: 1, threadCount: 1 });
+    state.inbox([{ unreadCount: 1 }]);
+  });
+  expect(marker("data-channel-needs-you")).not.toBeNull();
   expect(row()).not.toHaveAttribute("data-ordinary");
 });
 
@@ -561,8 +581,8 @@ it("marks a temporary channel with its lifetime and yields the slot to working a
   expect(marker).toHaveAttribute("title", label);
   // Metadata inside the select surface, not a separate control.
   expect(marker.closest("button")).toHaveAttribute("data-channel-id", "alpha");
-  act(() => state.unread(1, 1));
-  expect(document.querySelector("[data-channel-priority]")).not.toBeNull();
+  act(() => state.inbox([{ unreadCount: 1 }]));
+  expect(document.querySelector("[data-channel-needs-you]")).not.toBeNull();
   expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
   view.rerender(
     <ChannelSidebarItem {...itemProps(state.session, true, temporary)} />,
@@ -635,10 +655,33 @@ it("keeps Solo unread labels and markers independent of mute", () => {
   ).toBeInTheDocument();
   act(() => state.unread(3, 1));
   expect(label()).toBeInTheDocument();
-  expect(view.container.querySelector("[data-channel-priority]")).toBeNull();
+  expect(view.container.querySelector("[data-channel-needs-you]")).toBeNull();
   act(() => state.unread(0));
   expect(label()).toBeNull();
   expect(view.container.querySelector("[data-channel-unread]")).toBeNull();
+});
+
+it("marks a row as needing you only while Activity holds an unread conversation for it", () => {
+  const state = owner();
+  const view = render(
+    <UnreadBadge session={state.session} channelId="alpha" />,
+  );
+  const waiting = () =>
+    view.container.querySelector("[data-channel-needs-you]");
+  act(() => state.unread(2));
+  // Ordinary backlog alone, or a read Activity conversation, isn't waiting.
+  expect(waiting()).toBeNull();
+  act(() => state.inbox([{ unreadCount: 0, manual: false }]));
+  expect(waiting()).toBeNull();
+  act(() => state.inbox([{ unreadCount: 1, manual: false }]));
+  expect(waiting()).toBeInTheDocument();
+  // One spoken status, which says it needs you instead of the observed count.
+  expect(screen.getAllByRole("img")).toHaveLength(1);
+  expect(screen.getByRole("img", { name: "1 unread" })).toBeInTheDocument();
+  act(() =>
+    state.inbox([{ channelId: "beta", unreadCount: 1, manual: false }]),
+  );
+  expect(waiting()).toBeNull();
 });
 
 it.each([
@@ -665,41 +708,48 @@ it.each([
     act(() => state.mute(true));
     expect(screen.getByRole("img", { name: "Muted" })).toBeInTheDocument();
     expect(row()).not.toHaveAttribute("data-ordinary");
+    const needsYou = () =>
+      view.container.querySelectorAll("[data-channel-needs-you]");
     act(() => state.mute(false));
-    act(() => state.unread(2));
+    // A DM's message reaches Activity; ordinary channel backlog does not.
+    act(() => {
+      state.unread(2);
+      if (channelType === "dm") state.inbox([{ unreadCount: 2 }]);
+    });
     expect(row()).toHaveAttribute("data-ordinary");
+    expect(needsYou()).toHaveLength(mutedIndicators);
     act(() => state.mute(true));
     expect(row()).not.toHaveAttribute("data-ordinary");
+    expect(needsYou()).toHaveLength(0);
     act(() => state.unread(3, 0));
     expect(row()).not.toHaveAttribute("data-ordinary");
     expect(
       view.container.querySelectorAll("[data-channel-unread]"),
     ).toHaveLength(mutedIndicators);
-    expect(
-      view.container.querySelectorAll("[data-channel-priority]"),
-    ).toHaveLength(0);
+    expect(needsYou()).toHaveLength(0);
     expect(screen.getByRole("img", { name: "Muted" })).toBeInTheDocument();
     act(() => state.mute(false));
     expect(row()).toHaveAttribute("data-ordinary");
     expect(
       screen.queryByRole("img", { name: "Muted" }),
     ).not.toBeInTheDocument();
-    expect(
-      view.container.querySelectorAll("[data-channel-priority]"),
-    ).toHaveLength(mutedIndicators);
+    expect(needsYou()).toHaveLength(mutedIndicators);
     act(() => state.mute(true));
-    act(() => state.unread(4, 1));
+    // A mention of you arrives while muted.
+    act(() => {
+      state.unread(4, 1);
+      state.inbox([{ unreadCount: 1 }]);
+    });
     expect(row()).not.toHaveAttribute("data-ordinary");
-    expect(view.container.querySelector("[data-channel-priority]")).toBeNull();
+    expect(needsYou()).toHaveLength(0);
     expect(
       screen.getByRole("img", { name: /4 observed unread messages/ }),
     ).toBeInTheDocument();
     act(() => state.mute(false));
-    expect(
-      view.container.querySelector("[data-channel-priority]"),
-    ).toBeInTheDocument();
+    expect(needsYou()).toHaveLength(1);
     act(() => state.mute(true));
     act(() => state.manual());
+    expect(needsYou()).toHaveLength(0);
     expect(row()).toHaveAttribute("data-ordinary");
     expect(
       screen.getByRole("img", { name: "Marked unread on this device only" }),

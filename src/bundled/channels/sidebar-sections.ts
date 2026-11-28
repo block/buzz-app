@@ -4,6 +4,7 @@ import {
   workspaceSectionOrder,
   type SidebarPreferences,
 } from "../../features/relay/sidebar-preferences";
+import { defaultSidebarSort } from "../../features/relay/sidebar-sort";
 
 export function isChannelSectionKey(key: string) {
   return key === "channels" || key.startsWith("group:");
@@ -88,11 +89,17 @@ export function compareRecent(a: ChannelSummary, b: ChannelSummary) {
 }
 
 const titles: Record<string, string> = {
-  starred: "Starred",
+  pages: "Plugins",
+  starred: "Favorites",
   solo: "Solo",
   channels: "Team",
   dms: "Direct messages",
 };
+
+/** A home card's title, such as Plugins for the pages card. */
+export function sidebarSectionTitle(key: string) {
+  return titles[key] ?? key;
+}
 
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
 export function sidebarSections<T extends ChannelSummary>(
@@ -102,6 +109,8 @@ export function sidebarSections<T extends ChannelSummary>(
   chatsOnly = false,
   draftSections: ReadonlySet<string> = new Set(),
   dormantAssignments: ReadonlySet<string> = new Set(),
+  /** Include the orderable Plugins section for sidebar-placed pages. */
+  pages = false,
 ) {
   const groups = new Map(
     preferences?.sections.map((group) => [group.id, group]),
@@ -130,24 +139,29 @@ export function sidebarSections<T extends ChannelSummary>(
     else rowsBySection.set(key, [channel]);
   }
   return workspaceSectionOrder(preferences).flatMap((key) => {
-    // Older clients can still save this key. Plugin pages now live in the header.
-    if (key === SIDEBAR_PAGES_SECTION) return [];
+    if (key === SIDEBAR_PAGES_SECTION && !pages) return [];
     const group = groups.get(key.slice(6));
     const rows = rowsBySection.get(key) ?? [];
     // The Solo heading owns New and its keyboard shortcut, even when every
-    // chat is filed in a workspace.
-    if (chatsOnly && key !== "solo" && !rows.length && !draftSections.has(key))
+    // chat is filed in a workspace. Plugins stay reachable in Focus.
+    if (
+      chatsOnly &&
+      key !== "solo" &&
+      key !== SIDEBAR_PAGES_SECTION &&
+      !rows.length &&
+      !draftSections.has(key)
+    )
       return [];
     const mode = preferences?.sort?.[group ? `section:${group.id}` : key];
     rows.sort(
-      mode === "recent" || (mode === undefined && key === "solo")
+      (mode ?? defaultSidebarSort(key)) === "recent"
         ? compareRecent
         : compareName,
     );
     return [
       {
         key,
-        title: group?.name ?? titles[key] ?? key,
+        title: group?.name ?? sidebarSectionTitle(key),
         icon: group?.icon,
         rows,
       },

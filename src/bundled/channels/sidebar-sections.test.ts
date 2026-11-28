@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { SIDEBAR_PAGES_SECTION } from "../../features/relay/sidebar-preferences";
 import {
   orderContributedSidebarSections,
   isChannelSectionKey,
@@ -154,9 +155,10 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       new Set(["hidden-dm"]),
     ).find(({ key }) => key === "starred")?.ids,
   ).toEqual(["forum", "solo", "star"]);
+  // Forums shows only once there is a forum to list.
   expect(sidebarSections([])).toEqual([
     { key: "solo", title: "Solo", icon: undefined, rows: [] },
-    { key: "starred", title: "Starred", icon: undefined, rows: [] },
+    { key: "starred", title: "Favorites", icon: undefined, rows: [] },
     { key: "channels", title: "Team", icon: undefined, rows: [] },
     { key: "dms", title: "Direct messages", icon: undefined, rows: [] },
   ]);
@@ -221,6 +223,7 @@ it("sorts every section independently with deterministic inactive and tie fallba
     ["channels", ["forum-new", "forum-old"]],
     ["dms", []],
   ]);
+  // Unsaved, a section reads as A–Z.
   expect(
     sidebarSections(roster)
       .find(({ key }) => key === "channels")
@@ -330,3 +333,17 @@ it.each(["starred", "section:work", "channels", "dms"])(
     );
   },
 );
+
+it("keeps the Plugins section when only Solo chats show", () => {
+  expect(
+    sidebarSections(
+      [],
+      undefined,
+      new Set(),
+      true,
+      new Set(),
+      new Set(),
+      true,
+    ).map((section) => section.key),
+  ).toEqual([SIDEBAR_PAGES_SECTION, "solo"]);
+});

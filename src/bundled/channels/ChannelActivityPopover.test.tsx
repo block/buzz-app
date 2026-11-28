@@ -39,7 +39,16 @@ test("closes activity while its row exits and does not reopen on re-entry", asyn
     freshness: "observed",
   };
   const session = {
-    unread: { activity: () => snapshot, subscribeActivity: () => () => {} },
+    unread: {
+      activity: () => snapshot,
+      inbox: () => ({
+        status: "ready" as const,
+        items: [],
+        freshness: "unknown" as const,
+      }),
+      subscribeInbox: () => () => {},
+      subscribeActivity: () => () => {},
+    },
     agentActivity: {
       snapshot: () => ({ records: [], turns: [], typing: [] }),
       subscribe: () => () => {},
@@ -100,7 +109,16 @@ test("mouse presses do not pin the hover preview open, and only hover marks it a
     freshness: "observed",
   };
   const session = {
-    unread: { activity: () => snapshot, subscribeActivity: () => () => {} },
+    unread: {
+      activity: () => snapshot,
+      inbox: () => ({
+        status: "ready" as const,
+        items: [],
+        freshness: "unknown" as const,
+      }),
+      subscribeInbox: () => () => {},
+      subscribeActivity: () => () => {},
+    },
     profiles: {
       snapshot: () => new Map(),
       subscribe: () => () => {},
@@ -168,6 +186,12 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
     },
     unread: {
       activity: () => snapshot,
+      inbox: () => ({
+        status: "ready" as const,
+        items: [],
+        freshness: "unknown" as const,
+      }),
+      subscribeInbox: () => () => {},
       subscribeActivity: () => () => {},
       markThrough,
     },
@@ -340,6 +364,12 @@ test("unread mentions open activity alone, list above threads, open by message a
     agentChoices: { snapshot: () => ({ identities: [] }) },
     unread: {
       activity: () => snapshot,
+      inbox: () => ({
+        status: "ready" as const,
+        items: [],
+        freshness: "unknown" as const,
+      }),
+      subscribeInbox: () => () => {},
       subscribeActivity: (_: string, listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -460,7 +490,16 @@ test("a mention whose edits or deletions are unchecked shows the Inbox placehold
   const profiles = new Map([["sam", { name: "Sam" }]]);
   const session = {
     agentChoices: { snapshot: () => ({ identities: [] }) },
-    unread: { activity: () => snapshot, subscribeActivity: () => () => {} },
+    unread: {
+      activity: () => snapshot,
+      inbox: () => ({
+        status: "ready" as const,
+        items: [],
+        freshness: "unknown" as const,
+      }),
+      subscribeInbox: () => () => {},
+      subscribeActivity: () => () => {},
+    },
     profiles: {
       snapshot: () => profiles,
       subscribe: () => () => {},
@@ -580,6 +619,12 @@ test("working agents open their thread when linked, otherwise the conversation",
     },
     unread: {
       activity: () => snapshot,
+      inbox: () => ({
+        status: "ready" as const,
+        items: [],
+        freshness: "unknown" as const,
+      }),
+      subscribeInbox: () => () => {},
       subscribeActivity: () => () => {},
     },
     profiles: { ensure },
@@ -676,6 +721,12 @@ test("a typing agent still opens its profile activity while Agent Activity is of
     },
     unread: {
       activity: () => unread,
+      inbox: () => ({
+        status: "ready" as const,
+        items: [],
+        freshness: "unknown" as const,
+      }),
+      subscribeInbox: () => () => {},
       subscribeActivity: () => () => {},
     },
     profiles: { ensure: vi.fn(async () => {}) },
@@ -729,6 +780,12 @@ test("a press while there is no activity does not block the hover preview once a
   const session = {
     unread: {
       activity: () => snapshot,
+      inbox: () => ({
+        status: "ready" as const,
+        items: [],
+        freshness: "unknown" as const,
+      }),
+      subscribeInbox: () => () => {},
       subscribeActivity: (_: string, listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);

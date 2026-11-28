@@ -23,6 +23,10 @@
   padding: var(--space-3) 0 0;
   min-width: 0;
 }
+/* A header with nothing in it takes no room. */
+.sidebarFilter:empty {
+  display: none;
+}
 .sidebarBody {
   display: flex;
   flex-direction: column;
@@ -69,11 +73,22 @@
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
-/* Global destinations share the channel list's row geometry. */
+/* Global destinations share the channel list's row geometry. Everything at a
+   row's end measures from one inset inside its fill: counts, dots and typing
+   end on it, and trailing icon buttons centre where a 1rem glyph would end on
+   it, as leading icons centre in their slot. */
 .channelList,
 .sidebarFilter {
   --channel-row-fill-start: var(--space-1);
   --channel-row-fill-end: var(--space-1);
+  --sidebar-row-inset: var(--space-3);
+  --sidebar-row-action-size: calc(var(--space-6) + var(--space-1));
+  --sidebar-row-action-end: calc(
+    var(--channel-row-fill-end) +
+    var(--sidebar-row-inset) -
+    (var(--sidebar-row-action-size) - 1rem) /
+    2
+  );
 }
 /* Wrapped channel rows paint on the wrapper; direct destination and Solo chat
    rows paint on the navigation item itself, so shorten them to the fill and
@@ -92,7 +107,16 @@
       var(--space-half) -
       var(--channel-row-fill-start)
     )
-    var(--space-2);
+    var(--sidebar-row-inset);
+}
+/* Text-only rows keep their label clear of the pill's rounded
+   edge. The label's design-system class is matched by attribute so the module
+   doesn't scope it. */
+.channelList
+[data-variant="row"]:has(> [class~="navigation-item-label"]:first-child),
+.sidebarFilter
+  [data-variant="row"]:has(> [class~="navigation-item-label"]:first-child) {
+  padding-inline-start: var(--space-3);
 }
 .channelList [data-variant="row"][data-inset],
 .sidebarFilter [data-variant="row"][data-inset] {
@@ -202,4 +226,55 @@
     var(--sidebar-floating-action-clearance) +
     var(--space-3)
   );
+}
+/* Cards: the sidebar has no surface of its own. Its sections are Panels (see
+   `.panel` in components.css) on the window's tint, and the controls around
+   them use the tint's quiet fills, as the header's do. */
+.cards {
+  height: 100%;
+  min-height: 0;
+  --affordance-panel-hover: var(--affordance-backdrop-hover);
+  /* Every card, Favorites included, sits this gap from the next, tighter than
+     the panel gap at the app's edge. */
+  --sidebar-card-gap: var(--space-1);
+}
+/* Cards line up with the conversation: their tops meet, and they sit a panel
+   gap from the window's edge and from the conversation. */
+/* Nothing above the first card adds space, so its top always meets the
+   conversation's. */
+.cards .sidebar .sidebarFilter {
+  padding-block-start: 0;
+}
+/* The list owns the space between cards, so a card spaces correctly however
+   it is wrapped. Slots are display: contents; a box that groups several cards
+   marks itself data-sidebar-card-group and passes the same gap on. */
+.cards .sidebar .channelListContent,
+.cards .sidebar [data-sidebar-card-group] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidebar-card-gap);
+}
+/* The shell already keeps a panel gap on both sides of the sidebar. */
+.cards .sidebar {
+  --sidebar-padding-inline: 0px;
+  --sidebar-padding-end: 0px;
+}
+/* In a card, row fills reach the card's padding, so a fill sits as far from
+   the card's sides as the last row's does from its bottom. Labels keep their
+   place, since row padding is measured from the fill. */
+.cards .sidebar :is(.channelList, .sidebarFilter) {
+  --channel-row-fill-start: 0px;
+  --channel-row-fill-end: 0px;
+}
+/* Cards scroll without a visible scrollbar, and cut off cleanly at the edge:
+   a card's own rounded edge already marks where the list ends, and a fade
+   would wash a card out into the lighter sheet behind it. */
+.cards .sidebar .channelList {
+  mask-image: none;
+  padding-block-start: 0;
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
+}
+.cards .sidebar .channelList::-webkit-scrollbar {
+  display: none;
 }

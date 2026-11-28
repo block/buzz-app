@@ -119,7 +119,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   ).toBeEnabled();
   await page.keyboard.press("Escape");
   await page.unroute("**/sidebar-mute");
-  // Session-owned retry UI remains usable while the sidebar is hidden.
+  // Session-owned retry UI remains usable from an app page.
   await openPage(page, "Workflows");
   await expect(
     page.getByRole("heading", { name: "Workflows", exact: true }),
@@ -128,7 +128,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await failure.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(failure).toHaveCount(0);
   await expect(menu).toHaveCount(0);
-  await expect(beta).toBeHidden();
+  // The sidebar stays beside app pages.
+  await expect(beta).toBeVisible();
   await openPage(page, "Messages");
   await beta.focus();
   await expect(beta).toBeFocused();

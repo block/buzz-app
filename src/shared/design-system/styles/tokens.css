@@ -783,6 +783,12 @@
   --neutral-standard-text: #0f0f0f; /* Designer-requested light primary text and inherited icons. */
   --bubble-neutral: #e9e9ea;
   --bubble-received: #f3f3f4;
+  /* Cards on the workspace sheet: a step quieter than the sheet. */
+  --sheet-card-fill: color-mix(
+    in srgb,
+    var(--bubble-received) 50%,
+    var(--neutral-1)
+  );
   /* Received bubbles on a raised sheet; light needs no separate step. */
   --bubble-received-raised: var(--bubble-received);
   --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
@@ -906,7 +912,7 @@
   /* --- Corner. Containers stop at 28px; pills/circles are separate shapes. */
   --corner-row: 1rem;
   --corner-control: 1.25rem;
-  --corner-container: 1.5rem;
+  --corner-container: 1rem;
   --corner-panel: 1.75rem;
   --corner-round: 9999rem;
 
@@ -916,6 +922,8 @@
   --time-state: 150ms;
   --time-panel-enter: 180ms;
   --time-settle: 220ms;
+  /* A long ease-out tail: it moves in about 200ms, then cushions into place. */
+  --time-glide: 400ms;
   --ease-state: ease;
   --ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-settle: cubic-bezier(0.645, 0.045, 0.355, 1);
@@ -935,6 +943,11 @@
   --neutral-quiet-hover: #2e2e2e;
   --bubble-neutral: #2e2e2e;
   --bubble-received: #292929;
+  --sheet-card-fill: color-mix(
+    in srgb,
+    var(--bubble-received) 50%,
+    var(--neutral-3)
+  );
   /* Inline sheets are raised (#282828), where #292929 disappears. A bubble
      step of its own, not neutral-5, the pressed/selected gray. */
   --bubble-received-raised: #383838;
@@ -1107,6 +1120,7 @@
 :root {
   --surface-base: var(--neutral-2);
   --surface-panel: var(--neutral-1);
+  --surface-sheet-card: var(--sheet-card-fill);
   --surface-composer: var(--surface-panel);
   --surface-popover: var(--neutral-1);
   --surface-elevated-glass: var(--popover-glass-fill);
@@ -1328,6 +1342,7 @@
   --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
+  --surface-sheet-card: var(--sheet-card-fill);
   --surface-composer: var(--neutral-4);
   --surface-popover: var(--neutral-raised);
   --surface-elevated-glass: var(--popover-glass-fill);
@@ -1588,6 +1603,7 @@
   --duration-state: var(--time-state);
   --duration-panel-enter: var(--time-panel-enter);
   --duration-settle: var(--time-settle);
+  --duration-glide: var(--time-glide);
   --duration-field-focus: var(--time-state);
   --easing-state: var(--ease-state);
   --easing-enter: var(--ease-enter);
@@ -1713,6 +1729,9 @@
   /* Corner counts keep a dark fill and readable accent ink in both modes. */
   --surface-dock-count: var(--mono-2-dark);
   --text-dock-count: var(--accent-link-dark);
+  /* A tile's corner count: the strong accent fill with its own ink. */
+  --surface-corner-count: var(--accent-9);
+  --text-corner-count: var(--accent-contrast);
   --text-sidebar-hover: var(--accent-12);
   --affordance-sidebar-hover: var(--accent-2);
   --affordance-accent-prominent: var(--accent-9);
@@ -1762,6 +1781,9 @@
   /* Corner counts keep a dark fill and readable accent ink in both modes. */
   --surface-dock-count: var(--mono-2-dark);
   --text-dock-count: var(--accent-link-dark);
+  /* A tile's corner count: the strong accent fill with its own ink. */
+  --surface-corner-count: var(--accent-9);
+  --text-corner-count: var(--accent-contrast);
   --text-sidebar-hover: var(--accent-12);
   --affordance-sidebar-hover: var(--accent-3);
   --affordance-accent-prominent: var(--accent-9);
@@ -2145,6 +2167,8 @@
   --color-surface-sidebar-selected: var(--surface-sidebar-selected);
   --color-surface-dock-count: var(--surface-dock-count);
   --text-color-dock-count: var(--text-dock-count);
+  --color-surface-corner-count: var(--surface-corner-count);
+  --text-color-corner-count: var(--text-corner-count);
   --color-affordance-sidebar-hover: var(--affordance-sidebar-hover);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);

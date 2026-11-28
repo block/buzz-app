@@ -631,7 +631,7 @@ export function BestieConversation({
               className={`${panelStyles.frame} ${panelStyles.splitMotion}`}
             >
               <div className={panelStyles.page}>
-                <Panel>
+                <Panel flat>
                   <PanelWorkspace
                     main
                     label="Bestie conversation tabs"
@@ -777,7 +777,7 @@ export function BestieConversation({
                 resizeHandle={split.handle}
               >
                 {sideItems.length > 0 && (
-                  <Panel>
+                  <Panel flat joined>
                     <PanelWorkspace
                       label="Bestie panel tabs"
                       items={sideItems}

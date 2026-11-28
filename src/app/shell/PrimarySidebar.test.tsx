@@ -213,7 +213,7 @@ it("keeps focus on a different chat after an Enter-save finishes", async () => {
   );
   expect(destination).toHaveFocus();
 });
-it("shows only chats under a plugin restriction and restores the other sections after", async () => {
+it("shows only chats and the Plugins card under a plugin restriction and restores the other sections after", async () => {
   let restrictions: readonly RegisteredSidebarRestriction[] = [];
   const listeners = new Set<() => void>();
   const publish = (next: readonly RegisteredSidebarRestriction[]) => {
@@ -308,7 +308,8 @@ it("shows only chats under a plugin restriction and restores the other sections 
   expect(screen.queryByRole("tab")).toBeNull();
   expect(screen.queryByRole("tabpanel")).toBeNull();
   expect(screen.getByText("Focusing")).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Inbox" })).toBeNull();
+  // Focus keeps the Plugins card, so its pages stay reachable.
+  expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
   expect(screen.getByRole("button", { name: /^Planning/ })).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "More actions for Team" }),
@@ -540,56 +541,26 @@ it("keeps unavailable creation actions disabled", async () => {
   expect(screen.queryByRole("menuitem", { name: "New section" })).toBeNull();
 });
 
-it.each([["New options", "New workspace"]])(
-  "opens an ordinary workspace draft from %s and ignores later completion after session replacement",
-  async (triggerName, itemName) => {
-    const f = fixture(true, true);
-    const user = userEvent.setup();
-    let finish!: () => void;
-    const pending = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    const create = vi
-      .spyOn(f.session.sidebarPreferences, "createSection")
-      .mockResolvedValueOnce(undefined)
-      .mockReturnValue(pending);
-    await user.click(screen.getByRole("button", { name: triggerName }));
-    await user.click(await screen.findByRole("menuitem", { name: itemName }));
-    const first = await screen.findByRole("dialog", { name: "New workspace" });
-    await user.type(
-      within(first).getByRole("textbox", { name: "Name" }),
-      "First workspace",
-    );
-    await user.click(within(first).getByRole("button", { name: "Create" }));
-    const project = create.mock.calls[0]?.[0];
-    if (!project) throw new Error("Missing created workspace");
-    await waitFor(() =>
-      expect(f.open).toHaveBeenCalledWith(
-        soloDraftTarget(scope, { project: project.id }),
-      ),
-    );
-    await waitFor(() => expect(first).not.toBeInTheDocument());
-    f.open.mockClear();
-    await user.click(screen.getByRole("button", { name: triggerName }));
-    await user.click(await screen.findByRole("menuitem", { name: itemName }));
-    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
-    await user.type(
-      within(dialog).getByRole("textbox", { name: "Name" }),
-      "Planning",
-    );
-    try {
-      await user.click(within(dialog).getByRole("button", { name: "Create" }));
-      await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
-      f.replaceSession();
-    } finally {
-      await act(async () => {
-        finish();
-        await pending;
-      });
-    }
-    expect(f.open).not.toHaveBeenCalled();
-  },
-);
+it("creates a workspace from New options without opening a chat in it", async () => {
+  const f = fixture(true, true);
+  const user = userEvent.setup();
+  const create = vi
+    .spyOn(f.session.sidebarPreferences, "createSection")
+    .mockResolvedValue(undefined);
+  await user.click(screen.getByRole("button", { name: "New options" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "New workspace" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+  await user.type(
+    within(dialog).getByRole("textbox", { name: "Name" }),
+    "Planning",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(f.open).not.toHaveBeenCalled();
+});
 
 it.each([
   ["New workspace", "New workspace", "Name"],
@@ -1357,6 +1328,85 @@ it("renders each framed workspace once with creation controls and restores the o
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     await act(() => source.fiber.dispose());
     await checkOrdinary();
+  } finally {
+    view.unmount();
+    preferences.dispose();
+    await h.dispose();
+  }
+});
+
+it("keeps a workspace name editor through a write outage, and a late save never closes a newer edit", async () => {
+  const h = createSoloRegionFixture(viewer);
+  const groups = {
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "mixed", name: "Mixed", order: 1 },
+    ],
+    assignments: { chat: "work", "public-row": "mixed" },
+  };
+  let failReads = false;
+  const read = vi.fn(async () => {
+    if (failReads) throw new Error("offline");
+    return { ...groups, starred: [], muted: [] };
+  });
+  let release = () => {};
+  const renameSection = vi.fn(
+    () => new Promise<typeof groups>((done) => (release = () => done(groups))),
+  );
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    read,
+    renameSection,
+  });
+  await preferences.queries.ensure();
+  Object.assign(h.session, { sidebarPreferences: preferences.queries });
+  h.roster([
+    {
+      id: "chat",
+      name: "Chat",
+      channelType: "solo",
+      creator: viewer,
+      cached: true,
+    },
+    { id: "public-row", name: "Public channel", channelType: "stream" },
+  ]);
+  const view = render(
+    <ToastProvider>
+      <PrimarySidebar
+        relay={h.relay}
+        navigator={h.navigator}
+        target={conversationTarget(h.scope, "chat")}
+      >
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  try {
+    await user.dblClick(await screen.findByLabelText("Work"));
+    const work = screen.getByRole("textbox", { name: "Workspace name" });
+    await user.keyboard("Studio");
+    // Writes go away while the editor is open; the draft stays.
+    failReads = true;
+    await act(() => preferences.queries.refresh().catch(() => {}));
+    expect(preferences.queries.sectionRenameWritable).toBe(false);
+    expect(work).toHaveValue("Studio");
+    failReads = false;
+    await act(() => preferences.queries.refresh());
+    expect(preferences.queries.sectionRenameWritable).toBe(true);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(renameSection).toHaveBeenCalledOnce());
+    // A newer edit opens on another workspace before the first save lands.
+    await user.dblClick(screen.getByLabelText("Mixed"));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Workspace name" }),
+      ).toHaveValue("Mixed"),
+    );
+    await act(async () => release());
+    expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
+      "Mixed",
+    );
   } finally {
     view.unmount();
     preferences.dispose();

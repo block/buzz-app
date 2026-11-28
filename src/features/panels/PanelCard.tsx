@@ -37,7 +37,7 @@ export function PanelCard({
         }
       }}
     >
-      <Panel as="div">
+      <Panel as="div" flat>
         <PanelSubviewHost close={props.close}>
           <div className={styles.card}>
             {!tabbed && (

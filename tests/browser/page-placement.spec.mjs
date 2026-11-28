@@ -5,6 +5,7 @@ import {
   pageChoice,
   selectCommunity,
   selectPage,
+  settleShellToggle,
 } from "./navigation.mjs";
 
 // Browser-only boundaries: painted focus, native insets, resize geometry, and
@@ -33,13 +34,12 @@ test("shared navigation preserves drafts and history across Solo and header page
   });
   await expect(composer).toBeVisible();
   await composer.fill("Keep this draft");
-  const topbar = page.getByRole("navigation", { name: "Apps dock" });
-  await expect(topbar.getByRole("tab")).toHaveText([
-    "Messages",
-    "Reminders",
-    "Agents",
-    "Workflows",
-  ]);
+  // Every page is a row in the Messages sidebar's Plugins card.
+  const pages = page.getByRole("navigation", { name: "Pages", exact: true });
+  const row = (name) => pages.getByRole("button", { name, exact: true });
+  await expect(
+    pages.getByRole("button", { name: /^(Reminders|Agents|Workflows)$/ }),
+  ).toHaveText(["Reminders", "Agents", "Workflows"]);
   const sidebar = page.getByRole("complementary", {
     name: "Sidebar",
     exact: true,
@@ -54,8 +54,6 @@ test("shared navigation preserves drafts and history across Solo and header page
     true,
   );
   await expect(composer).toHaveCount(0);
-  const messages = topbar.getByRole("tab", { name: "Messages", exact: true });
-  await expect(messages).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "Hide sidebar", exact: true }).click();
   await expect(page.locator("#shell-navigation")).toHaveAttribute(
     "aria-hidden",
@@ -66,23 +64,18 @@ test("shared navigation preserves drafts and history across Solo and header page
   await expect(
     page.getByRole("textbox", { name: "Message your agents", exact: true }),
   ).toBeFocused();
-  await messages.click();
-  // The header keeps the current Messages route, including a Solo draft.
   // Pick the original conversation from the shared sidebar to restore its draft.
-  await page
+  const alpha = page
     .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alpha", exact: true })
-    .click();
+    .getByRole("button", { name: "Alpha", exact: true });
+  await alpha.click();
   await expect(composer).toHaveText("Keep this draft");
-  const reminders = topbar.getByRole("tab", { name: "Reminders", exact: true });
-  await expect(composer).toHaveText("Keep this draft");
-  // Enter the page through normal keyboard traversal, not programmatic panel focus.
+  const reminders = row("Reminders");
+  // Activate the page rows through the keyboard, as well as the pointer.
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     for (const activation of ["Enter", "Space"]) {
-      await messages.focus();
-      await messages.press("ArrowDown");
-      await expect(reminders).toBeFocused();
+      await reminders.focus();
       await reminders.press(activation);
       const newComposer = page.getByRole("heading", {
         name: "Reminders",
@@ -96,113 +89,38 @@ test("shared navigation preserves drafts and history across Solo and header page
             requestAnimationFrame(() => resolve(element.isConnected));
           }),
       );
-      await expect(reminders).toHaveAttribute("aria-selected", "true");
-      await expect(reminders).toBeFocused();
-      await page.keyboard.press("ArrowUp");
-      await expect(messages).toBeFocused();
-      await expect(reminders).toHaveAttribute("aria-selected", "true");
-      await page.keyboard.press(activation);
-      await expect(messages).toHaveAttribute("aria-selected", "true");
+      await expect(reminders).toHaveAttribute("aria-current", "page");
+      await expect(sidebar).toBeVisible();
+      await alpha.focus();
+      await alpha.press(activation);
+      await expect(reminders).not.toHaveAttribute("aria-current");
       await expect(composer).toHaveText("Keep this draft");
-      await expect(messages).toBeFocused();
     }
     await reminders.click();
-    const newComposer = page.getByRole("heading", {
-      name: "Reminders",
-      exact: true,
-    });
-    await expect(newComposer).toBeVisible();
-    await newComposer.evaluate(
-      (element) =>
-        new Promise((resolve) => {
-          requestAnimationFrame(() => resolve(element.isConnected));
-        }),
-    );
-    await expect(reminders).toBeFocused();
-    for (const name of ["Reminders", "Messages"]) {
-      await topbar.getByRole("tab", { name, exact: true }).click();
-      const panel = page.getByRole("tabpanel", { name, exact: true });
-      await page.locator("#main-content").focus();
-      await page.keyboard.press("Tab");
-      await expect(panel).toBeFocused();
-      await expect(panel).toHaveCSS("outline-style", "solid");
-      await expect(panel).toHaveCSS("outline-width", "2px");
-      const focus = await panel.evaluate((element) => {
-        const style = getComputedStyle(element);
-        const box = element.getBoundingClientRect();
-        const frame = element.parentElement.getBoundingClientRect();
-        return {
-          offset: Number.parseFloat(style.outlineOffset),
-          width: Number.parseFloat(style.outlineWidth),
-          color: style.outlineColor,
-          insideFrame:
-            box.left >= frame.left &&
-            box.right <= frame.right &&
-            box.top >= frame.top &&
-            box.bottom <= frame.bottom,
-        };
-      });
-      expect(focus.insideFrame).toBe(true);
-      expect(focus.color).not.toBe("rgba(0, 0, 0, 0)");
-      expect(focus.offset + focus.width).toBeLessThanOrEqual(0);
-      const screenshot = await page.screenshot({
-        scale: "css",
-        path: test.info().outputPath(`panel-focus-${name}-${mode}.png`),
-      });
-      const edgeColors = await panel.evaluate(async (element, imageBase64) => {
-        const image = new Image();
-        image.src = `data:image/png;base64,${imageBase64}`;
-        await image.decode();
-        const canvas = document.createElement("canvas");
-        canvas.width = image.width;
-        canvas.height = image.height;
-        const context = canvas.getContext("2d");
-        context.drawImage(image, 0, 0);
-        const box = element.getBoundingClientRect();
-        return [
-          [box.left + 1, box.top + box.height / 2],
-          [box.right - 1, box.top + box.height / 2],
-          [box.left + box.width / 2, box.top + 1],
-          [box.left + box.width / 2, box.bottom - 1],
-        ].map(([x, y]) => {
-          const [r, g, b] = context.getImageData(
-            Math.floor(x),
-            Math.floor(y),
-            1,
-            1,
-          ).data;
-          return `rgb(${r}, ${g}, ${b})`;
-        });
-      }, screenshot.toString("base64"));
-      expect(edgeColors).toEqual(Array(4).fill(focus.color));
-      await page.keyboard.press("Tab");
-      await expect(panel).not.toBeFocused();
-      await expect(panel).toHaveCSS("outline-style", "none");
-      await topbar.getByRole("tab", { name, exact: true }).click();
-      await expect(page.locator("html")).not.toHaveAttribute(
-        "data-keyboard-navigation",
-      );
-    }
+    await expect(
+      page.getByRole("heading", { name: "Reminders", exact: true }),
+    ).toBeVisible();
+    await expect(reminders).toHaveAttribute("aria-current", "page");
+    await alpha.click();
+    await expect(composer).toHaveText("Keep this draft");
   }
-  await expect(
-    page.getByRole("complementary", { name: "Sidebar", exact: true }),
-  ).toBeVisible();
-  const workflows = topbar.getByRole("tab", { name: "Workflows", exact: true });
+  await expect(sidebar).toBeVisible();
+  const workflows = row("Workflows");
   await workflows.click();
-  await expect(workflows).toHaveAttribute("aria-selected", "true");
-  await expect(messages).toHaveAttribute("aria-selected", "false");
+  await expect(workflows).toHaveAttribute("aria-current", "page");
+  await expect(reminders).not.toHaveAttribute("aria-current");
   await page.reload();
-  await expect(workflows).toHaveAttribute("aria-selected", "true");
+  await expect(workflows).toHaveAttribute("aria-current", "page");
   await reminders.click();
-  await expect(reminders).toHaveAttribute("aria-selected", "true");
+  await expect(reminders).toHaveAttribute("aria-current", "page");
   await page.goBack();
-  await expect(workflows).toHaveAttribute("aria-selected", "true");
+  await expect(workflows).toHaveAttribute("aria-current", "page");
   await page.goForward();
-  await expect(reminders).toHaveAttribute("aria-selected", "true");
-  await messages.click();
+  await expect(reminders).toHaveAttribute("aria-current", "page");
+  await alpha.click();
   await expect(composer).toHaveText("Keep this draft");
   await openPage(page, "Settings");
-  await expect(topbar.locator('[aria-selected="true"]')).toHaveCount(0);
+  await expect(pages.locator('[aria-current="page"]')).toHaveCount(0);
 });
 
 test("a page listed in the Messages sidebar keeps Messages and the conversation sidebar", async ({
@@ -237,14 +155,14 @@ test("a page listed in the Messages sidebar keeps Messages and the conversation 
     page.getByRole("heading", { name: "Listed destination", exact: true }),
   ).toBeVisible();
 
-  const messages = page
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Messages", exact: true });
-  await expect(messages).toHaveAttribute("aria-selected", "true");
+  // Messages stays the owner: its sidebar is still shown, with the row current.
   await expect(sidebar).toBeVisible();
   await expect(destination).toHaveAttribute("aria-current", "page");
 
-  await messages.click();
+  await sidebar
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: "Alpha", exact: true })
+    .click();
   await expect(composer).toBeVisible();
   await expect(destination).not.toHaveAttribute("aria-current");
 });
@@ -290,11 +208,8 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
   await expect(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toHaveCount(0);
-  await expect(
-    page
-      .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab", { name: "Messages", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+  // The replacement sidebar's own Pages list marks the page as current.
+  await expect(destination).toHaveAttribute("aria-current", "page");
   const wideSize = await sidebar.evaluate(
     (element) => element.getBoundingClientRect().width,
   );
@@ -384,15 +299,8 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
     expect(geometryAndColors.action.bottom).toBeLessThanOrEqual(
       geometryAndColors.slot.bottom,
     );
-    await page
-      .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab")
-      .first()
-      .focus();
-    await page.keyboard.press("Tab");
-    await expect(
-      page.getByRole("button", { name: /^Community switcher:/ }),
-    ).toBeFocused();
+    // The header's account controls come before the sidebar in tab order.
+    await page.getByRole("button", { name: /^Community switcher:/ }).focus();
     await page.keyboard.press("Tab");
     await expect(
       page.getByRole("button", { name: "Your profile", exact: true }),
@@ -598,7 +506,7 @@ test.describe("failed page sidebar recovery", () => {
   });
 });
 
-test("dock destinations and titlebar controls remain reachable through scale and resize", async ({
+test("sidebar page rows and titlebar controls remain reachable through scale and resize", async ({
   page,
   app,
 }) => {
@@ -618,8 +526,9 @@ test("dock destinations and titlebar controls remain reachable through scale and
   });
   await page.goto(app.origin);
   await openPage(page, "Messages");
-  const dock = page.getByRole("navigation", { name: "Apps dock" });
-  const toolbar = dock.getByRole("tab", {
+  // Every page is a row in the sidebar's Plugins card.
+  const pages = page.getByRole("navigation", { name: "Pages", exact: true });
+  const toolbar = pages.getByRole("button", {
     name: "Toolbar destination",
     exact: true,
   });
@@ -627,7 +536,7 @@ test("dock destinations and titlebar controls remain reachable through scale and
   await expect(
     page.getByRole("heading", { name: "Toolbar destination" }),
   ).toBeVisible();
-  await expect(toolbar).toHaveAttribute("aria-selected", "true");
+  await expect(toolbar).toHaveAttribute("aria-current", "page");
   await openPage(page, "Messages");
   // Simulate the native control reserve; native dragging itself needs desktop testing.
   await page
@@ -642,7 +551,15 @@ test("dock destinations and titlebar controls remain reachable through scale and
       }, scale);
       for (const width of [1600, 1024, 800, 650, 480, 390]) {
         await page.setViewportSize({ width, height: 950 });
-        await expect(dock).toBeVisible();
+        await settleShellToggle(page);
+        // A narrow window keeps the sidebar in a drawer.
+        const showNavigation = page.getByRole("button", {
+          name: "Show navigation",
+          exact: true,
+        });
+        const drawer = await showNavigation.isVisible();
+        if (drawer) await showNavigation.click();
+        await expect(pages).toBeVisible();
         const search = page.getByRole("button", {
           name: "Search Buzz",
           exact: true,
@@ -707,7 +624,7 @@ test("dock destinations and titlebar controls remain reachable through scale and
                 .getBoundingClientRect();
               const others = [
                 ...header.querySelectorAll(
-                  ".shell-history button, .shell-community-switcher button",
+                  ".shell-history button, .shell-actions button",
                 ),
               ];
               return others.every((button) => {
@@ -722,17 +639,19 @@ test("dock destinations and titlebar controls remain reachable through scale and
             }),
           )
           .toBe(true);
-        const messages = dock.getByRole("tab", {
-          name: "Messages",
-          exact: true,
-        });
-        await messages.focus();
-        await expect(messages).toBeInViewport({ ratio: 1 });
-        await messages.press("ArrowDown");
-        await expect(
-          dock.getByRole("tab", { name: "Reminders", exact: true }),
-        ).toBeFocused();
-        await expect(messages).toHaveAttribute("aria-selected", "true");
+        // The last page row stays reachable inside the sidebar at every size.
+        await toolbar.scrollIntoViewIfNeeded();
+        await toolbar.focus();
+        await expect(toolbar).toBeInViewport({ ratio: 1 });
+        // Messages is open, so no page row is current.
+        await expect(toolbar).not.toHaveAttribute("aria-current");
+        if (drawer) {
+          await page.keyboard.press("Escape");
+          await expect(page.locator("#shell-navigation")).toHaveAttribute(
+            "aria-hidden",
+            "true",
+          );
+        }
         await search.click();
         const dialog = page.getByRole("dialog", {
           name: "Search Buzz",

@@ -226,6 +226,20 @@ test("thread splitter tracks the conversation reserve as interface size changes"
       await sidebar.getAttribute("aria-valuemin"),
     );
     await expect(resize).toBeVisible();
+    // End jumps to the limit the splitter holds when pressed. Wait for the
+    // limit to catch up with the resized board (20rem of conversation is
+    // reserved), or a slow engine presses End against the previous layout's
+    // smaller limit.
+    await expect
+      .poll(async () => {
+        const reachable = (await board.boundingBox()).width - 20 * 16 * scale;
+        const expected =
+          reachable < 316
+            ? Math.max(0, Math.round(reachable))
+            : Math.floor(reachable);
+        return Number(await resize.getAttribute("aria-valuemax")) - expected;
+      })
+      .toBe(0);
     await resize.press("End");
     const narrow = await measure(`${scale * 100}% ${viewport}px End`);
     if (scale === 12.825 / 16) {
@@ -261,10 +275,10 @@ test("thread splitter tracks the conversation reserve as interface size changes"
       expect(precision.queryContainer).toBe("inline-size");
       expect(precision.containerInsets).toEqual([0, 0, 0, 0]);
       expect(precision.boardInsets).toEqual([0, 0, 0, 0]);
-      expect(precision.containerWidth).toBe(539.546875);
+      expect(precision.containerWidth).toBe(569.984375);
       expect(precision.boardWidth).toBe(precision.cqw);
       expect(precision.boardWidth).toBe(precision.containerWidth);
-      expect(precision.clientWidth).toBe(540);
+      expect(precision.clientWidth).toBe(570);
     }
     expect.soft(narrow.min).toBeLessThanOrEqual(narrow.now);
     expect.soft(narrow.now).toBe(narrow.max);

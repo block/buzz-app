@@ -307,7 +307,11 @@ export function SoloInventory({
   const current = () => !handoff || handoff.session === session;
   const newChat = (project?: string) => {
     if (!current()) return;
-    const destination = resumeSoloDraftTarget(scope, target, project);
+    const destination = resumeSoloDraftTarget(
+      scope,
+      target,
+      project ? { project } : {},
+    );
     const input = destination === target ? soloDraftInput() : null;
     if (input) {
       if (menuOpen) setDraftFocus(input);
@@ -411,9 +415,7 @@ export function SoloInventory({
           finalFocus={trigger}
           onCreated={async (id) => {
             if (!current() || !trigger.current?.isConnected) return;
-            if (await soloNavigationFor(session)?.openCreatedWorkspace(id))
-              return;
-            if (trigger.current?.isConnected) newChat(id);
+            await soloNavigationFor(session)?.openCreatedWorkspace(id);
           }}
         />
       )}
@@ -424,6 +426,7 @@ export function SoloInventory({
         compose={compose}
         renderChatMenu={renderChatMenu}
         navigator={navigator}
+        open={selected}
         drafts={listedDrafts.flatMap((destination) => {
           const route =
             destination.kind === "page"
@@ -499,6 +502,7 @@ export function SoloInventory({
   return (
     <nav
       className={styles.sidebarContents}
+      data-sidebar-card-group=""
       aria-label={`${regions.regions.find((region) => region.source && !region.hidden)?.title ?? "Solo"} conversations`}
     >
       {renderContents ? (

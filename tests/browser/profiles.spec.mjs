@@ -1483,7 +1483,8 @@ test("profile preview fits enlarged text and stops its status with reduced motio
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
   await expect(avatar).toBeVisible();
   await page.getByRole("button", { name: "Toggle appearance" }).focus();
-  for (let i = 0; i < 20; i++) {
+  // Each sidebar card adds its heading actions to the walk.
+  for (let i = 0; i < 30; i++) {
     await page.keyboard.press("Tab");
     if (await avatar.evaluate((node) => node === document.activeElement)) break;
   }

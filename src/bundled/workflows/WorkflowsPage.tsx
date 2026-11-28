@@ -67,7 +67,7 @@ export function WorkflowsPage({ relay }: { relay: RelayData }) {
 
 function WorkflowsPanel({ children }: { children: ReactNode }) {
   return (
-    <Panel aria-label="Workflows">
+    <Panel flat aria-label="Workflows">
       <div className="workflows-page text-body">{children}</div>
     </Panel>
   );
@@ -293,7 +293,7 @@ export function WorkflowCommunity({
         {detail && (
           <aside className="workflows-side">
             {split.handle}
-            <Panel aria-label="Workflow details">
+            <Panel flat aria-label="Workflow details">
               <PanelWorkspace
                 focusOnMount={false}
                 adoptSelection={detail.key}

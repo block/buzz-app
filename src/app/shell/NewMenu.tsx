@@ -10,14 +10,8 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { splitPartition } from "../../features/relay/partition";
 import { NewWorkspace } from "../../features/solo/NewWorkspace";
-import {
-  resetNewChatProject,
-  soloDraftInput,
-} from "../../features/solo/SoloDraft";
-import {
-  soloDraftTarget,
-  resumeSoloDraftTarget,
-} from "../../features/channel-navigation/routes";
+import { soloDraftInput } from "../../features/solo/SoloDraft";
+import { resumeSoloDraftTarget } from "../../features/channel-navigation/routes";
 import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -207,13 +201,7 @@ function ReadyNewMenu({
           finalFocus={finalFocus}
           onCreated={async (id) => {
             if (!current()) return;
-            if (await soloNavigationFor(session)?.openCreatedWorkspace(id))
-              return;
-            if (!current()) return;
-            resetNewChatProject(session.scope, id);
-            void navigator.open(
-              soloDraftTarget(session.scope, { project: id }),
-            );
+            await soloNavigationFor(session)?.openCreatedWorkspace(id);
           }}
         />
       )}

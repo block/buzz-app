@@ -25,20 +25,24 @@
   position: relative;
   z-index: 1;
 }
-/* Keep the menu trigger compact enough for the row. */
-.row:has(:is([data-channel-row-action], [data-solo-row-action])) {
-  --solo-row-action-size: calc(var(--space-6) + var(--space-1));
-}
-.row :is([data-channel-row-action], [data-solo-row-action]) {
+/* The row's trailing buttons share the sidebar's action slot (SidebarFrame). */
+.row :is([data-channel-row-action], [data-solo-row-action]),
+.row [data-solo-shared] {
   flex-shrink: 0;
-  width: var(--solo-row-action-size);
-  height: var(--solo-row-action-size);
+  width: var(--sidebar-row-action-size);
+  height: var(--sidebar-row-action-size);
   min-height: 0;
+}
+.row [data-solo-shared] {
+  margin-inline-end: calc(
+    var(--sidebar-row-action-end) -
+    var(--channel-row-fill-end, 0%)
+  );
 }
 @media (hover: hover) and (pointer: fine) {
   .row :is([data-channel-row-action], [data-solo-row-action]) {
     position: absolute;
-    inset-inline-end: var(--channel-row-fill-end, 0%);
+    inset-inline-end: var(--sidebar-row-action-end);
     opacity: 0;
   }
   .row [data-channel-row-action] {
@@ -60,7 +64,10 @@
   /* Shared keeps its hit area when the menu appears beside it. */
   .row:has([data-solo-shared])
   :is([data-channel-row-action], [data-solo-row-action]) {
-    inset-inline-end: var(--size-control-sm);
+    inset-inline-end: calc(
+      var(--sidebar-row-action-end) +
+      var(--sidebar-row-action-size)
+    );
   }
   /* Keep badges in their usual column until the trailing menu appears.
      Move the badge visually so the title's layout stays fixed. */
@@ -78,14 +85,14 @@
       ) {
       & .badges {
         position: relative;
-        inset-inline-end: var(--solo-row-action-size);
+        inset-inline-end: var(--sidebar-row-action-size);
       }
       /* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector; a class selector, not [class~=], because Chromium treats [class~=] as a class-attribute feature and this :has() rule would restyle every classed element in the sidebar on unread changes. */
       & .select :global(.navigation-item-label) {
         mask-image: linear-gradient(
           to left,
-          transparent var(--solo-row-action-size),
-          black calc(var(--solo-row-action-size) + var(--space-2))
+          transparent var(--sidebar-row-action-size),
+          black calc(var(--sidebar-row-action-size) + var(--space-2))
         );
       }
     }
@@ -122,14 +129,7 @@
   width: 100%;
   margin-inline: 0;
   padding-inline: calc(var(--space-2) + var(--space-half))
-    calc(var(--channel-row-fill-end, 0%) + var(--space-2));
-}
-.row .select [data-variant="row"][data-working] {
-  padding-inline-end: calc(
-    var(--channel-row-fill-end, 0%) +
-    var(--space-2) +
-    var(--space-half)
-  );
+    calc(var(--channel-row-fill-end, 0%) + var(--sidebar-row-inset));
 }
 .select [class~="navigation-item-label"] {
   text-overflow: clip;
@@ -159,11 +159,7 @@
 .badges {
   display: inline-flex;
   align-items: center;
-  padding-inline-end: var(--space-1);
   gap: var(--space-2);
-}
-.badges[data-working] {
-  padding-inline-end: 0;
 }
 .nameContent {
   --user-status-emoji-size: var(--sidenav-emoji-size);
@@ -207,4 +203,44 @@
 .menu {
   width: max-content;
   max-width: var(--available-width);
+}
+
+/* A row drawn as an identity tile in a card shown as icons. */
+.tileRow {
+  position: relative;
+  display: inline-flex;
+}
+.tileTarget {
+  display: inline-flex;
+}
+.tile {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+/* Unread sits on the tile's top-right corner, clear of the artwork's centre. */
+.tileBadge {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  display: flex;
+  pointer-events: none;
+}
+/* A Solo tile's dot overlaps the circle's top-right edge, as presence does the
+   bottom-right: its centre sits on the rim at 45deg, 14.6% of the circle in
+   from its box, and the circle is inset by the tile's padding. The ring parts
+   it from the artwork, like the corner count's. */
+.tileBadge:has([data-tile-unread-dot]) {
+  --tile-dot-offset: calc(
+    var(--space-1) +
+    (100% - 2 * var(--space-1)) *
+    0.146 -
+    0.1875rem
+  );
+  inset-block-start: var(--tile-dot-offset);
+  inset-inline-end: var(--tile-dot-offset);
+}
+.tileBadge [data-tile-unread-dot] {
+  box-shadow: 0 0 0 1px var(--surface-panel);
 }

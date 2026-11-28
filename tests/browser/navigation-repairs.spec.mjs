@@ -87,9 +87,9 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   await expect
     .poll(async () => (await entry(page)).target.pageId)
     .toBe("workflows");
-  const messages = page.getByRole("tab", { name: "Messages", exact: true });
-  await messages.focus();
-  await messages.press("Enter");
+  // Messages is no longer a tab: its sidebar lists the apps, and the page
+  // search opens Messages from the keyboard.
+  await openPage(page, "Messages", { connected: false });
   // A refused connection is a connection failure, whatever the visit was.
   await expect(
     page.getByRole("heading", { name: "Can’t connect" }),
@@ -111,10 +111,14 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   } finally {
     release();
   }
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
-  await expect(main).toBeFocused();
+  // Opening Messages from the page search moves focus to the conversation once
+  // it resolves, not back to the retry control or the page.
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await expect(composer).toBeVisible();
+  await expect(composer).toBeFocused();
   // Resolving Messages chooses its conversation in the same visit.
   expect(await entry(page)).toEqual({
     id: visit.id,
@@ -125,10 +129,6 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
       scope: visit.target.scope,
     },
   });
-  await page.keyboard.press("Tab");
-  await expect(
-    page.getByRole("tabpanel", { name: "Messages", exact: true }),
-  ).toBeFocused();
 });
 
 test("a refused account is explained once, as access", async ({
@@ -234,7 +234,10 @@ launchTest(
     await expect(button(card, "Go to Messages")).toBeVisible();
     await openPage(page, "Workflows");
     await expect(failed).toBeHidden();
-    await page.getByRole("tab", { name: "Agents", exact: true }).click();
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Agents", exact: true })
+      .click();
     await page.evaluate(() => {
       location.hash = "#buzz=%7B";
     });

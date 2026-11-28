@@ -741,6 +741,11 @@ it("marks a chat read from its row menu and reports a failed save", async () => 
   });
   const unreadChat = snapshot("chat", 3);
   const readChat = snapshot("other", 0);
+  const emptyInbox = {
+    status: "ready" as const,
+    items: [],
+    freshness: "observed" as const,
+  };
   const unread = {
     sync: () => ({ capability: "frontier-sync" }),
     snapshot: (target: { channelId: string }) =>
@@ -748,6 +753,8 @@ it("marks a chat read from its row menu and reports a failed save", async () => 
     subscribe: () => () => {},
     markChannelRead,
     markUnreadLocal: vi.fn(),
+    inbox: () => emptyInbox,
+    subscribeInbox: () => () => {},
   };
   render(h.view(store.queries, "viewer:community", unread));
   try {

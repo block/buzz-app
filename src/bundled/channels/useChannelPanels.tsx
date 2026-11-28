@@ -215,6 +215,7 @@ export function useChannelPanels(
     side: selected?.panel.channelPlacement === "side" && (
       // Its own landing, like PanelCard's, for focus handed to a floating dock.
       <Panel
+        flat
         tabIndex={-1}
         aria-label={`${selected.panel.title} panel`}
         onKeyDown={(event) => {

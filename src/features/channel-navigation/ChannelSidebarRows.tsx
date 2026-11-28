@@ -18,7 +18,19 @@ import styles from "./ChannelSidebarRows.module.css";
 // Fast Refresh preserves refs; a replaced module must restart the prepared batch.
 const animationGeneration = {};
 
-type RowPositions = Map<HTMLElement, { index: number; top: number }>;
+type RowPositions = Map<
+  HTMLElement,
+  { index: number; top: number; left: number }
+>;
+
+/** Tiles wrap in a grid, so a row can move across as well as down. */
+const inTiles = (node: Element | null | undefined) =>
+  !!node?.closest('[data-card-display="icons"]');
+
+/** A motion token's value, for animations scripted outside CSS. */
+function motionToken(node: Element, name: string) {
+  return getComputedStyle(node).getPropertyValue(name).trim();
+}
 
 const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 function subscribeReducedMotion(change: () => void) {
@@ -68,12 +80,16 @@ export const ChannelSidebarRows = memo(function ChannelSidebarRows({
   const animated = open && !active && !reducedMotion;
   const desired = JSON.stringify(children.map((child) => String(child.key)));
   const [order, setOrder] = useState(desired);
+  const container = useRef<HTMLDivElement>(null);
   const positions = useRef<RowPositions>(new Map()).current;
   const updateOrder = useCallback(
     (next: string) => {
       // Visibility and text scaling can change geometry without changing indices.
       // Read the live old slots together, immediately before React reorders them.
-      for (const [node, position] of positions) position.top = node.offsetTop;
+      for (const [node, position] of positions) {
+        position.top = node.offsetTop;
+        position.left = node.offsetLeft;
+      }
       setOrder(next);
     },
     [positions],
@@ -112,11 +128,15 @@ export const ChannelSidebarRows = memo(function ChannelSidebarRows({
         const next: string[] = JSON.parse(desired);
         const positions = new Map(next.map((id, index) => [id, index]));
         const displayed: string[] = JSON.parse(order);
-        const distant = new Set(
-          displayed.filter(
-            (id, index) => Math.abs((positions.get(id) ?? index) - index) > 2,
-          ),
-        );
+        // Tiles glide to any slot; list rows fade over long jumps instead.
+        const distant = inTiles(container.current)
+          ? new Set<string>()
+          : new Set(
+              displayed.filter(
+                (id, index) =>
+                  Math.abs((positions.get(id) ?? index) - index) > 2,
+              ),
+            );
         pending.current = new Set(distant);
         if (distant.size) setFading(distant);
         else updateOrder(desired);
@@ -143,7 +163,7 @@ export const ChannelSidebarRows = memo(function ChannelSidebarRows({
       })
     : children;
   return (
-    <div className={styles.rows}>
+    <div ref={container} className={styles.rows}>
       <AnimatePresence
         initial={false}
         mode="popLayout"
@@ -204,12 +224,14 @@ const ChannelRow = memo(
   ) {
     const ref = useRef<HTMLDivElement>(null);
     const playback = useRef<ReturnType<typeof animate> | null>(null);
+    const tilePlayback = useRef<Animation | null>(null);
     const present = useIsPresent();
     useImperativeHandle(forwardedRef, () => ref.current as HTMLDivElement);
     useEffect(() => {
       const node = ref.current;
       return () => {
         playback.current?.stop();
+        tilePlayback.current?.cancel();
         if (node) positions.delete(node);
         if (node) clearSlide(node);
       };
@@ -219,13 +241,47 @@ const ChannelRow = memo(
       if (!node) return;
       const previous = positions.get(node);
       const top = node.offsetTop;
-      positions.set(node, { index, top });
+      const left = node.offsetLeft;
+      positions.set(node, { index, top, left });
       if (!present || !slide) {
         playback.current?.stop();
+        tilePlayback.current?.cancel();
         clearSlide(node);
         return;
       }
-      if (!previous || previous.index === index || previous.top === top) return;
+      if (!previous || previous.index === index) return;
+      if (inTiles(node)) {
+        // Every tile glides from its old slot to its new one, together, so the
+        // one that moved to the front takes its place as the rest shift over.
+        const matrix = new DOMMatrixReadOnly(getComputedStyle(node).transform);
+        const dx = previous.left - left + matrix.m41;
+        const dy = previous.top - top + matrix.m42;
+        tilePlayback.current?.cancel();
+        if (dx === 0 && dy === 0) return;
+        node.dataset.moving = "";
+        // The tile moving forward passes over the ones making room.
+        node.style.zIndex = previous.index > index ? "2" : "1";
+        const glide = node.animate(
+          [
+            { transform: `translate(${dx}px, ${dy}px)` },
+            { transform: "translate(0px, 0px)" },
+          ],
+          {
+            duration:
+              Number.parseFloat(motionToken(node, "--duration-glide")) || 400,
+            easing: motionToken(node, "--easing-enter") || "ease-out",
+          },
+        );
+        tilePlayback.current = glide;
+        glide.onfinish = glide.oncancel = () => {
+          if (tilePlayback.current !== glide) return;
+          tilePlayback.current = null;
+          delete node.dataset.moving;
+          node.style.zIndex = "";
+        };
+        return;
+      }
+      if (previous.top === top) return;
       const matrix = new DOMMatrixReadOnly(getComputedStyle(node).transform);
       const delta = previous.top - top + matrix.m42;
       const rect = node.getBoundingClientRect();
@@ -260,6 +316,7 @@ const ChannelRow = memo(
       <motion.div
         ref={ref}
         className={styles.row}
+        data-card-row=""
         initial={{ opacity: animated ? 0 : 1 }}
         animate={{ opacity: hiding ? 0 : 1 }}
         exit={{ opacity: 0 }}

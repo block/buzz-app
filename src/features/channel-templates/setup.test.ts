@@ -182,7 +182,7 @@ it.each(["ready", "unavailable", "failed", "conflicting"] as const)(
       if (status === "unavailable" || status === "conflicting") {
         await expect(creation).rejects.toThrow(
           status === "unavailable"
-            ? "Starred placement is unavailable"
+            ? "Favorites placement is unavailable"
             : "Invalid template or group selection",
         );
         expect(events.filter((event) => event.kind === 9007)).toEqual([]);

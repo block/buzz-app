@@ -236,6 +236,8 @@ export type ChannelList = Readonly<{
   rosterAsOf?: number;
   /** Initial Recent ordering observation, independent of roster/access readiness. */
   activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
+  /** The activity failure is relay recovery's to retry, not the sidebar's. */
+  activityTransient?: true;
   channels: readonly ChannelSummary[];
   error?: string;
 }>;

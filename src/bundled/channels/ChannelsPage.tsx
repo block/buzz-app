@@ -3092,6 +3092,7 @@ function ChannelWorkspace({
       )}
       <Panel
         as="article"
+        flat
         ref={conversation}
         aria-label="Conversation"
         data-overlay-boundary=""
@@ -3125,6 +3126,7 @@ function ChannelWorkspace({
             <LiveNewMessage
               intent={messageDraft?.intent}
               workspace={messageDraft?.workspace}
+              starred={messageDraft?.starred}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
@@ -3149,6 +3151,7 @@ function ChannelWorkspace({
             <SoloDraft
               key={JSON.stringify([
                 draft.project,
+                draft.starred,
                 draft.agent,
                 draft.linked,
                 draft.region,
@@ -3169,6 +3172,7 @@ function ChannelWorkspace({
               }
               agent={draft.agent}
               projectId={draft.project}
+              starred={draft.starred}
               session={queries}
               scope={scope}
               extensions={extensions}
@@ -3447,44 +3451,48 @@ function ChannelWorkspace({
                 className={styles.retainedPanel}
                 hidden={!!companion && !showingChannelPanel}
               >
-                <PanelWorkspace
-                  key={currentId}
-                  actions={
-                    <IconButton
-                      hint="familiar"
-                      data-tab-pane-toggle=""
-                      data-highlight-expanded="false"
-                      variant="subtle"
-                      size="toolbar"
-                      aria-label="Toggle tab pane"
-                      title="Close tab pane"
-                      aria-expanded={true}
-                      onClick={secondary.closePane}
-                      icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
-                    />
-                  }
-                  tabMenu={tabMenu}
-                  drag={secondary.drag.side}
-                  value={selectedTab}
-                  focusOnMount={
-                    !membersOpen && (continuingVisit || !!routedThread)
-                  }
-                  select={selectPanelTab}
-                  items={[
-                    ...(settings
-                      ? [
-                          {
-                            id: "settings",
-                            label: "Channel settings",
-                            icon: <GearIcon size="1rem" />,
-                            close: closeSettings,
-                            content: settingsContent,
-                          },
-                        ]
-                      : []),
-                    ...secondary.items,
-                  ]}
-                />
+                <Panel as="div" flat joined>
+                  <PanelWorkspace
+                    key={currentId}
+                    actions={
+                      <IconButton
+                        hint="familiar"
+                        data-tab-pane-toggle=""
+                        data-highlight-expanded="false"
+                        variant="subtle"
+                        size="toolbar"
+                        aria-label="Toggle tab pane"
+                        title="Close tab pane"
+                        aria-expanded={true}
+                        onClick={secondary.closePane}
+                        icon={
+                          <SidebarRightIcon size="1rem" aria-hidden="true" />
+                        }
+                      />
+                    }
+                    tabMenu={tabMenu}
+                    drag={secondary.drag.side}
+                    value={selectedTab}
+                    focusOnMount={
+                      !membersOpen && (continuingVisit || !!routedThread)
+                    }
+                    select={selectPanelTab}
+                    items={[
+                      ...(settings
+                        ? [
+                            {
+                              id: "settings",
+                              label: "Channel settings",
+                              icon: <GearIcon size="1rem" />,
+                              close: closeSettings,
+                              content: settingsContent,
+                            },
+                          ]
+                        : []),
+                      ...secondary.items,
+                    ]}
+                  />
+                </Panel>
               </div>
             )}
             {hasChannelPanel && drawer.side && (

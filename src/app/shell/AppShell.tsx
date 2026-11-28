@@ -21,7 +21,6 @@ import {
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarIcon } from "../../shared/design-system/icons";
-import { Panel } from "../../shared/design-system/ui/Panel";
 import { isTauri } from "@tauri-apps/api/core";
 import type { SettingsCards } from "../../features/settings/service";
 import type { RegisteredPage } from "../../features/pages/service";
@@ -286,11 +285,6 @@ function AppShellContent({
       : null;
     return content;
   }, [pages, selected, sidebar, onSelect, creationInNavigation]);
-  const dockPages = orderPages(
-    pages.filter((page) => page.primary && pagePlacement(page) !== "sidebar"),
-    "dock",
-  );
-  const selectedDockPage = dockPages.some((page) => page.key === owner);
   return (
     <div
       data-shell-tone={tone}
@@ -367,24 +361,6 @@ function AppShellContent({
         >
           <div className="shell-actions-fixed">
             {launchers}
-            <WindowControls />
-          </div>
-        </div>
-      </header>
-
-      <div className="shell-workspace">
-        <nav className="shell-side-dock" aria-label="Apps dock">
-          <div className="shell-dock-pages">
-            <PageNavigation
-              pages={dockPages}
-              selected={owner}
-              currentPage={selected}
-              onSelect={onSelect}
-              placement="dock"
-              previews
-            />
-          </div>
-          <div className="shell-community-switcher">
             <CommunityPicker
               communities={communities}
               unreads={communityUnreads}
@@ -410,8 +386,12 @@ function AppShellContent({
                 onSelect("settings", section ? { section } : undefined)
               }
             />
+            <WindowControls />
           </div>
-        </nav>
+        </div>
+      </header>
+
+      <div className="shell-workspace">
         <div
           ref={workspaceRef}
           className="shell-dialog-frame"
@@ -421,77 +401,63 @@ function AppShellContent({
           className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
         >
           <div className="relative flex min-h-0 min-w-0 flex-1">
-            <Panel as="div" joined>
-              <div className="shell-content">
-                <div
-                  id="shell-navigation"
-                  hidden={!hasNavigation}
-                  className="shell-navigation"
-                  data-sidebar-collapsible={
-                    (collapsibleSidebar && !narrow) || undefined
+            <div className="shell-content">
+              <div
+                id="shell-navigation"
+                hidden={!hasNavigation}
+                className="shell-navigation"
+                data-sidebar-collapsible={
+                  (collapsibleSidebar && !narrow) || undefined
+                }
+                data-sidebar-open={visibleSidebar || undefined}
+                aria-hidden={(collapsibleSidebar || narrow) && !visibleSidebar}
+                inert={(collapsibleSidebar || narrow) && !visibleSidebar}
+                data-expanded={navigationOpen}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Escape" &&
+                    !event.shiftKey &&
+                    navigationOpen &&
+                    !event.defaultPrevented
+                  ) {
+                    // Closing the drawer consumes Escape, so it marks nothing read.
+                    event.preventDefault();
+                    setNavigationOpen(false);
+                    navigationToggle.current?.focus();
                   }
-                  data-sidebar-open={visibleSidebar || undefined}
-                  aria-hidden={
-                    (collapsibleSidebar || narrow) && !visibleSidebar
-                  }
-                  inert={(collapsibleSidebar || narrow) && !visibleSidebar}
-                  data-expanded={navigationOpen}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Escape" &&
-                      !event.shiftKey &&
-                      navigationOpen &&
-                      !event.defaultPrevented
-                    ) {
-                      // Closing the drawer consumes Escape, so it marks nothing read.
-                      event.preventDefault();
-                      setNavigationOpen(false);
-                      navigationToggle.current?.focus();
-                    }
-                  }}
-                >
-                  <div className="shell-navigation-content">{navigation}</div>
-                </div>
-                <main
-                  id="main-content"
-                  tabIndex={-1}
-                  className="min-h-0 min-w-0 flex-1"
-                >
-                  <Panel as="div" joined>
-                    <PanelFrame scope={connection.scope} companion={companion}>
-                      <div
-                        id={`shell-page-${owner}`}
-                        {...(selectedDockPage
-                          ? {
-                              role: "tabpanel",
-                              "data-focus-inset": "",
-                              "aria-labelledby": `shell-page-${owner}-tab`,
-                              tabIndex: 0,
-                            }
-                          : {})}
-                        className={
-                          fillsWorkspace
-                            ? "buzz-tabs-panel h-full min-h-0"
-                            : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
-                        }
-                      >
-                        <div
-                          className={
-                            fillsWorkspace
-                              ? "h-full min-h-0"
-                              : "mx-auto w-full max-w-4xl"
-                          }
-                        >
-                          <OpenCommunitySwitcher value={openSwitcher}>
-                            {children}
-                          </OpenCommunitySwitcher>
-                        </div>
-                      </div>
-                    </PanelFrame>
-                  </Panel>
-                </main>
+                }}
+              >
+                <div className="shell-navigation-content">{navigation}</div>
               </div>
-            </Panel>
+              <main
+                id="main-content"
+                tabIndex={-1}
+                className="min-h-0 min-w-0 flex-1"
+              >
+                <PanelFrame scope={connection.scope} companion={companion}>
+                  <div
+                    id={`shell-page-${owner}`}
+                    className={
+                      fillsWorkspace
+                        ? "buzz-tabs-panel h-full min-h-0"
+                        : "buzz-tabs-panel h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+                    }
+                  >
+                    <div
+                      className={
+                        fillsWorkspace
+                          ? "h-full min-h-0"
+                          : "mx-auto w-full max-w-4xl"
+                      }
+                    >
+                      <OpenCommunitySwitcher value={openSwitcher}>
+                        {children}
+                      </OpenCommunitySwitcher>
+                    </div>
+                  </div>
+                </PanelFrame>
+              </main>
+            </div>
           </div>
         </div>
       </div>

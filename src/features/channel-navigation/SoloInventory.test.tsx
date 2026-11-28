@@ -658,14 +658,14 @@ it.each([
   { observedCount: 1, attentionCount: 1 },
   { observedCount: 1, attentionCount: 0 },
 ])(
-  "bolds a Solo chat for any unread message, without an attention dot ($observedCount unread, $attentionCount attention)",
+  "bolds a Solo chat for any unread message, without a needs-you cue ($observedCount unread, $attentionCount attention)",
   (counts) => {
     const f = fixture(false, false, undefined, counts);
     const row = screen.getByRole("button", { name: /^Planning/ });
     expect(
       row.querySelector('[data-channel-unread-title="true"]'),
     ).toBeInTheDocument();
-    expect(row.querySelector("[data-channel-priority]")).toBeNull();
+    expect(row.querySelector("[data-channel-needs-you]")).toBeNull();
     f.clearUnread();
     expect(row.querySelector('[data-channel-unread-title="true"]')).toBeNull();
   },

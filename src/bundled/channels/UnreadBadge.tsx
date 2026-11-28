@@ -1,4 +1,5 @@
 import { Button } from "../../shared/design-system/ui/Button";
+import { CountBadge } from "../../shared/design-system/ui/CountBadge";
 import {
   useCallback,
   useMemo,
@@ -8,6 +9,10 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import { rowUnread } from "../../features/relay/unread";
+import {
+  useConfirmedMute,
+  useNeedsYou,
+} from "../../features/relay/useNeedsYou";
 import styles from "./Channels.module.css";
 
 type UnreadSnapshot = ReturnType<RelaySession["unread"]["snapshot"]>;
@@ -16,7 +21,8 @@ type UnreadSnapshot = ReturnType<RelaySession["unread"]["snapshot"]>;
  * its messages and threads stay unread elsewhere. */
 const shown = (snapshot: UnreadSnapshot) => snapshot.row ?? snapshot;
 
-/** Bold tracks ordinary backlog; protected attention has its own dot. */
+/** Bold tracks ordinary backlog, the quiet "something's new" signal. It never
+ * feeds a count, an order or a cue; those read `needsYou`. */
 export function ordinaryUnread(
   snapshot: UnreadSnapshot,
   dm: boolean,
@@ -30,16 +36,7 @@ export function ordinaryUnread(
   );
 }
 
-/** Observe only confirmed preferences; optimistic menu intents do not quiet unread. */
-export function useConfirmedMute(session: RelaySession, channelId: string) {
-  const get = useCallback(() => {
-    const snapshot = session.sidebarPreferences.snapshot();
-    return !snapshot.cached && !!snapshot.data?.muted.includes(channelId);
-  }, [session, channelId]);
-  return useSyncExternalStore(session.sidebarPreferences.subscribe, get, get);
-}
-
-/** Unread evidence for one channel's badge. */
+/** The channel's observed backlog, for bold and its spoken description. */
 export function useUnreadState(
   session: RelaySession,
   channelId: string,
@@ -57,39 +54,16 @@ export function useUnreadState(
     () => session.unread.snapshot(target),
     [session, target],
   );
-  const subscribeActivity = useCallback(
-    (listener: () => void) =>
-      session.unread.subscribeActivity(channelId, listener),
-    [session, channelId],
-  );
-  const getActivity = useCallback(
-    () => session.unread.activity(channelId),
-    [session, channelId],
-  );
   const snapshot = useSyncExternalStore(subscribe, get, get);
-  const activity = useSyncExternalStore(
-    subscribeActivity,
-    getActivity,
-    getActivity,
-  );
   const muted = useConfirmedMute(session, channelId);
-  const { observedCount: count, attentionCount } = shown(snapshot);
+  const { observedCount: count } = shown(snapshot);
   const manual = snapshot.manual !== "none";
   const unread = rowUnread(snapshot, dm, muted);
   const ordinary = ordinaryUnread(snapshot, dm, muted);
-  const threadCount = snapshot.row?.threadCount ?? activity.items?.length ?? 0;
-  return {
-    snapshot,
-    activity,
-    count,
-    attentionCount,
-    manual,
-    unread,
-    ordinary,
-    threadCount,
-    muted,
-  };
+  return { snapshot, count, manual, unread, ordinary, muted };
 }
+
+const needsYouLabel = (count: number) => `${count} unread`;
 
 export function UnreadBadge({
   session,
@@ -98,48 +72,47 @@ export function UnreadBadge({
   label,
   labelUnread = "ordinary",
   preserveUnread = false,
+  unreadDot = false,
 }: {
   session: RelaySession;
   channelId: string;
   dm?: boolean;
   label?: ReactNode;
-  /** Solo labels emphasize every unread message, so attention adds no dot. */
+  /** Solo labels emphasize every unread message, so needing you adds no dot. */
   labelUnread?: "ordinary" | "all";
-  /** Preserve observed evidence for Solo destinations with their own labels. */
+  /** Preserve observed evidence for Solo destinations with their own labels.
+   * Their bold says it all, so needing you adds no dot there either. */
   preserveUnread?: boolean;
+  /** Draw the dot for any unread: a Solo tile has no text to bold. */
+  unreadDot?: boolean;
 }) {
   const {
     snapshot,
-    activity,
     count,
     manual,
-    attentionCount,
     unread: quietUnread,
     ordinary,
-    threadCount,
     muted,
   } = useUnreadState(session, channelId, dm);
+  const needs = useNeedsYou(session, channelId);
+  // Solo emphasizes every unread message, and needing you is always unread:
+  // a reply you follow can need you before any message is counted.
   const unread =
     labelUnread === "all" || preserveUnread
-      ? manual || (count ?? 0) > 0
+      ? manual || (count ?? 0) > 0 || needs.waiting
       : quietUnread;
-  const hideUnreadDots = muted && labelUnread === "ordinary" && !preserveUnread;
-  if (!unread && !threadCount && label === undefined) return null;
-  const priority = dm || (attentionCount ?? 0) > 0;
-  const showUnreadDot =
-    !hideUnreadDots &&
-    priority &&
-    threadCount === 0 &&
-    labelUnread === "ordinary";
+  if (!unread && !needs.waiting && label === undefined) return null;
   const unreadLabel = manual
     ? `Marked unread${snapshot.manual === "local-only" ? " on this device only" : ""}`
     : `${count} observed unread messages${snapshot.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`;
-  const mentionCount = activity.mentions?.length ?? 0;
-  const stale = activity.freshness === "stale" ? "; may be out of date" : "";
-  const mentionLabel = `${mentionCount} unread ${mentionCount === 1 ? "mention" : "mentions"}`;
-  // Mentions share the thread dot. Without a thread they have only the
-  // aria-hidden priority dot, or none when muted, so name them on their own.
-  const activityLabel = `${mentionCount ? `${mentionLabel}, ` : ""}${threadCount} unread ${threadCount === 1 ? "thread" : "threads"}${stale}`;
+  // One spoken status per row. Needing you already says the row is unread, so
+  // it replaces the observed count; a manual mark still adds its note.
+  const status = needs.waiting
+    ? manual
+      ? `${needsYouLabel(needs.count)}. ${unreadLabel}`
+      : needsYouLabel(needs.count)
+    : unreadLabel;
+  const dot = labelUnread === "ordinary" && !preserveUnread;
   return (
     <>
       {label !== undefined && (
@@ -151,43 +124,58 @@ export function UnreadBadge({
           {label}
         </span>
       )}
-      {unread && (
+      {(unread || needs.waiting) && (
         <span
           className={styles.unreadState}
-          data-channel-unread=""
+          data-channel-unread={unread || undefined}
           data-channel-muted={muted || undefined}
-          data-priority={priority}
           role="img"
-          aria-label={unreadLabel}
+          aria-label={status}
         />
       )}
-      {showUnreadDot && (
+      {unreadDot && unread && (
         <span
-          className={styles.priorityDot}
-          data-channel-priority=""
-          data-indicator-layer="unread"
+          className={styles.needsYouDot}
+          data-tile-unread-dot=""
           aria-hidden="true"
         />
       )}
-      {mentionCount > 0 && threadCount === 0 && (
-        <span className="sr-only">{`${mentionLabel}${stale}`}</span>
+      {needs.waiting && (
+        <span
+          className={dot ? styles.needsYouDot : undefined}
+          data-channel-needs-you=""
+          aria-hidden="true"
+        />
       )}
-      {threadCount > 0 &&
-        (hideUnreadDots ? (
-          <span className="sr-only">{activityLabel}</span>
-        ) : (
-          <span
-            className={styles.threadActivityDot}
-            data-channel-activity=""
-            data-channel-muted={muted || undefined}
-            role="img"
-            aria-label={activityLabel}
-            title={activityLabel}
-          />
-        ))}
     </>
   );
 }
+
+/** Needing you on an identity tile: a corner count (see `needsYou`). A tile
+ * that only has ordinary backlog shows nothing; it has no label to bold. */
+export function UnreadCount({
+  session,
+  channelId,
+  dm = false,
+}: {
+  session: RelaySession;
+  channelId: string;
+  dm?: boolean;
+}) {
+  const needs = useNeedsYou(session, channelId);
+  if (!needs.waiting)
+    return <UnreadBadge session={session} channelId={channelId} dm={dm} />;
+  return (
+    <span data-channel-needs-you="">
+      <CountBadge
+        count={needs.count}
+        label={needsYouLabel(needs.count)}
+        placement="corner"
+      />
+    </span>
+  );
+}
+
 export function UnreadOptions({
   session,
   channelId,

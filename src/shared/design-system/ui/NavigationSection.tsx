@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, type RefObject, useLayoutEffect, useRef } from "react";
 
 export function NavigationSection({
   label,
@@ -39,9 +39,11 @@ export type NavigationSectionTrailing = {
  * own disclosure trigger, which keeps the row's inset as its hit area and
  * focus ring. Quiet parts, `revealActions` or any descendant marked
  * `data-navigation-reveal` such as a chevron, appear on hover, keyboard focus,
- * and while a menu from the heading is open. On touch, actions stay visible
- * beside the label. A stable trailing slot keeps its accessory mounted when
- * metadata changes. Metadata sets the hover target for an overlay reveal.
+ * and while a menu or popover from the heading is open. On touch, actions stay
+ * visible beside the label. A stable trailing slot keeps its accessory mounted
+ * when metadata changes. Metadata sets the hover target for an overlay reveal.
+ * Plain `revealActions` that would cover the label wrap below it, and keep that
+ * row while hidden, so revealing them never changes the height.
  */
 export function NavigationSectionHeading({
   actions,
@@ -61,14 +63,25 @@ export function NavigationSectionHeading({
   const reserveSpace =
     hasMetadata || (accessory != null && typeof accessory !== "boolean");
   const swap = hasMetadata && !!actions && revealActions;
+  const heading = useRef<HTMLDivElement>(null);
+  const actionsBox = useRef<HTMLDivElement>(null);
+  // Only plain revealed actions can wrap; an overlay or trailing slot keeps
+  // its own space.
+  useActionsRow(
+    heading,
+    actionsBox,
+    revealActions === true && !!actions && !trailing,
+  );
   return (
     <div
+      ref={heading}
       className="navigation-section-heading"
       data-disclosure={disclosure || undefined}
     >
       <div className="navigation-section-heading-label">{children}</div>
       {!trailing && actions && (
         <div
+          ref={actionsBox}
           className="navigation-section-heading-actions"
           data-navigation-reveal={revealActions || undefined}
         >
@@ -114,4 +127,58 @@ export function NavigationSectionHeading({
       )}
     </div>
   );
+}
+
+/**
+ * Marks a heading whose revealed actions wrap below the label, so CSS keeps
+ * their row while they are hidden. It asks layout itself: lay the actions out
+ * as revealed, see whether they wrap, and restore it, all before paint.
+ */
+function useActionsRow(
+  headingRef: RefObject<HTMLDivElement | null>,
+  actionsRef: RefObject<HTMLDivElement | null>,
+  enabled: boolean,
+) {
+  useLayoutEffect(() => {
+    const heading = headingRef.current;
+    const actions = actionsRef.current;
+    if (
+      !enabled ||
+      !heading ||
+      !actions ||
+      typeof ResizeObserver === "undefined"
+    )
+      return;
+    const label = heading.firstElementChild as HTMLElement;
+    const measure = () => {
+      // A hidden heading has no layout to ask; keep the last answer, so it
+      // shows again at its old height instead of a reserved row for a frame.
+      if (!heading.getClientRects().length) return;
+      heading.setAttribute("data-actions-measure", "");
+      // Actions with no box yet (an empty slot) take no row; their zero
+      // rectangle would read as wrapped above the viewport.
+      const wraps =
+        actions.getClientRects().length > 0 &&
+        actions.getBoundingClientRect().top >=
+          label.getBoundingClientRect().bottom - 0.5;
+      heading.removeAttribute("data-actions-measure");
+      heading.toggleAttribute("data-actions-row", wraps);
+    };
+    // Hidden buttons keep their size, so text scale reaches them too.
+    const resize = new ResizeObserver(measure);
+    const observe = () => {
+      resize.disconnect();
+      resize.observe(heading);
+      for (const button of actions.children) resize.observe(button);
+      measure();
+    };
+    const mutations = new MutationObserver(observe);
+    mutations.observe(actions, { childList: true });
+    observe();
+    return () => {
+      resize.disconnect();
+      mutations.disconnect();
+      heading.removeAttribute("data-actions-row");
+    };
+  }, [headingRef, actionsRef, enabled]);
 }

@@ -62,17 +62,28 @@ export function Avatar({
   size = "default",
   shape = "circle",
   statusBadge,
+  statusBadgeSize = "default",
   loading,
 }: {
   src?: string | null | undefined;
   alt: string;
   fallback: string;
   fallbackContent?: ReactNode;
-  /** Panel-colored monogram for avatars displayed on an inset surface. */
-  fallbackSurface?: "subtle" | "panel";
+  /** Neutral monograms, a stable categorical fill for a channel's identity,
+   * or a quiet accent fill for an identity drawn as an icon. */
+  fallbackSurface?:
+    | "subtle"
+    | "panel"
+    | "accent"
+    | "categorical-purple"
+    | "categorical-blue"
+    | "categorical-green"
+    | "categorical-amber";
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
+  /** `small` keeps presence quiet where another mark, such as an unread count, leads. */
+  statusBadgeSize?: "default" | "small";
   /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
   loading?: "eager" | "lazy";
 }) {
@@ -86,6 +97,11 @@ export function Avatar({
       data-size={size}
       data-shape={shape}
       data-status={statusBadge}
+      data-status-size={
+        statusBadge && statusBadgeSize !== "default"
+          ? statusBadgeSize
+          : undefined
+      }
     >
       <BaseAvatar.Root
         data-buzz-ui=""

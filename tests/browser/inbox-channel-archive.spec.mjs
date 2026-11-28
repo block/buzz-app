@@ -37,9 +37,11 @@ test("excludes a channel-archived conversation across reload without clearing lo
 
   // Navigate to ordinary Channels without earning another Inbox read.
   await openPage(page, "Messages");
+  // The marked-unread conversation needs the viewer, so its row's name ends
+  // with the unread count; the channel id names the row either way.
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Lifecycle channel", exact: true })
+    .locator(`button[data-channel-id="${channel}"]`)
     .click();
   await openChannelDetails(page);
   await page

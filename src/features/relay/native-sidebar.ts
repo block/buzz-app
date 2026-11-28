@@ -1,3 +1,4 @@
+import { defaultSidebarSort } from "./sidebar-sort.ts";
 import {
   importWorkspaceFallback,
   projectSidebarRecord,
@@ -461,7 +462,7 @@ export function nativeSidebar(transport: ReadTransport) {
         (value) =>
           (project(WORKSPACE_SORT_COORDINATE, value, sectionIds).sort?.[
             group
-          ] ?? "alpha") === mode,
+          ] ?? defaultSidebarSort(group)) === mode,
         "Sidebar sort changed on another device; reload and try again",
       );
     },

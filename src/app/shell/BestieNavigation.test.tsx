@@ -552,7 +552,6 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
         <PageNavigation
           pages={[page]}
           selected={page.key}
-          placement="dock"
           onSelect={() => {}}
         />
       </PrimarySidebar>
@@ -566,9 +565,10 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
     </StrictMode>
   );
   const view = render(tree());
-  const row = () => screen.getByRole("tab", { name: /^Pollen/ });
+  // Bestie is a row in the sidebar's Plugins card.
+  const row = () => screen.getByRole("button", { name: /^Pollen/ });
   const dmRow = () => document.querySelector(`[data-channel-id="${first}"]`);
-  expect(row().querySelector("[data-channel-priority]")).toBeNull();
+  expect(row().querySelector("[data-channel-needs-you]")).toBeNull();
   await waitFor(() =>
     expect(
       document.querySelector(`[data-channel-id="${second}"]`),
@@ -584,31 +584,34 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
       ]),
     ]);
   });
-  await waitFor(() => expect(row()).toHaveAccessibleName(/1 unread thread/));
-  expect(row().querySelector("[data-channel-activity]")).toBeNull();
-  expect(
-    within(row()).getByRole("img", { name: /1 observed unread messages/ }),
-  ).toBeInTheDocument();
-  expect(row().querySelector("[data-channel-priority]")).toBeNull();
+  // Muted, the row keeps its observed evidence but never needs you.
+  await waitFor(() =>
+    expect(row()).toHaveAccessibleName(/1 observed unread messages/),
+  );
+  expect(row().querySelector("[data-channel-needs-you]")).toBeNull();
+  expect(within(row()).getAllByRole("img", { name: /unread/ })).toHaveLength(1);
   expect(dmRow()).toBeNull();
   await act(async () => {
     muted = false;
     await preferences.queries.refresh();
   });
-  expect(row().querySelector("[data-channel-activity]")).toBeInTheDocument();
+  expect(row().querySelector("[data-channel-needs-you]")).toBeInTheDocument();
+  expect(
+    within(row()).getByRole("img", { name: "1 unread" }),
+  ).toBeInTheDocument();
   await act(async () => {
     muted = true;
     await preferences.queries.refresh();
   });
-  expect(row().querySelector("[data-channel-activity]")).toBeNull();
-  expect(row()).toHaveAccessibleName(/1 unread thread/);
+  expect(row().querySelector("[data-channel-needs-you]")).toBeNull();
+  expect(row()).toHaveAccessibleName(/1 observed unread messages/);
   expect(dmRow()).toBeNull();
   view.rerender(tree());
   expect(dmRow()).toBeNull();
   await act(async () => {
     await session.unread.markChannelRead(first);
   });
-  expect(row().querySelector("[data-channel-priority]")).toBeNull();
+  expect(row().querySelector("[data-channel-needs-you]")).toBeNull();
   await act(async () => {
     await session.unread.markUnreadLocal({ kind: "channel", channelId: first });
   });
@@ -618,26 +621,28 @@ it("honors the promoted DM's mute and unread state through reads and Bestie repl
   act(() => {
     setDefaultAgent(currentScope, fizz);
   });
-  const replacement = screen.getByRole("tab", { name: "Fizz" });
-  expect(replacement.querySelector("[data-channel-priority]")).toBeNull();
+  const replacement = screen.getByRole("button", { name: /^Fizz/ });
+  expect(replacement.querySelector("[data-channel-needs-you]")).toBeNull();
   act(() => {
     live?.receive([message(agent, first, "Old bestie message", 1_700_000_006)]);
   });
-  expect(replacement.querySelector("[data-channel-priority]")).toBeNull();
+  expect(replacement.querySelector("[data-channel-needs-you]")).toBeNull();
   act(() => {
     live?.receive([
       message(agent, second, "New bestie message", 1_700_000_007),
     ]);
   });
   await waitFor(() =>
-    expect(replacement.querySelector("[data-channel-priority]")).not.toBeNull(),
+    expect(
+      replacement.querySelector("[data-channel-needs-you]"),
+    ).not.toBeNull(),
   );
   act(() => {
     forgetDefaultAgent(fizz);
   });
   expect(
     screen
-      .getByRole("tab", { name: "Create an agent" })
-      .querySelector("[data-channel-priority]"),
+      .getByRole("button", { name: /^Create an agent/ })
+      .querySelector("[data-channel-needs-you]"),
   ).toBeNull();
 });

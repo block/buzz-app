@@ -64,22 +64,9 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
 /** Resolve host navigation policy once, independently of icons and registrations. */
 export function pagePlacement(page: RegisteredPage) {
   if (!page.primary) return undefined;
-  switch (page.key) {
-    // Activity is a row at the top of the Messages sidebar.
-    case "buzz.inbox/inbox":
-      return "sidebar";
-    case "buzz.channels/channels":
-    case "buzz.bestie/bestie":
-    case "buzz.reminders/reminders":
-    case "buzz.agents/agents":
-    case "buzz.workflows/workflows":
-      return "dock";
-    default:
-      // `topbar` and `toolbar` predate the dock; both mean it.
-      return page.placement === undefined || page.placement === "sidebar"
-        ? "sidebar"
-        : "dock";
-  }
+  // Every app is a row in the Messages sidebar's Plugins card; there is no
+  // separate dock. Messages itself is the sidebar, so it needs no row.
+  return page.key === "buzz.channels/channels" ? "dock" : "sidebar";
 }
 
 /** The app whose navigation lists a destination: the dock selects it and the

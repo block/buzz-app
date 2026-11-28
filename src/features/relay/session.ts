@@ -1319,6 +1319,7 @@ export function createRelaySession(
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
     activityStatus: channelActivity.status(),
+    ...(channelActivity.transient() && { activityTransient: true as const }),
   });
   let channelActivityRevision = channelActivity.revision();
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
@@ -1367,6 +1368,9 @@ export function createRelaySession(
       activityChannelList = Object.freeze({
         ...snapshot,
         activityStatus: channelActivity.status(),
+        ...(channelActivity.transient() && {
+          activityTransient: true as const,
+        }),
         channels: projected.every(
           (channel, index) => channel === snapshot.channels[index],
         )
@@ -2539,7 +2543,7 @@ export function createRelaySession(
             }
             if (setup.starred && !sidebarPreferences.queries.starWritable)
               throw new Error(
-                "Starred placement is unavailable; refresh your sidebar before creating the channel",
+                "Favorites placement is unavailable; refresh your sidebar before creating the channel",
               );
             if (setup.groupId) {
               const state = sidebarPreferences.queries.snapshot();
@@ -2556,7 +2560,7 @@ export function createRelaySession(
             await settledPreferences();
             if (!sidebarPreferences.queries.starWritable)
               throw new Error(
-                "Starred placement is unavailable; keep the partial channel and star it separately",
+                "Favorites placement is unavailable; keep the partial channel and add it to Favorites separately",
               );
             if (
               sidebarPreferences.queries.snapshot().data?.starred.includes(id)
@@ -2782,6 +2786,19 @@ export function createRelaySession(
           sidebarPreferences.queries.subscribe,
           () => loadState(sidebarPreferences.queries.snapshot()),
           () => void sidebarPreferences.queries.refresh(),
+        ),
+        // Recent sorting's activity read.
+        recoverable(
+          channelActivity.subscribe,
+          () =>
+            loadState({
+              status: channelActivity.status(),
+              transient: channelActivity.transient() || undefined,
+            }),
+          () => {
+            activityRosterKey = undefined;
+            refreshChannelActivity();
+          },
         ),
         // Threads a person reads; see createThreadView's `recover`.
         recoverable(

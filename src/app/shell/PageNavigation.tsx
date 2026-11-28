@@ -160,9 +160,13 @@ export function PageNavigation({
         onClick={select}
         selected={selected === page.key}
         label={label}
-        title={page.preview && previewed(page) ? undefined : label}
         variant="row"
-        trailing={badge}
+        trailing={
+          <>
+            {badge}
+            <BestieUnreadBadge pageKey={page.key} />
+          </>
+        }
         icon={<span className="shell-page-icon">{pageIcon}</span>}
       />
     );
@@ -242,7 +246,8 @@ function PagePreview({
       openOnHover={enabled ? "preview" : false}
       data-popup-preview={enabled ? "" : undefined}
       render={cloneElement(children, {
-        title: enabled || dockHint ? undefined : label,
+        // The row's own name is visible, so no system hint repeats it.
+        title: undefined,
         "aria-haspopup": enabled ? "dialog" : undefined,
         "aria-expanded": enabled ? open : undefined,
       })}

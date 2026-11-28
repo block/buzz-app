@@ -916,6 +916,31 @@
     color: var(--text-standard);
   }
 
+  /* A quiet accent fill for an identity drawn as an icon, such as a Solo chat.
+     It shares the sidebar's pale accent hover, so it never reads gray on gray. */
+  .buzz-avatar[data-fallback-surface="accent"]:has([data-avatar-fallback]) {
+    background: var(--affordance-sidebar-hover);
+    color: var(--text-standard);
+  }
+
+  /* Each fill carries its own ink, so a selected row's ink never reaches it. */
+  .buzz-avatar[data-fallback-surface="categorical-purple"] {
+    background: var(--surface-categorical-purple);
+    color: var(--text-categorical-purple);
+  }
+  .buzz-avatar[data-fallback-surface="categorical-blue"] {
+    background: var(--surface-categorical-blue);
+    color: var(--text-categorical-blue);
+  }
+  .buzz-avatar[data-fallback-surface="categorical-green"] {
+    background: var(--surface-categorical-green);
+    color: var(--text-categorical-green);
+  }
+  .buzz-avatar[data-fallback-surface="categorical-amber"] {
+    background: var(--surface-categorical-amber);
+    color: var(--text-categorical-amber);
+  }
+
   /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
   .buzz-avatar[data-size="compact"] {
     @apply text-caption;
@@ -1025,7 +1050,8 @@
      `:where()` keeps the vendor selector at zero specificity, so a Panel
      variant can still override it without an escalation. */
   .panel,
-  :where(.bento-workspace .dv-groupview) {
+  :where(.bento-workspace .dv-groupview),
+  :where([data-sidebar-cards] [data-sidebar-card]) {
     @apply interaction-panel;
     width: 100%;
     height: 100%;
@@ -1038,6 +1064,19 @@
     box-shadow: var(--shadow-panel);
   }
 
+  /* A sidebar card takes the panel surface, but its rows are sidebar
+     navigation: restore the sidebar's selection and hover the panel recipe
+     reset, so any row in any card, a plugin's included, selects, hovers and
+     inks as the channel cards' own rows do. Hover pairs with its ink. */
+  :where([data-sidebar-cards] [data-sidebar-card]) {
+    --interaction-selected: var(--surface-sidebar-selected);
+    --interaction-selected-text: var(--text-sidebar-selected);
+    --interaction-selected-metadata: var(--text-sidebar-selected);
+    --interaction-row-hover: var(--affordance-sidebar-hover);
+    --interaction-row-text: var(--text-sidebar-hover);
+    --interaction-row-metadata: var(--text-sidebar-hover);
+  }
+
   /* Shared with Builderlab/Auth0 standalone account setup cards. */
   .panel[data-shape="card"] {
     height: auto;
@@ -1047,6 +1086,44 @@
 
   .panel[data-shape="capsule"] {
     border-radius: var(--radius-pill);
+  }
+
+  /* A flat panel has no edge; its fill separates it from the tint. Sidebar
+     cards are always flat; the regions of a layout that floats them apart
+     each pass `flat`. */
+  .panel[data-flat],
+  :where([data-sidebar-cards] [data-sidebar-card]) {
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  /* Heading actions that cover a sidebar card's title paint the card's fill. */
+  :where([data-sidebar-cards] [data-sidebar-card]) {
+    --surface-sidebar: var(--surface-panel);
+  }
+
+  /* A layout marked `data-panel-cards` draws each of its regions as its own
+     Panel, so a panel around it steps back to bare layout: no fill, edge,
+     shadow or clip, and the window's tint and backdrop show between the
+     cards. Hidden layouts, such as a retained page, don't count. */
+  .panel:has([data-panel-cards]:not([hidden], [hidden] *)) {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  /* Every split marked `data-panel-cards` (built-in `usePanelSplit` marks
+     its container) floats its regions the same way: while its side region
+     shows (`data-side`, or an open panel dock), the cards sit the sidebar's
+     small gap apart, with no divider. The split's grip centres itself in that
+     gap (Panels.module.css). Pages own only their column widths and
+     narrow-window behavior. */
+  [data-panel-cards]:is(
+    [data-side],
+    :has(> [data-panel-dock]:not([hidden], [data-closing]))
+  ) {
+    column-gap: var(--space-1);
   }
 
   /* A joined surface keeps one outer edge; nested panels retain opaque
@@ -1635,9 +1712,13 @@
   }
 
   /* The label fills and truncates. Quiet actions overlay it on pointer
-     devices so hover does not change the disclosure target. */
+     devices so hover does not change the disclosure target. Otherwise the
+     label keeps room for its title; actions that would cover it wrap to their
+     own row instead, as at narrow widths with enlarged text. Shown actions
+     wider than even their own row wrap among themselves. */
   .navigation-section-heading {
     display: flex;
+    flex-wrap: wrap;
     min-height: var(--size-row);
     align-items: center;
     gap: var(--space-row-gap);
@@ -1646,8 +1727,8 @@
 
   .navigation-section-heading-label {
     display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
+    flex: 1 1 min(100%, var(--space-16));
+    min-width: min(100%, var(--space-16));
     align-items: center;
   }
 
@@ -1656,6 +1737,15 @@
     display: flex;
     flex: none;
     align-items: center;
+  }
+
+  /* Plain actions wrap below a label they would cover; a trailing slot keeps
+     its own reserved layout. */
+  .navigation-section-heading > .navigation-section-heading-actions {
+    flex-wrap: wrap;
+    max-width: 100%;
+    justify-content: flex-end;
+    margin-inline-start: auto;
   }
 
   .navigation-section-heading-actions:not([data-has-metadata]):empty,
@@ -1813,6 +1903,20 @@
     user-select: none;
   }
 
+  /* A sidebar card's title names the card, so it reads at full contrast
+     rather than as quiet metadata. */
+  :where([data-sidebar-cards] [data-sidebar-card])
+    .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-label
+    > button,
+  :where([data-sidebar-cards] [data-sidebar-card])
+    .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-label
+    > details
+    > summary {
+    color: var(--text-standard);
+  }
+
   .navigation-section-heading[data-disclosure]
     .navigation-section-heading-label
     summary::-webkit-details-marker {
@@ -1848,33 +1952,45 @@
       pointer-events: none;
     }
 
+    /* Hidden actions stay on one start-aligned line, so they take no height
+       and overflow away from the label. */
     .navigation-section-heading-actions[data-navigation-reveal="true"] {
+      flex-wrap: nowrap;
+      justify-content: flex-start;
       max-width: 0;
       overflow: hidden;
     }
 
+    /* Actions that can't fit beside the label keep their wrapped row while
+       hidden, so revealing them changes only their opacity, never the
+       height. */
+    .navigation-section-heading[data-actions-row]
+      > .navigation-section-heading-actions[data-navigation-reveal="true"] {
+      flex-basis: 100%;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      max-width: 100%;
+    }
+
+    /* The revealed layout, applied for one synchronous measure before
+       paint. */
+    .navigation-section-heading[data-actions-measure]
+      > .navigation-section-heading-actions[data-navigation-reveal="true"] {
+      flex-basis: auto;
+      flex-wrap: wrap;
+      max-width: 100%;
+    }
+
     .navigation-section-heading-actions[data-navigation-reveal="overlay"] {
       position: absolute;
+      flex-wrap: nowrap;
       inset-block: 0;
       inset-inline-end: 0;
       background: var(--surface-sidebar, var(--surface-popover));
     }
 
-    /* Keep the caret outside the action overlay when the title truncates. */
-    :where(
-        .navigation-section-heading[data-disclosure]:has(
-          > .navigation-section-heading-actions[data-navigation-reveal="overlay"]:not(
-              :empty
-            )
-        )
-      )
-      > .navigation-section-heading-label
-      :is(button, summary)
-      > [data-navigation-reveal] {
-      order: -1;
-    }
-
-    /* Leave room for the disclosure inset and caret at large text sizes. */
+    /* The caret stays after the title on every card; at large text sizes
+       the overlay still leaves the start of the title showing. */
     .navigation-section-heading[data-disclosure]
       > .navigation-section-heading-actions[data-navigation-reveal="overlay"] {
       max-inline-size: calc(
@@ -1931,9 +2047,7 @@
         .navigation-section-heading:not(.buzz-sidebar-navigation:hover *):has(
           [data-navigation-reveal]:focus-within
         ),
-        .navigation-section-heading:has(
-          [aria-expanded="true"][aria-haspopup="menu"]
-        ),
+        .navigation-section-heading:has([aria-expanded="true"][aria-haspopup]),
         [data-context-menu-present] > .navigation-section-heading
       ) {
       [data-navigation-reveal]:not(
@@ -1942,7 +2056,9 @@
         opacity: 1;
 
         &.navigation-section-heading-actions[data-navigation-reveal="true"] {
-          max-width: none;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          max-width: 100%;
           overflow: visible;
         }
 
@@ -2222,6 +2338,16 @@
     align-items: flex-start;
     padding-block: var(--space-1);
   }
+  .navigation-item[data-variant="avatar"] {
+    width: var(--size-control-lg);
+    height: var(--size-control-lg);
+    min-height: var(--size-control-lg);
+    padding: var(--space-1);
+    gap: 0;
+    border-radius: var(--radius-pill);
+    flex: none;
+    overflow: visible;
+  }
   .navigation-item {
     display: inline-flex;
     width: 100%;
@@ -2370,6 +2496,9 @@
   .navigation-item[data-multiline] .navigation-item-label {
     white-space: normal;
   }
+  .navigation-item[data-variant="avatar"] .navigation-item-label {
+    @apply sr-only;
+  }
   .navigation-item-trailing {
     flex: 0 0 auto;
     color: var(--text-metadata);
@@ -2410,6 +2539,13 @@
     background: var(--surface-dock-count);
     color: var(--text-dock-count);
     box-shadow: 0 0 0 1px var(--bg-app);
+  }
+  /* Corner counts on a tile in a panel: the strong accent fill, ringed in
+     the panel so it separates from the artwork beneath. */
+  .buzz-count-badge[data-placement="corner"] {
+    background: var(--surface-corner-count);
+    color: var(--text-corner-count);
+    box-shadow: 0 0 0 1px var(--surface-panel);
   }
   .navigation-item[data-selected] .buzz-count-badge {
     background: var(--surface-row-selected-detail);

@@ -201,3 +201,44 @@ it("re-arms only explicit current reveals using the latest location and preserve
   view.rerender(<View location="source" ready />);
   expect(viewport.scrollTop).toBe(160);
 });
+
+it("reveals a row past a resized card's edge through the card", () => {
+  function View() {
+    const sidebar = useSidebarView("fixture", true, "hidden", true);
+    return (
+      <>
+        <button type="button" onClick={() => sidebar.revealAgain()}>
+          Reveal current
+        </button>
+        <nav ref={sidebar.list} data-testid="viewport">
+          <div data-card-rows="">
+            <div data-card-row="">
+              <button type="button">Shown</button>
+            </div>
+            <div data-card-row="" data-card-clipped="" inert>
+              <button type="button" aria-current="page">
+                Hidden
+              </button>
+            </div>
+          </div>
+        </nav>
+      </>
+    );
+  }
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      if (this.hasAttribute("data-card-rows"))
+        return { top: 300, bottom: 380, height: 80 } as DOMRect;
+      if (this.textContent === "Hidden")
+        return { top: 500, bottom: 520, height: 20 } as DOMRect;
+      return this.tagName === "NAV"
+        ? ({ top: 0, bottom: 100, height: 100 } as DOMRect)
+        : ({ top: 10, bottom: 30, height: 20 } as DOMRect);
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+  render(<View />);
+  fireEvent.click(screen.getByText("Reveal current"));
+  // The card is centered, not the row it hides.
+  expect(screen.getByTestId("viewport").scrollTop).toBe(290);
+});

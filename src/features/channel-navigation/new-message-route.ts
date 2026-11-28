@@ -18,17 +18,30 @@ export type MessageIntent = Readonly<{ to: string; at: number }>;
  * Nothing exists on the relay until its first send. */
 export function newMessage(
   params: JsonValue | undefined,
-): { intent?: MessageIntent; workspace?: string } | undefined {
+): { intent?: MessageIntent; workspace?: string; starred?: true } | undefined {
   if (params === "new-message") return {};
   if (!params || typeof params !== "object" || Array.isArray(params)) return;
-  const { kind, to, at, workspace, ...rest } = params as {
+  const { kind, to, at, workspace, starred, ...rest } = params as {
     readonly [key: string]: JsonValue;
   };
   if (kind !== "new-message" || Object.keys(rest).length) return;
-  if (workspaceId(workspace) && to === undefined && at === undefined)
+  if (
+    workspaceId(workspace) &&
+    starred === undefined &&
+    to === undefined &&
+    at === undefined
+  )
     return { workspace };
   if (
+    starred === true &&
     workspace === undefined &&
+    to === undefined &&
+    at === undefined
+  )
+    return { starred };
+  if (
+    workspace === undefined &&
+    starred === undefined &&
     typeof to === "string" &&
     personKey.test(to) &&
     typeof at === "number" &&
@@ -84,4 +97,14 @@ export const workspaceMessageTarget = (
   pageId: "channels",
   scope,
   route: { version: 1, params: { kind: "new-message", workspace } },
+});
+
+/** A New message draft whose conversation lands in Favorites. */
+export const starredMessageTarget = (scope: NavigationScope): OpenTarget => ({
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.channels",
+  pageId: "channels",
+  scope,
+  route: { version: 1, params: { kind: "new-message", starred: true } },
 });

@@ -23,7 +23,6 @@
 }
 .side {
   position: relative;
-  border-inline-start: 1px solid var(--border-standard);
   min-height: 0;
   min-width: 0;
 }
@@ -233,9 +232,6 @@
   }
   .side > [data-panel-resize] {
     display: none;
-  }
-  .side {
-    border-inline-start: 0;
   }
 }
 

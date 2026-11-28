@@ -20,6 +20,9 @@ import { ChannelInventory } from "./ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
 import { SidebarUnread } from "./SidebarUnread";
+import { SidebarSection } from "./SidebarSection";
+import { SIDEBAR_PAGES_SECTION } from "../../features/relay/sidebar-preferences";
+import { sidebarSectionTitle } from "./sidebar-sections";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -174,15 +177,15 @@ function ScopedSidebar({
           </div>
         </div>
       )}
-      {props.children && !restriction && (
-        <div className={styles.destinations}>{props.children}</div>
-      )}
     </>
   );
+  // Without a community the pages keep their Plugins card, as in one.
+  const [pagesOpen, setPagesOpen] = useState(true);
   return (
     <SidebarBoundary key={`${scope}:${connection.generation}`} header={header}>
       {session && inventory ? (
         <ChannelInventory
+          pages={props.children}
           relay={props.relay}
           navigator={props.navigator}
           agents={props.agents}
@@ -264,6 +267,7 @@ function ScopedSidebar({
                       <props.Frame
                         scope={scope}
                         resizable
+                        cards
                         label="Sidebar"
                         header={header}
                         footer={footer}
@@ -321,6 +325,7 @@ function ScopedSidebar({
         />
       ) : (
         <props.Frame
+          cards
           label="Sidebar"
           header={header}
           footer={footer}
@@ -329,47 +334,60 @@ function ScopedSidebar({
           }
         >
           <SidebarList>
+            {props.children && (
+              <SidebarSection
+                sectionKey={SIDEBAR_PAGES_SECTION}
+                title={sidebarSectionTitle(SIDEBAR_PAGES_SECTION)}
+                hideMoreActions
+                open={pagesOpen}
+                onToggle={setPagesOpen}
+              >
+                {props.children}
+              </SidebarSection>
+            )}
             {/* A connection retrying by itself is still connecting; only a
                   settled failure asks for Try again, right beside its notice. */}
-            {refused ? (
-              <CommunityRefusalNotice
-                // A refusal while connecting is the relay's about access.
-                refusal={connection.refusal ?? "access"}
-                identity={communityIdentity(
-                  props.federatedIdentity,
-                  connection.origin,
-                )}
-                retry={props.relay.tryAgain}
-                relay={connection.origin}
-                memberships={props.memberships}
-              />
-            ) : (
-              <div className={styles.connectionStatus}>
-                <p>
-                  {connection.status === "connecting" || connection.retrying
-                    ? "Connecting…"
-                    : connection.status === "error"
-                      ? "Couldn’t load channels."
-                      : "Choose a community to see channels."}
-                </p>
-                {connection.status === "error" && !connection.retrying && (
-                  <>
-                    <CommunitySignIn
-                      identity={communityIdentity(
-                        props.federatedIdentity,
-                        connection.origin,
-                      )}
-                      error={connection.error}
-                      retry={props.relay.tryAgain}
-                      relay={connection.origin}
-                      memberships={props.memberships}
-                      asksAgain
-                    />
-                    <Button onClick={props.relay.tryAgain}>Try again</Button>
-                  </>
-                )}
-              </div>
-            )}
+            <div className={styles.statusCard} data-sidebar-card="">
+              {refused ? (
+                <CommunityRefusalNotice
+                  // A refusal while connecting is the relay's about access.
+                  refusal={connection.refusal ?? "access"}
+                  identity={communityIdentity(
+                    props.federatedIdentity,
+                    connection.origin,
+                  )}
+                  retry={props.relay.tryAgain}
+                  relay={connection.origin}
+                  memberships={props.memberships}
+                />
+              ) : (
+                <div className={styles.connectionStatus}>
+                  <p>
+                    {connection.status === "connecting" || connection.retrying
+                      ? "Connecting…"
+                      : connection.status === "error"
+                        ? "Couldn’t load channels."
+                        : "Choose a community to see channels."}
+                  </p>
+                  {connection.status === "error" && !connection.retrying && (
+                    <>
+                      <CommunitySignIn
+                        identity={communityIdentity(
+                          props.federatedIdentity,
+                          connection.origin,
+                        )}
+                        error={connection.error}
+                        retry={props.relay.tryAgain}
+                        relay={connection.origin}
+                        memberships={props.memberships}
+                        asksAgain
+                      />
+                      <Button onClick={props.relay.tryAgain}>Try again</Button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </SidebarList>
         </props.Frame>
       )}

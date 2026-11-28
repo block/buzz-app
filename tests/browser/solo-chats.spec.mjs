@@ -358,6 +358,7 @@ test("dragging a chat between a workspace and Solo saves and reloads like Move t
   await field.fill("Work");
   await expect(field).toHaveValue("Work");
   await dialog.getByRole("button", { name: "Create and move" }).click();
+  await expect(dialog).not.toBeVisible();
   await expect(inProject("Alpha")).toBeVisible();
   const work = (await published(1))[id];
 

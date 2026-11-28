@@ -416,9 +416,9 @@ test("narrow mouse double-click renames while single-click and keyboard still na
       }),
     )
     .toEqual({ status: "failed", aborted: true });
+  // The failed page's own action returns to Messages, as the dock's tab did.
   await page
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Messages", exact: true })
+    .getByRole("button", { name: "Go to Messages", exact: true })
     .click();
   await show.tap();
   await row(page, alpha).click();
@@ -623,7 +623,9 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
       await input(page).fill("Retain until cancelled");
       await input(page).press("Enter");
       await expect(sidebar(page).getByRole("alert")).toBeVisible();
-      await work.click();
+      // A mouse click on a renamable heading waits to tell a double-click from
+      // a click; the keyboard requests the collapse at once.
+      await work.press("Enter");
       await expect(workspace).toHaveAttribute("open");
       await input(page).focus();
       if (cancellation === "Escape") await input(page).press("Escape");
@@ -657,7 +659,7 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
       await input(page).fill("Focused save through collapse");
       await input(page).press("Enter");
       await saveStarted;
-      await work.click();
+      await work.press("Enter");
       await input(page).focus();
       await expect(input(page)).toBeFocused();
       finishSave();
@@ -686,6 +688,9 @@ async function regionFixture(page, app, ids = [alpha, beta]) {
     for (const id of ids) await window.fixtureSoloRegion.classify(id);
   }, ids);
   await expect(regionRow(page, ids[0])).toBeVisible();
+  // Classified rows slide into their region; a click during the slide can
+  // press on one spot and release on another, so wait for them to settle.
+  await expect(sidebar(page).locator("[data-moving]")).toHaveCount(0);
 }
 
 test("composable rows retain narrow rename and immediate keyboard/touch activation", async ({
@@ -833,8 +838,12 @@ test.describe("plugin-owned Solo lifecycle", () => {
     app,
   }) => {
     await regionFixture(page, app, [id]);
-    const messages = page.getByRole("tab", { name: "Messages", exact: true });
-    await expect(messages).toHaveAttribute("aria-selected", "true");
+    // Messages has no dock tab; its conversation list on screen marks the shell
+    // as being in Messages.
+    const messages = page.getByRole("navigation", {
+      name: "Subscribed channels",
+    });
+    await expect(messages).toBeVisible();
     const row = regionRow(page, id);
     await expect(row).toBeVisible();
     await row.click();
@@ -852,7 +861,7 @@ test.describe("plugin-owned Solo lifecycle", () => {
       .click();
     await expect(dialog).toHaveCount(0);
     await expect(row).toHaveCount(0);
-    await expect(messages).toHaveAttribute("aria-selected", "true");
+    await expect(messages).toBeVisible();
     await expect(page).toHaveURL(/solo-draft/);
     expect(
       app.report.lifecyclePublications.map((event) => [event.kind, event.tags]),

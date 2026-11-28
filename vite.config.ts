@@ -9,6 +9,7 @@ import { worktreePort } from "./scripts/worktree-port.mjs";
 import { captureBuildIdentity } from "./scripts/build-identity.mjs";
 import {
   parseCommunityAliases,
+  parseRelayPolicy,
   relayOrigin,
 } from "./src/features/communities/destination.ts";
 import { parseFirstRunAccountSeed } from "./src/features/identity/first-run-seed.ts";
@@ -103,6 +104,9 @@ export default defineConfig(async ({ command, mode }) => {
   // Native builds consume only process values and repository-root .env.local.
   // Keep this frontend value on the same source so Vite mode files cannot
   // select a different same-origin deployment path.
+  // Process-only so frontend and Cargo consume exactly the same build input.
+  const relayPolicy = process.env.BUZZ_BUILD_RELAY_POLICY;
+  parseRelayPolicy(relayPolicy);
   // The development broker is the dev server's default: it runs whenever the
   // developer has pinned their public key. Production builds (`pnpm build`,
   // `pnpm tauri build`) never load it, regardless of .env.local contents.
@@ -203,6 +207,7 @@ export default defineConfig(async ({ command, mode }) => {
             await import("./src/bundled/builderlab/apps/environment.ts")
           ).controlPlane(builderlabUrl, builderlabUrl, appsControlPlane),
         },
+        relayPolicy,
       }),
     );
   const profileReadyToken = process.env.BUZZ_PROFILE_VITE_READY_TOKEN;
@@ -229,6 +234,8 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_FRONTEND_SOURCE_STATE": JSON.stringify(
         frontendIdentity.state,
       ),
+      "import.meta.env.VITE_BUZZ_RELAY_POLICY":
+        JSON.stringify(relayPolicy) ?? "undefined",
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
       "import.meta.env.VITE_BUZZ_AGENT_GATEWAY": JSON.stringify(
         gateway ? JSON.stringify(gateway) : "",

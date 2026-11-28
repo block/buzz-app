@@ -5214,3 +5214,26 @@ fn pin_commands_name_one_channel_and_one_message() {
         assert!(validate_event("https://relay.test", &pin(tags)).is_err());
     }
 }
+
+#[test]
+fn event_kind_refuses_aliases_the_relay_would_narrow_to_a_leave() {
+    use nostr::event::{EventBuilder, FinalizeEvent, Kind, Tag};
+    use nostr::key::Keys;
+    let leave = EventBuilder::new(Kind::Custom(28936), "")
+        .tags([Tag::parse(["-"]).unwrap()])
+        .finalize(&Keys::generate())
+        .unwrap();
+    let leave = serde_json::to_string(&leave).unwrap();
+    let kind = |json: &str| event_kind(&serde_json::from_str(json).unwrap());
+    assert_eq!(kind(&leave), Ok(28936));
+    for alias in ["94472", "4294996232"] {
+        let aliased = leave.replace(r#""kind":28936"#, &format!(r#""kind":{alias}"#));
+        // A parser that truncates the kind to 16 bits, as nostr 0.44 did, reads
+        // it back as this validly signed leave.
+        assert_eq!(alias.parse::<u64>().unwrap() as u16, 28936);
+        assert!(kind(&aliased).is_err());
+    }
+    for event in [r#"{"kind":-1}"#, r#"{"kind":1.0}"#, r#"{"kind":"1"}"#, "{}"] {
+        assert!(kind(event).is_err(), "{event}");
+    }
+}

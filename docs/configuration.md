@@ -31,6 +31,7 @@ token or other secret in one**. Open-source builds leave them all unset.
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | The Apps cookie domain for in-app SSO, for Builderlab deployments other than the public one. Empty disables SSO. |
 | `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | The Apps control plane origin, for deployments the built-in table doesn't list. |
 | `BUZZ_BUILD_MANAGED_PLUGINS_URL` | An `https` URL of a version 1 [managed plugin policy](managed-plugins.md#packaged-policy), used when no `managed-plugins.json` exists. |
+| `BUZZ_BUILD_RELAY_POLICY` | A [relay trust policy](#relay-trust-policy): the pinned community and the additional relays allowed. Vite and Cargo read it only from the build command's environment. |
 | `BUZZ_BUILD_REPOSITORY_ACCESS` | Default [repository access rules](repository-access.md#default-rules). |
 | `BUZZ_DATABRICKS_HOST` | An `https://` Databricks workspace URL passed to every bundled goose as `DATABRICKS_HOST`. Only the host; model and sign-in stay goose's. |
 | `BUZZ_MOBILE_APP_IOS_URL`, `BUZZ_MOBILE_APP_ANDROID_URL` | Store links shown with QR codes on the mobile Settings card, for people whose Builderlab account holds this device's backed-up key. |
@@ -44,6 +45,83 @@ and [`BUZZ_DEV_FIRST_RUN_ACCOUNT`](#first-run-account-seed-development).
 `BUZZ_BUILD_AGENT_ENV`, `BUZZ_BUILD_BUZZ_AGENT_PROVIDER`,
 `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` and `BUZZ_OWNER_MCP_COMMUNITIES` are no
 longer read. Remove them.
+
+## Relay trust policy
+
+Packagers can require one community and explicitly permit additional relays:
+
+```sh
+export BUZZ_BUILD_RELAY_POLICY='{"pinned":"relay.example.com","allowlist":["other.example.com:8443"]}'
+bin/pnpm tauri build
+```
+
+Vite and Cargo read this input **only from the environment of the build
+command**, never from a `.env` file. `just desktop` and `just desktop-bundle`
+copy a `.env.local` value into that environment (see
+[How values are read](#how-values-are-read)), and a value already in the
+environment wins. A direct `pnpm tauri build`, Vite or `cargo` run reads no
+`.env` file for it. Both Vite and Cargo validate the input at build time and
+embed it into their artifacts. Supply the same input to both stages;
+`tauri build` passes its environment to both. Vite development reads it when
+the server starts; native development needs a rebuild too. `VITE_` variables,
+saved preferences and the launched app's environment do not override it.
+Rebuild both artifacts to change a packaged policy. No relay policy or relay
+addresses are supplied by OSS defaults.
+
+- Absent: existing unrestricted community behavior.
+- Present: a JSON object with exactly `pinned` (a host string) and `allowlist`
+  (an array of host strings). The pin is always permitted. An empty array permits
+  only the pin; additional entries permit optional communities, without joining
+  them automatically. Equivalent duplicate hosts have the same effect as one.
+- Empty/whitespace input, invalid JSON, `null`, missing/unknown fields, wrong
+  types, empty hosts and invalid hosts fail the build or dev-server startup with
+  a `BUZZ_BUILD_RELAY_POLICY` error. Invalid values never enable unrestricted
+  operation. Errors do not echo the configured values.
+
+Each entry is `host` or `host:port`, without a scheme, credentials, path, query
+or fragment. An entry permits that host over both `wss://` and `https://`. A bare
+host means port 443; `host:port` permits only that port. Host case and a final
+DNS dot normalize away. IDNs use their ASCII form and IPv6 literals use brackets,
+such as `[2001:db8::1]:8443`. Subdomains, suffixes and different ports are
+separate relays. An allowlist entry `*.suffix` or `*.suffix:port` permits any
+host exactly one DNS label under `suffix`, on that port, such as
+`*.communities.example.com` for `a.communities.example.com`. It does not permit
+`suffix` itself or deeper subdomains. The suffix needs to be a DNS name of at least two labels, not an IP literal,
+and the pin cannot be a wildcard. Aliases resolve to an origin before
+policy checking.
+
+After identity restoration the pin is present in the saved community inventory.
+This seeded pin is never uploaded to the Builderlab account list, so it does not
+reach the account's other devices. That holds after a later build changes or
+drops the policy, until the person joins the pin themselves.
+A fresh identity starts there. An allowed saved selection or Personal space
+remains selected; a saved blocked selection falls back to the pin. Disallowed
+saved memberships are excluded before metadata reads, session acquisition and
+background agent startup, but stay in the stored community record, so a build
+that allows them restores them. Their remote memberships and relay-scoped
+device data are retained. A failed preference write does not disable policy
+enforcement. Account sync, legacy import, invites and deep links pass through
+the same destination gate; a legacy import that skipped blocked relays offers
+them again once a build allows them.
+Saved agent identities remain in the reconciliation inventory so their settings
+and teams survive policy changes; blocked relays acquire no agent sessions or
+profile publications. Unfinished joins to blocked relays remain stored and are
+excluded from recovery candidates while allowed joins remain usable.
+
+Shared community mutation and transport boundaries enforce the policy; the
+development broker independently checks registration and every routed request.
+The native host checks relay discovery, authenticated requests, signing,
+publication and media access, plus pairing community selection and agent
+creation/import/join/access. The app-held CLI uses those checked app transports.
+Advertised admin and pairing service endpoints keep their existing validation
+under an allowed community; they are not additional saved communities. The pin
+cannot be forgotten locally or left through the leave API, broker or native
+signing/publication commands. Community profile and presentation editing and
+switching among allowed communities or Personal space keep their existing behavior.
+
+`BUZZ_DEFAULT_COMMUNITY_URL`, development seeds and aliases do not grant policy
+exceptions. The default-community input remains a one-time selection seed;
+the policy is a persistent build constraint.
 
 ## Agent gateway
 

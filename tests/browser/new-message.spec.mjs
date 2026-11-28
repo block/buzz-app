@@ -22,6 +22,7 @@ const test = base.extend({
   localAgentActivity: [false, { scope: "worker" }],
   startupFailureFixture: [false, { scope: "worker" }],
   diagnostics: [false, { scope: "worker" }],
+  relayPolicy: [undefined, { scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   directorySize: [35, { option: true }],
   app: async ({ compiledApp, page, context, directorySize }, use) => {

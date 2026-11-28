@@ -699,6 +699,7 @@ function ManagedMessageItems({
       )}
       {canDelete && (
         <MenuItem
+          tone="danger"
           disabled={
             busy ||
             management.operations.some(

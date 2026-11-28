@@ -9932,7 +9932,7 @@ export class AgentsService extends Service implements Agents {
       const previous = binding.controlling;
       const listen = binding.session.controlAgents;
       const { decodeControl: decode, answerControl: answer } = native ?? {};
-      const { interruptConversation: interrupt } = this.localActivity.reader;
+      const { work, interrupt } = this.localActivity.reader;
       if (agents.size && listen && decode && answer && interrupt)
         binding.controlling = {
           key,
@@ -9942,6 +9942,7 @@ export class AgentsService extends Service implements Agents {
             if (!member) return;
             remoteStop(event, binding.scope, {
               decode: (frame) => decode(member, frame),
+              work,
               interrupt,
               answer: (result) => answer(member, result),
             }).catch((error: unknown) =>

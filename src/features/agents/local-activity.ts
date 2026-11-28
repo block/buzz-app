@@ -124,15 +124,6 @@ export type LocalAgentSource = {
   interrupt?(
     work: Pick<LocalWork, "scope" | "agent" | "messageId">,
   ): Promise<void>;
-  /** Stops every stoppable unsettled request of `agent` in a conversation:
-   * the thread at `threadRootId`, or anywhere in the channel without one.
-   * Each stop settles alone; none when nothing there can be stopped. */
-  interruptConversation?(conversation: {
-    scope: string;
-    agent: string;
-    channelId: string;
-    threadRootId?: string | undefined;
-  }): Promise<void>[];
   /** Asks again for this failed request, which begins it again; throws when
    * it can't be. */
   retry?(work: Pick<LocalWork, "scope" | "agent" | "messageId">): void;
@@ -172,30 +163,6 @@ export function createLocalAgentActivity() {
       listeners.delete(listener);
     };
   };
-  const interrupt = async ({
-    scope,
-    agent,
-    messageId,
-  }: Pick<LocalWork, "scope" | "agent" | "messageId">) => {
-    for (const [id, row] of entries) {
-      const stop = stops.get(id);
-      if (
-        !stop ||
-        row.scope !== scope ||
-        row.agent !== agent ||
-        row.messageId !== messageId
-      )
-        continue;
-      await stop();
-      const current = entries.get(id);
-      if (!current || settled(current.state)) return;
-      stops.delete(id);
-      const { step: _step, stoppable: _stoppable, ...rest } = current;
-      entries.set(id, Object.freeze({ ...rest, state: "stopped" }));
-      publish();
-      return;
-    }
-  };
   const reader: LocalAgentSource = {
     work: () => work,
     declined: () => declined,
@@ -214,19 +181,25 @@ export function createLocalAgentActivity() {
           return;
         }
     },
-    interrupt,
-    interruptConversation({ scope, agent, channelId, threadRootId }) {
-      return [...entries]
-        .filter(
-          ([id, row]) =>
-            stops.has(id) &&
-            !settled(row.state) &&
-            row.scope === scope &&
-            row.agent === agent &&
-            row.channelId === channelId &&
-            (!threadRootId || row.threadRootId === threadRootId),
+    async interrupt({ scope, agent, messageId }) {
+      for (const [id, row] of entries) {
+        const stop = stops.get(id);
+        if (
+          !stop ||
+          row.scope !== scope ||
+          row.agent !== agent ||
+          row.messageId !== messageId
         )
-        .map(([, row]) => interrupt(row));
+          continue;
+        await stop();
+        const current = entries.get(id);
+        if (!current || settled(current.state)) return;
+        stops.delete(id);
+        const { step: _step, stoppable: _stoppable, ...rest } = current;
+        entries.set(id, Object.freeze({ ...rest, state: "stopped" }));
+        publish();
+        return;
+      }
     },
     retry({ scope, agent, messageId }) {
       for (const [id, row] of entries) {

@@ -195,8 +195,13 @@ fn answer_event(
     if answer.agent != agent.pubkey
         || !channel_id(&answer.channel_id)
         || !channel_id(&answer.request_id)
-        || !matches!(answer.r#type.as_str(), "cancel_turn" | "cancel_thread_turn")
-        || !matches!(answer.status.as_str(), "sent" | "no_active_turn")
+        || !matches!(
+            (answer.r#type.as_str(), answer.status.as_str()),
+            (
+                "cancel_turn" | "cancel_thread_turn",
+                "sent" | "no_active_turn"
+            ) | ("cancel_turn", "ambiguous_target")
+        )
     {
         return Err("Invalid control answer".into());
     }
@@ -460,7 +465,7 @@ mod tests {
                 "payload": {"type": "cancel_thread_turn", "status": "no_active_turn", "requestId": "r-1"},
             })
         );
-        // Only a status this copy can give.
+        // Only a channel stop can be ambiguous.
         let refused = ControlAnswer {
             status: "ambiguous_target".into(),
             ..answer
@@ -480,5 +485,11 @@ mod tests {
             ..other
         };
         assert!(answer_event(&f.agent, &f.key, &unknown, f.now).is_err());
+        let ambiguous = ControlAnswer {
+            r#type: "cancel_turn".into(),
+            status: "ambiguous_target".into(),
+            ..unknown
+        };
+        assert!(answer_event(&f.agent, &f.key, &ambiguous, f.now).is_ok());
     }
 }

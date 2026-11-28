@@ -3,6 +3,8 @@ mod archive;
 #[cfg(test)]
 mod build_resources;
 mod federated_identity;
+#[cfg(not(any(windows, target_os = "android")))]
+mod frame;
 use archive::relay_archive;
 mod browser;
 #[cfg(target_os = "macos")]
@@ -1293,6 +1295,12 @@ pub fn run() {
         .manage(TitleBarFillFrames::default())
         .menu(close_menu::menu)
         .on_menu_event(close_menu::handle);
+    // Not on Windows or Android: Tauri serves custom schemes there as
+    // `http://<scheme>.localhost`, which its IPC accepts as the app, and
+    // WebView2 adds the app's scripts, the IPC invoke key among them, to
+    // subframes too. Keep this gate the same as `mod frame`'s.
+    #[cfg(not(any(windows, target_os = "android")))]
+    let builder = builder.register_uri_scheme_protocol("buzz-frame", frame::frame_protocol);
     // Register the updater only in configured release builds; omit it locally.
     #[cfg(buzz_updater_enabled)]
     let builder = if tauri::is_dev() {

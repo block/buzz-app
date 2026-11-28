@@ -68,6 +68,7 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import {
   addressedTo,
+  mayBeOwners,
   CHAT_KINDS,
   watchMatches,
   type AttentionObject,
@@ -3018,13 +3019,23 @@ export class AgentRunners {
     // names, so no mention is needed. Only new messages: an edit is not a new
     // turn, and a reaction is not conversation. A group DM still needs the
     // mention.
-    if (
-      addressable &&
+    const dm =
       event.kind === 9 &&
       event.pubkey !== agent.pubkey &&
-      this.host.dm(agent, event)
+      this.host.dm(agent, event);
+    // Only the owner talks to the agent: a mention or DM from anyone else
+    // wakes nothing, neither a mention run nor any watch, whatever the watch
+    // selects and before any classifier sees it. A claim of the owner's
+    // authority counts only where the mention path will verify it; one only
+    // watches would hear must come from the owner's own key.
+    if (
+      (dm || addressedTo(event, agent.pubkey)) &&
+      !(addressable
+        ? mayBeOwners(event, agent.pubkey, agent.owner)
+        : event.pubkey === agent.owner)
     )
-      return { triggers: [{ type: "mention", event }] };
+      return { triggers: [] };
+    if (addressable && dm) return { triggers: [{ type: "mention", event }] };
     // An addressed event the owner's app hears for the owner never reaches a
     // watch. Only conversation starts a run, not an encrypted DM (kind 4) it
     // cannot read yet. A reaction to its message is not addressed, so a watch

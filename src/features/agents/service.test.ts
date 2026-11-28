@@ -52,7 +52,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
-import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getEventHash } from "nostr-tools";
 import {
   afterEach,
   assert,
@@ -74,7 +74,12 @@ import { artifactTemplate } from "./agent-config-artifacts";
 import { type ConfigAgent, fields } from "./community-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
-import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
+import {
+  createEventVerifier,
+  eventDto,
+  type ReadFilter,
+  type RelayEvent,
+} from "../relay/events";
 import { keypair, message, signed } from "../relay/testing";
 import { createRelayReader } from "../relay/reader";
 import type { LiveBatch } from "../relay/incoming";
@@ -4241,13 +4246,13 @@ it("passes the model and effort its owner asked for, and no other", async () => 
       asked("unknown", viewer, ["model", bot, "gone"], ["effort", bot, "low"]),
     ],
   });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(7));
+  // The stranger's mention starts no run at all.
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
   expect(run.mock.calls[0]?.[0]).not.toHaveProperty("session");
   expect(
     run.mock.calls.map(([{ model, effort }]) => ({ model, effort })),
   ).toEqual([
     { model: undefined, effort: "high" },
-    { model: undefined, effort: undefined },
     { model: undefined, effort: undefined },
     { model: undefined, effort: undefined },
     // An effort counts only for the model the run uses.
@@ -5355,7 +5360,7 @@ it("ignores session tags even for a type with immediate session controls", async
       asked("unknown", viewer, ["session", bot, "forget"]),
     ],
   });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
   for (const [delivery] of run.mock.calls)
     expect(delivery).not.toHaveProperty("session");
   expect(run.mock.calls[1]?.[0].effort).toBe("high");
@@ -7424,7 +7429,10 @@ describe("an agent in several communities", () => {
       // Lost by the live subscription in the community it was added to.
       second.history.push(
         eventDto(
-          message(author, channel, "lost there", nowSeconds(), [["p", bot]]),
+          message(author, channel, "lost there", nowSeconds(), [
+            ["p", bot],
+            claim,
+          ]),
         ),
       );
       await vi.advanceTimersByTimeAsync(5 * 60_000);
@@ -8077,18 +8085,18 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
       }),
     ],
   });
-  // The runner keys on the channel, not the author: someone outside the roster
-  // is queued too, and the runtime's `fromOwner` is what turns them away.
-  // Another of the owner's agents is heard like anyone else.
+  // Only the owner talks to it: someone else's DM starts nothing. Another of
+  // the owner's agents claims the owner's authority, so it is queued for the
+  // runtime's `fromOwner` to verify.
   emit({ events: [inDm("stranger", { pubkey: other })] });
   emit({ events: [inDm("sibling", { pubkey: sibling, tags: [auth] })] });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+  await settle();
   expect(run.mock.calls.map(([{ trigger }]) => trigger)).toMatchObject([
     { type: "mention", event: { id: "hello".padEnd(64, "0") } },
     { type: "mention", event: { id: "more".padEnd(64, "0") } },
     { type: "mention", event: { id: "about".padEnd(64, "0") } },
     { type: "mention", event: { id: "asked".padEnd(64, "0") } },
-    { type: "mention", event: { id: "stranger".padEnd(64, "0") } },
     { type: "mention", event: { id: "sibling".padEnd(64, "0") } },
   ]);
 });
@@ -8181,7 +8189,10 @@ it("hears a reaction to its own message through a watch", async () => {
   const echoMessage = (await published(native, 9))[0]?.id;
   emit({
     events: [
+      // Someone else's reaction p-tags Echo as its message's author; that is
+      // not a mention, so the watch still hears it.
       event("like", {
+        pubkey: other,
         kind: 7,
         content: "+",
         tags: [
@@ -8198,6 +8209,68 @@ it("hears a reaction to its own message through a watch", async () => {
     slug: "watch/likes",
     event: { id: "like".padEnd(64, "0") },
   });
+});
+
+it("lets no one but the owner reach it by mention, however its watches select", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const root = "root".padEnd(64, "0");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      // Any kind in one thread, as a review follow-up watch is set.
+      "watch/thread": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: [channel],
+        kinds: [],
+        tags: { e: [root] },
+      },
+      // And one that selects mentions of Echo outright.
+      "watch/mentions": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [],
+        tags: { p: [bot] },
+      },
+    },
+  });
+  const inThread = (tags: string[][] = []) => [
+    ["h", channel],
+    ["e", root, "", "reply"],
+    ...tags,
+  ];
+  emit({
+    events: [event("asked", { pubkey: other, tags: inThread([["p", bot]]) })],
+  });
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+  // Someone else's reply that names no one is still data for the watch, and
+  // the owner's mention still starts a run.
+  emit({ events: [event("said", { pubkey: other, tags: inThread() })] });
+  emit({ events: [event("owner", { tags: inThread([["p", bot]]) })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(2);
+  // Each in its own lane, so in either order.
+  expect(run.mock.calls.map(([{ trigger }]) => trigger)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        type: "watch",
+        slug: "watch/thread",
+        event: expect.objectContaining({ id: "said".padEnd(64, "0") }),
+      }),
+      expect.objectContaining({
+        type: "mention",
+        event: expect.objectContaining({ id: "owner".padEnd(64, "0") }),
+      }),
+    ]),
+  );
 });
 
 it("answers the owner and agents the owner attested, nobody else", async () => {
@@ -10513,7 +10586,21 @@ it("runs a watch's classifier after its selectors and passes the event with each
   const jev = fakeJev();
   const { service, run, emit } = await classifiedAgent(jev);
   await vi.waitFor(() => expect(service.classifier()).toBe("available"));
-  emit({ events: [event("w", { content: "shipping v2" })] });
+  // A mention from someone else is dropped before any classifier is asked.
+  emit({
+    events: [
+      event("m", {
+        pubkey: other,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await settle();
+  expect(jev.decide).not.toHaveBeenCalled();
+  emit({ events: [event("w", { pubkey: other, content: "shipping v2" })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     slug: "watch/channel",
@@ -11278,6 +11365,24 @@ const chat = {
   },
 } as const;
 const author = keypair();
+/** Mentions `author` signs claim the owner's authority, as another of the
+ * owner's agents would: the runner hears no one else's. */
+const claim = ["auth", viewer, "", "f".repeat(128)];
+/** `event` as the owner's own, which a mention only watches hear needs: off
+ * the mention path nothing verifies a claim. The owner's test key has no
+ * secret, so a verifier that accepts any signature gives it its proof. */
+async function owners(event: RelayEvent): Promise<RelayEvent> {
+  const { id: _, sig: __, ...rest } = { ...event, pubkey: viewer };
+  const native = createEventVerifier(1, async (claims) =>
+    claims.map(() => true),
+  ).native;
+  if (!native) throw new Error("A verifier with signatures has native checks");
+  const [owned] = await native.settle([
+    native.prepare({ ...rest, id: getEventHash(rest), sig: "0".repeat(128) }),
+  ]);
+  if (!owned) throw new Error("The owner's event has no proof");
+  return owned;
+}
 /** A message in `channel` the relay signed and stored. */
 const posted = (content: string, created_at: number) =>
   eventDto(message(author, channel, content, created_at));
@@ -11506,7 +11611,10 @@ describe("a turn closing or reloading the app stopped", () => {
   const working = () => new Promise<void>(() => {});
   const mention = () =>
     eventDto(
-      message(author, channel, "Echo, go on", nowSeconds(), [["p", bot]]),
+      message(author, channel, "Echo, go on", nowSeconds(), [
+        ["p", bot],
+        claim,
+      ]),
     );
   const resumedOf = (run: {
     mock: { calls: readonly (readonly unknown[])[] };
@@ -12079,7 +12187,10 @@ describe("a turn closing or reloading the app stopped", () => {
   it("resumes or forgets only the agents the notice names", async () => {
     const asked = mention();
     const other = eventDto(
-      message(author, channel, "Birch, go on", nowSeconds(), [["p", sibling]]),
+      message(author, channel, "Birch, go on", nowSeconds(), [
+        ["p", sibling],
+        claim,
+      ]),
     );
     const storage = memoryStorage() as AgentStore;
     await writeInterrupted(storage, bot, { [asked.id]: channel });
@@ -12247,7 +12358,10 @@ describe("a turn closing or reloading the app stopped", () => {
       workingUntil(working()),
     );
     const asked = eventDto(
-      message(author, channel, "Birch, go on", nowSeconds(), [["p", sibling]]),
+      message(author, channel, "Birch, go on", nowSeconds(), [
+        ["p", sibling],
+        claim,
+      ]),
     );
     theirs.emit({ events: [asked], channelId: channel });
     await vi.waitFor(() => expect(theirs.run).toHaveBeenCalledOnce());
@@ -12266,11 +12380,15 @@ describe("a turn closing or reloading the app stopped", () => {
 
   it("resumes an agent's saved mentions oldest first", async () => {
     const older = eventDto(
-      message(author, channel, "Echo, do X", nowSeconds() - 1, [["p", bot]]),
+      message(author, channel, "Echo, do X", nowSeconds() - 1, [
+        ["p", bot],
+        claim,
+      ]),
     );
     const newer = eventDto(
       message(author, channel, "Echo, do Y instead", nowSeconds(), [
         ["p", bot],
+        claim,
       ]),
     );
     const storage = memoryStorage() as AgentStore;
@@ -14104,7 +14222,9 @@ it("answers a mention catch-up reads from while it listened, not one from before
   try {
     const start = nowSeconds();
     const mention = (content: string, created_at: number) =>
-      eventDto(message(author, channel, content, created_at, [["p", bot]]));
+      eventDto(
+        message(author, channel, content, created_at, [["p", bot], claim]),
+      );
     const { service, run, history, recover } = await setup({
       identities: [echo],
       history: [mention("old", start - 10)],
@@ -14134,7 +14254,9 @@ it("finds mentions the live subscription lost while it stayed connected", async 
     });
     const start = nowSeconds();
     const mention = (content: string, created_at: number) =>
-      eventDto(message(author, "other", content, created_at, [["p", bot]]));
+      eventDto(
+        message(author, "other", content, created_at, [["p", bot], claim]),
+      );
     // Mentions need no attention; the watch reads its channel.
     await service.save(bot, { attentionEnabled: true, attention: chat });
     await vi.advanceTimersByTimeAsync(0);
@@ -14181,7 +14303,10 @@ it("keeps finding lost mentions while its watches are edited more often than it 
     await vi.advanceTimersByTimeAsync(60_000);
     history.push(
       eventDto(
-        message(author, "other", "lost mention", nowSeconds(), [["p", bot]]),
+        message(author, "other", "lost mention", nowSeconds(), [
+          ["p", bot],
+          claim,
+        ]),
       ),
     );
     // Each edit restarts the watches' catch-up, more often than it polls;
@@ -14225,7 +14350,10 @@ it("does not answer a mention again after other traffic pushed it out of what it
     });
     await vi.advanceTimersByTimeAsync(0);
     const mention = eventDto(
-      message(author, "other", "answered once", nowSeconds(), [["p", bot]]),
+      message(author, "other", "answered once", nowSeconds(), [
+        ["p", bot],
+        claim,
+      ]),
     );
     history.push(mention);
     emit({ events: [mention], channelId: "other" });
@@ -14254,7 +14382,10 @@ it("does not answer a mention again after other traffic pushed it out of what it
     // One that only catch-up found is remembered the same way.
     history.push(
       eventDto(
-        message(author, "other", "found once", nowSeconds(), [["p", bot]]),
+        message(author, "other", "found once", nowSeconds(), [
+          ["p", bot],
+          claim,
+        ]),
       ),
     );
     await vi.advanceTimersByTimeAsync(3 * 60_000);
@@ -14286,7 +14417,9 @@ it("does not answer a mention again that a waiting catch-up read before live gav
       () => new Promise<void>((resolve) => turnsWaiting.push(resolve)),
     );
     const mention = (content: string) =>
-      eventDto(message(author, "other", content, nowSeconds(), [["p", bot]]));
+      eventDto(
+        message(author, "other", content, nowSeconds(), [["p", bot], claim]),
+      );
     const fill = (round: number) =>
       emit({
         events: Array.from({ length: 33 }, (_, index) =>
@@ -14352,7 +14485,10 @@ it("keeps reading mentions while a watch's catch-up is stuck", async () => {
     await vi.advanceTimersByTimeAsync(3 * 60_000);
     history.push(
       eventDto(
-        message(author, "other", "still heard", nowSeconds(), [["p", bot]]),
+        message(author, "other", "still heard", nowSeconds(), [
+          ["p", bot],
+          claim,
+        ]),
       ),
     );
     await vi.advanceTimersByTimeAsync(3 * 60_000);
@@ -14694,7 +14830,8 @@ it.each([
       if (learnedOnly) learned.add(plaza);
       vi.setSystemTime((start + 60) * 1000);
       history.push(
-        eventDto(message(author, plaza, "new", start + 30, [["p", bot]])),
+        // Its owner's own key: off the mention path no claim counts.
+        await owners(message(author, plaza, "new", start + 30, [["p", bot]])),
       );
       recover();
       await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
@@ -14706,6 +14843,42 @@ it.each([
     }
   },
 );
+
+it("lets no watch hear someone else's mention in a channel only agents' lookups know", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const { service, run, history, recover, learned } = await setup({
+      identities: [echo],
+    });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/all": { ...chat["watch/chat"], channels: "all" },
+      },
+    });
+    await settle();
+    learned.add(plaza);
+    vi.setSystemTime((start + 60) * 1000);
+    // Only the watch would hear any of these: the owner's app does not know
+    // the channel. The stranger's mention reaches nothing, even with a claim
+    // of the owner's authority that nothing here would verify; their other
+    // message is data for the watch.
+    history.push(
+      eventDto(message(author, plaza, "asked", start + 30, [["p", bot]])),
+      eventDto(
+        message(author, plaza, "claimed", start + 30, [["p", bot], claim]),
+      ),
+      eventDto(message(author, plaza, "said", start + 31)),
+    );
+    recover();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(run)).toEqual(["said"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("keeps reading mentions while a full Interest waits for a mention only its watches hear", async () => {
   vi.useFakeTimers({ now: 1_000_000_000 });
@@ -14754,12 +14927,17 @@ it("keeps reading mentions while a full Interest waits for a mention only its wa
     // mention.
     learned.add(plaza);
     history.push(
-      eventDto(message(author, plaza, "watched", nowSeconds(), [["p", bot]])),
+      await owners(
+        message(author, plaza, "watched", nowSeconds(), [["p", bot]]),
+      ),
     );
     await vi.advanceTimersByTimeAsync(3 * 60_000);
     history.push(
       eventDto(
-        message(author, "other", "lost mention", nowSeconds(), [["p", bot]]),
+        message(author, "other", "lost mention", nowSeconds(), [
+          ["p", bot],
+          claim,
+        ]),
       ),
     );
     await vi.advanceTimersByTimeAsync(3 * 60_000);

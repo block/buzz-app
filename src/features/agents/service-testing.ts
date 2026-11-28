@@ -31,7 +31,7 @@ export const groupDm = "dm-with-bot-and-other";
 export const event = (id: string, patch: Partial<RelayEvent> = {}) =>
   ({
     id: id.padEnd(64, "0"),
-    pubkey: other,
+    pubkey: viewer,
     kind: 9,
     created_at: 100,
     content: `hello ${id}`,

@@ -406,6 +406,11 @@ export class AgentSessions {
         idle: () => held.session.idle(),
         reserve: () => held.session.reserveExternal(),
         select: () => held.session.select(),
+        /** Puts the session on the agent's current instructions, as a
+         * typed turn does, for the work voice delegates. */
+        prepare: async () => {
+          await held.session.beforeTurn?.();
+        },
         externalIdle: () => held.session.externalIdle(),
         interrupt: () => held.session.interruptExternalRun(),
         release: () => {

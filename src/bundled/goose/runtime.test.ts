@@ -4251,6 +4251,135 @@ it("switching voice off closes its live seat and releases queued typed work", as
   }
 });
 
+it("holds typed text queued during voice until goose lets go of the session", async () => {
+  const f = setup({ scope: "channel" });
+  vi.mocked(openVoice).mockImplementation(
+    async (process, sessionId, _seat, _instructions, start) => {
+      const result = (await start(() =>
+        process.request("_goose/unstable/session/live-voice/start", {
+          sessionId,
+          offerSdp: "offer",
+        }),
+      )) as { interactionId: string };
+      return {
+        input: vi.fn(),
+        close: async () => {
+          await process.request("_goose/unstable/session/live-voice/stop", {
+            sessionId,
+            interactionId: result.interactionId,
+          });
+        },
+      };
+    },
+  );
+  let release!: () => void;
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    const seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    const process = f.fake.geese.at(-1);
+    if (!process) throw new Error("goose did not start");
+    const sessionId = String(
+      process.received.find((m) => m.method?.endsWith("live-voice/start"))
+        ?.params?.sessionId,
+    );
+    // A delegated run is going when the owner leaves.
+    process.update(sessionId, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: "delegated" } },
+    });
+    await f.deliver(message("1", "typed while speaking"));
+    // goose answers the stop and ends the run, then saves the transcript
+    // before it lets go of the session.
+    process.liveRelease = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const closed = seat.close();
+    await vi.waitFor(() => expect(process.cancelled).toContain(sessionId));
+    process.update(sessionId, {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: null } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const prompts = () =>
+      process.received.filter((m) => m.method === "session/prompt");
+    expect(prompts()).toHaveLength(0);
+    release();
+    await closed;
+    await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+    expect(process.turns[0]?.text).toContain("typed while speaking");
+    expect(prompts()).toHaveLength(1);
+  } finally {
+    release?.();
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
+
+it("puts a reused session on the agent's current instructions before voice delegates", async () => {
+  const f = setup({ scope: "channel" });
+  vi.mocked(openVoice).mockImplementation(async () => ({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  }));
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    // Switching voice on replaces the process, so it comes first.
+    await f.runtime.voiceSettings.setEnabled(true);
+    await f.deliver(message("1", "typed first"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    const sessionId = process?.turns[0]?.sessionId ?? "";
+    expect(process?.prompts.get(sessionId)).not.toContain("pirate");
+    const config = {
+      ...DEFAULT_CONFIG,
+      scope: "channel",
+      instructions: "Speak like a pirate.",
+    };
+    f.runtime.sync([{ ...f.agent, config } as unknown as Agent]);
+    seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config,
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    // The same warm session, put on the new instructions before voice
+    // starts. (openVoice is mocked here, so the buzz-voice append is last.)
+    expect(f.fake.geese.flatMap((p) => p.opened)).toHaveLength(1);
+    const sets = (process?.received ?? []).filter(
+      (m) =>
+        m.method === "_goose/unstable/session/system-prompt/set" &&
+        m.params?.sessionId === sessionId &&
+        m.params?.key === "buzz",
+    );
+    expect(String(sets.at(-1)?.params?.text)).toContain("Speak like a pirate.");
+    const order = (process?.received ?? []).map((m) =>
+      m.params?.key === "buzz" ? "buzz" : m.params?.key,
+    );
+    expect(order.lastIndexOf("buzz")).toBeLessThan(order.indexOf("buzz-voice"));
+  } finally {
+    await seat?.close();
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
+
 it("selects the agent's model and thinking level before opening voice", async () => {
   const f = setup({ scope: "channel" });
   vi.mocked(openVoice).mockImplementation(async () => {

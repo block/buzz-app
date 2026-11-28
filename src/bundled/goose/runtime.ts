@@ -269,6 +269,43 @@ type Entry = {
   >;
 };
 
+/** How long a stopped voice interaction has to let go of its session. */
+export const LIVE_RELEASE_TIMEOUT_MS = 20_000;
+const LIVE_BUSY = "Live voice is unavailable while this session is busy";
+
+/** goose answers a stop, and ends delegated work, before it saves the
+ * transcript and lets go of the session; a prompt sent meanwhile is refused.
+ * Resolves once goose stops saying the session is busy, or at the deadline. */
+async function liveReleased(process: GooseProcess, sessionId: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let late = false;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      late = true;
+      resolve();
+    }, LIVE_RELEASE_TIMEOUT_MS);
+  });
+  // Untimed, as a timed request that ran late would stop the process.
+  const ask = () =>
+    process
+      .request("_goose/unstable/session/live-voice/availability", {
+        sessionId,
+      })
+      .then(
+        (result) => (result as { message?: unknown }).message === LIVE_BUSY,
+        () => false,
+      );
+  try {
+    while (!late && (await Promise.race([ask(), deadline.then(() => false)])))
+      await Promise.race([
+        new Promise((resolve) => setTimeout(resolve, 100)),
+        deadline,
+      ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
   readonly voiceSettings: GooseVoiceSettings;
@@ -405,6 +442,7 @@ export class GooseRuntime {
           if (!promptChanged) return;
           held.interrupt();
           await held.externalIdle();
+          await liveReleased(held.process, held.sessionId);
           await held.process
             .request(
               "_goose/unstable/session/system-prompt/set",
@@ -448,6 +486,9 @@ export class GooseRuntime {
       signal.throwIfAborted();
       held.reserve();
       await held.select();
+      // Delegated work runs on this session's prompt, which only a typed
+      // turn would otherwise bring up to date.
+      await held.prepare();
       signal.throwIfAborted();
       entry.contexts.set(channelId, { channel: channelId, topLevel: true });
       promptChanged = true;

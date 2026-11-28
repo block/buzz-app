@@ -65,6 +65,9 @@ export type FakeGoose = {
   endOnSteer: boolean;
   /** Requests it never answers, as a goose that hangs. */
   silent: Set<string>;
+  /** When set, a stopped voice interaction answers at once but keeps the
+   * session busy until this settles, as goose does while it saves. */
+  liveRelease?: Promise<void>;
   killed: boolean;
   /** Asks the client a request and resolves with its response. */
   ask(method: string, params: Record<string, unknown>): Promise<Message>;
@@ -354,9 +357,19 @@ export function fakeSpawn(
             interactionId: `voice-${sessionId}`,
             answerSdp: "answer",
           });
-        case "_goose/unstable/session/live-voice/stop":
-          liveInteractions.delete(sessionId);
+        case "_goose/unstable/session/live-voice/stop": {
+          const release = () => liveInteractions.delete(sessionId);
+          if (fake.liveRelease) void fake.liveRelease.then(release);
+          else release();
           return reply(id, {});
+        }
+        case "_goose/unstable/session/live-voice/availability":
+          return reply(id, {
+            message:
+              running.has(sessionId) || liveInteractions.has(sessionId)
+                ? "Live voice is unavailable while this session is busy"
+                : "Start Live voice",
+          });
         case "session/prompt": {
           if (fake.rejectPrompt) {
             fake.rejectPrompt = false;

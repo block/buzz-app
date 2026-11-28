@@ -16,6 +16,7 @@ import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
+import { signReadState } from "../../browser-host/read-state.mjs";
 import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
@@ -3047,6 +3048,22 @@ export const test = base.extend({
             key,
           );
           servedStatuses.set(event.pubkey, event);
+          return event;
+        },
+        // Seed a signed NIP-78 read-state frontier on the modeled relay before
+        // opening the app, so the production snapshot read loads it normally.
+        serveReadState(contexts, community = "primary") {
+          const slot = "00000000000000000000000000000001";
+          const coordinate = `read-state:${slot}`;
+          const event = signReadState(
+            {
+              slot,
+              createdAt: Math.floor(Date.now() / 1000),
+              blob: { v: 1, client_id: "fixture-reader", contexts },
+            },
+            userKey,
+          );
+          readEvents.get(community).set(coordinate, event);
           return event;
         },
         // A real, newer NIP-OA head; the client still admits it through a read.

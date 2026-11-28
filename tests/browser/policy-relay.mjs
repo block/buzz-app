@@ -633,7 +633,13 @@ export function policyRelay({
           holdOlder
         )
           return new Promise((resolve, reject) => {
+            const queuedAt = performance.now();
+            let timer;
+            let settled = false;
             const abort = () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
               // A read the app cancels is no longer pending.
               const index = pending.indexOf(receipt);
               if (index >= 0) pending.splice(index, 1);
@@ -650,13 +656,17 @@ export function policyRelay({
                 return init.signal.aborted;
               },
               release() {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
                 init.signal.removeEventListener("abort", abort);
+                receipt.releaseDelayMs = performance.now() - queuedAt;
                 resolve(Response.json(result));
               },
             };
             pending.push(receipt);
             if (olderPageDelayMs !== null)
-              setTimeout(() => receipt.release(), olderPageDelayMs);
+              timer = setTimeout(() => receipt.release(), olderPageDelayMs);
           });
         return Response.json(result);
       } catch (error) {

@@ -6,6 +6,7 @@ import {
   THREAD_REPLIES,
 } from "./thread-corpus.mjs";
 import { hoverMessage } from "../message-actions.mjs";
+import { readJournal } from "../reading.mjs";
 import { settle } from "../timeline.mjs";
 
 // Browser-only: scrolling the thread history once every reply the strict window
@@ -22,6 +23,7 @@ test.use({
 
 const historySelector = '[aria-label="Thread messages"]';
 const topLevel = ":scope > [data-thread-rows] > ol > li[data-layout]";
+const EXPECTED_OLDER_PAGES = Math.ceil((THREAD_REPLIES - 10) / 50);
 // Upward is positive in Chromium's gesture distance, negative in wheel deltas.
 const gestures = {
   "thread-scroll-fling": [[6000, 6000]],
@@ -32,10 +34,33 @@ const gestures = {
   ],
 };
 
-async function openThread(page, app, perf) {
+async function openThread(page, app, perf, { read = false } = {}) {
   const root = populateThread(app);
-  const ids = [root.id, ...app.inboxWindow.replies.map((event) => event.id)];
+  const replies = app.inboxWindow.replies;
+  const ids = [root.id, ...replies.map((event) => event.id)];
+  const latest = replies.at(-1);
+  if (read) app.serveReadState({ [`thread:${root.id}`]: latest.created_at });
   await perf.setup(THREAD_CHANNEL);
+  if (read) {
+    await expect
+      .poll(
+        () =>
+          app.report.queries.some(
+            ({ community, filter }) =>
+              community === "primary" && filter?.read_state_snapshot === 1,
+          ),
+        { message: "read-state snapshot loaded" },
+      )
+      .toBe(true);
+    await expect
+      .poll(
+        async () =>
+          (await readJournal(page))?.state?.frontiers?.[`thread:${root.id}`] ??
+          0,
+        { message: "thread read frontier hydrated" },
+      )
+      .toBeGreaterThanOrEqual(latest.created_at);
+  }
   const row = page
     .locator(timeline(THREAD_CHANNEL))
     .locator(`[data-message-id="${root.id}"]`);
@@ -52,26 +77,27 @@ const history = (page) =>
   page.getByRole("region", { name: "Thread messages", exact: true });
 
 // Every older page is held by the fixture until released. Opening the unread
-// thread pages older itself to find its first unread reply; release those
-// pages until it is positioned.
+// thread pages older itself to find its first unread reply; release each held
+// page once until it is positioned.
 async function openPositioned(page, app) {
+  let released = app.pending.length;
   await expect(async () => {
-    for (const receipt of app.pending) receipt.release();
+    while (released < app.pending.length) app.pending[released++].release();
     await expect(history(page)).not.toHaveAttribute("data-positioning", {
       timeout: 100,
     });
   }).toPass();
+  return released;
 }
 
-// Upward wheel input at the top requests the remaining older pages, so each
+// Upward wheel input at the top requests any remaining older pages, so each
 // step waits for its request and rows.
-async function loadHistory(page, app) {
+async function loadHistory(page, app, released = app.pending.length) {
   const element = history(page);
   const expected =
     THREAD_REPLIES - app.inboxWindow.replies.filter(isNested).length;
   const box = await element.boundingBox();
   await page.mouse.move(box.x + box.width - 12, box.y + box.height / 2);
-  let released = app.pending.length;
   for (
     let before = await element.locator(topLevel).count();
     before < expected;
@@ -92,6 +118,7 @@ async function loadHistory(page, app) {
       .toBeGreaterThan(before);
   }
   await expect(element.locator(topLevel)).toHaveCount(expected);
+  await expect(element.getByRole("alert")).toHaveCount(0);
   await settle(page, element);
   return expected;
 }
@@ -102,8 +129,11 @@ for (const name of ["thread-scroll-open", ...Object.keys(gestures)])
   for (let i = 1; i <= repeats; i++)
     test(`${name} sample ${i}`, async ({ page, app, perf, browserName }) => {
       test.setTimeout(180_000);
-      const { ids, reply } = await openThread(page, app, perf);
+      const { ids, reply } = await openThread(page, app, perf, {
+        read: name === "thread-scroll-open",
+      });
       if (name === "thread-scroll-open") {
+        const readsBefore = app.pending.length;
         const sample = await perf.measure(THREAD_CHANNEL, {
           click:
             '[role="group"][aria-label="Message actions"]:popover-open button[aria-label="Reply"]',
@@ -112,13 +142,25 @@ for (const name of ["thread-scroll-open", ...Object.keys(gestures)])
           timeoutMs: 30_000,
           work: { replies: THREAD_REPLIES },
         });
+        sample.work.olderReads = app.pending.length - readsBefore;
         await perf.save(sample);
+        await expect(history(page)).not.toHaveAttribute("data-positioning");
+        await expect(history(page).getByRole("alert")).toHaveCount(0);
+        expect(
+          sample.work.olderReads,
+          "read thread opens on its initial window without older-page reads",
+        ).toBe(0);
         return;
       }
+      const pendingBeforeOpen = app.pending.length;
       await reply.click();
       const element = history(page);
-      await openPositioned(page, app);
-      const loaded = await loadHistory(page, app);
+      const released = await openPositioned(page, app);
+      const loaded = await loadHistory(page, app, released);
+      expect(
+        app.pending.length - pendingBeforeOpen,
+        "fixture held older thread pages during history preload",
+      ).toBe(EXPECTED_OLDER_PAGES);
       await element.evaluate((node) => {
         node.scrollTop = node.scrollHeight;
       });

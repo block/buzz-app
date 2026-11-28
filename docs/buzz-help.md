@@ -91,6 +91,8 @@ if that desktop app is up and running.
     checks.
   - **Plugins**: **Manage plugins**, plus each plugin's own page (Builderlab,
     Attention, Claude, GitHub, Focus and so on).
+    Builderlab's **Connections** lists the apps your agents use for you, warns
+    before one expires and reconnects it in your browser.
 
 ## Getting started
 

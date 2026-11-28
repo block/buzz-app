@@ -245,6 +245,14 @@ agents are not migrated into this type.
   as sent. A list this client cannot read halts sync until the next sign-in,
   as does a 404 on any route (not yet deployed); a listed address the device
   could never save is dropped and counted, never a halt.
+- `connections/` lists the account's OAuth connections behind a Settings card and
+  alerts once as each nears its end (within seven days, when the service
+  reports one) and once when it ends, remembered across restarts. It reads
+  `list-oauth-extensions` (`{}` → `{ extensions: [{ name, expires_at_epoch_s?,
+  previously_connected? }] }`, where `previously_connected` marks one the
+  service dropped) at sign-in, hourly, on window focus and after a disconnect
+  (`delete-oauth-extension`, `{ extension }`). Connecting and reconnecting
+  happen on the account's web connections page in the system browser.
 
 The plugin's server is the build's Builderlab: its first
 [sign-in server](../../../docs/configuration.md#federated-identity-build-input),

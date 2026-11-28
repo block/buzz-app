@@ -11,6 +11,7 @@ import { objectBody } from "./body";
 import { huddleRoom } from "../huddle/lifecycle";
 import { newer } from "./events";
 import type { EventData } from "./events";
+import { agentCandidateMetadata } from "./agent-candidates";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
   MEDIA_TARGET_TAG,
@@ -524,6 +525,7 @@ export function foldMessages(
           : {}),
         ...(edits[0] ? { edited: true as const, editId: edits[0].id } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
+        ...agentCandidateMetadata(event),
         mentionReferences: Object.freeze([
           ...new Set(
             event.tags.flatMap((tag) =>

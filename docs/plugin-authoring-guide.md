@@ -189,6 +189,33 @@ its members, the host keeps the source on individual additions for the rest.
 Both calls report relay migration throttling with an error that starts with
 `rate-limited:`. Pause the import before issuing another write when you see it.
 
+## Pre-send agent routing
+
+Feature-check `ctx.conversation.registerAgentRouter({ id, route })`. The
+[`AgentRouter` and `AgentRoutingRequest` types](../src/plugins/author.ts) define
+the request and result. The owner Solo composer calls one router before signing,
+including on a new chat. It passes the request text, channel ID, optional
+community origin, candidate profiles and up to six loaded recent messages.
+Return a nonempty subset of candidate pubkeys. Invalid results, failures,
+timeouts and plugin replacement leave the draft unsent. With multiple routers
+enabled, the error names the conflicting plugin and router IDs.
+
+Assigned agents get notification tags. Signed `buzz:agent-candidate` tags retain
+the original pool for later selection, subject to current eligibility. Queued
+sends and Outbox retries retain the captured assignment. Single-agent sends,
+chats with people and programmatic sends use ordinary routing.
+
+`ctx.agents.snapshot().agents` may include device-local `publicInstructions`
+evidence from a verified Marketplace import. Match its community and SHA-256
+digest against the request community and the complete current instructions
+before truncating the text. Older imports and edited copies may lack matching
+evidence. Marketplace visibility alone does not establish provider approval.
+
+A router runs with the same access as other
+[trusted plugins](plugins.md#trust). Its sharing settings govern what the plugin
+forwards to its decision provider. Explain that data and the effect on
+recipients in the installation description.
+
 ## Host access (`manifest.host`)
 
 Declare in `manifest.json` the commands, processes, network origins and files your plugin uses, then add `"host"` to `inject`. The host's own APIs only do what's declared, so this is how they get wired up. It isn't a security boundary: plugin code runs in the app and can reach past it.

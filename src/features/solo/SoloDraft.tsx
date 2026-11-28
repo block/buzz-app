@@ -380,6 +380,7 @@ export function SoloDraft({
     draftPicks?: DraftPicks,
     draftPicksRevision?: string | null,
     explicitRecipientIds?: readonly string[],
+    assigned?: readonly string[],
   ) {
     const text = composerMarkdown(draft);
     if (submitting.current || !text.trim() || !available) return;
@@ -598,36 +599,49 @@ export function SoloDraft({
       const { ready } = starting;
       // Observe admission immediately, even while local persistence awaits ownership.
       void ready.catch(() => {});
+      const assignment = assigned?.every((key) => recipients.includes(key))
+        ? assigned
+        : undefined;
+      const firstRecipients = assignment ?? recipients;
       const firstPicks: MentionPicks = Object.fromEntries(
         Object.entries(picks ?? {}).filter(([pubkey]) =>
-          recipients.includes(pubkey),
+          firstRecipients.includes(pubkey),
         ),
       );
       const retainedPicks = firstChatPicks(
         startingDraftPicks,
-        firstPicks,
+        picks ?? firstPicks,
         recipients,
       );
       try {
+        const firstReferences = [
+          ...references,
+          ...recipients.filter(
+            (key) => assignment && !assignment.includes(key),
+          ),
+        ];
         signMessageTokens(draftTokens(draft), () =>
           sendWithOwnerMentions(
             session,
-            explicitRecipientIds?.filter((id) => recipients.includes(id)),
+            explicitRecipientIds?.filter((id) => firstRecipients.includes(id)),
             () =>
-              references.length || Object.keys(firstPicks).length
+              firstReferences.length ||
+              Object.keys(firstPicks).length ||
+              assignment
                 ? session.messages.send(
                     channelId,
                     text,
-                    recipients,
+                    firstRecipients,
                     uploaded,
                     undefined,
-                    references,
+                    firstReferences,
                     firstPicks,
+                    ...(assignment ? [recipients] : []),
                   )
                 : session.messages.send(
                     channelId,
                     text,
-                    recipients,
+                    firstRecipients,
                     ...(uploaded.length ? [uploaded] : []),
                   ),
           ),
@@ -944,6 +958,7 @@ export function SoloDraft({
             draftPicks,
             revision,
             explicitRecipientIds,
+            assigned,
           ) => {
             void start(
               draft,
@@ -953,6 +968,7 @@ export function SoloDraft({
               draftPicks,
               revision,
               explicitRecipientIds,
+              assigned,
             );
           },
         }}

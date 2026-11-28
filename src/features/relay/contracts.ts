@@ -194,6 +194,8 @@ export type ChannelMessage = Readonly<{
   mentions: readonly string[];
   /** Signed two-field mention tags bind display only; never notification recipients. */
   mentionReferences?: readonly string[];
+  /** Selected routing pool; `mentions` alone determines which agents run. */
+  agentCandidates?: readonly string[];
   /** Frozen display labels inside a forwarded copy; never notification intent. */
   mentionLabels?: readonly { id: string; names: readonly string[] }[];
   /** Authorized edit supplying current imeta; absent when sourced from the original. */

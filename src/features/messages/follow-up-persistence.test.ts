@@ -12,6 +12,7 @@ import {
   type OutgoingEvent,
 } from "../relay/outbox";
 import { createMessages } from "../relay/messages";
+import { createOwnerMentionStore } from "../relay/owner-mentions";
 import { followUpQueue } from "./follow-up-queue";
 import { followUpMessage } from "./follow-up-message";
 import {
@@ -272,6 +273,26 @@ function fixture(
   };
 }
 
+it("retains a routed request's assigned recipients and candidate pool through queue restoration", async () => {
+  const peer = "b".repeat(64);
+  fixture().enqueue({
+    ...message,
+    references: [peer],
+    candidates: [agent, peer],
+  });
+  const restored = fixture();
+  expect(restored.queue.snapshot()[0]?.message?.candidates).toEqual([
+    agent,
+    peer,
+  ]);
+  const id = restored.queue.snapshot()[0]?.id;
+  if (!id) throw new Error("Missing restored request");
+  restored.queue.sendNow(id);
+  await vi.waitFor(() => expect(restored.send).toHaveBeenCalledOnce());
+  expect(restored.send.mock.calls[0]?.[2]).toEqual([agent]);
+  expect(restored.send.mock.calls[0]?.[7]).toEqual([agent, peer]);
+});
+
 it("restores ordered payloads in the same account/community without automatically publishing", async () => {
   const first = fixture();
   const attachment = {
@@ -331,25 +352,61 @@ it("restores ordered payloads in the same account/community without automaticall
   ).toEqual(["Second"]);
 });
 
-it("restores a queued message's chips and signs them on the recovered send", async () => {
-  const token = {
-    kind: "folder" as const,
-    id: "/example/repos/notes",
-    label: "notes",
-  };
-  fixture().enqueue({ ...message, tokens: [token] });
-  const restored = fixture();
-  await restored.owner.ready;
-  const row = restored.queue.snapshot()[0];
-  if (!row) throw new Error("Queued message was not restored");
-  expect(row.message?.tokens).toEqual([token]);
-  restored.queue.sendNow(row.id);
-  await vi.waitFor(() => expect(restored.publish).toHaveBeenCalledOnce());
-  const [event] = restored.publish.mock.calls[0] as unknown as [
-    { tags: string[][] },
-  ];
-  expect(event.tags).toContainEqual(messageTokenTags([token])[0]);
-});
+it.each([false, true])(
+  "restores queued chips and routing candidates (routed: %s)",
+  async (routed) => {
+    const peer = "b".repeat(64);
+    const token = {
+      kind: "folder" as const,
+      id: "/example/repos/notes",
+      label: "notes",
+    };
+    fixture().enqueue({
+      ...message,
+      tokens: [token],
+      ...(routed
+        ? {
+            references: [peer],
+            candidates: [agent, peer],
+            explicitRecipientIds: [],
+          }
+        : {}),
+    });
+    const restored = fixture();
+    await restored.owner.ready;
+    const ownerMentions = createOwnerMentionStore(viewer);
+    const access = new AbortController();
+    cleanup.push(() => access.abort());
+    const evidence = ownerMentions.bind(
+      restored.owner.outbox,
+      () => true,
+      access.signal,
+      () => () => {},
+      (messages) => messages === restored.session.messages,
+    );
+    const row = restored.queue.snapshot()[0];
+    if (!row) throw new Error("Queued message was not restored");
+    expect(row.message?.tokens).toEqual([token]);
+    restored.queue.sendNow(row.id);
+    await vi.waitFor(() => expect(restored.publish).toHaveBeenCalledOnce());
+    const [event] = restored.publish.mock.calls[0] as unknown as [
+      ReturnType<typeof finalizeEvent>,
+    ];
+    expect(event.tags).toContainEqual(messageTokenTags([token])[0]);
+    if (routed) {
+      expect(restored.send.mock.calls[0]?.[2]).toEqual([agent]);
+      expect(event.tags).toContainEqual(["buzz:agent-candidate", agent]);
+      expect(event.tags).toContainEqual(["buzz:agent-candidate", peer]);
+      expect(event.tags).not.toContainEqual(["p", peer]);
+      ownerMentions.confirm(event, () => true);
+      const source = { channelId: message.channelId, rootId: null };
+      expect(evidence.confirmedOwnerSends(source, [event.id])).toEqual([
+        event.id,
+      ]);
+      expect(evidence.latest(source, [agent])).toBeNull();
+    }
+  },
+);
 
 it.each([
   {},

@@ -266,6 +266,24 @@ one only if you trust its author with your account and your computer. An optiona
 publishers and can include plugins you sign with your own Buzz identity. Manage
 the policy with `buzzodz plugin trust`. Blocked plugins stay listed with the reason.
 
+The optional **Solo Agents Router** uses your **Decisions API** provider to
+choose which selected agents to notify for each request in your own Solo chats.
+The full pool stays available for later messages. Group requests can notify
+everyone. The plugin also sends to everyone when it is uncertain or fails, or
+when more than eight agents are selected. With more than eight it skips the
+Decisions API call.
+
+The provider gets the request, agent profile bios, and verified Marketplace
+instructions. In **Settings → Solo Agents Router**, sharing local agent
+instructions and recent chat context are separate options, both off by default.
+Edited Marketplace instructions need the local-instructions option. Older
+unverified imports need that option or a fresh import. Settings apply to the
+current account and community on this device.
+
+Disable the plugin to notify all selected agents on each send. If Buzz reports
+multiple active routers, leave one enabled in **Manage plugins** and retry the
+saved draft.
+
 ## Docs
 
 Docs is a bundled plugin for live Markdown documents shared with people and

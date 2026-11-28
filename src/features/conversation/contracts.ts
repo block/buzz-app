@@ -315,6 +315,11 @@ export type LinkPreviewSettings = Readonly<{
   open(section: string): void;
 }>;
 export type ConversationExtensions = Readonly<{
+  /** Optional pre-send assignment for owner-authored Solo requests. */
+  routeAgents?: (
+    request: import("./agent-routing").AgentRoutingRequest,
+    signal: AbortSignal,
+  ) => Promise<readonly string[] | undefined>;
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
   actions?: ContributionReader<MessageAction>;

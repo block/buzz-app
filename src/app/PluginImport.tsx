@@ -1,6 +1,7 @@
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Field } from "../shared/design-system/ui/Field";
 import { Input } from "../shared/design-system/ui/Input";
+import { Checkbox, CheckboxGroup } from "../shared/design-system/ui/Checkbox";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Switch } from "../shared/design-system/ui/Switch";
 import { Button } from "../shared/design-system/ui/Button";
@@ -19,7 +20,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { FolderOpenIcon } from "../shared/design-system/icons/index";
-import { PluginAccessReview } from "./PluginAccessReview";
+import {
+  PluginAccessReview,
+  PluginBatchAccessReview,
+} from "./PluginAccessReview";
 import {
   sharedPluginUpdateChecks,
   pluginUpdateCheck,
@@ -29,6 +33,8 @@ import { gitScope } from "../plugins/git-scope";
 import type { PluginManager } from "../plugins/manager";
 import { samePluginRelease } from "../plugins/same-release";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
+
+type ImportCandidate = ImportPreview["candidates"][number];
 import {
   pluginUpdateSource,
   updateSourceKey,
@@ -242,13 +248,97 @@ export function PluginImport({
     setReference(initialGit.reference);
     setOpen(true);
   }, [initialGit, requestSignal]);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [reviewing, setReviewing] = useState(false);
   // Snapshot at review entry: our own install catalog refresh must not turn a
   // new install into an update while its enable operation is still pending.
-  const [existing, setExisting] = useState<PluginInfo>();
+  const [reviewExisting, setReviewExisting] = useState<Map<string, PluginInfo>>(
+    () => new Map(),
+  );
+  const [installProgress, setInstallProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [abandonable, setAbandonable] = useState(false);
   const mounted = useRef(true);
   const [bound, setBound] = useState<GitPluginInstallRequest>();
+  const catalogById = useMemo(
+    () => new Map(catalog.plugins.map((item) => [item.manifest.id, item])),
+    [catalog.plugins],
+  );
+  const distinctCandidateIds = useMemo(
+    () =>
+      new Set(preview?.candidates.map((item) => item.manifest.id) ?? []).size,
+    [preview],
+  );
+  const multiSelect =
+    !updateId && !bound && !!preview && distinctCandidateIds > 1;
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const selectedCandidates = useMemo(
+    () =>
+      preview
+        ? preview.candidates.filter((item) => selectedSet.has(item.path))
+        : [],
+    [preview, selectedSet],
+  );
+  const installablePaths = useMemo(() => {
+    if (!preview) return [];
+    const seen = new Set<string>();
+    const paths: string[] = [];
+    for (const item of preview.candidates) {
+      if (catalogById.has(item.manifest.id) || seen.has(item.manifest.id))
+        continue;
+      seen.add(item.manifest.id);
+      paths.push(item.path);
+    }
+    return paths;
+  }, [preview, catalogById]);
+  const allInstallableSelected =
+    installablePaths.length > 0 &&
+    installablePaths.every((path) => selectedSet.has(path));
+  const batchReview = reviewing && selectedCandidates.length > 1;
+  const batchTargets = batchReview
+    ? selectedCandidates.filter((item) => !reviewExisting.has(item.manifest.id))
+    : [];
+  const batchExisting = batchReview
+    ? selectedCandidates.filter((item) => reviewExisting.has(item.manifest.id))
+    : [];
+  const batchAllExisting = batchReview && batchTargets.length === 0;
+  const candidate =
+    selectedCandidates.length === 1 ? selectedCandidates[0] : undefined;
+  const existing = candidate
+    ? reviewExisting.get(candidate.manifest.id)
+    : undefined;
+  const singleReviewTarget = batchReview
+    ? batchTargets.length === 1
+      ? batchTargets[0]
+      : undefined
+    : candidate;
+  const installTargets = batchReview
+    ? batchTargets
+    : candidate
+      ? [candidate]
+      : [];
+  function updateMultiSelection(nextPaths: string[]) {
+    if (!preview) return;
+    const added = nextPaths.find((path) => !selectedSet.has(path));
+    const addedId = added
+      ? preview.candidates.find((item) => item.path === added)?.manifest.id
+      : undefined;
+    const nextSet = new Set(nextPaths);
+    setSelected(
+      preview.candidates
+        .filter(
+          (item) =>
+            nextSet.has(item.path) &&
+            (!addedId || item.path === added || item.manifest.id !== addedId),
+        )
+        .map((item) => item.path),
+    );
+  }
   // A link pinned to a commit and folder names one immutable plugin, so like a plugin's
   // request it may update an imported plugin from the same source instead of being a duplicate.
   const pinnedLink =
@@ -269,11 +359,6 @@ export function PluginImport({
     trackedReference !== undefined &&
     requestedReference !== undefined &&
     requestedReference !== trackedReference;
-  const [preview, setPreview] = useState<ImportPreview | null>(null);
-
-  const [discarding, setDiscarding] = useState(false);
-  const [selected, setSelected] = useState("");
-  const [reviewing, setReviewing] = useState(false);
   const [showUnchanged, setShowUnchanged] = useState(false);
   const unchangedTrigger = useRef<HTMLButtonElement>(null);
   const unchangedBack = useRef<HTMLButtonElement>(null);
@@ -293,7 +378,7 @@ export function PluginImport({
     if (preview) {
       const checked = !reviewing
         ? previewRegion.current?.querySelector<HTMLElement>(
-            '[role="radio"][aria-checked="true"], input[type="radio"]:checked',
+            '[role="radio"][aria-checked="true"], input[type="radio"]:checked, [role="checkbox"][aria-checked="true"]',
           )
         : null;
       (
@@ -436,7 +521,6 @@ export function PluginImport({
     };
   }, [imports]);
 
-  const candidate = preview?.candidates.find((p) => p.path === selected);
   const updating = !!existing;
   const installedSource = existing?.updateSource;
   const conflict =
@@ -680,17 +764,18 @@ export function PluginImport({
       lastQueuedUpdateFailure.current = undefined;
       setError(null);
       setPreview(next);
-      setReviewing(next?.candidates.length === 1);
-      setExisting(
-        next?.candidates.length === 1
-          ? catalog.plugins.find(
-              (item) => item.manifest.id === next.candidates[0]?.manifest.id,
-            )
-          : undefined,
+      const single =
+        next?.candidates.length === 1 ? next.candidates[0] : undefined;
+      const singleExisting = single
+        ? catalogById.get(single.manifest.id)
+        : undefined;
+      setReviewing(!!single);
+      setReviewExisting(
+        single && singleExisting
+          ? new Map([[single.manifest.id, singleExisting]])
+          : new Map(),
       );
-      setSelected(
-        next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
-      );
+      setSelected(single ? [single.path] : []);
     } catch (reason) {
       if (current.active) {
         observe?.(undefined, String(reason));
@@ -753,6 +838,8 @@ export function PluginImport({
       await imports?.discard(preview.token);
       lifetime.current.token = "";
       setPreview(null);
+      setSelected([]);
+      setReviewExisting(new Map());
       setShowUnchanged(false);
     } catch (reason) {
       showError(reason, previewBack.current);
@@ -782,6 +869,8 @@ export function PluginImport({
         return false;
       }
       setPreview(null);
+      setSelected([]);
+      setReviewExisting(new Map());
       errorTrigger.current = null;
       setError(null);
       setDragging(false);
@@ -835,13 +924,14 @@ export function PluginImport({
     if (
       !imports ||
       !preview ||
-      !candidate ||
+      !installTargets.length ||
       blocked ||
       retired ||
       pending.current ||
       pinError
     )
       return;
+    const targets = installTargets;
     lastQueuedUpdateFailure.current = undefined;
     if (requested && existing) {
       const snapshot = plugins.snapshot();
@@ -875,10 +965,12 @@ export function PluginImport({
         return;
       }
     }
-    const candidateError = candidateDriftError(candidate);
-    if (candidateError) {
-      showError(candidateError, installButton.current);
-      return;
+    if (candidate) {
+      const candidateError = candidateDriftError(candidate);
+      if (candidateError) {
+        showError(candidateError, installButton.current);
+        return;
+      }
     }
     const validationError = queuedUpdate?.validate();
     if (validationError) {
@@ -911,24 +1003,52 @@ export function PluginImport({
     setError(null);
     const unconfirmRequest =
       requestId === undefined ? undefined : onRequestConfirmed?.(requestId);
+    const installed: ImportCandidate[] = [];
+    let currentTarget: ImportCandidate | undefined;
+    const formatBatchFailure = (
+      target: ImportCandidate | undefined,
+      reason: string,
+    ) => {
+      if (targets.length <= 1 || !target) return reason;
+      if (!installed.length)
+        return `Could not install ${target.manifest.name}: ${reason}`;
+      return `Could not install ${target.manifest.name}: ${reason} (${installed.length} earlier ${installed.length === 1 ? "plugin" : "plugins"} installed).`;
+    };
+    const clearInstalledFromSelection = () => {
+      if (!installed.length) return;
+      const installedPaths = new Set(installed.map((item) => item.path));
+      setSelected((prev) => prev.filter((path) => !installedPaths.has(path)));
+    };
     try {
-      const success = await plugins.installImport(
-        preview.token,
-        candidate.path,
-      );
-      if (!success) {
-        const failure =
-          plugins.snapshot().error ??
-          "Plugin installation wasn’t confirmed. Check the preview and try again.";
-        lastQueuedUpdateFailure.current = failure;
-        if (current.active) showError(failure, installButton.current);
-        return;
+      for (const [index, target] of targets.entries()) {
+        if (!current.active && index > 0) return;
+        currentTarget = target;
+        if (targets.length > 1 && current.active) {
+          setInstallProgress({ done: index, total: targets.length });
+        }
+        const success = await plugins.installImport(preview.token, target.path);
+        if (!success) {
+          const reason =
+            plugins.snapshot().error ??
+            "Plugin installation wasn’t confirmed. Check the preview and try again.";
+          const failure = formatBatchFailure(target, reason);
+          lastQueuedUpdateFailure.current = failure;
+          if (current.active) {
+            clearInstalledFromSelection();
+            showError(failure, installButton.current);
+          }
+          return;
+        }
+        installed.push(target);
+        if (targets.length > 1 && enableOnInstall) {
+          await plugins.change("enable", target.manifest.id);
+        }
       }
       // Native keeps the prepared preview after install.
       current.token = "";
       await imports.discard(preview.token).catch(() => {});
-      if (!existing && enableOnInstall)
-        await plugins.change("enable", candidate.manifest.id);
+      if (targets.length === 1 && !existing && enableOnInstall && targets[0])
+        await plugins.change("enable", targets[0].manifest.id);
       if (!current.active) {
         if (requestId !== undefined)
           settleRequest.current?.(
@@ -939,21 +1059,36 @@ export function PluginImport({
         onClosed?.();
         return;
       }
-      if (!updateId) setPreview(null);
-      else if (existing)
-        setExisting({
-          ...existing,
-          revision: candidate.revision,
-        });
+      if (!updateId) {
+        setPreview(null);
+        setSelected([]);
+        setReviewExisting(new Map());
+      } else if (existing && candidate) {
+        setReviewExisting(
+          new Map([
+            [
+              existing.manifest.id,
+              {
+                ...existing,
+                revision: candidate.revision,
+              },
+            ],
+          ]),
+        );
+      }
       releaseRequest(existing ? "updated" : "installed");
       if (requestId === undefined)
         settleQueuedUpdate(existing ? "updated" : "installed");
       setOpen(false);
       onClosed?.();
     } catch (reason) {
-      const failure = reason instanceof Error ? reason.message : String(reason);
+      const message = reason instanceof Error ? reason.message : String(reason);
+      const failure = formatBatchFailure(currentTarget, message);
       lastQueuedUpdateFailure.current = failure;
-      if (current.active) showError(failure, installButton.current);
+      if (current.active) {
+        clearInstalledFromSelection();
+        showError(failure, installButton.current);
+      }
     } finally {
       unconfirmRequest?.();
       unconfirmQueue?.();
@@ -974,7 +1109,10 @@ export function PluginImport({
       }
       release();
       pending.current = false;
-      if (current.active) setLoading(false);
+      if (current.active) {
+        setLoading(false);
+        setInstallProgress(null);
+      }
     }
   }
   if (!imports) return null;
@@ -1109,19 +1247,29 @@ export function PluginImport({
               "Add a plugin"
             )
           ) : reviewing ? (
-            duplicate ? (
+            duplicate || batchAllExisting ? (
               "Already installed"
             ) : existing ? (
               `Update ${existing.manifest.name}`
+            ) : batchTargets.length > 1 ? (
+              <>
+                Review access for <strong>{batchTargets.length} plugins</strong>
+              </>
             ) : (
               <>
                 Review{" "}
-                <strong>{candidate?.manifest.name ?? "Unknown"} Plugin</strong>{" "}
+                <strong>
+                  {singleReviewTarget?.manifest.name ?? "Unknown"} Plugin
+                </strong>{" "}
                 access
               </>
             )
           ) : preview.candidates.length ? (
-            "Choose a plugin"
+            multiSelect ? (
+              "Choose plugins"
+            ) : (
+              "Choose a plugin"
+            )
           ) : (
             "No plugins found"
           )
@@ -1133,15 +1281,21 @@ export function PluginImport({
               ? undefined
               : preview
                 ? reviewing
-                  ? updating
+                  ? updating || batchAllExisting
                     ? undefined
                     : "Only install code you trust."
                   : preview.candidates.length
-                    ? "Select a plugin to review before installing."
+                    ? multiSelect
+                      ? "Select one or more plugins to review before installing."
+                      : "Select a plugin to review before installing."
                     : "Try another folder or repository."
                 : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
         }
-        size={error || (reviewing && updating) ? "compact" : "wide"}
+        size={
+          error || (reviewing && (updating || batchAllExisting))
+            ? "compact"
+            : "wide"
+        }
         footerGap={reviewing && updating ? "compact" : "default"}
         leadingActions={
           !error &&
@@ -1154,12 +1308,14 @@ export function PluginImport({
               This plugin will stay disabled.
             </p>
           ) : reviewing &&
-            candidate &&
+            installTargets.length > 0 &&
             !updateId &&
             (!existing || loading) &&
             !error ? (
             <Switch
-              label="Enable plugin"
+              label={
+                installTargets.length > 1 ? "Enable plugins" : "Enable plugin"
+              }
               checked={enableOnInstall}
               disabled={blocked}
               onCheckedChange={setEnableOnInstall}
@@ -1204,7 +1360,7 @@ export function PluginImport({
                   Back
                 </Button>
               )}
-              {reviewing && duplicate && onOpenInstalled && (
+              {reviewing && duplicate && existing && onOpenInstalled && (
                 <Button
                   variant="prominent"
                   disabled={blocked}
@@ -1216,16 +1372,18 @@ export function PluginImport({
                   Open in Buzz
                 </Button>
               )}
-              {reviewing && (duplicate ? !onOpenInstalled : upToDate) && (
-                <Button disabled={blocked} onClick={() => void close()}>
-                  Done
-                </Button>
-              )}
+              {reviewing &&
+                (batchAllExisting ||
+                  (duplicate ? !onOpenInstalled : upToDate)) && (
+                  <Button disabled={blocked} onClick={() => void close()}>
+                    Done
+                  </Button>
+                )}
               {!reviewing && preview.candidates.length > 1 && (
                 <Button
                   variant="prominent"
                   type="button"
-                  disabled={blocked || !candidate}
+                  disabled={blocked || selectedCandidates.length === 0}
                   onClick={() => {
                     if (currentPlugin && savedSource && candidate)
                       checks.observe(currentPlugin, updateAction?.source)(
@@ -1233,9 +1391,19 @@ export function PluginImport({
                         null,
                         candidate,
                       );
-                    setExisting(
-                      catalog.plugins.find(
-                        (item) => item.manifest.id === candidate?.manifest.id,
+                    setReviewExisting(
+                      new Map(
+                        selectedCandidates
+                          .map((item) => {
+                            const match = catalogById.get(item.manifest.id);
+                            return match
+                              ? ([item.manifest.id, match] as const)
+                              : null;
+                          })
+                          .filter(
+                            (entry): entry is readonly [string, PluginInfo] =>
+                              entry !== null,
+                          ),
                       ),
                     );
                     setReviewing(true);
@@ -1245,7 +1413,7 @@ export function PluginImport({
                 </Button>
               )}
               {reviewing &&
-                candidate &&
+                installTargets.length > 0 &&
                 !upToDate &&
                 !conflict &&
                 !updateError &&
@@ -1259,7 +1427,11 @@ export function PluginImport({
                     }
                     onClick={() => void installCandidate()}
                   >
-                    {updating ? "Update" : "Install plugin"}
+                    {updating
+                      ? "Update"
+                      : installTargets.length > 1
+                        ? `Install ${installTargets.length} plugins`
+                        : "Install plugin"}
                   </Button>
                 )}
             </>
@@ -1449,7 +1621,11 @@ export function PluginImport({
           )}
           {loading && preview && (
             <p role="status">
-              {updating ? "Updating plugin…" : "Installing plugin…"}
+              {updating
+                ? "Updating plugin…"
+                : installProgress
+                  ? `Installing plugins (${installProgress.done + 1} of ${installProgress.total})…`
+                  : "Installing plugin…"}
             </p>
           )}
           {preview && (
@@ -1480,34 +1656,104 @@ export function PluginImport({
                     artifacts.
                   </p>
                 ) : !reviewing && preview.candidates.length > 1 ? (
-                  <Field label="Choose a plugin" labelVisibility="hidden">
-                    <RadioGroup
-                      name="plugin-folder"
-                      aria-label="Choose a plugin"
-                      value={selected}
-                      disabled={busy}
-                      onValueChange={(value) => {
-                        setSelected(value);
-                      }}
-                    >
-                      {preview.candidates.map((item) => (
-                        <Radio
-                          key={item.path}
-                          value={item.path}
-                          variant="card"
-                          label={item.manifest.name}
-                          description={
-                            <span className="block break-all text-caption text-muted">
-                              <code className={styles.sourcePath}>
-                                {importLocation(preview, item.path)}
-                              </code>{" "}
-                              · {item.manifest.id}
-                            </span>
+                  multiSelect ? (
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-caption text-muted">
+                          {selectedCandidates.length} of{" "}
+                          {preview.candidates.length} selected
+                        </span>
+                        <Button
+                          variant="subtle"
+                          size="sm"
+                          disabled={
+                            busy ||
+                            (!allInstallableSelected &&
+                              selectedCandidates.length === 0 &&
+                              installablePaths.length === 0)
                           }
-                        />
-                      ))}
-                    </RadioGroup>
-                  </Field>
+                          onClick={() => {
+                            if (
+                              allInstallableSelected ||
+                              (installablePaths.length === 0 &&
+                                selectedCandidates.length > 0)
+                            ) {
+                              setSelected([]);
+                            } else {
+                              setSelected(installablePaths);
+                            }
+                          }}
+                        >
+                          {allInstallableSelected ||
+                          (installablePaths.length === 0 &&
+                            selectedCandidates.length > 0)
+                            ? "Deselect all"
+                            : "Select all"}
+                        </Button>
+                      </div>
+                      <Field label="Choose plugins" labelVisibility="hidden">
+                        <CheckboxGroup
+                          aria-label="Choose plugins"
+                          value={selected}
+                          disabled={busy}
+                          onValueChange={updateMultiSelection}
+                        >
+                          {preview.candidates.map((item) => {
+                            const installed = catalogById.get(item.manifest.id);
+                            return (
+                              <Checkbox
+                                key={item.path}
+                                value={item.path}
+                                variant="card"
+                                label={item.manifest.name}
+                                description={
+                                  <span className="block break-all text-caption text-muted">
+                                    <code className={styles.sourcePath}>
+                                      {importLocation(preview, item.path)}
+                                    </code>{" "}
+                                    · {item.manifest.id}
+                                    {installed &&
+                                      (installed.source === "bundled"
+                                        ? " · Included with Buzz"
+                                        : " · Already installed")}
+                                  </span>
+                                }
+                              />
+                            );
+                          })}
+                        </CheckboxGroup>
+                      </Field>
+                    </div>
+                  ) : (
+                    <Field label="Choose a plugin" labelVisibility="hidden">
+                      <RadioGroup
+                        name="plugin-folder"
+                        aria-label="Choose a plugin"
+                        value={selected[0] ?? ""}
+                        disabled={busy}
+                        onValueChange={(value) => {
+                          setSelected(value ? [value] : []);
+                        }}
+                      >
+                        {preview.candidates.map((item) => (
+                          <Radio
+                            key={item.path}
+                            value={item.path}
+                            variant="card"
+                            label={item.manifest.name}
+                            description={
+                              <span className="block break-all text-caption text-muted">
+                                <code className={styles.sourcePath}>
+                                  {importLocation(preview, item.path)}
+                                </code>{" "}
+                                · {item.manifest.id}
+                              </span>
+                            }
+                          />
+                        ))}
+                      </RadioGroup>
+                    </Field>
+                  )
                 ) : null}
                 {preview.warnings.length > 0 &&
                   (!reviewing || preview.candidates.length === 1) && (
@@ -1582,13 +1828,35 @@ export function PluginImport({
                     it.
                   </p>
                 )}
+                {batchAllExisting && (
+                  <p className="m-0">
+                    These plugins are already installed. Open their details to
+                    manage them.
+                  </p>
+                )}
+                {batchReview &&
+                  batchTargets.length > 0 &&
+                  batchExisting.length > 0 && (
+                    <p className="m-0 text-body-sm text-muted">
+                      Already installed (will be skipped):{" "}
+                      {batchExisting
+                        .map((item) => item.manifest.name)
+                        .join(", ")}
+                      .
+                    </p>
+                  )}
+                {batchReview && batchTargets.length > 1 && (
+                  <PluginBatchAccessReview
+                    manifests={batchTargets.map((item) => item.manifest)}
+                  />
+                )}
                 {reviewing &&
-                  candidate &&
+                  singleReviewTarget &&
                   (existing?.source !== "bundled" || loading) &&
                   !conflict &&
                   (!existing || !!updateId || requested) && (
                     <PluginAccessReview
-                      manifest={candidate.manifest}
+                      manifest={singleReviewTarget.manifest}
                       previousManifest={existing?.manifest}
                       unchangedTrigger={unchangedTrigger}
                       onShowUnchanged={() => setShowUnchanged(true)}

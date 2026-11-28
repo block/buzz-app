@@ -244,7 +244,8 @@ you or your agents own.
 
 **Settings → Plugins → Manage plugins** shows which plugins are on, turns them
 on and off, adds them from a Git repository or a local folder, and updates
-them. Don't assume an
+them. When a repository or folder contains multiple plugins, you can select
+several (or choose **Select all**) to review and install them together. Don't assume an
 optional plugin is on. Agents can ask to install or enable one, which you
 approve or decline.
 

@@ -13,7 +13,7 @@ import { Field } from "./Field";
 import { Input } from "./Input";
 import { Textarea } from "./Textarea";
 import { Radio, RadioGroup } from "./RadioGroup";
-import { Checkbox } from "./Checkbox";
+import { Checkbox, CheckboxGroup } from "./Checkbox";
 import { SearchField } from "./SearchField";
 import { Composer } from "./Composer";
 
@@ -230,6 +230,44 @@ test("radio and checkbox labels change the actual form values while disabled cho
       new FormData(screen.getByRole("form") as HTMLFormElement),
     ),
   ).toEqual({ mode: "light", summary: "yes" });
+});
+
+test("checkbox group manages card checkboxes with accessible descriptions", async () => {
+  const user = userEvent.setup();
+  const onValueChange = vi.fn();
+  render(
+    <Field label="Plugins" labelVisibility="hidden">
+      <CheckboxGroup
+        aria-label="Plugins"
+        defaultValue={["one"]}
+        onValueChange={onValueChange}
+      >
+        <Checkbox
+          value="one"
+          variant="card"
+          label="One"
+          description="First plugin"
+        />
+        <Checkbox
+          value="two"
+          variant="card"
+          label="Two"
+          description="Second plugin"
+        />
+      </CheckboxGroup>
+    </Field>,
+  );
+  const one = screen.getByRole("checkbox", { name: "One" });
+  const two = screen.getByRole("checkbox", { name: "Two" });
+  expect(one).toHaveAccessibleDescription("First plugin");
+  expect(one).toBeChecked();
+  expect(two).not.toBeChecked();
+  await user.click(two);
+  expect(two).toBeChecked();
+  expect(onValueChange).toHaveBeenLastCalledWith(
+    ["one", "two"],
+    expect.anything(),
+  );
 });
 
 test.each(["default", "capsule"] as const)(

@@ -892,30 +892,39 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.getByRole("dialog")).toHaveAccessibleName(
-    "Choose a plugin",
-  );
+  await expect(page.getByRole("dialog")).toHaveAccessibleName("Choose plugins");
   await expect(page.getByRole("dialog")).toHaveAccessibleDescription(
-    "Select a plugin to review before installing.",
+    "Select one or more plugins to review before installing.",
   );
   await expect(
-    page.getByRole("radiogroup", { name: "Choose a plugin" }),
+    page.getByRole("group", { name: "Choose plugins" }),
   ).toBeVisible();
 
-  await expect(page.getByRole("radio")).toHaveCount(2);
+  await expect(page.getByRole("checkbox")).toHaveCount(2);
   await expect(
-    page.getByRole("radio", { name: /Example one/ }),
+    page.getByRole("checkbox", { name: /Example one/ }),
   ).toHaveAccessibleDescription("/plugins/example · example.one");
   await expect(
-    page.getByRole("radio", { name: /Example two/ }),
+    page.getByRole("checkbox", { name: /Example two/ }),
   ).toHaveAccessibleDescription("/plugins/example/dist · example.two");
   await expect(button(page, "Install plugin")).toHaveCount(0);
   await expect(button(page, "Continue")).toBeDisabled();
   await expect(
     page.getByRole("region", { name: "Computer access" }),
   ).toHaveCount(0);
-  await page.getByRole("radio", { name: /Example two/ }).check();
-  await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
+  await button(page, "Select all").click();
+  await expect(
+    page.getByRole("checkbox", { name: /Example one/ }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: /Example two/ }),
+  ).toBeChecked();
+  await button(page, "Deselect all").click();
+  await expect(button(page, "Continue")).toBeDisabled();
+  await page.getByRole("checkbox", { name: /Example two/ }).check();
+  await expect(
+    page.getByRole("checkbox", { name: /Example two/ }),
+  ).toBeChecked();
   await expect(
     page.getByRole("heading", { name: "Example two", level: 3 }),
   ).toHaveCount(0);
@@ -938,13 +947,17 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(
     page.getByRole("region", { name: "Skipped folders" }),
   ).toHaveCount(0);
-  await expect(page.getByRole("radio")).toHaveCount(0);
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "Computer access" }),
   ).toBeVisible();
   await button(page, "Back").click();
-  await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
-  await expect(page.getByRole("radio", { name: /Example two/ })).toBeFocused();
+  await expect(
+    page.getByRole("checkbox", { name: /Example two/ }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: /Example two/ }),
+  ).toBeFocused();
   await button(page, "Continue").click();
   await page.setViewportSize({ width: 480, height: 700 });
   await page.emulateMedia({ colorScheme: "dark" });
@@ -1255,7 +1268,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page.getByLabel("Branch or tag (optional)").fill("feature/plugins");
   await page.getByLabel("Folder (optional)").fill("plugins/");
   await button(page, "Find plugins").click();
-  await expect(page.getByRole("radio")).toHaveCount(2);
+  await expect(page.getByRole("checkbox")).toHaveCount(2);
   expect(
     await page.evaluate(
       () =>
@@ -1296,7 +1309,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page.keyboard.press("Escape");
   await button(page, "Add").click();
   await button(page, "Browse plugin folder").click();
-  await page.getByRole("radio", { name: /Example two/ }).check();
+  await page.getByRole("checkbox", { name: /Example two/ }).check();
   await button(page, "Continue").click();
   await expect(
     page.getByRole("dialog", { name: "Already installed" }),
@@ -1399,7 +1412,7 @@ test("leaving Settings discards a late preview without installing", async ({
 test("checked-in local examples activate and work independently", async ({
   page,
   app,
-}) => {
+}, info) => {
   const samples = await Promise.all(
     ["counter", "notes"].map(async (name) => {
       const folder = new URL(
@@ -1418,15 +1431,22 @@ test("checked-in local examples activate and work independently", async ({
   );
   await nativeImports(page, samples);
   await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await button(page, "Select all").click();
+  await button(page, "Continue").click();
+  await expect(page.getByRole("dialog")).toHaveAccessibleName(
+    "Review access for 2 plugins",
+  );
+  await expect(
+    page.getByRole("switch", { name: "Enable plugins" }),
+  ).toBeChecked();
+  await page
+    .getByRole("dialog")
+    .screenshot({ path: info.outputPath("plugin-batch-review.png") });
+  await button(page, "Install 2 plugins").click();
+  await expectOnlySettings(page);
   for (const sample of samples) {
-    await button(page, "Add").click();
-    await button(page, "Browse plugin folder").click();
-    await page
-      .getByRole("radio", { name: new RegExp(sample.manifest.name) })
-      .check();
-    await button(page, "Continue").click();
-    await button(page, "Install plugin").click();
-    await expectOnlySettings(page);
     await expect(pluginAction(page, sample.manifest.name)).toHaveAccessibleName(
       `Disable ${sample.manifest.name}`,
     );

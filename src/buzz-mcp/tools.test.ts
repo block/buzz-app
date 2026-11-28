@@ -2384,6 +2384,10 @@ const workspaces = (
   prepare: async () => async () => ({ status: "filed" }),
   defaults: async () => ({ canvas: "", agents: [], skipped: [] }),
   move: async () => ({ status: "filed" }),
+  create: async () => "new",
+  rename: async () => {},
+  remove: async () => {},
+  order: async () => [],
   ...overrides,
 });
 
@@ -2612,6 +2616,53 @@ it("moves a conversation to a workspace, or unfiles it", async () => {
     [room, "work"],
     [room, undefined],
   ]);
+});
+
+it("creates, renames and removes the owner's workspaces", async () => {
+  const { client } = relay();
+  const create = vi.fn(async () => "w1");
+  const rename = vi.fn(async () => {});
+  const remove = vi.fn(async () => {});
+  client.workspaces = workspaces({ create, rename, remove });
+  await expect(
+    callTool(client, {}, "workspace_create", { name: "Credit work" }),
+  ).resolves.toBe("created workspace w1");
+  await expect(
+    callTool(client, {}, "workspace_rename", { workspace: "w1", name: "Work" }),
+  ).resolves.toBe("renamed workspace w1");
+  await expect(
+    callTool(client, {}, "workspace_remove", { workspace: "w1" }),
+  ).resolves.toBe("removed workspace w1");
+  await expect(callTool(client, {}, "workspace_create", {})).rejects.toThrow(
+    "name is required",
+  );
+  expect(create).toHaveBeenCalledExactlyOnceWith("Credit work");
+  expect(rename).toHaveBeenCalledExactlyOnceWith("w1", "Work");
+  expect(remove).toHaveBeenCalledExactlyOnceWith("w1");
+});
+
+it("reads the sidebar order, and puts the sections it lists first", async () => {
+  const { client } = relay();
+  const entries = [
+    { key: "dms", name: "Direct messages" },
+    { key: "group:w1", name: "Work" },
+  ];
+  const order = vi.fn(async () => entries);
+  await expect(callTool(client, {}, "workspace_order", {})).rejects.toThrow(
+    "unavailable on this host",
+  );
+  client.workspaces = workspaces({ order });
+  await expect(callTool(client, {}, "workspace_order", {})).resolves.toBe(
+    JSON.stringify(entries),
+  );
+  await expect(
+    callTool(client, {}, "workspace_order", { order: ["dms", "group:w1"] }),
+  ).resolves.toBe(JSON.stringify(entries));
+  for (const bad of [[], "dms", [1]])
+    await expect(
+      callTool(client, {}, "workspace_order", { order: bad }),
+    ).rejects.toThrow("order must list section keys");
+  expect(order.mock.calls).toEqual([[undefined], [["dms", "group:w1"]]]);
 });
 
 it("refuses Solo arguments that do not fit, before publishing", async () => {

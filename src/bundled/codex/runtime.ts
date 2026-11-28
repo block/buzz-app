@@ -1972,8 +1972,9 @@ export class CodexRuntime {
     // channels into the channel_* tools; v17 split members into the
     // member_* tools; v18 adds search and removes read's q; v19 replaces
     // solo_workspace_list with workspace_list and adds channel_move; v20
-    // adds canvas versions.
-    return `buzz.codex.sessions.v20:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
+    // adds canvas versions; v21 adds workspace_create, workspace_rename,
+    // workspace_remove and workspace_order.
+    return `buzz.codex.sessions.v21:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.

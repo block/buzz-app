@@ -2977,7 +2977,7 @@ it.each([true, false])(
     const agent = "a".repeat(64);
     const root = "e".repeat(64);
     const place = JSON.stringify(["channel", root]);
-    const prefix = `buzz.codex.sessions.v20:test:${agent}`;
+    const prefix = `buzz.codex.sessions.v21:test:${agent}`;
     const items = new Map([
       [
         prefix,
@@ -3065,7 +3065,7 @@ it.each([false, true])(
       JSON.stringify({ key: "old-session", intent: "existing" }),
     );
     await storage.set(
-      `buzz.codex.sessions.v20:test:${agent}:session:old-session`,
+      `buzz.codex.sessions.v21:test:${agent}:session:old-session`,
       JSON.stringify({
         [place]: { threadId: "old-thread", workspace: "/guest" },
       }),

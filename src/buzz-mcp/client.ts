@@ -9,6 +9,7 @@ import type {
   WorkspaceChat,
   WorkspaceDefaults,
   WorkspacePlacement,
+  WorkspaceOrderEntry,
   AgentReadout,
   AgentUpdateInput,
   TeamReadout,
@@ -214,6 +215,12 @@ export interface BuzzClient {
     ): Promise<(id: string) => Promise<WorkspacePlacement>>;
     /** Files conversation `id` in `workspace`, or unfiles it without one. */
     move(id: string, workspace?: string): Promise<WorkspacePlacement>;
+    /** Creates an empty workspace; resolves its ID. */
+    create(name: string): Promise<string>;
+    rename(workspace: string, name: string): Promise<void>;
+    remove(workspace: string): Promise<void>;
+    /** The sidebar's section order; with `keys`, puts those first. */
+    order(keys?: readonly string[]): Promise<readonly WorkspaceOrderEntry[]>;
   }>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;

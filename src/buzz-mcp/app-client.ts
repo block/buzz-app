@@ -187,6 +187,28 @@ export function appClient(
           check();
           return result;
         },
+        create: async (name: string) => {
+          check();
+          const result = await workspaces.create(name, options.signal);
+          check();
+          return result;
+        },
+        rename: async (workspace: string, name: string) => {
+          check();
+          await workspaces.rename(workspace, name, options.signal);
+          check();
+        },
+        remove: async (workspace: string) => {
+          check();
+          await workspaces.remove(workspace, options.signal);
+          check();
+        },
+        order: async (keys?: readonly string[]) => {
+          check();
+          const result = await workspaces.order(keys, options.signal);
+          check();
+          return result;
+        },
       },
     }),
     pubkey: agent.pubkey,

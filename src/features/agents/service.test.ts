@@ -18310,6 +18310,161 @@ it.each([
   },
 );
 
+/** A session whose sidebar has workspace `work` among the built-in sections. */
+function arrangeSession(
+  f: Awaited<ReturnType<typeof setup>>,
+  sectionOrder: readonly string[] | null = [
+    "pages",
+    "solo",
+    "starred",
+    "group:work",
+    "channels",
+    "dms",
+  ],
+) {
+  let data = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {},
+    ...(sectionOrder ? { sectionOrder } : {}),
+  };
+  const preferences = {
+    refresh: vi.fn(async () => {}),
+    writable: true,
+    snapshot: () => ({ status: "ready", data }),
+    createSection: vi.fn(async (section: { id: string; name: string }) => {
+      data = {
+        ...data,
+        sections: [...data.sections, { ...section, order: 1 }],
+      };
+    }),
+    renameSection: vi.fn(async () => {}),
+    removeSection: vi.fn(async () => {}),
+    reorderSections: vi.fn(async (_: string, keys: readonly string[]) => {
+      const rest = (data.sectionOrder ?? []).filter(
+        (key) => !keys.includes(key),
+      );
+      data = { ...data, sectionOrder: [...keys, ...rest] };
+    }),
+  };
+  Object.assign(f.session, {
+    relayAuthor: "f".repeat(64),
+    snapshotRead: vi.fn(async () => []),
+    sidebarPreferences: preferences,
+  });
+  return { preferences };
+}
+
+it("creates, renames and removes only the owner's known workspaces", async () => {
+  const f = await setup();
+  const { preferences } = arrangeSession(f);
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  const workspace = handle.workspaces;
+  if (!workspace) throw new Error("Missing run workspace capability");
+  try {
+    const id = await workspace.create("  Credit work ");
+    expect(preferences.createSection).toHaveBeenCalledExactlyOnceWith({
+      id,
+      name: "Credit work",
+    });
+    await expect(workspace.create(" ")).rejects.toThrow("1 to 256");
+    await workspace.rename("work", "Team");
+    expect(preferences.renameSection).toHaveBeenCalledExactlyOnceWith(
+      "work",
+      "Team",
+    );
+    await workspace.remove("work");
+    expect(preferences.removeSection).toHaveBeenCalledExactlyOnceWith(
+      "work",
+      expect.any(AbortSignal),
+    );
+    await expect(workspace.rename("gone", "X")).rejects.toThrow(
+      "No such workspace",
+    );
+    await expect(workspace.remove("gone")).rejects.toThrow("No such workspace");
+    expect(preferences.renameSection).toHaveBeenCalledOnce();
+    expect(preferences.removeSection).toHaveBeenCalledOnce();
+    expect(preferences.createSection).toHaveBeenCalledOnce();
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("reports a workspace created when the store saved it before failing", async () => {
+  const f = await setup();
+  const { preferences } = arrangeSession(f);
+  const save = preferences.createSection.getMockImplementation();
+  preferences.createSection.mockImplementationOnce(async (section) => {
+    await save?.(section);
+    throw new Error("confirmation timed out");
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  try {
+    await expect(handle.workspaces?.create("New")).resolves.toEqual(
+      expect.any(String),
+    );
+    preferences.createSection.mockRejectedValueOnce(new Error("refused"));
+    await expect(handle.workspaces?.create("Other")).rejects.toThrow("refused");
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("reads the sidebar order by name and puts listed sections first", async () => {
+  const f = await setup();
+  const { preferences } = arrangeSession(f);
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  try {
+    expect(await handle.workspaces?.order(undefined)).toEqual([
+      { key: "pages", name: "Pages" },
+      { key: "solo", name: "Solo" },
+      { key: "starred", name: "Starred" },
+      { key: "group:work", name: "Work" },
+      { key: "channels", name: "Channels" },
+      { key: "dms", name: "Direct messages" },
+    ]);
+    const moved = await handle.workspaces?.order(["pages", "solo", "dms"]);
+    expect(preferences.reorderSections).toHaveBeenCalledExactlyOnceWith(
+      "pages",
+      ["pages", "solo", "dms"],
+    );
+    expect(moved?.map(({ key }) => key)).toEqual([
+      "pages",
+      "solo",
+      "dms",
+      "starred",
+      "group:work",
+      "channels",
+    ]);
+    await expect(handle.workspaces?.order(["group:gone"])).rejects.toThrow(
+      "Not in the sidebar: group:gone",
+    );
+    await expect(handle.workspaces?.order(["dms", "dms"])).rejects.toThrow(
+      "once each",
+    );
+    expect(preferences.reorderSections).toHaveBeenCalledOnce();
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
+it("refuses the sidebar order of a layout that orders only workspaces", async () => {
+  const f = await setup();
+  const { preferences } = arrangeSession(f, null);
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  const handle = await handleOf(f.run, f.emit);
+  try {
+    await expect(handle.workspaces?.order(["dms"])).rejects.toThrow(
+      "Sidebar order is unavailable",
+    );
+    expect(preferences.reorderSections).not.toHaveBeenCalled();
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it.each([
   "cached preferences",
   "read-only preferences",

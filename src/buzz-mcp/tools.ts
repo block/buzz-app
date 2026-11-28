@@ -79,6 +79,10 @@ import type {
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
+const workspaceId = {
+  ...str,
+  description: "Exact ID from workspace_list.",
+} as const;
 // Shared by send and reply_in_subthread.
 const audience = {
   type: "string",
@@ -393,6 +397,36 @@ export const TOOLS: readonly Tool[] = [
       },
     },
     ["workspace"],
+  ),
+  tool(
+    "workspace_create",
+    "Create an empty sidebar workspace for your owner, as New workspace does. Local host only.",
+    { name: str },
+    ["name"],
+  ),
+  tool(
+    "workspace_rename",
+    "Rename one of your owner's sidebar workspaces. Local host only.",
+    { workspace: workspaceId, name: str },
+    ["workspace", "name"],
+  ),
+  tool(
+    "workspace_remove",
+    "Remove one of your owner's sidebar workspaces. Its conversations go back to their own sections; none is left or deleted. Local host only.",
+    { workspace: workspaceId },
+    ["workspace"],
+    { readOnlyHint: false, destructiveHint: true },
+  ),
+  tool(
+    "workspace_order",
+    "Your owner's sidebar sections, top to bottom: each one's key and name. A workspace's key is group: and its ID; built-in sections have their own, such as dms. Local host only.",
+    {
+      order: {
+        ...strs,
+        description:
+          "Keys to put first, in this order; the rest keep theirs. The answer is the new order.",
+      },
+    },
   ),
   tool("channel_update", "Change a channel's details.", {
     channel: str,
@@ -1320,6 +1354,33 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ? `moved ${channel} to workspace ${workspace}`
         : `unfiled ${channel}`;
     return `${channel} may not have moved: ${placement.error ?? "unconfirmed"}. Check your owner's sidebar before trying again.`;
+  },
+  workspace_create: async ({ client }, args) => {
+    const id = await localWorkspaces(client).create(required(args, "name"));
+    return `created workspace ${id}`;
+  },
+  workspace_rename: async ({ client }, args) => {
+    const workspace = required(args, "workspace");
+    await localWorkspaces(client).rename(workspace, required(args, "name"));
+    return `renamed workspace ${workspace}`;
+  },
+  workspace_remove: async ({ client }, args) => {
+    const workspace = required(args, "workspace");
+    await localWorkspaces(client).remove(workspace);
+    return `removed workspace ${workspace}`;
+  },
+  workspace_order: async ({ client }, args) => {
+    const { order } = args;
+    if (
+      order !== undefined &&
+      (!Array.isArray(order) ||
+        !order.length ||
+        !order.every((key) => typeof key === "string"))
+    )
+      throw new Error("order must list section keys from workspace_order.");
+    return JSON.stringify(
+      await localWorkspaces(client).order(order as string[] | undefined),
+    );
   },
   channel_update: (tools, args) => tools.update(target(tools, args), args),
   channel_join: (tools, args) => lifecycle(tools, args, "join"),
@@ -3847,6 +3908,11 @@ const list = (value: unknown) =>
   Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+function localWorkspaces(client: BuzzClient) {
+  if (!client.workspaces)
+    throw new Error("Workspaces are unavailable on this host");
+  return client.workspaces;
+}
 function required(args: Args, name: string) {
   const value = args[name];
   if (typeof value !== "string" || !value)

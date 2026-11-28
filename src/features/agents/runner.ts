@@ -4298,6 +4298,30 @@ export class AgentRunners {
                 workspace,
                 AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
               ),
+            create: (name: string, signal?: AbortSignal) =>
+              workspaces.create(
+                name,
+                AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
+              ),
+            rename: (workspace: string, name: string, signal?: AbortSignal) =>
+              workspaces.rename(
+                workspace,
+                name,
+                AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
+              ),
+            remove: (workspace: string, signal?: AbortSignal) =>
+              workspaces.remove(
+                workspace,
+                AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
+              ),
+            order: (
+              keys: readonly string[] | undefined,
+              signal?: AbortSignal,
+            ) =>
+              workspaces.order(
+                keys,
+                AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
+              ),
             prepare: async (
               workspace: string,
               audience: WorkspaceAudience,

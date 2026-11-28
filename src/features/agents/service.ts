@@ -317,6 +317,8 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { openMetadata } from "../relay/discovery";
+import { validSidebarChannelId } from "../relay/sidebar-edits";
+import { workspaceSectionOrder } from "../relay/sidebar-preferences";
 import { prepareSoloMove } from "../channel-navigation/solo-navigation";
 import {
   loadChannelSetup,
@@ -690,7 +692,21 @@ export type Workspaces = Readonly<{
     workspace: string | undefined,
     signal: AbortSignal,
   ): Promise<WorkspacePlacement>;
+  /** Creates an empty workspace, as New workspace does; resolves its ID. */
+  create(name: string, signal: AbortSignal): Promise<string>;
+  rename(workspace: string, name: string, signal: AbortSignal): Promise<void>;
+  /** Removes `workspace`; its conversations return to their own sections. */
+  remove(workspace: string, signal: AbortSignal): Promise<void>;
+  /** The sidebar's section order. With `keys`, first puts those sections
+   * first, in that order, as dragging them would; the rest keep theirs. */
+  order(
+    keys: readonly string[] | undefined,
+    signal: AbortSignal,
+  ): Promise<readonly WorkspaceOrderEntry[]>;
 }>;
+/** A section in the owner's sidebar order: a workspace as `group:<id>`, or a
+ * built-in section by its key, such as `dms`. */
+export type WorkspaceOrderEntry = Readonly<{ key: string; name: string }>;
 /** The agent as `run` holds it. A run's handle works for as long as the
  * agent exists; one from `Agents.handle` fails each call while `handle`
  * would not return it, and for good once the agent's type or its plugin is
@@ -800,6 +816,17 @@ export type AgentHandle = Readonly<{
       workspace: string | undefined,
       signal?: AbortSignal,
     ): Promise<WorkspacePlacement>;
+    create(name: string, signal?: AbortSignal): Promise<string>;
+    rename(
+      workspace: string,
+      name: string,
+      signal?: AbortSignal,
+    ): Promise<void>;
+    remove(workspace: string, signal?: AbortSignal): Promise<void>;
+    order(
+      keys: readonly string[] | undefined,
+      signal?: AbortSignal,
+    ): Promise<readonly WorkspaceOrderEntry[]>;
   }>;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
@@ -3714,6 +3741,77 @@ export class AgentsService extends Service implements Agents {
                 error: errorText(error),
               };
             }
+          },
+          create: async (name, signal) => {
+            const { binding, check, list } = operation();
+            const trimmed = workspaceName(name);
+            await list(signal);
+            const preferences = binding.session.sidebarPreferences;
+            const id = crypto.randomUUID();
+            try {
+              await preferences.createSection({ id, name: trimmed });
+            } catch (error) {
+              // The store re-reads after an unconfirmed creation; a saved
+              // workspace is created, so a retry makes no duplicate.
+              if (
+                !preferences
+                  .snapshot()
+                  .data?.sections.some((section) => section.id === id)
+              )
+                throw error;
+            }
+            check(signal);
+            return id;
+          },
+          rename: async (workspace, name, signal) => {
+            const { binding, check, known } = operation();
+            const trimmed = workspaceName(name);
+            await known(workspace, signal);
+            await binding.session.sidebarPreferences.renameSection(
+              workspace,
+              trimmed,
+            );
+            check(signal);
+          },
+          remove: async (workspace, signal) => {
+            const { binding, check, known } = operation();
+            await known(workspace, signal);
+            await binding.session.sidebarPreferences.removeSection(
+              workspace,
+              AbortSignal.any([signal, binding.controller.signal]),
+            );
+            check(signal);
+          },
+          order: async (keys, signal) => {
+            const { binding, check, list } = operation();
+            await list(signal);
+            const preferences = binding.session.sidebarPreferences;
+            const entries = () => {
+              const data = preferences.snapshot().data;
+              // Older layouts order only workspaces, not the built-in sections.
+              if (!data || !Array.isArray(data.sectionOrder))
+                throw new Error("Sidebar order is unavailable");
+              const names = new Map(
+                data.sections.map(({ id, name }) => [`group:${id}`, name]),
+              );
+              return workspaceSectionOrder(data).map((key) => ({
+                key,
+                name: names.get(key) ?? SIDEBAR_SECTION_NAMES[key] ?? key,
+              }));
+            };
+            const current = entries();
+            if (!keys) return current;
+            const live = new Set(current.map(({ key }) => key));
+            const unknown = keys.filter((key) => !live.has(key));
+            if (unknown.length)
+              throw new Error(
+                `Not in the sidebar: ${unknown.join(", ")}; use workspace_order`,
+              );
+            if (!keys.length || new Set(keys).size !== keys.length)
+              throw new Error("order must list sections once each");
+            await preferences.reorderSections(keys[0] ?? "", keys);
+            check(signal);
+            return entries();
           },
         };
       },
@@ -10005,6 +10103,24 @@ async function handOnMainAgent(session: RelaySession, pubkey: string) {
   forgetDefaultAgent(pubkey);
   await clearDeletedDefaultAgent(session, session.scope, pubkey);
 }
+/** Names of the sidebar's built-in sections, by order key. */
+const SIDEBAR_SECTION_NAMES: Readonly<Record<string, string>> = {
+  pages: "Pages",
+  solo: "Solo",
+  starred: "Starred",
+  channels: "Channels",
+  forums: "Forums",
+  dms: "Direct messages",
+};
+
+/** A workspace name, trimmed, as the New workspace dialog takes it. */
+function workspaceName(name: string) {
+  const trimmed = name.trim();
+  if (!validSidebarChannelId(trimmed))
+    throw new Error("A workspace name has 1 to 256 characters");
+  return trimmed;
+}
+
 /** The membership's community, as its owner knows it. */
 /** The origin of the agent's home community, as native saved it on the row:
  * the community it was first in, where its membership's key is its pubkey. */

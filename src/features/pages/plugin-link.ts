@@ -1,4 +1,6 @@
 import type { OpenTarget } from "../navigation/targets";
+import type { PluginManager } from "../../plugins/manager";
+import { resolveOwner } from "../../plugins/owner";
 import type { RegisteredPage } from "./service";
 
 type PluginLink = Extract<OpenTarget, { kind: "plugin" }>;
@@ -37,3 +39,53 @@ export function linkedPageTarget(
       : {}),
   };
 }
+
+export type PluginLinkProblem =
+  | { reason: "missing"; name: string; source?: string }
+  | { reason: "no-page"; name: string; pageId?: string };
+
+/** Why a plugin link found no page, when the plugin itself is the cause. A
+ * turned-off plugin has its own notice. A plugin that is installed and enabled
+ * but not running, or whose settings could not be read, keeps the generic
+ * failure: nothing here is certain. */
+export function pluginLinkProblem(
+  link: PluginLink,
+  plugins: Pick<
+    ReturnType<PluginManager["snapshot"]>,
+    "hostOwned" | "configuration" | "activation"
+  >,
+): PluginLinkProblem | undefined {
+  const { configuration, activation } = plugins;
+  if (configuration.status !== "ready") return undefined;
+  const owner = resolveOwner(plugins, link.pluginId);
+  const state = activation[link.pluginId];
+  if (owner?.hostOwned)
+    return { reason: "no-page", name: owner.manifest.name, ...pageOf(link) };
+  const installed = configuration.catalog.plugins.find(
+    (plugin) => plugin.manifest.id === link.pluginId,
+  );
+  if (!installed) {
+    if (state)
+      return { reason: "no-page", name: link.pluginId, ...pageOf(link) };
+    const { managed } = configuration;
+    const recommendation =
+      managed?.status === "ready"
+        ? managed.plugins.find(
+            (entry) => entry.id === link.pluginId && entry.state === "missing",
+          )
+        : undefined;
+    return {
+      reason: "missing",
+      name: link.pluginId,
+      ...(recommendation && managed?.status === "ready"
+        ? { source: managed.source }
+        : {}),
+    };
+  }
+  if (!installed.enabled || installed.error || state?.status !== "active")
+    return undefined;
+  return { reason: "no-page", name: installed.manifest.name, ...pageOf(link) };
+}
+
+const pageOf = (link: PluginLink) =>
+  link.pageId === undefined ? {} : { pageId: link.pageId };

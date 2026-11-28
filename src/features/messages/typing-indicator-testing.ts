@@ -38,7 +38,7 @@ export function fixture() {
     { id: root, content: "First task" },
     { id: secondRoot, content: "Second task" },
   ];
-  const ensure = vi.fn();
+  const ensure = vi.fn(async (..._args: unknown[]) => {});
   const session = {
     viewer: "viewer",
     typing: { snapshot: () => typing, subscribe },

@@ -232,25 +232,22 @@ export function bindMessageNotifications(
             // not cancel the alert; a read row no longer in view stays quiet.
             return attention.unread || (whileViewing && attention.viewing);
           },
-          () =>
-            messageNotificationText(
+          () => {
+            const channel = owned.channels
+              .list()
+              .channels.find((item) => item.id === message.channelId);
+            const author = message.workflowOwnerId ?? message.authorId;
+            const resolveName = (pubkey: string) =>
+              owned.names.resolve(pubkey, undefined, channel?.members ?? []);
+            return messageNotificationText(
               message,
               category,
-              owned.channels
-                .list()
-                .channels.find((item) => item.id === message.channelId),
-              owned.profiles
-                .snapshot()
-                .get(message.workflowOwnerId ?? message.authorId),
-              owned.names.resolve(
-                message.workflowOwnerId ?? message.authorId,
-                undefined,
-                owned.channels
-                  .list()
-                  .channels.find((item) => item.id === message.channelId)
-                  ?.members ?? [],
-              ),
-            ),
+              channel,
+              owned.profiles.snapshot().get(author),
+              resolveName(author),
+              resolveName,
+            );
+          },
         );
       }
     };

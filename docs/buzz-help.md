@@ -216,7 +216,10 @@ if that desktop app is up and running.
   says which and why. A message sent while the agent is working keeps its
   model, and a model chosen beside Send still wins.
 - **While it works**, the agent shows typing dots, and you can stop it. If it
-  can't finish, it says why and offers **Retry**.
+  can't finish, it says why and offers **Retry**. When the failure is a
+  model its provider doesn't have, your Claude Code, Goose or Pi agent's reply
+  offers a menu of the models it can use; the pick is saved to that agent only,
+  not the harness's shared config.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents

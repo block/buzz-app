@@ -16,6 +16,7 @@ import {
 } from "../../features/agent-harness/session-scope";
 import { protectionTranscript } from "./protection-transcript";
 import { compactAt } from "../../features/agents/compact-at";
+import { failureTags } from "../../features/agents/failure-words";
 import { launchModel, routeOf } from "../../features/agents/model-routes";
 import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
@@ -780,6 +781,9 @@ export class ClaudeRuntime {
         label: modelName(model.resolvedModel ?? model.value),
         efforts: offeredEfforts,
         ...resting(offeredEfforts),
+        ...(model.resolvedModel && model.resolvedModel !== model.value
+          ? { resolvedModel: model.resolvedModel }
+          : {}),
       };
     });
     // A saved route is the current choice; the agents service lists it.
@@ -2060,6 +2064,7 @@ export class ClaudeRuntime {
                 ],
               ]),
           ["p", agent.owner],
+          ...failureTags(error),
         ],
       })
       .catch((failure) =>

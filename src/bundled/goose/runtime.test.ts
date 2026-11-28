@@ -2750,6 +2750,26 @@ it.each([
   }
 });
 
+it("marks a turn its provider has no model for, so its owner can pick another", async () => {
+  const f = setup({
+    wrap: failing("session/prompt", {
+      code: -32603,
+      message: "Internal error",
+      data: "Request failed: Resource not found (404) at https://example.test/serving-endpoints: 'databricks-retired-model' does not exist.",
+    }),
+  });
+  try {
+    await f.deliver(message("1", "@Gander hi"));
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
+    expect(f.published[0]?.tags).toContainEqual([
+      "buzz:model-unavailable",
+      "databricks-retired-model",
+    ]);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("waits for the community before it routes a mention, a workflow's or its owner's", async () => {
   const relay = keypair();
   const f = setup({ workflowAuthority: relay.pubkey });

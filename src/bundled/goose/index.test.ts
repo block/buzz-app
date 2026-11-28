@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { setRuntimeRecommendation } from "../../features/agents/recommended";
 import type { AgentType } from "../../features/agents/service";
 import { GooseRuntime } from "./runtime";
 import { GooseSetup } from "./setup";
@@ -9,7 +10,10 @@ import { fakeSpawn } from "./goose-testing";
 import type { Spawn } from "./goose";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  setRuntimeRecommendation(undefined);
+  vi.restoreAllMocks();
+});
 
 it("observes saved conversations with the status of open sessions", () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
@@ -335,4 +339,67 @@ it("recommends a candidate only on a set-up provider whose live list has its mod
     false,
   );
   expect(models).not.toHaveBeenCalled();
+});
+
+it("lists the recommended provider and model for a Recommended agent instead of Goose's shared default", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  setRuntimeRecommendation({
+    candidates: [
+      {
+        harness: "goose",
+        provider: "databricks",
+        model: "databricks-recommended",
+        effort: "high",
+        label: "Recommended",
+      },
+    ],
+  });
+  vi.spyOn(GooseSetup.prototype, "providers").mockResolvedValue({
+    defaults: { provider: "openai", model: "gpt-5" },
+    providers: [
+      { id: "openai", name: "OpenAI", configured: true, defaultModel: "gpt-5" },
+      {
+        id: "databricks",
+        name: "Databricks",
+        configured: true,
+        defaultModel: "databricks-default",
+      },
+    ],
+  } as unknown as Awaited<ReturnType<GooseSetup["providers"]>>);
+  vi.spyOn(GooseSetup.prototype, "models").mockImplementation(async (id) =>
+    id === "databricks"
+      ? [
+          { id: "databricks-recommended", label: "Recommended" },
+          { id: "databricks-other", label: "Other" },
+        ]
+      : [{ id: "gpt-5", label: "GPT-5" }],
+  );
+  vi.spyOn(GooseSetup.prototype, "efforts").mockResolvedValue({
+    current: "low",
+    levels: ["low", "high"],
+  });
+  vi.spyOn(GooseSetup.prototype, "levels").mockImplementation((_p, ids) =>
+    ids.map(() => Promise.resolve({ current: "low", levels: ["low", "high"] })),
+  );
+  let type: AgentType | undefined;
+  apply({
+    pluginOwner: { id: "buzz.goose", revision: "r1" },
+    host: { request: vi.fn() },
+    agentProtection: { registerModels: vi.fn() },
+    agents: {
+      register: (registered: AgentType) => {
+        type = registered;
+      },
+      relay: () => undefined,
+    },
+    effect: vi.fn(),
+  } as never);
+  const listed = await type?.models?.({
+    key: `${"a".repeat(64)}:wss://relay.test`,
+    config: { preset: "recommended" },
+  } as never);
+  expect(listed).toMatchObject({
+    current: "databricks-recommended",
+    models: [{ id: "databricks-recommended" }, { id: "databricks-other" }],
+  });
 });

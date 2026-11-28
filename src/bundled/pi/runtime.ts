@@ -56,6 +56,7 @@ import {
   workflowOf,
 } from "../../features/agents/owner-attestation";
 import { compactAt } from "../../features/agents/compact-at";
+import { failureTags } from "../../features/agents/failure-words";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import {
   conversationFolder,
@@ -1812,7 +1813,7 @@ export class PiRuntime {
       .publish({
         kind: 9,
         content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
-        tags: [...replyTags(where), ["p", agent.owner]],
+        tags: [...replyTags(where), ["p", agent.owner], ...failureTags(error)],
       })
       .catch((failure) =>
         console.warn("Pi could not report a failed turn", failure),

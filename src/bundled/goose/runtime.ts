@@ -45,6 +45,7 @@ import {
   type TurnResult,
 } from "../../features/agents/service";
 import { compactAt } from "../../features/agents/compact-at";
+import { failureTags } from "../../features/agents/failure-words";
 import { launchModel } from "../../features/agents/model-routes";
 import { workflowOf } from "../../features/agents/owner-attestation";
 import {
@@ -1530,7 +1531,7 @@ export class GooseRuntime {
       event,
       `⚠️ I couldn't finish that: ${this.explain(error.slice(0, 500))}`,
       topLevel,
-      [["p", agent.owner]],
+      [["p", agent.owner], ...failureTags(error)],
     );
   }
 

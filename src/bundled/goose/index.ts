@@ -279,7 +279,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
         component: ActivityTab,
       },
     ],
-    models: (agent) => setup.picks(config(agent.config)),
+    models: async (agent) =>
+      setup.picks(
+        running(
+          agent.config,
+          onRecommended(agent.config) ? await recommended.find() : undefined,
+        ),
+      ),
     recommends: offered,
     ...gooseRun(runtime),
   });

@@ -1,3 +1,5 @@
+import { MODEL_UNAVAILABLE_TAG } from "../relay/contracts";
+
 /** How much of a provider's own words a failed turn's reply quotes: as much
  * as a report keeps of any failure. */
 const QUOTED = 500;
@@ -21,4 +23,36 @@ export function withProviderWords(
     .map((line) => `> ${line}`.trimEnd())
     .join("\n");
   return `${explanation}\n\n${who} said:\n${quote}`;
+}
+
+/** A model ID, as providers quote it. */
+const ID = "[^\\s`'\"()]{1,200}";
+/** How providers say they do not have a model: goose's "Resource not found
+ * (404)" with Databricks' "'<id>' does not exist", OpenAI's "The model `<id>`
+ * does not exist", Anthropic's not_found_error "model: <id>", Claude Code's
+ * "issue with the selected model (<id>)", and Pi's "Pi has no model <id> from
+ * <provider>". Each captures the ID. A reply offers a pick only while its
+ * agent still runs on that ID. */
+const UNAVAILABLE = [
+  new RegExp(`Resource not found \\(404\\)[^\\n]*?'(${ID})' does not exist`),
+  new RegExp(`\\bmodel ['\`"](${ID})['\`"] does not exist`, "i"),
+  new RegExp(`not_found_error[^\\n]*?"message"\\s*:\\s*"model: (${ID})"`),
+  new RegExp(`issue with the selected model \\((${ID})\\)`, "i"),
+  new RegExp(`Pi has no model (${ID}) from ${ID}`),
+];
+
+/** The model a failed turn's error says its provider does not have, if any. */
+export function unavailableModel(error: string): string | undefined {
+  for (const pattern of UNAVAILABLE) {
+    const model = pattern.exec(error)?.[1];
+    if (model) return model;
+  }
+  return undefined;
+}
+
+/** The tag a failed turn's reply carries when its error names a model its
+ * provider does not have, so its owner can pick another from the reply. */
+export function failureTags(error: string): string[][] {
+  const model = unavailableModel(error);
+  return model ? [[MODEL_UNAVAILABLE_TAG, model]] : [];
 }

@@ -1330,14 +1330,26 @@ it("discovers models and effort without a turn or retaining a per-agent spare", 
     expect(await runtime.models(self)).toEqual({
       current: "opus",
       models: [
-        { id: "opus", label: "Opus 5.5", efforts: EFFORTS, effort: "high" },
+        {
+          id: "opus",
+          label: "Opus 5.5",
+          resolvedModel: "claude-opus-5-5",
+          efforts: EFFORTS,
+          effort: "high",
+        },
         {
           id: "haiku",
           label: "Haiku 5.5",
+          resolvedModel: "claude-haiku-5-5",
           efforts: [EFFORTS[0], EFFORTS[2]],
           effort: "high",
         },
-        { id: "legacy", label: "Legacy 1", efforts: [] },
+        {
+          id: "legacy",
+          label: "Legacy 1",
+          resolvedModel: "claude-legacy-1",
+          efforts: [],
+        },
       ],
     });
     expect(claudes().filter((process) => !process.killed)).toHaveLength(1);

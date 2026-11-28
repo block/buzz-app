@@ -10,10 +10,12 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { decode } from "nostr-tools/nip19";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
+import { relayInfoOf } from "../features/relay/relay-info";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { CANVAS_MAX_EVENT_BYTES } from "../features/channel-templates/canvas-limits.ts";
 import { eventsDto } from "../features/relay/events";
+import { openKey, sealKey } from "../features/tables/file";
 import {
   effectiveEditDto,
   effectiveEditFilter,
@@ -190,6 +192,22 @@ export function nodeClient(
       // A community without profile name search.
       if (response.status === 404 || response.status === 405) return undefined;
       return eventsDto(await json(response));
+    },
+    async relayInfo() {
+      const response = await fetch(base, {
+        headers: { Accept: "application/nostr+json" },
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok)
+        throw new Error(
+          `The relay answered ${response.status} for its features.`,
+        );
+      return relayInfoOf(await response.json());
+    },
+    tableKeys: {
+      seal: async (key) => sealKey(secret, key),
+      open: async (sealed) => openKey(secret, sealed),
     },
     publish(event) {
       const tags = event.tags.filter(

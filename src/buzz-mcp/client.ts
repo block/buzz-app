@@ -43,6 +43,8 @@ export type ManagedAttachment = Readonly<{
 export type PublishOptions = Readonly<{
   managedAttachments?: readonly ManagedAttachment[];
 }>;
+export type { RelayInfo } from "../features/relay/relay-info";
+import type { RelayInfo } from "../features/relay/relay-info";
 export type Filter = Readonly<Record<string, unknown>>;
 /** The community's description of an uploaded blob. */
 export type Upload = Readonly<{
@@ -153,6 +155,15 @@ export interface BuzzClient {
   threadsApart?(channel: string): boolean | undefined;
   /** An exact, saved task anchor for this agent. */
   isTaskThread?(channel: string, root: string): boolean;
+  /** The relay's NIP-11 `supported_extensions` and `max_message_length`;
+   * only where the host can read them. */
+  relayInfo?(): Promise<RelayInfo>;
+  /** Table keys the agent seals to and opens from itself, with its key,
+   * which stays in the host. */
+  readonly tableKeys?: Readonly<{
+    seal(key: Uint8Array): Promise<string>;
+    open(sealed: string): Promise<Uint8Array>;
+  }>;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */

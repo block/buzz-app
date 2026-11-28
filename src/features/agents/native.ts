@@ -228,6 +228,10 @@ export type AgentsNative = {
     body: string | null,
     after: number,
   ): Promise<RelayEvent>;
+  /** A table key, 64 lowercase hex, sealed by the agent to itself. */
+  tableKeySeal(member: Membership, key: string): Promise<string>;
+  /** A table key the agent sealed to itself; nothing else opens. */
+  tableKeyOpen(member: Membership, sealed: string): Promise<string>;
   /** Publishes its name and picture as its profile in one community unless
    * that community already has it. */
   /** `force` republishes it even when unchanged. */
@@ -360,6 +364,10 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_git_auth", { pubkey, relay, owner, repo }),
         remember: ({ pubkey, relay }, slug, body, after) =>
           invoke("app_agent_remember", { pubkey, relay, slug, body, after }),
+        tableKeySeal: ({ pubkey, relay }, key) =>
+          invoke("app_agent_table_key_seal", { pubkey, relay, key }),
+        tableKeyOpen: ({ pubkey, relay }, sealed) =>
+          invoke("app_agent_table_key_open", { pubkey, relay, sealed }),
         publishProfile: ({ pubkey, relay }, force) =>
           invoke("app_agent_publish_profile", { pubkey, relay, force }),
         claim: (pubkey, revision) =>

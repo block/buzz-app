@@ -31,6 +31,32 @@ export function relayKeyOf(
   return source && (source.workflowAuthority() ?? null);
 }
 
+/** The agent's table keys and community limits, checked like every other
+ * operation, where its handle has them. */
+function tableAccess(agent: AgentHandle, check: () => void) {
+  const { tableKeys, relayInfo } = agent;
+  return {
+    ...(tableKeys && {
+      tableKeys: {
+        seal: (key: Uint8Array) => {
+          check();
+          return tableKeys.seal(key);
+        },
+        open: (sealed: string) => {
+          check();
+          return tableKeys.open(sealed);
+        },
+      },
+    }),
+    ...(relayInfo && {
+      relayInfo: () => {
+        check();
+        return relayInfo();
+      },
+    }),
+  };
+}
+
 export function appClient(
   agent: AgentHandle,
   options: Readonly<{
@@ -294,6 +320,7 @@ export function appClient(
       check();
       return agent.gitAuth(owner, repo);
     },
+    ...tableAccess(agent, check),
     read: async (path) => {
       check();
       agent.protection?.assertAvailable();

@@ -1525,6 +1525,30 @@ pub(crate) async fn app_agent_remember(
         .await
 }
 
+/// A table key sealed by the agent to itself; only a table key is sealed.
+#[tauri::command]
+pub(crate) async fn app_agent_table_key_seal(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    relay: String,
+    key: String,
+) -> Result<String, String> {
+    let (_, secret) = state.caller_key(pubkey, relay).await?;
+    secret.table_key_seal(&key)
+}
+
+/// A table key the agent sealed to itself; anything else stays sealed.
+#[tauri::command]
+pub(crate) async fn app_agent_table_key_open(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    relay: String,
+    sealed: String,
+) -> Result<String, String> {
+    let (_, secret) = state.caller_key(pubkey, relay).await?;
+    secret.table_key_open(&sealed).map(|key| key.to_string())
+}
+
 /// Adds the agent's NIP-FI assertion, beside its NIP-98 `Authorization`, for
 /// a community of the owner's organization.
 fn attach(request: reqwest::RequestBuilder, evidence: Option<&str>) -> reqwest::RequestBuilder {

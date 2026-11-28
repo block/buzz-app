@@ -150,6 +150,8 @@ function provideAgents(
     upload: vi.fn(),
     media: vi.fn(),
     gitAuth: vi.fn(),
+    tableKeySeal: vi.fn(),
+    tableKeyOpen: vi.fn(),
     remember: vi.fn(),
     claim: async () => true,
     release: vi.fn(),

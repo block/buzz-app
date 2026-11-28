@@ -81,6 +81,8 @@ it("carries a verified mention through host handover into all three scopes witho
     beginLeave: vi.fn(),
     media: vi.fn(),
     gitAuth: vi.fn(),
+    tableKeySeal: vi.fn(),
+    tableKeyOpen: vi.fn(),
     create: vi.fn(),
     rename: vi.fn(),
     holdRemoval: vi.fn(),

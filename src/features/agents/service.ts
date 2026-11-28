@@ -118,6 +118,7 @@ import {
   settingsProposalProblem,
 } from "./settings-proposal";
 import { nativeRelayInfo } from "../relay/native";
+import type { RelayInfo } from "../relay/relay-info";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import {
@@ -196,6 +197,7 @@ import {
   removeAgentFromChannels,
   removeRelayAgent,
   archiveAgent,
+  deleteAgentTables,
   type OwnerConsent,
 } from "./relay-removal";
 import { UnattestedProfile } from "../relay/identity-archives";
@@ -769,6 +771,14 @@ export type AgentHandle = Readonly<{
     body: string | null,
     after: number,
   ): Promise<RelayEvent>;
+  /** Table keys the agent seals to and opens from itself, with its key,
+   * which stays in the app. */
+  tableKeys?: Readonly<{
+    seal(key: Uint8Array): Promise<string>;
+    open(sealed: string): Promise<Uint8Array>;
+  }>;
+  /** Its community's advertised extensions and message size limit. */
+  relayInfo?(): Promise<RelayInfo>;
   /** The owner's channel templates on this device, each with the agents it
    * adds that are the owner's agents in this agent's community. */
   templates(): readonly Readonly<{
@@ -7767,6 +7777,14 @@ export class AgentsService extends Service implements Agents {
           binding.controller.signal,
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
+        // While its key is here to read the channel as the agent does.
+        if (deleting)
+          await deleteAgentTables(
+            binding.session,
+            (filters) => native.query(member, filters),
+            pubkey,
+            signal,
+          );
         // Only an owner proves ownership with a proof issued now; its key,
         // still here, force-republishes its own profile naming that owner.
         await leaveCommunity(

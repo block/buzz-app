@@ -62,6 +62,7 @@ import {
   MIN_COMPACT_AT,
 } from "../features/agents/compact-at";
 import { attestedOwner } from "../features/agents/owner-attestation";
+import { TABLE_HANDLERS, TABLE_TOOLS } from "./tables";
 import type { AgentSettingsProposal } from "../features/agents/settings-proposal";
 import { type BuzzToolName, TOOL_TITLES } from "./tool-titles";
 import type {
@@ -456,6 +457,9 @@ export const TOOLS: readonly Tool[] = [
     "Delete memory. Pass the version from your latest mem_get of it as expected. core cannot be deleted.",
     { slug: str, expected: str },
     ["slug", "expected"],
+  ),
+  ...TABLE_TOOLS.map((t) =>
+    tool(t.name, t.description, t.properties, t.required),
   ),
   tool(
     "notes_get",
@@ -1573,6 +1577,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     await tools.client.remember(key, null, current.createdAt);
     return `deleted ${key}`;
   },
+
+  ...Object.fromEntries(
+    Object.entries(TABLE_HANDLERS).map(([name, handler]) => [
+      name,
+      (tools: Tools, args: Args) => handler(tools.client, args),
+    ]),
+  ),
 
   async notes_get(tools, args) {
     const { client } = tools;

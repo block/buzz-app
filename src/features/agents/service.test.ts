@@ -204,6 +204,7 @@ const records = vi.hoisted(() => ({
   remove: vi.fn(),
   removeAgent: vi.fn(),
   unshare: vi.fn(),
+  tables: vi.fn(),
 }));
 vi.mock("../solo/default-agent", async (original) => ({
   ...(await original<typeof import("../solo/default-agent")>()),
@@ -246,6 +247,7 @@ vi.mock("./relay-removal", async (actual) => ({
   publishAgentRecord: records.publish,
   deleteAgentRecord: records.remove,
   removeRelayAgent: records.removeAgent,
+  deleteAgentTables: records.tables,
 }));
 vi.mock("./agent-share", () => ({ unshare: records.unshare }));
 
@@ -543,6 +545,8 @@ beforeEach(() => {
   records.publish.mockImplementation(async () => {});
   records.remove.mockReset();
   records.remove.mockImplementation(async () => void steps.push("record"));
+  records.tables.mockReset();
+  records.tables.mockImplementation(async () => void steps.push("tables"));
   records.removeAgent.mockReset();
   records.removeAgent.mockImplementation(async () => void steps.push("leave"));
   records.unshare.mockReset();
@@ -8631,12 +8635,14 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
   expect(leaveChannels).toHaveBeenCalledTimes(1);
   expect(archives.request).not.toHaveBeenCalled();
   expect(records.remove).not.toHaveBeenCalled();
-  expect(steps).toEqual(["stop"]);
+  expect(steps).toEqual(["stop", "tables"]);
   // Delete again runs it all again.
   await service.remove(bot);
   expect(steps).toEqual([
     "stop",
+    "tables",
     "stop",
+    "tables",
     "channels",
     "archive",
     "unshare",
@@ -9900,6 +9906,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
   await service.remove(bot);
   expect(steps).toEqual([
     "stop",
+    "tables",
     "channels",
     "archive",
     "unshare",
@@ -9907,6 +9914,12 @@ it("stops it first, and deletes its key only after it left its channels and was 
     "key",
     "forget",
   ]);
+  expect(records.tables).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.any(Function),
+    bot,
+    expect.any(AbortSignal),
+  );
   expect(service.snapshot().agents).toEqual([]);
   expect(storage.get(`buzz.agent.v1:${bot}`)).toBeNull();
   expect(leaveChannels).toHaveBeenCalledWith(
@@ -9922,6 +9935,20 @@ it("stops it first, and deletes its key only after it left its channels and was 
     expect.any(Function),
   );
   expect(await native.list()).toEqual([]);
+});
+
+it("keeps its key when its tables are not deleted, and deletes them when Delete runs again", async () => {
+  const { service, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  records.tables.mockRejectedValueOnce(new Error("not confirmed"));
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
+  warn.mockRestore();
+  expect(native.remove).not.toHaveBeenCalled();
+  expect(leaveChannels).not.toHaveBeenCalled();
+  await service.remove(bot);
+  expect(records.tables).toHaveBeenCalledTimes(2);
+  expect(native.forget).toHaveBeenCalledWith(member(bot));
 });
 
 it("joins a Delete already running instead of starting another", async () => {

@@ -1,3 +1,9 @@
+import {
+  channelProblem,
+  channelState,
+  type ReadEvents,
+  tablesChannel,
+} from "../tables/channel";
 import type { EventData } from "../relay/events";
 import type { LocalEvents, Outbox } from "../relay/outbox";
 import type { IdentityAttest } from "../relay/identity-archives";
@@ -183,6 +189,56 @@ export async function deleteAgentRecord(
     "Record deletion is not confirmed. Retry.",
   );
   await outbox.dismiss(id);
+}
+
+/** Deletes the agent's private tables channel when the agent alone owns it,
+ * before its key goes: `read` sees the channel as the agent does, so only a
+ * private channel whose roster is exactly the agent as owner is deleted, by
+ * the owner (the relay lets an agent's owner delete its channels). A channel
+ * that is gone needs nothing, and one shared with another owner, or that is
+ * not the agent's, keeps its data. An unreadable roster or an unconfirmed
+ * deletion throws, so Delete stays retryable with the key still here. */
+export async function deleteAgentTables(
+  session: Pick<RelaySession, "outbox">,
+  read: ReadEvents,
+  pubkey: string,
+  signal: AbortSignal,
+): Promise<"deleted" | "kept" | "none"> {
+  const h = await tablesChannel(pubkey);
+  const state = await channelState(read, h);
+  signal.throwIfAborted();
+  if (!state.exists) return "none";
+  if (!state.rosterKnown)
+    throw new Error("Its tables channel's members could not be read.");
+  if (channelProblem(state, pubkey)) return "kept";
+  const outbox = session.outbox;
+  if (!outbox?.supports(9008))
+    throw new Error("This community cannot delete the agent's tables.");
+  await outbox.ready();
+  signal.throwIfAborted();
+  const active = () => !signal.aborted;
+  const previous = await resumable(
+    outbox,
+    (event) =>
+      event.kind === 9008 &&
+      event.tags.some(([name, value]) => name === "h" && value === h),
+  );
+  if (previous) outbox.retry(previous.event.id, active);
+  const id =
+    previous?.event.id ??
+    outbox.send(
+      { kind: 9008, content: "", tags: [["h", h]] },
+      undefined,
+      active,
+    );
+  await delivered(
+    outbox,
+    id,
+    signal,
+    "The agent's tables were not deleted. Retry.",
+  );
+  await outbox.dismiss(id);
+  return "deleted";
 }
 
 /** Base Buzz `removeAgentFromAllChannels` over the relay's rosters for this

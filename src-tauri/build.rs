@@ -251,6 +251,8 @@ fn main() {
             "app_agent_media",
             "app_agent_git_auth",
             "app_agent_remember",
+            "app_agent_table_key_seal",
+            "app_agent_table_key_open",
             "app_agent_claim",
             "app_agent_release",
             "agent_env_status",

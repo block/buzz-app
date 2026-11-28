@@ -389,6 +389,8 @@ export async function bestieFixture(
       media: vi.fn(),
       remember: vi.fn(),
       gitAuth: vi.fn(),
+      tableKeySeal: vi.fn(),
+      tableKeyOpen: vi.fn(),
       claim: async () => true,
       release: vi.fn(),
       join: vi.fn(),

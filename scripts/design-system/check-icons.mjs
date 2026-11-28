@@ -26,8 +26,8 @@ const nonIconDependencies = new Set([
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@noble/hashes",
-  "@playwright/test",
   "@pierre/diffs", // Diff renderer and syntax highlighting, not an icon catalog.
+  "@playwright/test",
   "@pydantic/genai-prices", // LLM price data for Usage estimates.
   "@shikijs/langs", // Syntax grammars for diff highlighting, not an icon catalog.
   "@tailwindcss/postcss",
@@ -44,6 +44,7 @@ const nonIconDependencies = new Set([
   "@types/node",
   "@types/react",
   "@types/react-dom",
+  "@types/sql.js",
   "@vitejs/plugin-react",
   "@xterm/addon-fit",
   "@xterm/xterm",
@@ -85,6 +86,7 @@ const nonIconDependencies = new Set([
   "remark-gfm",
   "rolldown",
   "sonner", // Headless toast behavior; Buzz supplies controls and Tabler icons.
+  "sql.js", // SQLite in memory for agent tables, not an icon catalog.
   "tailwindcss",
   "typescript",
   "undici",

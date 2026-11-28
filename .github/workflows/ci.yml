@@ -383,35 +383,42 @@ jobs:
     env:
       HOME: /root
       BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
-    # Playwright sizes file-level shards by test count, not duration, so costly
-    # files can share one. Each engine gets enough shards to keep its slowest
-    # well inside this deadline on slower runners, setup included: eighteen for
-    # WebKit, which runs slower, and eleven for Chromium. Size a count from
-    # recent runs' per-test durations and `playwright test --list --shard=K/N`.
-    # WebKit at fourteen: the slowest shard's summed test time reached 25
-    # minutes (two workers, about 15 minutes of job time) and hit this deadline
-    # with every test passing. Chromium at nine: the slowest shard summed 20.5
-    # minutes, a 12.3-minute median job, and slower runners hit this deadline
-    # with every test passing; at eleven it sums 17.8 minutes, a projected
-    # 10.5-minute job.
+    # Playwright assigns test groups by count, so slow groups can share a
+    # shard. Main pushes and the Sunday cache refresh use more shards to give
+    # two-worker standard runners room for setup and slow hosts. Size each
+    # engine from recent timings and `playwright test --list --shard=K/N`.
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         runner_class: *runner_class
+        main_ref:
+          - ${{ github.ref == 'refs/heads/main' }}
         engine: [chromium, webkit]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
         exclude:
-          - { engine: chromium, shard: 12 }
-          - { engine: chromium, shard: 13 }
-          - { engine: chromium, shard: 14 }
-          - { engine: chromium, shard: 15 }
+          - { main_ref: false, engine: chromium, shard: 12 }
+          - { main_ref: false, engine: chromium, shard: 13 }
+          - { main_ref: false, engine: chromium, shard: 14 }
+          - { main_ref: false, engine: chromium, shard: 15 }
           - { engine: chromium, shard: 16 }
           - { engine: chromium, shard: 17 }
           - { engine: chromium, shard: 18 }
+          - { engine: chromium, shard: 19 }
+          - { engine: chromium, shard: 20 }
+          - { engine: chromium, shard: 21 }
+          - { engine: chromium, shard: 22 }
+          - { engine: chromium, shard: 23 }
+          - { main_ref: false, engine: webkit, shard: 19 }
+          - { main_ref: false, engine: webkit, shard: 20 }
+          - { main_ref: false, engine: webkit, shard: 21 }
+          - { main_ref: false, engine: webkit, shard: 22 }
+          - { main_ref: false, engine: webkit, shard: 23 }
         include:
-          - { engine: chromium, shards: 11 }
-          - { engine: webkit, shards: 18 }
+          - engine: chromium
+            shards: ${{ github.ref == 'refs/heads/main' && 15 || 11 }}
+          - engine: webkit
+            shards: ${{ github.ref == 'refs/heads/main' && 23 || 18 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

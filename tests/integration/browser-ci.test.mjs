@@ -31,21 +31,35 @@ const job = (name) => {
   return body;
 };
 const browser = job("browser");
-// Expand the browser matrix the way Actions does: engine × shard, minus
-// exclusions, with each engine's include supplying its shard denominator.
-const browserJobs = () => {
+// Expand the browser matrix for the current ref. Each engine's include
+// supplies its shard denominator after ref- and engine-specific exclusions.
+const browserJobs = (ref) => {
   const {
+    main_ref: [mainRef],
     engine,
     shard,
     exclude = [],
     include = [],
   } = parse(workflow).jobs.browser.strategy.matrix;
+  const refCondition = mainRef.match(/^\$\{\{ github\.ref == '([^']+)' \}\}$/);
+  assert.ok(refCondition, "browser matrix must declare its main ref condition");
+  const main = ref === refCondition[1];
   return engine.flatMap((name) => {
-    const { shards } = include.find((entry) => entry.engine === name) ?? {};
-    assert.ok(Number.isInteger(shards), `${name} must declare its shard total`);
+    const total = include.find((entry) => entry.engine === name)?.shards;
+    const counts = total?.match(
+      /^\$\{\{ github\.ref == '([^']+)' && (\d+) \|\| (\d+) \}\}$/,
+    );
+    assert.ok(counts, `${name} must declare its shard totals`);
+    assert.equal(counts[1], refCondition[1]);
+    const shards = Number(main ? counts[2] : counts[3]);
     const selected = shard.filter(
       (n) =>
-        !exclude.some((entry) => entry.engine === name && entry.shard === n),
+        !exclude.some(
+          (entry) =>
+            entry.engine === name &&
+            entry.shard === n &&
+            (entry.main_ref === undefined || entry.main_ref === main),
+        ),
     );
     assert.deepEqual(
       selected,
@@ -134,7 +148,7 @@ test("Linux shards and macOS recording discover every CI functional test/project
   const actual = [];
   // Node owns the bounded scheduling and subtest failure reporting.
   await Promise.all(
-    browserJobs().map(({ engine, shard, shards }) =>
+    browserJobs(process.env.GITHUB_REF).map(({ engine, shard, shards }) =>
       t.test(`${engine}/${shard}`, async () => {
         // Exercise the actual workflow command, including its shard denominator.
         const expanded = command

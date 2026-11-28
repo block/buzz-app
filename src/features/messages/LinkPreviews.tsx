@@ -17,8 +17,14 @@ import type {
   LinkPreviewSettings,
   LinkPreviewStatus,
 } from "../conversation/contracts";
+import { useConversationPresentation } from "../conversation/ConversationPresentation";
+import {
+  OPEN_IN_BROWSER_FAILED,
+  openInBrowser,
+} from "../conversation/open-in-browser";
 import { useTargetOpener } from "../conversation/opener";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { combineStatuses, linkPreviewStatus } from "./link-preview-status";
 import styles from "./LinkPreviews.module.css";
 
@@ -134,7 +140,11 @@ export function LinkPreviews({
     registry?.snapshot ?? noSnapshot,
     registry?.snapshot ?? noSnapshot,
   );
+  const active = useConversationPresentation();
   const [open, setOpen] = useState(false);
+  const [failed, setFailed] = useState(false);
+  // Leaving the conversation clears the notice, as MessageLink's does.
+  if (!active && failed) setFailed(false);
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -262,15 +272,32 @@ export function LinkPreviews({
               messageId={messageId}
               registry={registry}
               renderer={renderer}
-              open={() =>
-                live.current && registry.snapshot().includes(renderer)
-                  ? onOpenLink(url)
-                  : false
-              }
+              open={() => {
+                if (
+                  !active ||
+                  !live.current ||
+                  !registry.snapshot().includes(renderer)
+                )
+                  return false;
+                // A link no panel takes opens in the browser, as its anchor does.
+                if (!onOpenLink(url)) {
+                  setFailed(false);
+                  void openInBrowser(url).then(
+                    (opened) => live.current && setFailed(!opened),
+                  );
+                }
+                return true;
+              }}
             />
           </ContributionBoundary>
         );
       })}
+      {active && failed && (
+        <ToastNotice
+          title={OPEN_IN_BROWSER_FAILED}
+          onDismiss={() => setFailed(false)}
+        />
+      )}
       {(hidden > 0 || (open && cards.length > FOLD_AFTER)) && (
         <Button
           variant="ghost"

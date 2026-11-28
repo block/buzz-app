@@ -5,20 +5,31 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+
+const tauri = vi.hoisted(() => ({
+  isTauri: vi.fn(() => false),
+  invoke: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("@tauri-apps/api/core", () => tauri);
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ContributionReader,
   LinkPreviewProps,
   LinkPreviewRenderer,
 } from "../conversation/contracts";
+import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { TargetOpenerProvider } from "../conversation/opener";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { LinkPreviews } from "./LinkPreviews";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  tauri.isTauri.mockReset().mockReturnValue(false);
+  tauri.invoke.mockReset().mockResolvedValue(undefined);
 });
 
 function entry(
@@ -193,6 +204,106 @@ it("drops a card whose renderer throws and keeps the rest", () => {
     />,
   );
   expect(screen.getByText("web https://ok.example/")).toBeTruthy();
+});
+
+it("opens a link no host handler takes in the browser, as its anchor does", () => {
+  const opened = vi.spyOn(window, "open").mockImplementation(() => null);
+  const registry = reader([entry("web", () => true, 100, card("web"))]);
+  render(
+    <LinkPreviews
+      urls={["https://docs.example/"]}
+      messageId="m"
+      registry={registry}
+      onOpenLink={() => false}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "web https://docs.example/" }),
+  );
+  expect(opened).toHaveBeenCalledWith(
+    "https://docs.example/",
+    "_blank",
+    "noopener,noreferrer",
+  );
+});
+
+it("opens it with the system opener on desktop, and not when a panel takes it", () => {
+  tauri.isTauri.mockReturnValue(true);
+  const opened = vi.spyOn(window, "open").mockImplementation(() => null);
+  let handled = false;
+  render(
+    <LinkPreviews
+      urls={["https://docs.example/"]}
+      messageId="m"
+      registry={reader([entry("web", () => true, 100, card("web"))])}
+      onOpenLink={() => handled}
+    />,
+  );
+  const button = screen.getByRole("button", {
+    name: "web https://docs.example/",
+  });
+  fireEvent.click(button);
+  expect(tauri.invoke).toHaveBeenCalledWith("plugin:opener|open_url", {
+    url: "https://docs.example/",
+  });
+  handled = true;
+  fireEvent.click(button);
+  expect(tauri.invoke).toHaveBeenCalledTimes(1);
+  expect(opened).not.toHaveBeenCalled();
+});
+
+it("tells the viewer when the system opener refuses, until they leave the conversation", async () => {
+  tauri.isTauri.mockReturnValue(true);
+  tauri.invoke.mockRejectedValue(new Error("refused"));
+  const view = (active: boolean) => (
+    <ToastProvider>
+      <ConversationPresentation.Provider value={active}>
+        <LinkPreviews
+          urls={["https://docs.example/"]}
+          messageId="m"
+          registry={reader([entry("web", () => true, 100, card("web"))])}
+          onOpenLink={() => false}
+        />
+      </ConversationPresentation.Provider>
+    </ToastProvider>
+  );
+  const { rerender } = render(view(true));
+  fireEvent.click(
+    screen.getByRole("button", { name: "web https://docs.example/" }),
+  );
+  const notice = "Couldn’t open the link in your browser.";
+  expect(await screen.findByText(notice)).toBeTruthy();
+  rerender(view(false));
+  // The toast plays its exit animation before it leaves the page.
+  await waitFor(() => expect(screen.queryByText(notice)).toBeNull());
+  rerender(view(true));
+  expect(screen.queryByText(notice)).toBeNull();
+});
+
+it("opens nothing once the card's renderer has left the registry", () => {
+  const opened = vi.spyOn(window, "open").mockImplementation(() => null);
+  const onOpenLink = vi.fn(() => false);
+  const results: boolean[] = [];
+  const Recording = ({ url, open }: LinkPreviewProps) => (
+    <button type="button" onClick={() => results.push(open())}>
+      {url}
+    </button>
+  );
+  const live = [entry("web", () => true, 100, Recording)];
+  render(
+    <LinkPreviews
+      urls={["https://docs.example/"]}
+      messageId="m"
+      registry={{ snapshot: () => live, subscribe: () => () => {} }}
+      onOpenLink={onOpenLink}
+    />,
+  );
+  const button = screen.getByRole("button", { name: "https://docs.example/" });
+  live.length = 0;
+  fireEvent.click(button);
+  expect(results).toEqual([false]);
+  expect(onOpenLink).not.toHaveBeenCalled();
+  expect(opened).not.toHaveBeenCalled();
 });
 
 function provider(initial: "checking" | "ready" | "needs-setup") {

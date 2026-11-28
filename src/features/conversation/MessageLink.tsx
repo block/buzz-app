@@ -1,5 +1,6 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@tauri-apps/api/core";
 import { useConversationPresentation } from "./ConversationPresentation";
+import { OPEN_IN_BROWSER_FAILED, openInBrowser } from "./open-in-browser";
 import {
   useContext,
   useLayoutEffect,
@@ -297,11 +298,8 @@ export function MessageLink({
       if (external && event.metaKey && event.button === 0 && isTauri()) {
         event.preventDefault();
         setNotice(undefined);
-        void invoke("plugin:opener|open_url", { url }).catch(() => {
-          setNotice({
-            text: "Couldn’t open the link in your browser.",
-            error: true,
-          });
+        void openInBrowser(url).then((opened) => {
+          if (!opened) setNotice({ text: OPEN_IN_BROWSER_FAILED, error: true });
         });
         return;
       }

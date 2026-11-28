@@ -59,6 +59,9 @@ const isUpdaterUnavailable = (message: string) =>
   message.includes("plugin updater not found") ||
   message.includes("not initialized");
 
+export const MOVE_TO_APPLICATIONS =
+  "Buzz can't update itself where it's running. Quit Buzz, move it to your Applications folder, and open it from there.";
+
 /** App-wide update lifecycle: background checks, download, install and relaunch. */
 export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   let status: UpdateStatus = { state: "idle" };
@@ -114,7 +117,16 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       await platform.relaunch();
     } catch (err) {
       noticeRecovery = true;
-      setStatus({ state: "error", message: toErrorMessage(err) });
+      const message = toErrorMessage(err);
+      // The updater replaces the app where it runs, which a macOS disk image or
+      // translocated copy refuses as a read-only file system (EROFS).
+      setStatus({
+        state: "error",
+        message:
+          /Mac/.test(navigator.platform) && message.includes("os error 30")
+            ? MOVE_TO_APPLICATIONS
+            : message,
+      });
     } finally {
       installInFlight = false;
     }
